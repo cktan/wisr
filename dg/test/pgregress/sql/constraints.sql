@@ -1461,57 +1461,51 @@ DEALLOCATE get_nnconstraint_info;
 
 -- Comments
 -- Setup a low-level role to enforce non-superuser checks.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_constraint_comments;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_constraint_comments;
+CREATE ROLE regress_constraint_comments;
+SET SESSION AUTHORIZATION regress_constraint_comments;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE constraint_comments_tbl (a int CONSTRAINT the_constraint CHECK (a > 0));
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE DOMAIN constraint_comments_dom AS int CONSTRAINT the_constraint CHECK (value > 0);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg COMMENT ON CONSTRAINT the_constraint ON constraint_comments_tbl IS 'yes, the comment';
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg COMMENT ON CONSTRAINT the_constraint ON DOMAIN constraint_comments_dom IS 'yes, another comment';
 
 -- no such constraint
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg COMMENT ON CONSTRAINT no_constraint ON constraint_comments_tbl IS 'yes, the comment';
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg COMMENT ON CONSTRAINT no_constraint ON DOMAIN constraint_comments_dom IS 'yes, another comment';
 
 -- no such table/domain
-COMMENT ON CONSTRAINT the_constraint ON no_comments_tbl IS 'bad comment';
-COMMENT ON CONSTRAINT the_constraint ON DOMAIN no_comments_dom IS 'another bad comment';
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg COMMENT ON CONSTRAINT the_constraint ON no_comments_tbl IS 'bad comment';
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg COMMENT ON CONSTRAINT the_constraint ON DOMAIN no_comments_dom IS 'another bad comment';
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg COMMENT ON CONSTRAINT the_constraint ON constraint_comments_tbl IS NULL;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg COMMENT ON CONSTRAINT the_constraint ON DOMAIN constraint_comments_dom IS NULL;
 
 -- unauthorized user
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_constraint_comments_noaccess;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_constraint_comments_noaccess;
---dg-cascade
+CREATE ROLE regress_constraint_comments_noaccess;
+SET SESSION AUTHORIZATION regress_constraint_comments_noaccess;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg COMMENT ON CONSTRAINT the_constraint ON constraint_comments_tbl IS 'no, the comment';
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg COMMENT ON CONSTRAINT the_constraint ON DOMAIN constraint_comments_dom IS 'no, another comment';
 RESET SESSION AUTHORIZATION;
 
---dg-cascade
---dg DROP TABLE constraint_comments_tbl;
---dg-cascade
---dg DROP DOMAIN constraint_comments_dom;
+DROP TABLE constraint_comments_tbl;
+DROP DOMAIN constraint_comments_dom;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_constraint_comments;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_constraint_comments_noaccess;
+DROP ROLE regress_constraint_comments;
+DROP ROLE regress_constraint_comments_noaccess;
 
 -- Leave some constraints for the pg_upgrade test to pick up
 --dg-skip: relation pg_type cannot be written: digres has no catalog tables

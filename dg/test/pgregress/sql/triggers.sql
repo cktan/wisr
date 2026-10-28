@@ -3569,10 +3569,8 @@ create table parent (a int);
 -- Test who runs deferred trigger functions
 
 -- setup
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create role regress_caller;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create role regress_fn_owner;
+create role regress_caller;
+create role regress_fn_owner;
 --dg-skip: language "?" does not exist
 --dg create function whoami() returns trigger language plpgsql
 --dg as $$
@@ -3581,7 +3579,7 @@ create table parent (a int);
 --dg   return null;
 --dg end;
 --dg $$;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg alter function whoami() owner to regress_fn_owner;
 
 create table defer_trig (id integer);
@@ -3595,12 +3593,11 @@ create table defer_trig (id integer);
 
 -- deferred triggers must run as the user that queued the trigger
 begin;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_caller;
-insert into defer_trig values (1);
+set role regress_caller;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg insert into defer_trig values (1);
 reset role;
---dg-cascade
---dg set role regress_fn_owner;
+set role regress_fn_owner;
 --dg-cascade
 --dg insert into defer_trig values (2);
 --dg-cascade
@@ -3613,9 +3610,9 @@ reset role;
 --dg alter function whoami() security definer;
 --dg-cascade
 --dg begin;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_caller;
-insert into defer_trig values (3);
+set role regress_caller;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg insert into defer_trig values (3);
 reset role;
 --dg-cascade
 --dg commit;
@@ -3635,9 +3632,9 @@ reset role;
 
 --dg-cascade
 --dg begin;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_caller;
-insert into defer_trig values (4);
+set role regress_caller;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg insert into defer_trig values (4);
 reset role;
 --dg-cascade
 --dg commit;  -- error expected
@@ -3647,7 +3644,7 @@ select current_user = session_user;
 drop table defer_trig;
 --dg-cascade
 --dg drop function whoami();
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: DROP ROLE cannot run inside a transaction block
 --dg drop role regress_fn_owner;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: DROP ROLE cannot run inside a transaction block
 --dg drop role regress_caller;

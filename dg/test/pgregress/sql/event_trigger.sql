@@ -95,13 +95,10 @@ create event trigger regress_event_trigger2 on ddl_command_start
 --dg comment on event trigger regress_event_trigger is 'test comment';
 
 -- drop as non-superuser should fail
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create role regress_evt_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_evt_user;
---dg-cascade
---dg create event trigger regress_event_trigger_noperms on ddl_command_start
---dg    execute procedure test_event_trigger();
+create role regress_evt_user;
+set role regress_evt_user;
+create event trigger regress_event_trigger_noperms on ddl_command_start
+   execute procedure test_event_trigger();
 reset role;
 
 -- test enabling and disabling
@@ -174,7 +171,7 @@ reset session_replication_role;
 --dg create server useless_server foreign data wrapper useless;
 --dg-skip: relation pg_user_mapping cannot be opened: digres has no catalog tables
 --dg create user mapping for regress_evt_user server useless_server;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg alter default privileges for role regress_evt_user
 --dg  revoke delete on tables from regress_evt_user;
 
@@ -183,9 +180,8 @@ reset session_replication_role;
 --dg alter event trigger regress_event_trigger owner to regress_evt_user;
 
 -- alter owner to superuser should work
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg alter role regress_evt_user superuser;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+alter role regress_evt_user superuser;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
 --dg alter event trigger regress_event_trigger owner to regress_evt_user;
 
 -- should fail, name collision
@@ -216,14 +212,14 @@ reset session_replication_role;
 --dg drop event trigger regress_event_trigger_end;
 
 -- test support for dropped objects
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE SCHEMA schema_one authorization regress_evt_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE SCHEMA schema_two authorization regress_evt_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE SCHEMA audit_tbls authorization regress_evt_user;
 CREATE TEMP TABLE a_temp_tbl ();
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SET SESSION AUTHORIZATION regress_evt_user;
 
 --dg-cascade
@@ -346,12 +342,12 @@ DELETE FROM undroppable_objs WHERE object_identity = 'schema_one.table_three';
 --dg SELECT * FROM dropped_objects
 --dg   WHERE schema_name IS NULL OR schema_name <> 'pg_toast';
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP OWNED BY regress_evt_user;
 --dg-cascade
 --dg SELECT * FROM dropped_objects WHERE object_type = 'schema';
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP ROLE regress_evt_user;
 
 --dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables

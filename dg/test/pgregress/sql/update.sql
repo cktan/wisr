@@ -55,11 +55,9 @@ INSERT INTO update_test SELECT a,b+1,c FROM update_test;
 SELECT * FROM update_test;
 
 UPDATE update_test SET (c,b,a) = ('bugle', b+11, DEFAULT) WHERE c = 'foo';
---dg-differs: the result
---dg SELECT * FROM update_test;
+SELECT * FROM update_test;
 UPDATE update_test SET (c,b) = ('car', a+b), a = a + 1 WHERE a = 10;
---dg-differs: the result
---dg SELECT * FROM update_test;
+SELECT * FROM update_test;
 -- fail, multi assignment to same column:
 UPDATE update_test SET (c,b) = ('car', a+b), b = a + 1 WHERE a = 10;
 
@@ -67,21 +65,18 @@ UPDATE update_test SET (c,b) = ('car', a+b), b = a + 1 WHERE a = 10;
 UPDATE update_test
   SET (b,a) = (select a,b from update_test where b = 41 and c = 'car')
   WHERE a = 100 AND b = 20;
---dg-differs: the result
---dg SELECT * FROM update_test;
+SELECT * FROM update_test;
 -- correlated sub-select:
 UPDATE update_test o
   SET (b,a) = (select a+1,b from update_test i
                where i.a=o.a and i.b=o.b and i.c is not distinct from o.c);
---dg-differs: the result
---dg SELECT * FROM update_test;
+SELECT * FROM update_test;
 -- fail, multiple rows supplied:
 UPDATE update_test SET (b,a) = (select a+1,b from update_test);
 -- set to null if no rows supplied:
 UPDATE update_test SET (b,a) = (select a+1,b from update_test where a = 1000)
   WHERE a = 11;
---dg-differs: the result
---dg SELECT * FROM update_test;
+SELECT * FROM update_test;
 -- *-expansion should work in this context:
 UPDATE update_test SET (a,b) = ROW(v.*) FROM (VALUES(21, 100)) AS v(i, j)
   WHERE update_test.a = v.i;
@@ -95,8 +90,7 @@ UPDATE update_test AS t SET b = update_test.b + 10 WHERE t.a = 10;
 
 -- Make sure that we can update to a TOASTed value.
 UPDATE update_test SET c = repeat('x', 10000) WHERE c = 'car';
---dg-differs: the result
---dg SELECT a, b, char_length(c) FROM update_test;
+SELECT a, b, char_length(c) FROM update_test;
 
 -- Check multi-assignment with a Result node to handle a one-time filter.
 --dg-differs: the plan
@@ -107,8 +101,7 @@ UPDATE update_test SET c = repeat('x', 10000) WHERE c = 'car';
 UPDATE update_test t
   SET (a, b) = (SELECT b, a FROM update_test s WHERE s.a = t.a)
   WHERE CURRENT_USER = SESSION_USER;
---dg-differs: the result
---dg SELECT a, b, char_length(c) FROM update_test;
+SELECT a, b, char_length(c) FROM update_test;
 
 -- Test ON CONFLICT DO UPDATE
 
@@ -429,8 +422,7 @@ INSERT into mintab VALUES (120);
 
 --dg-cascade
 --dg ALTER TABLE range_parted ENABLE ROW LEVEL SECURITY;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_range_parted_user;
+CREATE USER regress_range_parted_user;
 --dg-cascade
 --dg GRANT ALL ON range_parted, mintab TO regress_range_parted_user;
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
@@ -440,8 +432,7 @@ INSERT into mintab VALUES (120);
 
 --dg-cascade
 --dg :init_range_parted;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_range_parted_user;
+SET SESSION AUTHORIZATION regress_range_parted_user;
 -- This should fail with RLS violation error while moving row from
 -- part_a_10_a_20 to part_d_1_15, because we are setting 'c' to an odd number.
 --dg-cascade
@@ -461,20 +452,18 @@ RESET SESSION AUTHORIZATION;
 
 --dg-cascade
 --dg :init_range_parted;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_range_parted_user;
+SET SESSION AUTHORIZATION regress_range_parted_user;
 
 -- Here, RLS checks should succeed while moving row from part_a_10_a_20 to
 -- part_d_1_15. Even though the UPDATE is setting 'c' to an odd number, the
 -- trigger at the destination partition again makes it an even number.
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg UPDATE range_parted set a = 'b', c = 151 WHERE a = 'a' and c = 200;
 
 RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg :init_range_parted;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_range_parted_user;
+SET SESSION AUTHORIZATION regress_range_parted_user;
 -- This should fail with RLS violation error. Even though the UPDATE is setting
 -- 'c' to an even number, the trigger at the destination partition again makes
 -- it an odd number.
@@ -496,13 +485,12 @@ RESET SESSION AUTHORIZATION;
 --dg CREATE POLICY policy_range_parted_subplan on range_parted
 --dg     AS RESTRICTIVE for UPDATE USING (true)
 --dg     WITH CHECK ((SELECT range_parted.c <= c1 FROM mintab));
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_range_parted_user;
+SET SESSION AUTHORIZATION regress_range_parted_user;
 -- fail, mintab has row with c1 = 120
 --dg-cascade
 --dg UPDATE range_parted set a = 'b', c = 122 WHERE a = 'a' and c = 200;
 -- ok
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg UPDATE range_parted set a = 'b', c = 120 WHERE a = 'a' and c = 200;
 
 -- RLS policy expression contains whole row.
@@ -513,16 +501,14 @@ RESET SESSION AUTHORIZATION;
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY policy_range_parted_wholerow on range_parted AS RESTRICTIVE for UPDATE USING (true)
 --dg    WITH CHECK (range_parted = row('b', 10, 112, 1, NULL)::range_parted);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_range_parted_user;
+SET SESSION AUTHORIZATION regress_range_parted_user;
 -- ok, should pass the RLS check
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg UPDATE range_parted set a = 'b', c = 112 WHERE a = 'a' and c = 200;
 RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg :init_range_parted;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_range_parted_user;
+SET SESSION AUTHORIZATION regress_range_parted_user;
 -- fail, the whole row RLS check should fail
 --dg-cascade
 --dg UPDATE range_parted set a = 'b', c = 116 WHERE a = 'a' and c = 200;
@@ -537,8 +523,7 @@ RESET SESSION AUTHORIZATION;
 --dg DROP POLICY policy_range_parted_wholerow ON range_parted;
 --dg-cascade
 --dg REVOKE ALL ON range_parted, mintab FROM regress_range_parted_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_range_parted_user;
+DROP USER regress_range_parted_user;
 DROP TABLE mintab;
 
 

@@ -4,8 +4,7 @@
 
 /* If objects exist, return oids */
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_regrole_test;
+CREATE ROLE regress_regrole_test;
 
 -- without schemaname
 
@@ -44,68 +43,47 @@ SELECT to_regcollation('pg_catalog."POSIX"');
 
 -- schemaname not applicable
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SELECT regrole('regress_regrole_test');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SELECT regrole('"regress_regrole_test"');
+SELECT regrole('regress_regrole_test');
+SELECT regrole('"regress_regrole_test"');
 SELECT regnamespace('pg_catalog');
 SELECT regnamespace('"pg_catalog"');
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SELECT to_regrole('regress_regrole_test');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SELECT to_regrole('"regress_regrole_test"');
+SELECT to_regrole('regress_regrole_test');
+SELECT to_regrole('"regress_regrole_test"');
 SELECT to_regnamespace('pg_catalog');
 SELECT to_regnamespace('"pg_catalog"');
 
 /* If objects don't exist, raise errors. */
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_regrole_test;
+DROP ROLE regress_regrole_test;
 
 -- without schemaname
 
---dg-cascade
---dg SELECT regoper('||//');
---dg-cascade
---dg SELECT regoperator('++(int4,int4)');
---dg-cascade
---dg SELECT regproc('know');
---dg-cascade
---dg SELECT regprocedure('absinthe(numeric)');
---dg-cascade
---dg SELECT regclass('pg_classes');
---dg-cascade
---dg SELECT regtype('int3');
+SELECT regoper('||//');
+SELECT regoperator('++(int4,int4)');
+SELECT regproc('know');
+SELECT regprocedure('absinthe(numeric)');
+SELECT regclass('pg_classes');
+SELECT regtype('int3');
 
 -- with schemaname
 
---dg-cascade
---dg SELECT regoper('ng_catalog.||/');
---dg-cascade
---dg SELECT regoperator('ng_catalog.+(int4,int4)');
---dg-cascade
---dg SELECT regproc('ng_catalog.now');
---dg-cascade
---dg SELECT regprocedure('ng_catalog.abs(numeric)');
---dg-cascade
---dg SELECT regclass('ng_catalog.pg_class');
---dg-cascade
---dg SELECT regtype('ng_catalog.int4');
+SELECT regoper('ng_catalog.||/');
+SELECT regoperator('ng_catalog.+(int4,int4)');
+SELECT regproc('ng_catalog.now');
+SELECT regprocedure('ng_catalog.abs(numeric)');
+SELECT regclass('ng_catalog.pg_class');
+SELECT regtype('ng_catalog.int4');
 \set VERBOSITY sqlstate \\ -- error message is encoding-dependent
 SELECT regcollation('ng_catalog."POSIX"');
 \set VERBOSITY default
 
 -- schemaname not applicable
 
---dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
---dg SELECT regrole('regress_regrole_test');
---dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
---dg SELECT regrole('"regress_regrole_test"');
---dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
---dg SELECT regrole('Nonexistent');
---dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
---dg SELECT regrole('"Nonexistent"');
+SELECT regrole('regress_regrole_test');
+SELECT regrole('"regress_regrole_test"');
+SELECT regrole('Nonexistent');
+SELECT regrole('"Nonexistent"');
 SELECT regrole('foo.bar');
 SELECT regnamespace('Nonexistent');
 SELECT regnamespace('"Nonexistent"');
@@ -135,15 +113,11 @@ SELECT to_regcollation('ng_catalog."POSIX"');
 
 -- schemaname not applicable
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SELECT to_regrole('regress_regrole_test');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SELECT to_regrole('"regress_regrole_test"');
+SELECT to_regrole('regress_regrole_test');
+SELECT to_regrole('"regress_regrole_test"');
 SELECT to_regrole('foo.bar');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SELECT to_regrole('Nonexistent');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SELECT to_regrole('"Nonexistent"');
+SELECT to_regrole('Nonexistent');
+SELECT to_regrole('"Nonexistent"');
 SELECT to_regrole('foo.bar');
 SELECT to_regnamespace('Nonexistent');
 SELECT to_regnamespace('"Nonexistent"');
@@ -173,8 +147,7 @@ SELECT * FROM pg_input_error_info('-', 'regoperator');
 SELECT * FROM pg_input_error_info('ng_catalog.now', 'regproc');
 SELECT * FROM pg_input_error_info('ng_catalog.abs(numeric)', 'regprocedure');
 SELECT * FROM pg_input_error_info('ng_catalog.abs(numeric', 'regprocedure');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SELECT * FROM pg_input_error_info('regress_regrole_test', 'regrole');
+SELECT * FROM pg_input_error_info('regress_regrole_test', 'regrole');
 SELECT * FROM pg_input_error_info('no_such_type', 'regtype');
 
 -- Some cases that should be soft errors, but are not yet

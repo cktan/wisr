@@ -321,31 +321,33 @@ SELECT * FROM mvtest_v;
 --dg DROP TABLE mvtest_v CASCADE;
 
 -- make sure running as superuser works when MV owned by another role (bug #11208)
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_user_mvtest;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_user_mvtest;
+CREATE ROLE regress_user_mvtest;
+SET ROLE regress_user_mvtest;
 -- this test case also checks for ambiguity in the queries issued by
 -- refresh_by_match_merge(), by choosing column names that intentionally
 -- duplicate all the aliases used in those queries
-CREATE TABLE mvtest_foo_data AS SELECT i,
-  i+1 AS tid,
-  fipshash(random()::text) AS mv,
-  fipshash(random()::text) AS newdata,
-  fipshash(random()::text) AS newdata2,
-  fipshash(random()::text) AS diff
-  FROM generate_series(1, 10) i;
-CREATE MATERIALIZED VIEW mvtest_mv_foo AS SELECT * FROM mvtest_foo_data;
-CREATE MATERIALIZED VIEW mvtest_mv_foo AS SELECT * FROM mvtest_foo_data;
-CREATE MATERIALIZED VIEW IF NOT EXISTS mvtest_mv_foo AS SELECT * FROM mvtest_foo_data;
-CREATE UNIQUE INDEX ON mvtest_mv_foo (i);
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg CREATE TABLE mvtest_foo_data AS SELECT i,
+--dg   i+1 AS tid,
+--dg   fipshash(random()::text) AS mv,
+--dg   fipshash(random()::text) AS newdata,
+--dg   fipshash(random()::text) AS newdata2,
+--dg   fipshash(random()::text) AS diff
+--dg   FROM generate_series(1, 10) i;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg CREATE MATERIALIZED VIEW mvtest_mv_foo AS SELECT * FROM mvtest_foo_data;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg CREATE MATERIALIZED VIEW mvtest_mv_foo AS SELECT * FROM mvtest_foo_data;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg CREATE MATERIALIZED VIEW IF NOT EXISTS mvtest_mv_foo AS SELECT * FROM mvtest_foo_data;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg CREATE UNIQUE INDEX ON mvtest_mv_foo (i);
 RESET ROLE;
 REFRESH MATERIALIZED VIEW mvtest_mv_foo;
 REFRESH MATERIALIZED VIEW CONCURRENTLY mvtest_mv_foo;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
 --dg DROP OWNED BY regress_user_mvtest CASCADE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_user_mvtest;
+DROP ROLE regress_user_mvtest;
 
 -- Concurrent refresh requires a unique index on the materialized
 -- view. Test what happens if it's dropped during the refresh.
@@ -391,44 +393,41 @@ ROLLBACK;
 
 -- INSERT privileges if relation owner is not allowed to insert.
 CREATE SCHEMA matview_schema;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_matview_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+CREATE USER regress_matview_user;
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES FOR ROLE regress_matview_user
 --dg   REVOKE INSERT ON TABLES FROM regress_matview_user;
 --dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg GRANT ALL ON SCHEMA matview_schema TO public;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_matview_user;
---dg-skip: a relation's storage cannot be made: digres has no catalog tables
+SET SESSION AUTHORIZATION regress_matview_user;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE MATERIALIZED VIEW matview_schema.mv_withdata1 (a) AS
 --dg   SELECT generate_series(1, 10) WITH DATA;
---dg-skip: a relation's storage cannot be made: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
 --dg   CREATE MATERIALIZED VIEW matview_schema.mv_withdata2 (a) AS
 --dg   SELECT generate_series(1, 10) WITH DATA;
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg REFRESH MATERIALIZED VIEW matview_schema.mv_withdata2;
---dg-skip: a relation's storage cannot be made: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE MATERIALIZED VIEW matview_schema.mv_nodata1 (a) AS
 --dg   SELECT generate_series(1, 10) WITH NO DATA;
---dg-skip: a relation's storage cannot be made: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
 --dg   CREATE MATERIALIZED VIEW matview_schema.mv_nodata2 (a) AS
 --dg   SELECT generate_series(1, 10) WITH NO DATA;
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg REFRESH MATERIALIZED VIEW matview_schema.mv_nodata2;
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES FOR ROLE regress_matview_user
 --dg   GRANT INSERT ON TABLES TO regress_matview_user;
 
 --dg-cascade
 --dg DROP SCHEMA matview_schema CASCADE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_matview_user;
+DROP USER regress_matview_user;
 
 -- CREATE MATERIALIZED VIEW ... IF NOT EXISTS
 --dg-skip: a relation's storage cannot be made: digres has no catalog tables

@@ -72,10 +72,15 @@ struct sequence_state_free_t {
 };
 extern sequence_state_t *sequence_state_new(void);
 
-/* pg_global.c: the roles, as last committed, that every session reads. */
+/* pg_global.c: the roles, as last committed, that every session reads,
+ * and a session's role DDL not yet committed. */
 struct pg_global_t;
 struct pg_global_free_t {
   void operator()(pg_global_t *global) const;
+};
+struct pg_global_session_t;
+struct pg_global_session_free_t {
+  void operator()(pg_global_session_t *state) const;
 };
 
 /* advisory_lock.c: the advisory locks held, and a session's keys of them. */
@@ -266,6 +271,11 @@ typedef struct tcb_t {
    */
   uint32 lxid = 0;
   std::unique_ptr<smstore_state_t, smstore_state_free_t> smstore;
+  /*
+   * pg_global.c: this session's role DDL not yet committed, its caches'
+   * epoch of the roles, and its sm session on pg_global
+   */
+  std::unique_ptr<pg_global_session_t, pg_global_session_free_t> pg_global;
 
   /* -- the thread's resources -- */
   std::unique_ptr<timeout_state_t, timeout_state_free_t> timeout;

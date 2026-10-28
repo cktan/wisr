@@ -116,12 +116,15 @@
 #include "storage/procnumber.h"
 #include "storage/sinval.h"
 #include "access/smstore.h"
+#include "catalog/pg_auth_members_d.h"
+#include "catalog/pg_authid_d.h"
 #include "catalog/pg_namespace_d.h"
 #include "utils/catcache.h"
 #include "utils/injection_point.h"
 #include "utils/inval.h"
 #include "utils/memdebug.h"
 #include "utils/memutils.h"
+#include "utils/pg_global.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
@@ -779,6 +782,22 @@ void AcceptInvalidationMessages(void) {
     msg.cat.id = SHAREDINVALCATALOG_ID;
     msg.cat.dbId = MyDatabaseId;
     msg.cat.catId = NamespaceRelationId;
+    LocalExecuteInvalidationMessage(&msg);
+    SharedInvalidMessageCounter++;
+  }
+
+  /*
+   * The roles, which no lock guards either, against pg_global's epoch: a
+   * session's role DDL replaced them (utils/init/pg_global.c).
+   */
+  if (pg_global_epoch_moved()) {
+    SharedInvalidationMessage msg;
+
+    msg.cat.id = SHAREDINVALCATALOG_ID;
+    msg.cat.dbId = InvalidOid;
+    msg.cat.catId = AuthIdRelationId;
+    LocalExecuteInvalidationMessage(&msg);
+    msg.cat.catId = AuthMemRelationId;
     LocalExecuteInvalidationMessage(&msg);
     SharedInvalidMessageCounter++;
   }

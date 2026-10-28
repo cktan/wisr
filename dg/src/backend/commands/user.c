@@ -25,10 +25,8 @@
 #include "catalog/pg_authid.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_db_role_setting.h"
-#include "commands/comment.h"
 #include "commands/dbcommands.h"
 #include "commands/defrem.h"
-#include "commands/seclabel.h"
 #include "commands/user.h"
 #include "libpq/crypt.h"
 #include "miscadmin.h"
@@ -39,6 +37,7 @@
 #include "utils/control_block.h"
 #include "utils/fmgroids.h"
 #include "utils/hooks.h"
+#include "utils/pg_global.h"
 #include "utils/syscache.h"
 #include "utils/varlena.h"
 
@@ -411,8 +410,8 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
     roleid = binary_upgrade_next_pg_authid_oid;
     binary_upgrade_next_pg_authid_oid = InvalidOid;
   } else {
-    roleid =
-        GetNewOidWithIndex(pg_authid_rel, AuthIdOidIndexId, Anum_pg_authid_oid);
+    /* The roles are pg_global's (utils/init/pg_global.c), and its oids. */
+    roleid = pg_global_new_oid();
   }
 
   new_record[Anum_pg_authid_oid - 1] = ObjectIdGetDatum(roleid);
@@ -420,9 +419,9 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
   tuple = heap_form_tuple(pg_authid_dsc, new_record, new_record_nulls);
 
   /*
-   * Insert new record in the pg_authid table
+   * Insert new record in the pg_authid table: pg_global's, at commit.
    */
-  CatalogTupleInsert(pg_authid_rel, tuple);
+  pg_global_put_role(tuple, pg_authid_dsc);
 
   /*
    * Advance command counter so we can see new record; else tests in
@@ -829,7 +828,7 @@ Oid AlterRole(ParseState *pstate, AlterRoleStmt *stmt) {
 
   new_tuple = heap_modify_tuple(tuple, pg_authid_dsc, new_record,
                                 new_record_nulls, new_record_repl);
-  CatalogTupleUpdate(pg_authid_rel, &tuple->t_self, new_tuple);
+  pg_global_put_role(new_tuple, pg_authid_dsc);
 
   InvokeObjectPostAlterHook(AuthIdRelationId, roleid, 0);
 
@@ -1065,8 +1064,8 @@ void DropRole(DropRoleStmt *stmt) {
       Form_pg_auth_members authmem_form;
 
       authmem_form = (Form_pg_auth_members)GETSTRUCT(tmp_tuple);
-      deleteSharedDependencyRecordsFor(AuthMemRelationId, authmem_form->oid, 0);
-      CatalogTupleDelete(pg_auth_members_rel, &tmp_tuple->t_self);
+      /* No pg_shdepend: its grantor is read from pg_global. */
+      pg_global_delete_member(authmem_form->oid);
     }
 
     systable_endscan(sscan);
@@ -1081,8 +1080,8 @@ void DropRole(DropRoleStmt *stmt) {
       Form_pg_auth_members authmem_form;
 
       authmem_form = (Form_pg_auth_members)GETSTRUCT(tmp_tuple);
-      deleteSharedDependencyRecordsFor(AuthMemRelationId, authmem_form->oid, 0);
-      CatalogTupleDelete(pg_auth_members_rel, &tmp_tuple->t_self);
+      /* No pg_shdepend: its grantor is read from pg_global. */
+      pg_global_delete_member(authmem_form->oid);
     }
 
     systable_endscan(sscan);
@@ -1110,7 +1109,6 @@ void DropRole(DropRoleStmt *stmt) {
     HeapTuple tuple;
     Form_pg_authid roleform;
     char *detail;
-    char *detail_log;
 
     /*
      * Re-find the pg_authid tuple.
@@ -1125,37 +1123,33 @@ void DropRole(DropRoleStmt *stmt) {
     roleform = (Form_pg_authid)GETSTRUCT(tuple);
 
     /*
-     * Check for pg_shdepend entries depending on this role.
+     * Check for what depends on this role: in pg_global alone, as there is
+     * no pg_shdepend (sm/ROLE.md section 4).
      *
      * This needs to happen after we've completed removing any
      * pg_auth_members entries that can be removed silently, in order to
      * avoid spurious failures. See notes above for more details.
      */
-    if (checkSharedDependencies(AuthIdRelationId, roleid, &detail, &detail_log))
+    detail = pg_global_role_dependents(roleid);
+    if (detail != NULL)
       ereport(ERROR, (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
                       errmsg("role \"%s\" cannot be dropped because some "
                              "objects depend on it",
                              NameStr(roleform->rolname)),
-                      errdetail_internal("%s", detail),
-                      errdetail_log("%s", detail_log)));
+                      errdetail_internal("%s", detail)));
 
     /*
-     * Remove the role from the pg_authid table
+     * Remove the role from the pg_authid table: pg_global's, at commit.
      */
-    CatalogTupleDelete(pg_authid_rel, &tuple->t_self);
+    pg_global_delete_role(roleid);
 
     ReleaseSysCache(tuple);
 
     /*
-     * Remove any comments or security labels on this role.
+     * A role has no comment, security label or setting of its own to
+     * remove: digres keeps none (pg_shdescription, pg_shseclabel and
+     * pg_db_role_setting are not kept).
      */
-    DeleteSharedComments(roleid, AuthIdRelationId);
-    DeleteSharedSecurityLabel(roleid, AuthIdRelationId);
-
-    /*
-     * Remove settings for this role.
-     */
-    DropSetting(InvalidOid, roleid);
   }
 
   /*
@@ -1281,7 +1275,7 @@ ObjectAddress RenameRole(const char *oldname, const char *newname) {
   }
 
   newtuple = heap_modify_tuple(oldtuple, dsc, repl_val, repl_null, repl_repl);
-  CatalogTupleUpdate(rel, &oldtuple->t_self, newtuple);
+  pg_global_put_role(newtuple, dsc);
 
   InvokeObjectPostAlterHook(AuthIdRelationId, roleid, 0);
 
@@ -1674,12 +1668,11 @@ static void AddRoleMems(Oid currentUserId, const char *rolename, Oid roleid,
 
       tuple = heap_modify_tuple(authmem_tuple, pg_authmem_dsc, new_record,
                                 new_record_nulls, new_record_repl);
-      CatalogTupleUpdate(pg_authmem_rel, &tuple->t_self, tuple);
+      pg_global_put_member(tuple);
 
       ReleaseSysCache(authmem_tuple);
     } else {
       Oid objectId;
-      Oid *newmembers = (Oid *)palloc(sizeof(Oid));
 
       /*
        * The values for these options can be taken directly from 'popt'.
@@ -1710,17 +1703,14 @@ static void AddRoleMems(Oid currentUserId, const char *rolename, Oid roleid,
         ReleaseSysCache(mrtup);
       }
 
-      /* get an OID for the new row and insert it */
-      objectId = GetNewOidWithIndex(pg_authmem_rel, AuthMemOidIndexId,
-                                    Anum_pg_auth_members_oid);
+      /*
+       * get an OID for the new row and insert it: pg_global's, at commit.
+       * No pg_shdepend records the grantor: DROP ROLE reads it there.
+       */
+      objectId = pg_global_new_oid();
       new_record[Anum_pg_auth_members_oid - 1] = objectId;
       tuple = heap_form_tuple(pg_authmem_dsc, new_record, new_record_nulls);
-      CatalogTupleInsert(pg_authmem_rel, tuple);
-
-      /* updateAclDependencies wants to pfree array inputs */
-      newmembers[0] = grantorId;
-      updateAclDependencies(AuthMemRelationId, objectId, 0, InvalidOid, 0, NULL,
-                            1, newmembers);
+      pg_global_put_member(tuple);
     }
 
     /* CCI after each change, in case there are duplicates in list */
@@ -1809,12 +1799,8 @@ static void DelRoleMems(Oid currentUserId, const char *rolename, Oid roleid,
     authmem_form = (Form_pg_auth_members)GETSTRUCT(authmem_tuple);
 
     if (actions[i] == RRG_DELETE_GRANT) {
-      /*
-       * Remove the entry altogether, after first removing its
-       * dependencies
-       */
-      deleteSharedDependencyRecordsFor(AuthMemRelationId, authmem_form->oid, 0);
-      CatalogTupleDelete(pg_authmem_rel, &authmem_tuple->t_self);
+      /* Remove the entry altogether: pg_global's, at commit. */
+      pg_global_delete_member(authmem_form->oid);
     } else {
       /* Just turn off the specified option */
       HeapTuple tuple;
@@ -1838,7 +1824,7 @@ static void DelRoleMems(Oid currentUserId, const char *rolename, Oid roleid,
 
       tuple = heap_modify_tuple(authmem_tuple, pg_authmem_dsc, new_record,
                                 new_record_nulls, new_record_repl);
-      CatalogTupleUpdate(pg_authmem_rel, &tuple->t_self, tuple);
+      pg_global_put_member(tuple);
     }
   }
 

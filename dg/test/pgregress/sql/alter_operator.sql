@@ -103,10 +103,8 @@ ALTER OPERATOR & (bit, bit) SET ("Restrict" = _int_contsel, "Join" = _int_contjo
 --
 -- Test permission check. Must be owner to ALTER OPERATOR.
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_alter_op_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alter_op_user;
+CREATE USER regress_alter_op_user;
+SET SESSION AUTHORIZATION regress_alter_op_user;
 
 --dg-cascade
 --dg ALTER OPERATOR === (boolean, boolean) SET (RESTRICT = NONE);
@@ -262,8 +260,7 @@ RESET SESSION AUTHORIZATION;
 -- Clean up
 --
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_alter_op_user;
+DROP USER regress_alter_op_user;
 
 --dg-cascade
 --dg DROP OPERATOR === (boolean, boolean);

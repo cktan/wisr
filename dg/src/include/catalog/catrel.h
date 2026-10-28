@@ -23,6 +23,8 @@ extern const TableAmRoutine *catrel_routine(void);
 
 /* Whether a catalog relation has the rows compiled in alone, none of sm's. */
 extern bool catrel_is_builtin(Oid relid);
+/* Whether a catalog relation has pg_global's rows, the roles'. */
+extern bool catrel_is_global(Oid relid);
 
 /* A qual a scan of a catalog relation is narrowed by: column = value. */
 typedef struct catrel_key_t {

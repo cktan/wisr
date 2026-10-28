@@ -10,16 +10,14 @@
 SET bytea_output TO escape;
 
 -- Test ALTER LARGE OBJECT OWNER
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_lo_user;
+CREATE ROLE regress_lo_user;
 --dg-skip: function ?(...) does not exist
 --dg SELECT lo_create(42);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: large objects are not supported
 --dg ALTER LARGE OBJECT 42 OWNER TO regress_lo_user;
 
 -- Test GRANT, COMMENT as non-superuser
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_lo_user;
+SET SESSION AUTHORIZATION regress_lo_user;
 
 --dg-skip: large objects are not supported
 --dg GRANT SELECT ON LARGE OBJECT 42 TO public;
@@ -425,5 +423,4 @@ ROLLBACK;
 --dg-cascade
 --dg DROP TABLE lotest_stash_values;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_lo_user;
+DROP ROLE regress_lo_user;

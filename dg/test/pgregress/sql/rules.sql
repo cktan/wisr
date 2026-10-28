@@ -238,14 +238,11 @@ select * from rtest_v1;
 
 -- now updates with constant expression
 update rtest_v1 set b = 42 where a = 2;
---dg-differs: the result
---dg select * from rtest_v1;
+select * from rtest_v1;
 update rtest_v1 set b = 99 where b = 42;
---dg-differs: the result
---dg select * from rtest_v1;
+select * from rtest_v1;
 update rtest_v1 set b = 88 where b < 50;
---dg-differs: the result
---dg select * from rtest_v1;
+select * from rtest_v1;
 delete from rtest_v1;
 insert into rtest_v1 select rtest_t2.a, rtest_t3.b
     from rtest_t2, rtest_t3
@@ -1618,23 +1615,22 @@ DROP TABLE ruletest2;
 -- Test non-SELECT rule on security invoker view.
 -- Should use view owner's permissions.
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_rule_user1;
+CREATE USER regress_rule_user1;
 
 CREATE TABLE ruletest_t1 (x int);
 CREATE TABLE ruletest_t2 (x int);
 CREATE VIEW ruletest_v1 WITH (security_invoker=true) AS
     SELECT * FROM ruletest_t1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg GRANT INSERT ON ruletest_v1 TO regress_rule_user1;
 
 --dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
 --dg CREATE RULE rule1 AS ON INSERT TO ruletest_v1
 --dg     DO INSTEAD INSERT INTO ruletest_t2 VALUES (NEW.*);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rule_user1;
-INSERT INTO ruletest_v1 VALUES (1);
+SET SESSION AUTHORIZATION regress_rule_user1;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg INSERT INTO ruletest_v1 VALUES (1);
 
 RESET SESSION AUTHORIZATION;
 
@@ -1644,20 +1640,18 @@ CREATE TABLE ruletest_t3 (x int);
 --dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
 --dg CREATE RULE rule2 AS ON UPDATE TO ruletest_t1
 --dg     DO INSTEAD INSERT INTO ruletest_t2 VALUES (OLD.*);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg REVOKE ALL ON ruletest_t2 FROM regress_rule_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg REVOKE ALL ON ruletest_t3 FROM regress_rule_user1;
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ruletest_t1 OWNER TO regress_rule_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rule_user1;
+SET SESSION AUTHORIZATION regress_rule_user1;
 --dg-cascade
 --dg UPDATE ruletest_t1 t1 SET x = 0 FROM ruletest_t3 t3 WHERE t1.x = t3.x;
 
 RESET SESSION AUTHORIZATION;
---dg-cascade
---dg SELECT * FROM ruletest_t1;
+SELECT * FROM ruletest_t1;
 --dg-cascade
 --dg SELECT * FROM ruletest_t2;
 
@@ -1668,5 +1662,4 @@ DROP TABLE ruletest_t3;
 DROP TABLE ruletest_t2;
 DROP TABLE ruletest_t1;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_rule_user1;
+DROP USER regress_rule_user1;

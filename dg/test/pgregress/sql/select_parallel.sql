@@ -528,7 +528,7 @@ rollback;
 
 -- test that a newly-created session role propagates to workers.
 begin;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: CREATE ROLE cannot run inside a transaction block
 --dg create role regress_parallel_worker;
 --dg-cascade
 --dg set session authorization regress_parallel_worker;
@@ -541,15 +541,14 @@ begin;
 rollback;
 
 -- test that function option SET ROLE works in parallel workers.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create role regress_parallel_worker;
+create role regress_parallel_worker;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: language "?" does not exist
 --dg create function set_and_report_role() returns text as
 --dg   $$ select current_setting('role') $$ language sql parallel safe
 --dg   set role = regress_parallel_worker;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: language "?" does not exist
 --dg create function set_role_and_error(int) returns int as
 --dg   $$ select 1 / $1 $$ language sql parallel safe
 --dg   set role = regress_parallel_worker;
@@ -573,8 +572,7 @@ rollback;
 --dg drop function set_and_report_role();
 --dg-cascade
 --dg drop function set_role_and_error(int);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg drop role regress_parallel_worker;
+drop role regress_parallel_worker;
 
 -- don't freeze in ParallelFinish while holding an LWLock
 BEGIN;

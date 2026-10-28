@@ -123,10 +123,8 @@ CREATE TABLE ab1 (a INTEGER, b INTEGER, c INTEGER);
 --dg CREATE STATISTICS IF NOT EXISTS ab1_a_b_stats ON a, b FROM ab1;
 --dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
 --dg COMMENT ON STATISTICS ab1_a_b_stats IS 'new comment';
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_stats_ext;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_ext;
+CREATE ROLE regress_stats_ext;
+SET SESSION AUTHORIZATION regress_stats_ext;
 --dg-cascade
 --dg COMMENT ON STATISTICS ab1_a_b_stats IS 'changed comment';
 --dg-cascade
@@ -134,8 +132,7 @@ CREATE TABLE ab1 (a INTEGER, b INTEGER, c INTEGER);
 --dg-cascade
 --dg ALTER STATISTICS ab1_a_b_stats RENAME TO ab1_a_b_stats_new;
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_stats_ext;
+DROP ROLE regress_stats_ext;
 --dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
 --dg CREATE STATISTICS pg_temp.stats_ext_temp ON a, b FROM ab1;
 --dg-cascade
@@ -1746,25 +1743,20 @@ set search_path to public, stts_s1, stts_s2, tststats;
 set search_path to public, stts_s1;
 --dg-cascade
 --dg \dX
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create role regress_stats_ext nosuperuser;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_stats_ext;
---dg-cascade
+create role regress_stats_ext nosuperuser;
+set role regress_stats_ext;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg \dX
 reset role;
 drop table stts_t1, stts_t2, stts_t3;
 drop schema stts_s1, stts_s2 cascade;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg drop user regress_stats_ext;
+drop user regress_stats_ext;
 reset search_path;
 -- User with no access
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_stats_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+CREATE USER regress_stats_user1;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg GRANT USAGE ON SCHEMA tststats TO regress_stats_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg SELECT * FROM tststats.priv_test_tbl; -- Permission denied
 -- Check individual columns if we don't have table privilege
@@ -1772,18 +1764,18 @@ reset search_path;
 --dg SELECT * FROM tststats.priv_test_tbl
 --dg   WHERE a = 1 and tststats.priv_test_tbl.* > (1, 1) is not null;
 -- Attempt to gain access using a leaky operator
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE FUNCTION op_leak(int, int) RETURNS bool
 --dg     AS 'BEGIN RAISE NOTICE ''op_leak => %, %'', $1, $2; RETURN $1 < $2; END'
 --dg     LANGUAGE plpgsql;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE OPERATOR <<< (procedure = op_leak, leftarg = int, rightarg = int,
 --dg                      restrict = scalarltsel);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE FUNCTION op_leak(record, record) RETURNS bool
 --dg     AS 'BEGIN RAISE NOTICE ''op_leak => %, %'', $1, $2; RETURN $1 < $2; END'
 --dg     LANGUAGE plpgsql;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE OPERATOR <<< (procedure = op_leak, leftarg = record, rightarg = record,
 --dg                      restrict = scalarltsel);
 --dg-cascade
@@ -1799,11 +1791,10 @@ reset search_path;
 RESET SESSION AUTHORIZATION;
 CREATE VIEW tststats.priv_test_view WITH (security_barrier=true)
     AS SELECT * FROM tststats.priv_test_tbl WHERE false;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg GRANT SELECT, DELETE ON tststats.priv_test_view TO regress_stats_user1;
 -- Should now have access via the view, but see nothing and leak nothing
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg SELECT * FROM tststats.priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not leak
 --dg-cascade
@@ -1819,11 +1810,10 @@ RESET SESSION AUTHORIZATION;
 --dg ALTER TABLE tststats.priv_test_tbl ENABLE ROW LEVEL SECURITY;
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY priv_test_tbl_pol ON tststats.priv_test_tbl USING (2 * a < 0);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg GRANT SELECT, DELETE ON tststats.priv_test_tbl TO regress_stats_user1;
 -- Should now have direct table access, but see nothing and leak nothing
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
 --dg-cascade
@@ -1839,8 +1829,7 @@ CREATE TABLE tststats.priv_test_parent_tbl (a int, b int);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE tststats.priv_test_tbl INHERIT tststats.priv_test_parent_tbl;
 -- Should not have access to parent, and should leak nothing
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
 --dg-cascade
@@ -1856,11 +1845,10 @@ RESET SESSION AUTHORIZATION;
 --dg ALTER TABLE tststats.priv_test_parent_tbl ENABLE ROW LEVEL SECURITY;
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY priv_test_parent_tbl_pol ON tststats.priv_test_parent_tbl USING (2 * a < 0);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg GRANT SELECT, DELETE ON tststats.priv_test_parent_tbl TO regress_stats_user1;
 -- Should now have direct table access to parent, but see nothing and leak nothing
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
 --dg-cascade
@@ -1880,25 +1868,23 @@ INSERT INTO stats_ext_tbl (col) VALUES ('secret'), ('secret'), ('very secret');
 --dg CREATE STATISTICS s_expr ON mod(id, 2), lower(col) FROM stats_ext_tbl;
 ANALYZE stats_ext_tbl;
 -- unprivileged role should not have access
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
---dg-skip: relation "?" does not exist
+SET SESSION AUTHORIZATION regress_stats_user1;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT statistics_name, most_common_vals FROM pg_stats_ext x
 --dg     WHERE tablename = 'stats_ext_tbl' ORDER BY ROW(x.*);
---dg-skip: relation "?" does not exist
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT statistics_name, most_common_vals FROM pg_stats_ext_exprs x
 --dg     WHERE tablename = 'stats_ext_tbl' ORDER BY ROW(x.*);
 -- give unprivileged role ownership of table
 RESET SESSION AUTHORIZATION;
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE stats_ext_tbl OWNER TO regress_stats_user1;
 -- unprivileged role should now have access
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
---dg-cascade
+SET SESSION AUTHORIZATION regress_stats_user1;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT statistics_name, most_common_vals FROM pg_stats_ext x
 --dg     WHERE tablename = 'stats_ext_tbl' ORDER BY ROW(x.*);
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT statistics_name, most_common_vals FROM pg_stats_ext_exprs x
 --dg     WHERE tablename = 'stats_ext_tbl' ORDER BY ROW(x.*);
 -- CREATE STATISTICS checks for CREATE on the schema
@@ -1910,8 +1896,7 @@ CREATE SCHEMA sts_sch2;
 --dg GRANT USAGE ON SCHEMA sts_sch1, sts_sch2 TO regress_stats_user1;
 --dg-cascade
 --dg ALTER TABLE sts_sch1.tbl OWNER TO regress_stats_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg CREATE STATISTICS ON a, b, c FROM sts_sch1.tbl;
 --dg-cascade
@@ -1919,8 +1904,7 @@ CREATE SCHEMA sts_sch2;
 RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg GRANT CREATE ON SCHEMA sts_sch1 TO regress_stats_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg CREATE STATISTICS ON a, b, c FROM sts_sch1.tbl;
 --dg-cascade
@@ -1928,10 +1912,9 @@ RESET SESSION AUTHORIZATION;
 RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg REVOKE CREATE ON SCHEMA sts_sch1 FROM regress_stats_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg GRANT CREATE ON SCHEMA sts_sch2 TO regress_stats_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg CREATE STATISTICS ON a, b, c FROM sts_sch1.tbl;
 --dg-cascade
@@ -1939,8 +1922,7 @@ RESET SESSION AUTHORIZATION;
 RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg GRANT CREATE ON SCHEMA sts_sch1, sts_sch2 TO regress_stats_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg CREATE STATISTICS ON a, b, c FROM sts_sch1.tbl;
 --dg-cascade
@@ -1949,20 +1931,19 @@ RESET SESSION AUTHORIZATION;
 RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg REVOKE CREATE ON SCHEMA sts_sch1, sts_sch2 FROM regress_stats_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg ALTER TABLE sts_sch1.tbl ALTER COLUMN a TYPE SMALLINT;
 --dg-cascade
 --dg ALTER TABLE sts_sch1.tbl ALTER COLUMN c SET EXPRESSION AS (a * 3);
 -- Tidy up
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP OPERATOR <<< (int, int);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP FUNCTION op_leak(int, int);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP OPERATOR <<< (record, record);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP FUNCTION op_leak(record, record);
 RESET SESSION AUTHORIZATION;
 DROP TABLE stats_ext_tbl;
@@ -1970,19 +1951,16 @@ DROP TABLE stats_ext_tbl;
 --dg DROP SCHEMA tststats CASCADE;
 --dg-cascade
 --dg DROP SCHEMA sts_sch1, sts_sch2 CASCADE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_stats_user1;
+DROP USER regress_stats_user1;
 -- CREATE STATISTICS checks for the owner
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_relowner;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_stxowner;
+CREATE ROLE regress_relowner;
+CREATE ROLE regress_stxowner;
 CREATE TABLE stats_ext_tbl (a int, b int);
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE stats_ext_tbl OWNER TO regress_relowner;
 --dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
 --dg CREATE STATISTICS tst ON a, b FROM stats_ext_tbl;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
 --dg ALTER STATISTICS tst OWNER TO regress_stxowner;
 --dg-cascade
 --dg SELECT stxowner::regrole FROM pg_statistic_ext WHERE stxname = 'tst';
@@ -1993,10 +1971,8 @@ CREATE TABLE stats_ext_tbl (a int, b int);
 --dg SELECT stxowner::regrole FROM pg_statistic_ext WHERE stxname = 'tst';
 -- Tidy up
 DROP TABLE stats_ext_tbl;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_relowner;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_stxowner;
+DROP ROLE regress_relowner;
+DROP ROLE regress_stxowner;
 CREATE TABLE grouping_unique (x integer);
 INSERT INTO grouping_unique (x) SELECT gs FROM generate_series(1,1000) AS gs;
 ANALYZE grouping_unique;

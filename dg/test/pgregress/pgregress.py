@@ -200,10 +200,13 @@ class server_t:
                             'drop subscription %s'):
                     self.psql(sql % sub, db='regression', check=False)
         self.psql('drop database if exists regression with (force)')
+        # The roles in one DROP ROLE, which drops a grantor with what it
+        # granted, whatever their order.
         sql = ("select format('drop database if exists %I with (force)', "
                "datname) from pg_database where datname like 'regression%' "
-               "union all select format('drop role if exists %I', rolname) "
-               "from pg_roles where rolname like 'regress%'")
+               "union all select 'drop role if exists ' || "
+               "string_agg(format('%I', rolname), ', ') from pg_roles "
+               "where rolname like 'regress%' having count(*) > 0")
         # digres has no tablespaces.
         if self.kind == 'pg':
             sql += (" union all select format('drop tablespace if exists %I',"

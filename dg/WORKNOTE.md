@@ -9135,3 +9135,74 @@ the invariant).
   name and oid (`regrole`), and has `pg_global` hidden. Each
   was shown to fail with its part disabled. sm and its `rel`
   and mvcc tests have nothing to check: sm is unchanged.
+
+## Step 313: role DDL writes pg_global
+
+The second step of roles (`../sm/ROLE.md` §9): CREATE, ALTER
+and DROP ROLE, GRANT and REVOKE of a membership, SET ROLE and
+SET SESSION AUTHORIZATION. `user.c` is PostgreSQL's still, its
+checks and messages too; what it wrote to `pg_authid` and
+`pg_auth_members` goes to `pg_global` instead.
+
+- **`pg_auth_members`** is a table of `pg_global`'s beside
+  `pg_authid`, keyed by oid, with a unique index on (role,
+  member, grantor), and a catalog relation; the oids of both
+  come from `pg_global`'s sequence `role_oid`, from 16384.
+  A data directory from step 312 has none, and is refused at
+  start, to be made again.
+- **A session's changes** (`pg_global_put_role()` and the
+  rest, in place of `CatalogTupleInsert()`, `Update()`,
+  `Delete()` and `GetNewOidWithIndex()`) go to a copy of the
+  snapshot the session alone reads, and its caches of the two
+  catalogs are invalidated at its next command, as a catalog
+  tuple's write would.
+- **At commit**, before the database's (`CommitTransaction()`),
+  what differs from the snapshot the changes began from is
+  written to `pg_global` in one transaction, each row checked
+  first to be as the session read it: one another session
+  changed meanwhile fails the commit, `could not serialize
+  access due to concurrent update`, rather than lose that
+  change. Then the snapshot is read again and replaced, under
+  its mutex, and its epoch moves. An abort forgets the copy.
+- **Other sessions** drop their caches of the roles at their
+  next transaction, when the epoch has moved
+  (`AcceptInvalidationMessages()`), as they do a schema's.
+- **No pg_shdepend**: a membership's grantor was recorded
+  there. DROP ROLE now reads it from `pg_global`
+  (`pg_global_role_dependents()`), with PostgreSQL's DETAIL;
+  the cleanup of a role's comments, security labels and
+  settings is gone, as digres keeps none.
+- **The session's role is set as PostgreSQL sets it**, through
+  the `session_authorization` setting, now that a role can be
+  looked up by name: digres set the user ids alone, and RESET
+  SESSION AUTHORIZATION then left the session as the role SET
+  had made it, superuser or not.
+- **In a transaction block** CREATE, ALTER, DROP ROLE, a
+  role's GRANT and REVOKE, and ALTER ROLE RENAME are refused
+  (ROLE.md §8 question 1).
+- **System-table scans** of the two catalogs read their rows,
+  as of a catalog of compiled-in rows: they have no index
+  (`catrel_is_global()`).
+- **pgregress**: between files, the `regress%` roles are
+  dropped in one DROP ROLE, which drops a grantor with what it
+  granted whatever their order. The 55 files with statements
+  taken out at `pg_authid` were ported again, and 1,115 of
+  their statements are back: `password` keeps all 44 it took
+  out, `roleattributes` 73 of 80, `privileges` 461 of 1,361,
+  `rowsecurity` 53 of 907, `create_role` 53 of 139. Statements
+  that ran as no role before now run as one that is not a
+  superuser, whose privilege checks read `pg_namespace`'s ACL
+  by the syscache, which opens an index a catalog relation
+  does not have: 1,020 now stop at `relation pg_namespace
+  cannot be opened`, until owners and GRANT (steps 4 and 5).
+- **Left on purpose**: ALTER ROLE ... SET (`pg_db_role_setting`)
+  still fails; REASSIGN OWNED and DROP OWNED are step 6. Two
+  sessions changing one role at once is not tested: role DDL
+  is one statement, with nothing to hold one between its read
+  and its commit.
+- **Tests**: `server.sh` makes, grants, alters and drops roles,
+  and checks what a session already open sees, the refusal in
+  a transaction block, the grantor's DETAIL, SET ROLE and what
+  a role without CREATEROLE may not do, and the roles after a
+  restart. sm is unchanged, so mvcc and `rel` have nothing to
+  check.

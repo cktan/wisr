@@ -5,17 +5,13 @@
 -- initial setups
 SET client_min_messages TO 'warning';
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE IF EXISTS regress_seclabel_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE IF EXISTS regress_seclabel_user2;
+DROP ROLE IF EXISTS regress_seclabel_user1;
+DROP ROLE IF EXISTS regress_seclabel_user2;
 
 RESET client_min_messages;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_seclabel_user1 WITH CREATEROLE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_seclabel_user2;
+CREATE USER regress_seclabel_user1 WITH CREATEROLE;
+CREATE USER regress_seclabel_user2;
 
 CREATE TABLE seclabel_tbl1 (a int, b text);
 CREATE TABLE seclabel_tbl2 (x int, y text);
@@ -25,9 +21,9 @@ CREATE VIEW seclabel_view1 AS SELECT * FROM seclabel_tbl2;
 --dg-skip: relation pg_type cannot be written: digres has no catalog tables
 --dg CREATE DOMAIN seclabel_domain AS text;
 
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE seclabel_tbl1 OWNER TO regress_seclabel_user1;
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE seclabel_tbl2 OWNER TO regress_seclabel_user2;
 
 --
@@ -51,7 +47,5 @@ SECURITY LABEL ON ROLE regress_seclabel_user3 IS 'unclassified';			-- fail
 DROP VIEW seclabel_view1;
 DROP TABLE seclabel_tbl1;
 DROP TABLE seclabel_tbl2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_seclabel_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_seclabel_user2;
+DROP USER regress_seclabel_user1;
+DROP USER regress_seclabel_user2;

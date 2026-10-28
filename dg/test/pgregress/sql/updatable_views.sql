@@ -740,16 +740,12 @@ CREATE VIEW rw_view2 AS SELECT * FROM rw_view1 WHERE a<10;
 
 -- permissions checks
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_view_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_view_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_view_user3;
+CREATE USER regress_view_user1;
+CREATE USER regress_view_user2;
+CREATE USER regress_view_user3;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
---dg-cascade
+SET SESSION AUTHORIZATION regress_view_user1;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE base_tbl(a int, b text, c float);
 --dg-cascade
 --dg INSERT INTO base_tbl VALUES (1, 'Row 1', 1.0);
@@ -768,8 +764,7 @@ CREATE VIEW rw_view2 AS SELECT * FROM rw_view1 WHERE a<10;
 --dg GRANT UPDATE (bb,cc) ON rw_view1 TO regress_view_user2;
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg CREATE VIEW rw_view2 AS SELECT b AS bb, c AS cc, a AS aa FROM base_tbl;
 --dg-cascade
@@ -829,14 +824,12 @@ RESET SESSION AUTHORIZATION;
 --dg DELETE FROM rw_view2; -- not allowed
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
+SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg GRANT INSERT, DELETE ON base_tbl TO regress_view_user2;
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg INSERT INTO base_tbl VALUES (3, 'Row 3', 3.0); -- ok
 --dg-cascade
@@ -859,16 +852,14 @@ RESET SESSION AUTHORIZATION;
 --dg SELECT * FROM base_tbl;
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
+SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg REVOKE INSERT, DELETE ON base_tbl FROM regress_view_user2;
 --dg-cascade
 --dg GRANT INSERT, DELETE ON rw_view1 TO regress_view_user2;
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg INSERT INTO base_tbl VALUES (5, 'Row 5', 5.0); -- not allowed
 --dg-cascade
@@ -901,9 +892,8 @@ RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg INSERT INTO base_tbl VALUES (1, 'Row 1', 1.0);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
---dg-cascade
+SET SESSION AUTHORIZATION regress_view_user1;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE VIEW rw_view1 AS SELECT * FROM base_tbl;
 --dg-cascade
 --dg SELECT * FROM rw_view1;  -- not allowed
@@ -915,8 +905,7 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.a = v.a
 --dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg CREATE VIEW rw_view2 AS SELECT * FROM rw_view1;
 --dg-cascade
@@ -930,11 +919,10 @@ RESET SESSION AUTHORIZATION;
 --dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
 
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg GRANT SELECT ON base_tbl TO regress_view_user1;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
+SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg SELECT * FROM rw_view1;
 --dg-cascade
@@ -945,8 +933,7 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.a = v.a
 --dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg SELECT * FROM rw_view2;  -- not allowed
 --dg-cascade
@@ -957,13 +944,11 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.a = v.a
 --dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
+SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg GRANT SELECT ON rw_view1 TO regress_view_user2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg SELECT * FROM rw_view2;
 --dg-cascade
@@ -975,11 +960,10 @@ RESET SESSION AUTHORIZATION;
 --dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
 
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg GRANT UPDATE ON base_tbl TO regress_view_user1;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
+SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg SELECT * FROM rw_view1;
 --dg-cascade
@@ -990,8 +974,7 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.a = v.a
 --dg   WHEN MATCHED THEN UPDATE SET b = 'foo';
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg SELECT * FROM rw_view2;
 --dg-cascade
@@ -1002,13 +985,11 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.a = v.a
 --dg   WHEN MATCHED THEN UPDATE SET b = 'bar'; -- not allowed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
+SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg GRANT UPDATE ON rw_view1 TO regress_view_user2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg SELECT * FROM rw_view2;
 --dg-cascade
@@ -1020,11 +1001,10 @@ RESET SESSION AUTHORIZATION;
 --dg   WHEN MATCHED THEN UPDATE SET b = 'fud';
 
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg REVOKE UPDATE ON base_tbl FROM regress_view_user1;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
+SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg SELECT * FROM rw_view1;
 --dg-cascade
@@ -1035,8 +1015,7 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.a = v.a
 --dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg SELECT * FROM rw_view2;
 --dg-cascade
@@ -1054,9 +1033,8 @@ RESET SESSION AUTHORIZATION;
 
 -- security invoker view permissions
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
---dg-cascade
+SET SESSION AUTHORIZATION regress_view_user1;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE base_tbl(a int, b text, c float);
 --dg-cascade
 --dg INSERT INTO base_tbl VALUES (1, 'Row 1', 1.0);
@@ -1071,8 +1049,7 @@ RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg GRANT UPDATE (bb,cc) ON rw_view1 TO regress_view_user2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg SELECT * FROM base_tbl; -- not allowed
 --dg-cascade
@@ -1096,15 +1073,13 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
 --dg   WHEN MATCHED THEN DELETE; -- not allowed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
+SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg GRANT SELECT ON base_tbl TO regress_view_user2;
 --dg-cascade
 --dg GRANT UPDATE (a,c) ON base_tbl TO regress_view_user2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg SELECT * FROM base_tbl; -- ok
 --dg-cascade
@@ -1129,13 +1104,11 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
 --dg   WHEN MATCHED THEN UPDATE SET bb = bb; -- not allowed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
+SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg GRANT INSERT, DELETE ON base_tbl TO regress_view_user2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg INSERT INTO base_tbl VALUES (3, 'Row 3', 3.0); -- ok
 --dg-cascade
@@ -1148,15 +1121,13 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
 --dg   WHEN MATCHED THEN DELETE; -- not allowed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
+SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg REVOKE INSERT, DELETE ON base_tbl FROM regress_view_user2;
 --dg-cascade
 --dg GRANT INSERT, DELETE ON rw_view1 TO regress_view_user2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg INSERT INTO rw_view1 VALUES ('Row 4', 4.0, 4); -- not allowed
 --dg-cascade
@@ -1165,13 +1136,11 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
 --dg   WHEN MATCHED THEN DELETE; -- not allowed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
+SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg GRANT INSERT, DELETE ON base_tbl TO regress_view_user2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg INSERT INTO rw_view1 VALUES ('Row 4', 4.0, 4); -- ok
 --dg-cascade
@@ -1194,8 +1163,7 @@ RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg INSERT INTO base_tbl VALUES (1, 'Row 1', 1.0);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
+SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg CREATE VIEW rw_view1 AS SELECT b AS bb, c AS cc, a AS aa FROM base_tbl;
 --dg-cascade
@@ -1208,8 +1176,7 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view1 t USING (VALUES (2, 'Row 2', 2.0)) AS v(a,b,c) ON t.aa = v.a
 --dg   WHEN NOT MATCHED THEN INSERT VALUES (v.b, v.c, v.a); -- not allowed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg CREATE VIEW rw_view2 AS SELECT cc AS ccc, aa AS aaa, bb AS bbb FROM rw_view1;
 --dg-cascade
@@ -1224,13 +1191,12 @@ RESET SESSION AUTHORIZATION;
 
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg GRANT SELECT ON base_tbl TO regress_view_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg GRANT UPDATE (a, b) ON base_tbl TO regress_view_user1;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
+SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg SELECT * FROM rw_view1; -- ok
 --dg-cascade
@@ -1244,8 +1210,7 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
 --dg   WHEN MATCHED THEN UPDATE SET cc = cc; -- not allowed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg SELECT * FROM rw_view2;  -- not allowed
 --dg-cascade
@@ -1254,8 +1219,7 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
 --dg   WHEN MATCHED THEN UPDATE SET aaa = aaa; -- not allowed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user3;
+SET SESSION AUTHORIZATION regress_view_user3;
 --dg-cascade
 --dg SELECT * FROM rw_view2;  -- not allowed
 --dg-cascade
@@ -1264,15 +1228,13 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
 --dg   WHEN MATCHED THEN UPDATE SET aaa = aaa; -- not allowed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
+SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg GRANT SELECT ON rw_view1 TO regress_view_user2;
 --dg-cascade
 --dg GRANT UPDATE (bb, cc) ON rw_view1 TO regress_view_user2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg SELECT * FROM rw_view2;  -- not allowed
 --dg-cascade
@@ -1281,8 +1243,7 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
 --dg   WHEN MATCHED THEN UPDATE SET bbb = bbb; -- not allowed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user3;
+SET SESSION AUTHORIZATION regress_view_user3;
 --dg-cascade
 --dg SELECT * FROM rw_view2;  -- not allowed
 --dg-cascade
@@ -1293,13 +1254,12 @@ RESET SESSION AUTHORIZATION;
 
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg GRANT SELECT ON base_tbl TO regress_view_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg GRANT UPDATE (a, c) ON base_tbl TO regress_view_user2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg SELECT * FROM rw_view2;  -- ok
 --dg-cascade
@@ -1318,8 +1278,7 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
 --dg   WHEN MATCHED THEN UPDATE SET ccc = ccc; -- ok
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user3;
+SET SESSION AUTHORIZATION regress_view_user3;
 --dg-cascade
 --dg SELECT * FROM rw_view2;  -- not allowed
 --dg-cascade
@@ -1340,13 +1299,12 @@ RESET SESSION AUTHORIZATION;
 
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg GRANT SELECT ON base_tbl TO regress_view_user3;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg GRANT UPDATE (a, c) ON base_tbl TO regress_view_user3;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user3;
+SET SESSION AUTHORIZATION regress_view_user3;
 --dg-cascade
 --dg SELECT * FROM rw_view2;  -- ok
 --dg-cascade
@@ -1367,11 +1325,10 @@ RESET SESSION AUTHORIZATION;
 
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg REVOKE SELECT, UPDATE ON base_tbl FROM regress_view_user1;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user1;
+SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg SELECT * FROM rw_view1;  -- not allowed
 --dg-cascade
@@ -1380,8 +1337,7 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
 --dg   WHEN MATCHED THEN UPDATE SET aa = aa; -- not allowed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg SELECT * FROM rw_view2;  -- ok
 --dg-cascade
@@ -1400,8 +1356,7 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
 --dg   WHEN MATCHED THEN UPDATE SET ccc = ccc; -- ok
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user3;
+SET SESSION AUTHORIZATION regress_view_user3;
 --dg-cascade
 --dg SELECT * FROM rw_view2;  -- ok
 --dg-cascade
@@ -1422,11 +1377,10 @@ RESET SESSION AUTHORIZATION;
 
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg REVOKE SELECT, UPDATE ON base_tbl FROM regress_view_user2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user2;
+SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg SELECT * FROM rw_view2;  -- not allowed
 --dg-cascade
@@ -1445,8 +1399,7 @@ RESET SESSION AUTHORIZATION;
 --dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
 --dg   WHEN MATCHED THEN UPDATE SET ccc = ccc; -- not allowed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_view_user3;
+SET SESSION AUTHORIZATION regress_view_user3;
 --dg-cascade
 --dg SELECT * FROM rw_view2;  -- ok
 --dg-cascade
@@ -1470,12 +1423,9 @@ RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg DROP TABLE base_tbl CASCADE;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_view_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_view_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_view_user3;
+DROP USER regress_view_user1;
+DROP USER regress_view_user2;
+DROP USER regress_view_user3;
 
 -- column defaults
 
@@ -1493,8 +1443,7 @@ RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg ALTER VIEW rw_view1 ALTER COLUMN bb SET DEFAULT 'View default';
 
---dg-cascade
---dg INSERT INTO rw_view1 VALUES (4, 'Row 4');
+INSERT INTO rw_view1 VALUES (4, 'Row 4');
 --dg-cascade
 --dg INSERT INTO rw_view1 (aa) VALUES (5);
 --dg-cascade
@@ -1787,9 +1736,8 @@ INSERT INTO other_tbl_parent VALUES (7),(200);
 --dg-cascade
 --dg INSERT INTO other_tbl_child VALUES (8),(100);
 
---dg-cascade
---dg EXPLAIN (costs off)
---dg UPDATE rw_view1 SET a = a + 1000 FROM other_tbl_parent WHERE a = id;
+EXPLAIN (costs off)
+UPDATE rw_view1 SET a = a + 1000 FROM other_tbl_parent WHERE a = id;
 UPDATE rw_view1 SET a = a + 1000 FROM other_tbl_parent WHERE a = id;
 
 --dg-cascade
@@ -1995,8 +1943,7 @@ INSERT INTO ref_tbl SELECT * FROM generate_series(1,10);
 
 --dg-cascade
 --dg EXPLAIN (costs off) INSERT INTO rw_view1 VALUES (5);
---dg-cascade
---dg EXPLAIN (costs off) UPDATE rw_view1 SET a = a + 5;
+EXPLAIN (costs off) UPDATE rw_view1 SET a = a + 5;
 
 --dg-cascade
 --dg DROP TABLE base_tbl, ref_tbl CASCADE;
@@ -2726,14 +2673,11 @@ create table uv_iocu_tab (a int unique, b text);
 drop table uv_iocu_tab;
 
 -- ON CONFLICT DO UPDATE permissions checks
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create user regress_view_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create user regress_view_user2;
+create user regress_view_user1;
+create user regress_view_user2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set session authorization regress_view_user1;
---dg-cascade
+set session authorization regress_view_user1;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg create table base_tbl(a int unique, b text, c float);
 --dg-cascade
 --dg insert into base_tbl values (1,'xxx',1.0);
@@ -2747,8 +2691,7 @@ drop table uv_iocu_tab;
 --dg-cascade
 --dg grant update (bb) on rw_view1 to regress_view_user2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set session authorization regress_view_user2;
+set session authorization regress_view_user2;
 --dg-cascade
 --dg insert into rw_view1 values ('yyy',2.0,1)
 --dg   on conflict (aa) do update set bb = excluded.cc; -- Not allowed
@@ -2768,8 +2711,7 @@ reset session authorization;
 --dg-cascade
 --dg select * from base_tbl;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set session authorization regress_view_user1;
+set session authorization regress_view_user1;
 --dg-cascade
 --dg grant select (a,b) on base_tbl to regress_view_user2;
 --dg-cascade
@@ -2777,8 +2719,7 @@ reset session authorization;
 --dg-cascade
 --dg grant update (a,b) on base_tbl to regress_view_user2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set session authorization regress_view_user2;
+set session authorization regress_view_user2;
 --dg-cascade
 --dg create view rw_view2 as select b as bb, c as cc, a as aa from base_tbl;
 --dg-cascade
@@ -2793,26 +2734,23 @@ reset session authorization;
 --dg-cascade
 --dg select * from base_tbl;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set session authorization regress_view_user2;
+set session authorization regress_view_user2;
 --dg-cascade
 --dg create view rw_view4 as select aa, bb, cc FROM rw_view1;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg insert into rw_view4 (aa,bb) values (1,'yyy')
 --dg   on conflict (aa) do update set bb = excluded.bb; -- Not allowed
 --dg-cascade
 --dg create view rw_view5 as select aa, bb FROM rw_view1;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg insert into rw_view5 (aa,bb) values (1,'yyy')
 --dg   on conflict (aa) do update set bb = excluded.bb; -- OK
 reset session authorization;
 --dg-cascade
 --dg select * from base_tbl;
 
---dg-cascade
---dg drop view rw_view5;
---dg-cascade
---dg drop view rw_view4;
+drop view rw_view5;
+drop view rw_view4;
 --dg-cascade
 --dg drop view rw_view3;
 --dg-cascade
@@ -2821,10 +2759,8 @@ reset session authorization;
 --dg drop view rw_view1;
 --dg-cascade
 --dg drop table base_tbl;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg drop user regress_view_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg drop user regress_view_user2;
+drop user regress_view_user1;
+drop user regress_view_user2;
 
 -- Test single- and multi-row inserts with table and view defaults.
 -- Table defaults should be used, unless overridden by view defaults.

@@ -12,8 +12,7 @@ SELECT * FROM toyemp WHERE name = 'sharon';
 --
 -- Test for Leaky view scenario
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_alice;
+CREATE ROLE regress_alice;
 
 --dg-skip: language "?" does not exist
 --dg CREATE FUNCTION f_leak (text)
@@ -91,38 +90,37 @@ CREATE VIEW my_credit_card_usage_secure WITH (security_barrier) AS
 --
 -- Run leaky view scenarios
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alice;
+SET SESSION AUTHORIZATION regress_alice;
 
 --
 -- scenario: if a qualifier with tiny-cost is given, it shall be launched
 --           prior to the security policy of the view.
 --
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM my_property_normal WHERE f_leak(passwd);
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (COSTS OFF) SELECT * FROM my_property_normal WHERE f_leak(passwd);
 
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM my_property_secure WHERE f_leak(passwd);
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (COSTS OFF) SELECT * FROM my_property_secure WHERE f_leak(passwd);
 
 --
 -- scenario: qualifiers can be pushed down if they contain leaky functions,
 --           provided they aren't passed data from inside the view.
 --
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM my_property_normal v
 --dg 		WHERE f_leak('passwd') AND f_leak(passwd);
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (COSTS OFF) SELECT * FROM my_property_normal v
 --dg 		WHERE f_leak('passwd') AND f_leak(passwd);
 
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM my_property_secure v
 --dg 		WHERE f_leak('passwd') AND f_leak(passwd);
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (COSTS OFF) SELECT * FROM my_property_secure v
 --dg 		WHERE f_leak('passwd') AND f_leak(passwd);
 
@@ -131,14 +129,14 @@ CREATE VIEW my_credit_card_usage_secure WITH (security_barrier) AS
 --           tree, it shall be distributed to the most deep scan plan as
 --           possible as we can.
 --
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM my_credit_card_normal WHERE f_leak(cnum);
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (COSTS OFF) SELECT * FROM my_credit_card_normal WHERE f_leak(cnum);
 
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM my_credit_card_secure WHERE f_leak(cnum);
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (COSTS OFF) SELECT * FROM my_credit_card_secure WHERE f_leak(cnum);
 
 --
@@ -146,17 +144,17 @@ CREATE VIEW my_credit_card_usage_secure WITH (security_barrier) AS
 --           views with "security_barrier" attribute, except for operators
 --           implemented with leakproof functions.
 --
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM my_credit_card_usage_normal
 --dg        WHERE f_leak(cnum) AND ymd >= '2011-10-01' AND ymd < '2011-11-01';
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (COSTS OFF) SELECT * FROM my_credit_card_usage_normal
 --dg        WHERE f_leak(cnum) AND ymd >= '2011-10-01' AND ymd < '2011-11-01';
 
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM my_credit_card_usage_secure
 --dg        WHERE f_leak(cnum) AND ymd >= '2011-10-01' AND ymd < '2011-11-01';
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (COSTS OFF) SELECT * FROM my_credit_card_usage_secure
 --dg        WHERE f_leak(cnum) AND ymd >= '2011-10-01' AND ymd < '2011-11-01';
 
@@ -164,9 +162,9 @@ CREATE VIEW my_credit_card_usage_secure WITH (security_barrier) AS
 -- Test for the case when security_barrier gets changed between rewriter
 -- and planner stage.
 --
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg PREPARE p1 AS SELECT * FROM my_property_normal WHERE f_leak(passwd);
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg PREPARE p2 AS SELECT * FROM my_property_secure WHERE f_leak(passwd);
 --dg-cascade
 --dg EXECUTE p1;
@@ -175,8 +173,7 @@ CREATE VIEW my_credit_card_usage_secure WITH (security_barrier) AS
 RESET SESSION AUTHORIZATION;
 ALTER VIEW my_property_normal SET (security_barrier=true);
 ALTER VIEW my_property_secure SET (security_barrier=false);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alice;
+SET SESSION AUTHORIZATION regress_alice;
 --dg-cascade
 --dg EXECUTE p1;		-- To be perform as a view with security-barrier
 --dg-cascade
@@ -184,5 +181,4 @@ ALTER VIEW my_property_secure SET (security_barrier=false);
 
 -- Cleanup.
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_alice;
+DROP ROLE regress_alice;

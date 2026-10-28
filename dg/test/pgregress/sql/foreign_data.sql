@@ -19,26 +19,18 @@
 -- Suppress NOTICE messages when roles don't exist
 SET client_min_messages TO 'warning';
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE IF EXISTS regress_foreign_data_user, regress_test_role, regress_test_role2, regress_test_role_super, regress_test_indirect, regress_unprivileged_role;
+DROP ROLE IF EXISTS regress_foreign_data_user, regress_test_role, regress_test_role2, regress_test_role_super, regress_test_indirect, regress_unprivileged_role;
 
 RESET client_min_messages;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_foreign_data_user LOGIN SUPERUSER;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION 'regress_foreign_data_user';
+CREATE ROLE regress_foreign_data_user LOGIN SUPERUSER;
+SET SESSION AUTHORIZATION 'regress_foreign_data_user';
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_test_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_test_role2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_test_role_super SUPERUSER;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_test_indirect;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_unprivileged_role;
+CREATE ROLE regress_test_role;
+CREATE ROLE regress_test_role2;
+CREATE ROLE regress_test_role_super SUPERUSER;
+CREATE ROLE regress_test_indirect;
+CREATE ROLE regress_unprivileged_role;
 
 --dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg CREATE FOREIGN DATA WRAPPER dummy;
@@ -83,9 +75,8 @@ RESET client_min_messages;
 
 --dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg DROP FOREIGN DATA WRAPPER foo;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
---dg-cascade
+SET ROLE regress_test_role;
+--dg-differs: another error: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg CREATE FOREIGN DATA WRAPPER foo; -- ERROR
 RESET ROLE;
 --dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
@@ -147,12 +138,10 @@ ALTER FOREIGN DATA WRAPPER foo;                             -- ERROR
 --dg-cascade
 --dg \dew+
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
---dg-cascade
+SET ROLE regress_test_role;
+--dg-differs: another error: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg ALTER FOREIGN DATA WRAPPER foo OPTIONS (ADD d '5');         -- ERROR
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role_super;
+SET ROLE regress_test_role_super;
 --dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg ALTER FOREIGN DATA WRAPPER foo OPTIONS (ADD d '5');
 --dg-cascade
@@ -160,13 +149,11 @@ ALTER FOREIGN DATA WRAPPER foo;                             -- ERROR
 
 --dg-cascade
 --dg ALTER FOREIGN DATA WRAPPER foo OWNER TO regress_test_role;  -- ERROR
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg ALTER FOREIGN DATA WRAPPER foo OWNER TO regress_test_role_super;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg ALTER ROLE regress_test_role_super NOSUPERUSER;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role_super;
---dg-cascade
+ALTER ROLE regress_test_role_super NOSUPERUSER;
+SET ROLE regress_test_role_super;
+--dg-differs: another error: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg ALTER FOREIGN DATA WRAPPER foo OPTIONS (ADD e '6');         -- ERROR
 RESET ROLE;
 --dg-cascade
@@ -199,12 +186,12 @@ RESET ROLE;
 
 --dg-cascade
 --dg DROP ROLE regress_test_role_super;                          -- ERROR
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SET ROLE regress_test_role_super;
 --dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg DROP FOREIGN DATA WRAPPER foo;
 RESET ROLE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP ROLE regress_test_role_super;
 --dg-cascade
 --dg \dew+
@@ -229,8 +216,7 @@ RESET ROLE;
 --dg \deu+
 --dg-cascade
 --dg DROP FOREIGN DATA WRAPPER foo;                              -- ERROR
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
+SET ROLE regress_test_role;
 --dg-cascade
 --dg DROP FOREIGN DATA WRAPPER foo CASCADE;                      -- ERROR
 RESET ROLE;
@@ -272,15 +258,13 @@ RESET ROLE;
 --dg CREATE SERVER s8 FOREIGN DATA WRAPPER postgresql OPTIONS (host 'localhost', dbname 's8db');
 --dg-cascade
 --dg \des+
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
+SET ROLE regress_test_role;
 --dg-cascade
 --dg CREATE SERVER t1 FOREIGN DATA WRAPPER foo;                 -- ERROR: no usage on FDW
 RESET ROLE;
 --dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg GRANT USAGE ON FOREIGN DATA WRAPPER foo TO regress_test_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
+SET ROLE regress_test_role;
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg CREATE SERVER t1 FOREIGN DATA WRAPPER foo;
 RESET ROLE;
@@ -291,22 +275,18 @@ RESET ROLE;
 --dg REVOKE USAGE ON FOREIGN DATA WRAPPER foo FROM regress_test_role;
 --dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg GRANT USAGE ON FOREIGN DATA WRAPPER foo TO regress_test_indirect;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
+SET ROLE regress_test_role;
 --dg-cascade
 --dg CREATE SERVER t2 FOREIGN DATA WRAPPER foo;                 -- ERROR
 RESET ROLE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_test_indirect TO regress_test_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
+GRANT regress_test_indirect TO regress_test_role;
+SET ROLE regress_test_role;
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg CREATE SERVER t2 FOREIGN DATA WRAPPER foo;
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg \des+
 RESET ROLE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg REVOKE regress_test_indirect FROM regress_test_role;
+REVOKE regress_test_indirect FROM regress_test_role;
 
 -- ALTER SERVER
 ALTER SERVER s0;                                            -- ERROR
@@ -324,19 +304,16 @@ ALTER SERVER s0;                                            -- ERROR
 --dg GRANT USAGE ON FOREIGN SERVER s6 TO regress_test_role2 WITH GRANT OPTION;
 --dg-cascade
 --dg \des+
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
+SET ROLE regress_test_role;
 --dg-cascade
 --dg ALTER SERVER s1 VERSION '1.1';                              -- ERROR
 --dg-cascade
 --dg ALTER SERVER s1 OWNER TO regress_test_role;                 -- ERROR
 RESET ROLE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg ALTER SERVER s1 OWNER TO regress_test_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_test_role2 TO regress_test_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
+GRANT regress_test_role2 TO regress_test_role;
+SET ROLE regress_test_role;
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg ALTER SERVER s1 VERSION '1.1';
 --dg-cascade
@@ -346,23 +323,19 @@ RESET ROLE;
 --dg ALTER SERVER s8 OPTIONS (foo '1');                          -- ERROR option validation
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg ALTER SERVER s8 OPTIONS (connect_timeout '30', SET dbname 'db1', DROP host);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
+SET ROLE regress_test_role;
 --dg-cascade
 --dg ALTER SERVER s1 OWNER TO regress_test_indirect;             -- ERROR
 RESET ROLE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_test_indirect TO regress_test_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+GRANT regress_test_indirect TO regress_test_role;
+SET ROLE regress_test_role;
+--dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg ALTER SERVER s1 OWNER TO regress_test_indirect;
 RESET ROLE;
 --dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg GRANT USAGE ON FOREIGN DATA WRAPPER foo TO regress_test_indirect;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+SET ROLE regress_test_role;
+--dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg ALTER SERVER s1 OWNER TO regress_test_indirect;
 RESET ROLE;
 --dg-cascade
@@ -384,8 +357,7 @@ RESET ROLE;
 --dg DROP SERVER IF EXISTS nonexistent;
 --dg-cascade
 --dg \des
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
+SET ROLE regress_test_role;
 --dg-cascade
 --dg DROP SERVER s2;                                             -- ERROR
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
@@ -393,10 +365,9 @@ RESET ROLE;
 RESET ROLE;
 --dg-cascade
 --dg \des
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg ALTER SERVER s2 OWNER TO regress_test_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
+SET ROLE regress_test_role;
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg DROP SERVER s2;
 RESET ROLE;
@@ -430,12 +401,11 @@ RESET ROLE;
 --dg CREATE USER MAPPING FOR user SERVER s8 OPTIONS (username 'test', password 'secret');    -- ERROR
 --dg-skip: relation pg_user_mapping cannot be opened: digres has no catalog tables
 --dg CREATE USER MAPPING FOR user SERVER s8 OPTIONS (user 'test', password 'secret');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg ALTER SERVER s5 OWNER TO regress_test_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER SERVER s6 OWNER TO regress_test_indirect;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
+SET ROLE regress_test_role;
 --dg-skip: relation pg_user_mapping cannot be opened: digres has no catalog tables
 --dg CREATE USER MAPPING FOR current_user SERVER s5;
 --dg-skip: relation pg_user_mapping cannot be opened: digres has no catalog tables
@@ -446,10 +416,9 @@ RESET ROLE;
 --dg CREATE USER MAPPING FOR public SERVER s8;                   -- ERROR
 RESET ROLE;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER SERVER t1 OWNER TO regress_test_indirect;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
+SET ROLE regress_test_role;
 --dg-skip: relation pg_user_mapping cannot be opened: digres has no catalog tables
 --dg CREATE USER MAPPING FOR current_user SERVER t1 OPTIONS (username 'bob', password 'boo');
 --dg-skip: relation pg_user_mapping cannot be opened: digres has no catalog tables
@@ -469,8 +438,7 @@ RESET ROLE;
 --dg ALTER USER MAPPING FOR current_user SERVER s8 OPTIONS (username 'test');    -- ERROR
 --dg-skip: relation pg_user_mapping cannot be opened: digres has no catalog tables
 --dg ALTER USER MAPPING FOR current_user SERVER s8 OPTIONS (DROP user, SET password 'public');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
+SET ROLE regress_test_role;
 --dg-skip: relation pg_user_mapping cannot be opened: digres has no catalog tables
 --dg ALTER USER MAPPING FOR current_user SERVER s5 OPTIONS (ADD modified '1');
 --dg-cascade
@@ -482,22 +450,19 @@ RESET ROLE;
 --dg \deu+
 
 -- DROP USER MAPPING
---dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER MAPPING FOR regress_test_missing_role SERVER s4;  -- ERROR
+DROP USER MAPPING FOR regress_test_missing_role SERVER s4;  -- ERROR
 --dg-differs: another error: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg DROP USER MAPPING FOR user SERVER ss4;
 --dg-cascade
 --dg DROP USER MAPPING FOR public SERVER s7;                     -- ERROR
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER MAPPING IF EXISTS FOR regress_test_missing_role SERVER s4;
+DROP USER MAPPING IF EXISTS FOR regress_test_missing_role SERVER s4;
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg DROP USER MAPPING IF EXISTS FOR user SERVER ss4;
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg DROP USER MAPPING IF EXISTS FOR public SERVER s7;
 --dg-skip: relation pg_user_mapping cannot be opened: digres has no catalog tables
 --dg CREATE USER MAPPING FOR public SERVER s8;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
+SET ROLE regress_test_role;
 --dg-cascade
 --dg DROP USER MAPPING FOR public SERVER s8;                     -- ERROR
 RESET ROLE;
@@ -817,8 +782,7 @@ CREATE FOREIGN TABLE ft1 (
 --dg SELECT * FROM information_schema.foreign_tables ORDER BY 1, 2, 3;
 --dg-cascade
 --dg SELECT * FROM information_schema.foreign_table_options ORDER BY 1, 2, 3, 4;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
+SET ROLE regress_test_role;
 --dg-cascade
 --dg SELECT * FROM information_schema.user_mapping_options ORDER BY 1, 2, 3, 4;
 --dg-cascade
@@ -827,8 +791,7 @@ CREATE FOREIGN TABLE ft1 (
 --dg SELECT * FROM information_schema.role_usage_grants WHERE object_type LIKE 'FOREIGN%' AND object_name IN ('s6', 'foo') ORDER BY 1, 2, 3, 4, 5;
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg DROP USER MAPPING FOR current_user SERVER t1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role2;
+SET ROLE regress_test_role2;
 --dg-cascade
 --dg SELECT * FROM information_schema.user_mapping_options ORDER BY 1, 2, 3, 4;
 RESET ROLE;
@@ -838,7 +801,7 @@ RESET ROLE;
 --dg-cascade
 --dg SELECT has_foreign_data_wrapper_privilege('regress_test_role',
 --dg     (SELECT oid FROM pg_foreign_data_wrapper WHERE fdwname='foo'), 'USAGE');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg SELECT has_foreign_data_wrapper_privilege('regress_test_role', 'foo', 'USAGE');
 --dg-cascade
 --dg SELECT has_foreign_data_wrapper_privilege(
@@ -847,21 +810,21 @@ RESET ROLE;
 --dg-cascade
 --dg SELECT has_foreign_data_wrapper_privilege(
 --dg     (SELECT oid FROM pg_foreign_data_wrapper WHERE fdwname='foo'), 'USAGE');
---dg-cascade
+--dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg SELECT has_foreign_data_wrapper_privilege(
 --dg     (SELECT oid FROM pg_roles WHERE rolname='regress_test_role'), 'foo', 'USAGE');
 --dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg SELECT has_foreign_data_wrapper_privilege('foo', 'USAGE');
 --dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg GRANT USAGE ON FOREIGN DATA WRAPPER foo TO regress_test_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg SELECT has_foreign_data_wrapper_privilege('regress_test_role', 'foo', 'USAGE');
 
 -- has_server_privilege
 --dg-cascade
 --dg SELECT has_server_privilege('regress_test_role',
 --dg     (SELECT oid FROM pg_foreign_server WHERE srvname='s8'), 'USAGE');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg SELECT has_server_privilege('regress_test_role', 's8', 'USAGE');
 --dg-cascade
 --dg SELECT has_server_privilege(
@@ -870,14 +833,14 @@ RESET ROLE;
 --dg-cascade
 --dg SELECT has_server_privilege(
 --dg     (SELECT oid FROM pg_foreign_server WHERE srvname='s8'), 'USAGE');
---dg-cascade
+--dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg SELECT has_server_privilege(
 --dg     (SELECT oid FROM pg_roles WHERE rolname='regress_test_role'), 's8', 'USAGE');
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg SELECT has_server_privilege('s8', 'USAGE');
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg GRANT USAGE ON FOREIGN SERVER s8 TO regress_test_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg SELECT has_server_privilege('regress_test_role', 's8', 'USAGE');
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg REVOKE USAGE ON FOREIGN SERVER s8 FROM regress_test_role;
@@ -894,11 +857,10 @@ RESET ROLE;
 --dg ALTER FOREIGN DATA WRAPPER foo VALIDATOR postgresql_fdw_validator;
 
 -- Privileges
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_unprivileged_role;
---dg-cascade
+SET ROLE regress_unprivileged_role;
+--dg-differs: another error: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg CREATE FOREIGN DATA WRAPPER foobar;                             -- ERROR
---dg-cascade
+--dg-differs: another error: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg ALTER FOREIGN DATA WRAPPER foo OPTIONS (gotcha 'true');         -- ERROR
 --dg-cascade
 --dg ALTER FOREIGN DATA WRAPPER foo OWNER TO regress_unprivileged_role; -- ERROR
@@ -928,11 +890,10 @@ RESET ROLE;
 --dg GRANT USAGE ON FOREIGN DATA WRAPPER postgresql TO regress_unprivileged_role;
 --dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg GRANT USAGE ON FOREIGN DATA WRAPPER foo TO regress_unprivileged_role WITH GRANT OPTION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_unprivileged_role;
---dg-cascade
+SET ROLE regress_unprivileged_role;
+--dg-differs: another error: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg CREATE FOREIGN DATA WRAPPER foobar;                             -- ERROR
---dg-cascade
+--dg-differs: another error: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg ALTER FOREIGN DATA WRAPPER foo OPTIONS (gotcha 'true');         -- ERROR
 --dg-cascade
 --dg DROP FOREIGN DATA WRAPPER foo;                                  -- ERROR
@@ -964,8 +925,7 @@ RESET ROLE;
 --dg REVOKE USAGE ON FOREIGN DATA WRAPPER foo FROM regress_unprivileged_role; -- ERROR
 --dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg REVOKE USAGE ON FOREIGN DATA WRAPPER foo FROM regress_unprivileged_role CASCADE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_unprivileged_role;
+SET ROLE regress_unprivileged_role;
 --dg-cascade
 --dg GRANT USAGE ON FOREIGN DATA WRAPPER foo TO regress_test_role;   -- ERROR
 --dg-cascade
@@ -983,8 +943,7 @@ RESET ROLE;
 --dg CREATE SERVER s9 FOREIGN DATA WRAPPER foo;
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg GRANT USAGE ON FOREIGN SERVER s9 TO regress_unprivileged_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_unprivileged_role;
+SET ROLE regress_unprivileged_role;
 --dg-cascade
 --dg ALTER SERVER s9 VERSION '1.2';                                  -- ERROR
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
@@ -995,8 +954,7 @@ RESET ROLE;
 --dg DROP SERVER s9 CASCADE;                                         -- ERROR
 
 -- Check visibility of user mapping data
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_test_role;
+SET ROLE regress_test_role;
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg CREATE SERVER s10 FOREIGN DATA WRAPPER foo;
 --dg-skip: relation pg_user_mapping cannot be opened: digres has no catalog tables
@@ -1004,16 +962,15 @@ RESET ROLE;
 --dg-skip: relation pg_user_mapping cannot be opened: digres has no catalog tables
 --dg CREATE USER MAPPING FOR regress_unprivileged_role SERVER s10 OPTIONS (user 'secret');
 -- owner of server can see some option fields
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg \deu+
 RESET ROLE;
 -- superuser can see all option fields
 --dg-cascade
 --dg \deu+
 -- unprivileged user cannot see any option field
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_unprivileged_role;
---dg-cascade
+SET ROLE regress_unprivileged_role;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg \deu+
 RESET ROLE;
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
@@ -1278,11 +1235,11 @@ DROP FOREIGN TABLE IF EXISTS no_table;
 --dg DROP FOREIGN TABLE foreign_schema.foreign_table_1;
 
 -- REASSIGN OWNED/DROP OWNED of foreign objects
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
 --dg REASSIGN OWNED BY regress_test_role TO regress_test_role2;
 --dg-cascade
 --dg DROP OWNED BY regress_test_role2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
 --dg DROP OWNED BY regress_test_role2 CASCADE;
 
 -- Foreign partition DDL stuff
@@ -1411,34 +1368,33 @@ DROP SCHEMA foreign_schema CASCADE;
 --dg DROP ROLE regress_test_role;                                -- ERROR
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg DROP SERVER t1 CASCADE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP USER MAPPING FOR regress_test_role SERVER s6;
 --dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg DROP FOREIGN DATA WRAPPER foo CASCADE;
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg DROP SERVER s8 CASCADE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP ROLE regress_test_indirect;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP ROLE regress_test_role;
 --dg-cascade
 --dg DROP ROLE regress_unprivileged_role;                        -- ERROR
 --dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg REVOKE ALL ON FOREIGN DATA WRAPPER postgresql FROM regress_unprivileged_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP ROLE regress_unprivileged_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_test_role2;
+DROP ROLE regress_test_role2;
 --dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg DROP FOREIGN DATA WRAPPER postgresql CASCADE;
 --dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
 --dg DROP FOREIGN DATA WRAPPER dummy CASCADE;
 \c
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP ROLE regress_foreign_data_user;
 
 -- At this point we should have no wrappers, no servers, and no mappings.
---dg-cascade
+--dg-skip: relation "?" does not exist
 --dg SELECT fdwname, fdwhandler, fdwvalidator, fdwoptions FROM pg_foreign_data_wrapper;
 --dg-skip: relation "?" does not exist
 --dg SELECT srvname, srvoptions FROM pg_foreign_server;

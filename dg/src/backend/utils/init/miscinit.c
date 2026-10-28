@@ -594,11 +594,12 @@ void InitializeSessionUserId(const char *rolename, Oid roleid,
   SetAuthenticatedUserId(role.oid);
 
   /*
-   * As InitializeSessionUserIdStandalone() does, and for its reason: the
-   * "session_authorization" setting would look the role up by name.
+   * Set SessionUserId and related variables, including "role", via the GUC
+   * mechanisms, as PostgreSQL does: so RESET SESSION AUTHORIZATION goes
+   * back to this role.
    */
-  SetSessionAuthorization(role.oid, role.rolsuper);
-  SetCurrentRoleId(InvalidOid, false);
+  SetConfigOption("session_authorization", role.rolname.c_str(), PGC_BACKEND,
+                  PGC_S_OVERRIDE);
 }
 
 /*

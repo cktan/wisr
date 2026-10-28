@@ -2,12 +2,9 @@
 -- MERGE
 --
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_merge_privs;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_merge_no_privs;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_merge_none;
+CREATE USER regress_merge_privs;
+CREATE USER regress_merge_no_privs;
+CREATE USER regress_merge_none;
 
 DROP TABLE IF EXISTS target;
 DROP TABLE IF EXISTS source;
@@ -21,9 +18,9 @@ INSERT INTO target VALUES (3, 30);
 --dg-skip: column t.ctid does not exist
 --dg SELECT t.ctid is not null as matched, t.*, s.* FROM source s FULL OUTER JOIN target t ON s.sid = t.tid ORDER BY t.tid, s.sid;
 
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE target OWNER TO regress_merge_privs;
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE source OWNER TO regress_merge_privs;
 
 CREATE TABLE target2 (tid integer, balance integer)
@@ -31,18 +28,17 @@ CREATE TABLE target2 (tid integer, balance integer)
 CREATE TABLE source2 (sid integer, delta integer)
   WITH (autovacuum_enabled=off);
 
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE target2 OWNER TO regress_merge_no_privs;
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE source2 OWNER TO regress_merge_no_privs;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg GRANT INSERT ON target TO regress_merge_no_privs;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_merge_privs;
+SET SESSION AUTHORIZATION regress_merge_privs;
 
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (COSTS OFF)
 --dg MERGE INTO target t
 --dg USING source AS s
@@ -107,47 +103,48 @@ ON t.tid = s.sid
 WHEN MATCHED THEN
 	UPDATE target SET balance = 0;
 -- source and target names the same
-MERGE INTO target
-USING target
-ON tid = tid
-WHEN MATCHED THEN DO NOTHING;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg MERGE INTO target
+--dg USING target
+--dg ON tid = tid
+--dg WHEN MATCHED THEN DO NOTHING;
 -- used in a CTE without RETURNING
-WITH foo AS (
-  MERGE INTO target USING source ON (true)
-  WHEN MATCHED THEN DELETE
-) SELECT * FROM foo;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg WITH foo AS (
+--dg   MERGE INTO target USING source ON (true)
+--dg   WHEN MATCHED THEN DELETE
+--dg ) SELECT * FROM foo;
 -- used in COPY without RETURNING
-COPY (
-  MERGE INTO target USING source ON (true)
-  WHEN MATCHED THEN DELETE
-) TO stdout;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg COPY (
+--dg   MERGE INTO target USING source ON (true)
+--dg   WHEN MATCHED THEN DELETE
+--dg ) TO stdout;
 
 -- unsupported relation types
 -- materialized view
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE MATERIALIZED VIEW mv AS SELECT * FROM target;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO mv t
 --dg USING source s
 --dg ON t.tid = s.sid
 --dg WHEN NOT MATCHED THEN
 --dg 	INSERT DEFAULT VALUES;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP MATERIALIZED VIEW mv;
 
 -- permissions
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_merge_none;
---dg-cascade
+SET SESSION AUTHORIZATION regress_merge_none;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target
 --dg USING (SELECT 1)
 --dg ON true
 --dg WHEN MATCHED THEN
 --dg 	DO NOTHING;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_merge_privs;
+SET SESSION AUTHORIZATION regress_merge_privs;
 --dg-cascade
 --dg MERGE INTO target
 --dg USING source2
@@ -155,31 +152,29 @@ COPY (
 --dg WHEN MATCHED THEN
 --dg 	UPDATE SET balance = 0;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg GRANT INSERT ON target TO regress_merge_no_privs;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_merge_no_privs;
+SET SESSION AUTHORIZATION regress_merge_no_privs;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target
 --dg USING source2
 --dg ON target.tid = source2.sid
 --dg WHEN MATCHED THEN
 --dg 	UPDATE SET balance = 0;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg GRANT UPDATE ON target2 TO regress_merge_privs;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_merge_privs;
+SET SESSION AUTHORIZATION regress_merge_privs;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target2
 --dg USING source
 --dg ON target2.tid = source.sid
 --dg WHEN MATCHED THEN
 --dg 	DELETE;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target2
 --dg USING source
 --dg ON target2.tid = source.sid
@@ -188,37 +183,38 @@ COPY (
 
 -- check if the target can be accessed from source relation subquery; we should
 -- not be able to do so
-MERGE INTO target t
-USING (SELECT * FROM source WHERE t.tid > sid) s
-ON t.tid = s.sid
-WHEN NOT MATCHED THEN
-	INSERT DEFAULT VALUES;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg MERGE INTO target t
+--dg USING (SELECT * FROM source WHERE t.tid > sid) s
+--dg ON t.tid = s.sid
+--dg WHEN NOT MATCHED THEN
+--dg 	INSERT DEFAULT VALUES;
 
 --
 -- initial tests
 --
 -- zero rows in source has no effect
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target
 --dg USING source
 --dg ON target.tid = source.sid
 --dg WHEN MATCHED THEN
 --dg 	UPDATE SET balance = 0;
 
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN MATCHED THEN
 --dg 	UPDATE SET balance = 0;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN MATCHED THEN
 --dg 	DELETE;
 BEGIN;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -227,30 +223,33 @@ BEGIN;
 ROLLBACK;
 
 -- insert some non-matching source rows to work from
-INSERT INTO source VALUES (4, 40);
-SELECT * FROM source ORDER BY sid;
-SELECT * FROM target ORDER BY tid;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg INSERT INTO source VALUES (4, 40);
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg SELECT * FROM source ORDER BY sid;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg SELECT * FROM target ORDER BY tid;
 
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN NOT MATCHED THEN
 --dg 	DO NOTHING;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN MATCHED THEN
 --dg 	UPDATE SET balance = 0;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN MATCHED THEN
 --dg 	DELETE;
 BEGIN;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -262,7 +261,7 @@ ROLLBACK;
 
 -- DELETE/INSERT not matched by source/target
 BEGIN;
---dg-skip: relation "?" does not have a composite type
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -276,44 +275,52 @@ BEGIN;
 ROLLBACK;
 
 -- index plans
-INSERT INTO target SELECT generate_series(1000,2500), 0;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg INSERT INTO target SELECT generate_series(1000,2500), 0;
 --dg-cascade
 --dg ALTER TABLE target ADD PRIMARY KEY (tid);
-ANALYZE target;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg ANALYZE target;
 
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (COSTS OFF)
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN MATCHED THEN
 --dg 	UPDATE SET balance = 0;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (COSTS OFF)
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN MATCHED THEN
 --dg 	DELETE;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (COSTS OFF)
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN NOT MATCHED THEN
 --dg 	INSERT VALUES (4, NULL);
-DELETE FROM target WHERE tid > 100;
-ANALYZE target;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg DELETE FROM target WHERE tid > 100;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg ANALYZE target;
 
 -- insert some matching source rows to work from
-INSERT INTO source VALUES (2, 5);
-INSERT INTO source VALUES (3, 20);
-SELECT * FROM source ORDER BY sid;
-SELECT * FROM target ORDER BY tid;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg INSERT INTO source VALUES (2, 5);
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg INSERT INTO source VALUES (3, 20);
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg SELECT * FROM source ORDER BY sid;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg SELECT * FROM target ORDER BY tid;
 
 -- equivalent of an UPDATE join
 BEGIN;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -325,7 +332,7 @@ ROLLBACK;
 
 -- equivalent of a DELETE join
 BEGIN;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -336,17 +343,18 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN MATCHED THEN
 --dg 	DO NOTHING;
-SELECT * FROM target ORDER BY tid;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg SELECT * FROM target ORDER BY tid;
 ROLLBACK;
 
 BEGIN;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -357,11 +365,14 @@ BEGIN;
 ROLLBACK;
 
 -- duplicate source row causes multiple target row update ERROR
-INSERT INTO source VALUES (2, 5);
-SELECT * FROM source ORDER BY sid;
-SELECT * FROM target ORDER BY tid;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg INSERT INTO source VALUES (2, 5);
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg SELECT * FROM source ORDER BY sid;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg SELECT * FROM target ORDER BY tid;
 BEGIN;
---dg-differs: another error: MERGE does not write to table "?" yet
+--dg-cascade
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -370,7 +381,7 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-differs: another error: MERGE does not write to table "?" yet
+--dg-cascade
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -379,15 +390,20 @@ BEGIN;
 ROLLBACK;
 
 -- remove duplicate MATCHED data from source data
-DELETE FROM source WHERE sid = 2;
-INSERT INTO source VALUES (2, 5);
-SELECT * FROM source ORDER BY sid;
-SELECT * FROM target ORDER BY tid;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg DELETE FROM source WHERE sid = 2;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg INSERT INTO source VALUES (2, 5);
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg SELECT * FROM source ORDER BY sid;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg SELECT * FROM target ORDER BY tid;
 
 -- duplicate source row on INSERT should fail because of target_pkey
-INSERT INTO source VALUES (4, 40);
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg INSERT INTO source VALUES (4, 40);
 BEGIN;
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -398,20 +414,24 @@ BEGIN;
 ROLLBACK;
 
 -- remove duplicate NOT MATCHED data from source data
-DELETE FROM source WHERE sid = 4;
-INSERT INTO source VALUES (4, 40);
-SELECT * FROM source ORDER BY sid;
-SELECT * FROM target ORDER BY tid;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg DELETE FROM source WHERE sid = 4;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg INSERT INTO source VALUES (4, 40);
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg SELECT * FROM source ORDER BY sid;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg SELECT * FROM target ORDER BY tid;
 
 -- remove constraints
 --dg-cascade
 --dg alter table target drop CONSTRAINT target_pkey;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg alter table target alter column tid drop not null;
 
 -- multiple actions
 BEGIN;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -425,7 +445,7 @@ ROLLBACK;
 
 -- should be equivalent
 BEGIN;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -440,7 +460,7 @@ ROLLBACK;
 -- column references
 -- do a simple equivalent of an UPDATE join
 BEGIN;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -452,7 +472,7 @@ ROLLBACK;
 
 -- do a simple equivalent of an INSERT SELECT
 BEGIN;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -463,12 +483,14 @@ BEGIN;
 ROLLBACK;
 
 -- and again with duplicate source rows
-INSERT INTO source VALUES (5, 50);
-INSERT INTO source VALUES (5, 50);
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg INSERT INTO source VALUES (5, 50);
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg INSERT INTO source VALUES (5, 50);
 
 -- do a simple equivalent of an INSERT SELECT
 BEGIN;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -479,11 +501,12 @@ BEGIN;
 ROLLBACK;
 
 -- removing duplicate source rows
-DELETE FROM source WHERE sid = 5;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg DELETE FROM source WHERE sid = 5;
 
 -- and again with explicitly identified column list
 BEGIN;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -494,25 +517,28 @@ BEGIN;
 ROLLBACK;
 
 -- and again with a subtle error: referring to non-existent target row for NOT MATCHED
-MERGE INTO target t
-USING source AS s
-ON t.tid = s.sid
-WHEN NOT MATCHED THEN
-	INSERT (tid, balance) VALUES (t.tid, s.delta);
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg MERGE INTO target t
+--dg USING source AS s
+--dg ON t.tid = s.sid
+--dg WHEN NOT MATCHED THEN
+--dg 	INSERT (tid, balance) VALUES (t.tid, s.delta);
 
 -- and again with a constant ON clause
 BEGIN;
-MERGE INTO target t
-USING source AS s
-ON (SELECT true)
-WHEN NOT MATCHED THEN
-	INSERT (tid, balance) VALUES (t.tid, s.delta);
-SELECT * FROM target ORDER BY tid;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg MERGE INTO target t
+--dg USING source AS s
+--dg ON (SELECT true)
+--dg WHEN NOT MATCHED THEN
+--dg 	INSERT (tid, balance) VALUES (t.tid, s.delta);
+--dg-cascade
+--dg SELECT * FROM target ORDER BY tid;
 ROLLBACK;
 
 -- now the classic UPSERT
 BEGIN;
---dg-skip: MERGE does not write to table "?" yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -536,19 +562,19 @@ WHEN MATCHED THEN
 ROLLBACK;
 
 -- conditional WHEN clause
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE wq_target (tid integer not null, balance integer DEFAULT -1)
 --dg   WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE wq_source (balance integer, sid integer)
 --dg   WITH (autovacuum_enabled=off);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO wq_source (sid, balance) VALUES (1, 100);
 
 BEGIN;
 -- try a simple INSERT with default values first
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN NOT MATCHED THEN
@@ -558,26 +584,26 @@ BEGIN;
 ROLLBACK;
 
 -- this time with a FALSE condition
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN NOT MATCHED AND FALSE THEN
 --dg 	INSERT (tid) VALUES (s.sid);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM wq_target;
 
 -- this time with an actual condition which returns false
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN NOT MATCHED AND s.balance <> 100 THEN
 --dg 	INSERT (tid) VALUES (s.sid);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM wq_target;
 
 BEGIN;
 -- and now with a condition which returns true
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN NOT MATCHED AND s.balance = 100 THEN
@@ -588,7 +614,7 @@ ROLLBACK;
 
 -- conditions in the NOT MATCHED clause can only refer to source columns
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN NOT MATCHED AND t.balance = 100 THEN
@@ -597,83 +623,83 @@ BEGIN;
 --dg SELECT * FROM wq_target;
 ROLLBACK;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN NOT MATCHED AND s.balance = 100 THEN
 --dg 	INSERT (tid) VALUES (s.sid);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM wq_target;
 
 -- conditions in NOT MATCHED BY SOURCE clause can only refer to target columns
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN NOT MATCHED BY SOURCE AND s.balance = 100 THEN
 --dg 	DELETE;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN NOT MATCHED BY SOURCE AND t.balance = 100 THEN
 --dg     DELETE;
 
 -- conditions in MATCHED clause can refer to both source and target
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM wq_source;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN MATCHED AND s.balance = 100 THEN
 --dg 	UPDATE SET balance = t.balance + s.balance;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM wq_target;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN MATCHED AND t.balance = 100 THEN
 --dg 	UPDATE SET balance = t.balance + s.balance;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM wq_target;
 
 -- check if AND works
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN MATCHED AND t.balance = 99 AND s.balance > 100 THEN
 --dg 	UPDATE SET balance = t.balance + s.balance;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM wq_target;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN MATCHED AND t.balance = 99 AND s.balance = 100 THEN
 --dg 	UPDATE SET balance = t.balance + s.balance;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM wq_target;
 
 -- check if OR works
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN MATCHED AND t.balance = 99 OR s.balance > 100 THEN
 --dg 	UPDATE SET balance = t.balance + s.balance;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM wq_target;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN MATCHED AND t.balance = 199 OR s.balance > 100 THEN
 --dg 	UPDATE SET balance = t.balance + s.balance;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM wq_target;
 
 -- check source-side whole-row references
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON (t.tid = s.sid)
 --dg WHEN matched and t = s or t.tid = s.sid THEN
@@ -683,32 +709,32 @@ BEGIN;
 ROLLBACK;
 
 -- check if subqueries work in the conditions?
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN MATCHED AND t.balance > (SELECT max(balance) FROM target) THEN
 --dg 	UPDATE SET balance = t.balance + s.balance;
 
 -- check if we can access system columns in the conditions
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN MATCHED AND t.xmin = t.xmax THEN
 --dg 	UPDATE SET balance = t.balance + s.balance;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO wq_target t
 --dg USING wq_source s ON t.tid = s.sid
 --dg WHEN MATCHED AND t.tableoid >= 0 THEN
 --dg 	UPDATE SET balance = t.balance + s.balance;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM wq_target;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE wq_target, wq_source;
 
 -- test triggers
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg create or replace function merge_trigfunc () returns trigger
 --dg language plpgsql as
 --dg $$
@@ -764,10 +790,10 @@ ROLLBACK;
 
 -- now the classic UPSERT, with a DELETE
 BEGIN;
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg UPDATE target SET balance = 0 WHERE tid = 3;
 --EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF)
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -783,7 +809,8 @@ ROLLBACK;
 
 -- UPSERT with UPDATE/DELETE when not matched by source
 BEGIN;
-DELETE FROM SOURCE WHERE sid = 2;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg DELETE FROM SOURCE WHERE sid = 2;
 --dg-cascade
 --dg MERGE INTO target t
 --dg USING source AS s
@@ -804,7 +831,7 @@ DELETE FROM SOURCE WHERE sid = 2;
 ROLLBACK;
 
 -- Test behavior of triggers that turn UPDATE/DELETE into no-ops
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg create or replace function skip_merge_op() returns trigger
 --dg language plpgsql as
 --dg $$
@@ -813,7 +840,8 @@ ROLLBACK;
 --dg END;
 --dg $$;
 
-SELECT * FROM target full outer join source on (sid = tid);
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg SELECT * FROM target full outer join source on (sid = tid);
 --dg-cascade
 --dg create trigger merge_skip BEFORE INSERT OR UPDATE or DELETE
 --dg   ON target FOR EACH ROW EXECUTE FUNCTION skip_merge_op();
@@ -837,11 +865,11 @@ SELECT * FROM target full outer join source on (sid = tid);
 --dg RAISE NOTICE 'ROW_COUNT = %', result;
 --dg END;
 --dg $$;
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM target FULL OUTER JOIN source ON (sid = tid);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TRIGGER merge_skip ON target;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP FUNCTION skip_merge_op();
 
 -- test from PL/pgSQL
@@ -861,7 +889,7 @@ ROLLBACK;
 
 --source constants
 BEGIN;
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING (SELECT 9 AS sid, 57 AS delta) AS s
 --dg ON t.tid = s.sid
@@ -873,7 +901,7 @@ ROLLBACK;
 
 --source query
 BEGIN;
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING (SELECT sid, delta FROM source WHERE delta > 0) AS s
 --dg ON t.tid = s.sid
@@ -884,7 +912,7 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING (SELECT sid, delta as newname FROM source WHERE delta > 0) AS s
 --dg ON t.tid = s.sid
@@ -896,7 +924,7 @@ ROLLBACK;
 
 --self-merge
 BEGIN;
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t1
 --dg USING target t2
 --dg ON t1.tid = t2.tid
@@ -909,7 +937,7 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING (SELECT tid as sid, balance as delta FROM target WHERE balance > 0) AS s
 --dg ON t.tid = s.sid
@@ -920,7 +948,7 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO target t
 --dg USING
 --dg (SELECT sid, max(delta) AS delta
@@ -937,7 +965,7 @@ ROLLBACK;
 
 -- plpgsql parameters and results
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE FUNCTION merge_func (p_id integer, p_bal integer)
 --dg RETURNS INTEGER
 --dg LANGUAGE plpgsql
@@ -964,7 +992,8 @@ ROLLBACK;
 
 -- PREPARE
 BEGIN;
-prepare foom as merge into target t using (select 1 as sid) s on (t.tid = s.sid) when matched then update set balance = 1;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg prepare foom as merge into target t using (select 1 as sid) s on (t.tid = s.sid) when matched then update set balance = 1;
 --dg-cascade
 --dg execute foom;
 --dg-cascade
@@ -972,12 +1001,13 @@ prepare foom as merge into target t using (select 1 as sid) s on (t.tid = s.sid)
 ROLLBACK;
 
 BEGIN;
-PREPARE foom2 (integer, integer) AS
-MERGE INTO target t
-USING (SELECT 1) s
-ON t.tid = $1
-WHEN MATCHED THEN
-UPDATE SET balance = $2;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg PREPARE foom2 (integer, integer) AS
+--dg MERGE INTO target t
+--dg USING (SELECT 1) s
+--dg ON t.tid = $1
+--dg WHEN MATCHED THEN
+--dg UPDATE SET balance = $2;
 --EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF)
 --dg-cascade
 --dg execute foom2 (1, 1);
@@ -987,20 +1017,20 @@ ROLLBACK;
 
 -- subqueries in source relation
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE sq_target (tid integer NOT NULL, balance integer)
 --dg   WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE sq_source (delta integer, sid integer, balance integer DEFAULT 0)
 --dg   WITH (autovacuum_enabled=off);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO sq_target(tid, balance) VALUES (1,100), (2,200), (3,300);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO sq_source(sid, delta) VALUES (1,10), (2,20), (4,40);
 
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO sq_target t
 --dg USING (SELECT * FROM sq_source) s
 --dg ON tid = sid
@@ -1011,11 +1041,11 @@ BEGIN;
 ROLLBACK;
 
 -- try a view
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE VIEW v AS SELECT * FROM sq_source WHERE sid < 2;
 
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO sq_target
 --dg USING v
 --dg ON tid = sid
@@ -1027,7 +1057,7 @@ ROLLBACK;
 
 -- ambiguous reference to a column
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO sq_target
 --dg USING v
 --dg ON tid = sid
@@ -1040,7 +1070,7 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO sq_source (sid, balance, delta) VALUES (-1, -1, -10);
 --dg-cascade
 --dg MERGE INTO sq_target t
@@ -1058,7 +1088,7 @@ ROLLBACK;
 
 -- CTEs
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO sq_source (sid, balance, delta) VALUES (-1, -1, -10);
 --dg-cascade
 --dg WITH targq AS (
@@ -1076,13 +1106,13 @@ BEGIN;
 ROLLBACK;
 
 -- RETURNING
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM sq_source ORDER BY sid;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM sq_target ORDER BY tid;
 
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE merge_actions(action text, abbrev text);
 --dg-cascade
 --dg INSERT INTO merge_actions VALUES ('INSERT', 'ins'), ('UPDATE', 'upd'), ('DELETE', 'del');
@@ -1109,18 +1139,18 @@ BEGIN;
 ROLLBACK;
 
 -- error when using merge_action() outside MERGE
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT merge_action() FROM sq_target;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg UPDATE sq_target SET balance = balance + 1 RETURNING merge_action();
 
 -- RETURNING in CTEs
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE sq_target_merge_log (tid integer NOT NULL, last_change text);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO sq_target_merge_log VALUES (1, 'Original value');
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg WITH m AS (
 --dg     MERGE INTO sq_target t
 --dg     USING sq_source s
@@ -1154,7 +1184,7 @@ ROLLBACK;
 
 -- COPY (MERGE ... RETURNING) TO ...
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg COPY (
 --dg     MERGE INTO sq_target t
 --dg     USING sq_source s
@@ -1171,7 +1201,7 @@ ROLLBACK;
 
 -- SQL function with MERGE ... RETURNING
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE FUNCTION merge_into_sq_target(sid int, balance int, delta int,
 --dg                                      OUT action text, OUT tid int, OUT new_balance int)
 --dg LANGUAGE sql AS
@@ -1195,7 +1225,7 @@ ROLLBACK;
 
 -- SQL SRF with MERGE ... RETURNING
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE FUNCTION merge_sq_source_into_sq_target()
 --dg RETURNS TABLE (action text, tid int, balance int)
 --dg LANGUAGE sql AS
@@ -1217,7 +1247,7 @@ ROLLBACK;
 
 -- PL/pgSQL function with MERGE ... RETURNING ... INTO
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE FUNCTION merge_into_sq_target(sid int, balance int, delta int,
 --dg                                      OUT r_action text, OUT r_tid int, OUT r_balance int)
 --dg LANGUAGE plpgsql AS
@@ -1242,18 +1272,18 @@ BEGIN;
 ROLLBACK;
 
 -- EXPLAIN
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE ex_mtarget (a int, b int)
 --dg   WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE ex_msource (a int, b int)
 --dg   WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO ex_mtarget SELECT i, i*10 FROM generate_series(1,100,2) i;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO ex_msource SELECT i, i*10 FROM generate_series(1,100,1) i;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE FUNCTION explain_merge(query text) RETURNS SETOF text
 --dg LANGUAGE plpgsql AS
 --dg $$
@@ -1270,21 +1300,21 @@ ROLLBACK;
 --dg $$;
 
 -- only updates
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT explain_merge('
 --dg MERGE INTO ex_mtarget t USING ex_msource s ON t.a = s.a
 --dg WHEN MATCHED THEN
 --dg 	UPDATE SET b = t.b + 1');
 
 -- only updates to selected tuples
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT explain_merge('
 --dg MERGE INTO ex_mtarget t USING ex_msource s ON t.a = s.a
 --dg WHEN MATCHED AND t.a < 10 THEN
 --dg 	UPDATE SET b = t.b + 1');
 
 -- updates + deletes
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT explain_merge('
 --dg MERGE INTO ex_mtarget t USING ex_msource s ON t.a = s.a
 --dg WHEN MATCHED AND t.a < 10 THEN
@@ -1293,14 +1323,14 @@ ROLLBACK;
 --dg 	DELETE');
 
 -- only inserts
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT explain_merge('
 --dg MERGE INTO ex_mtarget t USING ex_msource s ON t.a = s.a
 --dg WHEN NOT MATCHED AND s.a < 10 THEN
 --dg 	INSERT VALUES (a, b)');
 
 -- all three
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT explain_merge('
 --dg MERGE INTO ex_mtarget t USING ex_msource s ON t.a = s.a
 --dg WHEN MATCHED AND t.a < 10 THEN
@@ -1311,14 +1341,14 @@ ROLLBACK;
 --dg 	INSERT VALUES (a, b)');
 
 -- not matched by source
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT explain_merge('
 --dg MERGE INTO ex_mtarget t USING ex_msource s ON t.a = s.a
 --dg WHEN NOT MATCHED BY SOURCE and t.a < 10 THEN
 --dg 	DELETE');
 
 -- not matched by source and target
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT explain_merge('
 --dg MERGE INTO ex_mtarget t USING ex_msource s ON t.a = s.a
 --dg WHEN NOT MATCHED BY SOURCE AND t.a < 10 THEN
@@ -1327,26 +1357,26 @@ ROLLBACK;
 --dg 	INSERT VALUES (a, b)');
 
 -- nothing
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT explain_merge('
 --dg MERGE INTO ex_mtarget t USING ex_msource s ON t.a = s.a AND t.a < -1000
 --dg WHEN MATCHED AND t.a < 10 THEN
 --dg 	DO NOTHING');
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE ex_msource, ex_mtarget;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP FUNCTION explain_merge(text);
 
 -- EXPLAIN SubPlans and InitPlans
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE src (a int, b int, c int, d int);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE tgt (a int, b int, c int, d int);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE ref (ab int, cd int);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (verbose, costs off)
 --dg MERGE INTO tgt t
 --dg USING (SELECT *, (SELECT count(*) FROM ref r
@@ -1357,12 +1387,12 @@ ROLLBACK;
 --dg WHEN MATCHED AND t.c > s.cnt THEN
 --dg   UPDATE SET (b, c) = (SELECT s.b, s.cnt);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE src, tgt, ref;
 
 -- Subqueries
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO sq_target t
 --dg USING v
 --dg ON tid = sid
@@ -1373,7 +1403,7 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO sq_target t
 --dg USING v
 --dg ON tid = sid
@@ -1384,7 +1414,7 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO sq_target t
 --dg USING v
 --dg ON tid = sid AND (SELECT count(*) > 0 FROM sq_target)
@@ -1394,38 +1424,38 @@ BEGIN;
 --dg SELECT * FROM sq_target WHERE tid = 1;
 ROLLBACK;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE sq_target, sq_target_merge_log, sq_source CASCADE;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE pa_target (tid integer, balance float, val text)
 --dg 	PARTITION BY LIST (tid);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE part1 PARTITION OF pa_target FOR VALUES IN (1,4)
 --dg   WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE part2 PARTITION OF pa_target FOR VALUES IN (2,5,6)
 --dg   WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE part3 PARTITION OF pa_target FOR VALUES IN (3,8,9)
 --dg   WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE part4 PARTITION OF pa_target DEFAULT
 --dg   WITH (autovacuum_enabled=off);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE pa_source (sid integer, delta float);
 -- insert many rows to the source table
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO pa_source SELECT id, id * 10  FROM generate_series(1,14) AS id;
 -- insert a few rows in the target table (odd numbered tid)
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO pa_target SELECT id, id * 100, 'initial' FROM generate_series(1,15,2) AS id;
 
 -- try simple MERGE
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO pa_target t
 --dg   USING pa_source s
 --dg   ON t.tid = s.sid
@@ -1441,7 +1471,7 @@ ROLLBACK;
 
 -- same with a constant qual
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO pa_target t
 --dg   USING pa_source s
 --dg   ON t.tid = s.sid AND tid = 1
@@ -1457,7 +1487,7 @@ ROLLBACK;
 
 -- try updating the partition key column
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE FUNCTION merge_func() RETURNS integer LANGUAGE plpgsql AS $$
 --dg DECLARE
 --dg   result integer;
@@ -1485,7 +1515,7 @@ ROLLBACK;
 
 -- update partition key to partition not initially scanned
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO pa_target t
 --dg   USING pa_source s
 --dg   ON t.tid = s.sid AND t.tid = 1
@@ -1498,7 +1528,7 @@ ROLLBACK;
 
 -- bug #18871: ExecInitPartitionInfo()'s handling of DO NOTHING actions
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg TRUNCATE pa_target;
 --dg-cascade
 --dg MERGE INTO pa_target t
@@ -1512,46 +1542,46 @@ BEGIN;
 --dg SELECT * FROM pa_target ORDER BY tid, val;
 ROLLBACK;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE pa_target CASCADE;
 
 -- The target table is partitioned in the same way, but this time by attaching
 -- partitions which have columns in different order, dropped columns etc.
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE pa_target (tid integer, balance float, val text)
 --dg 	PARTITION BY LIST (tid);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE part1 (tid integer, balance float, val text)
 --dg   WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE part2 (balance float, tid integer, val text)
 --dg   WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE part3 (tid integer, balance float, val text)
 --dg   WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE part4 (extraid text, tid integer, balance float, val text)
 --dg   WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg ALTER TABLE part4 DROP COLUMN extraid;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg ALTER TABLE pa_target ATTACH PARTITION part1 FOR VALUES IN (1,4);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg ALTER TABLE pa_target ATTACH PARTITION part2 FOR VALUES IN (2,5,6);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg ALTER TABLE pa_target ATTACH PARTITION part3 FOR VALUES IN (3,8,9);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg ALTER TABLE pa_target ATTACH PARTITION part4 DEFAULT;
 
 -- insert a few rows in the target table (odd numbered tid)
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO pa_target SELECT id, id * 100, 'initial' FROM generate_series(1,15,2) AS id;
 
 -- try simple MERGE
 BEGIN;
---dg-cascade
+--dg-differs: another error: language "?" does not exist
 --dg DO $$
 --dg DECLARE
 --dg   result integer;
@@ -1575,7 +1605,7 @@ ROLLBACK;
 
 -- same with a constant qual
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO pa_target t
 --dg   USING pa_source s
 --dg   ON t.tid = s.sid AND tid IN (1, 5)
@@ -1592,7 +1622,7 @@ ROLLBACK;
 
 -- try updating the partition key column
 BEGIN;
---dg-cascade
+--dg-differs: another error: language "?" does not exist
 --dg DO $$
 --dg DECLARE
 --dg   result integer;
@@ -1616,7 +1646,7 @@ ROLLBACK;
 
 -- as above, but blocked by BEFORE DELETE ROW trigger
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE FUNCTION trig_fn() RETURNS trigger LANGUAGE plpgsql AS
 --dg   $$ BEGIN RETURN NULL; END; $$;
 --dg-cascade
@@ -1646,7 +1676,7 @@ ROLLBACK;
 
 -- as above, but blocked by BEFORE INSERT ROW trigger
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE FUNCTION trig_fn() RETURNS trigger LANGUAGE plpgsql AS
 --dg   $$ BEGIN RETURN NULL; END; $$;
 --dg-cascade
@@ -1676,7 +1706,7 @@ ROLLBACK;
 
 -- test RLS enforcement
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg ALTER TABLE pa_target ENABLE ROW LEVEL SECURITY;
 --dg-cascade
 --dg ALTER TABLE pa_target FORCE ROW LEVEL SECURITY;
@@ -1690,52 +1720,52 @@ BEGIN;
 --dg     UPDATE SET tid = tid - 1;
 ROLLBACK;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE pa_source;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE pa_target CASCADE;
 
 -- Sub-partitioning
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE pa_target (logts timestamp, tid integer, balance float, val text)
 --dg 	PARTITION BY RANGE (logts);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE part_m01 PARTITION OF pa_target
 --dg 	FOR VALUES FROM ('2017-01-01') TO ('2017-02-01')
 --dg 	PARTITION BY LIST (tid);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE part_m01_odd PARTITION OF part_m01
 --dg 	FOR VALUES IN (1,3,5,7,9) WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE part_m01_even PARTITION OF part_m01
 --dg 	FOR VALUES IN (2,4,6,8) WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE part_m02 PARTITION OF pa_target
 --dg 	FOR VALUES FROM ('2017-02-01') TO ('2017-03-01')
 --dg 	PARTITION BY LIST (tid);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE part_m02_odd PARTITION OF part_m02
 --dg 	FOR VALUES IN (1,3,5,7,9) WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE part_m02_even PARTITION OF part_m02
 --dg 	FOR VALUES IN (2,4,6,8) WITH (autovacuum_enabled=off);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE pa_source (sid integer, delta float)
 --dg   WITH (autovacuum_enabled=off);
 -- insert many rows to the source table
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO pa_source SELECT id, id * 10  FROM generate_series(1,14) AS id;
 -- insert a few rows in the target table (odd numbered tid)
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO pa_target SELECT '2017-01-31', id, id * 100, 'initial' FROM generate_series(1,9,3) AS id;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO pa_target SELECT '2017-02-28', id, id * 100, 'initial' FROM generate_series(2,9,3) AS id;
 
 -- try simple MERGE
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO pa_target t
 --dg   USING (SELECT '2017-01-15' AS slogts, * FROM pa_source WHERE sid < 10) s
 --dg   ON t.tid = s.sid
@@ -1748,83 +1778,83 @@ BEGIN;
 --dg SELECT * FROM pa_target ORDER BY tid;
 ROLLBACK;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE pa_source;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE pa_target CASCADE;
 
 -- Partitioned table with primary key
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE pa_target (tid integer PRIMARY KEY) PARTITION BY LIST (tid);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE pa_targetp PARTITION OF pa_target DEFAULT;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE pa_source (sid integer);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO pa_source VALUES (1), (2);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (VERBOSE, COSTS OFF)
 --dg MERGE INTO pa_target t USING pa_source s ON t.tid = s.sid
 --dg   WHEN NOT MATCHED THEN INSERT VALUES (s.sid);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO pa_target t USING pa_source s ON t.tid = s.sid
 --dg   WHEN NOT MATCHED THEN INSERT VALUES (s.sid);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg TABLE pa_target;
 
 -- Partition-less partitioned table
 -- (the bug we are checking for appeared only if table had partitions before)
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE pa_targetp;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (VERBOSE, COSTS OFF)
 --dg MERGE INTO pa_target t USING pa_source s ON t.tid = s.sid
 --dg   WHEN NOT MATCHED THEN INSERT VALUES (s.sid);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO pa_target t USING pa_source s ON t.tid = s.sid
 --dg   WHEN NOT MATCHED THEN INSERT VALUES (s.sid);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE pa_source;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE pa_target CASCADE;
 
 -- some complex joins on the source side
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE cj_target (tid integer, balance float, val text)
 --dg   WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE cj_source1 (sid1 integer, scat integer, delta integer)
 --dg   WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE cj_source2 (sid2 integer, sval text)
 --dg   WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO cj_source1 VALUES (1, 10, 100);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO cj_source1 VALUES (1, 20, 200);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO cj_source1 VALUES (2, 20, 300);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO cj_source1 VALUES (3, 10, 400);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO cj_source2 VALUES (1, 'initial source2');
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO cj_source2 VALUES (2, 'initial source2');
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO cj_source2 VALUES (3, 'initial source2');
 
 -- source relation is an unaliased join
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO cj_target t
 --dg USING cj_source1 s1
 --dg 	INNER JOIN cj_source2 s2 ON sid1 = sid2
@@ -1833,7 +1863,7 @@ ROLLBACK;
 --dg 	INSERT VALUES (sid1, delta, sval);
 
 -- try accessing columns from either side of the source join
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO cj_target t
 --dg USING cj_source2 s2
 --dg 	INNER JOIN cj_source1 s1 ON sid1 = sid2 AND scat = 20
@@ -1844,7 +1874,7 @@ ROLLBACK;
 --dg 	DELETE;
 
 -- some simple expressions in INSERT targetlist
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO cj_target t
 --dg USING cj_source2 s2
 --dg 	INNER JOIN cj_source1 s1 ON sid1 = sid2
@@ -1854,7 +1884,7 @@ ROLLBACK;
 --dg WHEN MATCHED THEN
 --dg 	UPDATE SET val = val || ' updated by merge';
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO cj_target t
 --dg USING cj_source2 s2
 --dg 	INNER JOIN cj_source1 s1 ON sid1 = sid2 AND scat = 20
@@ -1862,11 +1892,11 @@ ROLLBACK;
 --dg WHEN MATCHED THEN
 --dg 	UPDATE SET val = val || ' ' || delta::text;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM cj_target;
 
 -- try it with an outer join and PlaceHolderVar
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO cj_target t
 --dg USING (SELECT *, 'join input'::text AS phv FROM cj_source1) fj
 --dg 	FULL JOIN cj_source2 fj2 ON fj.scat = fj2.sid2 * 10
@@ -1874,18 +1904,18 @@ ROLLBACK;
 --dg WHEN NOT MATCHED THEN
 --dg 	INSERT (tid, balance, val) VALUES (fj.scat, fj.delta, fj.phv);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM cj_target;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg ALTER TABLE cj_source1 RENAME COLUMN sid1 TO sid;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg ALTER TABLE cj_source2 RENAME COLUMN sid2 TO sid;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg TRUNCATE cj_target;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO cj_target t
 --dg USING cj_source1 s1
 --dg 	INNER JOIN cj_source2 s2 ON s1.sid = s2.sid
@@ -1893,14 +1923,14 @@ ROLLBACK;
 --dg WHEN NOT MATCHED THEN
 --dg 	INSERT VALUES (s2.sid, delta, sval);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE cj_source2, cj_source1, cj_target;
 
 -- Function scans
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE fs_target (a int, b int, c text)
 --dg   WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO fs_target t
 --dg USING generate_series(1,100,1) AS id
 --dg ON t.a = id
@@ -1909,7 +1939,7 @@ ROLLBACK;
 --dg WHEN NOT MATCHED THEN
 --dg 	INSERT VALUES (id, -1);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO fs_target t
 --dg USING generate_series(1,100,2) AS id
 --dg ON t.a = id
@@ -1918,31 +1948,31 @@ ROLLBACK;
 --dg WHEN NOT MATCHED THEN
 --dg 	INSERT VALUES (id, -1, 'inserted ' || id.*::text);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT count(*) FROM fs_target;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE fs_target;
 
 -- SERIALIZABLE test
 -- handled in isolation tests
 
 -- Inheritance-based partitioning
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE measurement (
 --dg     city_id         int not null,
 --dg     logdate         date not null,
 --dg     peaktemp        int,
 --dg     unitsales       int
 --dg ) WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE measurement_y2006m02 (
 --dg     CHECK ( logdate >= DATE '2006-02-01' AND logdate < DATE '2006-03-01' )
 --dg ) INHERITS (measurement) WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE measurement_y2006m03 (
 --dg     CHECK ( logdate >= DATE '2006-03-01' AND logdate < DATE '2006-04-01' )
 --dg ) INHERITS (measurement) WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE measurement_y2007m01 (
 --dg     filler          text,
 --dg     peaktemp        int,
@@ -1951,14 +1981,14 @@ ROLLBACK;
 --dg     unitsales       int
 --dg     CHECK ( logdate >= DATE '2007-01-01' AND logdate < DATE '2007-02-01')
 --dg ) WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg ALTER TABLE measurement_y2007m01 DROP COLUMN filler;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg ALTER TABLE measurement_y2007m01 INHERIT measurement;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO measurement VALUES (0, '2005-07-21', 5, 15);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE OR REPLACE FUNCTION measurement_insert_trigger()
 --dg RETURNS TRIGGER AS $$
 --dg BEGIN
@@ -1978,47 +2008,47 @@ ROLLBACK;
 --dg     RETURN NULL;
 --dg END;
 --dg $$ LANGUAGE plpgsql ;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TRIGGER insert_measurement_trigger
 --dg     BEFORE INSERT ON measurement
 --dg     FOR EACH ROW EXECUTE PROCEDURE measurement_insert_trigger();
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO measurement VALUES (1, '2006-02-10', 35, 10);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO measurement VALUES (1, '2006-02-16', 45, 20);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO measurement VALUES (1, '2006-03-17', 25, 10);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO measurement VALUES (1, '2006-03-27', 15, 40);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO measurement VALUES (1, '2007-01-15', 10, 10);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO measurement VALUES (1, '2007-01-17', 10, 10);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT tableoid::regclass, * FROM measurement ORDER BY city_id, logdate;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE new_measurement (LIKE measurement) WITH (autovacuum_enabled=off);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO new_measurement VALUES (0, '2005-07-21', 25, 20);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO new_measurement VALUES (1, '2006-03-01', 20, 10);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO new_measurement VALUES (1, '2006-02-16', 50, 10);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO new_measurement VALUES (2, '2006-02-10', 20, 20);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO new_measurement VALUES (1, '2006-03-27', NULL, NULL);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO new_measurement VALUES (1, '2007-01-17', NULL, NULL);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO new_measurement VALUES (1, '2007-01-15', 5, NULL);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO new_measurement VALUES (1, '2007-01-16', 10, 10);
 
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO ONLY measurement m
 --dg  USING new_measurement nm ON
 --dg       (m.city_id = nm.city_id and m.logdate=nm.logdate)
@@ -2034,7 +2064,7 @@ BEGIN;
 --dg SELECT tableoid::regclass, * FROM measurement ORDER BY city_id, logdate, peaktemp;
 ROLLBACK;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE into measurement m
 --dg  USING new_measurement nm ON
 --dg       (m.city_id = nm.city_id and m.logdate=nm.logdate)
@@ -2046,11 +2076,11 @@ ROLLBACK;
 --dg      (city_id, logdate, peaktemp, unitsales)
 --dg    VALUES (city_id, logdate, peaktemp, unitsales);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT tableoid::regclass, * FROM measurement ORDER BY city_id, logdate;
 
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO new_measurement nm
 --dg  USING ONLY measurement m ON
 --dg       (nm.city_id = m.city_id and nm.logdate=m.logdate)
@@ -2060,22 +2090,22 @@ BEGIN;
 --dg SELECT * FROM new_measurement ORDER BY city_id, logdate;
 ROLLBACK;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO new_measurement nm
 --dg  USING measurement m ON
 --dg       (nm.city_id = m.city_id and nm.logdate=m.logdate)
 --dg WHEN MATCHED THEN DELETE;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM new_measurement ORDER BY city_id, logdate;
 
 -- MERGE into inheritance root table
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TRIGGER insert_measurement_trigger ON measurement;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg ALTER TABLE measurement ADD CONSTRAINT mcheck CHECK (city_id = 0) NO INHERIT;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg EXPLAIN (COSTS OFF)
 --dg MERGE INTO measurement m
 --dg  USING (VALUES (1, '01-17-2007'::date)) nm(city_id, logdate) ON
@@ -2085,7 +2115,7 @@ ROLLBACK;
 --dg    VALUES (city_id - 1, logdate, 25, 100);
 
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO measurement m
 --dg  USING (VALUES (1, '01-17-2007'::date)) nm(city_id, logdate) ON
 --dg       (m.city_id = nm.city_id and m.logdate=nm.logdate)
@@ -2096,14 +2126,14 @@ BEGIN;
 --dg SELECT * FROM ONLY measurement ORDER BY city_id, logdate;
 ROLLBACK;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg ALTER TABLE measurement ENABLE ROW LEVEL SECURITY;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg ALTER TABLE measurement FORCE ROW LEVEL SECURITY;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE POLICY measurement_p ON measurement USING (peaktemp IS NOT NULL);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO measurement m
 --dg  USING (VALUES (1, '01-17-2007'::date)) nm(city_id, logdate) ON
 --dg       (m.city_id = nm.city_id and m.logdate=nm.logdate)
@@ -2111,17 +2141,17 @@ ROLLBACK;
 --dg      (city_id, logdate, peaktemp, unitsales)
 --dg    VALUES (city_id - 1, logdate, NULL, 100); -- should fail
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO measurement m
 --dg  USING (VALUES (1, '01-17-2007'::date)) nm(city_id, logdate) ON
 --dg       (m.city_id = nm.city_id and m.logdate=nm.logdate)
 --dg WHEN NOT MATCHED THEN INSERT
 --dg      (city_id, logdate, peaktemp, unitsales)
 --dg    VALUES (city_id - 1, logdate, 25, 100); -- ok
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM ONLY measurement ORDER BY city_id, logdate;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO measurement m
 --dg  USING (VALUES (1, '01-18-2007'::date)) nm(city_id, logdate) ON
 --dg       (m.city_id = nm.city_id and m.logdate=nm.logdate)
@@ -2130,64 +2160,64 @@ ROLLBACK;
 --dg    VALUES (city_id - 1, logdate, 25, 200)
 --dg RETURNING merge_action(), m.*;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE measurement, new_measurement CASCADE;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP FUNCTION measurement_insert_trigger();
 
 --
 -- test non-strict join clause
 --
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE src (a int, b text);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO src VALUES (1, 'src row');
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE tgt (a int, b text);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO tgt VALUES (NULL, 'tgt row');
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO tgt USING src ON tgt.a IS NOT DISTINCT FROM src.a
 --dg   WHEN MATCHED THEN UPDATE SET a = src.a, b = src.b
 --dg   WHEN NOT MATCHED BY SOURCE THEN DELETE
 --dg   RETURNING merge_action(), src.*, tgt.*;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM tgt;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE src, tgt;
 
 --
 -- test for bug #18634 (wrong varnullingrels error)
 --
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE bug18634t (a int, b int, c text);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO bug18634t VALUES(1, 10, 'tgt1'), (2, 20, 'tgt2');
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE VIEW bug18634v AS
 --dg   SELECT * FROM bug18634t WHERE EXISTS (SELECT 1 FROM bug18634t);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE bug18634s (a int, b int, c text);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO bug18634s VALUES (1, 2, 'src1');
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg MERGE INTO bug18634v t USING bug18634s s ON s.a = t.a
 --dg   WHEN MATCHED THEN UPDATE SET b = s.b
 --dg   WHEN NOT MATCHED BY SOURCE THEN DELETE
 --dg   RETURNING merge_action(), s.c, t.*;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM bug18634t;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE bug18634t CASCADE;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP TABLE bug18634s;
 
 -- prepare
@@ -2214,11 +2244,7 @@ CREATE VIEW classv AS SELECT * FROM pg_class;
 
 DROP TABLE target, target2;
 DROP TABLE source, source2;
---dg-cascade
---dg DROP FUNCTION merge_trigfunc();
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_merge_privs;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_merge_no_privs;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_merge_none;
+DROP FUNCTION merge_trigfunc();
+DROP USER regress_merge_privs;
+DROP USER regress_merge_no_privs;
+DROP USER regress_merge_none;

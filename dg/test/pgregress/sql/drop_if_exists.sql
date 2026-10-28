@@ -90,39 +90,27 @@ DROP DOMAIN test_domain_exists;
 --- role/user/group
 ---
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_test_u1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_test_r1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE GROUP regress_test_g1;
+CREATE USER regress_test_u1;
+CREATE ROLE regress_test_r1;
+CREATE GROUP regress_test_g1;
 
---dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_test_u2;
+DROP USER regress_test_u2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER IF EXISTS regress_test_u1, regress_test_u2;
+DROP USER IF EXISTS regress_test_u1, regress_test_u2;
 
---dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_test_u1;
+DROP USER regress_test_u1;
 
---dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_test_r2;
+DROP ROLE regress_test_r2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE IF EXISTS regress_test_r1, regress_test_r2;
+DROP ROLE IF EXISTS regress_test_r1, regress_test_r2;
 
---dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_test_r1;
+DROP ROLE regress_test_r1;
 
---dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP GROUP regress_test_g2;
+DROP GROUP regress_test_g2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP GROUP IF EXISTS regress_test_g1, regress_test_g2;
+DROP GROUP IF EXISTS regress_test_g1, regress_test_g2;
 
---dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP GROUP regress_test_g1;
+DROP GROUP regress_test_g1;
 
 -- collation
 DROP COLLATION IF EXISTS test_collation_exists;

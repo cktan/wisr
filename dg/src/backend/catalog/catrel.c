@@ -49,6 +49,7 @@
 #include "catalog/pg_statistic_ext_d.h"
 #include "catalog/pg_trigger_d.h"
 #include "catalog/pg_type_d.h"
+#include "catalog/pg_auth_members_d.h"
 #include "catalog/pg_authid_d.h"
 #include "catalog/pg_class_d.h"
 #include "catalog/pg_index.h"
@@ -585,7 +586,7 @@ static void gen_text_rows(const cat_relation_t *cat, Tuplestorestate *ts,
 }
 
 /*
- * pg_authid's rows: pg_global's roles, as last committed
+ * pg_authid's rows: pg_global's roles, as this session sees them
  * (utils/init/pg_global.c).
  */
 static void gen_pg_authid(Tuplestorestate *ts, TupleDesc desc) {
@@ -611,6 +612,26 @@ static void gen_pg_authid(Tuplestorestate *ts, TupleDesc desc) {
     nulls[Anum_pg_authid_rolvaliduntil - 1] = !r.has_validuntil;
     values[Anum_pg_authid_rolvaliduntil - 1] =
         TimestampTzGetDatum(r.rolvaliduntil);
+    tuplestore_putvalues(ts, desc, values, nulls);
+  }
+}
+
+/* pg_auth_members's rows: pg_global's memberships, as this session sees. */
+static void gen_pg_auth_members(Tuplestorestate *ts, TupleDesc desc) {
+  std::shared_ptr<const pg_global_roles_t> all = pg_global_roles();
+  Datum values[Natts_pg_auth_members];
+  bool nulls[Natts_pg_auth_members] = {};
+
+  for (const pg_global_member_t &m : all->members) {
+    values[Anum_pg_auth_members_oid - 1] = ObjectIdGetDatum(m.oid);
+    values[Anum_pg_auth_members_roleid - 1] = ObjectIdGetDatum(m.roleid);
+    values[Anum_pg_auth_members_member - 1] = ObjectIdGetDatum(m.member);
+    values[Anum_pg_auth_members_grantor - 1] = ObjectIdGetDatum(m.grantor);
+    values[Anum_pg_auth_members_admin_option - 1] =
+        BoolGetDatum(m.admin_option);
+    values[Anum_pg_auth_members_inherit_option - 1] =
+        BoolGetDatum(m.inherit_option);
+    values[Anum_pg_auth_members_set_option - 1] = BoolGetDatum(m.set_option);
     tuplestore_putvalues(ts, desc, values, nulls);
   }
 }
@@ -882,6 +903,9 @@ static void generate(Relation rel, Tuplestorestate *ts, int nkeys,
   case AuthIdRelationId:
     gen_pg_authid(ts, desc);
     break;
+  case AuthMemRelationId:
+    gen_pg_auth_members(ts, desc);
+    break;
   case CATREL_PG_ROLES:
     gen_pg_roles(ts, desc);
     break;
@@ -1078,6 +1102,14 @@ bool catrel_is_builtin(Oid relid) {
   default:
     return false;
   }
+}
+
+/*
+ * Whether the catalog relation relid has pg_global's rows, the roles': they
+ * are found by a scan, for they have no index (utils/init/pg_global.c).
+ */
+bool catrel_is_global(Oid relid) {
+  return AuthIdRelationId == relid || AuthMemRelationId == relid;
 }
 
 /*

@@ -20,40 +20,38 @@
 --dg     AS :'regresslib', 'test_enc_conversion'
 --dg     LANGUAGE C STRICT;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_conversion_user WITH NOCREATEDB NOCREATEROLE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_conversion_user;
---dg-cascade
+CREATE USER regress_conversion_user WITH NOCREATEDB NOCREATEROLE;
+SET SESSION AUTHORIZATION regress_conversion_user;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE CONVERSION myconv FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
 --
 -- cannot make same name conversion in same schema
 --
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE CONVERSION myconv FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
 --
 -- create default conversion with qualified name
 --
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE DEFAULT CONVERSION public.mydef FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
 --
 -- cannot make default conversion with same schema/for_encoding/to_encoding
 --
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE DEFAULT CONVERSION public.mydef2 FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
 -- test comments
---dg-differs: another error: relation pg_conversion cannot be opened: digres has no catalog tables
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg COMMENT ON CONVERSION myconv_bad IS 'foo';
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg COMMENT ON CONVERSION myconv IS 'bar';
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg COMMENT ON CONVERSION myconv IS NULL;
 --
 -- drop user defined conversion
 --
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP CONVERSION myconv;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg DROP CONVERSION mydef;
 --
 -- Note: the built-in conversions are exercised in opr_sanity.sql,
@@ -63,8 +61,7 @@
 -- return to the superuser
 --
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_conversion_user;
+DROP USER regress_conversion_user;
 
 --
 -- Test built-in conversion functions.

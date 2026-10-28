@@ -617,8 +617,7 @@ done
 # Verify that a role cannot be given REPLICATION, as digres has no
 # replication, while NOREPLICATION, which pg_dumpall writes, passes it by.
 # 1. CREATE ROLE and ALTER ROLE with REPLICATION each fail, saying so.
-# 2. With NOREPLICATION neither fails on the attribute (it fails later, as
-#    digres has no roles to make yet).
+# 2. With NOREPLICATION neither fails; the role made is dropped.
 # 3. ALTER TABLE ... REPLICA IDENTITY on a table made for it is refused.
 for sql in "create role r replication" "alter role current_user replication"; do
   local_psql -c "$sql" 2>&1 |
@@ -627,9 +626,9 @@ for sql in "create role r replication" "alter role current_user replication"; do
 done
 for sql in "create role r noreplication" \
   "alter role current_user noreplication"; do
-  local_psql -c "$sql" 2>&1 | grep -q 'REPLICATION attribute' &&
-    fail "NOREPLICATION passes: $sql"
+  local_psql -c "$sql" > "$work/norepl.out" 2>&1 || fail "NOREPLICATION passes: $sql"
 done
+local_psql -c "drop role r" > "$work/norepl.out" 2>&1 || fail "drop role r"
 local_psql -c "create table ri (a int4 primary key)" \
   -c "alter table ri replica identity full" -c "drop table ri" 2>&1 |
   grep -q 'ERROR:  ALTER TABLE supports only' || fail "REPLICA IDENTITY refused"
@@ -2950,6 +2949,81 @@ local_psql -c 'drop database pg_global' 2>&1 |
 local_psql -c 'create database pg_global' 2>&1 |
   grep -q 'database "pg_global" already exists' || fail "create pg_global"
 
+# Verify role DDL (sm/ROLE.md section 9, step 2): roles and memberships go
+# to pg_global at commit, a session already open sees them at its next
+# statement, and what PostgreSQL refuses is refused.
+# 1. Hold a session open; make rr1 LOGIN with a password, rr2 and rr3; grant
+#    rr2 to rr1 WITH ADMIN OPTION, and rr2 to rr3 GRANTED BY rr1.
+# 2. pg_auth_members has both grants; the held session finds rr1 by name.
+# 3. CREATE ROLE in a transaction block is refused, and makes no role.
+# 4. DROP ROLE rr1 is refused, as the grantor of rr3's membership, with
+#    PostgreSQL's DETAIL; rr2's grant to rr3 goes with rr3 dropped.
+# 5. As rr1, SET ROLE rr2 is allowed; rr1, without CREATEROLE, may not
+#    make a role, nor SET ROLE to rr4, which it is no member of.
+# 6. ALTER ROLE renames rr2 to rr2b and makes rr1 NOLOGIN; DROP ROLE of
+#    both leaves rr1's memberships none, and pg_roles the roles kept.
+held_start roles
+held_send roles "select 'up';"
+held_wait roles "up" || fail "role DDL: held session"
+local_psql -c "create role rr1 login password 'pw1'" -c 'create role rr2' \
+  -c 'create role rr3' -c 'grant rr2 to rr1 with admin option' \
+  -c 'grant rr2 to rr3 granted by rr1' > "$work/roleddl.out" 2>&1 ||
+  fail "role DDL: make"
+local_psql -c "select r.rolname, m.rolname, g.rolname, admin_option
+                 from pg_auth_members a join pg_roles r on r.oid = a.roleid
+                 join pg_roles m on m.oid = a.member
+                 join pg_roles g on g.oid = a.grantor
+                 where r.rolname like 'rr%' order by 2" \
+  > "$work/rolemem.out" 2>&1
+cat > "$work/rolemem.expected" << OUT
+rr2|rr1|$me|t
+rr2|rr3|rr1|f
+OUT
+cmp -s "$work/rolemem.out" "$work/rolemem.expected" ||
+  fail "role DDL: pg_auth_members"
+held_send roles "select 'rr1:' || 'rr1'::regrole::oid::int8 / 16384;"
+held_wait roles "rr1:1" || fail "role DDL: seen by a session already open"
+held_end roles
+local_psql -c 'begin' -c 'create role rr9' -c 'rollback' \
+  -c "select count(*) from pg_roles where rolname = 'rr9'" \
+  > "$work/roleblock.out" 2>&1
+grep -q 'CREATE ROLE cannot run inside a transaction block' \
+  "$work/roleblock.out" && grep -qx 0 "$work/roleblock.out" ||
+  fail "role DDL: refused in a transaction block"
+local_psql -c 'drop role rr1' > "$work/roledep.out" 2>&1 &&
+  fail "role DDL: a grantor is not dropped"
+grep -q 'DETAIL:  privileges for membership of role rr3 in role rr2' \
+  "$work/roledep.out" || fail "role DDL: the grantor's DETAIL"
+local_psql -c 'drop role rr3' > "$work/roledep.out" 2>&1 ||
+  fail "role DDL: drop rr3"
+local_psql -c 'set session authorization rr1' -c 'set role rr2' \
+  -c 'select current_user' > "$work/roleset.out" 2>&1
+grep -qx rr2 "$work/roleset.out" || fail "role DDL: SET ROLE"
+local_psql -c 'set session authorization rr1' -c 'create role rr4' \
+  -c 'reset session authorization' -c 'create role rr4' \
+  -c 'set session authorization rr1' -c 'set role rr4' \
+  > "$work/roleset2.out" 2>&1
+grep -q 'permission denied to create role' "$work/roleset2.out" &&
+  grep -q 'permission denied to set role "rr4"' "$work/roleset2.out" ||
+  fail "role DDL: what a role without CREATEROLE may not do"
+local_psql -c 'alter role rr2 rename to rr2b' -c 'alter role rr1 nologin' \
+  -c "select rolname, rolcanlogin from pg_roles where rolname like 'rr%'
+        order by 1" -c 'drop role rr2b, rr4' \
+  -c "select count(*) from pg_auth_members a join pg_roles m
+        on m.oid = a.member where m.rolname = 'rr1'" \
+  > "$work/rolealter.out" 2>&1
+cat > "$work/rolealter.expected" << OUT
+ALTER ROLE
+ALTER ROLE
+rr1|f
+rr2b|f
+rr4|f
+DROP ROLE
+0
+OUT
+cmp -s "$work/rolealter.out" "$work/rolealter.expected" ||
+  fail "role DDL: ALTER and DROP ROLE"
+
 # Verify that psql's \d describes a sequence of sm's: pg_sequence has its
 # START and INCREMENT, and pg_depend the column that owns it.
 # 1. In schema sq1 make sequence q, START 5 INCREMENT 3, and table t with a
@@ -4626,6 +4700,11 @@ $digres -D "$work/data" -k "$work" -p "$port" -c max_connections=3 \
   > "$work/log2" 2>&1 &
 server=$!
 server_ready $server "$work/log2" || fail "max_connections: start"
+# Verify that a role and its attributes outlive the restart: pg_global's
+# rows, read again at the start (sm/ROLE.md section 3).
+# 1. rr1, made above and made NOLOGIN, is there, still NOLOGIN.
+[ "$(local_psql -c "select rolcanlogin from pg_roles where rolname = 'rr1'" \
+  2> "$work/rolekept.err")" = f ] || fail "role DDL: kept across a restart"
 for n in 1 2 3; do
   held_start "conn$n"
   held_send "conn$n" "select 'up $n';"

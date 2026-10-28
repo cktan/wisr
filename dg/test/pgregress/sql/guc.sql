@@ -195,21 +195,19 @@ PREPARE foo AS SELECT 1;
 --dg LISTEN foo_event;
 SET vacuum_cost_delay = 13;
 CREATE TEMP TABLE tmp_foo (data text) ON COMMIT DELETE ROWS;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_guc_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_guc_user;
+CREATE ROLE regress_guc_user;
+SET SESSION AUTHORIZATION regress_guc_user;
 -- look changes
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT pg_listening_channels();
---dg-skip: relation "?" does not exist
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT name FROM pg_prepared_statements;
---dg-skip: relation "?" does not exist
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT name FROM pg_cursors;
 SHOW vacuum_cost_delay;
-SELECT relname from pg_class where relname = 'tmp_foo';
---dg-cascade
---dg SELECT current_user = 'regress_guc_user';
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg SELECT relname from pg_class where relname = 'tmp_foo';
+SELECT current_user = 'regress_guc_user';
 -- discard everything
 DISCARD ALL;
 -- look again
@@ -222,8 +220,7 @@ DISCARD ALL;
 SHOW vacuum_cost_delay;
 SELECT relname from pg_class where relname = 'tmp_foo';
 SELECT current_user = 'regress_guc_user';
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_guc_user;
+DROP ROLE regress_guc_user;
 
 --
 -- search_path should react to changes in pg_namespace

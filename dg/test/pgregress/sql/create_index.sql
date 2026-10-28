@@ -1818,18 +1818,15 @@ END;
 --dg REINDEX SCHEMA CONCURRENTLY schema_to_reindex;
 
 -- Failure for unauthorized user
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_reindexuser NOLOGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION ROLE regress_reindexuser;
---dg-cascade
+CREATE ROLE regress_reindexuser NOLOGIN;
+SET SESSION ROLE regress_reindexuser;
+--dg-differs: no error where PostgreSQL has: must be owner of schema schema_to_reindex
 --dg REINDEX SCHEMA schema_to_reindex;
 -- Permission failures with toast tables and indexes (pg_authid here)
 RESET ROLE;
---dg-cascade
+--dg-skip: schema "?" does not exist
 --dg GRANT USAGE ON SCHEMA pg_toast TO regress_reindexuser;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION ROLE regress_reindexuser;
+SET SESSION ROLE regress_reindexuser;
 --dg-cascade
 --dg REINDEX TABLE pg_toast.pg_toast_1262;
 --dg-cascade
@@ -1837,9 +1834,8 @@ RESET ROLE;
 
 -- Clean up
 RESET ROLE;
---dg-cascade
+--dg-skip: schema "?" does not exist
 --dg REVOKE USAGE ON SCHEMA pg_toast FROM regress_reindexuser;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_reindexuser;
+DROP ROLE regress_reindexuser;
 --dg-cascade
 --dg DROP SCHEMA schema_to_reindex CASCADE;

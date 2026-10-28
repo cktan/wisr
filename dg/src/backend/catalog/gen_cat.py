@@ -57,8 +57,8 @@ CATALOGS = {
 }
 
 #The catalogs a query can read as relations(SYSCATALOG.md).
-RELATIONS = ["pg_am", "pg_attrdef", "pg_attribute", "pg_authid", "pg_cast",
-             "pg_class",
+RELATIONS = ["pg_am", "pg_attrdef", "pg_attribute", "pg_auth_members",
+             "pg_authid", "pg_cast", "pg_class",
              "pg_collation", "pg_constraint", "pg_database", "pg_depend",
              "pg_description", "pg_extension", "pg_index", "pg_inherits",
              "pg_language", "pg_namespace", "pg_operator", "pg_policy", "pg_proc",

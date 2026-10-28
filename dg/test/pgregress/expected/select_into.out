@@ -15,78 +15,60 @@ DROP TABLE sitmp1;
 -- SELECT INTO and INSERT permission, if owner is not allowed to insert.
 --
 CREATE SCHEMA selinto_schema;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_selinto_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+CREATE USER regress_selinto_user;
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES FOR ROLE regress_selinto_user
 --dg 	  REVOKE INSERT ON TABLES FROM regress_selinto_user;
 --dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg GRANT ALL ON SCHEMA selinto_schema TO public;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_selinto_user;
+SET SESSION AUTHORIZATION regress_selinto_user;
 -- WITH DATA, passes.
-CREATE TABLE selinto_schema.tbl_withdata1 (a)
-  AS SELECT generate_series(1,3) WITH DATA;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg CREATE TABLE selinto_schema.tbl_withdata1 (a)
+--dg   AS SELECT generate_series(1,3) WITH DATA;
 --dg-cascade
 --dg INSERT INTO selinto_schema.tbl_withdata1 VALUES (4);
-EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
-  CREATE TABLE selinto_schema.tbl_withdata2 (a) AS
-  SELECT generate_series(1,3) WITH DATA;
-               QUERY PLAN                
------------------------------------------
- ProjectSet (actual rows=3.00 loops=1)
-   ->  Result (actual rows=1.00 loops=1)
-(2 rows)
-
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+--dg   CREATE TABLE selinto_schema.tbl_withdata2 (a) AS
+--dg   SELECT generate_series(1,3) WITH DATA;
 -- WITH NO DATA, passes.
-CREATE TABLE selinto_schema.tbl_nodata1 (a) AS
-  SELECT generate_series(1,3) WITH NO DATA;
-EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
-  CREATE TABLE selinto_schema.tbl_nodata2 (a) AS
-  SELECT generate_series(1,3) WITH NO DATA;
-          QUERY PLAN           
--------------------------------
- ProjectSet (never executed)
-   ->  Result (never executed)
-(2 rows)
-
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg CREATE TABLE selinto_schema.tbl_nodata1 (a) AS
+--dg   SELECT generate_series(1,3) WITH NO DATA;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+--dg   CREATE TABLE selinto_schema.tbl_nodata2 (a) AS
+--dg   SELECT generate_series(1,3) WITH NO DATA;
 -- EXECUTE and WITH DATA, passes.
-PREPARE data_sel AS SELECT generate_series(1,3);
-CREATE TABLE selinto_schema.tbl_withdata3 (a) AS
-  EXECUTE data_sel WITH DATA;
-EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
-  CREATE TABLE selinto_schema.tbl_withdata4 (a) AS
-  EXECUTE data_sel WITH DATA;
-               QUERY PLAN                
------------------------------------------
- ProjectSet (actual rows=3.00 loops=1)
-   ->  Result (actual rows=1.00 loops=1)
-(2 rows)
-
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg PREPARE data_sel AS SELECT generate_series(1,3);
+--dg-cascade
+--dg CREATE TABLE selinto_schema.tbl_withdata3 (a) AS
+--dg   EXECUTE data_sel WITH DATA;
+--dg-cascade
+--dg EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+--dg   CREATE TABLE selinto_schema.tbl_withdata4 (a) AS
+--dg   EXECUTE data_sel WITH DATA;
 -- EXECUTE and WITH NO DATA, passes.
-CREATE TABLE selinto_schema.tbl_nodata3 (a) AS
-  EXECUTE data_sel WITH NO DATA;
-EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
-  CREATE TABLE selinto_schema.tbl_nodata4 (a) AS
-  EXECUTE data_sel WITH NO DATA;
-          QUERY PLAN           
--------------------------------
- ProjectSet (never executed)
-   ->  Result (never executed)
-(2 rows)
-
+--dg-cascade
+--dg CREATE TABLE selinto_schema.tbl_nodata3 (a) AS
+--dg   EXECUTE data_sel WITH NO DATA;
+--dg-cascade
+--dg EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+--dg   CREATE TABLE selinto_schema.tbl_nodata4 (a) AS
+--dg   EXECUTE data_sel WITH NO DATA;
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES FOR ROLE regress_selinto_user
 --dg 	  GRANT INSERT ON TABLES TO regress_selinto_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_selinto_user;
+SET SESSION AUTHORIZATION regress_selinto_user;
 RESET SESSION AUTHORIZATION;
-DEALLOCATE data_sel;
---dg-differs: the result
+--dg-cascade
+--dg DEALLOCATE data_sel;
+--dg-cascade
 --dg DROP SCHEMA selinto_schema CASCADE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_selinto_user;
+DROP USER regress_selinto_user;
 -- Tests for WITH NO DATA and column name consistency
 CREATE TABLE ctas_base (i int, j int);
 INSERT INTO ctas_base VALUES (1, 2);

@@ -441,8 +441,7 @@ UPDATE gtestp SET f1 = f1 * 10;
 --dg INSERT INTO gtest10a (a) VALUES (1);
 
 -- privileges
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_user11;
+CREATE USER regress_user11;
 
 --dg-skip: column "?" asks for what CREATE TABLE does not support yet
 --dg CREATE TABLE gtest11 (a int PRIMARY KEY, b int, c int GENERATED ALWAYS AS (b * 2) STORED);
@@ -463,17 +462,16 @@ UPDATE gtestp SET f1 = f1 * 10;
 --dg-cascade
 --dg GRANT SELECT (a, c), INSERT ON gtest12 TO regress_user11;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_user11;
+SET ROLE regress_user11;
 --dg-cascade
 --dg SELECT a, b FROM gtest11;  -- not allowed
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT a, c FROM gtest11;  -- allowed
 --dg-cascade
 --dg SELECT gf1(10);  -- not allowed
 --dg-cascade
 --dg INSERT INTO gtest12 VALUES (3, 30), (4, 40);  -- currently not allowed because of function permissions, should arguably be allowed
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT a, c FROM gtest12;  -- allowed (does not actually invoke the function)
 RESET ROLE;
 
@@ -483,7 +481,7 @@ RESET ROLE;
 --dg DROP TABLE gtest11, gtest12;
 --dg-cascade
 --dg DROP FUNCTION gf1(int);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP USER regress_user11;
 
 -- check constraints

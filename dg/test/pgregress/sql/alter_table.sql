@@ -4,12 +4,10 @@
 
 -- Clean up in case a prior regression run failed
 SET client_min_messages TO 'warning';
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE IF EXISTS regress_alter_table_user1;
+DROP ROLE IF EXISTS regress_alter_table_user1;
 RESET client_min_messages;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_alter_table_user1;
+CREATE USER regress_alter_table_user1;
 
 --
 -- add attribute
@@ -228,8 +226,7 @@ DROP TABLE attmp_new2;
 --dg ALTER TABLE part_attmp RENAME TO part_at2tmp;
 --dg-cascade
 --dg ALTER TABLE part_attmp1 RENAME TO part_at2tmp1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_alter_table_user1;
+SET ROLE regress_alter_table_user1;
 --dg-cascade
 --dg ALTER INDEX part_attmp_index RENAME TO fail;
 --dg-cascade
@@ -281,8 +278,7 @@ DROP TABLE _attmp_array;
 --dg-differs: another error: ALTER INDEX is not supported yet
 --dg ALTER INDEX attmp_onek_unique1 RENAME TO onek_unique1;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_alter_table_user1;
+SET ROLE regress_alter_table_user1;
 --dg-differs: another error: ALTER INDEX is not supported yet
 --dg ALTER INDEX onek_unique1 RENAME TO fail;  -- permission denied
 RESET ROLE;
@@ -334,9 +330,8 @@ COMMIT;
 CREATE VIEW attmp_view (unique1) AS SELECT unique1 FROM tenk1;
 ALTER TABLE attmp_view RENAME TO attmp_view_new;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_alter_table_user1;
---dg-cascade
+SET ROLE regress_alter_table_user1;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg ALTER VIEW attmp_view_new RENAME TO fail;  -- permission denied
 RESET ROLE;
 
@@ -3321,29 +3316,24 @@ DROP TABLE unparted, fail_part;
 --dg ALTER TABLE list_parted ATTACH PARTITION nonexistent FOR VALUES IN (1);
 
 -- check ownership of the source table
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_test_me;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_test_not_me;
+CREATE ROLE regress_test_me;
+CREATE ROLE regress_test_not_me;
 --dg-cascade
 --dg CREATE TABLE not_owned_by_me (LIKE list_parted);
 --dg-cascade
 --dg ALTER TABLE not_owned_by_me OWNER TO regress_test_not_me;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_test_me;
---dg-cascade
+SET SESSION AUTHORIZATION regress_test_me;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE owned_by_me (
 --dg 	a int
 --dg ) PARTITION BY LIST (a);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg ALTER TABLE owned_by_me ATTACH PARTITION not_owned_by_me FOR VALUES IN (1);
 RESET SESSION AUTHORIZATION;
---dg-cascade
---dg DROP TABLE owned_by_me, not_owned_by_me;
+DROP TABLE owned_by_me, not_owned_by_me;
 --dg-cascade
 --dg DROP ROLE regress_test_not_me;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_test_me;
+DROP ROLE regress_test_me;
 
 -- check that the table being attached is not part of regular inheritance
 --dg-cascade
@@ -4060,8 +4050,7 @@ INSERT INTO attmp VALUES (1);
 ANALYZE attmp;
 DROP TABLE attmp;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_alter_table_user1;
+DROP USER regress_alter_table_user1;
 
 -- check that violating rows are correctly reported when attaching as the
 -- default partition

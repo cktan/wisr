@@ -1697,38 +1697,30 @@ drop table inh_nn1, inh_nn2;
 --
 -- Mixed ownership inheritance tree
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create role regress_alice;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create role regress_bob;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+create role regress_alice;
+create role regress_bob;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg grant all on schema public to regress_alice, regress_bob;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg grant regress_alice to regress_bob;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set session authorization regress_alice;
---dg-cascade
+grant regress_alice to regress_bob;
+set session authorization regress_alice;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg create table inh_parent (a int not null);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set session authorization regress_bob;
---dg-cascade
+set session authorization regress_bob;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg create table inh_child () inherits (inh_parent);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set session authorization regress_alice;
+set session authorization regress_alice;
 -- alice can't do this: she doesn't own inh_child
 --dg-cascade
 --dg alter table inh_parent alter a drop not null;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set session authorization regress_bob;
---dg-cascade
+set session authorization regress_bob;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg alter table inh_parent alter a drop not null;
 reset session authorization;
 --dg-cascade
 --dg drop table inh_parent, inh_child;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg revoke all on schema public from regress_alice, regress_bob;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg drop role regress_alice, regress_bob;
+drop role regress_alice, regress_bob;
 --
 -- Check use of temporary tables with inheritance trees
 --
@@ -2065,20 +2057,18 @@ create table permtest_grandchild (c text, b text, a int);
 --dg   select 1, 'a', left(fipshash(i::text), 5) from generate_series(0, 100) i;
 --dg-cascade
 --dg analyze permtest_parent;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create role regress_no_child_access;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+create role regress_no_child_access;
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg revoke all on permtest_grandchild from regress_no_child_access;
 --dg-cascade
 --dg grant select on permtest_parent to regress_no_child_access;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set session authorization regress_no_child_access;
+set session authorization regress_no_child_access;
 -- without stats access, these queries would produce hash join plans:
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg explain (costs off)
 --dg   select * from permtest_parent p1 inner join permtest_parent p2
 --dg   on p1.a = p2.a and p1.c ~ 'a1$';
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg explain (costs off)
 --dg   select * from permtest_parent p1 inner join permtest_parent p2
 --dg   on p1.a = p2.a and left(p1.c, 3) ~ 'a1$';
@@ -2087,22 +2077,20 @@ reset session authorization;
 --dg revoke all on permtest_parent from regress_no_child_access;
 --dg-cascade
 --dg grant select(a,c) on permtest_parent to regress_no_child_access;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set session authorization regress_no_child_access;
---dg-cascade
+set session authorization regress_no_child_access;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg explain (costs off)
 --dg   select p2.a, p1.c from permtest_parent p1 inner join permtest_parent p2
 --dg   on p1.a = p2.a and p1.c ~ 'a1$';
 -- we will not have access to the expression index's stats here:
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg explain (costs off)
 --dg   select p2.a, p1.c from permtest_parent p1 inner join permtest_parent p2
 --dg   on p1.a = p2.a and left(p1.c, 3) ~ 'a1$';
 reset session authorization;
 --dg-cascade
 --dg revoke all on permtest_parent from regress_no_child_access;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg drop role regress_no_child_access;
+drop role regress_no_child_access;
 --dg-cascade
 --dg drop table permtest_parent;
 -- Verify that constraint errors across partition root / child are

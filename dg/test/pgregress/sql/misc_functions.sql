@@ -148,32 +148,30 @@ SELECT pg_log_backend_memory_contexts(pg_backend_pid());
 --dg SELECT pg_log_backend_memory_contexts(pid) FROM pg_stat_activity
 --dg   WHERE backend_type = 'checkpointer';
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_log_memory;
+CREATE ROLE regress_log_memory;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-differs: the result
 --dg SELECT has_function_privilege('regress_log_memory',
 --dg   'pg_log_backend_memory_contexts(integer)', 'EXECUTE'); -- no
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_proc cannot be written: digres has no catalog tables
 --dg GRANT EXECUTE ON FUNCTION pg_log_backend_memory_contexts(integer)
 --dg   TO regress_log_memory;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_function_privilege('regress_log_memory',
 --dg   'pg_log_backend_memory_contexts(integer)', 'EXECUTE'); -- yes
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_log_memory;
-SELECT pg_log_backend_memory_contexts(pg_backend_pid());
+SET ROLE regress_log_memory;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg SELECT pg_log_backend_memory_contexts(pg_backend_pid());
 RESET ROLE;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_proc cannot be written: digres has no catalog tables
 --dg REVOKE EXECUTE ON FUNCTION pg_log_backend_memory_contexts(integer)
 --dg   FROM regress_log_memory;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_log_memory;
+DROP ROLE regress_log_memory;
 
 --
 -- Test some built-in SRFs
@@ -252,32 +250,30 @@ select * from (select (pg_timezone_names()).name) ptn where name='UTC' limit 1;
 --
 -- Test replication slot directory functions
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_slot_dir_funcs;
+CREATE ROLE regress_slot_dir_funcs;
 -- Not available by default.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: function "?" does not exist
 --dg SELECT has_function_privilege('regress_slot_dir_funcs',
 --dg   'pg_ls_logicalsnapdir()', 'EXECUTE');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: function "?" does not exist
 --dg SELECT has_function_privilege('regress_slot_dir_funcs',
 --dg   'pg_ls_logicalmapdir()', 'EXECUTE');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: function "?" does not exist
 --dg SELECT has_function_privilege('regress_slot_dir_funcs',
 --dg   'pg_ls_replslotdir(text)', 'EXECUTE');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: role "?" does not exist
 --dg GRANT pg_monitor TO regress_slot_dir_funcs;
 -- Role is now part of pg_monitor, so these are available.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_function_privilege('regress_slot_dir_funcs',
 --dg   'pg_ls_logicalsnapdir()', 'EXECUTE');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_function_privilege('regress_slot_dir_funcs',
 --dg   'pg_ls_logicalmapdir()', 'EXECUTE');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_function_privilege('regress_slot_dir_funcs',
 --dg   'pg_ls_replslotdir(text)', 'EXECUTE');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_slot_dir_funcs;
+DROP ROLE regress_slot_dir_funcs;
 
 --
 -- Test adding a support function to a subject function
@@ -461,20 +457,18 @@ SELECT * FROM generate_series(TIMESTAMPTZ '2024-02-01', TIMESTAMPTZ '2024-03-01'
 --dg      pg_split_walfile_name(file_name);
 
 -- pg_current_logfile
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_current_logfile;
+CREATE ROLE regress_current_logfile;
 -- not available by default
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: function "?" does not exist
 --dg SELECT has_function_privilege('regress_current_logfile',
 --dg   'pg_current_logfile()', 'EXECUTE');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: role "?" does not exist
 --dg GRANT pg_monitor TO regress_current_logfile;
 -- role has privileges of pg_monitor and can execute the function
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_function_privilege('regress_current_logfile',
 --dg   'pg_current_logfile()', 'EXECUTE');
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_current_logfile;
+DROP ROLE regress_current_logfile;
 
 -- pg_column_toast_chunk_id
 CREATE TABLE test_chunk_id (a TEXT, b TEXT STORAGE EXTERNAL);

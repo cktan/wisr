@@ -63,8 +63,7 @@ INSERT INTO clstr_tst (b, c, d) VALUES (6, 'seis', repeat('xyzzy', 100000));
 --dg-differs: the result
 --dg CLUSTER clstr_tst_c ON clstr_tst;
 
---dg-cascade
---dg SELECT a,b,c,substring(d for 30), length(d) from clstr_tst;
+SELECT a,b,c,substring(d for 30), length(d) from clstr_tst;
 SELECT a,b,c,substring(d for 30), length(d) from clstr_tst ORDER BY a;
 SELECT a,b,c,substring(d for 30), length(d) from clstr_tst ORDER BY b;
 SELECT a,b,c,substring(d for 30), length(d) from clstr_tst ORDER BY c;
@@ -120,16 +119,15 @@ WHERE pg_class.oid=indexrelid
 --dg CLUSTER pg_toast.pg_toast_826 USING pg_toast_826_index;
 
 -- Verify that clustering all tables does in fact cluster the right ones
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_clstr_user;
+CREATE USER regress_clstr_user;
 CREATE TABLE clstr_1 (a INT PRIMARY KEY);
 CREATE TABLE clstr_2 (a INT PRIMARY KEY);
 CREATE TABLE clstr_3 (a INT PRIMARY KEY);
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE clstr_1 OWNER TO regress_clstr_user;
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE clstr_3 OWNER TO regress_clstr_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg GRANT SELECT ON clstr_2 TO regress_clstr_user;
 INSERT INTO clstr_1 VALUES (2);
 INSERT INTO clstr_1 VALUES (1);
@@ -146,10 +144,9 @@ INSERT INTO clstr_3 VALUES (1);
 --dg CLUSTER clstr_1_pkey ON clstr_1;
 --dg-differs: the result
 --dg CLUSTER clstr_2 USING clstr_2_pkey;
---dg-cascade
---dg SELECT * FROM clstr_1 UNION ALL
---dg   SELECT * FROM clstr_2 UNION ALL
---dg   SELECT * FROM clstr_3;
+SELECT * FROM clstr_1 UNION ALL
+  SELECT * FROM clstr_2 UNION ALL
+  SELECT * FROM clstr_3;
 
 -- revert to the original state
 DELETE FROM clstr_1;
@@ -164,47 +161,49 @@ INSERT INTO clstr_3 VALUES (1);
 
 -- this user can only cluster clstr_1 and clstr_3, but the latter
 -- has not been clustered
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_clstr_user;
+SET SESSION AUTHORIZATION regress_clstr_user;
 SET client_min_messages = ERROR;  -- order of "skipping" warnings may vary
 CLUSTER;
 RESET client_min_messages;
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM clstr_1 UNION ALL
 --dg   SELECT * FROM clstr_2 UNION ALL
 --dg   SELECT * FROM clstr_3;
 
 -- cluster a single table using the indisclustered bit previously set
-DELETE FROM clstr_1;
-INSERT INTO clstr_1 VALUES (2);
-INSERT INTO clstr_1 VALUES (1);
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg DELETE FROM clstr_1;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg INSERT INTO clstr_1 VALUES (2);
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg INSERT INTO clstr_1 VALUES (1);
 --dg-cascade
 --dg CLUSTER clstr_1;
---dg-cascade
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM clstr_1;
 
 -- Test MVCC-safety of cluster. There isn't much we can do to verify the
 -- results with a single backend...
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE clustertest (key int PRIMARY KEY);
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO clustertest VALUES (10);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO clustertest VALUES (20);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO clustertest VALUES (30);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO clustertest VALUES (40);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg INSERT INTO clustertest VALUES (50);
 
 -- Use a transaction so that updates are not committed when CLUSTER sees 'em
 BEGIN;
 
 -- Test update where the old row version is found first in the scan
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg UPDATE clustertest SET key = 100 WHERE key = 10;
 
 -- Test update where the new row version is found first in the scan
@@ -223,28 +222,30 @@ BEGIN;
 --dg SELECT * FROM clustertest;
 --dg-cascade
 --dg CLUSTER clustertest_pkey ON clustertest;
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM clustertest;
 
 COMMIT;
 
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg SELECT * FROM clustertest;
 
 -- check that temp tables can be clustered
-create temp table clstr_temp (col1 int primary key, col2 text);
-insert into clstr_temp values (2, 'two'), (1, 'one');
---dg-differs: the result
---dg cluster clstr_temp using clstr_temp_pkey;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg create temp table clstr_temp (col1 int primary key, col2 text);
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg insert into clstr_temp values (2, 'two'), (1, 'one');
 --dg-cascade
+--dg cluster clstr_temp using clstr_temp_pkey;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg select * from clstr_temp;
-drop table clstr_temp;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg drop table clstr_temp;
 
 RESET SESSION AUTHORIZATION;
 
 -- check clustering an empty table
---dg-cascade
---dg DROP TABLE clustertest;
+DROP TABLE clustertest;
 CREATE TABLE clustertest (f1 int PRIMARY KEY);
 --dg-differs: the result
 --dg CLUSTER clustertest USING clustertest_pkey;
@@ -302,14 +303,12 @@ CREATE TABLE clustertest (f1 int PRIMARY KEY);
 --dg CREATE INDEX ptnowner_i_idx ON ptnowner(i);
 --dg-cascade
 --dg CREATE TABLE ptnowner1 PARTITION OF ptnowner FOR VALUES IN (1);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_ptnowner;
+CREATE ROLE regress_ptnowner;
 --dg-cascade
 --dg CREATE TABLE ptnowner2 PARTITION OF ptnowner FOR VALUES IN (2);
 --dg-cascade
 --dg ALTER TABLE ptnowner1 OWNER TO regress_ptnowner;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_ptnowner;
+SET SESSION AUTHORIZATION regress_ptnowner;
 --dg-cascade
 --dg CLUSTER ptnowner USING ptnowner_i_idx;
 RESET SESSION AUTHORIZATION;
@@ -319,8 +318,7 @@ RESET SESSION AUTHORIZATION;
 --dg CREATE TEMP TABLE ptnowner_oldnodes AS
 --dg   SELECT oid, relname, relfilenode FROM pg_partition_tree('ptnowner') AS tree
 --dg   JOIN pg_class AS c ON c.oid=tree.relid;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_ptnowner;
+SET SESSION AUTHORIZATION regress_ptnowner;
 --dg-cascade
 --dg CLUSTER ptnowner USING ptnowner_i_idx;
 RESET SESSION AUTHORIZATION;
@@ -329,8 +327,7 @@ RESET SESSION AUTHORIZATION;
 --dg   JOIN ptnowner_oldnodes b USING (oid) ORDER BY a.relname COLLATE "C";
 --dg-cascade
 --dg DROP TABLE ptnowner;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_ptnowner;
+DROP ROLE regress_ptnowner;
 
 -- Test CLUSTER with external tuplesorting
 
@@ -423,5 +420,4 @@ DROP TABLE clstr_4;
 --dg-cascade
 --dg DROP TABLE clstr_expression;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_clstr_user;
+DROP USER regress_clstr_user;

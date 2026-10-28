@@ -1,8 +1,9 @@
 # ROLE — users, roles, privileges, and how a client gets in
 
-**Being built**, a step at a time (§9): step 1 is done. digres
-has one role, the superuser initdb names, now kept in
-`pg_global`, and no privilege is ever refused. This file says
+**Being built**, a step at a time (§9): steps 1 and 2 are
+done. Roles and memberships are `pg_global`'s, made, changed
+and dropped by SQL; no privilege on an object is refused yet,
+and every object's owner is the superuser. This file says
 what roles and privileges digres takes from PostgreSQL, where
 sm keeps them, and how a client is let in, by a rule much
 simpler than `pg_hba.conf`. Paths are relative to `sm/`;
@@ -354,8 +355,12 @@ of its own for them.
   the syscache. Built for reading, step 1.
 - `user.c`'s CREATE, ALTER and DROP ROLE, GRANT and REVOKE of
   a membership, and `aclchk.c`'s GRANT and REVOKE, writing
-  sm3's records instead of catalog tuples; role DDL refused in
-  a transaction block.
+  `pg_global` instead of catalog tuples: the session queues
+  its changes, sees them itself, and writes them at its
+  commit, in one transaction of `pg_global`'s, a row another
+  session changed meanwhile failing it as a serialization
+  failure; role DDL refused in a transaction block. Built for
+  roles and memberships, step 2.
 - relcache: `relowner` and `relacl` from the object's entry,
   else its database's owner; the entry written for
   `current_user` after a CREATE commits, and removed after a
@@ -425,7 +430,8 @@ it (`../CLAUDE.md`, "Test at every layer"):
 1. `pg_global` and the role records; the superuser moves
    there from the file; `pg_authid`, `pg_roles`, `\du`. Done
    (`../dg/WORKNOTE.md` step 312).
-2. CREATE, ALTER, DROP ROLE; membership; SET ROLE.
+2. CREATE, ALTER, DROP ROLE; membership; SET ROLE. Done
+   (`../dg/WORKNOTE.md` step 313).
 3. §5's four checks, in place of the fixed rule.
 4. Owners: an object's entry in `pg_global`, `current_user`
    after CREATE commits, the database's owner without one,

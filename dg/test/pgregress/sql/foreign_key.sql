@@ -2088,41 +2088,37 @@ CREATE TABLE fk_partitioned_pk_6 (a int PRIMARY KEY);
 --dg DROP TABLE fk_partitioned_pk_6, fk_partitioned_fk_6;
 
 -- test the case when the referenced table is owned by a different user
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create role regress_other_partitioned_fk_owner;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+create role regress_other_partitioned_fk_owner;
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg grant references on fk_notpartitioned_pk to regress_other_partitioned_fk_owner;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_other_partitioned_fk_owner;
---dg-cascade
+set role regress_other_partitioned_fk_owner;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg create table other_partitioned_fk(a int, b int) partition by list (a);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg create table other_partitioned_fk_1 partition of other_partitioned_fk
 --dg   for values in (2048);
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg insert into other_partitioned_fk
 --dg   select 2048, x from generate_series(1,10) x;
 -- this should fail
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg alter table other_partitioned_fk add foreign key (a, b)
 --dg   references fk_notpartitioned_pk(a, b);
 -- add the missing keys and retry
 reset role;
 insert into fk_notpartitioned_pk (a, b)
   select 2048, x from generate_series(1,10) x;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_other_partitioned_fk_owner;
---dg-cascade
+set role regress_other_partitioned_fk_owner;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg alter table other_partitioned_fk add foreign key (a, b)
 --dg   references fk_notpartitioned_pk(a, b);
 -- clean up
---dg-cascade
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg drop table other_partitioned_fk;
 reset role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg revoke all on fk_notpartitioned_pk from regress_other_partitioned_fk_owner;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg drop role regress_other_partitioned_fk_owner;
+drop role regress_other_partitioned_fk_owner;
 
 --
 -- Test self-referencing foreign key with partition.

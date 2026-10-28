@@ -535,28 +535,24 @@ BEGIN;
 GRANT ALL ON TABLESPACE regress_tblspace TO PUBLIC;
 ROLLBACK;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_tablespace_user1 login;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_tablespace_user2 login;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+CREATE ROLE regress_tablespace_user1 login;
+CREATE ROLE regress_tablespace_user2 login;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg GRANT USAGE ON SCHEMA testschema TO regress_tablespace_user2;
 
---dg-cascade
---dg ALTER TABLESPACE regress_tblspace OWNER TO regress_tablespace_user1;
+ALTER TABLESPACE regress_tblspace OWNER TO regress_tablespace_user1;
 
 CREATE TABLE testschema.tablespace_acl (c int);
 -- new owner lacks permission to create this index from scratch
---dg-differs: another error: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
+--dg-differs: another error: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg CREATE INDEX k ON testschema.tablespace_acl (c) TABLESPACE regress_tblspace;
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE testschema.tablespace_acl OWNER TO regress_tablespace_user2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION ROLE regress_tablespace_user2;
---dg-cascade
+SET SESSION ROLE regress_tablespace_user2;
+--dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg CREATE TABLE tablespace_table (i int) TABLESPACE regress_tblspace; -- fail
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
 --dg ALTER TABLE testschema.tablespace_acl ALTER c TYPE bigint;
 --dg-differs: no error where PostgreSQL has: tablespace "?" does not exist
 --dg REINDEX (TABLESPACE regress_tblspace) TABLE tablespace_table; -- fail
@@ -582,7 +578,6 @@ ALTER MATERIALIZED VIEW ALL IN TABLESPACE regress_tblspace_renamed SET TABLESPAC
 --dg-cascade
 --dg DROP SCHEMA testschema CASCADE;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_tablespace_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+DROP ROLE regress_tablespace_user1;
+--dg-cascade
 --dg DROP ROLE regress_tablespace_user2;

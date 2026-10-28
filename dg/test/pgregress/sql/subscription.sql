@@ -2,16 +2,12 @@
 -- SUBSCRIPTION
 --
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_subscription_user LOGIN SUPERUSER;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_subscription_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+CREATE ROLE regress_subscription_user LOGIN SUPERUSER;
+CREATE ROLE regress_subscription_user2;
+--dg-skip: role "?" does not exist
 --dg CREATE ROLE regress_subscription_user3 IN ROLE pg_create_subscription;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_subscription_user_dummy LOGIN NOSUPERUSER;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION 'regress_subscription_user';
+CREATE ROLE regress_subscription_user_dummy LOGIN NOSUPERUSER;
+SET SESSION AUTHORIZATION 'regress_subscription_user';
 
 -- fail - no publications
 CREATE SUBSCRIPTION regress_testsub CONNECTION 'foo';
@@ -64,12 +60,10 @@ COMMIT;
 --dg CREATE SUBSCRIPTION regress_testsub CONNECTION 'dbname=regress_doesnotexist' PUBLICATION testpub WITH (connect = false);
 
 -- fail - must be superuser
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION 'regress_subscription_user2';
---dg-cascade
+SET SESSION AUTHORIZATION 'regress_subscription_user2';
+--dg-differs: another error: subscriptions are not supported
 --dg CREATE SUBSCRIPTION regress_testsub2 CONNECTION 'dbname=regress_doesnotexist' PUBLICATION foo WITH (connect = false);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION 'regress_subscription_user';
+SET SESSION AUTHORIZATION 'regress_subscription_user';
 
 -- fail - invalid option combinations
 --dg-differs: another error: subscriptions are not supported
@@ -195,8 +189,7 @@ BEGIN;
 COMMIT;
 
 -- fail - must be owner of subscription
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_subscription_user_dummy;
+SET ROLE regress_subscription_user_dummy;
 --dg-cascade
 --dg ALTER SUBSCRIPTION regress_testsub RENAME TO regress_testsub_dummy;
 RESET ROLE;
@@ -236,7 +229,7 @@ COMMIT;
 
 --dg-skip: subscriptions are not supported
 --dg DROP SUBSCRIPTION IF EXISTS regress_testsub;
---dg-differs: another error: subscriptions are not supported
+--dg-cascade
 --dg DROP SUBSCRIPTION regress_testsub;  -- fail
 
 -- fail - binary must be boolean
@@ -418,7 +411,7 @@ END;
 --dg DROP SUBSCRIPTION regress_testsub;
 
 -- let's do some tests with pg_create_subscription rather than superuser
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SET SESSION AUTHORIZATION regress_subscription_user3;
 
 -- fail, not enough privileges
@@ -427,27 +420,27 @@ END;
 
 -- fail, must specify password
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg GRANT CREATE ON DATABASE REGRESSION TO regress_subscription_user3;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SET SESSION AUTHORIZATION regress_subscription_user3;
 --dg-cascade
 --dg CREATE SUBSCRIPTION regress_testsub CONNECTION 'dbname=regress_doesnotexist' PUBLICATION testpub WITH (connect = false);
 
 -- fail, can't set password_required=false
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg GRANT CREATE ON DATABASE REGRESSION TO regress_subscription_user3;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SET SESSION AUTHORIZATION regress_subscription_user3;
 --dg-cascade
 --dg CREATE SUBSCRIPTION regress_testsub CONNECTION 'dbname=regress_doesnotexist' PUBLICATION testpub WITH (connect = false, password_required = false);
 
 -- ok
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg GRANT CREATE ON DATABASE REGRESSION TO regress_subscription_user3;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SET SESSION AUTHORIZATION regress_subscription_user3;
 --dg-skip: subscriptions are not supported
 --dg CREATE SUBSCRIPTION regress_testsub CONNECTION 'dbname=regress_doesnotexist password=regress_fakepassword' PUBLICATION testpub WITH (connect = false);
@@ -462,18 +455,18 @@ RESET SESSION AUTHORIZATION;
 
 -- ok, even after losing pg_create_subscription we can still rename it
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg REVOKE pg_create_subscription FROM regress_subscription_user3;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SET SESSION AUTHORIZATION regress_subscription_user3;
 --dg-skip: subscriptions are not supported
 --dg ALTER SUBSCRIPTION regress_testsub2 RENAME TO regress_testsub;
 
 -- fail, after losing CREATE on the database we can't rename it any more
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg REVOKE CREATE ON DATABASE REGRESSION FROM regress_subscription_user3;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SET SESSION AUTHORIZATION regress_subscription_user3;
 --dg-cascade
 --dg ALTER SUBSCRIPTION regress_testsub RENAME TO regress_testsub2;
@@ -491,11 +484,9 @@ COMMIT;
 --dg DROP SUBSCRIPTION regress_testsub;
 
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP ROLE regress_subscription_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_subscription_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+DROP ROLE regress_subscription_user2;
+--dg-cascade
 --dg DROP ROLE regress_subscription_user3;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_subscription_user_dummy;
+DROP ROLE regress_subscription_user_dummy;
