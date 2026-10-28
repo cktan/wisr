@@ -163,7 +163,7 @@ CREATE ROLE regress_log_memory;
 --dg   'pg_log_backend_memory_contexts(integer)', 'EXECUTE'); -- yes
 
 SET ROLE regress_log_memory;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT pg_log_backend_memory_contexts(pg_backend_pid());
 RESET ROLE;
 

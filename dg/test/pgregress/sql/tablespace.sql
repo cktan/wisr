@@ -537,7 +537,7 @@ ROLLBACK;
 
 CREATE ROLE regress_tablespace_user1 login;
 CREATE ROLE regress_tablespace_user2 login;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
 --dg GRANT USAGE ON SCHEMA testschema TO regress_tablespace_user2;
 
 ALTER TABLESPACE regress_tblspace OWNER TO regress_tablespace_user1;
@@ -550,9 +550,8 @@ CREATE TABLE testschema.tablespace_acl (c int);
 --dg ALTER TABLE testschema.tablespace_acl OWNER TO regress_tablespace_user2;
 
 SET SESSION ROLE regress_tablespace_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE tablespace_table (i int) TABLESPACE regress_tblspace; -- fail
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+CREATE TABLE tablespace_table (i int) TABLESPACE regress_tblspace; -- fail
+--dg-cascade
 --dg ALTER TABLE testschema.tablespace_acl ALTER c TYPE bigint;
 --dg-differs: no error where PostgreSQL has: tablespace "?" does not exist
 --dg REINDEX (TABLESPACE regress_tblspace) TABLE tablespace_table; -- fail

@@ -583,7 +583,7 @@ ERROR:  tablespace "regress_tblspace" does not exist
 ROLLBACK;
 CREATE ROLE regress_tablespace_user1 login;
 CREATE ROLE regress_tablespace_user2 login;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
 --dg GRANT USAGE ON SCHEMA testschema TO regress_tablespace_user2;
 ALTER TABLESPACE regress_tblspace OWNER TO regress_tablespace_user1;
 ERROR:  tablespace "regress_tblspace" does not exist
@@ -594,9 +594,11 @@ CREATE TABLE testschema.tablespace_acl (c int);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE testschema.tablespace_acl OWNER TO regress_tablespace_user2;
 SET SESSION ROLE regress_tablespace_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE tablespace_table (i int) TABLESPACE regress_tblspace; -- fail
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+CREATE TABLE tablespace_table (i int) TABLESPACE regress_tblspace; -- fail
+ERROR:  permission denied for schema public
+LINE 1: CREATE TABLE tablespace_table (i int) TABLESPACE regress_tbl...
+                     ^
+--dg-cascade
 --dg ALTER TABLE testschema.tablespace_acl ALTER c TYPE bigint;
 --dg-differs: no error where PostgreSQL has: tablespace "?" does not exist
 --dg REINDEX (TABLESPACE regress_tblspace) TABLE tablespace_table; -- fail

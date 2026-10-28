@@ -582,7 +582,7 @@ ROLLBACK;
 -- WHERE CURRENT OF may someday work with views, but today is not that day.
 -- For now, just make sure it errors out cleanly.
 CREATE TEMP VIEW ucview AS SELECT * FROM uctest;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE ucrule AS ON DELETE TO ucview DO INSTEAD
 --dg   DELETE FROM uctest WHERE f1 = OLD.f1;
 BEGIN;

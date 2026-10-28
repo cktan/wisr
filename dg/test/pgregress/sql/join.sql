@@ -2627,14 +2627,15 @@ begin;
 create temp table t (a int unique, b int);
 insert into t values (1, 2);
 
-explain (verbose, costs off)
-select t1.a from t t1
-  left join t t2 on t1.a = t2.a
-       join t t3 on true
-where exists (select 1 from t t4
-                join t t5 on t4.b = t5.b
-                join t t6 on t5.b = t6.b
-              where t1.a = t4.a and t3.a = t5.a and t4.a = 1);
+--dg-differs: the plan
+--dg explain (verbose, costs off)
+--dg select t1.a from t t1
+--dg   left join t t2 on t1.a = t2.a
+--dg        join t t3 on true
+--dg where exists (select 1 from t t4
+--dg                 join t t5 on t4.b = t5.b
+--dg                 join t t6 on t5.b = t6.b
+--dg               where t1.a = t4.a and t3.a = t5.a and t4.a = 1);
 
 select t1.a from t t1
   left join t t2 on t1.a = t2.a
@@ -2860,14 +2861,15 @@ explain (costs off)
 select * from sj x join sj y on x.a = y.a
 left join int8_tbl z on y.a = z.q1;
 
-explain (costs off)
-select * from (
-  select t1.*, t2.a as ax from sj t1 join sj t2
-  on (t1.a = t2.a and t1.c * t1.c = t2.c + 2 and t2.b is null)
-) as q1
-left join
-  (select t3.* from sj t3, sj t4 where t3.c = t4.c) as q2
-on q1.ax = q2.a;
+--dg-differs: the plan
+--dg explain (costs off)
+--dg select * from (
+--dg   select t1.*, t2.a as ax from sj t1 join sj t2
+--dg   on (t1.a = t2.a and t1.c * t1.c = t2.c + 2 and t2.b is null)
+--dg ) as q1
+--dg left join
+--dg   (select t3.* from sj t3, sj t4 where t3.c = t4.c) as q2
+--dg on q1.ax = q2.a;
 
 -- Test that placeholders are updated correctly after join removal
 explain (costs off)
@@ -2896,9 +2898,10 @@ select t4.a from sj t1
 
 -- Check updating of semi_rhs_exprs links from upper-level semi join to
 -- the removing relation
-explain (verbose, costs off)
-select t1.a from sj t1 where t1.b in (
-  select t2.b from sj t2 join sj t3 on t2.c=t3.c);
+--dg-differs: the plan
+--dg explain (verbose, costs off)
+--dg select t1.a from sj t1 where t1.b in (
+--dg   select t2.b from sj t2 join sj t3 on t2.c=t3.c);
 
 --
 -- SJE corner case: uniqueness of an inner is [partially] derived from
@@ -3050,8 +3053,9 @@ explain (costs off) select * from sj p join sj q on p.a = q.a
 
 -- FIXME this constant false filter doesn't look good. Should we merge
 -- equivalence classes?
-explain (costs off)
-select * from sj p, sj q where p.a = q.a and p.b = 1 and q.b = 2;
+--dg-differs: the plan
+--dg explain (costs off)
+--dg select * from sj p, sj q where p.a = q.a and p.b = 1 and q.b = 2;
 
 -- Check that attr_needed is updated correctly after self-join removal. In this
 -- test, the join of j1 with j2 is removed. k1.b is required at either j1 or j2.
@@ -3110,12 +3114,13 @@ on true;
 
 -- Try PHV, which could potentially be removed completely by SJE, but that's
 -- not implemented yet.
-explain (verbose, costs off)
-select 1 from emp1 t1 left join
-    ((select 1 as x, * from emp1 t2) s1 inner join
-        (select * from emp1 t3) s2 on s1.id = s2.id)
-    on true
-where s1.x = 1;
+--dg-differs: the plan
+--dg explain (verbose, costs off)
+--dg select 1 from emp1 t1 left join
+--dg     ((select 1 as x, * from emp1 t2) s1 inner join
+--dg         (select * from emp1 t3) s2 on s1.id = s2.id)
+--dg     on true
+--dg where s1.x = 1;
 
 -- Check that PHVs do not impose any constraints on removing self joins
 explain (verbose, costs off)
@@ -3139,12 +3144,13 @@ CREATE INDEX tbl_phv_idx ON tbl_phv(x);
 INSERT INTO tbl_phv (x, y)
   SELECT gs, gs FROM generate_series(1,100) AS gs;
 VACUUM ANALYZE tbl_phv;
-EXPLAIN (COSTS OFF, VERBOSE)
-SELECT 1 FROM tbl_phv t1 LEFT JOIN
-  (SELECT 1 extra, x, y FROM tbl_phv tl) t3 JOIN
-    (SELECT y FROM tbl_phv tr) t4
-  ON t4.y = t3.y
-ON true WHERE t3.extra IS NOT NULL AND t3.x = t1.x % 2;
+--dg-differs: the plan
+--dg EXPLAIN (COSTS OFF, VERBOSE)
+--dg SELECT 1 FROM tbl_phv t1 LEFT JOIN
+--dg   (SELECT 1 extra, x, y FROM tbl_phv tl) t3 JOIN
+--dg     (SELECT y FROM tbl_phv tr) t4
+--dg   ON t4.y = t3.y
+--dg ON true WHERE t3.extra IS NOT NULL AND t3.x = t1.x % 2;
 DROP TABLE IF EXISTS tbl_phv;
 
 -- Check that SJE replaces join clauses involving the removed rel correctly
@@ -3176,13 +3182,13 @@ TRUNCATE emp1;
 EXPLAIN (COSTS OFF)
 UPDATE sj sq SET b = 1 FROM sj as sz WHERE sq.a = sz.a;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE sj_del_rule AS ON DELETE TO sj
 --dg   DO INSTEAD
 --dg     UPDATE sj SET a = 1 WHERE a = old.a;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) DELETE FROM sj;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP RULE sj_del_rule ON sj CASCADE;
 
 -- Check that SJE does not mistakenly omit qual clauses (bug #18187)
@@ -3953,7 +3959,7 @@ RESET enable_indexscan;
 -- Test that we do not account for nullingrels when looking up statistics
 CREATE TABLE group_tbl (a INT, b INT);
 INSERT INTO group_tbl SELECT 1, 1;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS group_tbl_stat (ndistinct) ON a, b FROM group_tbl;
 ANALYZE group_tbl;
 

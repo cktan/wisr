@@ -2723,9 +2723,12 @@ static AclMode pg_attribute_aclmask_ext(Oid table_oid, AttrNumber attnum,
   Acl *acl;
   Oid ownerId;
 
-  /* A catalog a query can read: its columns are read, never written. */
+  /*
+   * A catalog a query can read has no column ACL, as PostgreSQL's catalogs
+   * have none: what it grants, it grants on the whole relation.
+   */
   if (cat_relation(table_oid) != NULL)
-    return mask & ACL_SELECT;
+    return 0;
 
   /*
    * First, get the column's ACL from its pg_attribute entry
@@ -2834,23 +2837,17 @@ static AclMode pg_class_aclmask_ext(Oid table_oid, Oid roleid, AclMode mask,
   Oid ownerId;
 
   /*
-   * A user's relation is sm's: no pg_class row, and no ACL but the default
-   * one, of its owner, the one superuser there is.
+   * A superuser may do anything to a relation of sm's, and read a catalog a
+   * query can read (catalog/catrel.c), which has nothing stored to write:
+   * decided before its pg_class row is made, as most checks are a
+   * superuser's.  Another role's check reads the row's ACL, below.
    */
-  if (table_oid >= FirstNormalObjectId) {
-    if (superuser_arg(roleid))
+  if (superuser_arg(roleid)) {
+    if (table_oid >= FirstNormalObjectId)
       return mask;
-    acl = acldefault(OBJECT_TABLE, BOOTSTRAP_SUPERUSERID);
-    return aclmask(acl, roleid, BOOTSTRAP_SUPERUSERID, mask, how);
+    if (cat_relation(table_oid) != NULL)
+      return mask & ACL_SELECT;
   }
-
-  /*
-   * A catalog a query can read (catalog/catrel.c) has no pg_class row
-   * either: anyone may read it, as PostgreSQL grants its catalogs, and no
-   * one may write it, as it has nothing stored.
-   */
-  if (cat_relation(table_oid) != NULL)
-    return mask & ACL_SELECT;
 
   /*
    * Must get the relation's tuple from pg_class
@@ -3337,9 +3334,9 @@ AclResult pg_attribute_aclcheck_all_ext(Oid table_oid, Oid roleid, AclMode mode,
   AttrNumber nattrs;
   AttrNumber curr_att;
 
-  /* A catalog a query can read: its columns are read, never written. */
+  /* A catalog a query can read has no column ACL (above). */
   if (cat_relation(table_oid) != NULL)
-    return (mode & ~ACL_SELECT) == 0 ? ACLCHECK_OK : ACLCHECK_NO_PRIV;
+    return ACLCHECK_NO_PRIV;
 
   /*
    * Must fetch pg_class row to get owner ID and number of attributes.

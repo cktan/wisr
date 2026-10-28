@@ -24,25 +24,17 @@ SELECT table_to_xml('testxmlschema.test1', true, true, '');
 --dg-cascade
 --dg SELECT table_to_xml('testxmlschema.test2', false, false, '');
 
---dg-differs: another error: relation pg_class cannot be opened: digres has no catalog tables
---dg SELECT table_to_xmlschema('testxmlschema.test1', false, false, '');
---dg-differs: another error: relation pg_class cannot be opened: digres has no catalog tables
---dg SELECT table_to_xmlschema('testxmlschema.test1', true, false, '');
---dg-differs: another error: relation pg_class cannot be opened: digres has no catalog tables
---dg SELECT table_to_xmlschema('testxmlschema.test1', false, true, 'foo');
---dg-differs: another error: relation pg_class cannot be opened: digres has no catalog tables
---dg SELECT table_to_xmlschema('testxmlschema.test1', true, true, '');
+SELECT table_to_xmlschema('testxmlschema.test1', false, false, '');
+SELECT table_to_xmlschema('testxmlschema.test1', true, false, '');
+SELECT table_to_xmlschema('testxmlschema.test1', false, true, 'foo');
+SELECT table_to_xmlschema('testxmlschema.test1', true, true, '');
 --dg-cascade
 --dg SELECT table_to_xmlschema('testxmlschema.test2', false, false, '');
 
---dg-differs: another error: relation pg_class cannot be opened: digres has no catalog tables
---dg SELECT table_to_xml_and_xmlschema('testxmlschema.test1', false, false, '');
---dg-differs: another error: relation pg_class cannot be opened: digres has no catalog tables
---dg SELECT table_to_xml_and_xmlschema('testxmlschema.test1', true, false, '');
---dg-differs: another error: relation pg_class cannot be opened: digres has no catalog tables
---dg SELECT table_to_xml_and_xmlschema('testxmlschema.test1', false, true, '');
---dg-differs: another error: relation pg_class cannot be opened: digres has no catalog tables
---dg SELECT table_to_xml_and_xmlschema('testxmlschema.test1', true, true, 'foo');
+SELECT table_to_xml_and_xmlschema('testxmlschema.test1', false, false, '');
+SELECT table_to_xml_and_xmlschema('testxmlschema.test1', true, false, '');
+SELECT table_to_xml_and_xmlschema('testxmlschema.test1', false, true, '');
+SELECT table_to_xml_and_xmlschema('testxmlschema.test1', true, true, 'foo');
 
 SELECT query_to_xml('SELECT * FROM testxmlschema.test1', false, false, '');
 SELECT query_to_xmlschema('SELECT * FROM testxmlschema.test1', false, false, '');

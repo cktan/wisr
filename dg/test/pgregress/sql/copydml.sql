@@ -27,86 +27,86 @@ copy (insert into copydml_test default values) to stdout;
 copy (update copydml_test set t = 'g') to stdout;
 copy (delete from copydml_test) to stdout;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule qqq as on insert to copydml_test do instead nothing;
 --dg-cascade
 --dg copy (insert into copydml_test default values) to stdout;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule qqq on copydml_test;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule qqq as on insert to copydml_test do also delete from copydml_test;
 --dg-cascade
 --dg copy (insert into copydml_test default values) to stdout;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule qqq on copydml_test;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule qqq as on insert to copydml_test do instead (delete from copydml_test; delete from copydml_test);
 --dg-cascade
 --dg copy (insert into copydml_test default values) to stdout;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule qqq on copydml_test;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule qqq as on insert to copydml_test where new.t <> 'f' do instead delete from copydml_test;
 --dg-cascade
 --dg copy (insert into copydml_test default values) to stdout;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule qqq on copydml_test;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule qqq as on update to copydml_test do instead nothing;
 --dg-cascade
 --dg copy (update copydml_test set t = 'f') to stdout;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule qqq on copydml_test;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule qqq as on update to copydml_test do also delete from copydml_test;
 --dg-cascade
 --dg copy (update copydml_test set t = 'f') to stdout;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule qqq on copydml_test;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule qqq as on update to copydml_test do instead (delete from copydml_test; delete from copydml_test);
 --dg-cascade
 --dg copy (update copydml_test set t = 'f') to stdout;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule qqq on copydml_test;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule qqq as on update to copydml_test where new.t <> 'f' do instead delete from copydml_test;
 --dg-cascade
 --dg copy (update copydml_test set t = 'f') to stdout;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule qqq on copydml_test;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule qqq as on delete to copydml_test do instead nothing;
 --dg-cascade
 --dg copy (delete from copydml_test) to stdout;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule qqq on copydml_test;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule qqq as on delete to copydml_test do also insert into copydml_test default values;
 --dg-cascade
 --dg copy (delete from copydml_test) to stdout;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule qqq on copydml_test;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule qqq as on delete to copydml_test do instead (insert into copydml_test default values; insert into copydml_test default values);
 --dg-cascade
 --dg copy (delete from copydml_test) to stdout;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule qqq on copydml_test;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule qqq as on delete to copydml_test where old.t <> 'f' do instead insert into copydml_test default values;
 --dg-cascade
 --dg copy (delete from copydml_test) to stdout;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule qqq on copydml_test;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule qqq as on insert to copydml_test do instead notify copydml_test;
 --dg-cascade
 --dg copy (insert into copydml_test default values) to stdout;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule qqq on copydml_test;
 
 -- triggers

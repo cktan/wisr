@@ -9246,3 +9246,53 @@ way to ROLE.md's four checks, with no `pg_hba.conf`.
   past VALID UNTIL, under another name, and not as another
   role. Each was shown to fail with its check disabled. sm is
   unchanged.
+
+## Step 315: a role that is not a superuser runs statements
+
+The first half of step 4 of roles (`../sm/ROLE.md` §9). Since
+step 313 a session may be a role that is not a superuser, and
+every statement of one that looked a name up failed: the
+privilege check of a schema read `pg_namespace` by the
+syscache, which opened an index no catalog relation has.
+
+- **No index for a catalog relation**: `systable_beginscan()`
+  scans one, as a catalog of compiled-in rows was scanned
+  already; its access method makes the rows its keys pass.
+- **A row of sm's catalog is not kept** by the syscache
+  (`catrel_is_cached()`): no DDL of sm's invalidates one, so
+  an entry made for `pg_class`, `pg_namespace` and the rest is
+  dead at once, and goes once released; nor is a negative
+  entry kept. Rows compiled in, and `pg_global`'s, are kept as
+  before.
+- **What initdb leaves, as PostgreSQL 18's**: `pg_catalog`'s
+  USAGE is PUBLIC's; `public` is `pg_database_owner`'s, with
+  USAGE for PUBLIC and CREATE for its owner alone; a catalog
+  relation is PUBLIC's to read, but `pg_authid`. PostgreSQL's
+  sixteen predefined roles are rows of `pg_global`'s
+  `pg_authid`, with their oids, and `pg_monitor` has its three
+  members; DROP ROLE refuses one, and the bootstrap superuser,
+  as required by the database system.
+- **`aclchk.c`'s shortcuts go**: a relation of sm's was taken
+  to be the superuser's with the default ACL, and a catalog
+  relation and every column of one readable by anyone, as no
+  row could be read. A superuser's check is still decided
+  before a row is made; another role's reads the row's ACL. A
+  catalog relation's column has no ACL, as PostgreSQL's has
+  none: the column checks the executor falls back to had let
+  any role read `pg_authid`.
+- **Left on purpose**: every object made is still the
+  superuser's (step 4's second half), so another role is
+  refused every table and may create none, as in PostgreSQL
+  with no GRANT, which is step 5.
+- **pgregress**: the 59 files with statements taken out at a
+  catalog relation that could not be opened, `pg_namespace`,
+  `pg_class`, `pg_rewrite` and the others the syscache read,
+  were ported again: 933 statements are back, and none is
+  taken out at those three now.
+- **Tests**: `server.sh` has a role that is not a superuser run
+  a statement that looks names up, read `pg_class` and
+  `pg_roles` and not `pg_authid`, be refused the superuser's
+  table and CREATE in `public`; checks the two schemas' ACLs,
+  `pg_monitor`'s member and its DROP refused; and has a
+  session's check of a table dropped by another answered as
+  for no table. Each was shown to fail with its part undone.

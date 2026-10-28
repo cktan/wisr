@@ -903,20 +903,20 @@ create role regress_multirange_owner;
 set role regress_multirange_owner;
 --dg-cascade
 --dg revoke usage on type multitextrange1 from public;  -- fail
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg revoke usage on type textrange1 from public;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg \dT+ *textrange1*
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg create temp table test1(f1 multitextrange1[]);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg revoke usage on type textrange1 from regress_multirange_owner;
 --dg-cascade
 --dg create temp table test2(f1 multitextrange1[]);  -- fail
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop table test1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop type textrange1;
 reset role;
 drop role regress_multirange_owner;
@@ -927,14 +927,12 @@ drop role regress_multirange_owner;
 create role regress_mr;
 create schema mr_sch;
 set role regress_mr;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg create type mytype as range (subtype=int4, multirange_type_name=mr_sch.mr_type);
+create type mytype as range (subtype=int4, multirange_type_name=mr_sch.mr_type);
 reset role;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
 --dg grant create on schema mr_sch to regress_mr;
 set role regress_mr;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg create type mytype as range (subtype=int4, multirange_type_name=mr_sch.mr_type);
+create type mytype as range (subtype=int4, multirange_type_name=mr_sch.mr_type);
 reset role;
 drop type mytype;
 drop schema mr_sch;

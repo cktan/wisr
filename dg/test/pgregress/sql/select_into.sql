@@ -24,31 +24,30 @@ CREATE USER regress_selinto_user;
 --dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES FOR ROLE regress_selinto_user
 --dg 	  REVOKE INSERT ON TABLES FROM regress_selinto_user;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
 --dg GRANT ALL ON SCHEMA selinto_schema TO public;
 
 SET SESSION AUTHORIZATION regress_selinto_user;
 -- WITH DATA, passes.
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE TABLE selinto_schema.tbl_withdata1 (a)
 --dg   AS SELECT generate_series(1,3) WITH DATA;
 --dg-cascade
 --dg INSERT INTO selinto_schema.tbl_withdata1 VALUES (4);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
 --dg   CREATE TABLE selinto_schema.tbl_withdata2 (a) AS
 --dg   SELECT generate_series(1,3) WITH DATA;
 -- WITH NO DATA, passes.
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE TABLE selinto_schema.tbl_nodata1 (a) AS
 --dg   SELECT generate_series(1,3) WITH NO DATA;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
 --dg   CREATE TABLE selinto_schema.tbl_nodata2 (a) AS
 --dg   SELECT generate_series(1,3) WITH NO DATA;
 -- EXECUTE and WITH DATA, passes.
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg PREPARE data_sel AS SELECT generate_series(1,3);
+PREPARE data_sel AS SELECT generate_series(1,3);
 --dg-cascade
 --dg CREATE TABLE selinto_schema.tbl_withdata3 (a) AS
 --dg   EXECUTE data_sel WITH DATA;
@@ -73,8 +72,7 @@ RESET SESSION AUTHORIZATION;
 SET SESSION AUTHORIZATION regress_selinto_user;
 RESET SESSION AUTHORIZATION;
 
---dg-cascade
---dg DEALLOCATE data_sel;
+DEALLOCATE data_sel;
 --dg-cascade
 --dg DROP SCHEMA selinto_schema CASCADE;
 DROP USER regress_selinto_user;

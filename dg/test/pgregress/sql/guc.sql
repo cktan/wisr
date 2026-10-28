@@ -198,15 +198,14 @@ CREATE TEMP TABLE tmp_foo (data text) ON COMMIT DELETE ROWS;
 CREATE ROLE regress_guc_user;
 SET SESSION AUTHORIZATION regress_guc_user;
 -- look changes
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT pg_listening_channels();
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: relation "?" does not exist
 --dg SELECT name FROM pg_prepared_statements;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: relation "?" does not exist
 --dg SELECT name FROM pg_cursors;
 SHOW vacuum_cost_delay;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT relname from pg_class where relname = 'tmp_foo';
+SELECT relname from pg_class where relname = 'tmp_foo';
 SELECT current_user = 'regress_guc_user';
 -- discard everything
 DISCARD ALL;

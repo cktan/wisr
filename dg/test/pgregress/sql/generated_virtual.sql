@@ -2,7 +2,7 @@
 
 
 CREATE SCHEMA generated_virtual_tests;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
 --dg GRANT USAGE ON SCHEMA generated_virtual_tests TO PUBLIC;
 SET search_path = generated_virtual_tests;
 
@@ -460,7 +460,7 @@ CREATE USER regress_user11;
 SET ROLE regress_user11;
 --dg-cascade
 --dg SELECT a, b FROM gtest11;  -- not allowed
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT a, c FROM gtest11;  -- allowed
 --dg-cascade
 --dg SELECT gf1(10);  -- not allowed
@@ -1032,7 +1032,7 @@ ALTER TABLE gtest25 ADD COLUMN d int DEFAULT 101;
 --dg CREATE STATISTICS gtest31_2_stat ON ((y).b is not null) FROM gtest31_2;
 --dg-cascade
 --dg ALTER TABLE gtest31_1 ALTER COLUMN b SET EXPRESSION AS ('hello2');
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS gtest31_2_stat;
 
 --dg-cascade

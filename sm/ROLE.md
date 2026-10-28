@@ -434,7 +434,10 @@ it (`../CLAUDE.md`, "Test at every layer"):
    (`../dg/WORKNOTE.md` step 313).
 3. §5's four checks, in place of the fixed rule. Done
    (`../dg/WORKNOTE.md` step 314).
-4. Owners: an object's entry in `pg_global`, `current_user`
+4. Owners: what initdb leaves, as PostgreSQL's (the schemas'
+   ACLs, the predefined roles), and a role that is not a
+   superuser running statements, done (`../dg/WORKNOTE.md`
+   step 315); an object's entry in `pg_global`, `current_user`
    after CREATE commits, the database's owner without one,
    `ALTER ... OWNER TO`; the sweep of entries left behind.
 5. GRANT and REVOKE on tables, views, sequences, schemas and

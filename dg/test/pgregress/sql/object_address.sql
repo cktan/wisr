@@ -52,7 +52,7 @@ SET search_path TO 'addr_nsp';
 --dg CREATE FUNCTION addr_nsp.trig() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN END; $$;
 --dg-cascade
 --dg CREATE TRIGGER t BEFORE INSERT ON addr_nsp.gentable FOR EACH ROW EXECUTE PROCEDURE addr_nsp.trig();
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY genpol ON addr_nsp.gentable;
 --dg-skip: language "?" does not exist
 --dg CREATE PROCEDURE addr_nsp.proc(int4) LANGUAGE SQL AS $$ $$;
@@ -177,8 +177,7 @@ SELECT pg_get_object_address('foreign-data wrapper', '{one,two}', '{}');
 --dg-differs: another error: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg SELECT pg_get_object_address('server', '{one}', '{}');
 SELECT pg_get_object_address('server', '{one,two}', '{}');
---dg-differs: another error: relation pg_extension cannot be opened: digres has no catalog tables
---dg SELECT pg_get_object_address('extension', '{one}', '{}');
+SELECT pg_get_object_address('extension', '{one}', '{}');
 SELECT pg_get_object_address('extension', '{one,two}', '{}');
 --dg-differs: another error: relation pg_event_trigger cannot be opened: digres has no catalog tables
 --dg SELECT pg_get_object_address('event trigger', '{one}', '{}');

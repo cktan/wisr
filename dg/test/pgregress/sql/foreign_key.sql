@@ -88,11 +88,10 @@ CREATE TABLE FKTABLE ( ftest1 int, ftest2 int, ftest3 int, CONSTRAINT constrname
                        REFERENCES PKTABLE MATCH FULL ON DELETE SET NULL ON UPDATE SET NULL);
 
 -- Test comments
---dg-differs: another error: relation pg_constraint cannot be opened: digres has no catalog tables
---dg COMMENT ON CONSTRAINT constrname_wrong ON FKTABLE IS 'fk constraint comment';
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+COMMENT ON CONSTRAINT constrname_wrong ON FKTABLE IS 'fk constraint comment';
+--dg-skip: COMMENT is not supported yet
 --dg COMMENT ON CONSTRAINT constrname ON FKTABLE IS 'fk constraint comment';
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg-skip: COMMENT is not supported yet
 --dg COMMENT ON CONSTRAINT constrname ON FKTABLE IS NULL;
 
 -- Insert test data into PKTABLE
@@ -1369,7 +1368,7 @@ drop table pp, cc;
 --
 create temp table t1 (a integer primary key, b text);
 create temp table t2 (a integer primary key, b integer references t1);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule r1 as on delete to t1 do delete from t2 where t2.b = old.a;
 
 --dg-cascade
@@ -2089,34 +2088,28 @@ CREATE TABLE fk_partitioned_pk_6 (a int PRIMARY KEY);
 
 -- test the case when the referenced table is owned by a different user
 create role regress_other_partitioned_fk_owner;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg grant references on fk_notpartitioned_pk to regress_other_partitioned_fk_owner;
 set role regress_other_partitioned_fk_owner;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg create table other_partitioned_fk(a int, b int) partition by list (a);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg create table other_partitioned_fk_1 partition of other_partitioned_fk
---dg   for values in (2048);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg insert into other_partitioned_fk
---dg   select 2048, x from generate_series(1,10) x;
+create table other_partitioned_fk(a int, b int) partition by list (a);
+create table other_partitioned_fk_1 partition of other_partitioned_fk
+  for values in (2048);
+insert into other_partitioned_fk
+  select 2048, x from generate_series(1,10) x;
 -- this should fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg alter table other_partitioned_fk add foreign key (a, b)
---dg   references fk_notpartitioned_pk(a, b);
+alter table other_partitioned_fk add foreign key (a, b)
+  references fk_notpartitioned_pk(a, b);
 -- add the missing keys and retry
 reset role;
 insert into fk_notpartitioned_pk (a, b)
   select 2048, x from generate_series(1,10) x;
 set role regress_other_partitioned_fk_owner;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg alter table other_partitioned_fk add foreign key (a, b)
---dg   references fk_notpartitioned_pk(a, b);
+alter table other_partitioned_fk add foreign key (a, b)
+  references fk_notpartitioned_pk(a, b);
 -- clean up
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg drop table other_partitioned_fk;
+drop table other_partitioned_fk;
 reset role;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: cache lookup failed for attribute -N of relation N
 --dg revoke all on fk_notpartitioned_pk from regress_other_partitioned_fk_owner;
 drop role regress_other_partitioned_fk_owner;
 
@@ -2614,7 +2607,7 @@ SET search_path TO fkpart9;
 --dg-cascade
 --dg INSERT INTO fk VALUES (1);		-- should fail
 BEGIN;
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SET CONSTRAINTS fk_a_fkey DEFERRED;
 --dg-cascade
 --dg INSERT INTO fk VALUES (1);
@@ -2622,7 +2615,7 @@ BEGIN;
 --dg COMMIT;							-- should fail
 --dg-cascade
 --dg BEGIN;
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SET CONSTRAINTS fk_a_fkey DEFERRED;
 --dg-cascade
 --dg INSERT INTO fk VALUES (1);
@@ -2630,7 +2623,7 @@ BEGIN;
 --dg INSERT INTO pk VALUES (1);
 COMMIT;							-- OK
 BEGIN;
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SET CONSTRAINTS fk_a_fkey DEFERRED;
 --dg-cascade
 --dg DELETE FROM pk WHERE a = 1;

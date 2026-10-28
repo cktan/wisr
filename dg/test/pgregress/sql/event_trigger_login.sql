@@ -1,6 +1,6 @@
 -- Login event triggers
 CREATE TABLE user_logins(id serial, who text);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT SELECT ON user_logins TO public;
 --dg-skip: language "?" does not exist
 --dg CREATE FUNCTION on_login_proc() RETURNS event_trigger AS $$

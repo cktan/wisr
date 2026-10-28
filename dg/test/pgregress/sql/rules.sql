@@ -12,22 +12,21 @@ create table rtest_t2 (a int4, b int4);
 create table rtest_t3 (a int4, b int4);
 
 create view rtest_v1 as select * from rtest_t1;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_v1_ins as on insert to rtest_v1 do instead
 --dg 	insert into rtest_t1 values (new.a, new.b);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_v1_upd as on update to rtest_v1 do instead
 --dg 	update rtest_t1 set a = new.a, b = new.b
 --dg 	where a = old.a;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_v1_del as on delete to rtest_v1 do instead
 --dg 	delete from rtest_t1 where a = old.a;
 -- Test comments
---dg-differs: another error: relation pg_rewrite cannot be opened: digres has no catalog tables
---dg COMMENT ON RULE rtest_v1_bad ON rtest_v1 IS 'bad rule';
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+COMMENT ON RULE rtest_v1_bad ON rtest_v1 IS 'bad rule';
+--dg-cascade
 --dg COMMENT ON RULE rtest_v1_del ON rtest_v1 IS 'delete rule';
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg COMMENT ON RULE rtest_v1_del ON rtest_v1 IS NULL;
 --
 -- Tables and rules for the constraint update/delete test
@@ -42,7 +41,7 @@ create table rtest_interface (sysname text, ifname text);
 create table rtest_person (pname text, pdesc text);
 create table rtest_admin (pname text, sysname text);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_sys_upd as on update to rtest_system do also (
 --dg 	update rtest_interface set sysname = new.sysname
 --dg 		where sysname = old.sysname;
@@ -50,17 +49,17 @@ create table rtest_admin (pname text, sysname text);
 --dg 		where sysname = old.sysname
 --dg 	);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_sys_del as on delete to rtest_system do also (
 --dg 	delete from rtest_interface where sysname = old.sysname;
 --dg 	delete from rtest_admin where sysname = old.sysname;
 --dg 	);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_pers_upd as on update to rtest_person do also
 --dg 	update rtest_admin set pname = new.pname where pname = old.pname;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_pers_del as on delete to rtest_person do also
 --dg 	delete from rtest_admin where pname = old.pname;
 
@@ -71,17 +70,17 @@ create table rtest_emp (ename char(20), salary numeric);
 create table rtest_emplog (ename char(20), who name, action char(10), newsal numeric, oldsal numeric);
 create table rtest_empmass (ename char(20), salary numeric);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_emp_ins as on insert to rtest_emp do
 --dg 	insert into rtest_emplog values (new.ename, current_user,
 --dg 			'hired', new.salary, '0.00');
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_emp_upd as on update to rtest_emp where new.salary != old.salary do
 --dg 	insert into rtest_emplog values (new.ename, current_user,
 --dg 			'honored', new.salary, old.salary);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_emp_del as on delete to rtest_emp do
 --dg 	insert into rtest_emplog values (old.ename, current_user,
 --dg 			'fired', '0.00', old.salary);
@@ -97,22 +96,22 @@ create table rtest_t7 (a int4, b text);
 create table rtest_t8 (a int4, b text);
 create table rtest_t9 (a int4, b text);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_t4_ins1 as on insert to rtest_t4
 --dg 		where new.a >= 10 and new.a < 20 do instead
 --dg 	insert into rtest_t5 values (new.a, new.b);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_t4_ins2 as on insert to rtest_t4
 --dg 		where new.a >= 20 and new.a < 30 do
 --dg 	insert into rtest_t6 values (new.a, new.b);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_t5_ins as on insert to rtest_t5
 --dg 		where new.a > 15 do
 --dg 	insert into rtest_t7 values (new.a, new.b);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_t6_ins as on insert to rtest_t6
 --dg 		where new.a > 25 do instead
 --dg 	insert into rtest_t8 values (new.a, new.b);
@@ -128,23 +127,23 @@ create table rtest_order2 (a int4, b int4, c text);
 
 create sequence rtest_seq;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_order_r3 as on insert to rtest_order1 do instead
 --dg 	insert into rtest_order2 values (new.a, nextval('rtest_seq'),
 --dg 		'rule 3 - this should run 3rd');
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_order_r4 as on insert to rtest_order1
 --dg 		where a < 100 do instead
 --dg 	insert into rtest_order2 values (new.a, nextval('rtest_seq'),
 --dg 		'rule 4 - this should run 4th');
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_order_r2 as on insert to rtest_order1 do
 --dg 	insert into rtest_order2 values (new.a, nextval('rtest_seq'),
 --dg 		'rule 2 - this should run 2nd');
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_order_r1 as on insert to rtest_order1 do instead
 --dg 	insert into rtest_order2 values (new.a, nextval('rtest_seq'),
 --dg 		'rule 1 - this should run 1st');
@@ -157,20 +156,20 @@ create table rtest_nothn2 (a int4, b text);
 create table rtest_nothn3 (a int4, b text);
 create table rtest_nothn4 (a int4, b text);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_nothn_r1 as on insert to rtest_nothn1
 --dg 	where new.a >= 10 and new.a < 20 do instead nothing;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_nothn_r2 as on insert to rtest_nothn1
 --dg 	where new.a >= 30 and new.a < 40 do instead nothing;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_nothn_r3 as on insert to rtest_nothn2
 --dg 	where new.a >= 100 do instead
 --dg 	insert into rtest_nothn3 values (new.a, new.b);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rtest_nothn_r4 as on insert to rtest_nothn2
 --dg 	do instead nothing;
 
@@ -670,7 +669,7 @@ SELECT * FROM shoe_ready WHERE total_avail >= 2 ORDER BY 1;
 -- but that is non-portable for the regression test
 -- - thomas 1999-02-21
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg     CREATE RULE log_shoelace AS ON UPDATE TO shoelace_data
 --dg         WHERE NEW.sl_avail != OLD.sl_avail
 --dg         DO INSERT INTO shoelace_log VALUES (
@@ -685,7 +684,7 @@ UPDATE shoelace_data SET sl_avail = 6 WHERE  sl_name = 'sl7';
 --dg-cascade
 --dg SELECT * FROM shoelace_log;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg     CREATE RULE shoelace_ins AS ON INSERT TO shoelace
 --dg         DO INSTEAD
 --dg         INSERT INTO shoelace_data VALUES (
@@ -695,7 +694,7 @@ UPDATE shoelace_data SET sl_avail = 6 WHERE  sl_name = 'sl7';
 --dg                NEW.sl_len,
 --dg                NEW.sl_unit);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg     CREATE RULE shoelace_upd AS ON UPDATE TO shoelace
 --dg         DO INSTEAD
 --dg         UPDATE shoelace_data SET
@@ -706,7 +705,7 @@ UPDATE shoelace_data SET sl_avail = 6 WHERE  sl_name = 'sl7';
 --dg                sl_unit = NEW.sl_unit
 --dg          WHERE sl_name = OLD.sl_name;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg     CREATE RULE shoelace_del AS ON DELETE TO shoelace
 --dg         DO INSTEAD
 --dg         DELETE FROM shoelace_data
@@ -722,7 +721,7 @@ UPDATE shoelace_data SET sl_avail = 6 WHERE  sl_name = 'sl7';
         ok_quant    integer
     );
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg     CREATE RULE shoelace_ok_ins AS ON INSERT TO shoelace_ok
 --dg         DO INSTEAD
 --dg         UPDATE shoelace SET
@@ -782,7 +781,7 @@ SELECT count(*) FROM shoe;
 create table rules_foo (f1 int);
 create table rules_foo2 (f1 int);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rules_foorule as on insert to rules_foo where f1 < 100
 --dg do instead nothing;
 
@@ -791,14 +790,14 @@ insert into rules_foo values(1001);
 --dg-cascade
 --dg select * from rules_foo;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule rules_foorule on rules_foo;
 
 -- this should fail because f1 is not exposed for unqualified reference:
 create rule rules_foorule as on insert to rules_foo where f1 < 100
 do instead insert into rules_foo2 values (f1);
 -- this is the correct way:
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rules_foorule as on insert to rules_foo where f1 < 100
 --dg do instead insert into rules_foo2 values (new.f1);
 
@@ -810,7 +809,7 @@ insert into rules_foo values(100);
 --dg-cascade
 --dg select * from rules_foo2;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule rules_foorule on rules_foo;
 drop table rules_foo;
 drop table rules_foo2;
@@ -831,7 +830,7 @@ create view vview as
   select pparent.pid, txt, descrip from
     pparent left join cchild using (pid);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rrule as
 --dg   on update to vview do instead
 --dg (
@@ -856,7 +855,7 @@ select * from vview;
 --dg-cascade
 --dg select * from cchild;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule rrule on vview;
 drop view vview;
 drop table pparent;
@@ -890,13 +889,13 @@ drop table cchild;
 CREATE TABLE ruletest_tbl (a int, b int);
 CREATE TABLE ruletest_tbl2 (a int, b int);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE OR REPLACE RULE myrule AS ON INSERT TO ruletest_tbl
 --dg 	DO INSTEAD INSERT INTO ruletest_tbl2 VALUES (10, 10);
 
 INSERT INTO ruletest_tbl VALUES (99, 99);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE OR REPLACE RULE myrule AS ON INSERT TO ruletest_tbl
 --dg 	DO INSTEAD INSERT INTO ruletest_tbl2 VALUES (1000, 1000);
 
@@ -963,7 +962,7 @@ insert into rule_and_refint_t3 values (1, 13, 11, 'row6')
 --dg   on conflict (sl_name) do update
 --dg   set sl_avail = excluded.sl_avail;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule rule_and_refint_t3_ins as on insert to rule_and_refint_t3
 --dg 	where (exists (select 1 from rule_and_refint_t3
 --dg 			where (((rule_and_refint_t3.id3a = new.id3a)
@@ -982,7 +981,7 @@ insert into rule_and_refint_t3 values (1, 13, 11, 'row8');
 --
 
 create view rules_fooview as select 'rules_foo'::text;
---dg-differs: another error: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-differs: another error: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg drop rule "_RETURN" on rules_fooview;
 drop view rules_fooview;
 
@@ -1040,7 +1039,7 @@ create table id (id serial primary key, name text);
 
 create view id_ordered as select * from id order by id;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule update_id_ordered as on update to id_ordered
 --dg 	do instead update id set name = new.name where id = old.id;
 
@@ -1107,12 +1106,12 @@ reset constraint_exclusion;
 
 create table rules_base(f1 int, f2 int);
 insert into rules_base values(1,2), (11,12);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule r1 as on update to rules_base do instead
 --dg   select * from rules_base where f1 = 1 for update;
 --dg-cascade
 --dg update rules_base set f2 = f2 + 1;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create or replace rule r1 as on update to rules_base do instead
 --dg   select * from rules_base where f1 = 11 for update of rules_base;
 --dg-cascade
@@ -1134,7 +1133,7 @@ select pg_get_viewdef('shoe'::regclass,0) as prettier;
 create table rules_src(f1 int, f2 int default 0);
 create table rules_log(f1 int, f2 int, tag text, id serial);
 insert into rules_src values(1,2), (11,12);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule r1 as on update to rules_src do also
 --dg   insert into rules_log values(old.*, 'old', default), (new.*, 'new', default);
 update rules_src set f2 = f2 + 1;
@@ -1142,12 +1141,12 @@ update rules_src set f2 = f2 * 10;
 select * from rules_src;
 --dg-cascade
 --dg select * from rules_log;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule r2 as on update to rules_src do also
 --dg   values(old.*, 'old'), (new.*, 'new');
 --dg-cascade
 --dg update rules_src set f2 = f2 / 10;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule r3 as on insert to rules_src do also
 --dg   insert into rules_log values(null, null, '-', default), (new.*, 'new', default);
 insert into rules_src values(22,23), (33,default);
@@ -1155,21 +1154,21 @@ insert into rules_src values(22,23), (33,default);
 --dg select * from rules_src;
 --dg-cascade
 --dg select * from rules_log;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule r4 as on delete to rules_src do notify rules_src_deletion;
 
 --
 -- Ensure an aliased target relation for insert is correctly deparsed.
 --
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule r5 as on insert to rules_src do instead insert into rules_log AS trgt SELECT NEW.* RETURNING trgt.f1, trgt.f2;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule r6 as on update to rules_src do instead UPDATE rules_log AS trgt SET tag = 'updated' WHERE trgt.f1 = new.f1;
 
 --
 -- Check deparse disambiguation of INSERT/UPDATE/DELETE targets.
 --
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule r7 as on delete to rules_src do instead
 --dg   with wins as (insert into int4_tbl as trgt values (0) returning *),
 --dg        wupd as (update int4_tbl trgt set f1 = f1+1 returning *),
@@ -1225,13 +1224,13 @@ DROP TABLE rule_t1 CASCADE;
 CREATE TABLE rule_t1 (a INT);
 CREATE VIEW rule_v1 AS SELECT * FROM rule_t1;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE InsertRule AS
 --dg     ON INSERT TO rule_v1
 --dg     DO INSTEAD
 --dg         INSERT INTO rule_t1 VALUES(new.a);
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER RULE InsertRule ON rule_v1 RENAME to NewInsertRule;
 
 INSERT INTO rule_v1 VALUES(1);
@@ -1243,12 +1242,10 @@ SELECT * FROM rule_v1;
 --
 -- error conditions for alter rename rule
 --
---dg-differs: another error: relation pg_class cannot be opened: digres has no catalog tables
---dg ALTER RULE InsertRule ON rule_v1 RENAME TO NewInsertRule; -- doesn't exist
+ALTER RULE InsertRule ON rule_v1 RENAME TO NewInsertRule; -- doesn't exist
 --dg-cascade
 --dg ALTER RULE NewInsertRule ON rule_v1 RENAME TO "_RETURN"; -- already exists
---dg-differs: another error: relation pg_class cannot be opened: digres has no catalog tables
---dg ALTER RULE "_RETURN" ON rule_v1 RENAME TO abc; -- ON SELECT rule cannot be renamed
+ALTER RULE "_RETURN" ON rule_v1 RENAME TO abc; -- ON SELECT rule cannot be renamed
 --dg-cascade
 --dg ALTER RULE rtest_t4_ins1 ON rtest_t4 RENAME TO "_RETURN"; -- also disallowed
 
@@ -1310,11 +1307,11 @@ INSERT INTO hats VALUES ('h7', 'black') RETURNING *;
 --dg-cascade
 --dg SELECT tablename, rulename, definition FROM pg_rules
 --dg 	WHERE tablename = 'hats';
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP RULE hat_nosert ON hats;
 
 -- DO NOTHING without ON CONFLICT
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE hat_nosert_all AS ON INSERT TO hats
 --dg     DO INSTEAD
 --dg     INSERT INTO hat_data VALUES (
@@ -1325,7 +1322,7 @@ INSERT INTO hats VALUES ('h7', 'black') RETURNING *;
 --dg         RETURNING *;
 --dg-cascade
 --dg SELECT definition FROM pg_rules WHERE tablename = 'hats' ORDER BY rulename;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP RULE hat_nosert_all ON hats;
 
 -- Works (does nothing)
@@ -1390,7 +1387,7 @@ INSERT INTO hats VALUES ('h7', 'black') RETURNING *;
 --dg-cascade
 --dg SELECT * FROM hat_data WHERE hat_name IN ('h8', 'h9', 'h7') ORDER BY hat_name;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP RULE hat_upsert ON hats;
 
 drop table hats;
@@ -1416,10 +1413,8 @@ SELECT pg_get_constraintdef(0);
 SELECT pg_get_functiondef(0);
 SELECT pg_get_indexdef(0);
 SELECT pg_get_ruledef(0);
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
---dg SELECT pg_get_statisticsobjdef(0);
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
---dg SELECT pg_get_triggerdef(0);
+SELECT pg_get_statisticsobjdef(0);
+SELECT pg_get_triggerdef(0);
 SELECT pg_get_viewdef(0);
 SELECT pg_get_function_arguments(0);
 SELECT pg_get_function_identity_arguments(0);
@@ -1437,7 +1432,7 @@ SELECT pg_get_function_arg_default('pg_class'::regclass, 0);
 --dg-cascade
 --dg CREATE RULE rules_parted_table_insert AS ON INSERT to rules_parted_table
 --dg     DO INSTEAD INSERT INTO rules_parted_table_1 VALUES (NEW.*);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER RULE rules_parted_table_insert ON rules_parted_table RENAME TO rules_parted_table_insert_redirect;
 --dg-cascade
 --dg DROP TABLE rules_parted_table;
@@ -1447,14 +1442,14 @@ SELECT pg_get_function_arg_default('pg_class'::regclass, 0);
 --
 CREATE TABLE rule_merge1 (a int, b text);
 CREATE TABLE rule_merge2 (a int, b text);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rule1 AS ON INSERT TO rule_merge1
 --dg 	DO INSTEAD INSERT INTO rule_merge2 VALUES (NEW.*);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rule2 AS ON UPDATE TO rule_merge1
 --dg 	DO INSTEAD UPDATE rule_merge2 SET a = NEW.a, b = NEW.b
 --dg 	WHERE a = OLD.a;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rule3 AS ON DELETE TO rule_merge1
 --dg 	DO INSTEAD DELETE FROM rule_merge2 WHERE a = OLD.a;
 
@@ -1585,7 +1580,7 @@ CREATE TABLE rule_merge2 (a int, b text);
 CREATE TABLE ruletest1 (a int);
 CREATE TABLE ruletest2 (b int);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rule1 AS ON INSERT TO ruletest1
 --dg     DO INSTEAD INSERT INTO ruletest2 VALUES (NEW.*);
 
@@ -1621,15 +1616,15 @@ CREATE TABLE ruletest_t1 (x int);
 CREATE TABLE ruletest_t2 (x int);
 CREATE VIEW ruletest_v1 WITH (security_invoker=true) AS
     SELECT * FROM ruletest_t1;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT INSERT ON ruletest_v1 TO regress_rule_user1;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rule1 AS ON INSERT TO ruletest_v1
 --dg     DO INSTEAD INSERT INTO ruletest_t2 VALUES (NEW.*);
 
 SET SESSION AUTHORIZATION regress_rule_user1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg INSERT INTO ruletest_v1 VALUES (1);
 
 RESET SESSION AUTHORIZATION;
@@ -1637,12 +1632,12 @@ RESET SESSION AUTHORIZATION;
 -- Test that main query's relation's permissions are checked before
 -- the rule action's relation's.
 CREATE TABLE ruletest_t3 (x int);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rule2 AS ON UPDATE TO ruletest_t1
 --dg     DO INSTEAD INSERT INTO ruletest_t2 VALUES (OLD.*);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: cache lookup failed for attribute -N of relation N
 --dg REVOKE ALL ON ruletest_t2 FROM regress_rule_user1;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: cache lookup failed for attribute -N of relation N
 --dg REVOKE ALL ON ruletest_t3 FROM regress_rule_user1;
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ruletest_t1 OWNER TO regress_rule_user1;
@@ -1656,7 +1651,7 @@ SELECT * FROM ruletest_t1;
 --dg SELECT * FROM ruletest_t2;
 
 DROP VIEW ruletest_v1;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP RULE rule2 ON ruletest_t1;
 DROP TABLE ruletest_t3;
 DROP TABLE ruletest_t2;

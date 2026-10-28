@@ -65,7 +65,7 @@ s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')}
     -d postgres -c "select oid, rolname, rolsuper,
                       rolpassword ~ '^SCRAM-SHA-256\\$',
                       rolpassword ~ 'secret'
-                    from pg_authid" > "$work/named.authid" 2>&1
+                    from pg_authid where oid = 10" > "$work/named.authid" 2>&1
   PGPASSWORD=secret psql -X -A -t -h 127.0.0.1 -p "$port" -U alice \
     -d postgres -c "alter role alice nologin connection limit 0
                       valid until '2000-01-01'" -c 'create role eve login' \

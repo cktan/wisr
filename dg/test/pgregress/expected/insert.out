@@ -870,7 +870,7 @@ drop role regress_insert_other_user;
 -- situation where the partitioned table is not the primary ModifyTable node
 create table inserttest3 (f1 text default 'foo', f2 text default 'bar', f3 int);
 create role regress_coldesc_role;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg grant insert on inserttest3 to regress_coldesc_role;
 --dg-cascade
 --dg grant insert on brtrigpartcon to regress_coldesc_role;
@@ -882,7 +882,7 @@ set role regress_coldesc_role;
 --dg   insert into inserttest3 (f3) select * from result;
 reset role;
 -- cleanup
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: cache lookup failed for attribute -N of relation N
 --dg revoke all on inserttest3 from regress_coldesc_role;
 --dg-cascade
 --dg revoke all on brtrigpartcon from regress_coldesc_role;

@@ -127,7 +127,7 @@ CREATE TABLE clstr_3 (a INT PRIMARY KEY);
 --dg ALTER TABLE clstr_1 OWNER TO regress_clstr_user;
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE clstr_3 OWNER TO regress_clstr_user;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT SELECT ON clstr_2 TO regress_clstr_user;
 INSERT INTO clstr_1 VALUES (2);
 INSERT INTO clstr_1 VALUES (1);
@@ -165,81 +165,66 @@ SET SESSION AUTHORIZATION regress_clstr_user;
 SET client_min_messages = ERROR;  -- order of "skipping" warnings may vary
 CLUSTER;
 RESET client_min_messages;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT * FROM clstr_1 UNION ALL
 --dg   SELECT * FROM clstr_2 UNION ALL
 --dg   SELECT * FROM clstr_3;
 
 -- cluster a single table using the indisclustered bit previously set
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DELETE FROM clstr_1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg INSERT INTO clstr_1 VALUES (2);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg INSERT INTO clstr_1 VALUES (1);
 --dg-cascade
 --dg CLUSTER clstr_1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT * FROM clstr_1;
 
 -- Test MVCC-safety of cluster. There isn't much we can do to verify the
 -- results with a single backend...
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE clustertest (key int PRIMARY KEY);
+CREATE TABLE clustertest (key int PRIMARY KEY);
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO clustertest VALUES (10);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO clustertest VALUES (20);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO clustertest VALUES (30);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO clustertest VALUES (40);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO clustertest VALUES (50);
+INSERT INTO clustertest VALUES (10);
+INSERT INTO clustertest VALUES (20);
+INSERT INTO clustertest VALUES (30);
+INSERT INTO clustertest VALUES (40);
+INSERT INTO clustertest VALUES (50);
 
 -- Use a transaction so that updates are not committed when CLUSTER sees 'em
 BEGIN;
 
 -- Test update where the old row version is found first in the scan
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE clustertest SET key = 100 WHERE key = 10;
+UPDATE clustertest SET key = 100 WHERE key = 10;
 
 -- Test update where the new row version is found first in the scan
---dg-cascade
---dg UPDATE clustertest SET key = 35 WHERE key = 40;
+UPDATE clustertest SET key = 35 WHERE key = 40;
 
 -- Test longer update chain
---dg-cascade
---dg UPDATE clustertest SET key = 60 WHERE key = 50;
---dg-cascade
---dg UPDATE clustertest SET key = 70 WHERE key = 60;
---dg-cascade
---dg UPDATE clustertest SET key = 80 WHERE key = 70;
+UPDATE clustertest SET key = 60 WHERE key = 50;
+UPDATE clustertest SET key = 70 WHERE key = 60;
+UPDATE clustertest SET key = 80 WHERE key = 70;
 
---dg-cascade
---dg SELECT * FROM clustertest;
---dg-cascade
---dg CLUSTER clustertest_pkey ON clustertest;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM clustertest;
+SELECT * FROM clustertest;
+CLUSTER clustertest_pkey ON clustertest;
+SELECT * FROM clustertest;
 
 COMMIT;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM clustertest;
+SELECT * FROM clustertest;
 
 -- check that temp tables can be clustered
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: must be owner of table clstr_temp
 --dg create temp table clstr_temp (col1 int primary key, col2 text);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg insert into clstr_temp values (2, 'two'), (1, 'one');
 --dg-cascade
 --dg cluster clstr_temp using clstr_temp_pkey;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg select * from clstr_temp;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop table clstr_temp;
 
 RESET SESSION AUTHORIZATION;

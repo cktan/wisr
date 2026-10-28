@@ -64,6 +64,7 @@
 #include "commands/defrem.h"
 #include "optimizer/optimizer.h"
 #include "mb/pg_wchar.h"
+#include "utils/acl.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/datadir.h"
@@ -114,8 +115,39 @@ static const cat_relation_t *cat_rels(Oid only, int *count) {
 }
 
 /*
+ * An ACL of two items, granted by owner: owner_privs to owner, and
+ * public_privs to PUBLIC if there are any.
+ */
+static Datum make_acl(Oid owner, AclMode owner_privs, AclMode public_privs) {
+  int n = ACL_NO_RIGHTS == public_privs ? 1 : 2;
+  /* As acl.c's allocacl() makes one: a one-dimensional aclitem array. */
+  Acl *acl = (Acl *)palloc0(ACL_N_SIZE(n));
+  AclItem *items;
+
+  SET_VARSIZE(acl, ACL_N_SIZE(n));
+  acl->ndim = 1;
+  acl->dataoffset = 0;
+  acl->elemtype = ACLITEMOID;
+  ARR_LBOUND(acl)[0] = 1;
+  ARR_DIMS(acl)[0] = n;
+  items = ACL_DAT(acl);
+
+  items[0].ai_grantee = owner;
+  items[0].ai_grantor = owner;
+  ACLITEM_SET_PRIVS_GOPTIONS(items[0], owner_privs, ACL_NO_RIGHTS);
+  if (ACL_NO_RIGHTS != public_privs) {
+    items[1].ai_grantee = ACL_ID_PUBLIC;
+    items[1].ai_grantor = owner;
+    ACLITEM_SET_PRIVS_GOPTIONS(items[1], public_privs, ACL_NO_RIGHTS);
+  }
+  return PointerGetDatum(acl);
+}
+
+/*
  * pg_namespace's rows: those compiled in, then sm's schemas not among them.
- * Every owner is the superuser, and no ACL is kept.
+ * The compiled-in ones are as initdb leaves PostgreSQL 18's: pg_catalog's
+ * USAGE is PUBLIC's, and public is pg_database_owner's, its USAGE PUBLIC's.
+ * Every other is the superuser's, with no ACL kept.
  */
 static void gen_pg_namespace(Tuplestorestate *ts, TupleDesc desc) {
   int count;
@@ -127,10 +159,17 @@ static void gen_pg_namespace(Tuplestorestate *ts, TupleDesc desc) {
   for (int i = 0; i < count; i++) {
     values[0] = ObjectIdGetDatum(rows[i].oid);
     values[1] = name_datum(rows[i].nspname);
-    values[2] = ObjectIdGetDatum(BOOTSTRAP_SUPERUSERID);
+    values[2] = ObjectIdGetDatum(rows[i].nspowner);
+    nulls[3] = true;
     values[3] = (Datum)0;
+    if (PG_CATALOG_NAMESPACE == rows[i].oid ||
+        PG_PUBLIC_NAMESPACE == rows[i].oid) {
+      nulls[3] = false;
+      values[3] = make_acl(rows[i].nspowner, ACL_ALL_RIGHTS_SCHEMA, ACL_USAGE);
+    }
     tuplestore_putvalues(ts, desc, values, nulls);
   }
+  nulls[3] = true;
   foreach (l, smstore_namespace_names()) {
     const char *name = (const char *)lfirst(l);
     Oid oid = smstore_namespace_oid(name);
@@ -155,7 +194,8 @@ static void gen_pg_namespace(Tuplestorestate *ts, TupleDesc desc) {
 static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
                       const char *name, Oid nspoid, Oid reltype, char kind,
                       int natts, bool hasindex, bool temp,
-                      Datum reloptions = (Datum)0, bool hastriggers = false) {
+                      Datum reloptions = (Datum)0, bool hastriggers = false,
+                      Datum acl = (Datum)0) {
   Datum values[Natts_pg_class];
   bool nulls[Natts_pg_class];
 
@@ -185,7 +225,8 @@ static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
   values[Anum_pg_class_relreplident - 1] =
       CharGetDatum(kind == RELKIND_RELATION ? REPLICA_IDENTITY_DEFAULT
                                             : REPLICA_IDENTITY_NOTHING);
-  nulls[Anum_pg_class_relacl - 1] = true;
+  values[Anum_pg_class_relacl - 1] = acl;
+  nulls[Anum_pg_class_relacl - 1] = acl == (Datum)0;
   values[Anum_pg_class_reloptions - 1] = reloptions;
   nulls[Anum_pg_class_reloptions - 1] = reloptions == (Datum)0;
   nulls[Anum_pg_class_relpartbound - 1] = true;
@@ -201,9 +242,17 @@ static void gen_pg_class(Tuplestorestate *ts, TupleDesc desc, Oid only) {
   const cat_relation_t *cats = cat_rels(only, &count);
   ListCell *l;
 
+  /*
+   * A catalog relation is readable by PUBLIC, as initdb grants PostgreSQL's,
+   * but pg_authid, which holds the passwords.
+   */
   for (int i = 0; i < count; i++)
-    class_row(ts, desc, cats[i].oid, cats[i].name, PG_CATALOG_NAMESPACE,
-              cats[i].rowtype, RELKIND_RELATION, cats[i].natts, false, false);
+    class_row(
+        ts, desc, cats[i].oid, cats[i].name, PG_CATALOG_NAMESPACE,
+        cats[i].rowtype, RELKIND_RELATION, cats[i].natts, false, false,
+        (Datum)0, false,
+        make_acl(BOOTSTRAP_SUPERUSERID, ACL_ALL_RIGHTS_RELATION,
+                 AuthIdRelationId == cats[i].oid ? ACL_NO_RIGHTS : ACL_SELECT));
   foreach (l, sm_relations(only)) {
     smstore_relation_t *r = (smstore_relation_t *)lfirst(l);
 
@@ -1105,11 +1154,22 @@ bool catrel_is_builtin(Oid relid) {
 }
 
 /*
- * Whether the catalog relation relid has pg_global's rows, the roles': they
- * are found by a scan, for they have no index (utils/init/pg_global.c).
+ * Whether the catalog relation relid has pg_global's rows, the roles':
+ * a session drops what it caches of them when pg_global's epoch moves
+ * (utils/init/pg_global.c).
  */
 bool catrel_is_global(Oid relid) {
   return AuthIdRelationId == relid || AuthMemRelationId == relid;
+}
+
+/*
+ * Whether the syscache may keep a row of the catalog relid: one compiled in,
+ * or of pg_global's, or of a catalog that is no catalog relation; not one
+ * made from sm's catalog, which no DDL invalidates (SYSCATALOG.md).
+ */
+bool catrel_is_cached(Oid relid) {
+  return NULL == cat_relation(relid) || catrel_is_builtin(relid) ||
+         catrel_is_global(relid);
 }
 
 /*

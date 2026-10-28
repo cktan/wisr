@@ -9,9 +9,9 @@ CREATE GROUP regress_dep_group;
 
 CREATE TABLE deptest (f1 serial primary key, f2 text);
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT SELECT ON TABLE deptest TO GROUP regress_dep_group;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT ALL ON TABLE deptest TO regress_dep_user, regress_dep_user2;
 
 -- can't drop neither because they have privileges somewhere
@@ -39,7 +39,7 @@ CREATE TABLE deptest (f1 serial primary key, f2 text);
 --dg DROP USER regress_dep_user;
 
 -- we are OK too if we drop the privileges all at once
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: cache lookup failed for attribute -N of relation N
 --dg REVOKE ALL ON deptest FROM regress_dep_user2;
 DROP USER regress_dep_user2;
 
@@ -72,16 +72,12 @@ REASSIGN OWNED BY regress_dep_user1 TO regress_dep_user0;
 --dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
 --dg DROP OWNED BY regress_dep_user0;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE deptest1 (f1 int unique);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT ALL ON deptest1 TO regress_dep_user1 WITH GRANT OPTION;
+CREATE TABLE deptest1 (f1 int unique);
+GRANT ALL ON deptest1 TO regress_dep_user1 WITH GRANT OPTION;
 
 SET SESSION AUTHORIZATION regress_dep_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE deptest (a serial primary key, b text);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT ALL ON deptest1 TO regress_dep_user2;
+CREATE TABLE deptest (a serial primary key, b text);
+GRANT ALL ON deptest1 TO regress_dep_user2;
 RESET SESSION AUTHORIZATION;
 \z deptest1
 
@@ -100,36 +96,27 @@ GRANT ALL ON deptest1 TO regress_dep_user1;
 SET SESSION AUTHORIZATION regress_dep_user1;
 --dg-cascade
 --dg CREATE SCHEMA deptest;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE deptest (a serial primary key, b text);
+CREATE TABLE deptest (a serial primary key, b text);
 --dg-cascade
 --dg ALTER DEFAULT PRIVILEGES FOR ROLE regress_dep_user1 IN SCHEMA deptest
 --dg   GRANT ALL ON TABLES TO regress_dep_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION deptest_func() RETURNS void LANGUAGE plpgsql
---dg   AS $$ BEGIN END; $$;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TYPE deptest_enum AS ENUM ('red');
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TYPE deptest_range AS RANGE (SUBTYPE = int4);
+CREATE FUNCTION deptest_func() RETURNS void LANGUAGE plpgsql
+  AS $$ BEGIN END; $$;
+CREATE TYPE deptest_enum AS ENUM ('red');
+CREATE TYPE deptest_range AS RANGE (SUBTYPE = int4);
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE deptest2 (f1 int);
+CREATE TABLE deptest2 (f1 int);
 -- make a serial column the hard way
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: no error where PostgreSQL has: permission denied for schema public
 --dg CREATE SEQUENCE ss1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE deptest2 ALTER f1 SET DEFAULT nextval('ss1');
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER SEQUENCE ss1 OWNED BY deptest2.f1;
+ALTER TABLE deptest2 ALTER f1 SET DEFAULT nextval('ss1');
+ALTER SEQUENCE ss1 OWNED BY deptest2.f1;
 
 -- When reassigning ownership of a composite type, its pg_class entry
 -- should match
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TYPE deptest_t AS (a int);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT typowner = relowner
---dg FROM pg_type JOIN pg_class c ON typrelid = c.oid WHERE typname = 'deptest_t';
+CREATE TYPE deptest_t AS (a int);
+SELECT typowner = relowner
+FROM pg_type JOIN pg_class c ON typrelid = c.oid WHERE typname = 'deptest_t';
 
 RESET SESSION AUTHORIZATION;
 --dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables

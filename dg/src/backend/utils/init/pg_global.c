@@ -275,6 +275,90 @@ static pg_global_member_t member_of_row(const sm_datum_t *v) {
   return member;
 }
 
+/*
+ * PostgreSQL 18's predefined roles, with their oids, as its pg_authid.dat
+ * has them: INHERIT, and nothing else.
+ */
+static const struct {
+  Oid oid;
+  const char *name;
+} predefined_roles[] = {
+    {6171, "pg_database_owner"},
+    {6181, "pg_read_all_data"},
+    {6182, "pg_write_all_data"},
+    {3373, "pg_monitor"},
+    {3374, "pg_read_all_settings"},
+    {3375, "pg_read_all_stats"},
+    {3377, "pg_stat_scan_tables"},
+    {4569, "pg_read_server_files"},
+    {4570, "pg_write_server_files"},
+    {4571, "pg_execute_server_program"},
+    {4200, "pg_signal_backend"},
+    {4544, "pg_checkpoint"},
+    {6337, "pg_maintain"},
+    {4550, "pg_use_reserved_connections"},
+    {6304, "pg_create_subscription"},
+    {6392, "pg_signal_autovacuum_worker"},
+};
+
+static int insert_role(sm_session_t *session, uint64_t table,
+                       const pg_global_role_t &role);
+
+/* The roles pg_monitor has, as PostgreSQL's system_functions.sql grants. */
+static const Oid monitor_members[] = {3374, 3375, 3377};
+#define PG_MONITOR_OID 3373
+
+/* Insert member into pg_auth_members, the table oid, likewise. */
+static int insert_member(sm_session_t *session, uint64_t table,
+                         const pg_global_member_t &member) {
+  sm_datum_t values[M_NATTS];
+  bool isnull[M_NATTS];
+  sm_tbl_t *tbl;
+  uint64_t id;
+  int rc;
+
+  member_row(member, values, isnull);
+  /* IX: a write to the table's rows. */
+  if (0 != sm_tbl_open(session, table, SM_LOCKMODE_IX, &tbl))
+    return -1;
+  rc = sm_tbl_insert(tbl, values, isnull, M_NATTS, &id);
+  sm_tbl_close(tbl);
+  return rc;
+}
+
+/*
+ * Insert PostgreSQL's predefined roles into pg_authid, the table authid,
+ * and pg_monitor's members into pg_auth_members, the table members, as
+ * initdb leaves PostgreSQL's.  0, or -1 with sm's error set.
+ */
+static int insert_predefined(sm_session_t *session, uint64_t authid,
+                             uint64_t members) {
+  for (const auto &p : predefined_roles) {
+    pg_global_role_t role;
+
+    role.oid = p.oid;
+    role.rolname = p.name;
+    if (0 != insert_role(session, authid, role))
+      return -1;
+  }
+  for (Oid roleid : monitor_members) {
+    pg_global_member_t m;
+    uint64_t oid;
+
+    if (0 != sm_nextseq(session, OID_SEQUENCE, &oid))
+      return -1;
+    m.oid = (Oid)oid;
+    m.roleid = roleid;
+    m.member = PG_MONITOR_OID;
+    m.grantor = BOOTSTRAP_SUPERUSERID;
+    m.inherit_option = true;
+    m.set_option = true;
+    if (0 != insert_member(session, members, m))
+      return -1;
+  }
+  return 0;
+}
+
 /* Insert role into pg_authid, the table oid, in the session's transaction. */
 static int insert_role(sm_session_t *session, uint64_t table,
                        const pg_global_role_t &role) {
@@ -345,6 +429,7 @@ int pg_global_create(sm_env_t *env, const char *superuser, const char *secret) {
       /* A role's oid, and a membership's, are above the built-in ones. */
       0 != sm_mkseq(guard.session, OID_SEQUENCE, FirstNormalObjectId, 1) ||
       0 != insert_role(guard.session, authid, role) ||
+      0 != insert_predefined(guard.session, authid, members) ||
       0 != sm_commit(guard.session)) {
     int saved = sm_errnum();
     std::string msg = sm_errmsg();

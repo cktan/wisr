@@ -541,16 +541,16 @@ COPY rls_t1 (a, b, c) from stdin;
 4	1	4
 \.
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON rls_t1 FOR SELECT USING (a % 2 = 0);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_t1 ENABLE ROW LEVEL SECURITY;
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_t1 FORCE ROW LEVEL SECURITY;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT SELECT ON TABLE rls_t1 TO regress_rls_copy_user;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_attribute cannot be written: digres has no catalog tables
 --dg GRANT SELECT (a, b) ON TABLE rls_t1 TO regress_rls_copy_user_colperms;
 
 -- all columns
@@ -567,19 +567,19 @@ COPY rls_t1 (b, a) TO stdout;
 SET SESSION AUTHORIZATION regress_rls_copy_user;
 
 -- all columns
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg COPY rls_t1 TO stdout;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg COPY rls_t1 (a, b, c) TO stdout;
 
 -- subset of columns
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg COPY rls_t1 (a) TO stdout;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg COPY rls_t1 (a, b) TO stdout;
 
 -- column reordering
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg COPY rls_t1 (b, a) TO stdout;
 
 RESET SESSION AUTHORIZATION;
@@ -587,19 +587,16 @@ RESET SESSION AUTHORIZATION;
 SET SESSION AUTHORIZATION regress_rls_copy_user_colperms;
 
 -- attempt all columns (should fail)
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg COPY rls_t1 TO stdout;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg COPY rls_t1 (a, b, c) TO stdout;
+COPY rls_t1 TO stdout;
+COPY rls_t1 (a, b, c) TO stdout;
 
 -- try to copy column with no privileges (should fail)
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg COPY rls_t1 (c) TO stdout;
+COPY rls_t1 (c) TO stdout;
 
 -- subset of columns (should succeed)
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg COPY rls_t1 (a) TO stdout;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg COPY rls_t1 (a, b) TO stdout;
 
 RESET SESSION AUTHORIZATION;

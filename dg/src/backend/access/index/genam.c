@@ -295,13 +295,11 @@ SysScanDesc systable_beginscan(Relation heapRelation, Oid indexId, bool indexOK,
   Relation irel;
 
   /*
-   * A catalog of compiled-in rows alone has no index, nor one of pg_global's:
-   * its access method makes the rows its keys pass (catrel_is_builtin(),
-   * catrel_is_global()).
+   * A catalog relation has no index: its access method makes the rows its
+   * keys pass (SYSCATALOG.md).
    */
   if (indexOK && !IgnoreSystemIndexes &&
-      !catrel_is_builtin(RelationGetRelid(heapRelation)) &&
-      !catrel_is_global(RelationGetRelid(heapRelation)))
+      catrel_routine() != heapRelation->rd_tableam)
     irel = index_open(indexId, AccessShareLock);
   else
     irel = NULL;

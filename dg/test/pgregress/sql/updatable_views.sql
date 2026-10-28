@@ -157,13 +157,13 @@ UPDATE ro_view20 SET b=upper(b);
 -- A view with a conditional INSTEAD rule but no unconditional INSTEAD rules
 -- or INSTEAD OF triggers should be non-updatable and generate useful error
 -- messages with appropriate detail
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rw_view16_ins_rule AS ON INSERT TO rw_view16
 --dg   WHERE NEW.a > 0 DO INSTEAD INSERT INTO base_tbl VALUES (NEW.a, NEW.b);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rw_view16_upd_rule AS ON UPDATE TO rw_view16
 --dg   WHERE OLD.a > 0 DO INSTEAD UPDATE base_tbl SET b=NEW.b WHERE a=OLD.a;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rw_view16_del_rule AS ON DELETE TO rw_view16
 --dg   WHERE OLD.a > 0 DO INSTEAD DELETE FROM base_tbl WHERE a=OLD.a;
 
@@ -275,7 +275,7 @@ EXPLAIN (costs off) DELETE FROM rw_view1 WHERE a=5;
 
 CREATE TABLE base_tbl_hist(ts timestamptz default now(), a int, b text);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE base_tbl_log AS ON INSERT TO rw_view1 DO ALSO
 --dg   INSERT INTO base_tbl_hist(a,b) VALUES(new.a, new.b);
 
@@ -395,7 +395,7 @@ CREATE VIEW rw_view2 AS SELECT * FROM rw_view1 WHERE a<10;
 --dg  WHERE table_name LIKE 'rw_view%'
 --dg  ORDER BY table_name, ordinal_position;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rw_view1_ins_rule AS ON INSERT TO rw_view1
 --dg   DO INSTEAD INSERT INTO base_tbl VALUES (NEW.a, NEW.b) RETURNING *;
 
@@ -417,7 +417,7 @@ CREATE VIEW rw_view2 AS SELECT * FROM rw_view1 WHERE a<10;
 --dg  WHERE table_name LIKE 'rw_view%'
 --dg  ORDER BY table_name, ordinal_position;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rw_view1_upd_rule AS ON UPDATE TO rw_view1
 --dg   DO INSTEAD UPDATE base_tbl SET b=NEW.b WHERE a=OLD.a RETURNING NEW.*;
 
@@ -439,7 +439,7 @@ CREATE VIEW rw_view2 AS SELECT * FROM rw_view1 WHERE a<10;
 --dg  WHERE table_name LIKE 'rw_view%'
 --dg  ORDER BY table_name, ordinal_position;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rw_view1_del_rule AS ON DELETE TO rw_view1
 --dg   DO INSTEAD DELETE FROM base_tbl WHERE a=OLD.a RETURNING OLD.*;
 
@@ -465,9 +465,9 @@ CREATE VIEW rw_view2 AS SELECT * FROM rw_view1 WHERE a<10;
 --dg INSERT INTO rw_view2 VALUES (3, 'Row 3') RETURNING old.*, new.*;
 --dg-cascade
 --dg UPDATE rw_view2 SET b='R3' WHERE a=3 RETURNING old.*, new.*; -- rule returns NEW
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP RULE rw_view1_upd_rule ON rw_view1;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rw_view1_upd_rule AS ON UPDATE TO rw_view1
 --dg   DO INSTEAD UPDATE base_tbl SET b=NEW.b WHERE a=OLD.a RETURNING *;
 --dg-cascade
@@ -663,7 +663,7 @@ CREATE VIEW rw_view2 AS SELECT * FROM rw_view1 WHERE a<10;
 --dg   WHEN NOT MATCHED AND s.a > 0 THEN INSERT VALUES (s.a, s.b);
 
 -- MERGE with incomplete set of INSTEAD OF triggers
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER rw_view1_del_trig ON rw_view1;
 --dg-cascade
 --dg MERGE INTO rw_view2 t
@@ -677,7 +677,7 @@ CREATE VIEW rw_view2 AS SELECT * FROM rw_view1 WHERE a<10;
 --dg   WHEN MATCHED THEN UPDATE SET b = s.b
 --dg   WHEN NOT MATCHED AND s.a > 0 THEN INSERT VALUES (s.a, s.b); -- ok
 
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER rw_view1_ins_trig ON rw_view1;
 --dg-cascade
 --dg MERGE INTO rw_view2 t
@@ -745,8 +745,7 @@ CREATE USER regress_view_user2;
 CREATE USER regress_view_user3;
 
 SET SESSION AUTHORIZATION regress_view_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE base_tbl(a int, b text, c float);
+CREATE TABLE base_tbl(a int, b text, c float);
 --dg-cascade
 --dg INSERT INTO base_tbl VALUES (1, 'Row 1', 1.0);
 --dg-cascade
@@ -893,8 +892,7 @@ RESET SESSION AUTHORIZATION;
 --dg INSERT INTO base_tbl VALUES (1, 'Row 1', 1.0);
 
 SET SESSION AUTHORIZATION regress_view_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE VIEW rw_view1 AS SELECT * FROM base_tbl;
+CREATE VIEW rw_view1 AS SELECT * FROM base_tbl;
 --dg-cascade
 --dg SELECT * FROM rw_view1;  -- not allowed
 --dg-cascade
@@ -919,7 +917,7 @@ SET SESSION AUTHORIZATION regress_view_user2;
 --dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
 
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT SELECT ON base_tbl TO regress_view_user1;
 
 SET SESSION AUTHORIZATION regress_view_user1;
@@ -960,7 +958,7 @@ SET SESSION AUTHORIZATION regress_view_user2;
 --dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
 
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT UPDATE ON base_tbl TO regress_view_user1;
 
 SET SESSION AUTHORIZATION regress_view_user1;
@@ -1001,7 +999,7 @@ SET SESSION AUTHORIZATION regress_view_user2;
 --dg   WHEN MATCHED THEN UPDATE SET b = 'fud';
 
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: cache lookup failed for attribute -N of relation N
 --dg REVOKE UPDATE ON base_tbl FROM regress_view_user1;
 
 SET SESSION AUTHORIZATION regress_view_user1;
@@ -1034,8 +1032,7 @@ RESET SESSION AUTHORIZATION;
 -- security invoker view permissions
 
 SET SESSION AUTHORIZATION regress_view_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE base_tbl(a int, b text, c float);
+CREATE TABLE base_tbl(a int, b text, c float);
 --dg-cascade
 --dg INSERT INTO base_tbl VALUES (1, 'Row 1', 1.0);
 --dg-cascade
@@ -1191,9 +1188,9 @@ SET SESSION AUTHORIZATION regress_view_user2;
 
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT SELECT ON base_tbl TO regress_view_user1;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_attribute cannot be written: digres has no catalog tables
 --dg GRANT UPDATE (a, b) ON base_tbl TO regress_view_user1;
 
 SET SESSION AUTHORIZATION regress_view_user1;
@@ -1254,9 +1251,9 @@ SET SESSION AUTHORIZATION regress_view_user3;
 
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT SELECT ON base_tbl TO regress_view_user2;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_attribute cannot be written: digres has no catalog tables
 --dg GRANT UPDATE (a, c) ON base_tbl TO regress_view_user2;
 
 SET SESSION AUTHORIZATION regress_view_user2;
@@ -1299,9 +1296,9 @@ SET SESSION AUTHORIZATION regress_view_user3;
 
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT SELECT ON base_tbl TO regress_view_user3;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_attribute cannot be written: digres has no catalog tables
 --dg GRANT UPDATE (a, c) ON base_tbl TO regress_view_user3;
 
 SET SESSION AUTHORIZATION regress_view_user3;
@@ -1325,7 +1322,7 @@ SET SESSION AUTHORIZATION regress_view_user3;
 
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: cache lookup failed for attribute -N of relation N
 --dg REVOKE SELECT, UPDATE ON base_tbl FROM regress_view_user1;
 
 SET SESSION AUTHORIZATION regress_view_user1;
@@ -1377,7 +1374,7 @@ SET SESSION AUTHORIZATION regress_view_user3;
 
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: cache lookup failed for attribute -N of relation N
 --dg REVOKE SELECT, UPDATE ON base_tbl FROM regress_view_user2;
 
 SET SESSION AUTHORIZATION regress_view_user2;
@@ -1493,7 +1490,7 @@ INSERT INTO rw_view1 VALUES (4, 'Row 4');
 
 --dg-cascade
 --dg DROP VIEW rw_view1;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER rw_view1_ins_trig on base_tbl;
 --dg-cascade
 --dg DROP FUNCTION rw_view1_trig_fn();
@@ -2053,12 +2050,12 @@ ALTER VIEW rw_view2 SET (check_option=cascaded);
 
 -- Neither local nor cascaded check options work with INSTEAD rules
 
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER rw_view1_trig ON rw_view1;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rw_view1_ins_rule AS ON INSERT TO rw_view1
 --dg   DO INSTEAD INSERT INTO base_tbl VALUES (NEW.a, 10);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rw_view1_upd_rule AS ON UPDATE TO rw_view1
 --dg   DO INSTEAD UPDATE base_tbl SET a=NEW.a WHERE a=OLD.a;
 --dg-cascade
@@ -2085,7 +2082,7 @@ ALTER VIEW rw_view2 SET (check_option=cascaded);
 --dg CREATE TABLE base_tbl (a int);
 --dg-cascade
 --dg CREATE VIEW rw_view1 AS SELECT a,10 AS b FROM base_tbl;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rw_view1_ins_rule AS ON INSERT TO rw_view1
 --dg   DO INSTEAD INSERT INTO base_tbl VALUES (NEW.a);
 --dg-cascade
@@ -2233,13 +2230,13 @@ ALTER VIEW rw_view1 SET (security_barrier = true);
 --dg-cascade
 --dg INSERT INTO base_tbl VALUES (1, 'Row 1', false), (2, 'Row 2', true);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE base_tbl_ins_rule AS ON INSERT TO base_tbl
 --dg   WHERE EXISTS (SELECT 1 FROM base_tbl t WHERE t.id = new.id)
 --dg   DO INSTEAD
 --dg     UPDATE base_tbl SET data = new.data, deleted = false WHERE id = new.id;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE base_tbl_del_rule AS ON DELETE TO base_tbl
 --dg   DO INSTEAD
 --dg     UPDATE base_tbl SET deleted = true WHERE id = old.id;
@@ -2445,7 +2442,7 @@ DROP TABLE t2;
 --dg CREATE TABLE t1 (a int);
 CREATE VIEW v1 WITH (security_barrier = true) AS
   SELECT * FROM t1;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE v1_upd_rule AS ON UPDATE TO v1 DO INSTEAD
 --dg   UPDATE t1 SET a = NEW.a WHERE a = OLD.a;
 CREATE VIEW v2 WITH (security_barrier = true) AS
@@ -2677,8 +2674,7 @@ create user regress_view_user1;
 create user regress_view_user2;
 
 set session authorization regress_view_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg create table base_tbl(a int unique, b text, c float);
+create table base_tbl(a int unique, b text, c float);
 --dg-cascade
 --dg insert into base_tbl values (1,'xxx',1.0);
 --dg-cascade
@@ -2737,14 +2733,12 @@ reset session authorization;
 set session authorization regress_view_user2;
 --dg-cascade
 --dg create view rw_view4 as select aa, bb, cc FROM rw_view1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg insert into rw_view4 (aa,bb) values (1,'yyy')
---dg   on conflict (aa) do update set bb = excluded.bb; -- Not allowed
+insert into rw_view4 (aa,bb) values (1,'yyy')
+  on conflict (aa) do update set bb = excluded.bb; -- Not allowed
 --dg-cascade
 --dg create view rw_view5 as select aa, bb FROM rw_view1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg insert into rw_view5 (aa,bb) values (1,'yyy')
---dg   on conflict (aa) do update set bb = excluded.bb; -- OK
+insert into rw_view5 (aa,bb) values (1,'yyy')
+  on conflict (aa) do update set bb = excluded.bb; -- OK
 reset session authorization;
 --dg-cascade
 --dg select * from base_tbl;
@@ -2817,11 +2811,11 @@ insert into base_tab_def_view values (17), (default);
 
 -- Using an unconditional DO INSTEAD rule should also cause NULLs to be
 -- inserted where there are no view defaults.
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop trigger base_tab_def_view_instrig on base_tab_def_view;
 --dg-cascade
 --dg drop function base_tab_def_view_instrig_func;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule base_tab_def_view_ins_rule as on insert to base_tab_def_view
 --dg   do instead insert into base_tab_def values (new.a, new.b, new.c, new.d, new.e);
 truncate base_tab_def;
@@ -2844,9 +2838,9 @@ insert into base_tab_def_view values (17), (default);
 -- defaults, unless overridden by view defaults). The second insert should
 -- behave the same as a rule-updatable view (inserting NULLs where there are
 -- no view defaults).
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule base_tab_def_view_ins_rule on base_tab_def_view;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule base_tab_def_view_ins_rule as on insert to base_tab_def_view
 --dg   do also insert into base_tab_def values (new.a, new.b, new.c, new.d, new.e);
 truncate base_tab_def;
@@ -2865,9 +2859,9 @@ insert into base_tab_def_view values (17), (default);
 --dg select * from base_tab_def order by a, c NULLS LAST;
 
 -- Test a DO ALSO INSERT ... SELECT rule
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule base_tab_def_view_ins_rule on base_tab_def_view;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule base_tab_def_view_ins_rule as on insert to base_tab_def_view
 --dg   do also insert into base_tab_def (a, b, e) select new.a, new.b, 'xxx';
 truncate base_tab_def;

@@ -1130,6 +1130,12 @@ void DropRole(DropRoleStmt *stmt) {
      * pg_auth_members entries that can be removed silently, in order to
      * avoid spurious failures. See notes above for more details.
      */
+    /* A role initdb made is the database system's (IsPinnedObject()). */
+    if (roleid < FirstUnpinnedObjectId)
+      ereport(ERROR, (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+                      errmsg("cannot drop role %s because it is required by "
+                             "the database system",
+                             NameStr(roleform->rolname))));
     detail = pg_global_role_dependents(roleid);
     if (detail != NULL)
       ereport(ERROR, (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),

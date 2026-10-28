@@ -1299,11 +1299,10 @@ SELECT * FROM t
 UNION ALL
 SELECT * FROM t2;
 
---dg-differs: the result
---dg SELECT * FROM y;
+SELECT * FROM y;
 
 -- unconditional DO INSTEAD rule
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE y_rule AS ON DELETE TO y DO INSTEAD
 --dg   INSERT INTO y VALUES(42) RETURNING *;
 
@@ -1316,7 +1315,7 @@ SELECT * FROM t2;
 --dg-cascade
 --dg SELECT * FROM y;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP RULE y_rule ON y;
 
 -- check merging of outer CTE with CTE in a rule action
@@ -1332,7 +1331,7 @@ SELECT * FROM bug6051;
 
 CREATE TEMP TABLE bug6051_2 (i int);
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE bug6051_ins AS ON INSERT TO bug6051 DO INSTEAD
 --dg  INSERT INTO bug6051_2
 --dg  VALUES(NEW.i);
@@ -1347,7 +1346,7 @@ INSERT INTO bug6051 SELECT * FROM t1;
 
 -- check INSERT ... SELECT rule actions are disallowed on commands
 -- that have modifyingCTEs
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE OR REPLACE RULE bug6051_ins AS ON INSERT TO bug6051 DO INSTEAD
 --dg  INSERT INTO bug6051_2
 --dg  SELECT NEW.i;
@@ -1360,7 +1359,7 @@ INSERT INTO bug6051 SELECT * FROM t1;
 CREATE TEMP TABLE bug6051_3 AS
   SELECT a FROM generate_series(11,13) AS a;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE bug6051_3_ins AS ON INSERT TO bug6051_3 DO INSTEAD
 --dg   SELECT i FROM bug6051_2;
 
@@ -1671,7 +1670,7 @@ INSERT INTO y SELECT generate_series(1, 10);
 --dg-cascade
 --dg SELECT * FROM y;
 
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER y_trig ON y;
 
 --dg-cascade
@@ -1692,7 +1691,7 @@ INSERT INTO y SELECT generate_series(1, 10);
 --dg-cascade
 --dg SELECT * FROM y;
 
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER y_trig ON y;
 
 --dg-skip: language "?" does not exist
@@ -1721,7 +1720,7 @@ INSERT INTO y SELECT generate_series(1, 10);
 --dg-cascade
 --dg SELECT * FROM y;
 
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER y_trig ON y;
 --dg-cascade
 --dg DROP FUNCTION y_trigger();
@@ -1802,35 +1801,35 @@ SELECT * FROM (
 ) ss;
 
 -- most variants of rules aren't allowed
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE y_rule AS ON INSERT TO y WHERE a=0 DO INSTEAD DELETE FROM y;
 --dg-cascade
 --dg WITH t AS (
 --dg 	INSERT INTO y VALUES(0)
 --dg )
 --dg VALUES(FALSE);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE OR REPLACE RULE y_rule AS ON INSERT TO y DO INSTEAD NOTHING;
 --dg-cascade
 --dg WITH t AS (
 --dg 	INSERT INTO y VALUES(0)
 --dg )
 --dg VALUES(FALSE);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE OR REPLACE RULE y_rule AS ON INSERT TO y DO INSTEAD NOTIFY foo;
 --dg-cascade
 --dg WITH t AS (
 --dg 	INSERT INTO y VALUES(0)
 --dg )
 --dg VALUES(FALSE);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE OR REPLACE RULE y_rule AS ON INSERT TO y DO ALSO NOTIFY foo;
 --dg-cascade
 --dg WITH t AS (
 --dg 	INSERT INTO y VALUES(0)
 --dg )
 --dg VALUES(FALSE);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE OR REPLACE RULE y_rule AS ON INSERT TO y
 --dg   DO INSTEAD (NOTIFY foo; NOTIFY bar);
 --dg-cascade
@@ -1838,7 +1837,7 @@ SELECT * FROM (
 --dg 	INSERT INTO y VALUES(0)
 --dg )
 --dg VALUES(FALSE);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP RULE y_rule ON y;
 
 -- check that parser lookahead for WITH doesn't cause any odd behavior

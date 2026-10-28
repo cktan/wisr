@@ -31,6 +31,7 @@
 #endif
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
+#include "catalog/catrel.h"
 #include "utils/catcache.h"
 #include "utils/datum.h"
 #include "utils/fmgroids.h"
@@ -1386,7 +1387,8 @@ static pg_noinline HeapTuple SearchCatCacheMiss(CatCache *cache, int nkeys,
    * cache inval for that.)
    */
   if (ct == NULL) {
-    if (IsBootstrapProcessingMode())
+    /* Nor is a negative entry kept, for sm's catalog's rows (above). */
+    if (IsBootstrapProcessingMode() || !catrel_is_cached(cache->cc_reloid))
       return NULL;
 
     ct = CatalogCacheCreateEntry(cache, NULL, arguments, hashValue, hashIndex);
@@ -1986,7 +1988,12 @@ static CatCTup *CatalogCacheCreateEntry(CatCache *cache, HeapTuple ntp,
   ct->my_cache = cache;
   ct->c_list = NULL;
   ct->refcount = 0; /* for the moment */
-  ct->dead = false;
+  /*
+   * A row of a catalog relation made from sm's catalog is not kept: no DDL
+   * of sm's invalidates it, so it goes once released, and the next lookup
+   * makes it again (catrel_is_cached()).
+   */
+  ct->dead = !catrel_is_cached(cache->cc_reloid);
   ct->negative = (ntp == NULL);
   ct->hash_value = hashValue;
 

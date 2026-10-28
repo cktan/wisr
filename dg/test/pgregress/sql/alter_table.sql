@@ -331,7 +331,7 @@ CREATE VIEW attmp_view (unique1) AS SELECT unique1 FROM tenk1;
 ALTER TABLE attmp_view RENAME TO attmp_view_new;
 
 SET ROLE regress_alter_table_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: no error where PostgreSQL has: must be owner of view attmp_view_new
 --dg ALTER VIEW attmp_view_new RENAME TO fail;  -- permission denied
 RESET ROLE;
 
@@ -1268,7 +1268,7 @@ insert into def_test default values;
 -- to allow insertions into it, and then alter the view to add
 -- a default
 create view def_view_test as select * from def_test;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule def_view_test_ins as
 --dg 	on insert to def_view_test
 --dg 	do instead insert into def_test select new.*;
@@ -1282,7 +1282,7 @@ insert into def_view_test default values;
 --dg-cascade
 --dg select * from def_view_test;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule def_view_test_ins on def_view_test;
 drop view def_view_test;
 drop table def_test;
@@ -2220,7 +2220,7 @@ create or replace temp view v1 with (security_barrier = true)
   as select * from t1;
 
 create temp table log (q1 int8, q2 int8);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule v1_upd_rule as on update to v1
 --dg   do also insert into log values (new.*);
 
@@ -3323,12 +3323,10 @@ CREATE ROLE regress_test_not_me;
 --dg-cascade
 --dg ALTER TABLE not_owned_by_me OWNER TO regress_test_not_me;
 SET SESSION AUTHORIZATION regress_test_me;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE owned_by_me (
---dg 	a int
---dg ) PARTITION BY LIST (a);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE owned_by_me ATTACH PARTITION not_owned_by_me FOR VALUES IN (1);
+CREATE TABLE owned_by_me (
+	a int
+) PARTITION BY LIST (a);
+ALTER TABLE owned_by_me ATTACH PARTITION not_owned_by_me FOR VALUES IN (1);
 RESET SESSION AUTHORIZATION;
 DROP TABLE owned_by_me, not_owned_by_me;
 --dg-cascade
@@ -4231,7 +4229,7 @@ create table attbl(a int);
 --dg create statistics atref_stat on ((b).a is not null) from atref;
 --dg-cascade
 --dg alter table attbl alter column a type numeric;  -- someday this should work
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop statistics atref_stat;
 
 --dg-cascade

@@ -149,11 +149,11 @@ reset session_replication_role;
 --dg-cascade
 --dg drop routine f1(), p1();
 -- regress_event_trigger_end should fire on these commands
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg grant all on table event_trigger_fire1 to public;
 --dg-skip: COMMENT is not supported yet
 --dg comment on table event_trigger_fire1 is 'here is a comment';
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg revoke all on table event_trigger_fire1 from public;
 --dg-cascade
 --dg drop table event_trigger_fire1;
@@ -433,7 +433,7 @@ DELETE FROM undroppable_objs WHERE object_identity = 'schema_one.table_three';
 --dg CREATE TRIGGER evtrg_nontemp_trig
 --dg   BEFORE INSERT ON evtrg_nontemp_table
 --dg   EXECUTE FUNCTION event_trigger_dummy_trigger();
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY evtrg_nontemp_pol ON evtrg_nontemp_table USING (f2 > 0);
 --dg-cascade
 --dg DROP TABLE evtrg_nontemp_table;
@@ -443,7 +443,7 @@ DELETE FROM undroppable_objs WHERE object_identity = 'schema_one.table_three';
 --dg CREATE TRIGGER a_temp_trig
 --dg   BEFORE INSERT ON a_temp_tbl
 --dg   EXECUTE FUNCTION event_trigger_dummy_trigger();
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY a_temp_pol ON a_temp_tbl USING (f2 > 0);
 --dg-cascade
 --dg DROP TABLE a_temp_tbl;
@@ -699,13 +699,13 @@ CREATE TABLE event_trigger_test (a integer, b text);
 --dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
 --dg CREATE EVENT TRIGGER sql_drop_command ON sql_drop
 --dg     WHEN TAG IN ('DROP POLICY') EXECUTE PROCEDURE drop_sql_command();
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON event_trigger_test USING (FALSE);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER POLICY p1 ON event_trigger_test USING (TRUE);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER POLICY p1 ON event_trigger_test RENAME TO p2;
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP POLICY p2 ON event_trigger_test;
 -- Check the object addresses of all the event triggers.
 --dg-cascade
@@ -742,12 +742,12 @@ CREATE TABLE event_trigger_test (a integer, b text);
 --dg 	ON sql_drop
 --dg 	WHEN TAG IN ('DROP POLICY') EXECUTE FUNCTION test_event_trigger_guc();
 SET event_triggers = 'on';
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY pguc ON event_trigger_test USING (FALSE);
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP POLICY pguc ON event_trigger_test;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY pguc ON event_trigger_test USING (FALSE);
 SET event_triggers = 'off';
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP POLICY pguc ON event_trigger_test;

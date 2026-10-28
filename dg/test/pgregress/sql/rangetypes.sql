@@ -611,14 +611,12 @@ CREATE ROLE regress_subtype;
 --dg-cascade
 --dg REVOKE USAGE ON TYPE mytype FROM PUBLIC;
 SET ROLE regress_subtype;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TYPE myrange AS RANGE (subtype = mytype);
+CREATE TYPE myrange AS RANGE (subtype = mytype);
 RESET ROLE;
 --dg-cascade
 --dg GRANT USAGE ON TYPE mytype TO regress_subtype;
 SET ROLE regress_subtype;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TYPE myrange AS RANGE (subtype = mytype);
+CREATE TYPE myrange AS RANGE (subtype = mytype);
 RESET ROLE;
 --dg-cascade
 --dg DROP TYPE mytype CASCADE;

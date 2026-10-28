@@ -555,46 +555,46 @@ CREATE TABLE vacowned (a int);
 CREATE ROLE regress_vacuum;
 SET ROLE regress_vacuum;
 -- Simple table
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: the result
 --dg VACUUM vacowned;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: the result
 --dg ANALYZE vacowned;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: the result
 --dg VACUUM (ANALYZE) vacowned;
 -- Catalog
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: the result
 --dg VACUUM pg_catalog.pg_class;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: the result
 --dg ANALYZE pg_catalog.pg_class;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: the result
 --dg VACUUM (ANALYZE) pg_catalog.pg_class;
 -- Shared catalog
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: the result
 --dg VACUUM pg_catalog.pg_authid;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: the result
 --dg ANALYZE pg_catalog.pg_authid;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: the result
 --dg VACUUM (ANALYZE) pg_catalog.pg_authid;
 -- Partitioned table and its partitions, nothing owned by other user.
 -- Relations are not listed in a single command to test ownership
 -- independently.
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM vacowned_parted;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM vacowned_part1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM vacowned_part2;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ANALYZE vacowned_parted;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ANALYZE vacowned_part1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ANALYZE vacowned_part2;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM (ANALYZE) vacowned_parted;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM (ANALYZE) vacowned_part1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM (ANALYZE) vacowned_part2;
 RESET ROLE;
 -- Partitioned table and one partition owned by other user.
@@ -603,46 +603,46 @@ RESET ROLE;
 --dg-cascade
 --dg ALTER TABLE vacowned_part1 OWNER TO regress_vacuum;
 SET ROLE regress_vacuum;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM vacowned_parted;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM vacowned_part1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM vacowned_part2;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ANALYZE vacowned_parted;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ANALYZE vacowned_part1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ANALYZE vacowned_part2;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM (ANALYZE) vacowned_parted;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM (ANALYZE) vacowned_part1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM (ANALYZE) vacowned_part2;
 RESET ROLE;
 -- Only one partition owned by other user.
 --dg-cascade
 --dg ALTER TABLE vacowned_parted OWNER TO CURRENT_USER;
 SET ROLE regress_vacuum;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM vacowned_parted;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM vacowned_part1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM vacowned_part2;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ANALYZE vacowned_parted;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ANALYZE vacowned_part1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ANALYZE vacowned_part2;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM (ANALYZE) vacowned_parted;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM (ANALYZE) vacowned_part1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM (ANALYZE) vacowned_part2;
 RESET ROLE;
 -- Only partitioned table owned by other user.
@@ -651,23 +651,23 @@ RESET ROLE;
 --dg-cascade
 --dg ALTER TABLE vacowned_part1 OWNER TO CURRENT_USER;
 SET ROLE regress_vacuum;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM vacowned_parted;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM vacowned_part1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM vacowned_part2;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ANALYZE vacowned_parted;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ANALYZE vacowned_part1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ANALYZE vacowned_part2;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM (ANALYZE) vacowned_parted;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM (ANALYZE) vacowned_part1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM (ANALYZE) vacowned_part2;
 RESET ROLE;
 DROP TABLE vacowned;

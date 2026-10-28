@@ -125,7 +125,7 @@ BEGIN TRANSACTION;
 --dg-skip: CREATE ROLE cannot run inside a transaction block
 --dg CREATE ROLE regress_rol_op1;
 CREATE SCHEMA schema_op1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
 --dg GRANT USAGE ON SCHEMA schema_op1 TO PUBLIC;
 --dg-cascade
 --dg REVOKE USAGE ON SCHEMA schema_op1 FROM regress_rol_op1;

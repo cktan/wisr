@@ -90,16 +90,16 @@ DETAIL:  Only roles with the SUPERUSER attribute may grant roles with the SUPERU
 --dg 	regress_role_super, regress_createdb, regress_createrole, regress_login,
 --dg 	regress_inherit, regress_connection_limit, regress_encrypted_password, regress_password_null;
 -- fail, cannot grant a role into itself
---dg-crash: the server crashed
---dg CREATE ROLE regress_nosuch_recursive ROLE regress_nosuch_recursive;
+CREATE ROLE regress_nosuch_recursive ROLE regress_nosuch_recursive;
+ERROR:  role "regress_nosuch_recursive" is a member of role "regress_nosuch_recursive"
 -- ok, can grant other users into a role with admin option
 --dg-cascade
 --dg CREATE ROLE regress_adminroles ADMIN
 --dg 	regress_role_super, regress_createdb, regress_createrole, regress_login,
 --dg 	regress_inherit, regress_connection_limit, regress_encrypted_password, regress_password_null;
 -- fail, cannot grant a role into itself with admin option
---dg-crash: the connection was lost
---dg CREATE ROLE regress_nosuch_admin_recursive ADMIN regress_nosuch_admin_recursive;
+CREATE ROLE regress_nosuch_admin_recursive ADMIN regress_nosuch_admin_recursive;
+ERROR:  role "regress_nosuch_admin_recursive" is a member of role "regress_nosuch_admin_recursive"
 -- fail, regress_createrole does not have CREATEDB privilege
 SET SESSION AUTHORIZATION regress_createrole;
 CREATE DATABASE regress_nosuch_db;
@@ -114,20 +114,28 @@ CREATE ROLE regress_hasprivs CREATEROLE LOGIN INHERIT CONNECTION LIMIT 5;
 -- ok, we should be able to modify a role we created
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON ROLE regress_hasprivs IS 'some comment';
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT shobj_description('regress_hasprivs'::regrole, 'pg_authid') IS NOT NULL AS has_comment;
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON ROLE regress_hasprivs IS NULL;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT shobj_description('regress_hasprivs'::regrole, 'pg_authid') IS NULL AS no_comment;
+SELECT shobj_description('regress_hasprivs'::regrole, 'pg_authid') IS NULL AS no_comment;
+ no_comment 
+------------
+ t
+(1 row)
+
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON ROLE regress_hasprivs IS 'add the comment back';
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT shobj_description('regress_hasprivs'::regrole, 'pg_authid') IS NOT NULL AS has_comment;
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON ROLE regress_hasprivs IS ''; -- empty string removes the comment, same as NULL
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT shobj_description('regress_hasprivs'::regrole, 'pg_authid') IS NULL AS no_comment;
+SELECT shobj_description('regress_hasprivs'::regrole, 'pg_authid') IS NULL AS no_comment;
+ no_comment 
+------------
+ t
+(1 row)
+
 ALTER ROLE regress_hasprivs RENAME TO regress_tenant;
 ALTER ROLE regress_tenant NOINHERIT NOLOGIN CONNECTION LIMIT 7;
 -- fail, we should be unable to modify a role we did not create
@@ -141,26 +149,28 @@ ERROR:  permission denied to alter role
 DETAIL:  Only roles with the CREATEROLE attribute and the ADMIN option on role "regress_role_normal" may alter this role.
 -- ok, regress_tenant can create objects within the database
 SET SESSION AUTHORIZATION regress_tenant;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE tenant_table (i integer);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE INDEX tenant_idx ON tenant_table(i);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE VIEW tenant_view AS SELECT * FROM pg_catalog.pg_class;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg REVOKE ALL PRIVILEGES ON tenant_table FROM PUBLIC;
+CREATE TABLE tenant_table (i integer);
+ERROR:  permission denied for schema public
+LINE 1: CREATE TABLE tenant_table (i integer);
+                     ^
+CREATE INDEX tenant_idx ON tenant_table(i);
+ERROR:  relation "tenant_table" does not exist
+CREATE VIEW tenant_view AS SELECT * FROM pg_catalog.pg_class;
+ERROR:  permission denied for schema public
+REVOKE ALL PRIVILEGES ON tenant_table FROM PUBLIC;
+ERROR:  relation "tenant_table" does not exist
 -- fail, these objects belonging to regress_tenant
 SET SESSION AUTHORIZATION regress_createrole;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DROP INDEX tenant_idx;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE tenant_table ADD COLUMN t text;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DROP TABLE tenant_table;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER VIEW tenant_view OWNER TO regress_role_admin;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DROP VIEW tenant_view;
+DROP INDEX tenant_idx;
+ERROR:  index "tenant_idx" does not exist
+ALTER TABLE tenant_table ADD COLUMN t text;
+ERROR:  relation "tenant_table" does not exist
+DROP TABLE tenant_table;
+ERROR:  table "tenant_table" does not exist
+ALTER VIEW tenant_view OWNER TO regress_role_admin;
+ERROR:  relation "tenant_view" does not exist
+DROP VIEW tenant_view;
+ERROR:  view "tenant_view" does not exist
 -- fail, can't create objects owned as regress_tenant
 --dg-cascade
 --dg CREATE SCHEMA regress_tenant_schema AUTHORIZATION regress_tenant;
@@ -171,38 +181,40 @@ DETAIL:  Only roles with privileges of role "regress_tenant" may reassign object
 -- ok, create a role with a value for createrole_self_grant
 SET createrole_self_grant = 'set, inherit';
 CREATE ROLE regress_tenant2;
---dg-cascade
+--dg-skip: relation pg_database cannot be written: digres has no catalog tables
 --dg GRANT CREATE ON DATABASE regression TO regress_tenant2;
 -- ok, regress_tenant2 can create objects within the database
 SET SESSION AUTHORIZATION regress_tenant2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE tenant2_table (i integer);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg REVOKE ALL PRIVILEGES ON tenant2_table FROM PUBLIC;
+CREATE TABLE tenant2_table (i integer);
+ERROR:  permission denied for schema public
+LINE 1: CREATE TABLE tenant2_table (i integer);
+                     ^
+REVOKE ALL PRIVILEGES ON tenant2_table FROM PUBLIC;
+ERROR:  relation "tenant2_table" does not exist
 -- ok, because we have SET and INHERIT on regress_tenant2
 SET SESSION AUTHORIZATION regress_createrole;
 --dg-cascade
 --dg CREATE SCHEMA regress_tenant2_schema AUTHORIZATION regress_tenant2;
 --dg-cascade
 --dg ALTER SCHEMA regress_tenant2_schema OWNER TO regress_createrole;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE tenant2_table OWNER TO regress_createrole;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE tenant2_table OWNER TO regress_tenant2;
+ALTER TABLE tenant2_table OWNER TO regress_createrole;
+ERROR:  relation "tenant2_table" does not exist
+ALTER TABLE tenant2_table OWNER TO regress_tenant2;
+ERROR:  relation "tenant2_table" does not exist
 -- with SET but not INHERIT, we can give away objects but not take them
 REVOKE INHERIT OPTION FOR regress_tenant2 FROM regress_createrole;
 --dg-cascade
 --dg ALTER SCHEMA regress_tenant2_schema OWNER TO regress_tenant2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE tenant2_table OWNER TO regress_createrole;
+ALTER TABLE tenant2_table OWNER TO regress_createrole;
+ERROR:  relation "tenant2_table" does not exist
 -- with INHERIT but not SET, we can take objects but not give them away
 GRANT regress_tenant2 TO regress_createrole WITH INHERIT TRUE, SET FALSE;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE tenant2_table OWNER TO regress_createrole;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE tenant2_table OWNER TO regress_tenant2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DROP TABLE tenant2_table;
+ALTER TABLE tenant2_table OWNER TO regress_createrole;
+ERROR:  relation "tenant2_table" does not exist
+ALTER TABLE tenant2_table OWNER TO regress_tenant2;
+ERROR:  relation "tenant2_table" does not exist
+DROP TABLE tenant2_table;
+ERROR:  table "tenant2_table" does not exist
 -- fail, CREATEROLE is not enough to create roles in privileged roles
 --dg-differs: another error: role "?" does not exist
 --dg CREATE ROLE regress_read_all_data IN ROLE pg_read_all_data;
@@ -247,7 +259,7 @@ DROP ROLE regress_nosuch_admin_recursive;
 ERROR:  role "regress_nosuch_admin_recursive" does not exist
 DROP ROLE regress_plainrole;
 -- must revoke privileges before dropping role
---dg-cascade
+--dg-skip: relation pg_database cannot be written: digres has no catalog tables
 --dg REVOKE CREATE ON DATABASE regression FROM regress_createrole CASCADE;
 -- ok, should be able to drop non-superuser roles we created
 --dg-cascade

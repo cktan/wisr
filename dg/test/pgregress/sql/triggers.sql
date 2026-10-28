@@ -64,7 +64,7 @@ update trigtest set f2 = f2 || 'bar';
 delete from trigtest;
 select * from trigtest;
 
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop trigger trigger_alpha on trigtest;
 
 insert into trigtest values(1, 'foo');
@@ -185,11 +185,10 @@ COPY main_table (a,b) FROM stdin;
 --dg SELECT * FROM main_table ORDER BY a, b;
 
 -- Test comments
---dg-differs: another error: relation pg_trigger cannot be opened: digres has no catalog tables
---dg COMMENT ON TRIGGER no_such_trigger ON main_table IS 'wrong';
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+COMMENT ON TRIGGER no_such_trigger ON main_table IS 'wrong';
+--dg-cascade
 --dg COMMENT ON TRIGGER before_ins_stmt_trig ON main_table IS 'right';
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg COMMENT ON TRIGGER before_ins_stmt_trig ON main_table IS NULL;
 
 --
@@ -242,23 +241,23 @@ COPY main_table (a,b) FROM stdin;
 --dg SELECT pg_get_triggerdef(oid, true) FROM pg_trigger WHERE tgrelid = 'main_table'::regclass AND tgname = 'modified_any';
 
 -- Test RENAME TRIGGER
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER TRIGGER modified_a ON main_table RENAME TO modified_modified_a;
 SELECT count(*) FROM pg_trigger WHERE tgrelid = 'main_table'::regclass AND tgname = 'modified_a';
 --dg-cascade
 --dg SELECT count(*) FROM pg_trigger WHERE tgrelid = 'main_table'::regclass AND tgname = 'modified_modified_a';
 
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER modified_modified_a ON main_table;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER modified_any ON main_table;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER insert_a ON main_table;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER delete_a ON main_table;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER insert_when ON main_table;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER delete_when ON main_table;
 
 -- Test WHEN condition accessing system columns.
@@ -274,7 +273,7 @@ insert into table_with_oids values (1);
 drop table table_with_oids;
 
 -- Test column-level triggers
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER after_upd_row_trig ON main_table;
 
 --dg-cascade
@@ -362,7 +361,7 @@ EXECUTE PROCEDURE trigger_func('error_when_sys_column');
 --dg ALTER TABLE main_table DROP COLUMN b;
 -- this should succeed, but we'll roll it back to keep the triggers around
 begin;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER after_upd_a_b_row_trig ON main_table;
 --dg-cascade
 --dg DROP TRIGGER after_upd_b_row_trig ON main_table;
@@ -508,7 +507,7 @@ CREATE TABLE trigger_test (
 --dg-cascade
 --dg delete from trigger_test;
 
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER show_trigger_data_trig on trigger_test;
 
 --dg-cascade
@@ -617,7 +616,7 @@ CREATE TABLE min_updates_test (
 
 INSERT INTO min_updates_test VALUES ('a',1,2),('b','2',null);
 
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_trigger cannot be written: digres has no catalog tables
 --dg CREATE TRIGGER z_min_update
 --dg BEFORE UPDATE ON min_updates_test
 --dg FOR EACH ROW EXECUTE PROCEDURE suppress_redundant_updates_trigger();
@@ -800,7 +799,7 @@ FOR EACH ROW EXECUTE PROCEDURE view_trigger('instead_of_del');
 --dg UPDATE main_view SET b = 32 WHERE a = 21 AND b = 31 RETURNING a, b;
 
 -- Remove table trigger to allow updates
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER before_upd_a_row_trig ON main_table;
 --dg-cascade
 --dg UPDATE main_view SET b = 31 WHERE a = 20;
@@ -1003,13 +1002,13 @@ CREATE VIEW european_city_view AS
 \set QUIET true
 
 -- rules bypassing no-op triggers
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE european_city_insert_rule AS ON INSERT TO european_city_view
 --dg DO INSTEAD INSERT INTO city_view
 --dg VALUES (NEW.city_id, NEW.city_name, NEW.population, NEW.country_name, NEW.continent)
 --dg RETURNING *;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE european_city_update_rule AS ON UPDATE TO european_city_view
 --dg DO INSTEAD UPDATE city_view SET
 --dg     city_name = NEW.city_name,
@@ -1018,7 +1017,7 @@ CREATE VIEW european_city_view AS
 --dg WHERE city_id = OLD.city_id
 --dg RETURNING NEW.*;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE european_city_delete_rule AS ON DELETE TO european_city_view
 --dg DO INSTEAD DELETE FROM city_view WHERE city_id = OLD.city_id RETURNING *;
 
@@ -2059,7 +2058,7 @@ begin;
 -- commit time.
 --dg-cascade
 --dg begin;
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg set constraints parted_trig deferred;
 --dg-cascade
 --dg insert into parted_constr values (1, 'aardvark');
@@ -2538,17 +2537,17 @@ begin;
 --dg drop trigger child1_update_trig on child1;
 --dg-cascade
 --dg drop trigger child1_delete_trig on child1;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop trigger child2_insert_trig on child2;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop trigger child2_update_trig on child2;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop trigger child2_delete_trig on child2;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop trigger child3_insert_trig on child3;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop trigger child3_update_trig on child3;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop trigger child3_delete_trig on child3;
 --dg-cascade
 --dg delete from parent;
@@ -2837,17 +2836,17 @@ begin;
 --dg drop trigger child1_update_trig on child1;
 --dg-cascade
 --dg drop trigger child1_delete_trig on child1;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop trigger child2_insert_trig on child2;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop trigger child2_update_trig on child2;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop trigger child2_delete_trig on child2;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop trigger child3_insert_trig on child3;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop trigger child3_update_trig on child3;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop trigger child3_delete_trig on child3;
 --dg-cascade
 --dg delete from parent;
@@ -3148,7 +3147,7 @@ create table self_ref (a int primary key,
 --dg create trigger self_ref_before_trig
 --dg   before delete on self_ref
 --dg   for each statement execute procedure trigger_func('self_ref');
---dg-skip: relation pg_inherits cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg create trigger self_ref_r_trig
 --dg   after delete on self_ref referencing old table as old_table
 --dg   for each row execute procedure dump_delete();
@@ -3163,7 +3162,7 @@ insert into self_ref values (1, null), (2, 1), (3, 2);
 --dg delete from self_ref where a = 1;
 
 -- without AR trigger, cascaded deletes all end up in one transition table
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop trigger self_ref_r_trig on self_ref;
 
 --dg-cascade
@@ -3514,7 +3513,7 @@ rollback;
 --dg create trigger a after insert on grandparent
 --dg for each row execute procedure f();
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg alter trigger a on grandparent rename to b;
 --dg-cascade
 --dg select tgrelid::regclass, tgname,
@@ -3535,7 +3534,7 @@ alter trigger a on only grandparent rename to b;	-- ONLY not supported
 --dg create trigger p after insert on grandparent for each statement execute function f();
 --dg-cascade
 --dg create trigger p after insert on middle for each statement execute function f();
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg alter trigger p on grandparent rename to q;
 --dg-cascade
 --dg select tgrelid::regclass, tgname,
@@ -3556,7 +3555,7 @@ create table parent (a int);
 --dg-cascade
 --dg create trigger parenttrig after insert on child
 --dg for each row execute procedure f();
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg alter trigger parenttrig on parent rename to anothertrig;
 --dg-cascade
 --dg \d+ child
@@ -3583,7 +3582,7 @@ create role regress_fn_owner;
 --dg alter function whoami() owner to regress_fn_owner;
 
 create table defer_trig (id integer);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg grant insert on defer_trig to public;
 --dg-cascade
 --dg create constraint trigger whoami after insert on defer_trig
@@ -3594,10 +3593,12 @@ create table defer_trig (id integer);
 -- deferred triggers must run as the user that queued the trigger
 begin;
 set role regress_caller;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg insert into defer_trig values (1);
-reset role;
-set role regress_fn_owner;
+--dg-cascade
+--dg reset role;
+--dg-cascade
+--dg set role regress_fn_owner;
 --dg-cascade
 --dg insert into defer_trig values (2);
 --dg-cascade
@@ -3611,9 +3612,10 @@ set role regress_fn_owner;
 --dg-cascade
 --dg begin;
 set role regress_caller;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg insert into defer_trig values (3);
-reset role;
+--dg-cascade
+--dg reset role;
 --dg-cascade
 --dg commit;
 --dg-cascade
@@ -3633,18 +3635,21 @@ reset role;
 --dg-cascade
 --dg begin;
 set role regress_caller;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg insert into defer_trig values (4);
-reset role;
+--dg-cascade
+--dg reset role;
 --dg-cascade
 --dg commit;  -- error expected
-select current_user = session_user;
+--dg-cascade
+--dg select current_user = session_user;
 
 -- clean up
-drop table defer_trig;
+--dg-cascade
+--dg drop table defer_trig;
 --dg-cascade
 --dg drop function whoami();
---dg-skip: DROP ROLE cannot run inside a transaction block
+--dg-cascade
 --dg drop role regress_fn_owner;
---dg-skip: DROP ROLE cannot run inside a transaction block
+--dg-cascade
 --dg drop role regress_caller;

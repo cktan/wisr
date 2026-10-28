@@ -163,10 +163,8 @@ DROP COLLATION IF EXISTS test_collation_exists;
 --dg DROP TEXT SEARCH CONFIGURATION test_tsconfig_exists;
 
 -- extension
---dg-differs: another error: relation pg_extension cannot be opened: digres has no catalog tables
---dg DROP EXTENSION test_extension_exists;
---dg-skip: relation pg_extension cannot be opened: digres has no catalog tables
---dg DROP EXTENSION IF EXISTS test_extension_exists;
+DROP EXTENSION test_extension_exists;
+DROP EXTENSION IF EXISTS test_extension_exists;
 
 -- functions
 DROP FUNCTION test_function_exists();
@@ -200,10 +198,8 @@ DROP CAST (text AS text);
 DROP CAST IF EXISTS (text AS text);
 
 -- trigger
---dg-differs: another error: relation pg_trigger cannot be opened: digres has no catalog tables
---dg DROP TRIGGER test_trigger_exists ON test_exists;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
---dg DROP TRIGGER IF EXISTS test_trigger_exists ON test_exists;
+DROP TRIGGER test_trigger_exists ON test_exists;
+DROP TRIGGER IF EXISTS test_trigger_exists ON test_exists;
 
 DROP TRIGGER test_trigger_exists ON no_such_table;
 DROP TRIGGER IF EXISTS test_trigger_exists ON no_such_table;
@@ -211,18 +207,16 @@ DROP TRIGGER IF EXISTS test_trigger_exists ON no_such_table;
 DROP TRIGGER test_trigger_exists ON no_such_schema.no_such_table;
 DROP TRIGGER IF EXISTS test_trigger_exists ON no_such_schema.no_such_table;
 
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_trigger cannot be written: digres has no catalog tables
 --dg CREATE TRIGGER test_trigger_exists
 --dg     BEFORE UPDATE ON test_exists
 --dg     FOR EACH ROW EXECUTE PROCEDURE suppress_redundant_updates_trigger();
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER test_trigger_exists ON test_exists;
 
 -- rule
---dg-differs: another error: relation pg_rewrite cannot be opened: digres has no catalog tables
---dg DROP RULE test_rule_exists ON test_exists;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
---dg DROP RULE IF EXISTS test_rule_exists ON test_exists;
+DROP RULE test_rule_exists ON test_exists;
+DROP RULE IF EXISTS test_rule_exists ON test_exists;
 
 DROP RULE test_rule_exists ON no_such_table;
 DROP RULE IF EXISTS test_rule_exists ON no_such_table;
@@ -230,11 +224,11 @@ DROP RULE IF EXISTS test_rule_exists ON no_such_table;
 DROP RULE test_rule_exists ON no_such_schema.no_such_table;
 DROP RULE IF EXISTS test_rule_exists ON no_such_schema.no_such_table;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE test_rule_exists AS ON INSERT TO test_exists
 --dg     DO INSTEAD
 --dg     INSERT INTO test_exists VALUES (NEW.a, NEW.b || NEW.a::text);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP RULE test_rule_exists ON test_exists;
 
 -- foreign data wrapper

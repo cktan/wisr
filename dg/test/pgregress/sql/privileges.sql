@@ -41,8 +41,7 @@ CREATE ROLE regress_priv_role;
 -- circular ADMIN OPTION grants should be disallowed
 GRANT regress_priv_user1 TO regress_priv_user2 WITH ADMIN OPTION;
 GRANT regress_priv_user1 TO regress_priv_user3 WITH ADMIN OPTION GRANTED BY regress_priv_user2;
---dg-crash: the connection was lost
---dg GRANT regress_priv_user1 TO regress_priv_user2 WITH ADMIN OPTION GRANTED BY regress_priv_user3;
+GRANT regress_priv_user1 TO regress_priv_user2 WITH ADMIN OPTION GRANTED BY regress_priv_user3;
 
 -- need CASCADE to revoke grant or admin option if dependent grants exist
 REVOKE ADMIN OPTION FOR regress_priv_user1 FROM regress_priv_user2; -- fail
@@ -62,23 +61,18 @@ GRANT regress_priv_user1 TO regress_priv_user2 WITH ADMIN OPTION;
 GRANT regress_priv_user2 TO regress_priv_user3;
 SET ROLE regress_priv_user3;
 GRANT regress_priv_user1 TO regress_priv_user4;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT grantor::regrole FROM pg_auth_members WHERE roleid = 'regress_priv_user1'::regrole and member = 'regress_priv_user4'::regrole;
+SELECT grantor::regrole FROM pg_auth_members WHERE roleid = 'regress_priv_user1'::regrole and member = 'regress_priv_user4'::regrole;
 RESET ROLE;
 REVOKE regress_priv_user2 FROM regress_priv_user3;
---dg-crash: the connection was lost
---dg REVOKE regress_priv_user1 FROM regress_priv_user2 CASCADE;
+REVOKE regress_priv_user1 FROM regress_priv_user2 CASCADE;
 
 -- test GRANTED BY with DROP OWNED and REASSIGN OWNED
---dg-cascade
---dg GRANT regress_priv_user1 TO regress_priv_user2 WITH ADMIN OPTION;
+GRANT regress_priv_user1 TO regress_priv_user2 WITH ADMIN OPTION;
 GRANT regress_priv_user1 TO regress_priv_user3 GRANTED BY regress_priv_user2;
---dg-cascade
---dg DROP ROLE regress_priv_user2; -- fail, dependency
+DROP ROLE regress_priv_user2; -- fail, dependency
 --dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
 --dg REASSIGN OWNED BY regress_priv_user2 TO regress_priv_user4;
---dg-cascade
---dg DROP ROLE regress_priv_user2; -- still fail, REASSIGN OWNED doesn't help
+DROP ROLE regress_priv_user2; -- still fail, REASSIGN OWNED doesn't help
 --dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
 --dg DROP OWNED BY regress_priv_user2;
 --dg-cascade
@@ -86,13 +80,10 @@ GRANT regress_priv_user1 TO regress_priv_user3 GRANTED BY regress_priv_user2;
 
 -- test that removing granted role or grantee role removes dependency
 GRANT regress_priv_user1 TO regress_priv_user3 WITH ADMIN OPTION;
---dg-crash: the connection was lost
---dg GRANT regress_priv_user1 TO regress_priv_user4 GRANTED BY regress_priv_user3;
---dg-cascade
---dg DROP ROLE regress_priv_user3; -- should fail, dependency
+GRANT regress_priv_user1 TO regress_priv_user4 GRANTED BY regress_priv_user3;
+DROP ROLE regress_priv_user3; -- should fail, dependency
 DROP ROLE regress_priv_user4; -- ok
---dg-cascade
---dg DROP ROLE regress_priv_user3; -- ok now
+DROP ROLE regress_priv_user3; -- ok now
 GRANT regress_priv_user1 TO regress_priv_user5 WITH ADMIN OPTION;
 GRANT regress_priv_user1 TO regress_priv_user6 GRANTED BY regress_priv_user5;
 DROP ROLE regress_priv_user5; -- should fail, dependency
@@ -102,8 +93,7 @@ DROP ROLE regress_priv_user1, regress_priv_user5; -- ok, despite order
 CREATE USER regress_priv_user1;
 --dg-cascade
 --dg CREATE USER regress_priv_user2;
---dg-cascade
---dg CREATE USER regress_priv_user3;
+CREATE USER regress_priv_user3;
 CREATE USER regress_priv_user4;
 CREATE USER regress_priv_user5;
 
@@ -164,32 +154,26 @@ SET SESSION AUTHORIZATION regress_priv_user8;
 SET ROLE regress_priv_user9;
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET debug_parallel_query = 0;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT session_user, current_role, current_user, current_setting('role') as role;
+SELECT session_user, current_role, current_user, current_setting('role') as role;
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET debug_parallel_query = 1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT session_user, current_role, current_user, current_setting('role') as role;
+SELECT session_user, current_role, current_user, current_setting('role') as role;
 
 BEGIN;
 SET SESSION AUTHORIZATION regress_priv_user10;
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET debug_parallel_query = 0;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT session_user, current_role, current_user, current_setting('role') as role;
+SELECT session_user, current_role, current_user, current_setting('role') as role;
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET debug_parallel_query = 1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT session_user, current_role, current_user, current_setting('role') as role;
+SELECT session_user, current_role, current_user, current_setting('role') as role;
 ROLLBACK;
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET debug_parallel_query = 0;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT session_user, current_role, current_user, current_setting('role') as role;
+SELECT session_user, current_role, current_user, current_setting('role') as role;
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET debug_parallel_query = 1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT session_user, current_role, current_user, current_setting('role') as role;
+SELECT session_user, current_role, current_user, current_setting('role') as role;
 
 RESET SESSION AUTHORIZATION;
 -- session_user at this point is installation-dependent
@@ -253,55 +237,34 @@ DROP ROLE regress_priv_role;
 SET SESSION AUTHORIZATION regress_priv_user1;
 SELECT session_user, current_user;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE atest1 ( a int, b text );
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest1 VALUES (1, 'one');
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DELETE FROM atest1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE atest1 SET a = 1 WHERE b = 'blech';
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg TRUNCATE atest1;
+CREATE TABLE atest1 ( a int, b text );
+SELECT * FROM atest1;
+INSERT INTO atest1 VALUES (1, 'one');
+DELETE FROM atest1;
+UPDATE atest1 SET a = 1 WHERE b = 'blech';
+TRUNCATE atest1;
 BEGIN;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg LOCK atest1 IN ACCESS EXCLUSIVE MODE;
+LOCK atest1 IN ACCESS EXCLUSIVE MODE;
 COMMIT;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg REVOKE ALL ON atest1 FROM PUBLIC;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest1;
+REVOKE ALL ON atest1 FROM PUBLIC;
+SELECT * FROM atest1;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT ALL ON atest1 TO regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON atest1 TO regress_priv_user3, regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest1;
+GRANT ALL ON atest1 TO regress_priv_user2;
+GRANT SELECT ON atest1 TO regress_priv_user3, regress_priv_user4;
+SELECT * FROM atest1;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE atest2 (col1 varchar(10), col2 boolean);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT pg_get_acl('pg_class'::regclass, 'atest2'::regclass::oid, 0);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON atest2 TO regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT UPDATE ON atest2 TO regress_priv_user3;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT INSERT ON atest2 TO regress_priv_user4 GRANTED BY CURRENT_USER;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT TRUNCATE ON atest2 TO regress_priv_user5 GRANTED BY CURRENT_ROLE;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT unnest(pg_get_acl('pg_class'::regclass, 'atest2'::regclass::oid, 0));
+CREATE TABLE atest2 (col1 varchar(10), col2 boolean);
+SELECT pg_get_acl('pg_class'::regclass, 'atest2'::regclass::oid, 0);
+GRANT SELECT ON atest2 TO regress_priv_user2;
+GRANT UPDATE ON atest2 TO regress_priv_user3;
+GRANT INSERT ON atest2 TO regress_priv_user4 GRANTED BY CURRENT_USER;
+GRANT TRUNCATE ON atest2 TO regress_priv_user5 GRANTED BY CURRENT_ROLE;
+SELECT unnest(pg_get_acl('pg_class'::regclass, 'atest2'::regclass::oid, 0));
 
 -- Invalid inputs
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT pg_get_acl('pg_class'::regclass, 0, 0); -- null
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT pg_get_acl(0, 0, 0); -- null
+SELECT pg_get_acl('pg_class'::regclass, 0, 0); -- null
+SELECT pg_get_acl(0, 0, 0); -- null
 
 GRANT TRUNCATE ON atest2 TO regress_priv_user4 GRANTED BY regress_priv_user5;  -- error
 
@@ -311,122 +274,77 @@ SELECT session_user, current_user;
 
 -- try various combinations of queries on atest1 and atest2
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest1; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest2; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest1 VALUES (2, 'two'); -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest2 VALUES ('foo', true); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest1 SELECT 1, b FROM atest1; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE atest1 SET a = 1 WHERE a = 2; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE atest2 SET col2 = NOT col2; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest1 FOR UPDATE; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest2 FOR UPDATE; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DELETE FROM atest2; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg TRUNCATE atest2; -- fail
+SELECT * FROM atest1; -- ok
+SELECT * FROM atest2; -- ok
+INSERT INTO atest1 VALUES (2, 'two'); -- ok
+INSERT INTO atest2 VALUES ('foo', true); -- fail
+INSERT INTO atest1 SELECT 1, b FROM atest1; -- ok
+UPDATE atest1 SET a = 1 WHERE a = 2; -- ok
+UPDATE atest2 SET col2 = NOT col2; -- fail
+SELECT * FROM atest1 FOR UPDATE; -- ok
+SELECT * FROM atest2 FOR UPDATE; -- fail
+DELETE FROM atest2; -- fail
+TRUNCATE atest2; -- fail
 BEGIN;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg LOCK atest2 IN ACCESS EXCLUSIVE MODE; -- fail
+LOCK atest2 IN ACCESS EXCLUSIVE MODE; -- fail
 COMMIT;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg COPY atest2 FROM stdin; -- fail
---dg \.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT ALL ON atest1 TO PUBLIC; -- fail
+COPY atest2 FROM stdin; -- fail
+\.
+GRANT ALL ON atest1 TO PUBLIC; -- fail
 
 -- checks in subquery, both ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest1 WHERE ( b IN ( SELECT col1 FROM atest2 ) );
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest2 WHERE ( col1 IN ( SELECT b FROM atest1 ) );
+SELECT * FROM atest1 WHERE ( b IN ( SELECT col1 FROM atest2 ) );
+SELECT * FROM atest2 WHERE ( col1 IN ( SELECT b FROM atest1 ) );
 
 SET SESSION AUTHORIZATION regress_priv_user6;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest1; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest2; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest2 VALUES ('foo', true); -- fail
+SELECT * FROM atest1; -- ok
+SELECT * FROM atest2; -- ok
+INSERT INTO atest2 VALUES ('foo', true); -- fail
 
 SET SESSION AUTHORIZATION regress_priv_user7;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest1; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest2; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest2 VALUES ('foo', true); -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE atest2 SET col2 = true; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DELETE FROM atest2; -- ok
+SELECT * FROM atest1; -- fail
+SELECT * FROM atest2; -- fail
+INSERT INTO atest2 VALUES ('foo', true); -- ok
+UPDATE atest2 SET col2 = true; -- ok
+DELETE FROM atest2; -- ok
 
 -- Make sure we are not able to modify system catalogs
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE pg_catalog.pg_class SET relname = '123'; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DELETE FROM pg_catalog.pg_class; -- fail
+UPDATE pg_catalog.pg_class SET relname = '123'; -- fail
+DELETE FROM pg_catalog.pg_class; -- fail
 --dg-cascade
 --dg UPDATE pg_toast.pg_toast_1213 SET chunk_id = 1; -- fail
 
 SET SESSION AUTHORIZATION regress_priv_user3;
 SELECT session_user, current_user;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest1; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest2; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest1 VALUES (2, 'two'); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest2 VALUES ('foo', true); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest1 SELECT 1, b FROM atest1; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE atest1 SET a = 1 WHERE a = 2; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE atest2 SET col2 = NULL; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE atest2 SET col2 = NOT col2; -- fails; requires SELECT on atest2
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE atest2 SET col2 = true FROM atest1 WHERE atest1.a = 5; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest1 FOR UPDATE; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest2 FOR UPDATE; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DELETE FROM atest2; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg TRUNCATE atest2; -- fail
+SELECT * FROM atest1; -- ok
+SELECT * FROM atest2; -- fail
+INSERT INTO atest1 VALUES (2, 'two'); -- fail
+INSERT INTO atest2 VALUES ('foo', true); -- fail
+INSERT INTO atest1 SELECT 1, b FROM atest1; -- fail
+UPDATE atest1 SET a = 1 WHERE a = 2; -- fail
+UPDATE atest2 SET col2 = NULL; -- ok
+UPDATE atest2 SET col2 = NOT col2; -- fails; requires SELECT on atest2
+UPDATE atest2 SET col2 = true FROM atest1 WHERE atest1.a = 5; -- ok
+SELECT * FROM atest1 FOR UPDATE; -- fail
+SELECT * FROM atest2 FOR UPDATE; -- fail
+DELETE FROM atest2; -- fail
+TRUNCATE atest2; -- fail
 BEGIN;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg LOCK atest2 IN ACCESS EXCLUSIVE MODE; -- ok
+LOCK atest2 IN ACCESS EXCLUSIVE MODE; -- ok
 COMMIT;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg COPY atest2 FROM stdin; -- fail
---dg \.
+COPY atest2 FROM stdin; -- fail
+\.
 
 -- checks in subquery, both fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest1 WHERE ( b IN ( SELECT col1 FROM atest2 ) );
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest2 WHERE ( col1 IN ( SELECT b FROM atest1 ) );
+SELECT * FROM atest1 WHERE ( b IN ( SELECT col1 FROM atest2 ) );
+SELECT * FROM atest2 WHERE ( col1 IN ( SELECT b FROM atest1 ) );
 
 SET SESSION AUTHORIZATION regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg COPY atest2 FROM stdin; -- ok
---dg bar	true
---dg \.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest1; -- ok
+COPY atest2 FROM stdin; -- ok
+bar	true
+\.
+SELECT * FROM atest1; -- ok
 
 
 -- test leaky-function protections in selfuncs
@@ -434,126 +352,97 @@ SET SESSION AUTHORIZATION regress_priv_user4;
 -- regress_priv_user1 will own a table and provide views for it.
 SET SESSION AUTHORIZATION regress_priv_user1;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: no error where PostgreSQL has: permission denied for schema public
 --dg CREATE TABLE atest12 as
 --dg   SELECT x AS a, 10001 - x AS b FROM generate_series(1,10000) x;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE INDEX ON atest12 (a);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE INDEX ON atest12 (abs(a));
+CREATE INDEX ON atest12 (a);
+CREATE INDEX ON atest12 (abs(a));
 -- results below depend on having quite accurate stats for atest12, so...
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE atest12 SET (autovacuum_enabled = off);
+ALTER TABLE atest12 SET (autovacuum_enabled = off);
 SET default_statistics_target = 10000;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg VACUUM ANALYZE atest12;
+VACUUM ANALYZE atest12;
 RESET default_statistics_target;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE OPERATOR <<< (procedure = leak, leftarg = integer, rightarg = integer,
---dg                      restrict = scalarltsel);
+CREATE OPERATOR <<< (procedure = leak, leftarg = integer, rightarg = integer,
+                     restrict = scalarltsel);
 
 -- views with leaky operator
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE VIEW atest12v AS
---dg   SELECT * FROM atest12 WHERE b <<< 5;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE VIEW atest12sbv WITH (security_barrier=true) AS
---dg   SELECT * FROM atest12 WHERE b <<< 5;
+CREATE VIEW atest12v AS
+  SELECT * FROM atest12 WHERE b <<< 5;
+CREATE VIEW atest12sbv WITH (security_barrier=true) AS
+  SELECT * FROM atest12 WHERE b <<< 5;
 
 -- This plan should use nestloop, knowing that few rows will be selected.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y WHERE x.a = y.b;
+EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y WHERE x.a = y.b;
 
 -- And this one.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg EXPLAIN (COSTS OFF) SELECT * FROM atest12 x, atest12 y
---dg   WHERE x.a = y.b and abs(y.a) <<< 5;
+EXPLAIN (COSTS OFF) SELECT * FROM atest12 x, atest12 y
+  WHERE x.a = y.b and abs(y.a) <<< 5;
 
 -- This should also be a nestloop, but the security barrier forces the inner
 -- scan to be materialized
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv x, atest12sbv y WHERE x.a = y.b;
+EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv x, atest12sbv y WHERE x.a = y.b;
 
 -- Check if regress_priv_user2 can break security.
 SET SESSION AUTHORIZATION regress_priv_user2;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION leak2(integer,integer) RETURNS boolean
---dg   AS $$begin raise notice 'leak % %', $1, $2; return $1 > $2; end$$
---dg   LANGUAGE plpgsql immutable;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE OPERATOR >>> (procedure = leak2, leftarg = integer, rightarg = integer,
---dg                      restrict = scalargtsel);
+CREATE FUNCTION leak2(integer,integer) RETURNS boolean
+  AS $$begin raise notice 'leak % %', $1, $2; return $1 > $2; end$$
+  LANGUAGE plpgsql immutable;
+CREATE OPERATOR >>> (procedure = leak2, leftarg = integer, rightarg = integer,
+                     restrict = scalargtsel);
 
 -- These should not show any "leak" notices before failing.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg EXPLAIN (COSTS OFF) SELECT * FROM atest12 WHERE a >>> 0;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg EXPLAIN (COSTS OFF) SELECT * FROM atest12v WHERE a >>> 0;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv WHERE a >>> 0;
+EXPLAIN (COSTS OFF) SELECT * FROM atest12 WHERE a >>> 0;
+EXPLAIN (COSTS OFF) SELECT * FROM atest12v WHERE a >>> 0;
+EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv WHERE a >>> 0;
 
 -- Now regress_priv_user1 grants access to regress_priv_user2 via the views.
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON atest12v TO PUBLIC;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON atest12sbv TO PUBLIC;
+GRANT SELECT ON atest12v TO PUBLIC;
+GRANT SELECT ON atest12sbv TO PUBLIC;
 SET SESSION AUTHORIZATION regress_priv_user2;
 
 -- These plans should continue to use a nestloop, since they execute with the
 -- privileges of the view owner.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y WHERE x.a = y.b;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv x, atest12sbv y WHERE x.a = y.b;
+EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y WHERE x.a = y.b;
+EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv x, atest12sbv y WHERE x.a = y.b;
 
 -- A non-security barrier view does not guard against information leakage.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y
---dg   WHERE x.a = y.b and abs(y.a) <<< 5;
+EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y
+  WHERE x.a = y.b and abs(y.a) <<< 5;
 
 -- But a security barrier view isolates the leaky operator.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv x, atest12sbv y
---dg   WHERE x.a = y.b and abs(y.a) <<< 5;
+EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv x, atest12sbv y
+  WHERE x.a = y.b and abs(y.a) <<< 5;
 
 -- Now regress_priv_user1 grants sufficient access to regress_priv_user2.
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT (a, b) ON atest12 TO PUBLIC;
+GRANT SELECT (a, b) ON atest12 TO PUBLIC;
 SET SESSION AUTHORIZATION regress_priv_user2;
 
 -- regress_priv_user2 should continue to get a good row estimate.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y WHERE x.a = y.b;
+EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y WHERE x.a = y.b;
 
 -- But not for this, due to lack of table-wide permissions needed
 -- to make use of the expression index's statistics.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg EXPLAIN (COSTS OFF) SELECT * FROM atest12 x, atest12 y
---dg   WHERE x.a = y.b and abs(y.a) <<< 5;
+EXPLAIN (COSTS OFF) SELECT * FROM atest12 x, atest12 y
+  WHERE x.a = y.b and abs(y.a) <<< 5;
 
 -- clean up (regress_priv_user1's objects are all dropped later)
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DROP FUNCTION leak2(integer, integer) CASCADE;
+DROP FUNCTION leak2(integer, integer) CASCADE;
 
 
 -- groups
 
 SET SESSION AUTHORIZATION regress_priv_user3;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE atest3 (one int, two int, three int);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT DELETE ON atest3 TO GROUP regress_priv_group2;
+CREATE TABLE atest3 (one int, two int, three int);
+GRANT DELETE ON atest3 TO GROUP regress_priv_group2;
 
 SET SESSION AUTHORIZATION regress_priv_user1;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest3; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DELETE FROM atest3; -- ok
+SELECT * FROM atest3; -- fail
+DELETE FROM atest3; -- ok
 
 BEGIN;
 RESET SESSION AUTHORIZATION;
@@ -561,317 +450,205 @@ RESET SESSION AUTHORIZATION;
 --dg ALTER ROLE regress_priv_user1 NOINHERIT;
 SET SESSION AUTHORIZATION regress_priv_user1;
 SAVEPOINT s1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DELETE FROM atest3; -- ok because grant-level option is unchanged
+DELETE FROM atest3; -- ok because grant-level option is unchanged
 ROLLBACK TO s1;
 RESET SESSION AUTHORIZATION;
 --dg-skip: GRANT cannot run inside a transaction block
 --dg GRANT regress_priv_group2 TO regress_priv_user1 WITH INHERIT FALSE;
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DELETE FROM atest3; -- fail
+DELETE FROM atest3; -- fail
 ROLLBACK TO s1;
 RESET SESSION AUTHORIZATION;
 --dg-skip: REVOKE cannot run inside a transaction block
 --dg REVOKE INHERIT OPTION FOR regress_priv_group2 FROM regress_priv_user1;
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DELETE FROM atest3; -- also fail
+DELETE FROM atest3; -- also fail
 ROLLBACK;
 
 -- views
 
 SET SESSION AUTHORIZATION regress_priv_user3;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE VIEW atestv1 AS SELECT * FROM atest1; -- ok
+CREATE VIEW atestv1 AS SELECT * FROM atest1; -- ok
 /* The next *should* fail, but it's not implemented that way yet. */
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE VIEW atestv2 AS SELECT * FROM atest2;
---dg-cascade
---dg CREATE VIEW atestv3 AS SELECT * FROM atest3; -- ok
+CREATE VIEW atestv2 AS SELECT * FROM atest2;
+CREATE VIEW atestv3 AS SELECT * FROM atest3; -- ok
 /* Empty view is a corner case that failed in 9.2. */
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE VIEW atestv0 AS SELECT 0 as x WHERE false; -- ok
+CREATE VIEW atestv0 AS SELECT 0 as x WHERE false; -- ok
 
---dg-cascade
---dg SELECT * FROM atestv1; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atestv2; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON atestv1, atestv3 TO regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON atestv2 TO regress_priv_user2;
+SELECT * FROM atestv1; -- ok
+SELECT * FROM atestv2; -- fail
+GRANT SELECT ON atestv1, atestv3 TO regress_priv_user4;
+GRANT SELECT ON atestv2 TO regress_priv_user2;
 
 SET SESSION AUTHORIZATION regress_priv_user4;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atestv1; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atestv2; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atestv3; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atestv0; -- fail
+SELECT * FROM atestv1; -- ok
+SELECT * FROM atestv2; -- fail
+SELECT * FROM atestv3; -- ok
+SELECT * FROM atestv0; -- fail
 
 -- Appendrels excluded by constraints failed to check permissions in 8.4-9.2.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select * from
---dg   ((select a.q1 as x from int8_tbl a offset 0)
---dg    union all
---dg    (select b.q2 as x from int8_tbl b offset 0)) ss
---dg where false;
+select * from
+  ((select a.q1 as x from int8_tbl a offset 0)
+   union all
+   (select b.q2 as x from int8_tbl b offset 0)) ss
+where false;
 
 set constraint_exclusion = on;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select * from
---dg   ((select a.q1 as x, random() from int8_tbl a where q1 > 0)
---dg    union all
---dg    (select b.q2 as x, random() from int8_tbl b where q2 > 0)) ss
---dg where x < 0;
+select * from
+  ((select a.q1 as x, random() from int8_tbl a where q1 > 0)
+   union all
+   (select b.q2 as x, random() from int8_tbl b where q2 > 0)) ss
+where x < 0;
 reset constraint_exclusion;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE VIEW atestv4 AS SELECT * FROM atestv3; -- nested view
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atestv4; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON atestv4 TO regress_priv_user2;
+CREATE VIEW atestv4 AS SELECT * FROM atestv3; -- nested view
+SELECT * FROM atestv4; -- ok
+GRANT SELECT ON atestv4 TO regress_priv_user2;
 
 SET SESSION AUTHORIZATION regress_priv_user2;
 
 -- Two complex cases:
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atestv3; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atestv4; -- ok (even though regress_priv_user2 cannot access underlying atestv3)
+SELECT * FROM atestv3; -- fail
+SELECT * FROM atestv4; -- ok (even though regress_priv_user2 cannot access underlying atestv3)
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest2; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atestv2; -- fail (even though regress_priv_user2 can access underlying atest2)
+SELECT * FROM atest2; -- ok
+SELECT * FROM atestv2; -- fail (even though regress_priv_user2 can access underlying atest2)
 
 -- Test column level permissions
 
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE atest5 (one int, two int unique, three int, four int unique);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE atest6 (one int, two int, blue int);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT (one), INSERT (two), UPDATE (three) ON atest5 TO regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT ALL (one) ON atest5 TO regress_priv_user3;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT unnest(pg_get_acl('pg_class'::regclass, 'atest5'::regclass::oid, 1));
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT unnest(pg_get_acl('pg_class'::regclass, 'atest5'::regclass::oid, 2));
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT unnest(pg_get_acl('pg_class'::regclass, 'atest5'::regclass::oid, 3));
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT unnest(pg_get_acl('pg_class'::regclass, 'atest5'::regclass::oid, 4));
+CREATE TABLE atest5 (one int, two int unique, three int, four int unique);
+CREATE TABLE atest6 (one int, two int, blue int);
+GRANT SELECT (one), INSERT (two), UPDATE (three) ON atest5 TO regress_priv_user4;
+GRANT ALL (one) ON atest5 TO regress_priv_user3;
+SELECT unnest(pg_get_acl('pg_class'::regclass, 'atest5'::regclass::oid, 1));
+SELECT unnest(pg_get_acl('pg_class'::regclass, 'atest5'::regclass::oid, 2));
+SELECT unnest(pg_get_acl('pg_class'::regclass, 'atest5'::regclass::oid, 3));
+SELECT unnest(pg_get_acl('pg_class'::regclass, 'atest5'::regclass::oid, 4));
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5 VALUES (1,2,3);
+INSERT INTO atest5 VALUES (1,2,3);
 
 SET SESSION AUTHORIZATION regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest5; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT one FROM atest5; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg COPY atest5 (one) TO stdout; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT two FROM atest5; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg COPY atest5 (two) TO stdout; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT atest5 FROM atest5; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg COPY atest5 (one,two) TO stdout; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT 1 FROM atest5; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT 1 FROM atest5 a JOIN atest5 b USING (one); -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT 1 FROM atest5 a JOIN atest5 b USING (two); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT 1 FROM atest5 a NATURAL JOIN atest5 b; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM (atest5 a JOIN atest5 b USING (one)) j; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT j.* FROM (atest5 a JOIN atest5 b USING (one)) j; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT (j.*) IS NULL FROM (atest5 a JOIN atest5 b USING (one)) j; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT one FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT j.one FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT two FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT j.two FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT y FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT j.y FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM (atest5 a JOIN atest5 b USING (one)); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT a.* FROM (atest5 a JOIN atest5 b USING (one)); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT (a.*) IS NULL FROM (atest5 a JOIN atest5 b USING (one)); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT two FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT a.two FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT y FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT b.y FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT y FROM (atest5 a LEFT JOIN atest5 b(one,x,y,z) USING (one)); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT b.y FROM (atest5 a LEFT JOIN atest5 b(one,x,y,z) USING (one)); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT y FROM (atest5 a FULL JOIN atest5 b(one,x,y,z) USING (one)); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT b.y FROM (atest5 a FULL JOIN atest5 b(one,x,y,z) USING (one)); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT 1 FROM atest5 WHERE two = 2; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest1, atest5; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT atest1.* FROM atest1, atest5; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT atest1.*,atest5.one FROM atest1, atest5; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT atest1.*,atest5.one FROM atest1 JOIN atest5 ON (atest1.a = atest5.two); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT atest1.*,atest5.one FROM atest1 JOIN atest5 ON (atest1.a = atest5.one); -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT one, two FROM atest5; -- fail
+SELECT * FROM atest5; -- fail
+SELECT one FROM atest5; -- ok
+COPY atest5 (one) TO stdout; -- ok
+SELECT two FROM atest5; -- fail
+COPY atest5 (two) TO stdout; -- fail
+SELECT atest5 FROM atest5; -- fail
+COPY atest5 (one,two) TO stdout; -- fail
+SELECT 1 FROM atest5; -- ok
+SELECT 1 FROM atest5 a JOIN atest5 b USING (one); -- ok
+SELECT 1 FROM atest5 a JOIN atest5 b USING (two); -- fail
+SELECT 1 FROM atest5 a NATURAL JOIN atest5 b; -- fail
+SELECT * FROM (atest5 a JOIN atest5 b USING (one)) j; -- fail
+SELECT j.* FROM (atest5 a JOIN atest5 b USING (one)) j; -- fail
+SELECT (j.*) IS NULL FROM (atest5 a JOIN atest5 b USING (one)) j; -- fail
+SELECT one FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- ok
+SELECT j.one FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- ok
+SELECT two FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- fail
+SELECT j.two FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- fail
+SELECT y FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- fail
+SELECT j.y FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- fail
+SELECT * FROM (atest5 a JOIN atest5 b USING (one)); -- fail
+SELECT a.* FROM (atest5 a JOIN atest5 b USING (one)); -- fail
+SELECT (a.*) IS NULL FROM (atest5 a JOIN atest5 b USING (one)); -- fail
+SELECT two FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+SELECT a.two FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+SELECT y FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+SELECT b.y FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+SELECT y FROM (atest5 a LEFT JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+SELECT b.y FROM (atest5 a LEFT JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+SELECT y FROM (atest5 a FULL JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+SELECT b.y FROM (atest5 a FULL JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+SELECT 1 FROM atest5 WHERE two = 2; -- fail
+SELECT * FROM atest1, atest5; -- fail
+SELECT atest1.* FROM atest1, atest5; -- ok
+SELECT atest1.*,atest5.one FROM atest1, atest5; -- ok
+SELECT atest1.*,atest5.one FROM atest1 JOIN atest5 ON (atest1.a = atest5.two); -- fail
+SELECT atest1.*,atest5.one FROM atest1 JOIN atest5 ON (atest1.a = atest5.one); -- ok
+SELECT one, two FROM atest5; -- fail
 
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT (one,two) ON atest6 TO regress_priv_user4;
+GRANT SELECT (one,two) ON atest6 TO regress_priv_user4;
 
 SET SESSION AUTHORIZATION regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT one, two FROM atest5 NATURAL JOIN atest6; -- fail still
+SELECT one, two FROM atest5 NATURAL JOIN atest6; -- fail still
 
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT (two) ON atest5 TO regress_priv_user4;
+GRANT SELECT (two) ON atest5 TO regress_priv_user4;
 
 SET SESSION AUTHORIZATION regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT one, two FROM atest5 NATURAL JOIN atest6; -- ok now
+SELECT one, two FROM atest5 NATURAL JOIN atest6; -- ok now
 
 -- test column-level privileges for INSERT and UPDATE
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5 (two) VALUES (3); -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg COPY atest5 FROM stdin; -- fail
---dg \.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg COPY atest5 (two) FROM stdin; -- ok
---dg 1
---dg \.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5 (three) VALUES (4); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5 VALUES (5,5,5); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE atest5 SET three = 10; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE atest5 SET one = 8; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE atest5 SET three = 5, one = 2; -- fail
+INSERT INTO atest5 (two) VALUES (3); -- ok
+COPY atest5 FROM stdin; -- fail
+\.
+COPY atest5 (two) FROM stdin; -- ok
+1
+\.
+INSERT INTO atest5 (three) VALUES (4); -- fail
+INSERT INTO atest5 VALUES (5,5,5); -- fail
+UPDATE atest5 SET three = 10; -- ok
+UPDATE atest5 SET one = 8; -- fail
+UPDATE atest5 SET three = 5, one = 2; -- fail
 -- Check that column level privs are enforced in RETURNING
 -- Ok.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = 10;
+INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = 10;
 -- Error. No SELECT on column three.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = 10 RETURNING atest5.three;
+INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = 10 RETURNING atest5.three;
 -- Ok.  May SELECT on column "one":
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = 10 RETURNING atest5.one;
+INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = 10 RETURNING atest5.one;
 -- Check that column level privileges are enforced for EXCLUDED
 -- Ok. we may select one
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = EXCLUDED.one;
+INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = EXCLUDED.one;
 -- Error. No select rights on three
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = EXCLUDED.three;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set one = 8; -- fails (due to UPDATE)
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5(three) VALUES (4) ON CONFLICT (two) DO UPDATE set three = 10; -- fails (due to INSERT)
+INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = EXCLUDED.three;
+INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set one = 8; -- fails (due to UPDATE)
+INSERT INTO atest5(three) VALUES (4) ON CONFLICT (two) DO UPDATE set three = 10; -- fails (due to INSERT)
 
 -- Check that the columns in the inference require select privileges
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5(four) VALUES (4); -- fail
+INSERT INTO atest5(four) VALUES (4); -- fail
 
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT INSERT (four) ON atest5 TO regress_priv_user4;
+GRANT INSERT (four) ON atest5 TO regress_priv_user4;
 SET SESSION AUTHORIZATION regress_priv_user4;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5(four) VALUES (4) ON CONFLICT (four) DO UPDATE set three = 3; -- fails (due to SELECT)
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5(four) VALUES (4) ON CONFLICT ON CONSTRAINT atest5_four_key DO UPDATE set three = 3; -- fails (due to SELECT)
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5(four) VALUES (4); -- ok
+INSERT INTO atest5(four) VALUES (4) ON CONFLICT (four) DO UPDATE set three = 3; -- fails (due to SELECT)
+INSERT INTO atest5(four) VALUES (4) ON CONFLICT ON CONSTRAINT atest5_four_key DO UPDATE set three = 3; -- fails (due to SELECT)
+INSERT INTO atest5(four) VALUES (4); -- ok
 
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT (four) ON atest5 TO regress_priv_user4;
+GRANT SELECT (four) ON atest5 TO regress_priv_user4;
 SET SESSION AUTHORIZATION regress_priv_user4;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5(four) VALUES (4) ON CONFLICT (four) DO UPDATE set three = 3; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO atest5(four) VALUES (4) ON CONFLICT ON CONSTRAINT atest5_four_key DO UPDATE set three = 3; -- ok
+INSERT INTO atest5(four) VALUES (4) ON CONFLICT (four) DO UPDATE set three = 3; -- ok
+INSERT INTO atest5(four) VALUES (4) ON CONFLICT ON CONSTRAINT atest5_four_key DO UPDATE set three = 3; -- ok
 
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg REVOKE ALL (one) ON atest5 FROM regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT (one,two,blue) ON atest6 TO regress_priv_user4;
+REVOKE ALL (one) ON atest5 FROM regress_priv_user4;
+GRANT SELECT (one,two,blue) ON atest6 TO regress_priv_user4;
 
 SET SESSION AUTHORIZATION regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT one FROM atest5; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE atest5 SET one = 1; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT atest6 FROM atest6; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg COPY atest6 TO stdout; -- ok
+SELECT one FROM atest5; -- fail
+UPDATE atest5 SET one = 1; -- fail
+SELECT atest6 FROM atest6; -- ok
+COPY atest6 TO stdout; -- ok
 
 -- test column privileges with MERGE
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE mtarget (a int, b text);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE msource (a int, b text);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO mtarget VALUES (1, 'init1'), (2, 'init2');
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO msource VALUES (1, 'source1'), (2, 'source2'), (3, 'source3');
+CREATE TABLE mtarget (a int, b text);
+CREATE TABLE msource (a int, b text);
+INSERT INTO mtarget VALUES (1, 'init1'), (2, 'init2');
+INSERT INTO msource VALUES (1, 'source1'), (2, 'source2'), (3, 'source3');
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT (a) ON msource TO regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT (a) ON mtarget TO regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT INSERT (a,b) ON mtarget TO regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT UPDATE (b) ON mtarget TO regress_priv_user4;
+GRANT SELECT (a) ON msource TO regress_priv_user4;
+GRANT SELECT (a) ON mtarget TO regress_priv_user4;
+GRANT INSERT (a,b) ON mtarget TO regress_priv_user4;
+GRANT UPDATE (b) ON mtarget TO regress_priv_user4;
 
 SET SESSION AUTHORIZATION regress_priv_user4;
 
@@ -880,52 +657,46 @@ SET SESSION AUTHORIZATION regress_priv_user4;
 --
 
 -- fail (no SELECT priv on s.b)
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg MERGE INTO mtarget t USING msource s ON t.a = s.a
---dg WHEN MATCHED THEN
---dg 	UPDATE SET b = s.b
---dg WHEN NOT MATCHED THEN
---dg 	INSERT VALUES (a, NULL);
+MERGE INTO mtarget t USING msource s ON t.a = s.a
+WHEN MATCHED THEN
+	UPDATE SET b = s.b
+WHEN NOT MATCHED THEN
+	INSERT VALUES (a, NULL);
 
 -- fail (s.b used in the INSERTed values)
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg MERGE INTO mtarget t USING msource s ON t.a = s.a
---dg WHEN MATCHED THEN
---dg 	UPDATE SET b = 'x'
---dg WHEN NOT MATCHED THEN
---dg 	INSERT VALUES (a, b);
+MERGE INTO mtarget t USING msource s ON t.a = s.a
+WHEN MATCHED THEN
+	UPDATE SET b = 'x'
+WHEN NOT MATCHED THEN
+	INSERT VALUES (a, b);
 
 -- fail (s.b used in the WHEN quals)
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg MERGE INTO mtarget t USING msource s ON t.a = s.a
---dg WHEN MATCHED AND s.b = 'x' THEN
---dg 	UPDATE SET b = 'x'
---dg WHEN NOT MATCHED THEN
---dg 	INSERT VALUES (a, NULL);
+MERGE INTO mtarget t USING msource s ON t.a = s.a
+WHEN MATCHED AND s.b = 'x' THEN
+	UPDATE SET b = 'x'
+WHEN NOT MATCHED THEN
+	INSERT VALUES (a, NULL);
 
 -- this should be ok since only s.a is accessed
 BEGIN;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg MERGE INTO mtarget t USING msource s ON t.a = s.a
---dg WHEN MATCHED THEN
---dg 	UPDATE SET b = 'ok'
---dg WHEN NOT MATCHED THEN
---dg 	INSERT VALUES (a, NULL);
+MERGE INTO mtarget t USING msource s ON t.a = s.a
+WHEN MATCHED THEN
+	UPDATE SET b = 'ok'
+WHEN NOT MATCHED THEN
+	INSERT VALUES (a, NULL);
 ROLLBACK;
 
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT (b) ON msource TO regress_priv_user4;
+GRANT SELECT (b) ON msource TO regress_priv_user4;
 SET SESSION AUTHORIZATION regress_priv_user4;
 
 -- should now be ok
 BEGIN;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg MERGE INTO mtarget t USING msource s ON t.a = s.a
---dg WHEN MATCHED THEN
---dg 	UPDATE SET b = s.b
---dg WHEN NOT MATCHED THEN
---dg 	INSERT VALUES (a, b);
+MERGE INTO mtarget t USING msource s ON t.a = s.a
+WHEN MATCHED THEN
+	UPDATE SET b = s.b
+WHEN NOT MATCHED THEN
+	INSERT VALUES (a, b);
 ROLLBACK;
 
 --
@@ -933,119 +704,87 @@ ROLLBACK;
 --
 
 -- fail (no SELECT priv on t.b)
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg MERGE INTO mtarget t USING msource s ON t.a = s.a
---dg WHEN MATCHED THEN
---dg 	UPDATE SET b = t.b
---dg WHEN NOT MATCHED THEN
---dg 	INSERT VALUES (a, NULL);
+MERGE INTO mtarget t USING msource s ON t.a = s.a
+WHEN MATCHED THEN
+	UPDATE SET b = t.b
+WHEN NOT MATCHED THEN
+	INSERT VALUES (a, NULL);
 
 -- fail (no UPDATE on t.a)
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg MERGE INTO mtarget t USING msource s ON t.a = s.a
---dg WHEN MATCHED THEN
---dg 	UPDATE SET b = s.b, a = t.a + 1
---dg WHEN NOT MATCHED THEN
---dg 	INSERT VALUES (a, b);
+MERGE INTO mtarget t USING msource s ON t.a = s.a
+WHEN MATCHED THEN
+	UPDATE SET b = s.b, a = t.a + 1
+WHEN NOT MATCHED THEN
+	INSERT VALUES (a, b);
 
 -- fail (no SELECT on t.b)
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg MERGE INTO mtarget t USING msource s ON t.a = s.a
---dg WHEN MATCHED AND t.b IS NOT NULL THEN
---dg 	UPDATE SET b = s.b
---dg WHEN NOT MATCHED THEN
---dg 	INSERT VALUES (a, b);
+MERGE INTO mtarget t USING msource s ON t.a = s.a
+WHEN MATCHED AND t.b IS NOT NULL THEN
+	UPDATE SET b = s.b
+WHEN NOT MATCHED THEN
+	INSERT VALUES (a, b);
 
 -- ok
 BEGIN;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg MERGE INTO mtarget t USING msource s ON t.a = s.a
---dg WHEN MATCHED THEN
---dg 	UPDATE SET b = s.b;
+MERGE INTO mtarget t USING msource s ON t.a = s.a
+WHEN MATCHED THEN
+	UPDATE SET b = s.b;
 ROLLBACK;
 
 -- fail (no DELETE)
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg MERGE INTO mtarget t USING msource s ON t.a = s.a
---dg WHEN MATCHED AND t.b IS NOT NULL THEN
---dg 	DELETE;
+MERGE INTO mtarget t USING msource s ON t.a = s.a
+WHEN MATCHED AND t.b IS NOT NULL THEN
+	DELETE;
 
 -- grant delete privileges
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT DELETE ON mtarget TO regress_priv_user4;
+GRANT DELETE ON mtarget TO regress_priv_user4;
 -- should be ok now
 BEGIN;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg MERGE INTO mtarget t USING msource s ON t.a = s.a
---dg WHEN MATCHED AND t.b IS NOT NULL THEN
---dg 	DELETE;
+MERGE INTO mtarget t USING msource s ON t.a = s.a
+WHEN MATCHED AND t.b IS NOT NULL THEN
+	DELETE;
 ROLLBACK;
 
 -- check error reporting with column privs
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE t1 (c1 int, c2 int, c3 int check (c3 < 5), primary key (c1, c2));
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT (c1) ON t1 TO regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT INSERT (c1, c2, c3) ON t1 TO regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT UPDATE (c1, c2, c3) ON t1 TO regress_priv_user2;
+CREATE TABLE t1 (c1 int, c2 int, c3 int check (c3 < 5), primary key (c1, c2));
+GRANT SELECT (c1) ON t1 TO regress_priv_user2;
+GRANT INSERT (c1, c2, c3) ON t1 TO regress_priv_user2;
+GRANT UPDATE (c1, c2, c3) ON t1 TO regress_priv_user2;
 
 -- seed data
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO t1 VALUES (1, 1, 1);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO t1 VALUES (1, 2, 1);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO t1 VALUES (2, 1, 2);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO t1 VALUES (2, 2, 2);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO t1 VALUES (3, 1, 3);
+INSERT INTO t1 VALUES (1, 1, 1);
+INSERT INTO t1 VALUES (1, 2, 1);
+INSERT INTO t1 VALUES (2, 1, 2);
+INSERT INTO t1 VALUES (2, 2, 2);
+INSERT INTO t1 VALUES (3, 1, 3);
 
 SET SESSION AUTHORIZATION regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO t1 (c1, c2) VALUES (1, 1); -- fail, but row not shown
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE t1 SET c2 = 1; -- fail, but row not shown
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO t1 (c1, c2) VALUES (null, null); -- fail, but see columns being inserted
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO t1 (c3) VALUES (null); -- fail, but see columns being inserted or have SELECT
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO t1 (c1) VALUES (5); -- fail, but see columns being inserted or have SELECT
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE t1 SET c3 = 10; -- fail, but see columns with SELECT rights, or being modified
+INSERT INTO t1 (c1, c2) VALUES (1, 1); -- fail, but row not shown
+UPDATE t1 SET c2 = 1; -- fail, but row not shown
+INSERT INTO t1 (c1, c2) VALUES (null, null); -- fail, but see columns being inserted
+INSERT INTO t1 (c3) VALUES (null); -- fail, but see columns being inserted or have SELECT
+INSERT INTO t1 (c1) VALUES (5); -- fail, but see columns being inserted or have SELECT
+UPDATE t1 SET c3 = 10; -- fail, but see columns with SELECT rights, or being modified
 
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DROP TABLE t1;
+DROP TABLE t1;
 
 -- check error reporting with column privs on a partitioned table
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE errtst(a text, b text NOT NULL, c text, secret1 text, secret2 text) PARTITION BY LIST (a);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE errtst_part_1(secret2 text, c text, a text, b text NOT NULL, secret1 text);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE errtst_part_2(secret1 text, secret2 text, a text, c text, b text NOT NULL);
+CREATE TABLE errtst(a text, b text NOT NULL, c text, secret1 text, secret2 text) PARTITION BY LIST (a);
+CREATE TABLE errtst_part_1(secret2 text, c text, a text, b text NOT NULL, secret1 text);
+CREATE TABLE errtst_part_2(secret1 text, secret2 text, a text, c text, b text NOT NULL);
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE errtst ATTACH PARTITION errtst_part_1 FOR VALUES IN ('aaa');
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE errtst ATTACH PARTITION errtst_part_2 FOR VALUES IN ('aaaa');
+ALTER TABLE errtst ATTACH PARTITION errtst_part_1 FOR VALUES IN ('aaa');
+ALTER TABLE errtst ATTACH PARTITION errtst_part_2 FOR VALUES IN ('aaaa');
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT (a, b, c) ON TABLE errtst TO regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT UPDATE (a, b, c) ON TABLE errtst TO regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT INSERT (a, b, c) ON TABLE errtst TO regress_priv_user2;
+GRANT SELECT (a, b, c) ON TABLE errtst TO regress_priv_user2;
+GRANT UPDATE (a, b, c) ON TABLE errtst TO regress_priv_user2;
+GRANT INSERT (a, b, c) ON TABLE errtst TO regress_priv_user2;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO errtst_part_1 (a, b, c, secret1, secret2)
---dg VALUES ('aaa', 'bbb', 'ccc', 'the body', 'is in the attic');
+INSERT INTO errtst_part_1 (a, b, c, secret1, secret2)
+VALUES ('aaa', 'bbb', 'ccc', 'the body', 'is in the attic');
 
 SET SESSION AUTHORIZATION regress_priv_user2;
 
@@ -1053,145 +792,96 @@ SET SESSION AUTHORIZATION regress_priv_user2;
 -- the error messages don't leak the secret fields.
 
 -- simple insert.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg INSERT INTO errtst (a, b) VALUES ('aaa', NULL);
+INSERT INTO errtst (a, b) VALUES ('aaa', NULL);
 -- simple update.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE errtst SET b = NULL;
+UPDATE errtst SET b = NULL;
 -- partitioning key is updated, doesn't move the row.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE errtst SET a = 'aaa', b = NULL;
+UPDATE errtst SET a = 'aaa', b = NULL;
 -- row is moved to another partition.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE errtst SET a = 'aaaa', b = NULL;
+UPDATE errtst SET a = 'aaaa', b = NULL;
 
 -- row is moved to another partition. This differs from the previous case in
 -- that the new partition is excluded by constraint exclusion, so its
 -- ResultRelInfo is not created at ExecInitModifyTable, but needs to be
 -- constructed on the fly when the updated tuple is routed to it.
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE errtst SET a = 'aaaa', b = NULL WHERE a = 'aaa';
+UPDATE errtst SET a = 'aaaa', b = NULL WHERE a = 'aaa';
 
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DROP TABLE errtst;
+DROP TABLE errtst;
 
 -- test column-level privileges when involved with DELETE
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE atest6 ADD COLUMN three integer;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT DELETE ON atest5 TO regress_priv_user3;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT (two) ON atest5 TO regress_priv_user3;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg REVOKE ALL (one) ON atest5 FROM regress_priv_user3;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT (one) ON atest5 TO regress_priv_user4;
+ALTER TABLE atest6 ADD COLUMN three integer;
+GRANT DELETE ON atest5 TO regress_priv_user3;
+GRANT SELECT (two) ON atest5 TO regress_priv_user3;
+REVOKE ALL (one) ON atest5 FROM regress_priv_user3;
+GRANT SELECT (one) ON atest5 TO regress_priv_user4;
 
 SET SESSION AUTHORIZATION regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT atest6 FROM atest6; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT one FROM atest5 NATURAL JOIN atest6; -- fail
+SELECT atest6 FROM atest6; -- fail
+SELECT one FROM atest5 NATURAL JOIN atest6; -- fail
 
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE atest6 DROP COLUMN three;
+ALTER TABLE atest6 DROP COLUMN three;
 
 SET SESSION AUTHORIZATION regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT atest6 FROM atest6; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT one FROM atest5 NATURAL JOIN atest6; -- ok
+SELECT atest6 FROM atest6; -- ok
+SELECT one FROM atest5 NATURAL JOIN atest6; -- ok
 
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE atest6 DROP COLUMN two;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg REVOKE SELECT (one,blue) ON atest6 FROM regress_priv_user4;
+ALTER TABLE atest6 DROP COLUMN two;
+REVOKE SELECT (one,blue) ON atest6 FROM regress_priv_user4;
 
 SET SESSION AUTHORIZATION regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT * FROM atest6; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT 1 FROM atest6; -- fail
+SELECT * FROM atest6; -- fail
+SELECT 1 FROM atest6; -- fail
 
 SET SESSION AUTHORIZATION regress_priv_user3;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DELETE FROM atest5 WHERE one = 1; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DELETE FROM atest5 WHERE two = 2; -- ok
+DELETE FROM atest5 WHERE one = 1; -- fail
+DELETE FROM atest5 WHERE two = 2; -- ok
 
 -- check inheritance cases
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE atestp1 (f1 int, f2 int);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE atestp2 (fx int, fy int);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE atestc (fz int) INHERITS (atestp1, atestp2);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT(fx,fy,tableoid) ON atestp2 TO regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT(fx) ON atestc TO regress_priv_user2;
+CREATE TABLE atestp1 (f1 int, f2 int);
+CREATE TABLE atestp2 (fx int, fy int);
+CREATE TABLE atestc (fz int) INHERITS (atestp1, atestp2);
+GRANT SELECT(fx,fy,tableoid) ON atestp2 TO regress_priv_user2;
+GRANT SELECT(fx) ON atestc TO regress_priv_user2;
 
 SET SESSION AUTHORIZATION regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT fx FROM atestp2; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT fy FROM atestp2; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT atestp2 FROM atestp2; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT tableoid FROM atestp2; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT fy FROM atestc; -- fail
+SELECT fx FROM atestp2; -- ok
+SELECT fy FROM atestp2; -- ok
+SELECT atestp2 FROM atestp2; -- ok
+SELECT tableoid FROM atestp2; -- ok
+SELECT fy FROM atestc; -- fail
 
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT(fy,tableoid) ON atestc TO regress_priv_user2;
+GRANT SELECT(fy,tableoid) ON atestc TO regress_priv_user2;
 
 SET SESSION AUTHORIZATION regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT fx FROM atestp2; -- still ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT fy FROM atestp2; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT atestp2 FROM atestp2; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT tableoid FROM atestp2; -- ok
+SELECT fx FROM atestp2; -- still ok
+SELECT fy FROM atestp2; -- ok
+SELECT atestp2 FROM atestp2; -- ok
+SELECT tableoid FROM atestp2; -- ok
 
 -- child's permissions do not apply when operating on parent
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg REVOKE ALL ON atestc FROM regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT ALL ON atestp1 TO regress_priv_user2;
+REVOKE ALL ON atestc FROM regress_priv_user2;
+GRANT ALL ON atestp1 TO regress_priv_user2;
 SET SESSION AUTHORIZATION regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT f2 FROM atestp1; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT f2 FROM atestc; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DELETE FROM atestp1; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DELETE FROM atestc; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE atestp1 SET f1 = 1; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg UPDATE atestc SET f1 = 1; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg TRUNCATE atestp1; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg TRUNCATE atestc; -- fail
+SELECT f2 FROM atestp1; -- ok
+SELECT f2 FROM atestc; -- fail
+DELETE FROM atestp1; -- ok
+DELETE FROM atestc; -- fail
+UPDATE atestp1 SET f1 = 1; -- ok
+UPDATE atestc SET f1 = 1; -- fail
+TRUNCATE atestp1; -- ok
+TRUNCATE atestc; -- fail
 BEGIN;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg LOCK atestp1;
+LOCK atestp1;
 END;
 BEGIN;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg LOCK atestc;
+LOCK atestc;
 END;
 
 -- privileges on functions, languages
@@ -1208,83 +898,50 @@ GRANT USAGE ON LANGUAGE c TO PUBLIC; -- fail
 SET SESSION AUTHORIZATION regress_priv_user1;
 --dg-skip: language "?" does not exist
 --dg GRANT USAGE ON LANGUAGE sql TO regress_priv_user2; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION priv_testfunc1(int) RETURNS int AS 'select 2 * $1;' LANGUAGE sql;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION priv_testfunc2(int) RETURNS int AS 'select 3 * $1;' LANGUAGE sql;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE AGGREGATE priv_testagg1(int) (sfunc = int4pl, stype = int4);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE PROCEDURE priv_testproc1(int) AS 'select $1;' LANGUAGE sql;
+CREATE FUNCTION priv_testfunc1(int) RETURNS int AS 'select 2 * $1;' LANGUAGE sql;
+CREATE FUNCTION priv_testfunc2(int) RETURNS int AS 'select 3 * $1;' LANGUAGE sql;
+CREATE AGGREGATE priv_testagg1(int) (sfunc = int4pl, stype = int4);
+CREATE PROCEDURE priv_testproc1(int) AS 'select $1;' LANGUAGE sql;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg REVOKE ALL ON FUNCTION priv_testfunc1(int), priv_testfunc2(int), priv_testagg1(int) FROM PUBLIC;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT EXECUTE ON FUNCTION priv_testfunc1(int), priv_testfunc2(int), priv_testagg1(int) TO regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg REVOKE ALL ON FUNCTION priv_testproc1(int) FROM PUBLIC; -- fail, not a function
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg REVOKE ALL ON PROCEDURE priv_testproc1(int) FROM PUBLIC;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT EXECUTE ON PROCEDURE priv_testproc1(int) TO regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT USAGE ON FUNCTION priv_testfunc1(int) TO regress_priv_user3; -- semantic error
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT USAGE ON FUNCTION priv_testagg1(int) TO regress_priv_user3; -- semantic error
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT USAGE ON PROCEDURE priv_testproc1(int) TO regress_priv_user3; -- semantic error
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT ALL PRIVILEGES ON FUNCTION priv_testfunc1(int) TO regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT ALL PRIVILEGES ON FUNCTION priv_testfunc_nosuch(int) TO regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT ALL PRIVILEGES ON FUNCTION priv_testagg1(int) TO regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT ALL PRIVILEGES ON PROCEDURE priv_testproc1(int) TO regress_priv_user4;
+REVOKE ALL ON FUNCTION priv_testfunc1(int), priv_testfunc2(int), priv_testagg1(int) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION priv_testfunc1(int), priv_testfunc2(int), priv_testagg1(int) TO regress_priv_user2;
+REVOKE ALL ON FUNCTION priv_testproc1(int) FROM PUBLIC; -- fail, not a function
+REVOKE ALL ON PROCEDURE priv_testproc1(int) FROM PUBLIC;
+GRANT EXECUTE ON PROCEDURE priv_testproc1(int) TO regress_priv_user2;
+GRANT USAGE ON FUNCTION priv_testfunc1(int) TO regress_priv_user3; -- semantic error
+GRANT USAGE ON FUNCTION priv_testagg1(int) TO regress_priv_user3; -- semantic error
+GRANT USAGE ON PROCEDURE priv_testproc1(int) TO regress_priv_user3; -- semantic error
+GRANT ALL PRIVILEGES ON FUNCTION priv_testfunc1(int) TO regress_priv_user4;
+GRANT ALL PRIVILEGES ON FUNCTION priv_testfunc_nosuch(int) TO regress_priv_user4;
+GRANT ALL PRIVILEGES ON FUNCTION priv_testagg1(int) TO regress_priv_user4;
+GRANT ALL PRIVILEGES ON PROCEDURE priv_testproc1(int) TO regress_priv_user4;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION priv_testfunc4(boolean) RETURNS text
---dg   AS 'select col1 from atest2 where col2 = $1;'
---dg   LANGUAGE sql SECURITY DEFINER;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT EXECUTE ON FUNCTION priv_testfunc4(boolean) TO regress_priv_user3;
+CREATE FUNCTION priv_testfunc4(boolean) RETURNS text
+  AS 'select col1 from atest2 where col2 = $1;'
+  LANGUAGE sql SECURITY DEFINER;
+GRANT EXECUTE ON FUNCTION priv_testfunc4(boolean) TO regress_priv_user3;
 
 SET SESSION AUTHORIZATION regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT priv_testfunc1(5), priv_testfunc2(5); -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION priv_testfunc3(int) RETURNS int AS 'select 2 * $1;' LANGUAGE sql; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT priv_testagg1(x) FROM (VALUES (1), (2), (3)) _(x); -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CALL priv_testproc1(6); -- ok
+SELECT priv_testfunc1(5), priv_testfunc2(5); -- ok
+CREATE FUNCTION priv_testfunc3(int) RETURNS int AS 'select 2 * $1;' LANGUAGE sql; -- fail
+SELECT priv_testagg1(x) FROM (VALUES (1), (2), (3)) _(x); -- ok
+CALL priv_testproc1(6); -- ok
 
 SET SESSION AUTHORIZATION regress_priv_user3;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT priv_testfunc1(5); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT priv_testagg1(x) FROM (VALUES (1), (2), (3)) _(x); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CALL priv_testproc1(6); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT col1 FROM atest2 WHERE col2 = true; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT priv_testfunc4(true); -- ok
+SELECT priv_testfunc1(5); -- fail
+SELECT priv_testagg1(x) FROM (VALUES (1), (2), (3)) _(x); -- fail
+CALL priv_testproc1(6); -- fail
+SELECT col1 FROM atest2 WHERE col2 = true; -- fail
+SELECT priv_testfunc4(true); -- ok
 
 SET SESSION AUTHORIZATION regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT priv_testfunc1(5); -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT priv_testagg1(x) FROM (VALUES (1), (2), (3)) _(x); -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CALL priv_testproc1(6); -- ok
+SELECT priv_testfunc1(5); -- ok
+SELECT priv_testagg1(x) FROM (VALUES (1), (2), (3)) _(x); -- ok
+CALL priv_testproc1(6); -- ok
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DROP FUNCTION priv_testfunc1(int); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DROP AGGREGATE priv_testagg1(int); -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DROP PROCEDURE priv_testproc1(int); -- fail
+DROP FUNCTION priv_testfunc1(int); -- fail
+DROP AGGREGATE priv_testagg1(int); -- fail
+DROP PROCEDURE priv_testproc1(int); -- fail
 
 \c -
 
@@ -1333,183 +990,127 @@ SET SESSION AUTHORIZATION regress_priv_user1;
 
 -- commands that should fail
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE AGGREGATE priv_testagg1a(priv_testdomain1) (sfunc = int4_sum, stype = bigint);
+CREATE AGGREGATE priv_testagg1a(priv_testdomain1) (sfunc = int4_sum, stype = bigint);
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE DOMAIN priv_testdomain2a AS priv_testdomain1;
+CREATE DOMAIN priv_testdomain2a AS priv_testdomain1;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE DOMAIN priv_testdomain3a AS int;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION castfunc(int) RETURNS priv_testdomain3a AS $$ SELECT $1::priv_testdomain3a $$ LANGUAGE SQL;
+CREATE DOMAIN priv_testdomain3a AS int;
+CREATE FUNCTION castfunc(int) RETURNS priv_testdomain3a AS $$ SELECT $1::priv_testdomain3a $$ LANGUAGE SQL;
 --dg-cascade
 --dg CREATE CAST (priv_testdomain1 AS priv_testdomain3a) WITH FUNCTION castfunc(int);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DROP FUNCTION castfunc(int) CASCADE;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DROP DOMAIN priv_testdomain3a;
+DROP FUNCTION castfunc(int) CASCADE;
+DROP DOMAIN priv_testdomain3a;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE DOMAIN priv_testdomain4a AS int CHECK (VALUE > ('(0,1)'::priv_testtype1).a);
+CREATE DOMAIN priv_testdomain4a AS int CHECK (VALUE > ('(0,1)'::priv_testtype1).a);
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION priv_testfunc5a(a priv_testdomain1) RETURNS int LANGUAGE SQL AS $$ SELECT $1 $$;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION priv_testfunc6a(b int) RETURNS priv_testdomain1 LANGUAGE SQL AS $$ SELECT $1::priv_testdomain1 $$;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION priv_testfunc7a(a int DEFAULT ('(0,1)'::priv_testtype1).a) RETURNS int LANGUAGE SQL AS $$ SELECT $1 $$;
+CREATE FUNCTION priv_testfunc5a(a priv_testdomain1) RETURNS int LANGUAGE SQL AS $$ SELECT $1 $$;
+CREATE FUNCTION priv_testfunc6a(b int) RETURNS priv_testdomain1 LANGUAGE SQL AS $$ SELECT $1::priv_testdomain1 $$;
+CREATE FUNCTION priv_testfunc7a(a int DEFAULT ('(0,1)'::priv_testtype1).a) RETURNS int LANGUAGE SQL AS $$ SELECT $1 $$;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE OPERATOR !+! (PROCEDURE = int4pl, LEFTARG = priv_testdomain1, RIGHTARG = priv_testdomain1);
+CREATE OPERATOR !+! (PROCEDURE = int4pl, LEFTARG = priv_testdomain1, RIGHTARG = priv_testdomain1);
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test5a (a int, b priv_testdomain1);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test6a OF priv_testtype1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test6a2 (a int, b text);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE test6a2 OF priv_testtype1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test10a (a int[], b priv_testtype1[]);
+CREATE TABLE test5a (a int, b priv_testdomain1);
+CREATE TABLE test6a OF priv_testtype1;
+CREATE TABLE test6a2 (a int, b text);
+ALTER TABLE test6a2 OF priv_testtype1;
+CREATE TABLE test10a (a int[], b priv_testtype1[]);
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test9a (a int, b int);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE test9a ADD COLUMN c priv_testdomain1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE test9a ALTER COLUMN b TYPE priv_testdomain1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE INDEX ON test9a ((a::priv_testdomain1));
+CREATE TABLE test9a (a int, b int);
+ALTER TABLE test9a ADD COLUMN c priv_testdomain1;
+ALTER TABLE test9a ALTER COLUMN b TYPE priv_testdomain1;
+CREATE INDEX ON test9a ((a::priv_testdomain1));
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TYPE test7a AS (a int, b priv_testdomain1);
+CREATE TYPE test7a AS (a int, b priv_testdomain1);
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TYPE test8a AS (a int, b int);
+CREATE TYPE test8a AS (a int, b int);
 --dg-differs: another error: ALTER TYPE is not supported yet
 --dg ALTER TYPE test8a ADD ATTRIBUTE c priv_testdomain1;
 --dg-differs: another error: ALTER TYPE is not supported yet
 --dg ALTER TYPE test8a ALTER ATTRIBUTE b TYPE priv_testdomain1;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE DOMAIN priv_testdomain5a AS test8a CHECK ((VALUE).a > 0 AND ('(0,1)'::priv_testtype1).a >= 0);
+CREATE DOMAIN priv_testdomain5a AS test8a CHECK ((VALUE).a > 0 AND ('(0,1)'::priv_testtype1).a >= 0);
 
 --dg-cascade
 --dg CREATE TABLE test11a AS (SELECT 1::priv_testdomain1 AS a);
 
 --dg-cascade
 --dg CREATE VIEW test16a AS SELECT ('(0,1)'::priv_testtype1).a;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test17a (a int) PARTITION BY RANGE ((a + ('(0,1)'::priv_testtype1).a));
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE POLICY priv_testpolicy1a ON test9a USING (('(0,1)'::priv_testtype1).a > 0);
+CREATE TABLE test17a (a int) PARTITION BY RANGE ((a + ('(0,1)'::priv_testtype1).a));
+CREATE POLICY priv_testpolicy1a ON test9a USING (('(0,1)'::priv_testtype1).a > 0);
 
 --dg-cascade
 --dg REVOKE ALL ON TYPE priv_testtype1 FROM PUBLIC;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test12 (c int DEFAULT 0 CHECK (c > 0 AND '(0,1)'::priv_testtype1 IS NOT NULL));
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test13 (c int DEFAULT ('(0,1)'::priv_testtype1).a);
+CREATE TABLE test12 (c int DEFAULT 0 CHECK (c > 0 AND '(0,1)'::priv_testtype1 IS NOT NULL));
+CREATE TABLE test13 (c int DEFAULT ('(0,1)'::priv_testtype1).a);
 
 SET SESSION AUTHORIZATION regress_priv_user2;
 
 -- commands that should succeed
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE AGGREGATE priv_testagg1b(priv_testdomain1) (sfunc = int4_sum, stype = bigint);
+CREATE AGGREGATE priv_testagg1b(priv_testdomain1) (sfunc = int4_sum, stype = bigint);
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE DOMAIN priv_testdomain2b AS priv_testdomain1;
+CREATE DOMAIN priv_testdomain2b AS priv_testdomain1;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE DOMAIN priv_testdomain3b AS int;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION castfunc(int) RETURNS priv_testdomain3b AS $$ SELECT $1::priv_testdomain3b $$ LANGUAGE SQL;
+CREATE DOMAIN priv_testdomain3b AS int;
+CREATE FUNCTION castfunc(int) RETURNS priv_testdomain3b AS $$ SELECT $1::priv_testdomain3b $$ LANGUAGE SQL;
 --dg-cascade
 --dg CREATE CAST (priv_testdomain1 AS priv_testdomain3b) WITH FUNCTION castfunc(int);
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE DOMAIN priv_testdomain4b AS int CHECK (VALUE > ('(0,1)'::priv_testtype1).a);
+CREATE DOMAIN priv_testdomain4b AS int CHECK (VALUE > ('(0,1)'::priv_testtype1).a);
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION priv_testfunc5b(a priv_testdomain1) RETURNS int LANGUAGE SQL AS $$ SELECT $1 $$;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION priv_testfunc6b(b int) RETURNS priv_testdomain1 LANGUAGE SQL AS $$ SELECT $1::priv_testdomain1 $$;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION priv_testfunc7b(a int DEFAULT ('(0,1)'::priv_testtype1).a) RETURNS int LANGUAGE SQL AS $$ SELECT $1 $$;
+CREATE FUNCTION priv_testfunc5b(a priv_testdomain1) RETURNS int LANGUAGE SQL AS $$ SELECT $1 $$;
+CREATE FUNCTION priv_testfunc6b(b int) RETURNS priv_testdomain1 LANGUAGE SQL AS $$ SELECT $1::priv_testdomain1 $$;
+CREATE FUNCTION priv_testfunc7b(a int DEFAULT ('(0,1)'::priv_testtype1).a) RETURNS int LANGUAGE SQL AS $$ SELECT $1 $$;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE OPERATOR !! (PROCEDURE = priv_testfunc5b, RIGHTARG = priv_testdomain1);
+CREATE OPERATOR !! (PROCEDURE = priv_testfunc5b, RIGHTARG = priv_testdomain1);
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test5b (a int, b priv_testdomain1);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test6b OF priv_testtype1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test6b2 (a int, b text);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE test6b2 OF priv_testtype1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test10b (a int[], b priv_testtype1[]);
+CREATE TABLE test5b (a int, b priv_testdomain1);
+CREATE TABLE test6b OF priv_testtype1;
+CREATE TABLE test6b2 (a int, b text);
+ALTER TABLE test6b2 OF priv_testtype1;
+CREATE TABLE test10b (a int[], b priv_testtype1[]);
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test9b (a int, b int);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE test9b ADD COLUMN c priv_testdomain1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE test9b ALTER COLUMN b TYPE priv_testdomain1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE INDEX ON test9b ((a::priv_testdomain1));
+CREATE TABLE test9b (a int, b int);
+ALTER TABLE test9b ADD COLUMN c priv_testdomain1;
+ALTER TABLE test9b ALTER COLUMN b TYPE priv_testdomain1;
+CREATE INDEX ON test9b ((a::priv_testdomain1));
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TYPE test7b AS (a int, b priv_testdomain1);
+CREATE TYPE test7b AS (a int, b priv_testdomain1);
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TYPE test8b AS (a int, b int);
+CREATE TYPE test8b AS (a int, b int);
 --dg-differs: another error: ALTER TYPE is not supported yet
 --dg ALTER TYPE test8b ADD ATTRIBUTE c priv_testdomain1;
 --dg-differs: another error: ALTER TYPE is not supported yet
 --dg ALTER TYPE test8b ALTER ATTRIBUTE b TYPE priv_testdomain1;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE DOMAIN priv_testdomain5b AS test8b CHECK ((VALUE).a > 0 AND ('(0,1)'::priv_testtype1).a >= 0);
+CREATE DOMAIN priv_testdomain5b AS test8b CHECK ((VALUE).a > 0 AND ('(0,1)'::priv_testtype1).a >= 0);
 
 --dg-cascade
 --dg CREATE TABLE test11b AS (SELECT 1::priv_testdomain1 AS a);
 
 --dg-cascade
 --dg CREATE VIEW test16b AS SELECT ('(0,1)'::priv_testtype1).a;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test17b (a int) PARTITION BY RANGE ((a + ('(0,1)'::priv_testtype1).a));
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE POLICY priv_testpolicy1b ON test9b USING (('(0,1)'::priv_testtype1).a > 0);
+CREATE TABLE test17b (a int) PARTITION BY RANGE ((a + ('(0,1)'::priv_testtype1).a));
+CREATE POLICY priv_testpolicy1b ON test9b USING (('(0,1)'::priv_testtype1).a > 0);
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg REVOKE ALL ON TYPE priv_testtype1 FROM PUBLIC;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test12 (c int DEFAULT 0 CHECK (c > 0 AND '(0,1)'::priv_testtype1 IS NOT NULL));
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test13 (c int DEFAULT ('(0,1)'::priv_testtype1).a);
+CREATE TABLE test12 (c int DEFAULT 0 CHECK (c > 0 AND '(0,1)'::priv_testtype1 IS NOT NULL));
+CREATE TABLE test13 (c int DEFAULT ('(0,1)'::priv_testtype1).a);
 
 -- new stored expressions require USAGE on types, rebuilds do not
 \c -
 --dg-cascade
 --dg REVOKE USAGE ON TYPE priv_testtype1 FROM regress_priv_user2;
 SET SESSION AUTHORIZATION regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE test12 ALTER COLUMN c TYPE bigint;
+ALTER TABLE test12 ALTER COLUMN c TYPE bigint;
 --dg-differs: another error: ALTER TYPE is not supported yet
 --dg ALTER TYPE test8b ALTER ATTRIBUTE a TYPE bigint CASCADE;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg ALTER TABLE test12 ALTER COLUMN c SET DEFAULT ('(0,1)'::priv_testtype1).a;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test14 (LIKE test12 INCLUDING CONSTRAINTS);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE test15 (LIKE test13 INCLUDING DEFAULTS);
+ALTER TABLE test12 ALTER COLUMN c SET DEFAULT ('(0,1)'::priv_testtype1).a;
+CREATE TABLE test14 (LIKE test12 INCLUDING CONSTRAINTS);
+CREATE TABLE test15 (LIKE test13 INCLUDING DEFAULTS);
 
 \c -
 --dg-cascade
@@ -1548,26 +1149,18 @@ DROP TABLE test13;
 
 -- truncate
 SET SESSION AUTHORIZATION regress_priv_user5;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg TRUNCATE atest2; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg TRUNCATE atest3; -- fail
+TRUNCATE atest2; -- ok
+TRUNCATE atest3; -- fail
 
 -- has_table_privilege function
 
 -- bad-input checks
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(NULL,'pg_authid','select');
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege('pg_shad','select');
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege('nosuchuser','pg_authid','select');
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege('pg_authid','sel');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(-999999,'pg_authid','update');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(1,'select');
+select has_table_privilege(NULL,'pg_authid','select');
+select has_table_privilege('pg_shad','select');
+select has_table_privilege('nosuchuser','pg_authid','select');
+select has_table_privilege('pg_authid','sel');
+select has_table_privilege(-999999,'pg_authid','update');
+select has_table_privilege(1,'select');
 
 -- superuser
 \c -
@@ -1611,159 +1204,109 @@ from (select oid from pg_class where relname = 'pg_authid') as t1;
 -- non-superuser
 SET SESSION AUTHORIZATION regress_priv_user3;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(current_user,'pg_class','select');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(current_user,'pg_class','insert');
+select has_table_privilege(current_user,'pg_class','select');
+select has_table_privilege(current_user,'pg_class','insert');
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(t2.oid,'pg_class','update')
---dg from (select oid from pg_roles where rolname = current_user) as t2;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(t2.oid,'pg_class','delete')
---dg from (select oid from pg_roles where rolname = current_user) as t2;
+select has_table_privilege(t2.oid,'pg_class','update')
+from (select oid from pg_roles where rolname = current_user) as t2;
+select has_table_privilege(t2.oid,'pg_class','delete')
+from (select oid from pg_roles where rolname = current_user) as t2;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(current_user,t1.oid,'references')
---dg from (select oid from pg_class where relname = 'pg_class') as t1;
+select has_table_privilege(current_user,t1.oid,'references')
+from (select oid from pg_class where relname = 'pg_class') as t1;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(t2.oid,t1.oid,'select')
---dg from (select oid from pg_class where relname = 'pg_class') as t1,
---dg   (select oid from pg_roles where rolname = current_user) as t2;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(t2.oid,t1.oid,'insert')
---dg from (select oid from pg_class where relname = 'pg_class') as t1,
---dg   (select oid from pg_roles where rolname = current_user) as t2;
+select has_table_privilege(t2.oid,t1.oid,'select')
+from (select oid from pg_class where relname = 'pg_class') as t1,
+  (select oid from pg_roles where rolname = current_user) as t2;
+select has_table_privilege(t2.oid,t1.oid,'insert')
+from (select oid from pg_class where relname = 'pg_class') as t1,
+  (select oid from pg_roles where rolname = current_user) as t2;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege('pg_class','update');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege('pg_class','delete');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege('pg_class','truncate');
+select has_table_privilege('pg_class','update');
+select has_table_privilege('pg_class','delete');
+select has_table_privilege('pg_class','truncate');
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(t1.oid,'select')
---dg from (select oid from pg_class where relname = 'pg_class') as t1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(t1.oid,'trigger')
---dg from (select oid from pg_class where relname = 'pg_class') as t1;
+select has_table_privilege(t1.oid,'select')
+from (select oid from pg_class where relname = 'pg_class') as t1;
+select has_table_privilege(t1.oid,'trigger')
+from (select oid from pg_class where relname = 'pg_class') as t1;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(current_user,'atest1','select');
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(current_user,'atest1','insert');
+select has_table_privilege(current_user,'atest1','select');
+select has_table_privilege(current_user,'atest1','insert');
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(t2.oid,'atest1','update')
---dg from (select oid from pg_roles where rolname = current_user) as t2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(t2.oid,'atest1','delete')
---dg from (select oid from pg_roles where rolname = current_user) as t2;
+select has_table_privilege(t2.oid,'atest1','update')
+from (select oid from pg_roles where rolname = current_user) as t2;
+select has_table_privilege(t2.oid,'atest1','delete')
+from (select oid from pg_roles where rolname = current_user) as t2;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(current_user,t1.oid,'references')
---dg from (select oid from pg_class where relname = 'atest1') as t1;
+select has_table_privilege(current_user,t1.oid,'references')
+from (select oid from pg_class where relname = 'atest1') as t1;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(t2.oid,t1.oid,'select')
---dg from (select oid from pg_class where relname = 'atest1') as t1,
---dg   (select oid from pg_roles where rolname = current_user) as t2;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(t2.oid,t1.oid,'insert')
---dg from (select oid from pg_class where relname = 'atest1') as t1,
---dg   (select oid from pg_roles where rolname = current_user) as t2;
+select has_table_privilege(t2.oid,t1.oid,'select')
+from (select oid from pg_class where relname = 'atest1') as t1,
+  (select oid from pg_roles where rolname = current_user) as t2;
+select has_table_privilege(t2.oid,t1.oid,'insert')
+from (select oid from pg_class where relname = 'atest1') as t1,
+  (select oid from pg_roles where rolname = current_user) as t2;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege('atest1','update');
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege('atest1','delete');
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege('atest1','truncate');
+select has_table_privilege('atest1','update');
+select has_table_privilege('atest1','delete');
+select has_table_privilege('atest1','truncate');
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(t1.oid,'select')
---dg from (select oid from pg_class where relname = 'atest1') as t1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_table_privilege(t1.oid,'trigger')
---dg from (select oid from pg_class where relname = 'atest1') as t1;
+select has_table_privilege(t1.oid,'select')
+from (select oid from pg_class where relname = 'atest1') as t1;
+select has_table_privilege(t1.oid,'trigger')
+from (select oid from pg_class where relname = 'atest1') as t1;
 
 -- has_column_privilege function
 
 -- bad-input checks (as non-super-user)
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_column_privilege('pg_authid',NULL,'select');
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_column_privilege('pg_authid','nosuchcol','select');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+select has_column_privilege('pg_authid',NULL,'select');
+select has_column_privilege('pg_authid','nosuchcol','select');
+--dg-skip: relation N cannot be opened: digres has no catalog tables
 --dg select has_column_privilege(9999,'nosuchcol','select');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_column_privilege(9999,99::int2,'select');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+select has_column_privilege(9999,99::int2,'select');
+--dg-differs: the result
 --dg select has_column_privilege('pg_authid',99::int2,'select');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_column_privilege(9999,99::int2,'select');
+select has_column_privilege(9999,99::int2,'select');
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg create temp table mytable(f1 int, f2 int, f3 int);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg alter table mytable drop column f2;
---dg-cascade
---dg select has_column_privilege('mytable','f2','select');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_column_privilege('mytable','........pg.dropped.2........','select');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_column_privilege('mytable',2::int2,'select');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_column_privilege('mytable',99::int2,'select');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+create temp table mytable(f1 int, f2 int, f3 int);
+alter table mytable drop column f2;
+select has_column_privilege('mytable','f2','select');
+select has_column_privilege('mytable','........pg.dropped.2........','select');
+select has_column_privilege('mytable',2::int2,'select');
+select has_column_privilege('mytable',99::int2,'select');
+--dg-skip: cache lookup failed for attribute -N of relation N
 --dg revoke select on table mytable from regress_priv_user3;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_column_privilege('mytable',2::int2,'select');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg select has_column_privilege('mytable',99::int2,'select');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg drop table mytable;
+select has_column_privilege('mytable',2::int2,'select');
+select has_column_privilege('mytable',99::int2,'select');
+drop table mytable;
 
 -- Grant options
 
 SET SESSION AUTHORIZATION regress_priv_user1;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE atest4 (a int);
+CREATE TABLE atest4 (a int);
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON atest4 TO regress_priv_user2 WITH GRANT OPTION;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT UPDATE ON atest4 TO regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON atest4 TO GROUP regress_priv_group1 WITH GRANT OPTION;
+GRANT SELECT ON atest4 TO regress_priv_user2 WITH GRANT OPTION;
+GRANT UPDATE ON atest4 TO regress_priv_user2;
+GRANT SELECT ON atest4 TO GROUP regress_priv_group1 WITH GRANT OPTION;
 
 SET SESSION AUTHORIZATION regress_priv_user2;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON atest4 TO regress_priv_user3;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT UPDATE ON atest4 TO regress_priv_user3; -- fail
+GRANT SELECT ON atest4 TO regress_priv_user3;
+GRANT UPDATE ON atest4 TO regress_priv_user3; -- fail
 
 SET SESSION AUTHORIZATION regress_priv_user1;
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg REVOKE SELECT ON atest4 FROM regress_priv_user3; -- does nothing
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT has_table_privilege('regress_priv_user3', 'atest4', 'SELECT'); -- true
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg REVOKE SELECT ON atest4 FROM regress_priv_user2; -- fail
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg REVOKE GRANT OPTION FOR SELECT ON atest4 FROM regress_priv_user2 CASCADE; -- ok
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT has_table_privilege('regress_priv_user2', 'atest4', 'SELECT'); -- true
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT has_table_privilege('regress_priv_user3', 'atest4', 'SELECT'); -- false
+REVOKE SELECT ON atest4 FROM regress_priv_user3; -- does nothing
+SELECT has_table_privilege('regress_priv_user3', 'atest4', 'SELECT'); -- true
+REVOKE SELECT ON atest4 FROM regress_priv_user2; -- fail
+REVOKE GRANT OPTION FOR SELECT ON atest4 FROM regress_priv_user2 CASCADE; -- ok
+SELECT has_table_privilege('regress_priv_user2', 'atest4', 'SELECT'); -- true
+SELECT has_table_privilege('regress_priv_user3', 'atest4', 'SELECT'); -- false
 
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT has_table_privilege('regress_priv_user1', 'atest4', 'SELECT WITH GRANT OPTION'); -- true
+SELECT has_table_privilege('regress_priv_user1', 'atest4', 'SELECT WITH GRANT OPTION'); -- true
 
 
 -- security-restricted operations
@@ -1841,56 +1384,44 @@ DROP TABLE sro_tab;
 --dg REINDEX INDEX CONCURRENTLY sro_pidx;
 
 SET SESSION AUTHORIZATION regress_sro_user;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION unwanted_grant() RETURNS void LANGUAGE sql AS
---dg 	'GRANT regress_priv_group2 TO regress_sro_user';
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION mv_action() RETURNS bool LANGUAGE sql AS
---dg 	'DECLARE c CURSOR WITH HOLD FOR SELECT public.unwanted_grant(); SELECT true';
+CREATE FUNCTION unwanted_grant() RETURNS void LANGUAGE sql AS
+	'GRANT regress_priv_group2 TO regress_sro_user';
+CREATE FUNCTION mv_action() RETURNS bool LANGUAGE sql AS
+	'DECLARE c CURSOR WITH HOLD FOR SELECT public.unwanted_grant(); SELECT true';
 -- REFRESH of this MV will queue a GRANT at end of transaction
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE MATERIALIZED VIEW sro_mv AS SELECT mv_action() WITH NO DATA;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg REFRESH MATERIALIZED VIEW sro_mv;
+CREATE MATERIALIZED VIEW sro_mv AS SELECT mv_action() WITH NO DATA;
+REFRESH MATERIALIZED VIEW sro_mv;
 \c -
 REFRESH MATERIALIZED VIEW sro_mv;
 
 SET SESSION AUTHORIZATION regress_sro_user;
 -- INSERT to this table will queue a GRANT at end of transaction
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE TABLE sro_trojan_table ();
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION sro_trojan() RETURNS trigger LANGUAGE plpgsql AS
---dg 	'BEGIN PERFORM public.unwanted_grant(); RETURN NULL; END';
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE CONSTRAINT TRIGGER t AFTER INSERT ON sro_trojan_table
---dg     INITIALLY DEFERRED FOR EACH ROW EXECUTE PROCEDURE sro_trojan();
+CREATE TABLE sro_trojan_table ();
+CREATE FUNCTION sro_trojan() RETURNS trigger LANGUAGE plpgsql AS
+	'BEGIN PERFORM public.unwanted_grant(); RETURN NULL; END';
+CREATE CONSTRAINT TRIGGER t AFTER INSERT ON sro_trojan_table
+    INITIALLY DEFERRED FOR EACH ROW EXECUTE PROCEDURE sro_trojan();
 -- Now, REFRESH will issue such an INSERT, queueing the GRANT
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE OR REPLACE FUNCTION mv_action() RETURNS bool LANGUAGE sql AS
---dg 	'INSERT INTO public.sro_trojan_table DEFAULT VALUES; SELECT true';
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg REFRESH MATERIALIZED VIEW sro_mv;
+CREATE OR REPLACE FUNCTION mv_action() RETURNS bool LANGUAGE sql AS
+	'INSERT INTO public.sro_trojan_table DEFAULT VALUES; SELECT true';
+REFRESH MATERIALIZED VIEW sro_mv;
 \c -
 REFRESH MATERIALIZED VIEW sro_mv;
 BEGIN; SET CONSTRAINTS ALL IMMEDIATE; REFRESH MATERIALIZED VIEW sro_mv; COMMIT;
 
 -- REFRESH MATERIALIZED VIEW CONCURRENTLY use of eval_const_expressions()
 SET SESSION AUTHORIZATION regress_sro_user;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION unwanted_grant_nofail(int) RETURNS int
---dg 	IMMUTABLE LANGUAGE plpgsql AS $$
---dg BEGIN
---dg 	PERFORM public.unwanted_grant();
---dg 	RAISE WARNING 'owned';
---dg 	RETURN 1;
---dg EXCEPTION WHEN OTHERS THEN
---dg 	RETURN 2;
---dg END$$;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE MATERIALIZED VIEW sro_index_mv AS SELECT 1 AS c;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE UNIQUE INDEX ON sro_index_mv (c) WHERE unwanted_grant_nofail(1) > 0;
+CREATE FUNCTION unwanted_grant_nofail(int) RETURNS int
+	IMMUTABLE LANGUAGE plpgsql AS $$
+BEGIN
+	PERFORM public.unwanted_grant();
+	RAISE WARNING 'owned';
+	RETURN 1;
+EXCEPTION WHEN OTHERS THEN
+	RETURN 2;
+END$$;
+CREATE MATERIALIZED VIEW sro_index_mv AS SELECT 1 AS c;
+CREATE UNIQUE INDEX ON sro_index_mv (c) WHERE unwanted_grant_nofail(1) > 0;
 \c -
 REFRESH MATERIALIZED VIEW CONCURRENTLY sro_index_mv;
 REFRESH MATERIALIZED VIEW sro_index_mv;
@@ -1904,9 +1435,8 @@ REFRESH MATERIALIZED VIEW sro_index_mv;
 -- Admin options
 
 SET SESSION AUTHORIZATION regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE FUNCTION dogrant_ok() RETURNS void LANGUAGE sql SECURITY DEFINER AS
---dg 	'GRANT regress_priv_group2 TO regress_priv_user5';
+CREATE FUNCTION dogrant_ok() RETURNS void LANGUAGE sql SECURITY DEFINER AS
+	'GRANT regress_priv_group2 TO regress_priv_user5';
 GRANT regress_priv_group2 TO regress_priv_user5; -- ok: had ADMIN OPTION
 SET ROLE regress_priv_group2;
 GRANT regress_priv_group2 TO regress_priv_user5; -- fails: SET ROLE suspended privilege
@@ -1914,8 +1444,7 @@ GRANT regress_priv_group2 TO regress_priv_user5; -- fails: SET ROLE suspended pr
 SET SESSION AUTHORIZATION regress_priv_user1;
 --dg-cascade
 --dg GRANT regress_priv_group2 TO regress_priv_user5; -- fails: no ADMIN OPTION
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT dogrant_ok();			-- ok: SECURITY DEFINER conveys ADMIN
+SELECT dogrant_ok();			-- ok: SECURITY DEFINER conveys ADMIN
 SET ROLE regress_priv_group2;
 GRANT regress_priv_group2 TO regress_priv_user5; -- fails: SET ROLE did not help
 
@@ -1923,9 +1452,8 @@ SET SESSION AUTHORIZATION regress_priv_group2;
 GRANT regress_priv_group2 TO regress_priv_user5; -- fails: no self-admin
 
 SET SESSION AUTHORIZATION regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg DROP FUNCTION dogrant_ok();
---dg-crash: the server crashed
+DROP FUNCTION dogrant_ok();
+--dg-crash: the connection was lost
 --dg REVOKE regress_priv_group2 FROM regress_priv_user5;
 
 
@@ -1934,7 +1462,7 @@ SET SESSION AUTHORIZATION regress_priv_user4;
 
 CREATE SEQUENCE x_seq;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT USAGE on x_seq to regress_priv_user2;
 
 SELECT has_sequence_privilege('regress_priv_user1', 'atest1', 'SELECT');
@@ -1943,22 +1471,22 @@ SELECT has_sequence_privilege('regress_priv_user1', 'x_seq', 'SELECT');
 
 SET SESSION AUTHORIZATION regress_priv_user2;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_sequence_privilege('x_seq', 'USAGE');
 
 -- largeobject privilege tests
 \c -
 SET SESSION AUTHORIZATION regress_priv_user1;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: function ?(...) does not exist
 --dg SELECT lo_create(1001);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: function ?(...) does not exist
 --dg SELECT lo_create(1002);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: function ?(...) does not exist
 --dg SELECT lo_create(1003);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: function ?(...) does not exist
 --dg SELECT lo_create(1004);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: function ?(...) does not exist
 --dg SELECT lo_create(1005);
 
 --dg-skip: large objects are not supported
@@ -1982,32 +1510,32 @@ SET SESSION AUTHORIZATION regress_priv_user1;
 \c -
 SET SESSION AUTHORIZATION regress_priv_user2;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: function ?(...) does not exist
 --dg SELECT lo_create(2001);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: function ?(...) does not exist
 --dg SELECT lo_create(2002);
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT loread(lo_open(1001, x'20000'::int), 32);	-- allowed, for now
 --dg-cascade
 --dg SELECT lowrite(lo_open(1001, x'40000'::int), 'abcd');	-- fail, wrong mode
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT loread(lo_open(1001, x'40000'::int), 32);
 --dg-cascade
 --dg SELECT loread(lo_open(1002, x'40000'::int), 32);	-- to be denied
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT loread(lo_open(1003, x'40000'::int), 32);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT loread(lo_open(1004, x'40000'::int), 32);
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT lowrite(lo_open(1001, x'20000'::int), 'abcd');
 --dg-cascade
 --dg SELECT lowrite(lo_open(1002, x'20000'::int), 'abcd');	-- to be denied
 --dg-cascade
 --dg SELECT lowrite(lo_open(1003, x'20000'::int), 'abcd');	-- to be denied
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT lowrite(lo_open(1004, x'20000'::int), 'abcd');
 
 --dg-skip: large objects are not supported
@@ -2021,7 +1549,7 @@ SET SESSION AUTHORIZATION regress_priv_user2;
 
 --dg-cascade
 --dg SELECT lo_unlink(1001);		-- to be denied
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT lo_unlink(2002);
 
 \c -
@@ -2031,16 +1559,16 @@ SET SESSION AUTHORIZATION regress_priv_user2;
 
 SET SESSION AUTHORIZATION regress_priv_user3;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT loread(lo_open(1001, x'40000'::int), 32);
 --dg-cascade
 --dg SELECT loread(lo_open(1003, x'40000'::int), 32);	-- to be denied
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT loread(lo_open(1005, x'40000'::int), 32);
 
 --dg-cascade
 --dg SELECT lo_truncate(lo_open(1005, x'20000'::int), 10);	-- to be denied
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT lo_truncate(lo_open(2001, x'20000'::int), 10);
 
 -- has_largeobject_privilege function
@@ -2071,34 +1599,34 @@ SET SESSION AUTHORIZATION regress_priv_user3;
 
 -- non-superuser
 SET SESSION AUTHORIZATION regress_priv_user2;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege(1001, 'SELECT');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege(1002, 'SELECT');	-- false
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege(1003, 'SELECT');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege(1004, 'SELECT');
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege(1001, 'UPDATE');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege(1002, 'UPDATE');	-- false
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege(1003, 'UPDATE');	-- false
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege(1004, 'UPDATE');
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege('regress_priv_user3', 1001, 'SELECT');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege('regress_priv_user3', 1003, 'SELECT');	-- false
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege('regress_priv_user3', 1005, 'SELECT');
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege('regress_priv_user3', 1005, 'UPDATE');	-- false
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege('regress_priv_user3', 2001, 'UPDATE');
 
 -- compatibility mode in largeobject permission
@@ -2107,9 +1635,9 @@ SET SESSION AUTHORIZATION regress_priv_user2;
 --dg SET lo_compat_privileges = false;	-- default setting
 SET SESSION AUTHORIZATION regress_priv_user4;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege(1002, 'SELECT'); -- false
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege(1002, 'UPDATE'); -- false
 
 --dg-cascade
@@ -2122,11 +1650,11 @@ SET SESSION AUTHORIZATION regress_priv_user4;
 --dg SELECT lo_put(1002, 1, 'abcd');				-- to be denied
 --dg-cascade
 --dg SELECT lo_unlink(1002);					-- to be denied
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: another error: function ?(...) does not exist
 --dg SELECT lo_export(1001, '/dev/null');			-- to be denied
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: another error: function ?(...) does not exist
 --dg SELECT lo_import('/dev/null');				-- to be denied
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: another error: function ?(...) does not exist
 --dg SELECT lo_import('/dev/null', 2003);			-- to be denied
 
 \c -
@@ -2134,20 +1662,20 @@ SET SESSION AUTHORIZATION regress_priv_user4;
 --dg SET lo_compat_privileges = true;	-- compatibility mode
 SET SESSION AUTHORIZATION regress_priv_user4;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege(1002, 'SELECT'); -- true
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_largeobject_privilege(1002, 'UPDATE'); -- true
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT loread(lo_open(1002, x'40000'::int), 32);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT lowrite(lo_open(1002, x'20000'::int), 'abcd');
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT lo_truncate(lo_open(1002, x'20000'::int), 10);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT lo_unlink(1002);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: another error: function ?(...) does not exist
 --dg SELECT lo_export(1001, '/dev/null');			-- to be denied
 
 -- don't allow unpriv users to access pg_largeobject contents
@@ -2156,7 +1684,7 @@ SET SESSION AUTHORIZATION regress_priv_user4;
 --dg SELECT * FROM pg_largeobject LIMIT 0;
 
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: another error: relation "?" does not exist
 --dg SELECT * FROM pg_largeobject LIMIT 0;			-- to be denied
 
 -- pg_signal_backend can't signal superusers
@@ -2232,7 +1760,7 @@ ROLLBACK;
 \c -
 
 CREATE SCHEMA testns;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
 --dg GRANT ALL ON SCHEMA testns TO regress_priv_user1;
 
 CREATE TABLE testns.acltest1 (x int);
@@ -2321,18 +1849,15 @@ CREATE SCHEMA testns2;
 --dg SELECT has_schema_privilege('regress_priv_user2', 'testns2', 'USAGE'); -- yes
 --dg-cascade
 --dg SELECT has_schema_privilege('regress_priv_user6', 'testns2', 'USAGE'); -- yes
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT has_schema_privilege('regress_priv_user2', 'testns2', 'CREATE'); -- no
+SELECT has_schema_privilege('regress_priv_user2', 'testns2', 'CREATE'); -- no
 
 --dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES REVOKE USAGE ON SCHEMAS FROM regress_priv_user2;
 
 CREATE SCHEMA testns3;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT has_schema_privilege('regress_priv_user2', 'testns3', 'USAGE'); -- no
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT has_schema_privilege('regress_priv_user2', 'testns3', 'CREATE'); -- no
+SELECT has_schema_privilege('regress_priv_user2', 'testns3', 'USAGE'); -- no
+SELECT has_schema_privilege('regress_priv_user2', 'testns3', 'CREATE'); -- no
 
 --dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES GRANT ALL ON SCHEMAS TO regress_priv_user2;
@@ -2433,78 +1958,76 @@ ROLLBACK;
 
 CREATE SCHEMA testns5;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT has_schema_privilege('regress_priv_user2', 'testns5', 'USAGE'); -- no
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT has_schema_privilege('regress_priv_user2', 'testns5', 'CREATE'); -- no
+SELECT has_schema_privilege('regress_priv_user2', 'testns5', 'USAGE'); -- no
+SELECT has_schema_privilege('regress_priv_user2', 'testns5', 'CREATE'); -- no
 
 SET ROLE regress_priv_user1;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE FUNCTION testns.foo() RETURNS int AS 'select 1' LANGUAGE sql;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE AGGREGATE testns.agg1(int) (sfunc = int4pl, stype = int4);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE PROCEDURE testns.bar() AS 'select 1' LANGUAGE sql;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_function_privilege('regress_priv_user2', 'testns.foo()', 'EXECUTE'); -- no
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_function_privilege('regress_priv_user2', 'testns.agg1(int)', 'EXECUTE'); -- no
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_function_privilege('regress_priv_user2', 'testns.bar()', 'EXECUTE'); -- no
 
 --dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES IN SCHEMA testns GRANT EXECUTE ON ROUTINES to public;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP FUNCTION testns.foo();
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE FUNCTION testns.foo() RETURNS int AS 'select 1' LANGUAGE sql;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP AGGREGATE testns.agg1(int);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE AGGREGATE testns.agg1(int) (sfunc = int4pl, stype = int4);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP PROCEDURE testns.bar();
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE PROCEDURE testns.bar() AS 'select 1' LANGUAGE sql;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_function_privilege('regress_priv_user2', 'testns.foo()', 'EXECUTE'); -- yes
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_function_privilege('regress_priv_user2', 'testns.agg1(int)', 'EXECUTE'); -- yes
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_function_privilege('regress_priv_user2', 'testns.bar()', 'EXECUTE'); -- yes (counts as function here)
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP FUNCTION testns.foo();
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP AGGREGATE testns.agg1(int);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP PROCEDURE testns.bar();
 
 --dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES FOR ROLE regress_priv_user1 REVOKE USAGE ON TYPES FROM public;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE DOMAIN testns.priv_testdomain1 AS int;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_type_privilege('regress_priv_user2', 'testns.priv_testdomain1', 'USAGE'); -- no
 
 --dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES IN SCHEMA testns GRANT USAGE ON TYPES to public;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP DOMAIN testns.priv_testdomain1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE DOMAIN testns.priv_testdomain1 AS int;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT has_type_privilege('regress_priv_user2', 'testns.priv_testdomain1', 'USAGE'); -- yes
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP DOMAIN testns.priv_testdomain1;
 
 RESET ROLE;
@@ -2606,7 +2129,7 @@ SET SESSION ROLE regress_schemauser1;
 --dg-cascade
 --dg SELECT nspname, rolname FROM pg_namespace, pg_roles WHERE pg_namespace.nspname = 'testns' AND pg_namespace.nspowner = pg_roles.oid;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-crash: the server crashed
 --dg ALTER SCHEMA testns OWNER TO regress_schemauser2;
 ALTER ROLE regress_schemauser2 RENAME TO regress_schemauser_renamed;
 --dg-cascade
@@ -2627,36 +2150,24 @@ DROP ROLE regress_schemauser_renamed;
 \c -
 
 set session role regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg create table dep_priv_test (a int);
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg grant select on dep_priv_test to regress_priv_user2 with grant option;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg grant select on dep_priv_test to regress_priv_user3 with grant option;
+create table dep_priv_test (a int);
+grant select on dep_priv_test to regress_priv_user2 with grant option;
+grant select on dep_priv_test to regress_priv_user3 with grant option;
 set session role regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg grant select on dep_priv_test to regress_priv_user4 with grant option;
+grant select on dep_priv_test to regress_priv_user4 with grant option;
 set session role regress_priv_user3;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg grant select on dep_priv_test to regress_priv_user4 with grant option;
+grant select on dep_priv_test to regress_priv_user4 with grant option;
 set session role regress_priv_user4;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg grant select on dep_priv_test to regress_priv_user5;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg \dp dep_priv_test
+grant select on dep_priv_test to regress_priv_user5;
+\dp dep_priv_test
 set session role regress_priv_user2;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg revoke select on dep_priv_test from regress_priv_user4 cascade;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg \dp dep_priv_test
+revoke select on dep_priv_test from regress_priv_user4 cascade;
+\dp dep_priv_test
 set session role regress_priv_user3;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg revoke select on dep_priv_test from regress_priv_user4 cascade;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg \dp dep_priv_test
+revoke select on dep_priv_test from regress_priv_user4 cascade;
+\dp dep_priv_test
 set session role regress_priv_user1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg drop table dep_priv_test;
+drop table dep_priv_test;
 
 
 -- clean up
@@ -2700,8 +2211,10 @@ DROP GROUP regress_priv_group2;
 --dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
 --dg DROP OWNED BY regress_priv_user1;
 
-DROP USER regress_priv_user1;
-DROP USER regress_priv_user2;
+--dg-cascade
+--dg DROP USER regress_priv_user1;
+--dg-cascade
+--dg DROP USER regress_priv_user2;
 DROP USER regress_priv_user3;
 DROP USER regress_priv_user4;
 DROP USER regress_priv_user5;
@@ -2724,123 +2237,120 @@ CREATE USER regress_locktable_user;
 CREATE TABLE lock_table (a int);
 
 -- LOCK TABLE and SELECT permission
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT SELECT ON lock_table TO regress_locktable_user;
 SET SESSION AUTHORIZATION regress_locktable_user;
 BEGIN;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
 COMMIT;
 BEGIN;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should fail
+LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should fail
 ROLLBACK;
 BEGIN;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should fail
+LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should fail
 ROLLBACK;
 \c
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: cache lookup failed for attribute -N of relation N
 --dg REVOKE SELECT ON lock_table FROM regress_locktable_user;
 
 -- LOCK TABLE and INSERT permission
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT INSERT ON lock_table TO regress_locktable_user;
 SET SESSION AUTHORIZATION regress_locktable_user;
 BEGIN;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
 ROLLBACK;
 BEGIN;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
 COMMIT;
 BEGIN;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should fail
+LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should fail
 ROLLBACK;
 \c
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: cache lookup failed for attribute -N of relation N
 --dg REVOKE INSERT ON lock_table FROM regress_locktable_user;
 
 -- LOCK TABLE and UPDATE permission
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT UPDATE ON lock_table TO regress_locktable_user;
 SET SESSION AUTHORIZATION regress_locktable_user;
 BEGIN;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
 ROLLBACK;
 BEGIN;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
 COMMIT;
 BEGIN;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should pass
 COMMIT;
 \c
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: cache lookup failed for attribute -N of relation N
 --dg REVOKE UPDATE ON lock_table FROM regress_locktable_user;
 
 -- LOCK TABLE and DELETE permission
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT DELETE ON lock_table TO regress_locktable_user;
 SET SESSION AUTHORIZATION regress_locktable_user;
 BEGIN;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
 ROLLBACK;
 BEGIN;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
 COMMIT;
 BEGIN;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should pass
 COMMIT;
 \c
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg REVOKE DELETE ON lock_table FROM regress_locktable_user;
 
 -- LOCK TABLE and TRUNCATE permission
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT TRUNCATE ON lock_table TO regress_locktable_user;
 SET SESSION AUTHORIZATION regress_locktable_user;
 BEGIN;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
 ROLLBACK;
 BEGIN;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
 COMMIT;
 BEGIN;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should pass
 COMMIT;
 \c
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg REVOKE TRUNCATE ON lock_table FROM regress_locktable_user;
 
 -- LOCK TABLE and MAINTAIN permission
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT MAINTAIN ON lock_table TO regress_locktable_user;
 SET SESSION AUTHORIZATION regress_locktable_user;
 BEGIN;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
 ROLLBACK;
 BEGIN;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
 COMMIT;
 BEGIN;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should pass
 COMMIT;
 \c
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg REVOKE MAINTAIN ON lock_table FROM regress_locktable_user;
 
 -- clean up
@@ -2878,11 +2388,11 @@ CREATE ROLE regress_readallstats;
 
 -- run query to ensure that functions within views can be executed
 SET ROLE regress_readallstats;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT COUNT(*) >= 0 AS ok FROM pg_aios;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT COUNT(*) >= 0 AS ok FROM pg_backend_memory_contexts;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT COUNT(*) >= 0 AS ok FROM pg_shmem_allocations;
 RESET ROLE;
 
@@ -2900,14 +2410,12 @@ GRANT regress_group_direct_manager TO regress_group_indirect_manager;
 
 SET SESSION AUTHORIZATION regress_group_direct_manager;
 GRANT regress_group TO regress_group_member;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT member::regrole::text, CASE WHEN grantor = 10 THEN 'BOOTSTRAP SUPERUSER' ELSE grantor::regrole::text END FROM pg_auth_members WHERE roleid = 'regress_group'::regrole ORDER BY 1, 2;
+SELECT member::regrole::text, CASE WHEN grantor = 10 THEN 'BOOTSTRAP SUPERUSER' ELSE grantor::regrole::text END FROM pg_auth_members WHERE roleid = 'regress_group'::regrole ORDER BY 1, 2;
 REVOKE regress_group FROM regress_group_member;
 
 SET SESSION AUTHORIZATION regress_group_indirect_manager;
 GRANT regress_group TO regress_group_member;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg SELECT member::regrole::text, CASE WHEN grantor = 10 THEN 'BOOTSTRAP SUPERUSER' ELSE grantor::regrole::text END FROM pg_auth_members WHERE roleid = 'regress_group'::regrole ORDER BY 1, 2;
+SELECT member::regrole::text, CASE WHEN grantor = 10 THEN 'BOOTSTRAP SUPERUSER' ELSE grantor::regrole::text END FROM pg_auth_members WHERE roleid = 'regress_group'::regrole ORDER BY 1, 2;
 REVOKE regress_group FROM regress_group_member;
 
 RESET SESSION AUTHORIZATION;
@@ -2921,27 +2429,27 @@ CREATE ROLE regress_roleoption_protagonist;
 CREATE ROLE regress_roleoption_donor;
 CREATE ROLE regress_roleoption_recipient;
 CREATE SCHEMA regress_roleoption;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
 --dg GRANT CREATE, USAGE ON SCHEMA regress_roleoption TO PUBLIC;
 GRANT regress_roleoption_donor TO regress_roleoption_protagonist WITH INHERIT TRUE, SET FALSE;
 GRANT regress_roleoption_recipient TO regress_roleoption_protagonist WITH INHERIT FALSE, SET TRUE;
 SET SESSION AUTHORIZATION regress_roleoption_protagonist;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE TABLE regress_roleoption.t1 (a int);
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE TABLE regress_roleoption.t2 (a int);
 SET SESSION AUTHORIZATION regress_roleoption_donor;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE TABLE regress_roleoption.t3 (a int);
 SET SESSION AUTHORIZATION regress_roleoption_recipient;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE TABLE regress_roleoption.t4 (a int);
 SET SESSION AUTHORIZATION regress_roleoption_protagonist;
 --dg-cascade
 --dg ALTER TABLE regress_roleoption.t1 OWNER TO regress_roleoption_donor; -- fails, can't be come donor
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER TABLE regress_roleoption.t2 OWNER TO regress_roleoption_recipient; -- works
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER TABLE regress_roleoption.t3 OWNER TO regress_roleoption_protagonist; -- works
 --dg-cascade
 --dg ALTER TABLE regress_roleoption.t4 OWNER TO regress_roleoption_protagonist; -- fails, we don't inherit from recipient
@@ -2966,7 +2474,7 @@ CREATE ROLE regress_maintain;
 --dg CREATE ROLE regress_maintain_all IN ROLE pg_maintain;
 CREATE TABLE maintain_test (a INT);
 CREATE INDEX ON maintain_test (a);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT MAINTAIN ON maintain_test TO regress_maintain;
 --dg-skip: a relation's storage cannot be made: digres has no catalog tables
 --dg CREATE MATERIALIZED VIEW refresh_test AS SELECT 1;
@@ -2976,11 +2484,11 @@ CREATE SCHEMA reindex_test;
 
 -- negative tests; should fail
 SET ROLE regress_no_maintain;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: the result
 --dg VACUUM maintain_test;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: the result
 --dg ANALYZE maintain_test;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: the result
 --dg VACUUM (ANALYZE) maintain_test;
 --dg-differs: no error where PostgreSQL has: permission denied for table maintain_test
 --dg CLUSTER maintain_test USING maintain_test_a_idx;
@@ -2995,15 +2503,15 @@ SET ROLE regress_no_maintain;
 RESET ROLE;
 
 SET ROLE regress_maintain;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM maintain_test;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ANALYZE maintain_test;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg VACUUM (ANALYZE) maintain_test;
 --dg-cascade
 --dg CLUSTER maintain_test USING maintain_test_a_idx;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg REFRESH MATERIALIZED VIEW refresh_test;
 --dg-cascade
 --dg REINDEX TABLE maintain_test;
@@ -3046,17 +2554,16 @@ CREATE ROLE regress_grantor3;
 CREATE TABLE grantor_test1 ();
 CREATE TABLE grantor_test2 ();
 CREATE TABLE grantor_test3 ();
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT SELECT ON grantor_test2 TO regress_grantor1 WITH GRANT OPTION;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT SELECT, UPDATE ON grantor_test3 TO regress_grantor2 WITH GRANT OPTION;
 
 SET ROLE regress_grantor1;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT SELECT, UPDATE ON grantor_test1 TO regress_grantor3;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+GRANT SELECT, UPDATE ON grantor_test1 TO regress_grantor3;
+--dg-cascade
 --dg GRANT SELECT, UPDATE ON grantor_test2 TO regress_grantor3;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg GRANT SELECT, UPDATE ON grantor_test3 TO regress_grantor3;
 RESET ROLE;
 

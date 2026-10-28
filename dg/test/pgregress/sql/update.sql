@@ -408,7 +408,7 @@ INSERT into mintab VALUES (120);
 
 --dg-cascade
 --dg DROP TRIGGER trans_updatetrig ON range_parted;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER trig_c1_100 ON part_c_1_100;
 --dg-cascade
 --dg DROP TRIGGER trig_d1_15 ON part_d_1_15;
@@ -425,9 +425,9 @@ INSERT into mintab VALUES (120);
 CREATE USER regress_range_parted_user;
 --dg-cascade
 --dg GRANT ALL ON range_parted, mintab TO regress_range_parted_user;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY seeall ON range_parted AS PERMISSIVE FOR SELECT USING (true);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY policy_range_parted ON range_parted for UPDATE USING (true) WITH CHECK (c % 2 = 0);
 
 --dg-cascade
@@ -457,7 +457,7 @@ SET SESSION AUTHORIZATION regress_range_parted_user;
 -- Here, RLS checks should succeed while moving row from part_a_10_a_20 to
 -- part_d_1_15. Even though the UPDATE is setting 'c' to an odd number, the
 -- trigger at the destination partition again makes it an even number.
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg UPDATE range_parted set a = 'b', c = 151 WHERE a = 'a' and c = 200;
 
 RESET SESSION AUTHORIZATION;
@@ -481,7 +481,7 @@ RESET SESSION AUTHORIZATION;
 RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg :init_range_parted;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY policy_range_parted_subplan on range_parted
 --dg     AS RESTRICTIVE for UPDATE USING (true)
 --dg     WITH CHECK ((SELECT range_parted.c <= c1 FROM mintab));
@@ -490,7 +490,7 @@ SET SESSION AUTHORIZATION regress_range_parted_user;
 --dg-cascade
 --dg UPDATE range_parted set a = 'b', c = 122 WHERE a = 'a' and c = 200;
 -- ok
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg UPDATE range_parted set a = 'b', c = 120 WHERE a = 'a' and c = 200;
 
 -- RLS policy expression contains whole row.
@@ -498,12 +498,12 @@ SET SESSION AUTHORIZATION regress_range_parted_user;
 RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg :init_range_parted;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY policy_range_parted_wholerow on range_parted AS RESTRICTIVE for UPDATE USING (true)
 --dg    WITH CHECK (range_parted = row('b', 10, 112, 1, NULL)::range_parted);
 SET SESSION AUTHORIZATION regress_range_parted_user;
 -- ok, should pass the RLS check
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg UPDATE range_parted set a = 'b', c = 112 WHERE a = 'a' and c = 200;
 RESET SESSION AUTHORIZATION;
 --dg-cascade
@@ -598,11 +598,11 @@ DROP TABLE mintab;
 --dg DROP TRIGGER parent_update_trig ON range_parted;
 --dg-cascade
 --dg DROP TRIGGER parent_insert_trig ON range_parted;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER c1_delete_trig ON part_c_1_100;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER c1_update_trig ON part_c_1_100;
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER c1_insert_trig ON part_c_1_100;
 --dg-cascade
 --dg DROP TRIGGER d1_delete_trig ON part_d_1_15;
@@ -798,7 +798,7 @@ CREATE TABLE list_part1(a numeric, b int, c int8);
 --dg-cascade
 --dg SELECT tableoid::regclass::text, * FROM list_parted ORDER BY 1, 2, 3, 4;
 
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER parted_mod_b ON sub_part1;
 
 -- If BR DELETE trigger prevented DELETE from happening, we should also skip
@@ -817,7 +817,7 @@ CREATE TABLE list_part1(a numeric, b int, c int8);
 --dg-cascade
 --dg SELECT tableoid::regclass::text, * FROM list_parted ORDER BY 1, 2, 3, 4;
 -- Drop the trigger. Now the row should be moved.
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER trig_skip_delete ON sub_part2;
 --dg-cascade
 --dg UPDATE list_parted set b = 1 WHERE c = 70;

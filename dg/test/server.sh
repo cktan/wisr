@@ -2930,8 +2930,9 @@ cmp -s "$work/db.out" "$work/db.expected" || fail "pg_database"
 #    for a database that is not there and one that is.
 local_psql -c "select oid, rolname = current_user, rolsuper, rolcanlogin,
                  rolreplication, rolpassword ~ '^SCRAM-SHA-256\\$',
-                 rolvaliduntil is null from pg_authid" \
-  -c "select rolname = current_user, rolpassword, oid from pg_roles" \
+                 rolvaliduntil is null from pg_authid where oid = 10" \
+  -c "select rolname = current_user, rolpassword, oid from pg_roles
+        where oid = 10" \
   -c "select current_user::regrole::oid, 10::regrole::text = current_user" \
   -c "select count(*) from pg_database where datname = 'pg_global'" \
   > "$work/roles.out" 2>&1
@@ -2964,9 +2965,9 @@ local_psql -c 'create database pg_global' 2>&1 |
 #    make a role, nor SET ROLE to rr4, which it is no member of.
 # 6. ALTER ROLE renames rr2 to rr2b and makes rr1 NOLOGIN; DROP ROLE of
 #    both leaves rr1's memberships none, and pg_roles the roles kept.
-held_start roles
-held_send roles "select 'up';"
-held_wait roles "up" || fail "role DDL: held session"
+held_start roleheld
+held_send roleheld "select 'up';"
+held_wait roleheld "up" || fail "role DDL: held session"
 local_psql -c "create role rr1 login password 'pw1'" -c 'create role rr2' \
   -c 'create role rr3' -c 'grant rr2 to rr1 with admin option' \
   -c 'grant rr2 to rr3 granted by rr1' > "$work/roleddl.out" 2>&1 ||
@@ -2983,9 +2984,10 @@ rr2|rr3|rr1|f
 OUT
 cmp -s "$work/rolemem.out" "$work/rolemem.expected" ||
   fail "role DDL: pg_auth_members"
-held_send roles "select 'rr1:' || 'rr1'::regrole::oid::int8 / 16384;"
-held_wait roles "rr1:1" || fail "role DDL: seen by a session already open"
-held_end roles
+held_send roleheld "select 'rr1:' || 'rr1'::regrole::oid::int8 / 16384;"
+held_wait roleheld "rr1:1" ||
+  fail "role DDL: seen by a session already open"
+held_end roleheld
 local_psql -c 'begin' -c 'create role rr9' -c 'rollback' \
   -c "select count(*) from pg_roles where rolname = 'rr9'" \
   > "$work/roleblock.out" 2>&1
@@ -3079,6 +3081,66 @@ for detail in 'User "rb" has no password assigned' \
 done
 local_psql -c 'drop role ra, rb, rc, rd, re' > "$work/auth.out" 2>&1 ||
   fail "auth: drop roles"
+
+# Verify that a role that is not a superuser runs statements, with
+# PostgreSQL 18's privileges on what initdb made: the catalogs PUBLIC may
+# read but pg_authid, schema public pg_database_owner's with USAGE for
+# PUBLIC, and the predefined roles there.
+# 1. Make rn LOGIN with a password, and table np owned by the superuser.
+# 2. As rn: a statement that looks names up runs; pg_class and pg_roles are
+#    read, pg_authid is not; np is refused, and so is CREATE in public;
+#    USAGE on public is had.
+# 3. pg_namespace has public's and pg_catalog's ACLs as PostgreSQL's.
+# 4. A row of sm's catalog is not kept by a session: rn's check of np2,
+#    made before the superuser drops it, is not answered from it after.
+# 5. pg_monitor, a predefined role, has pg_read_all_stats, and cannot be
+#    dropped.
+local_psql -c "create role rn login password 'pn'" \
+  -c 'create table np (a int4)' > "$work/nonsuper.out" 2>&1 ||
+  fail "non-superuser: make"
+tcp_psql pn -U rn -c "select 'x' || 1" -c 'select count(*) > 0 from pg_class' \
+  -c "select count(*) > 0 from pg_roles" -c 'select oid from pg_authid' \
+  -c 'select * from np' -c 'create table nq (a int4)' \
+  -c "select has_schema_privilege('public', 'usage')" \
+  > "$work/nonsuper.out" 2>&1
+cat > "$work/nonsuper.expected" << OUT
+x1
+t
+t
+ERROR:  permission denied for table pg_authid
+ERROR:  permission denied for table np
+ERROR:  permission denied for schema public
+LINE 1: create table nq (a int4)
+                     ^
+t
+OUT
+cmp -s "$work/nonsuper.out" "$work/nonsuper.expected" ||
+  fail "non-superuser: what it may do"
+local_psql -c 'create table np2 (a int4)' > "$work/np2.out" 2>&1
+np2=$(local_psql -c "select 'np2'::regclass::oid")
+held_start npheld
+held_send npheld "\\c 'host=127.0.0.1 port=$port dbname=postgres user=rn password=pn'"
+held_send npheld "select 'np2:' || has_table_privilege($np2, 'select');"
+held_wait npheld "np2:false" || fail "non-superuser: np2 before its drop"
+local_psql -c 'drop table np2' > "$work/np2.out" 2>&1
+held_send npheld "select 'np2:' || coalesce(has_table_privilege($np2, 'select')::text, 'none');"
+held_wait npheld "np2:none" || fail "non-superuser: np2 after its drop"
+held_end npheld
+local_psql -c "select nspname, nspacl from pg_namespace
+                 where nspname in ('pg_catalog', 'public') order by 1" \
+  -c "select pg_has_role('pg_monitor', 'pg_read_all_stats', 'member')" \
+  -c 'drop role pg_monitor' -c 'drop table np' -c 'drop role rn' \
+  > "$work/builtin_acl.out" 2>&1
+cat > "$work/builtin_acl.expected" << OUT
+pg_catalog|{$me=UC/$me,=U/$me}
+public|{pg_database_owner=UC/pg_database_owner,=U/pg_database_owner}
+t
+ERROR:  cannot drop role pg_monitor because it is required by the database system
+DROP TABLE
+DROP ROLE
+OUT
+cmp -s "$work/builtin_acl.out" "$work/builtin_acl.expected" ||
+  fail "non-superuser: what initdb made"
 
 # Verify that psql's \d describes a sequence of sm's: pg_sequence has its
 # START and INCREMENT, and pg_depend the column that owns it.

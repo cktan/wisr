@@ -22,36 +22,32 @@
 
 CREATE USER regress_conversion_user WITH NOCREATEDB NOCREATEROLE;
 SET SESSION AUTHORIZATION regress_conversion_user;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE CONVERSION myconv FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
+CREATE CONVERSION myconv FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
 --
 -- cannot make same name conversion in same schema
 --
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE CONVERSION myconv FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
+CREATE CONVERSION myconv FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
 --
 -- create default conversion with qualified name
 --
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE DEFAULT CONVERSION public.mydef FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
+CREATE DEFAULT CONVERSION public.mydef FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
 --
 -- cannot make default conversion with same schema/for_encoding/to_encoding
 --
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
---dg CREATE DEFAULT CONVERSION public.mydef2 FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
+CREATE DEFAULT CONVERSION public.mydef2 FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
 -- test comments
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: another error: relation pg_conversion cannot be opened: digres has no catalog tables
 --dg COMMENT ON CONVERSION myconv_bad IS 'foo';
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: another error: relation pg_conversion cannot be opened: digres has no catalog tables
 --dg COMMENT ON CONVERSION myconv IS 'bar';
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: another error: relation pg_conversion cannot be opened: digres has no catalog tables
 --dg COMMENT ON CONVERSION myconv IS NULL;
 --
 -- drop user defined conversion
 --
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: another error: relation pg_conversion cannot be opened: digres has no catalog tables
 --dg DROP CONVERSION myconv;
---dg-differs: another error: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-differs: another error: relation pg_conversion cannot be opened: digres has no catalog tables
 --dg DROP CONVERSION mydef;
 --
 -- Note: the built-in conversions are exercised in opr_sanity.sql,

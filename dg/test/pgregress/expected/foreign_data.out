@@ -254,7 +254,7 @@ GRANT regress_test_indirect TO regress_test_role;
 SET ROLE regress_test_role;
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg CREATE SERVER t2 FOREIGN DATA WRAPPER foo;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg \des+
 RESET ROLE;
 REVOKE regress_test_indirect FROM regress_test_role;
@@ -923,7 +923,7 @@ SET ROLE regress_test_role;
 --dg-skip: relation pg_user_mapping cannot be opened: digres has no catalog tables
 --dg CREATE USER MAPPING FOR regress_unprivileged_role SERVER s10 OPTIONS (user 'secret');
 -- owner of server can see some option fields
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg \deu+
 RESET ROLE;
 -- superuser can see all option fields
@@ -931,7 +931,7 @@ RESET ROLE;
 --dg \deu+
 -- unprivileged user cannot see any option field
 SET ROLE regress_unprivileged_role;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg \deu+
 RESET ROLE;
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
@@ -996,7 +996,7 @@ CREATE TABLE fd_pt1 (
 	c2 text,
 	c3 date
 );
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
 --dg CREATE FOREIGN TABLE ft2 () INHERITS (fd_pt1)
 --dg   SERVER s0 OPTIONS (delimiter ',', quote '"', "be quoted" 'value');
 --dg-cascade

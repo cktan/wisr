@@ -279,11 +279,11 @@ set enable_mergejoin = off;
 
 --dg-cascade
 --dg alter table ec1 enable row level security;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg create policy p1 on ec1 using (f1 < '5'::int8alias1);
 
 create user regress_user_ectest;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg grant select on ec0 to regress_user_ectest;
 --dg-cascade
 --dg grant select on ec1 to regress_user_ectest;
@@ -299,14 +299,14 @@ set session authorization regress_user_ectest;
 -- with RLS active, the non-leakproof a.ff = 43 clause is not treated
 -- as a suitable source for an EquivalenceClass; currently, this is true
 -- even though the RLS clause has nothing to do directly with the EC
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg explain (costs off)
 --dg   select * from ec0 a, ec1 b
 --dg   where a.ff = b.ff and a.ff = 43::bigint::int8alias1;
 
 reset session authorization;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: cache lookup failed for attribute -N of relation N
 --dg revoke select on ec0 from regress_user_ectest;
 --dg-cascade
 --dg revoke select on ec1 from regress_user_ectest;
