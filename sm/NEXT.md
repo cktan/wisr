@@ -159,6 +159,20 @@ Owed, and blocking nothing above:
 
 ## 3. Not blocking
 
+- **Explore dropping a chained store's OLD entries at
+  startup.** After a restart no snapshot is older than the
+  start, so an old entry (class `0x02`, `VCHAIN.md` §2) whose
+  displacer committed is garbage then; today each waits for
+  the compaction filter to pass it (`VCHAIN.md` §7). To find
+  out: whether the whole `0x02` range of a store can go at
+  once, by `DeleteRange` (allowed: stores have no
+  `row_cache`, `sm1/SM1_DESIGN.md` §12.2), or must be swept
+  entry by entry; what a prepared transaction kept across the
+  restart needs, as its version in CURR is in flight and the
+  one it displaced, in OLD, is what readers see; what it
+  costs at startup against what it saves in compaction and in
+  reads that follow a chain; and when it runs, before the
+  first session or in the background.
 - **Edges from digres in sm1's wait-for graph.** digres keeps
   PostgreSQL's advisory locks (`pg_advisory_lock()`,
   `pg_advisory_xact_lock()` and the rest) in a table of its
