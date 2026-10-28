@@ -9116,6 +9116,32 @@ the statements.
 - **Left out**: `USING INDEX`, DEFERRABLE, and the key-column
   ALTERs, which wait for `ALTER COLUMN TYPE`.
 - **Tests**: `test/slt/pk_ddl.test`, its results PostgreSQL
-  18's; a `server.sh` check of a crash before the commit; 52
+  18's; a `server.sh` check of a crash before the commit; 51
   pgregress files trimmed again; each part shown to fail
   disabled (`PKDDL.md` §5).
+
+## Step 313: server.sh's held-row checks read only their own output
+
+`sm/NEXT.md` owed "an upsert against a held row fails now and
+then": `server.sh` failed 2 runs in 35, at a check where one
+session holds a row and another upserts its key. sm1 was not
+at fault; the test was.
+
+- **The race**: `against()`, `after_held()` and
+  `upsert_against()` start psql in the background with its
+  output redirected to a file the last call also wrote, and
+  poll that file at once. The redirection truncates it in the
+  background child, which a loaded machine runs late: the poll
+  read the last call's `held`, and started the other session
+  before the holder had written, or its pid, and asked
+  `pg_blocking_pids()` of a session gone ("stuck").
+- **Found** by repeating the four upsert checks in one
+  server's life, four servers side by side with eight CPU
+  hogs: 14 of 3,200 failed, at every check, each with the
+  right answer. A gdb stack of the server taken at a stuck
+  check showed the upsert waiting in sm1's `lock_wait_xact()`,
+  on a thread whose id was not the pid polled.
+- **Fixed**: each helper empties its files itself before it
+  starts psql.
+- **Shown**: with each background psql started 0.5 s late, the
+  old helper failed 19 checks of 20 and the new one none.

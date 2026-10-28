@@ -67,20 +67,19 @@ steps behind each entry).
 
 Owed, and blocking nothing above:
 
-- **An upsert against a held row fails now and then.** dg's
-  `test/server.sh` failed 2 runs in 35 with sm built `-O0 -g`
-  (`DEBUG=1`), each time at a different check where one
-  session holds a row and another upserts its key: "upsert of
-  a row updated meanwhile", "upsert of a row deleted once
-  found". Traced, the holder held its row within 0.13 s and
-  the upsert was seen waiting within 0.2 s, far inside the
-  test's 5 s and 10 s, so a timeout is unlikely; the upsert
-  may at times not wait at all, a race in sm1. Not caught in
-  a failing run, and not yet known to predate the fixes it
-  was seen after. Next: repeat those four checks many times
-  in one server's life, and read both sessions' output when
-  one fails.
-
+- **A table's size, taken again after 10 s, is at times the
+  old one.** dg's `test/server.sh` failed once in four runs
+  (2026-10-28, debug build) at "a size taken again after 10
+  s": t33's estimates were 20,000, 20,000, 40,000, 40,000 and
+  40,000, where the last, after 20,000 more rows and 10.5 s,
+  should be 60,000 within 10%. `kept_estimate()` in
+  `../dg/src/backend/access/sm/smstore.c` lets an estimate go
+  after `size_cache_age`; whether it was made again from sizes
+  RocksDB had not yet changed (`sm1`'s approxsize, kept per
+  version of the tree), or a flush between the two read as no
+  growth, is not known. Next: repeat that check alone, and
+  print the table's bytes in files and memtables beside each
+  estimate.
 - **The commit cache's size** (`sm1/COMMITCACHE.md` §7).
   65,536 entries reaches back under a second at 100,000
   transactions a second, while a version needs a lookup until

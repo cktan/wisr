@@ -3721,6 +3721,9 @@ after_held() {
   local held=$1
   shift
   mkfifo "$work/write.in"
+  # Emptied here, not by the background psql's redirection, which may come
+  # after the poll below and leave it the last call's "held".
+  : > "$work/write_held.out"
   local_psql < "$work/write.in" > "$work/write_held.out" 2>&1 &
   local holder=$!
   exec 4> "$work/write.in"
@@ -3853,6 +3856,10 @@ local_psql -c 'create table tk1 (a int4 primary key, b int4)' \
 # first (wait_state), then what the other said, on one line.
 against() {
   mkfifo "$work/rowlock.in"
+  # Emptied here, not by the background psqls' redirections, which may come
+  # after the polls below and leave them the last call's "held" and pid.
+  : > "$work/rowlock_held.out"
+  : > "$work/rowlock_other.out"
   local_psql < "$work/rowlock.in" > "$work/rowlock_held.out" 2>&1 &
   local holder=$!
   exec 4> "$work/rowlock.in"
@@ -4027,6 +4034,10 @@ local_psql -c "insert into tu1 values (9, 'one', 7) on conflict (id)
 # other said.
 upsert_against() {
   mkfifo "$work/upsert.in"
+  # Emptied here, not by the background psqls' redirections, which may come
+  # after the polls below and leave them the last call's "held" and pid.
+  : > "$work/upsert_held.out"
+  : > "$work/upsert_other.out"
   local_psql < "$work/upsert.in" > "$work/upsert_held.out" 2>&1 &
   local holder=$!
   exec 4> "$work/upsert.in"

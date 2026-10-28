@@ -118,7 +118,7 @@ Run on PostgreSQL 18.6:
   and a duplicate found there (§8).
 - **dg**: `test/slt/pk_ddl.test`, §4's cases SQL reaches, its
   results PostgreSQL 18's; `server.sh`, a crash before the
-  commit; pgregress's 52 files whose SQL adds or drops a
+  commit; pgregress's 51 files whose SQL adds or drops a
   constraint or an index, trimmed again.
 - **Shown to fail** with each part disabled, one at a time:
   the NOT NULL of a primary key's columns, the filter of the
