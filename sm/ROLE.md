@@ -429,22 +429,22 @@ it (`../CLAUDE.md`, "Test at every layer"):
 
 1. `pg_global` and the role records; the superuser moves
    there from the file; `pg_authid`, `pg_roles`, `\du`. Done
-   (`../dg/WORKNOTE.md` step 312).
+   (`../dg/WORKNOTE.md` step 315).
 2. CREATE, ALTER, DROP ROLE; membership; SET ROLE. Done
-   (`../dg/WORKNOTE.md` step 313).
+   (`../dg/WORKNOTE.md` step 316).
 3. §5's four checks, in place of the fixed rule. Done
-   (`../dg/WORKNOTE.md` step 314).
+   (`../dg/WORKNOTE.md` step 317).
 4. Owners: what initdb leaves, as PostgreSQL's (the schemas'
    ACLs, the predefined roles), and a role that is not a
    superuser running statements, done (`../dg/WORKNOTE.md`
-   step 315); an object's entry in `pg_global`, `current_user`
+   step 318); an object's entry in `pg_global`, `current_user`
    after CREATE commits, the database's owner without one,
-   `ALTER ... OWNER TO`, done (step 316). Not done: the sweep
+   `ALTER ... OWNER TO`, done (step 319). Not done: the sweep
    of entries a crash left behind, which name nothing.
 5. GRANT and REVOKE on tables, views, sequences, schemas and
    databases; the checks that then refuse. Done
-   (`../dg/WORKNOTE.md` step 317).
+   (`../dg/WORKNOTE.md` step 320).
 6. `DROP ROLE` and its dependents, `REASSIGN OWNED`, `DROP
-   OWNED`. Done (`../dg/WORKNOTE.md` step 318).
+   OWNED`. Done (`../dg/WORKNOTE.md` step 321).
 7. Later: column privileges, default privileges, row-level
    security, TLS.
