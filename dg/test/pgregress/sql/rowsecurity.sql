@@ -2708,36 +2708,31 @@ CREATE TABLE dob_t1 (c1 int);
 
 --dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON dob_t1 TO regress_rls_dob_role1 USING (true);
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_rls_dob_role1;
+DROP OWNED BY regress_rls_dob_role1;
 DROP POLICY p1 ON dob_t1; -- should fail, already gone
 
 --dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON dob_t1 TO regress_rls_dob_role1,regress_rls_dob_role2 USING (true);
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_rls_dob_role1;
+DROP OWNED BY regress_rls_dob_role1;
 --dg-cascade
 --dg DROP POLICY p1 ON dob_t1; -- should succeed
 
 -- same cases with duplicate polroles entries
 --dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON dob_t1 TO regress_rls_dob_role1,regress_rls_dob_role1 USING (true);
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_rls_dob_role1;
+DROP OWNED BY regress_rls_dob_role1;
 DROP POLICY p1 ON dob_t1; -- should fail, already gone
 
 --dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON dob_t1 TO regress_rls_dob_role1,regress_rls_dob_role1,regress_rls_dob_role2 USING (true);
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_rls_dob_role1;
+DROP OWNED BY regress_rls_dob_role1;
 --dg-cascade
 --dg DROP POLICY p1 ON dob_t1; -- should succeed
 
 -- partitioned target
 --dg-cascade
 --dg CREATE POLICY p1 ON dob_t2 TO regress_rls_dob_role1,regress_rls_dob_role2 USING (true);
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_rls_dob_role1;
+DROP OWNED BY regress_rls_dob_role1;
 --dg-cascade
 --dg DROP POLICY p1 ON dob_t2; -- should succeed
 

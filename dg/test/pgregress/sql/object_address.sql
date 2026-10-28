@@ -285,8 +285,7 @@ SELECT pg_get_object_address('access method', '{one,two}', '{}');
 --dg-cascade
 --dg DROP SCHEMA addr_nsp CASCADE;
 
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_addr_user;
+DROP OWNED BY regress_addr_user;
 DROP USER regress_addr_user;
 
 --

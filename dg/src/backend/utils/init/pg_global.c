@@ -46,6 +46,7 @@
 #include "access/transam.h"
 #include "catalog/pg_auth_members.h"
 #include "catalog/pg_authid.h"
+#include "catalog/objectaddress.h"
 #include "catalog/pg_class_d.h"
 #include "catalog/pg_database_d.h"
 #include "catalog/pg_namespace_d.h"
@@ -55,6 +56,7 @@
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/control_block.h"
+#include "utils/datadir.h"
 #include "utils/inval.h"
 #include "utils/memutils.h"
 #include "utils/relcache.h"
@@ -137,6 +139,9 @@ struct pg_global_session_t {
 
   ~pg_global_session_t() { sm_closedb(session); }
 };
+
+static std::shared_ptr<const pg_global_objects_t> shared_objects(void);
+static std::vector<acl_item_t> acl_items(const std::string &text);
 
 /* Free a session's state, and close its sm session on pg_global. */
 void pg_global_session_free_t::operator()(pg_global_session_t *s) const {
@@ -856,26 +861,173 @@ void pg_global_delete_member(Oid oid) {
 }
 
 /*
+ * Every object's entry as session s sees it: the snapshot, with its
+ * transaction's changes.  s may be NULL.
+ */
+static pg_global_objects_t merged_objects(const pg_global_session_t *s) {
+  pg_global_objects_t out = *shared_objects();
+
+  if (NULL != s)
+    for (const object_change_t &c : s->changes) {
+      if (c.present)
+        out[c.key] = c.object;
+      else
+        out.erase(c.key);
+    }
+  return out;
+}
+
+/*
+ * Whether the entry o's ACL names the role roleid, other than as its
+ * owner: PostgreSQL records no dependency of an ACL on its object's owner
+ * (updateAclDependencies()).
+ */
+static bool acl_names(const pg_global_object_t &o, Oid roleid) {
+  if (!o.has_acl || o.owner == roleid)
+    return false;
+  for (const acl_item_t &i : acl_items(o.acl))
+    if (i.grantee == roleid || i.grantor == roleid)
+      return true;
+  return false;
+}
+
+/*
+ * The entries, as the session sees them, of the objects the role roleid
+ * owns, into *owned, and of those whose ACL names it, into *granted, if
+ * not NULL: of every database, a database's own among them (objid 0).
+ */
+void pg_global_objects_of(Oid roleid, std::vector<pg_global_object_t> *owned,
+                          std::vector<pg_global_object_t> *granted) {
+  if (!pg_global_is_loaded())
+    return;
+  for (const auto &[key, o] :
+       merged_objects(nullptr != tcb ? tcb->pg_global.get() : NULL)) {
+    if (NULL != owned && o.owner == roleid)
+      owned->push_back(o);
+    if (NULL != granted && acl_names(o, roleid))
+      granted->push_back(o);
+  }
+}
+
+/* One line of DROP ROLE's DETAIL, by the oid PostgreSQL sorts it by. */
+struct dependent_line_t {
+  Oid oid;
+  char deptype; /* PostgreSQL's: 'a' an ACL's, 'o' an owner's */
+  std::string text;
+};
+
+/*
+ * The DETAIL line for the entry o, owner or ACL by deptype, into *line: in
+ * this database, the object; a database, itself; false for an object of
+ * another database, counted in *remote, or one gone.
+ */
+static bool dependent_line(const pg_global_object_t &o, char deptype,
+                           std::map<uint64_t, int> *remote,
+                           dependent_line_t *line) {
+  const char *what = 'o' == deptype ? "owner of " : "privileges for ";
+  ObjectAddress address;
+  char *desc;
+
+  if (InvalidOid == o.objid) {
+    Oid dboid = FirstNormalObjectId + (Oid)o.dbid;
+    char *name = datadir_database_name(dboid);
+
+    if (NULL == name)
+      return false;
+    *line = {dboid, deptype, std::string(what) + "database " + name};
+    return true;
+  }
+  if (pg_global_dbid(MyDatabaseId) != o.dbid) {
+    (*remote)[o.dbid]++;
+    return false;
+  }
+  address.classId = o.classid;
+  address.objectId = o.objid;
+  address.objectSubId = 0;
+  if (NULL == (desc = getObjectDescription(&address, true)))
+    return false;
+  *line = {o.objid, deptype, std::string(what) + desc};
+  return true;
+}
+
+/* The most lines DROP ROLE's DETAIL has, as PostgreSQL's MAX_REPORTED_DEPS. */
+#define MAX_REPORTED 100
+
+/*
  * What depends on the role roleid, as DROP ROLE's DETAIL lists it, one a
- * line, palloc'd; NULL if nothing does.  So far only a membership it
- * granted (sm/ROLE.md section 4: no pg_shdepend, pg_global alone).
+ * line, palloc'd; NULL if nothing does: what it owns and what an ACL
+ * grants it, in this database and of the databases, a membership it
+ * granted, each by its oid, as PostgreSQL's checkSharedDependencies()
+ * sorts them; then how many in each other database.  All of it is in
+ * pg_global (sm/ROLE.md section 4: no pg_shdepend).
  */
 char *pg_global_role_dependents(Oid roleid) {
   std::shared_ptr<const pg_global_roles_t> all = pg_global_roles();
+  std::vector<pg_global_object_t> owned, granted;
+  std::vector<dependent_line_t> lines;
+  std::map<uint64_t, int> remote;
+  dependent_line_t line;
   StringInfoData out;
+  int shown = 0, hidden = 0;
 
-  initStringInfo(&out);
   for (const pg_global_member_t &m : all->members) {
     pg_global_role_t member, role;
 
     if (m.grantor != roleid || !pg_global_role_by_oid(m.member, &member) ||
         !pg_global_role_by_oid(m.roleid, &role))
       continue;
+    lines.push_back({m.oid, 'a',
+                     "privileges for membership of role " + member.rolname +
+                         " in role " + role.rolname});
+  }
+  pg_global_objects_of(roleid, &owned, &granted);
+  for (const pg_global_object_t &o : owned)
+    if (dependent_line(o, 'o', &remote, &line))
+      lines.push_back(line);
+  for (const pg_global_object_t &o : granted)
+    if (dependent_line(o, 'a', &remote, &line))
+      lines.push_back(line);
+  std::sort(lines.begin(), lines.end(),
+            [](const dependent_line_t &a, const dependent_line_t &b) {
+              return a.oid != b.oid ? a.oid < b.oid : a.deptype < b.deptype;
+            });
+
+  initStringInfo(&out);
+  for (const dependent_line_t &l : lines) {
+    if (shown >= MAX_REPORTED) {
+      hidden++;
+      continue;
+    }
     if (out.len > 0)
       appendStringInfoChar(&out, '\n');
-    appendStringInfo(&out, "privileges for membership of role %s in role %s",
-                     member.rolname.c_str(), role.rolname.c_str());
+    appendStringInfoString(&out, l.text.c_str());
+    shown++;
   }
+  for (const auto &[dbid, count] : remote) {
+    char *name = datadir_database_name(FirstNormalObjectId + (Oid)dbid);
+
+    if (NULL == name)
+      continue;
+    if (shown >= MAX_REPORTED) {
+      hidden += count;
+      continue;
+    }
+    if (out.len > 0)
+      appendStringInfoChar(&out, '\n');
+    appendStringInfo(&out,
+                     ngettext("%d object in database %s",
+                              "%d objects in database %s", count),
+                     count, name);
+    shown++;
+  }
+  if (hidden > 0)
+    appendStringInfo(&out,
+                     ngettext("\nand %d other object "
+                              "(see server log for list)",
+                              "\nand %d other objects "
+                              "(see server log for list)",
+                              hidden),
+                     hidden);
   if (0 == out.len) {
     pfree(out.data);
     return NULL;

@@ -13,10 +13,8 @@ GRANT SELECT ON TABLE deptest TO GROUP regress_dep_group;
 GRANT ALL ON TABLE deptest TO regress_dep_user, regress_dep_user2;
 
 -- can't drop neither because they have privileges somewhere
---dg-differs: no error where PostgreSQL has: role "?" cannot be dropped because some objects depend on it
---dg DROP USER regress_dep_user;
---dg-differs: no error where PostgreSQL has: role "?" cannot be dropped because some objects depend on it
---dg DROP GROUP regress_dep_group;
+DROP USER regress_dep_user;
+DROP GROUP regress_dep_group;
 
 -- if we revoke the privileges we can drop the group
 REVOKE SELECT ON deptest FROM GROUP regress_dep_group;
@@ -24,8 +22,7 @@ DROP GROUP regress_dep_group;
 
 -- can't drop the user if we revoke the privileges partially
 REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, MAINTAIN ON deptest FROM regress_dep_user;
---dg-differs: no error where PostgreSQL has: role "?" cannot be dropped because some objects depend on it
---dg DROP USER regress_dep_user;
+DROP USER regress_dep_user;
 
 -- now we are OK to drop him
 REVOKE TRIGGER ON deptest FROM regress_dep_user;
@@ -40,8 +37,7 @@ DROP USER regress_dep_user2;
 -- is not constant, so suppress it
 \set VERBOSITY terse
 ALTER TABLE deptest OWNER TO regress_dep_user3;
---dg-differs: no error where PostgreSQL has: role "?" cannot be dropped because some objects depend on it
---dg DROP USER regress_dep_user3;
+DROP USER regress_dep_user3;
 \set VERBOSITY default
 
 -- if we drop the object, we can drop the user too
@@ -59,8 +55,7 @@ DROP OWNED BY regress_dep_user0, regress_dep_user2;
 REASSIGN OWNED BY regress_dep_user0 TO regress_dep_user1;
 REASSIGN OWNED BY regress_dep_user1 TO regress_dep_user0;
 -- this one is allowed
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_dep_user0;
+DROP OWNED BY regress_dep_user0;
 
 CREATE TABLE deptest1 (f1 int unique);
 GRANT ALL ON deptest1 TO regress_dep_user1 WITH GRANT OPTION;
@@ -71,8 +66,7 @@ GRANT ALL ON deptest1 TO regress_dep_user2;
 RESET SESSION AUTHORIZATION;
 \z deptest1
 
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_dep_user1;
+DROP OWNED BY regress_dep_user1;
 -- all grants revoked
 \z deptest1
 -- table was dropped
@@ -107,8 +101,7 @@ SELECT typowner = relowner
 FROM pg_type JOIN pg_class c ON typrelid = c.oid WHERE typname = 'deptest_t';
 
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg REASSIGN OWNED BY regress_dep_user1 TO regress_dep_user2;
+REASSIGN OWNED BY regress_dep_user1 TO regress_dep_user2;
 \dt deptest
 
 SELECT typowner = relowner
@@ -117,15 +110,10 @@ FROM pg_type JOIN pg_class c ON typrelid = c.oid WHERE typname = 'deptest_t';
 -- doesn't work: grant still exists
 --dg-cascade
 --dg DROP USER regress_dep_user1;
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_dep_user1;
---dg-cascade
---dg DROP USER regress_dep_user1;
+DROP OWNED BY regress_dep_user1;
+DROP USER regress_dep_user1;
 
---dg-cascade
---dg DROP USER regress_dep_user2;
---dg-cascade
---dg DROP OWNED BY regress_dep_user2, regress_dep_user0;
---dg-cascade
---dg DROP USER regress_dep_user2;
+DROP USER regress_dep_user2;
+DROP OWNED BY regress_dep_user2, regress_dep_user0;
+DROP USER regress_dep_user2;
 DROP USER regress_dep_user0;

@@ -70,13 +70,10 @@ REVOKE regress_priv_user1 FROM regress_priv_user2 CASCADE;
 GRANT regress_priv_user1 TO regress_priv_user2 WITH ADMIN OPTION;
 GRANT regress_priv_user1 TO regress_priv_user3 GRANTED BY regress_priv_user2;
 DROP ROLE regress_priv_user2; -- fail, dependency
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg REASSIGN OWNED BY regress_priv_user2 TO regress_priv_user4;
+REASSIGN OWNED BY regress_priv_user2 TO regress_priv_user4;
 DROP ROLE regress_priv_user2; -- still fail, REASSIGN OWNED doesn't help
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_priv_user2;
---dg-cascade
---dg DROP ROLE regress_priv_user2; -- ok now, DROP OWNED does the job
+DROP OWNED BY regress_priv_user2;
+DROP ROLE regress_priv_user2; -- ok now, DROP OWNED does the job
 
 -- test that removing granted role or grantee role removes dependency
 GRANT regress_priv_user1 TO regress_priv_user3 WITH ADMIN OPTION;
@@ -91,8 +88,7 @@ DROP ROLE regress_priv_user1, regress_priv_user5; -- ok, despite order
 
 -- recreate the roles we just dropped
 CREATE USER regress_priv_user1;
---dg-cascade
---dg CREATE USER regress_priv_user2;
+CREATE USER regress_priv_user2;
 CREATE USER regress_priv_user3;
 CREATE USER regress_priv_user4;
 CREATE USER regress_priv_user5;
@@ -1413,10 +1409,8 @@ CREATE UNIQUE INDEX ON sro_index_mv (c) WHERE unwanted_grant_nofail(1) > 0;
 REFRESH MATERIALIZED VIEW CONCURRENTLY sro_index_mv;
 REFRESH MATERIALIZED VIEW sro_index_mv;
 
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_sro_user;
---dg-cascade
---dg DROP ROLE regress_sro_user;
+DROP OWNED BY regress_sro_user;
+DROP ROLE regress_sro_user;
 
 
 -- Admin options
@@ -1923,8 +1917,7 @@ BEGIN;
 --dg   WHERE deptype = 'a' AND
 --dg         refobjid = 'regress_priv_user2'::regrole AND
 --dg 	classid = 'pg_default_acl'::regclass;
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_priv_user2, regress_priv_user2;
+DROP OWNED BY regress_priv_user2, regress_priv_user2;
 --dg-skip: relation "?" does not exist
 --dg SELECT count(*) FROM pg_shdepend
 --dg   WHERE deptype = 'a' AND
@@ -2183,11 +2176,9 @@ DROP GROUP regress_priv_group2;
 -- these are needed to clean up permissions
 --dg-skip: language "?" does not exist
 --dg REVOKE USAGE ON LANGUAGE sql FROM regress_priv_user1;
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_priv_user1;
+DROP OWNED BY regress_priv_user1;
 
---dg-cascade
---dg DROP USER regress_priv_user1;
+DROP USER regress_priv_user1;
 --dg-cascade
 --dg DROP USER regress_priv_user2;
 DROP USER regress_priv_user3;

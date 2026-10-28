@@ -201,6 +201,7 @@ extern void smstore_drop_tables(DropStmt *stmt);
 extern void smstore_drop_table(Oid oid);
 extern void smstore_drop_temp_tables(void);
 extern void smstore_alter_table(Oid relid, AlterTableStmt *stmt);
+extern void smstore_reassign_owner(Oid relid, Oid owner);
 extern ObjectAddress smstore_rename_table(RenameStmt *stmt);
 extern ObjectAddress smstore_rename_column(RenameStmt *stmt);
 extern ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt);

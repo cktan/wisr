@@ -9421,3 +9421,48 @@ it computes, PostgreSQL's ACL merged with the grant, goes to
   fails at its commit leave the ACL as it was, read again
   after a restart. Each was shown to fail with its part
   undone.
+
+## Step 318: what depends on a role
+
+The sixth step of roles (`../sm/ROLE.md` §9): DROP ROLE refuses
+a role anything depends on, in any database, and REASSIGN
+OWNED and DROP OWNED act on what it owns and is granted, all
+read from `pg_global`'s entries, as PostgreSQL reads them from
+`pg_shdepend`, which digres has none of.
+
+- **DROP ROLE's DETAIL** (`pg_global_role_dependents()`):
+  `owner of` and `privileges for` each object of this database,
+  and each database, whose entry names the role, and each
+  membership it granted, sorted by oid; then `N objects in
+  database X` for each other database; a hundred lines at most,
+  as PostgreSQL's. An ACL that names its object's owner is not
+  a dependency, as in PostgreSQL. digres's oids are not
+  PostgreSQL's, so the lines may come in another order.
+- **REASSIGN OWNED** gives what the role owns in this database,
+  and the databases it owns, to the new role, with no check of
+  each, as PostgreSQL's does (`smstore_reassign_owner()`): an
+  index and a sequence a column owns go with their table.
+- **DROP OWNED** revokes what an ACL grants the role, in this
+  database and on the databases (`RemoveRoleFromObjectACL()`,
+  now writing `pg_global`), deletes the memberships it
+  granted, and drops what it owns in this database, its
+  relations the newest first, then its schemas, by the DROP
+  that each kind takes, RESTRICT or CASCADE as asked.
+- **A predefined role**, or the bootstrap superuser, is refused
+  both, as required by the database system.
+- **Left on purpose**: a temporary object's owner is the
+  session's alone, and DROP OWNED drops none. A membership
+  DROP OWNED deletes in a savepoint rolled back to stays
+  deleted: role changes have no savepoints, as role DDL runs
+  outside a transaction block; it leaves less granted, not
+  more. The sweep of entries a crash left behind is still to
+  come.
+- **pgregress**: the 56 files that drop a role, or what one
+  owns, were ported again: 30 statements are back.
+- **Tests**: `server.sh` has DROP ROLE refused with each line of
+  its DETAIL, an object in another database counted; REASSIGN
+  OWNED give a schema, a table, a view and a database away;
+  DROP OWNED revoke here, drop in the other database, and then
+  DROP ROLE succeed; DROP OWNED drop a schema, a table and a
+  view; and a predefined role refused both. Each was shown to
+  fail with its part undone.

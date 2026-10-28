@@ -1,7 +1,7 @@
 # ROLE — users, roles, privileges, and how a client gets in
 
-**Being built**, a step at a time (§9): steps 1 to 5 are
-done. Roles and memberships are `pg_global`'s, made, changed
+**Being built**, a step at a time (§9): steps 1 to 6 are
+done; the later steps are not. Roles and memberships are `pg_global`'s, made, changed
 and dropped by SQL; no privilege on an object is refused yet,
 and every object's owner is the superuser. This file says
 what roles and privileges digres takes from PostgreSQL, where
@@ -445,6 +445,6 @@ it (`../CLAUDE.md`, "Test at every layer"):
    databases; the checks that then refuse. Done
    (`../dg/WORKNOTE.md` step 317).
 6. `DROP ROLE` and its dependents, `REASSIGN OWNED`, `DROP
-   OWNED`.
+   OWNED`. Done (`../dg/WORKNOTE.md` step 318).
 7. Later: column privileges, default privileges, row-level
    security, TLS.

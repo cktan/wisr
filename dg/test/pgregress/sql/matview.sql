@@ -340,8 +340,7 @@ CREATE UNIQUE INDEX ON mvtest_mv_foo (i);
 RESET ROLE;
 REFRESH MATERIALIZED VIEW mvtest_mv_foo;
 REFRESH MATERIALIZED VIEW CONCURRENTLY mvtest_mv_foo;
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_user_mvtest CASCADE;
+DROP OWNED BY regress_user_mvtest CASCADE;
 DROP ROLE regress_user_mvtest;
 
 -- Concurrent refresh requires a unique index on the materialized

@@ -3335,6 +3335,70 @@ grep -q 'not serializable' "$work/gks1.out" || fail "grant: the second fails"
 [ "$(local_psql -c "select relacl from pg_class where relname = 'gk'")" = \
   "{$me=arwdDxtm/$me,rg2=r/$me}" ] || fail "grant: a failed REVOKE"
 
+# Verify DROP ROLE, REASSIGN OWNED and DROP OWNED (sm/ROLE.md section 9,
+# step 6): what depends on a role is read from pg_global, in this database
+# and in the others.
+# 1. Make rd1 and rd2; give rd1 schema ds, table dt and view dv, SELECT on
+#    dt2, database dd2, and in dd2 a table of its own.
+# 2. DROP ROLE rd1 is refused, its DETAIL naming each, and the one object
+#    in dd2.
+# 3. REASSIGN OWNED BY rd1 TO rd2 gives rd2 ds, dt, dv and dd2.
+# 4. DROP OWNED BY rd1, here and in dd2, revokes its SELECT and drops its
+#    table in dd2; then DROP ROLE rd1 succeeds.
+# 5. DROP OWNED BY rd2 drops ds, dt and dv; DROP OWNED and REASSIGN OWNED
+#    of a predefined role are refused.
+local_psql -c 'create role rd1' -c 'create role rd2' \
+  -c 'create schema ds authorization rd1' -c 'create table dt (a int4)' \
+  -c 'alter table dt owner to rd1' -c 'create view dv as select * from dt' \
+  -c 'alter view dv owner to rd1' -c 'create table dt2 (a int4)' \
+  -c 'grant select on dt2 to rd1' -c 'create database dd2' \
+  -c 'alter database dd2 owner to rd1' > "$work/dep.out" 2>&1 ||
+  fail "dependents: make"
+local_psql -d dd2 -c 'create table ot (a int4)' -c 'alter table ot owner to rd1' \
+  >> "$work/dep.out" 2>&1 || fail "dependents: make in dd2"
+local_psql -c 'drop role rd1' > "$work/dep1.out" 2>&1 &&
+  fail "dependents: a role that owns is dropped"
+for line in 'owner of schema ds' 'owner of table dt' 'owner of view dv' \
+  'privileges for table dt2' 'owner of database dd2' \
+  '1 object in database dd2'; do
+  grep -qx -e "DETAIL:  $line" -e "$line" "$work/dep1.out" ||
+    fail "dependents: DETAIL $line"
+done
+local_psql -c 'reassign owned by rd1 to rd2' \
+  -c "select string_agg(relname || ':' || pg_get_userbyid(relowner), ' '
+                        order by relname)
+        from pg_class where relname in ('dt', 'dv', 'dt2')" \
+  -c "select pg_get_userbyid(nspowner) from pg_namespace where nspname = 'ds'" \
+  -c "select pg_get_userbyid(datdba) from pg_database where datname = 'dd2'" \
+  -c 'drop owned by rd1' -c "select relacl from pg_class where relname = 'dt2'" \
+  > "$work/dep2.out" 2>&1
+local_psql -d dd2 -c 'drop owned by rd1' -c "select count(*) from pg_class
+                                            where relname = 'ot'" \
+  >> "$work/dep2.out" 2>&1
+local_psql -c 'drop role rd1' -c 'drop owned by rd2' \
+  -c "select count(*) from pg_class where relname in ('dt', 'dv')" \
+  -c "select count(*) from pg_namespace where nspname = 'ds'" \
+  -c 'drop owned by pg_monitor' -c 'reassign owned by pg_monitor to rd2' \
+  >> "$work/dep2.out" 2>&1
+cat > "$work/dep2.expected" << OUT
+REASSIGN OWNED
+dt:rd2 dt2:$me dv:rd2
+rd2
+rd2
+DROP OWNED
+{$me=arwdDxtm/$me}
+DROP OWNED
+0
+DROP ROLE
+DROP OWNED
+0
+0
+ERROR:  cannot drop objects owned by role pg_monitor because they are required by the database system
+ERROR:  cannot reassign ownership of objects owned by role pg_monitor because they are required by the database system
+OUT
+cmp -s "$work/dep2.out" "$work/dep2.expected" ||
+  fail "dependents: REASSIGN and DROP OWNED"
+
 # Verify that psql's \d describes a sequence of sm's: pg_sequence has its
 # START and INCREMENT, and pg_depend the column that owns it.
 # 1. In schema sq1 make sequence q, START 5 INCREMENT 3, and table t with a

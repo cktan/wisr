@@ -292,8 +292,7 @@ ERROR:  name list length must be exactly 1
 --dg DROP SUBSCRIPTION regress_addr_sub;
 --dg-cascade
 --dg DROP SCHEMA addr_nsp CASCADE;
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_addr_user;
+DROP OWNED BY regress_addr_user;
 DROP USER regress_addr_user;
 --
 -- Checks for invalid objects

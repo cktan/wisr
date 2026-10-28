@@ -25,8 +25,7 @@ CREATE ROLE regress_datdba_before;
 CREATE ROLE regress_datdba_after;
 --dg-cascade
 --dg ALTER DATABASE regression_utf8 OWNER TO regress_datdba_before;
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg REASSIGN OWNED BY regress_datdba_before TO regress_datdba_after;
+REASSIGN OWNED BY regress_datdba_before TO regress_datdba_after;
 
 --dg-cascade
 --dg DROP DATABASE regression_utf8;

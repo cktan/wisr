@@ -1235,11 +1235,10 @@ DROP FOREIGN TABLE IF EXISTS no_table;
 --dg DROP FOREIGN TABLE foreign_schema.foreign_table_1;
 
 -- REASSIGN OWNED/DROP OWNED of foreign objects
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
---dg REASSIGN OWNED BY regress_test_role TO regress_test_role2;
+REASSIGN OWNED BY regress_test_role TO regress_test_role2;
 --dg-cascade
 --dg DROP OWNED BY regress_test_role2;
---dg-skip: relation pg_shdepend cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP OWNED BY regress_test_role2 CASCADE;
 
 -- Foreign partition DDL stuff

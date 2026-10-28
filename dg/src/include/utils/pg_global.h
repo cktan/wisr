@@ -116,6 +116,9 @@ extern void pg_global_set_acl(uint64_t dbid, Oid classid, Oid objid, Oid owner,
 extern Acl *pg_global_acl(uint64_t dbid, Oid objid);
 extern void pg_global_change_owner(uint64_t dbid, Oid classid, Oid objid,
                                    Oid owner, bool temp);
+extern void pg_global_objects_of(Oid roleid,
+                                 std::vector<pg_global_object_t> *owned,
+                                 std::vector<pg_global_object_t> *granted);
 extern void pg_global_subcommit(void);
 extern void pg_global_subabort(void);
 extern void pg_global_post_commit(void);

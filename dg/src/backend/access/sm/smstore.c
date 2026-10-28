@@ -5614,8 +5614,31 @@ static Oid sequence_owner_table(Oid oid) {
  * sequence a column owns its table's.  Its ACL, if it keeps one, names
  * the new owner where it named the old (pg_global_change_owner()).
  */
+static void change_owner_to(Oid relid, const char *relname, Oid owner,
+                            bool check);
+
 static void change_owner(Oid relid, const char *relname, RoleSpec *spec) {
-  Oid owner = get_rolespec_oid(spec, false);
+  change_owner_to(relid, relname, get_rolespec_oid(spec, false), true);
+}
+
+/*
+ * REASSIGN OWNED's: make owner the owner of the relation relid, as ALTER
+ * ... OWNER TO would, with no check, as PostgreSQL's shdepReassignOwned()
+ * has it.  An index, and a sequence a column owns, go with their table.
+ */
+void smstore_reassign_owner(Oid relid, Oid owner) {
+  char kind = get_rel_relkind(relid);
+
+  /* An entry a crash left behind names no relation. */
+  if ('\0' == kind || RELKIND_INDEX == kind ||
+      (RELKIND_SEQUENCE == kind && OidIsValid(sequence_owner_table(relid))))
+    return;
+  change_owner_to(relid, get_rel_name(relid), owner, false);
+}
+
+/* change_owner()'s, with check_owner()'s checks if check. */
+static void change_owner_to(Oid relid, const char *relname, Oid owner,
+                            bool check) {
   char kind = get_rel_relkind(relid);
   Oid nspoid = get_rel_namespace(relid);
   uint64_t dbid = pg_global_dbid(MyDatabaseId);
@@ -5636,7 +5659,7 @@ static void change_owner(Oid relid, const char *relname, RoleSpec *spec) {
                               relname, get_rel_name(table))));
   if (pg_global_owner(relid) == owner)
     return;
-  if (!superuser()) {
+  if (check && !superuser()) {
     AclResult result;
 
     check_can_set_role(GetUserId(), owner);

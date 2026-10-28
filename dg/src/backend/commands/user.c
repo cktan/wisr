@@ -12,9 +12,12 @@
  */
 #include "postgres.h"
 
+#include <algorithm>
+
 #include "access/genam.h"
 #include "access/htup_details.h"
 #include "access/table.h"
+#include "access/smstore.h"
 #include "access/xact.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
@@ -24,18 +27,21 @@
 #include "catalog/pg_auth_members.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_database.h"
+#include "catalog/pg_namespace_d.h"
 #include "catalog/pg_db_role_setting.h"
 #include "commands/dbcommands.h"
 #include "commands/defrem.h"
 #include "commands/user.h"
 #include "libpq/crypt.h"
 #include "miscadmin.h"
+#include "nodes/makefuncs.h"
 #include "storage/lmgr.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
 #include "utils/control_block.h"
 #include "utils/fmgroids.h"
+#include "utils/lsyscache.h"
 #include "utils/hooks.h"
 #include "utils/pg_global.h"
 #include "utils/syscache.h"
@@ -1386,6 +1392,134 @@ void GrantRole(ParseState *pstate, GrantRoleStmt *stmt) {
 }
 
 /*
+ * Refuse, with message, which names it, to act on what the role roleid owns
+ * if initdb made it, as PostgreSQL's IsPinnedObject() does.
+ */
+static void refuse_pinned(Oid roleid, const char *message) {
+  if (roleid < FirstUnpinnedObjectId)
+    ereport(ERROR, (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+                    errmsg(message, psprintf("role %s",
+                                             GetUserNameFromId(roleid, false)))));
+}
+
+/*
+ * DROP OWNED's, as PostgreSQL's shdepDropOwned() does from pg_shdepend,
+ * from pg_global's entries (sm/ROLE.md section 4): of each role of
+ * roleids, revoke what an ACL grants it, in this database and on the
+ * databases; delete the memberships it granted; and drop what it owns in
+ * this database, its relations, the newest first, then its schemas.  A
+ * temporary object's owner is the session's alone, and none is dropped.
+ */
+static void drop_owned(List *roleids, DropBehavior behavior) {
+  uint64_t dbid = pg_global_dbid(MyDatabaseId);
+  std::vector<Oid> relations, schemas;
+
+  foreach_oid(roleid, roleids) {
+    std::vector<pg_global_object_t> owned, granted;
+    std::shared_ptr<const pg_global_roles_t> all = pg_global_roles();
+
+    refuse_pinned(roleid, "cannot drop objects owned by %s because they are "
+                          "required by the database system");
+    pg_global_objects_of(roleid, &owned, &granted);
+    for (const pg_global_object_t &o : granted) {
+      if (InvalidOid == o.objid) {
+        Oid dboid = FirstNormalObjectId + (Oid)o.dbid;
+
+        if (NULL != get_database_name(dboid))
+          RemoveRoleFromObjectACL(roleid, DatabaseRelationId, dboid);
+      } else if (dbid == o.dbid &&
+                 (RelationRelationId == o.classid
+                      ? '\0' != get_rel_relkind(o.objid)
+                      : NULL != get_namespace_name(o.objid)))
+        RemoveRoleFromObjectACL(roleid, o.classid, o.objid);
+    }
+    for (const pg_global_member_t &m : all->members)
+      if (m.grantor == roleid)
+        pg_global_delete_member(m.oid);
+    for (const pg_global_object_t &o : owned)
+      if (dbid == o.dbid && InvalidOid != o.objid)
+        (NamespaceRelationId == o.classid ? schemas : relations)
+            .push_back(o.objid);
+  }
+  CommandCounterIncrement();
+
+  /* The newest first, as PostgreSQL sorts them; one a cascade took, not. */
+  std::sort(relations.rbegin(), relations.rend());
+  std::sort(schemas.rbegin(), schemas.rend());
+  for (Oid relid : relations) {
+    char kind = get_rel_relkind(relid);
+    DropStmt *stmt;
+
+    if (RELKIND_RELATION != kind && RELKIND_VIEW != kind &&
+        RELKIND_SEQUENCE != kind)
+      continue;
+    stmt = makeNode(DropStmt);
+    stmt->objects = list_make1(
+        list_make2(makeString(get_namespace_name(get_rel_namespace(relid))),
+                   makeString(get_rel_name(relid))));
+    stmt->behavior = behavior;
+    stmt->missing_ok = false;
+    if (RELKIND_VIEW == kind) {
+      stmt->removeType = OBJECT_VIEW;
+      smstore_drop_views(stmt);
+    } else if (RELKIND_SEQUENCE == kind) {
+      stmt->removeType = OBJECT_SEQUENCE;
+      smstore_drop_sequences(stmt);
+    } else {
+      stmt->removeType = OBJECT_TABLE;
+      smstore_drop_tables(stmt);
+    }
+    CommandCounterIncrement();
+  }
+  for (Oid nspoid : schemas) {
+    char *name = get_namespace_name(nspoid);
+    DropStmt *stmt;
+
+    if (NULL == name)
+      continue;
+    stmt = makeNode(DropStmt);
+    stmt->objects = list_make1(makeString(name));
+    stmt->removeType = OBJECT_SCHEMA;
+    stmt->behavior = behavior;
+    smstore_drop_namespaces(stmt);
+    CommandCounterIncrement();
+  }
+}
+
+/*
+ * REASSIGN OWNED's, as PostgreSQL's shdepReassignOwned() does from
+ * pg_shdepend, from pg_global's entries: give what each role of roleids
+ * owns in this database, and the databases it owns, to newrole.
+ */
+static void reassign_owned(List *roleids, Oid newrole) {
+  uint64_t dbid = pg_global_dbid(MyDatabaseId);
+
+  foreach_oid(roleid, roleids) {
+    std::vector<pg_global_object_t> owned;
+
+    refuse_pinned(roleid,
+                  "cannot reassign ownership of objects owned by %s because "
+                  "they are required by the database system");
+    pg_global_objects_of(roleid, &owned, NULL);
+    for (const pg_global_object_t &o : owned) {
+      if (InvalidOid == o.objid)
+        pg_global_change_owner(o.dbid, DatabaseRelationId, InvalidOid, newrole,
+                               false);
+      else if (dbid != o.dbid)
+        continue;
+      else if (RelationRelationId == o.classid)
+        smstore_reassign_owner(o.objid, newrole);
+      else if (NamespaceRelationId == o.classid &&
+               NULL != get_namespace_name(o.objid))
+        pg_global_change_owner(dbid, NamespaceRelationId, o.objid, newrole,
+                               false);
+      /* Make sure the next one sees this one's change */
+      CommandCounterIncrement();
+    }
+  }
+}
+
+/*
  * DropOwnedObjects
  *
  * Drop the objects owned by a given list of roles.
@@ -1407,7 +1541,7 @@ void DropOwnedObjects(DropOwnedStmt *stmt) {
   }
 
   /* Ok, do it */
-  shdepDropOwned(role_ids, stmt->behavior);
+  drop_owned(role_ids, stmt->behavior);
 }
 
 /*
@@ -1443,7 +1577,7 @@ void ReassignOwnedObjects(ReassignOwnedStmt *stmt) {
                               GetUserNameFromId(newrole, false))));
 
   /* Ok, do it */
-  shdepReassignOwned(role_ids, newrole);
+  reassign_owned(role_ids, newrole);
 }
 
 /*
