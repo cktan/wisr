@@ -2462,6 +2462,21 @@ void RelationCheckSmVersion(Oid relid, Oid table, uint64 version) {
   list_free(stale);
 }
 
+/*
+ * The kind of the relation relationId into *kind, if the relation cache
+ * holds it: false if it does not, or holds it dropped.  Builds no entry,
+ * as RelationIdGetRelation() would, which a sequence of sm's has none of.
+ */
+bool RelationCacheKind(Oid relationId, char *kind) {
+  Relation rd;
+
+  RelationIdCacheLookup(relationId, rd);
+  if (!RelationIsValid(rd) || rd->rd_droppedSubid != InvalidSubTransactionId)
+    return false;
+  *kind = rd->rd_rel->relkind;
+  return true;
+}
+
 Relation RelationIdGetRelation(Oid relationId) {
   Relation rd;
 

@@ -30,8 +30,9 @@ STD := -x c++ -std=gnu++20 -fno-rtti -w
 # release build turns them off with "make ASSERT=".
 ASSERT ?= -DUSE_ASSERT_CHECKING
 # Every directory may include sm_sys.h: the services dg is built on,
-# in sm's level 0 (../sm/sm0).
-CPPFLAGS := -I$(top)/src/include -I$(top)/../sm/sm0/include $(INCLUDES) -D_GNU_SOURCE $(ASSERT)
+# in sm's level 0 (../sm/sm0); and aa.h, roles and privileges (../aa),
+# which utils/pg_global.h includes.
+CPPFLAGS := -I$(top)/src/include -I$(top)/../sm/sm0/include -I$(top)/../aa/include $(INCLUDES) -D_GNU_SOURCE $(ASSERT)
 
 SRCS := $(filter-out $(SKIP),$(wildcard *.c))
 OBJS := $(SRCS:.c=.$(OBJ))

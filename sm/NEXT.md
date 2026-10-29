@@ -21,6 +21,76 @@ and so are the catalog tables psql reads
    built (`../dg/PKDDL.md`); a key column's `ALTER COLUMN
    TYPE` waits for that ALTER, which digres refuses for every
    column (`../dg/UNSUPPORTED.md` §3).
+2. **What a role pays that a superuser does not**
+   (`../aa/ROLE.md`).
+   A role that is not a superuser runs every privilege check a
+   superuser skips, and pays for it, measured on 2026-10-28 on
+   `digres-release`: `narrow`, a million rows; pgbench, 20
+   seconds a run, two runs each; the same role granted SELECT
+   and UPDATE.
+
+   | Workload | Protocol | Clients | Superuser tps | Role tps | Lost |
+   | --- | --- | --- | --- | --- | --- |
+   | read by key | simple | 1 | 11,011 | 9,758 | 11% |
+   | read by key | simple | 16 | 101,805 | 88,024 | 14% |
+   | read by key | prepared | 1 | 14,502 | 12,955 | 11% |
+   | read by key | prepared | 16 | 132,451 | 111,254 | 16% |
+   | 9 reads, 1 update | prepared | 1 | 6,562 | 6,040 | 8% |
+   | 9 reads, 1 update | prepared | 16 | 45,051 | 43,332 | 4% |
+
+   About 8 µs a statement, and more as clients are added, so
+   some of it is contention. Where it is likely to go, not yet
+   profiled (`perf` does not run on this WSL kernel):
+
+   - **No row of `pg_class` or `pg_namespace` is kept by the
+     syscache** (`catrel_is_cached()`, `../dg/WORKNOTE.md`
+     step 321): each check makes the table's row again from
+     sm's definition, its columns and indexes with it, and the
+     search path's schema check every row of `pg_namespace`.
+   - **`pg_global`'s snapshots are read under one mutex**
+     (`shared_objects()`, `shared_roles()` in
+     `../dg/src/backend/utils/init/pg_global.c`): each owner
+     or ACL looked up copies a `shared_ptr` under the lock
+     every session takes.
+
+   **Profiled, and the most of it gone** (`../dg/WORKNOTE.md`
+   step 329): 19% of a role's busy time was the syscache
+   missing the table's `pg_class` row at each check, which is
+   now read from `pg_global` and the relation cache instead,
+   and an ACL's text is read without `sscanf()` (step 330), and
+   a role's privileges on an object are kept in its session
+   (step 331): an object's check costs a role 0.07 µs more than
+   the superuser (`../bench/roles.sh`). What is left of the
+   steps below is the syscache for the rows other paths read.
+
+   The plan, a step at a time, each measured as above:
+
+   1. **Keep the benchmark**: the script that made the table,
+      as `../bench/roles.sh`, so each step below is measured
+      the same way, and the gap can be checked again later.
+   2. **Profile first**, to confirm where the 8 µs go before
+      changing anything: a sampling profile where `perf` runs,
+      or the counters of the step 3 caches' misses.
+   3. **Keep sm's catalog rows in the syscache again**, made
+      stale correctly: dropped when sm's catalog epoch moves
+      (`sm_cat_epoch()`, checked where the namespaces' epoch
+      is, `AcceptInvalidationMessages()`), when `pg_global`'s
+      objects epoch moves (an owner or an ACL), and by the
+      session's own DDL, which invalidates the catalog it
+      changed as a catalog tuple's write would. The check that
+      a dropped table's privilege is answered as for no table
+      (`server.sh`) must still pass, and be shown to fail with
+      the epoch's check left out.
+   4. **Read the snapshots without the mutex**:
+      `std::atomic<std::shared_ptr<const T>>`, loaded by every
+      reader and stored by the one that replaces it; the mutex
+      kept only to order the replacements. Run under TSan
+      (`make -C ../dg tsan`).
+   5. **Then measure**: the gap a step leaves is recorded here
+      and in `../dg/WORKNOTE.md`; done when a role's point read
+      costs within 3% of a superuser's. What is left, if more,
+      is the checks PostgreSQL itself makes, and is PostgreSQL's
+      cost too.
 
 Low priority:
 
@@ -167,21 +237,6 @@ Owed, and blocking nothing above:
 
 ## 3. Not blocking
 
-- **Roles, authentication and authorization, a module of their
-  own**, beside `sm` and `sq`, once the code of `ROLE.md`
-  settles: not before (decided 2026-10-28). What would move
-  out of digres: the roles, memberships, owners and ACLs, and
-  their storage in `pg_global` through `sm.h`
-  (`../dg/src/backend/utils/init/pg_global.c`); the
-  transaction's changes and their writes around the
-  database's commit; ROLE.md §5's checks as one decision; and
-  the evaluation of privileges, with the closures over the
-  membership graph that INHERIT, SET and ADMIN make. What
-  would stay: PostgreSQL's protocol (the SCRAM exchange, the
-  socket's peer), its SQL (`user.c`, `aclchk.c`'s calls), the
-  catalog relations and the caches' invalidation. What it buys:
-  one authority over roles, tested without a server, the crash
-  between the two commits among its tests.
 - **Explore dropping a chained store's OLD entries at
   startup.** After a restart no snapshot is older than the
   start, so an old entry (class `0x02`, `VCHAIN.md` §2) whose

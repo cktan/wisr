@@ -9273,7 +9273,7 @@ that grows a file costs 2,776 µs, one over bytes the file has
 
 ## Step 318: the roles live in pg_global
 
-The first step of roles (`../sm/ROLE.md` §9). digres had one
+The first step of roles (`../aa/ROLE.md` §9). digres had one
 role, the superuser initdb named, whose name and SCRAM secret
 were the data directory's `superuser` file. A role is the
 whole server's, and no sm transaction spans two databases, so
@@ -9322,7 +9322,7 @@ the invariant).
 
 ## Step 319: role DDL writes pg_global
 
-The second step of roles (`../sm/ROLE.md` §9): CREATE, ALTER
+The second step of roles (`../aa/ROLE.md` §9): CREATE, ALTER
 and DROP ROLE, GRANT and REVOKE of a membership, SET ROLE and
 SET SESSION AUTHORIZATION. `user.c` is PostgreSQL's still, its
 checks and messages too; what it wrote to `pg_authid` and
@@ -9393,7 +9393,7 @@ checks and messages too; what it wrote to `pg_authid` and
 
 ## Step 320: how a client gets in
 
-The third step of roles (`../sm/ROLE.md` §5, §9): the fixed
+The third step of roles (`../aa/ROLE.md` §5, §9): the fixed
 rule of step 92, peer on the socket and SCRAM over TCP, gives
 way to ROLE.md's four checks, with no `pg_hba.conf`.
 
@@ -9433,7 +9433,7 @@ way to ROLE.md's four checks, with no `pg_hba.conf`.
 
 ## Step 321: a role that is not a superuser runs statements
 
-The first half of step 4 of roles (`../sm/ROLE.md` §9). Since
+The first half of step 4 of roles (`../aa/ROLE.md` §9). Since
 step 319 a session may be a role that is not a superuser, and
 every statement of one that looked a name up failed: the
 privilege check of a schema read `pg_namespace` by the
@@ -9483,7 +9483,7 @@ syscache, which opened an index no catalog relation has.
 
 ## Step 322: owners
 
-The second half of step 4 of roles (`../sm/ROLE.md` §9): every
+The second half of step 4 of roles (`../aa/ROLE.md` §9): every
 object a role makes is its, in `pg_global`, and DDL on one is
 refused to a role that does not own it, as PostgreSQL refuses
 it. Every object was the superuser's.
@@ -9559,7 +9559,7 @@ it. Every object was the superuser's.
 
 ## Step 323: GRANT and REVOKE
 
-The fifth step of roles (`../sm/ROLE.md` §9): GRANT and REVOKE
+The fifth step of roles (`../aa/ROLE.md` §9): GRANT and REVOKE
 on tables, views, sequences, schemas and databases, and the
 checks that then refuse. `aclchk.c` is PostgreSQL's still: what
 it computes, PostgreSQL's ACL merged with the grant, goes to
@@ -9608,7 +9608,7 @@ it computes, PostgreSQL's ACL merged with the grant, goes to
 
 ## Step 324: what depends on a role
 
-The sixth step of roles (`../sm/ROLE.md` §9): DROP ROLE refuses
+The sixth step of roles (`../aa/ROLE.md` §9): DROP ROLE refuses
 a role anything depends on, in any database, and REASSIGN
 OWNED and DROP OWNED act on what it owns and is granted, all
 read from `pg_global`'s entries, as PostgreSQL reads them from
@@ -9670,3 +9670,202 @@ or the table had no index.
   out as crashing in the merge's port; it and the other files
   that copy indexes, `alter_table`, `constraints`, `indexing`
   and `without_overlaps`, are ported again with the merge.
+
+## Step 326: roles and privileges, a library of their own
+
+What `pg_global.c` kept of the roles, memberships, owners and
+ACLs moves to `../aa`, a library on sm that digres links as it
+links sm and sq (`../aa/README.md`; `../sm/NEXT.md` §3). Its
+design, `ROLE.md`, moves with it to `../aa/ROLE.md`.
+
+- **aa**: `pg_global`'s tables and their rows; the snapshots
+  every session reads, their mutex and their epochs; a
+  session's changes, by subtransaction level; the commit
+  around the database's, with the entries that grant less in
+  between; ACLs as text, their default and their
+  intersection. It includes no header of PostgreSQL's and
+  throws nothing: 0 or -1, and the thread's error.
+- **`pg_global.c` is digres's side**: tuples and `Acl`s to
+  aa's structs and back, the nesting level and the database
+  passed in, the caches invalidated, aa's errors reported by
+  kind (a conflict as a serialization failure), and DROP
+  ROLE's DETAIL, which names objects by PostgreSQL's
+  descriptions. `pg_global.h`'s types are aa's, renamed.
+- **The build**: `dg.mk` adds `../aa/include`; the plain,
+  tsan and release links take `libaa.a` built the same way as
+  their sm.
+- **Left in digres, to move next**: `ROLE.md` §5's checks as
+  one decision, and the evaluation of privileges with the
+  closures INHERIT, SET and ADMIN make.
+- **Tests**: aa's own, 15 cases on a throwaway home: initdb's
+  roles, a home without `pg_global`, role DDL committed and
+  read after a restart, two sessions' conflict, a role
+  dropped; an object's entry committed and its oid reported
+  to another session, subtransactions, a crash between the
+  two commits leaving less granted, an abort putting back,
+  objects and databases forgotten, a role's objects,
+  temporary objects; ACL text, default and intersection. Each
+  of 11 mutations of aa was caught by its case. digres's
+  suites pass unchanged.
+
+## Step 327: how a client gets in, decided by aa
+
+`../aa/ROLE.md` §5's checks, but CONNECT, move to aa
+(`../aa/src/aa_auth.cc`), as three calls, one for each moment
+of a connection they fall in; digres reads the socket's peer,
+the clock and its sessions, passes them in, and tells the
+client what it told it before.
+
+- **Before the exchange**, `aa_auth_method()`: peer on the
+  local socket if the OS user is the role's name, or owns the
+  data directory and asks for the bootstrap superuser (then
+  `Port.datadir_owner`); else the password, and over TCP
+  always. `hba_getauthmethod()` calls it.
+- **During it**, `aa_role_secret()`: the SCRAM secret, or why
+  there is none for the log: no such role, no password, past
+  VALID UNTIL. `get_role_password()` calls it.
+- **After it**, `aa_login_refused()`: LOGIN, VALID UNTIL, and
+  CONNECTION LIMIT by the sessions digres counts, which a
+  superuser has none of; the data directory's owner passes.
+  `InitializeSessionUserId()` calls it.
+- **CONNECT stays in `CheckMyDatabase()`**: it follows
+  memberships, which aa does not evaluate yet.
+- **Tests**: aa's, three cases, each of 11 mutations caught,
+  one only after a case was added (another OS user asking for
+  the superuser). digres's `initdb.sh` and `server.sh` cases of
+  §5 pass unchanged.
+
+## Step 328: who holds which privilege, computed by aa
+
+The evaluation of privileges moves from `acl.c` to aa
+(`../aa/src/aa_authz.cc`), and CONNECT at a connect with it:
+what is left of `../aa/ROLE.md` §5 in digres is the protocol.
+`../sm/NEXT.md` §3's item on the module is done, and goes.
+
+- **The closures**: the roles a role is a member of through
+  grants with INHERIT, with SET, or any, breadth first, a
+  database's owner in `pg_database_owner` there; WITH ADMIN
+  OPTION, and the nearest role holding it. `acl.c`'s
+  `has_privs_of_role()`, `member_can_set_role()`,
+  `is_member_of_role()` and its `_nosuper`,
+  `is_admin_of_role()` and `select_best_admin()` call aa.
+  `roles_is_member_of()`, its caches, their syscache callbacks
+  and its Bloom filter go.
+- **An ACL's mask**, `aclmask()` and `aclmask_direct()`, and
+  the grantor a GRANT is made as, `select_best_grantor()`: an
+  `Acl`'s items go to aa as they are, `AclItem` and
+  `aa_acl_item_t` laid out alike (a `static_assert` says so).
+- **CONNECT**, in `CheckMyDatabase()`: `aa_connect_refused()`,
+  the database's ACL, or its default, by the same mask.
+- **The caches**: a session keeps the roles it reads, the last
+  superuser asked of, and one closure of each kind, as
+  PostgreSQL kept one; each holds while its stamp, the roles'
+  and objects' epochs and the session's own version, bumped at
+  each of its changes, is current. A hit takes no lock.
+- **Tests**: aa's, seven cases: the closures, pg_database_owner
+  by database, ADMIN, an ACL's mask, the best grantor, CONNECT,
+  and the caches going stale on the session's own change, its
+  abort, another's commit of a role and of a database's owner.
+  Of 19 mutations, 18 were caught, five only after a case was
+  added; the one left, the grantor search's early return, is
+  equivalent: the scan after it picks the same role.
+  `server.sh` gains a case: a member reads and ALTERs its
+  group's table, one WITH INHERIT FALSE is refused both, and
+  CONNECT granted to a group lets its member in. It catches
+  `has_privs_of_role()` answering for the superuser alone,
+  which the suites before let pass.
+
+## Step 329: a role's check on a table, without its pg_class row
+
+What a role that is not a superuser pays: 12 to 16% of a read
+by key on `digres-release` (`../sm/NEXT.md` §1). Statements that
+read no row (`WHERE ... AND false`) cost the role 7 to 10 µs
+more each, and `select 1` nothing, so the cost is the check on
+the table. A profile of the session thread by gdb, stopping it
+by SIGUSR2, which digres ignores (gdb never sees a SIGINT, read
+from a signalfd, and takes a SIGSTOP as its own), put 19% of
+the role's busy time
+in `pg_class_aclmask_ext()`, nearly all of it a syscache miss
+on `RELOID`: sm's rows are not cached (step 321), so each check
+scanned the catalog relation and made the table's whole
+`pg_class` row, to read its owner, its ACL and its kind. The
+ACL's evaluation, aa's, was under 1%.
+
+- **A table or a view of sm's is checked by its owner and ACL
+  in `pg_global`**, as its row would give them
+  (`catrel.c`'s `relation_owner()`, `relation_acl()`), and its
+  kind from the relation cache, which holds any relation a
+  statement names: `RelationCacheKind()` reads it there and
+  builds no entry, which a sequence of sm's could not have.
+  An index, a sequence, and a relation not in the cache are
+  read from their row as before. `pg_read_all_data` and the
+  rest are checked after either.
+- **Measured**, as before: a read by key loses 4 to 7%, was
+  12 to 16%; a statement that reads no row 2 to 3 µs, was 7 to
+  10.
+- **Tests**: `server.sh` gains a case: a role's own temporary
+  table, a sequence granted and refused, and
+  `pg_read_all_data` reading a table granted nothing. Three
+  mutations of the new path, its mask, its default ACL's
+  owner, and the predefined roles skipped after it, were each
+  caught.
+
+## Step 330: an ACL read without sscanf()
+
+What a role paid after step 329, profiled again with the simple
+protocol: of the role's busy time, 3.6% was the check on a
+table, and 2.1% of it reading the ACL's text in aa
+(`aa_acl_items()`), by `sscanf()` at each check.
+
+- **`aa_acl_items()` reads the text by `strtoull()`**, a field
+  at a time, stopping at the first item that is not
+  `grantee,grantor,privs`, as before.
+- **Measured**, as before, one client: a role loses 0 to 2% to
+  the superuser, within the runs' noise, on reads by key and on
+  statements that read no row. Sixteen clients lose 2 to 9%:
+  what is left is likely the one mutex every owner and ACL
+  lookup takes (`../sm/NEXT.md` §1, step 4).
+- **Tests**: aa's, a case of malformed text, an empty field, a
+  sign, two spaces between items; four mutations of the reader
+  caught.
+
+## Step 331: a role's check on an object, cached
+
+The rule (`../aa/AA_DESIGN.md`): a check must be cheap; making,
+changing and granting roles may be slow. After step 330 a
+role's check on a table still found the table's entry twice,
+copying `pg_global`'s snapshot pointer under its one mutex each
+time, copied the ACL's text and parsed it.
+
+- **`aa_object_mask()`**: every privilege a role holds on an
+  object, computed once, its owner and ACL found as
+  `pg_global_owner()` and `pg_global_acl()` find them, and
+  kept in the session by (database, object, role), up to 4096,
+  until the stamp moves: the roles' and objects' epochs, and
+  the session's own version, which a change to a temporary
+  object's owner or ACL now moves too. A check repeated takes
+  no lock, allocates nothing, copies no `shared_ptr` and parses
+  nothing. `pg_class_aclmask_ext()`'s path for sm's tables and
+  views calls it.
+- **`aa_login_okay()` and `aa_connect_okay()`**, were
+  `aa_login_refused()` and `aa_connect_refused()`: true if
+  allowed, the reason in an argument otherwise.
+- **`../bench/roles.sh`**: what checking costs, apart from data:
+  statements that read no row, `select 1`, one table, sixteen
+  by UNION ALL and a function, by the superuser, a role granted
+  SELECT, and one granted it two memberships up; each client
+  authenticates once. With one client and prepared statements,
+  an object's check costs a role 0.07 µs more than the
+  superuser, was 0.33 to 0.44; sixteen checks 1.5 µs, were 7 to
+  9.
+- **Left**: with sixteen clients, a statement of sixteen tables
+  runs at 2.8 times one client's rate, the superuser's too:
+  not roles'. And no function has an ACL: PostgreSQL revokes
+  EXECUTE from PUBLIC on 58 functions at initdb
+  (`system_functions.sql`), digres on none, so a role may call
+  `pg_ls_dir()` and `pg_read_file()`.
+- **Tests**: aa's, an object's mask: by ACL, default, owner of
+  each kind, membership, temporary object, CONNECT, a cache made
+  stale by the session and by another's commit. Of 7 mutations,
+  6 caught, three only after the case was tightened; the
+  seventh, a cache that never hits, is slower, not wrong.

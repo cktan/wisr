@@ -1,29 +1,22 @@
 /*-------------------------------------------------------------------------
  *
  * pg_global.c
- *	  The database of what every database shares: the roles.
+ *	  The database of what every database shares: the roles, and each
+ *	  object's owner and ACL.
  *
  * A role is the whole server's, and in sm no transaction spans two
  * databases, so the roles live in a database of their own, pg_global
- * (sm/ROLE.md section 3), which initdb makes beside postgres and no client
- * connects to.  It is an sm database like any other, holding tables of
- * digres's: pg_authid, a role a row, and pg_auth_members, a membership a
- * row, each keyed by its oid, which the sequence role_oid hands out.  sm
- * knows nothing of roles.
+ * (aa/ROLE.md section 3), which initdb makes beside postgres and no client
+ * connects to.  aa (../aa) keeps it: its tables, the snapshots of it every
+ * session reads, a session's changes to it, and the protocol that commits
+ * them.  This file is digres's side: it turns catalog tuples and Acls into
+ * aa's structs and back, passes aa the session's database and nesting
+ * level, invalidates the caches aa's changes leave stale, and reports aa's
+ * errors with ereport().
  *
  * All role data is in pg_global and only there: a database's directory
  * names no role, so a copy of it on another server finds that server's
- * roles (sm/ROLE.md, the invariant).
- *
- * The postmaster reads every role and membership at startup into one
- * snapshot the sessions share (shmem->pg_global); a lookup reads the
- * snapshot, and no transaction of pg_global's.  Role DDL, which runs
- * outside a transaction block, changes a copy of the snapshot the session
- * alone sees, and at its commit writes what it changed to pg_global, in
- * one transaction there, and replaces the snapshot.  A row another
- * session changed meanwhile fails the commit, as a serialization failure,
- * rather than lose that change.  Every other session drops what it
- * cached of the roles at its next transaction (pg_global_epoch_moved()).
+ * roles (aa/ROLE.md, the invariant).
  *
  * src/backend/utils/init/pg_global.c
  *
@@ -36,10 +29,7 @@
 #include "postgres.h"
 
 #include <algorithm>
-#include <atomic>
-#include <deque>
 #include <map>
-#include <mutex>
 
 #include "access/htup_details.h"
 #include "access/xact.h"
@@ -49,7 +39,6 @@
 #include "catalog/objectaddress.h"
 #include "catalog/pg_class_d.h"
 #include "catalog/pg_database_d.h"
-#include "catalog/pg_namespace_d.h"
 #include "catalog/pg_type_d.h"
 #include "miscadmin.h"
 #include "utils/acl.h"
@@ -58,649 +47,101 @@
 #include "utils/control_block.h"
 #include "utils/datadir.h"
 #include "utils/inval.h"
-#include "utils/memutils.h"
 #include "utils/relcache.h"
 #include "utils/pg_global.h"
 #include "utils/timestamp.h"
 
-/* The roles every session reads: shmem->pg_global. */
-struct pg_global_t {
-  sm_env_t *env = NULL; /* the home directory pg_global is in */
-  std::mutex mutex;     /* guards roles, and orders their replacement */
-  std::shared_ptr<const pg_global_roles_t> roles;
-  /* How many times roles was replaced: a session's caches of them are
-   * stale when it has moved (pg_global_epoch_moved()). */
-  std::atomic<uint64_t> epoch{0};
-  /* Every object's owner and privileges, replaced as a whole, under mutex. */
-  std::shared_ptr<const pg_global_objects_t> objects;
-  /* How many times objects was replaced, and, for the last of them, which
-   * object each replacement changed: a session drops what it caches of
-   * those (pg_global_objects_moved()). */
-  std::atomic<uint64_t> objects_epoch{0};
-  std::deque<std::pair<uint64_t, std::pair<uint64_t, Oid>>> changed;
-};
-
-/* How many of the objects changed lately pg_global_t keeps. */
-#define CHANGED_KEPT 4096
-
-/* An object's key: the database's id and the object's oid there. */
-typedef std::pair<uint64_t, Oid> object_key_t;
-
-/* An item of an ACL, as pg_object keeps it: its privilege bits, grant
- * options among them, as PostgreSQL's AclItem has them. */
-struct acl_item_t {
-  Oid grantee;
-  Oid grantor;
-  uint64_t privs;
-};
-
-/* An entry's state before the database's commit, and what it was. */
-struct intermediate_t {
-  std::pair<uint64_t, Oid> key;
-  pg_global_object_t base;
-  pg_global_object_t middle;
-};
-
-/* A change to an object's entry the session's transaction made. */
-struct object_change_t {
-  int level;        /* the subtransaction's nesting level that made it */
-  object_key_t key; /* the object's */
-  bool present;     /* false: the entry goes */
-  pg_global_object_t object;
-};
-
-/* Free the shared roles: never, as shmem is never freed. */
-void pg_global_free_t::operator()(pg_global_t *global) const { delete global; }
-
-/* A session's own: its role DDL not yet committed, and its sm session. */
-struct pg_global_session_t {
-  /* An sm session on pg_global, opened at the first need. */
-  sm_session_t *session = NULL;
-  /* The shared epoch this session's caches of the roles are of. */
-  uint64_t epoch = 0;
-  /* While the session's transaction has changed roles: the snapshot the
-   * changes began from, and it with the changes, which the session sees. */
-  std::shared_ptr<const pg_global_roles_t> base;
-  std::shared_ptr<pg_global_roles_t> working;
-
-  /* The objects epoch this session's relation cache is of. */
-  uint64_t objects_epoch = 0;
-  /* The transaction's changes to objects' entries, in order. */
-  std::vector<object_change_t> changes;
-  /* The databases dropped by the transaction, whose entries go. */
-  std::vector<uint64_t> dropped_dbs;
-  /* Entries written before the database's commit, as they were, to put
-   * back if it fails (pg_global_commit()). */
-  std::vector<std::pair<object_key_t, pg_global_object_t>> to_restore;
-  /* The session's temporary objects' owners, never written. */
-  std::map<Oid, Oid> temp_owners;
-  /* And their ACLs, PostgreSQL's text of them aside, as pg_object's. */
-  std::map<Oid, std::string> temp_acls;
-
-  ~pg_global_session_t() { sm_closedb(session); }
-};
-
-static std::shared_ptr<const pg_global_objects_t> shared_objects(void);
-static std::vector<acl_item_t> acl_items(const std::string &text);
+/* Free aa's state of pg_global: never, as shmem is never freed. */
+void pg_global_free_t::operator()(aa_env_t *env) const { aa_close(env); }
 
 /* Free a session's state, and close its sm session on pg_global. */
-void pg_global_session_free_t::operator()(pg_global_session_t *s) const {
-  delete s;
+void pg_global_session_free_t::operator()(aa_session_t *s) const {
+  aa_session_free(s);
 }
 
-/* pg_authid's columns in pg_global, in order. */
-enum authid_column_t {
-  A_OID,
-  A_ROLNAME,
-  A_ROLSUPER,
-  A_ROLINHERIT,
-  A_ROLCREATEROLE,
-  A_ROLCREATEDB,
-  A_ROLCANLOGIN,
-  A_ROLREPLICATION,
-  A_ROLBYPASSRLS,
-  A_ROLCONNLIMIT,
-  A_ROLPASSWORD,
-  A_ROLVALIDUNTIL,
-  A_NATTS
-};
-
-/* pg_auth_members's columns in pg_global, in order. */
-enum members_column_t {
-  M_OID,
-  M_ROLEID,
-  M_MEMBER,
-  M_GRANTOR,
-  M_ADMIN_OPTION,
-  M_INHERIT_OPTION,
-  M_SET_OPTION,
-  M_NATTS
-};
-
-/* pg_object's columns in pg_global, in order. */
-enum object_column_t { O_DBID, O_OBJID, O_CLASSID, O_OWNER, O_ACL, O_NATTS };
-
-/* The tables of pg_global, in its schema public, and its oid sequence. */
-#define AUTHID_TABLE "pg_authid"
-#define MEMBERS_TABLE "pg_auth_members"
-#define PG_OBJECT_TABLE "pg_object"
-#define OID_SEQUENCE "role_oid"
-
-/* sm's type codes (sm/sm2/TYPE.md section 3) of the columns used here. */
-#define CODE_BOOL 1
-#define CODE_INT4 3
-#define CODE_INT8 4
-#define CODE_TEXT 8
-#define CODE_TIMESTAMPTZ 14
-
-/* Closes an sm session on pg_global as it goes out of scope. */
-struct session_guard_t {
-  sm_session_t *session = NULL;
-  ~session_guard_t() { sm_closedb(session); }
-};
-
-/* Whether two roles are the same in every column. */
-static bool same_role(const pg_global_role_t &a, const pg_global_role_t &b) {
-  return a.oid == b.oid && a.rolname == b.rolname && a.rolsuper == b.rolsuper &&
-         a.rolinherit == b.rolinherit && a.rolcreaterole == b.rolcreaterole &&
-         a.rolcreatedb == b.rolcreatedb && a.rolcanlogin == b.rolcanlogin &&
-         a.rolreplication == b.rolreplication &&
-         a.rolbypassrls == b.rolbypassrls && a.rolconnlimit == b.rolconnlimit &&
-         a.has_password == b.has_password &&
-         (!a.has_password || a.rolpassword == b.rolpassword) &&
-         a.has_validuntil == b.has_validuntil &&
-         (!a.has_validuntil || a.rolvaliduntil == b.rolvaliduntil);
-}
-
-/* Whether two memberships are the same in every column. */
-static bool same_member(const pg_global_member_t &a,
-                        const pg_global_member_t &b) {
-  return a.oid == b.oid && a.roleid == b.roleid && a.member == b.member &&
-         a.grantor == b.grantor && a.admin_option == b.admin_option &&
-         a.inherit_option == b.inherit_option && a.set_option == b.set_option;
-}
-
-/* pg_authid's columns, as sm_cat_create_table takes them. */
-static std::vector<sm_column_spec_t> authid_columns(void) {
-  std::vector<sm_column_spec_t> c(A_NATTS);
-
-  c[A_OID] = {"oid", CODE_INT8, -1, true};
-  c[A_ROLNAME] = {"rolname", CODE_TEXT, -1, true};
-  c[A_ROLSUPER] = {"rolsuper", CODE_BOOL, -1, true};
-  c[A_ROLINHERIT] = {"rolinherit", CODE_BOOL, -1, true};
-  c[A_ROLCREATEROLE] = {"rolcreaterole", CODE_BOOL, -1, true};
-  c[A_ROLCREATEDB] = {"rolcreatedb", CODE_BOOL, -1, true};
-  c[A_ROLCANLOGIN] = {"rolcanlogin", CODE_BOOL, -1, true};
-  c[A_ROLREPLICATION] = {"rolreplication", CODE_BOOL, -1, true};
-  c[A_ROLBYPASSRLS] = {"rolbypassrls", CODE_BOOL, -1, true};
-  c[A_ROLCONNLIMIT] = {"rolconnlimit", CODE_INT4, -1, true};
-  c[A_ROLPASSWORD] = {"rolpassword", CODE_TEXT, -1, false};
-  c[A_ROLVALIDUNTIL] = {"rolvaliduntil", CODE_TIMESTAMPTZ, -1, false};
-  return c;
-}
-
-/* pg_auth_members's columns, as sm_cat_create_table takes them. */
-static std::vector<sm_column_spec_t> members_columns(void) {
-  std::vector<sm_column_spec_t> c(M_NATTS);
-
-  c[M_OID] = {"oid", CODE_INT8, -1, true};
-  c[M_ROLEID] = {"roleid", CODE_INT8, -1, true};
-  c[M_MEMBER] = {"member", CODE_INT8, -1, true};
-  c[M_GRANTOR] = {"grantor", CODE_INT8, -1, true};
-  c[M_ADMIN_OPTION] = {"admin_option", CODE_BOOL, -1, true};
-  c[M_INHERIT_OPTION] = {"inherit_option", CODE_BOOL, -1, true};
-  c[M_SET_OPTION] = {"set_option", CODE_BOOL, -1, true};
-  return c;
-}
-
-/* pg_object's columns, as sm_cat_create_table takes them. */
-static std::vector<sm_column_spec_t> object_columns(void) {
-  std::vector<sm_column_spec_t> c(O_NATTS);
-
-  c[O_DBID] = {"dbid", CODE_INT8, -1, true};
-  c[O_OBJID] = {"objid", CODE_INT8, -1, true};
-  c[O_CLASSID] = {"classid", CODE_INT8, -1, true};
-  c[O_OWNER] = {"owner", CODE_INT8, -1, true};
-  c[O_ACL] = {"acl", CODE_TEXT, -1, false};
-  return c;
-}
-
-/* An index's key columns, those at attnums, ascending. */
-static std::vector<sm_index_key_spec_t>
-key_on(std::initializer_list<int32_t> attnums) {
-  std::vector<sm_index_key_spec_t> keys;
-
-  for (int32_t attnum : attnums)
-    keys.push_back({attnum, false, false, 0, -1});
-  return keys;
-}
-
-/* role as pg_authid's row in pg_global, into values and isnull. */
-static void role_row(const pg_global_role_t &role, sm_datum_t *values,
-                     bool *isnull) {
-  memset(isnull, 0, A_NATTS * sizeof(bool));
-  values[A_OID] = SM_DATUM_FROM_INT64(role.oid);
-  values[A_ROLNAME] = SM_DATUM_FROM_PTR(cstring_to_text(role.rolname.c_str()));
-  values[A_ROLSUPER] = SM_DATUM_FROM_BOOL(role.rolsuper);
-  values[A_ROLINHERIT] = SM_DATUM_FROM_BOOL(role.rolinherit);
-  values[A_ROLCREATEROLE] = SM_DATUM_FROM_BOOL(role.rolcreaterole);
-  values[A_ROLCREATEDB] = SM_DATUM_FROM_BOOL(role.rolcreatedb);
-  values[A_ROLCANLOGIN] = SM_DATUM_FROM_BOOL(role.rolcanlogin);
-  values[A_ROLREPLICATION] = SM_DATUM_FROM_BOOL(role.rolreplication);
-  values[A_ROLBYPASSRLS] = SM_DATUM_FROM_BOOL(role.rolbypassrls);
-  values[A_ROLCONNLIMIT] = SM_DATUM_FROM_INT32(role.rolconnlimit);
-  isnull[A_ROLPASSWORD] = !role.has_password;
-  values[A_ROLPASSWORD] =
-      role.has_password
-          ? SM_DATUM_FROM_PTR(cstring_to_text(role.rolpassword.c_str()))
-          : 0;
-  isnull[A_ROLVALIDUNTIL] = !role.has_validuntil;
-  values[A_ROLVALIDUNTIL] = SM_DATUM_FROM_INT64(role.rolvaliduntil);
-}
-
-/* member as pg_auth_members's row in pg_global, into values and isnull. */
-static void member_row(const pg_global_member_t &member, sm_datum_t *values,
-                       bool *isnull) {
-  memset(isnull, 0, M_NATTS * sizeof(bool));
-  values[M_OID] = SM_DATUM_FROM_INT64(member.oid);
-  values[M_ROLEID] = SM_DATUM_FROM_INT64(member.roleid);
-  values[M_MEMBER] = SM_DATUM_FROM_INT64(member.member);
-  values[M_GRANTOR] = SM_DATUM_FROM_INT64(member.grantor);
-  values[M_ADMIN_OPTION] = SM_DATUM_FROM_BOOL(member.admin_option);
-  values[M_INHERIT_OPTION] = SM_DATUM_FROM_BOOL(member.inherit_option);
-  values[M_SET_OPTION] = SM_DATUM_FROM_BOOL(member.set_option);
-}
-
-/* object as pg_object's row in pg_global, into values and isnull. */
-static void object_row(const pg_global_object_t &object, sm_datum_t *values,
-                       bool *isnull) {
-  memset(isnull, 0, O_NATTS * sizeof(bool));
-  values[O_DBID] = SM_DATUM_FROM_INT64(object.dbid);
-  values[O_OBJID] = SM_DATUM_FROM_INT64(object.objid);
-  values[O_CLASSID] = SM_DATUM_FROM_INT64(object.classid);
-  values[O_OWNER] = SM_DATUM_FROM_INT64(object.owner);
-  isnull[O_ACL] = !object.has_acl;
-  values[O_ACL] = object.has_acl
-                      ? SM_DATUM_FROM_PTR(cstring_to_text(object.acl.c_str()))
-                      : 0;
-}
-
-/* The text value of a row's column, a varlena in the row, as a string. */
-static std::string text_value(sm_datum_t value) {
-  char *s = TextDatumGetCString((Datum)value);
-  std::string out = s;
-
-  pfree(s);
-  return out;
-}
-
-/* pg_authid's row in pg_global, values and isnull, as a role. */
-static pg_global_role_t role_of_row(const sm_datum_t *v, const bool *isnull) {
-  pg_global_role_t role;
-
-  role.oid = (Oid)SM_DATUM_TO_INT64(v[A_OID]);
-  role.rolname = text_value(v[A_ROLNAME]);
-  role.rolsuper = SM_DATUM_TO_BOOL(v[A_ROLSUPER]);
-  role.rolinherit = SM_DATUM_TO_BOOL(v[A_ROLINHERIT]);
-  role.rolcreaterole = SM_DATUM_TO_BOOL(v[A_ROLCREATEROLE]);
-  role.rolcreatedb = SM_DATUM_TO_BOOL(v[A_ROLCREATEDB]);
-  role.rolcanlogin = SM_DATUM_TO_BOOL(v[A_ROLCANLOGIN]);
-  role.rolreplication = SM_DATUM_TO_BOOL(v[A_ROLREPLICATION]);
-  role.rolbypassrls = SM_DATUM_TO_BOOL(v[A_ROLBYPASSRLS]);
-  role.rolconnlimit = SM_DATUM_TO_INT32(v[A_ROLCONNLIMIT]);
-  role.has_password = !isnull[A_ROLPASSWORD];
-  if (role.has_password)
-    role.rolpassword = text_value(v[A_ROLPASSWORD]);
-  role.has_validuntil = !isnull[A_ROLVALIDUNTIL];
-  if (role.has_validuntil)
-    role.rolvaliduntil = SM_DATUM_TO_INT64(v[A_ROLVALIDUNTIL]);
-  return role;
-}
-
-/* pg_object's row in pg_global, values and isnull, as an object. */
-static pg_global_object_t object_of_row(const sm_datum_t *v,
-                                        const bool *isnull) {
-  pg_global_object_t object;
-
-  object.dbid = (uint64_t)SM_DATUM_TO_INT64(v[O_DBID]);
-  object.objid = (Oid)SM_DATUM_TO_INT64(v[O_OBJID]);
-  object.classid = (Oid)SM_DATUM_TO_INT64(v[O_CLASSID]);
-  object.owner = (Oid)SM_DATUM_TO_INT64(v[O_OWNER]);
-  object.has_acl = !isnull[O_ACL];
-  if (object.has_acl)
-    object.acl = text_value(v[O_ACL]);
-  return object;
-}
-
-/* pg_auth_members's row in pg_global, values, as a membership. */
-static pg_global_member_t member_of_row(const sm_datum_t *v) {
-  pg_global_member_t member;
-
-  member.oid = (Oid)SM_DATUM_TO_INT64(v[M_OID]);
-  member.roleid = (Oid)SM_DATUM_TO_INT64(v[M_ROLEID]);
-  member.member = (Oid)SM_DATUM_TO_INT64(v[M_MEMBER]);
-  member.grantor = (Oid)SM_DATUM_TO_INT64(v[M_GRANTOR]);
-  member.admin_option = SM_DATUM_TO_BOOL(v[M_ADMIN_OPTION]);
-  member.inherit_option = SM_DATUM_TO_BOOL(v[M_INHERIT_OPTION]);
-  member.set_option = SM_DATUM_TO_BOOL(v[M_SET_OPTION]);
-  return member;
-}
-
-/*
- * PostgreSQL 18's predefined roles, with their oids, as its pg_authid.dat
- * has them: INHERIT, and nothing else.
- */
-static const struct {
-  Oid oid;
-  const char *name;
-} predefined_roles[] = {
-    {6171, "pg_database_owner"},
-    {6181, "pg_read_all_data"},
-    {6182, "pg_write_all_data"},
-    {3373, "pg_monitor"},
-    {3374, "pg_read_all_settings"},
-    {3375, "pg_read_all_stats"},
-    {3377, "pg_stat_scan_tables"},
-    {4569, "pg_read_server_files"},
-    {4570, "pg_write_server_files"},
-    {4571, "pg_execute_server_program"},
-    {4200, "pg_signal_backend"},
-    {4544, "pg_checkpoint"},
-    {6337, "pg_maintain"},
-    {4550, "pg_use_reserved_connections"},
-    {6304, "pg_create_subscription"},
-    {6392, "pg_signal_autovacuum_worker"},
-};
-
-static int insert_role(sm_session_t *session, uint64_t table,
-                       const pg_global_role_t &role);
-
-/* The roles pg_monitor has, as PostgreSQL's system_functions.sql grants. */
-static const Oid monitor_members[] = {3374, 3375, 3377};
-#define PG_MONITOR_OID 3373
-
-/* Insert member into pg_auth_members, the table oid, likewise. */
-static int insert_member(sm_session_t *session, uint64_t table,
-                         const pg_global_member_t &member) {
-  sm_datum_t values[M_NATTS];
-  bool isnull[M_NATTS];
-  sm_tbl_t *tbl;
-  uint64_t id;
-  int rc;
-
-  member_row(member, values, isnull);
-  /* IX: a write to the table's rows. */
-  if (0 != sm_tbl_open(session, table, SM_LOCKMODE_IX, &tbl))
-    return -1;
-  rc = sm_tbl_insert(tbl, values, isnull, M_NATTS, &id);
-  sm_tbl_close(tbl);
-  return rc;
-}
-
-/*
- * Insert PostgreSQL's predefined roles into pg_authid, the table authid,
- * and pg_monitor's members into pg_auth_members, the table members, as
- * initdb leaves PostgreSQL's.  0, or -1 with sm's error set.
- */
-static int insert_predefined(sm_session_t *session, uint64_t authid,
-                             uint64_t members) {
-  for (const auto &p : predefined_roles) {
-    pg_global_role_t role;
-
-    role.oid = p.oid;
-    role.rolname = p.name;
-    if (0 != insert_role(session, authid, role))
-      return -1;
+/* Report aa's last error at elevel, as PostgreSQL reports its kind. */
+static void aa_failed(int elevel) {
+  switch (aa_errnum()) {
+  case AA_ERR_CONFLICT:
+    ereport(elevel,
+            (errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+             errmsg("could not serialize access due to concurrent update"),
+             errdetail("%s", aa_errmsg())));
+    break;
+  case AA_ERR_LIMIT:
+    ereport(elevel, (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                     errmsg("%s", aa_errmsg())));
+    break;
+  case AA_ERR_NODB:
+    ereport(elevel, (errmsg("%s", aa_errmsg()),
+                     errdetail("It was made before digres kept roles there."),
+                     errhint("Run initdb to make a new data directory.")));
+    break;
+  case AA_ERR_NOTABLE:
+    ereport(elevel, (errmsg("%s", aa_errmsg()),
+                     errhint("Run initdb to make a new data directory.")));
+    break;
+  default:
+    ereport(elevel, (errmsg("%s", aa_errmsg())));
   }
-  for (Oid roleid : monitor_members) {
-    pg_global_member_t m;
-    uint64_t oid;
-
-    if (0 != sm_nextseq(session, OID_SEQUENCE, &oid))
-      return -1;
-    m.oid = (Oid)oid;
-    m.roleid = roleid;
-    m.member = PG_MONITOR_OID;
-    m.grantor = BOOTSTRAP_SUPERUSERID;
-    m.inherit_option = true;
-    m.set_option = true;
-    if (0 != insert_member(session, members, m))
-      return -1;
-  }
-  return 0;
-}
-
-/* Insert role into pg_authid, the table oid, in the session's transaction. */
-static int insert_role(sm_session_t *session, uint64_t table,
-                       const pg_global_role_t &role) {
-  sm_datum_t values[A_NATTS];
-  bool isnull[A_NATTS];
-  sm_tbl_t *tbl;
-  uint64_t id;
-  int rc;
-
-  role_row(role, values, isnull);
-  /* IX: a write to the table's rows. */
-  if (0 != sm_tbl_open(session, table, SM_LOCKMODE_IX, &tbl))
-    return -1;
-  rc = sm_tbl_insert(tbl, values, isnull, A_NATTS, &id);
-  sm_tbl_close(tbl);
-  return rc;
 }
 
 /*
- * Make pg_global in the attached home directory env, for initdb: the
- * database, its tables and oid sequence, and in pg_authid the bootstrap
- * superuser, named superuser, with the SCRAM secret of its password, or
- * none if secret is NULL.  0, or -1 with sm's error set.
+ * Make pg_global in the attached home directory env, for initdb: aa's
+ * tables, the bootstrap superuser, named superuser, with the SCRAM secret
+ * of its password, or none if secret is NULL, and the predefined roles.
+ * 0, or -1 with aa's error set.
  */
 int pg_global_create(sm_env_t *env, const char *superuser, const char *secret) {
-  session_guard_t guard;
-  pg_global_role_t role;
-  uint64_t authid, members, objects, index;
-
-  if (0 != sm_mkdb(env, PG_GLOBAL_DBNAME, NULL) ||
-      0 != sm_opendb(env, PG_GLOBAL_DBNAME, NULL, &guard.session))
-    return -1;
-
-  /*
-   * The bootstrap superuser, as PostgreSQL's pg_authid.dat has it, but
-   * REPLICATION: digres has no replication.
-   */
-  role.oid = BOOTSTRAP_SUPERUSERID;
-  role.rolname = superuser;
-  role.rolsuper = true;
-  role.rolcreaterole = true;
-  role.rolcreatedb = true;
-  role.rolcanlogin = true;
-  role.rolbypassrls = true;
-  role.has_password = NULL != secret;
-  if (NULL != secret)
-    role.rolpassword = secret;
-
-  /* One transaction: a pg_global is whole, or initdb fails. */
-  if (0 != sm_begin(guard.session, SM_XCT_READ_COMMITTED, 0))
-    return -1;
-  if (0 != sm_cat_create_table(guard.session, SM_NSP_PUBLIC, AUTHID_TABLE,
-                               authid_columns(), &authid) ||
-      0 != sm_cat_create_index(guard.session, authid, "pg_authid_oid_index",
-                               key_on({A_OID}), {}, true, "", {}, &index,
-                               true /* primary */) ||
-      0 != sm_cat_create_index(guard.session, authid, "pg_authid_rolname_index",
-                               key_on({A_ROLNAME}), {}, true, "", {}, &index) ||
-      0 != sm_cat_create_table(guard.session, SM_NSP_PUBLIC, MEMBERS_TABLE,
-                               members_columns(), &members) ||
-      0 != sm_cat_create_index(guard.session, members,
-                               "pg_auth_members_oid_index", key_on({M_OID}), {},
-                               true, "", {}, &index, true /* primary */) ||
-      0 != sm_cat_create_index(guard.session, members,
-                               "pg_auth_members_role_member_index",
-                               key_on({M_ROLEID, M_MEMBER, M_GRANTOR}), {},
-                               true, "", {}, &index) ||
-      0 != sm_cat_create_table(guard.session, SM_NSP_PUBLIC, PG_OBJECT_TABLE,
-                               object_columns(), &objects) ||
-      0 != sm_cat_create_index(guard.session, objects, "pg_object_index",
-                               key_on({O_DBID, O_OBJID}), {}, true, "", {},
-                               &index, true /* primary */) ||
-      /* A role's oid, and a membership's, are above the built-in ones. */
-      0 != sm_mkseq(guard.session, OID_SEQUENCE, FirstNormalObjectId, 1) ||
-      0 != insert_role(guard.session, authid, role) ||
-      0 != insert_predefined(guard.session, authid, members) ||
-      0 != sm_commit(guard.session)) {
-    int saved = sm_errnum();
-    std::string msg = sm_errmsg();
-
-    (void)sm_abort(guard.session);
-    sm_seterr((sm_errnum_t)saved, msg.c_str());
-    return -1;
-  }
-  return 0;
-}
-
-/* Report the failure of what, reading or writing pg_global, at elevel. */
-static void sm_failed(int elevel, const char *what) {
-  ereport(elevel, (errmsg("could not %s in database \"%s\": %s", what,
-                          PG_GLOBAL_DBNAME, sm_errmsg())));
+  return aa_create(env, superuser, secret);
 }
 
 /*
- * The oid of pg_global's table name, in session's transaction; at elevel
- * if there is none, as in a data directory an older initdb made.
- */
-static uint64_t table_oid(sm_session_t *session, const char *name, int elevel) {
-  uint64_t table;
-  int rc = sm_cat_table_oid(session, SM_NSP_PUBLIC, name, &table);
-
-  if (1 == rc)
-    ereport(elevel, (errmsg("database \"%s\" has no table \"%s\"",
-                            PG_GLOBAL_DBNAME, name),
-                     errhint("Run initdb to make a new data directory.")));
-  if (0 != rc)
-    sm_failed(elevel, "look up a table");
-  return table;
-}
-
-/*
- * Read every row of pg_global's table name, in its key's order, the oid,
- * in session's transaction: each, natts values and their null flags, to
- * row.
- */
-template <typename F>
-static void read_rows(sm_session_t *session, const char *name, size_t natts,
-                      int elevel, F row) {
-  uint64_t table = table_oid(session, name, elevel);
-  sm_tbl_t *tbl;
-  sm_rel_scan_t *scan;
-  const void *tuple;
-  size_t len;
-  uint64_t id;
-  int rc;
-
-  /* IS: a read of the table's rows. */
-  if (0 != sm_tbl_open(session, table, SM_LOCKMODE_IS, &tbl))
-    sm_failed(elevel, "read a table");
-  if (0 != sm_tbl_scan_rows(tbl, &scan)) {
-    sm_tbl_close(tbl);
-    sm_failed(elevel, "read a table");
-  }
-  /* 1 at the end of the rows, -1 on an error. */
-  while (0 == (rc = sm_rel_scannxt(scan, &id, &tuple, &len))) {
-    std::vector<sm_datum_t> v(natts);
-    std::unique_ptr<bool[]> isnull(new bool[natts]);
-
-    if (0 != sm_tbl_deform(tbl, tuple, len, v.data(), isnull.get(), natts)) {
-      rc = -1;
-      break;
-    }
-    row(v.data(), isnull.get());
-  }
-  sm_rel_scanend(scan);
-  sm_tbl_close(tbl);
-  if (0 > rc)
-    sm_failed(elevel, "read a table");
-}
-
-/* Read every role and membership of pg_global, through session. */
-static std::shared_ptr<pg_global_roles_t> read_roles(sm_session_t *session,
-                                                     int elevel) {
-  auto out = std::make_shared<pg_global_roles_t>();
-
-  if (0 != sm_begin(session, SM_XCT_READ_COMMITTED, 1))
-    sm_failed(elevel, "begin a transaction");
-  read_rows(session, AUTHID_TABLE, A_NATTS, elevel,
-            [&](const sm_datum_t *v, const bool *isnull) {
-              out->roles.push_back(role_of_row(v, isnull));
-            });
-  read_rows(session, MEMBERS_TABLE, M_NATTS, elevel,
-            [&](const sm_datum_t *v, const bool *isnull) {
-              out->members.push_back(member_of_row(v));
-            });
-  if (0 != sm_commit(session))
-    sm_failed(elevel, "commit");
-  return out;
-}
-
-/* Read every object's entry of pg_global, through session. */
-static std::shared_ptr<pg_global_objects_t> read_objects(sm_session_t *session,
-                                                         int elevel) {
-  auto out = std::make_shared<pg_global_objects_t>();
-
-  if (0 != sm_begin(session, SM_XCT_READ_COMMITTED, 1))
-    sm_failed(elevel, "begin a transaction");
-  read_rows(session, PG_OBJECT_TABLE, O_NATTS, elevel,
-            [&](const sm_datum_t *v, const bool *isnull) {
-              pg_global_object_t o = object_of_row(v, isnull);
-
-              (*out)[object_key_t(o.dbid, o.objid)] = o;
-            });
-  if (0 != sm_commit(session))
-    sm_failed(elevel, "commit");
-  return out;
-}
-
-/*
- * Read pg_global's roles into the snapshot every session shares.  The
- * postmaster calls this once, at startup, before any session.  A data
- * directory with no pg_global was made before digres kept roles, and is
- * refused (sm/ROLE.md section 8, question 5).
+ * Read pg_global into the state every session shares.  The postmaster
+ * calls this once, at startup, before any session.  A data directory with
+ * no pg_global was made before digres kept roles, and is refused
+ * (aa/ROLE.md section 8, question 5).
  */
 void pg_global_load(sm_env_t *env) {
-  session_guard_t guard;
-  uint64_t dbid;
+  aa_env_t *global;
 
-  if (0 != sm_dbid(env, PG_GLOBAL_DBNAME, &dbid)) {
-    if (SM_ERR_NOTFOUND == sm_errnum())
-      ereport(FATAL, (errmsg("data directory has no database \"%s\"",
-                             PG_GLOBAL_DBNAME),
-                      errdetail("It was made before digres kept roles there."),
-                      errhint("Run initdb to make a new data directory.")));
-    sm_failed(FATAL, "look up the database");
-  }
-  if (0 != sm_opendb(env, PG_GLOBAL_DBNAME, NULL, &guard.session))
-    sm_failed(FATAL, "open the database");
-  shmem->pg_global.reset(new pg_global_t());
-  shmem->pg_global->env = env;
-  shmem->pg_global->roles = read_roles(guard.session, FATAL);
-  shmem->pg_global->objects = read_objects(guard.session, FATAL);
+  if (0 != aa_load(env, &global))
+    aa_failed(FATAL);
+  shmem->pg_global.reset(global);
 }
 
 /* Whether the roles were read: not in a process with no data directory. */
 bool pg_global_is_loaded(void) { return nullptr != shmem->pg_global; }
 
-/* The roles as last committed, copied under the lock. */
-static std::shared_ptr<const pg_global_roles_t> shared_roles(void) {
-  /* The snapshot is replaced as a whole; copy the pointer under the lock. */
-  std::lock_guard<std::mutex> lock(shmem->pg_global->mutex);
-  return shmem->pg_global->roles;
-}
+/* aa's state of pg_global, for a call of aa's own; loaded at startup. */
+aa_env_t *pg_global_env(void) { return shmem->pg_global.get(); }
 
-/* This session's own state, made at its first use; NULL with no session. */
-static pg_global_session_t *session_state(void) {
+/* This session's aa state, made at its first use; NULL with no session. */
+static aa_session_t *session_state(void) {
   if (nullptr == tcb)
     return NULL;
   if (nullptr == tcb->pg_global)
-    tcb->pg_global.reset(new pg_global_session_t());
+    tcb->pg_global.reset(aa_session_new(shmem->pg_global.get()));
   return tcb->pg_global.get();
+}
+
+/*
+ * This session's aa state, for a call of aa's own: made at its first use;
+ * NULL with no session, or no pg_global loaded.
+ */
+aa_session_t *pg_global_session(void) {
+  return pg_global_is_loaded() ? session_state() : NULL;
+}
+
+/* sm's id of this session's database, or AA_NO_DATABASE before it has one. */
+uint64_t pg_global_aa_dbid(void) {
+  return OidIsValid(MyDatabaseId) ? pg_global_dbid(MyDatabaseId)
+                                  : AA_NO_DATABASE;
+}
+
+/* This session's aa state, if it made one; NULL if not. */
+static aa_session_t *session_if_any(void) {
+  return nullptr != tcb ? tcb->pg_global.get() : NULL;
 }
 
 /*
@@ -708,14 +149,12 @@ static pg_global_session_t *session_state(void) {
  * else as last committed; none in a process that loaded no data directory.
  */
 std::shared_ptr<const pg_global_roles_t> pg_global_roles(void) {
-  pg_global_session_t *s;
+  aa_session_t *s;
 
   if (!pg_global_is_loaded())
     return std::make_shared<const pg_global_roles_t>();
-  s = nullptr != tcb ? tcb->pg_global.get() : NULL;
-  if (NULL != s && nullptr != s->working)
-    return s->working;
-  return shared_roles();
+  s = session_if_any();
+  return NULL != s ? aa_session_roles(s) : aa_roles(shmem->pg_global.get());
 }
 
 /* The role whose oid is oid, into *out: false if there is none. */
@@ -742,59 +181,13 @@ bool pg_global_role_by_name(const char *name, pg_global_role_t *out) {
   return false;
 }
 
-/* This session's sm session on pg_global, opened at its first need. */
-static sm_session_t *write_session(void) {
-  pg_global_session_t *s = session_state();
-
-  /* For as long as the session lasts: it hands out oids, and commits. */
-  if (NULL == s->session && 0 != sm_opendb(shmem->pg_global->env,
-                                           PG_GLOBAL_DBNAME, NULL, &s->session))
-    sm_failed(ERROR, "open the database");
-  return s->session;
-}
-
 /* A new oid for a role or a membership, from pg_global's sequence. */
 Oid pg_global_new_oid(void) {
-  uint64_t oid;
+  aa_oid_t oid;
 
-  if (0 != sm_nextseq(write_session(), OID_SEQUENCE, &oid))
-    sm_failed(ERROR, "draw an oid");
-  if (oid > PG_UINT32_MAX)
-    ereport(ERROR, (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-                    errmsg("no role oid is left")));
-  return (Oid)oid;
-}
-
-/*
- * The session's working copy of the roles, to change: made from the
- * snapshot at its first change in the transaction.
- */
-static pg_global_roles_t &working(void) {
-  pg_global_session_t *s = session_state();
-
-  if (nullptr == s->working) {
-    s->base = shared_roles();
-    s->working = std::make_shared<pg_global_roles_t>(*s->base);
-  }
-  return *s->working;
-}
-
-/* Put row in rows by its oid, replacing one with that oid, in oid order. */
-template <typename T> static void put_by_oid(std::vector<T> &rows, T row) {
-  auto it = std::lower_bound(rows.begin(), rows.end(), row.oid,
-                             [](const T &r, Oid oid) { return r.oid < oid; });
-
-  if (rows.end() != it && it->oid == row.oid)
-    *it = std::move(row);
-  else
-    rows.insert(it, std::move(row));
-}
-
-/* Remove the row with oid from rows, if there is one. */
-template <typename T> static void delete_by_oid(std::vector<T> &rows, Oid oid) {
-  rows.erase(std::remove_if(rows.begin(), rows.end(),
-                            [oid](const T &r) { return r.oid == oid; }),
-             rows.end());
+  if (0 != aa_new_oid(session_state(), &oid))
+    aa_failed(ERROR);
+  return oid;
 }
 
 /*
@@ -826,14 +219,14 @@ void pg_global_put_role(HeapTuple tuple, TupleDesc desc) {
   if (role.has_validuntil)
     role.rolvaliduntil =
         DatumGetTimestampTz(values[Anum_pg_authid_rolvaliduntil - 1]);
-  put_by_oid(working().roles, std::move(role));
+  aa_put_role(session_state(), role);
   /* The session's caches of pg_authid go at its next command. */
   CacheInvalidateCatalog(AuthIdRelationId);
 }
 
 /* Remove the role oid, in the session's transaction. */
 void pg_global_delete_role(Oid oid) {
-  delete_by_oid(working().roles, oid);
+  aa_delete_role(session_state(), oid);
   CacheInvalidateCatalog(AuthIdRelationId);
 }
 
@@ -849,46 +242,15 @@ void pg_global_put_member(HeapTuple tuple) {
   member.admin_option = form->admin_option;
   member.inherit_option = form->inherit_option;
   member.set_option = form->set_option;
-  put_by_oid(working().members, member);
+  aa_put_member(session_state(), member);
   /* The session's caches of pg_auth_members go at its next command. */
   CacheInvalidateCatalog(AuthMemRelationId);
 }
 
 /* Remove the membership oid, in the session's transaction. */
 void pg_global_delete_member(Oid oid) {
-  delete_by_oid(working().members, oid);
+  aa_delete_member(session_state(), oid);
   CacheInvalidateCatalog(AuthMemRelationId);
-}
-
-/*
- * Every object's entry as session s sees it: the snapshot, with its
- * transaction's changes.  s may be NULL.
- */
-static pg_global_objects_t merged_objects(const pg_global_session_t *s) {
-  pg_global_objects_t out = *shared_objects();
-
-  if (NULL != s)
-    for (const object_change_t &c : s->changes) {
-      if (c.present)
-        out[c.key] = c.object;
-      else
-        out.erase(c.key);
-    }
-  return out;
-}
-
-/*
- * Whether the entry o's ACL names the role roleid, other than as its
- * owner: PostgreSQL records no dependency of an ACL on its object's owner
- * (updateAclDependencies()).
- */
-static bool acl_names(const pg_global_object_t &o, Oid roleid) {
-  if (!o.has_acl || o.owner == roleid)
-    return false;
-  for (const acl_item_t &i : acl_items(o.acl))
-    if (i.grantee == roleid || i.grantor == roleid)
-      return true;
-  return false;
 }
 
 /*
@@ -898,15 +260,9 @@ static bool acl_names(const pg_global_object_t &o, Oid roleid) {
  */
 void pg_global_objects_of(Oid roleid, std::vector<pg_global_object_t> *owned,
                           std::vector<pg_global_object_t> *granted) {
-  if (!pg_global_is_loaded())
-    return;
-  for (const auto &[key, o] :
-       merged_objects(nullptr != tcb ? tcb->pg_global.get() : NULL)) {
-    if (NULL != owned && o.owner == roleid)
-      owned->push_back(o);
-    if (NULL != granted && acl_names(o, roleid))
-      granted->push_back(o);
-  }
+  if (pg_global_is_loaded())
+    aa_objects_of(shmem->pg_global.get(), session_if_any(), roleid, owned,
+                  granted);
 }
 
 /* One line of DROP ROLE's DETAIL, by the oid PostgreSQL sorts it by. */
@@ -959,7 +315,7 @@ static bool dependent_line(const pg_global_object_t &o, char deptype,
  * grants it, in this database and of the databases, a membership it
  * granted, each by its oid, as PostgreSQL's checkSharedDependencies()
  * sorts them; then how many in each other database.  All of it is in
- * pg_global (sm/ROLE.md section 4: no pg_shdepend).
+ * pg_global (aa/ROLE.md section 4: no pg_shdepend).
  */
 char *pg_global_role_dependents(Oid roleid) {
   std::shared_ptr<const pg_global_roles_t> all = pg_global_roles();
@@ -1034,119 +390,9 @@ char *pg_global_role_dependents(Oid roleid) {
   }
   return out.data;
 }
-
-/* Fail the commit, a row of table changed meanwhile by another session. */
-static void concurrent_change(const char *table) {
-  ereport(
-      ERROR,
-      (errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-       errmsg("could not serialize access due to concurrent update"),
-       errdetail("Another session changed %s since this one read it.", table)));
-}
-
-/*
- * Write to pg_global's table name, natts columns, the rows of rows that
- * differ from base, by oid: insert, update or delete each.  A row not as
- * base had it is another session's change, and fails the commit.  row()
- * makes a row's values, decode() reads one, same() compares two.
- */
-template <typename T, typename R, typename D, typename S>
-static void write_changes(sm_session_t *session, const char *name, size_t natts,
-                          const std::vector<T> &base,
-                          const std::vector<T> &rows, R row, D decode, S same) {
-  uint64_t table = table_oid(session, name, ERROR);
-  std::map<Oid, std::pair<const T *, const T *>> changes;
-  sm_tbl_t *tbl;
-
-  for (const T &r : base)
-    changes[r.oid].first = &r;
-  for (const T &r : rows)
-    changes[r.oid].second = &r;
-  /* IX: writes to the table's rows. */
-  if (0 != sm_tbl_open(session, table, SM_LOCKMODE_IX, &tbl))
-    sm_failed(ERROR, "open a table");
-  for (const auto &[oid, change] : changes) {
-    const T *before = change.first, *after = change.second;
-    sm_datum_t key = SM_DATUM_FROM_INT64(oid);
-    bool key_null = false;
-    sm_row_key_t rowkey = {&key, &key_null, 1};
-    std::vector<sm_datum_t> v(natts);
-    std::unique_ptr<bool[]> isnull(new bool[natts]);
-    const void *tuple;
-    size_t len;
-    uint64_t id;
-    int rc;
-
-    if (NULL != before && NULL != after && same(*before, *after))
-      continue;
-    /* The row as pg_global has it now: as this session read it, or not. */
-    rc = sm_tbl_read(tbl, rowkey, &tuple, &len);
-    if (0 > rc)
-      sm_failed(ERROR, "read a row");
-    if ((1 == rc) != (NULL == before))
-      concurrent_change(name);
-    if (0 == rc) {
-      if (0 != sm_tbl_deform(tbl, tuple, len, v.data(), isnull.get(), natts))
-        sm_failed(ERROR, "read a row");
-      if (!same(decode(v.data(), isnull.get()), *before))
-        concurrent_change(name);
-    }
-    if (NULL == after)
-      rc = sm_tbl_delete(tbl, rowkey);
-    else {
-      row(*after, v.data(), isnull.get());
-      rc = NULL == before
-               ? sm_tbl_insert(tbl, v.data(), isnull.get(), natts, &id)
-               : sm_tbl_update(tbl, rowkey, v.data(), isnull.get(), natts);
-    }
-    if (0 != rc) {
-      if (SM_ERR_DUPKEY == sm_errnum() || SM_ERR_UPDATED == sm_errnum())
-        concurrent_change(name);
-      sm_failed(ERROR, "write a row");
-    }
-  }
-  sm_tbl_close(tbl);
-}
-
-/*
- * An ACL as pg_object keeps it, from its items: "grantee,grantor,privs"
- * each, by role oid, space-separated, so a role's rename leaves it be.
- */
-static std::string acl_text(const std::vector<acl_item_t> &items) {
-  std::string out;
-
-  for (const acl_item_t &i : items) {
-    if (!out.empty())
-      out += ' ';
-    out += std::to_string(i.grantee) + ',' + std::to_string(i.grantor) + ',' +
-           std::to_string(i.privs);
-  }
-  return out;
-}
-
-/* The items of an ACL as pg_object keeps it (acl_text()). */
-static std::vector<acl_item_t> acl_items(const std::string &text) {
-  std::vector<acl_item_t> out;
-  const char *p = text.c_str();
-
-  while (*p) {
-    unsigned long grantee, grantor;
-    unsigned long long privs;
-    int n = 0;
-
-    if (3 != sscanf(p, "%lu,%lu,%llu%n", &grantee, &grantor, &privs, &n))
-      break;
-    out.push_back({(Oid)grantee, (Oid)grantor, (uint64_t)privs});
-    p += n;
-    while (' ' == *p)
-      p++;
-  }
-  return out;
-}
-
 /* The items of PostgreSQL's ACL acl. */
-static std::vector<acl_item_t> acl_items_of(const Acl *acl) {
-  std::vector<acl_item_t> out;
+static std::vector<aa_acl_item_t> acl_items_of(const Acl *acl) {
+  std::vector<aa_acl_item_t> out;
   const AclItem *items = ACL_DAT(acl);
 
   for (int i = 0; i < ACL_NUM(acl); i++)
@@ -1156,7 +402,7 @@ static std::vector<acl_item_t> acl_items_of(const Acl *acl) {
 }
 
 /* PostgreSQL's ACL of the items given, palloc'd, as acl.c's allocacl(). */
-static Acl *acl_of_items(const std::vector<acl_item_t> &items) {
+static Acl *acl_of_items(const std::vector<aa_acl_item_t> &items) {
   int n = (int)items.size();
   Acl *acl = (Acl *)palloc0(ACL_N_SIZE(n));
   AclItem *dat;
@@ -1176,34 +422,13 @@ static Acl *acl_of_items(const std::vector<acl_item_t> &items) {
   return acl;
 }
 
-/* The objects' entries as last committed, copied under the lock. */
-static std::shared_ptr<const pg_global_objects_t> shared_objects(void) {
-  std::lock_guard<std::mutex> lock(shmem->pg_global->mutex);
-  return shmem->pg_global->objects;
-}
-
 /*
  * The entry of the object key as session s sees it, with its transaction's
  * changes, into *out: false if it has none.  s may be NULL.
  */
-static bool find_object(const pg_global_session_t *s, const object_key_t &key,
+static bool find_object(aa_session_t *s, const aa_key_t &key,
                         pg_global_object_t *out) {
-  std::shared_ptr<const pg_global_objects_t> all;
-
-  if (NULL != s)
-    for (auto it = s->changes.rbegin(); s->changes.rend() != it; ++it)
-      if (it->key == key) {
-        if (!it->present)
-          return false;
-        *out = it->object;
-        return true;
-      }
-  all = shared_objects();
-  auto found = all->find(key);
-  if (all->end() == found)
-    return false;
-  *out = found->second;
-  return true;
+  return aa_find_object(shmem->pg_global.get(), s, key, out);
 }
 
 /* sm's id of the database whose oid is dboid (utils/init/datadir.c). */
@@ -1214,8 +439,7 @@ Oid pg_global_database_owner(uint64_t dbid) {
   pg_global_object_t object;
 
   if (pg_global_is_loaded() &&
-      find_object(nullptr != tcb ? tcb->pg_global.get() : NULL,
-                  object_key_t(dbid, 0), &object))
+      find_object(session_if_any(), aa_key_t(dbid, 0), &object))
     return object.owner;
   return BOOTSTRAP_SUPERUSERID;
 }
@@ -1224,24 +448,21 @@ Oid pg_global_database_owner(uint64_t dbid) {
  * The owner of the object objid of this session's database, as the session
  * sees it: a temporary object's, the session's role that made it; else its
  * entry's; else, with none, as a crash between the commits may leave one,
- * the database's owner (sm/ROLE.md section 3).
+ * the database's owner (aa/ROLE.md section 3).
  */
 Oid pg_global_owner(Oid objid) {
-  pg_global_session_t *s;
+  aa_session_t *s;
   pg_global_object_t object;
+  aa_oid_t owner;
   uint64_t dbid;
 
   if (!pg_global_is_loaded())
     return BOOTSTRAP_SUPERUSERID;
-  s = nullptr != tcb ? tcb->pg_global.get() : NULL;
-  if (NULL != s) {
-    auto temp = s->temp_owners.find(objid);
-
-    if (s->temp_owners.end() != temp)
-      return temp->second;
-  }
+  s = session_if_any();
+  if (NULL != s && aa_temp_owner(s, objid, &owner))
+    return owner;
   dbid = pg_global_dbid(MyDatabaseId);
-  if (find_object(s, object_key_t(dbid, objid), &object))
+  if (find_object(s, aa_key_t(dbid, objid), &object))
     return object.owner;
   return pg_global_database_owner(dbid);
 }
@@ -1255,11 +476,27 @@ bool pg_global_owner_of(Oid objid, Oid *owner) {
   pg_global_object_t object;
 
   if (!pg_global_is_loaded() ||
-      !find_object(nullptr != tcb ? tcb->pg_global.get() : NULL,
-                   object_key_t(pg_global_dbid(MyDatabaseId), objid), &object))
+      !find_object(session_if_any(),
+                   aa_key_t(pg_global_dbid(MyDatabaseId), objid), &object))
     return false;
   *owner = object.owner;
   return true;
+}
+
+/*
+ * The entry of the object objid, of class classid, in the database dbid,
+ * as the session sees it, or a new one of no owner if it has none.
+ */
+static pg_global_object_t entry_of(aa_session_t *s, uint64_t dbid, Oid classid,
+                                   Oid objid) {
+  pg_global_object_t object;
+
+  if (!find_object(s, aa_key_t(dbid, objid), &object)) {
+    object.dbid = dbid;
+    object.objid = objid;
+    object.classid = classid;
+  }
+  return object;
 }
 
 /*
@@ -1271,20 +508,15 @@ bool pg_global_owner_of(Oid objid, Oid *owner) {
  */
 void pg_global_set_owner(uint64_t dbid, Oid classid, Oid objid, Oid owner,
                          bool temp) {
-  pg_global_session_t *s = session_state();
-  object_key_t key(dbid, objid);
-  pg_global_object_t object;
+  aa_session_t *s = session_state();
 
   if (temp)
-    s->temp_owners[objid] = owner;
+    aa_set_temp_owner(s, objid, owner);
   else {
-    if (!find_object(s, key, &object)) {
-      object.dbid = dbid;
-      object.objid = objid;
-      object.classid = classid;
-    }
+    pg_global_object_t object = entry_of(s, dbid, classid, objid);
+
     object.owner = owner;
-    s->changes.push_back({GetCurrentTransactionNestLevel(), key, true, object});
+    aa_set_object(s, GetCurrentTransactionNestLevel(), object);
   }
   /* The relation's cache entry has its owner, for a view's rules. */
   if (RelationRelationId == classid && pg_global_dbid(MyDatabaseId) == dbid)
@@ -1293,20 +525,15 @@ void pg_global_set_owner(uint64_t dbid, Oid classid, Oid objid, Oid owner,
 
 /* The object objid of the database dbid goes: its entry with it. */
 void pg_global_forget(uint64_t dbid, Oid objid) {
-  pg_global_session_t *s = session_state();
-  object_key_t key(dbid, objid);
-  pg_global_object_t object;
+  aa_session_t *s = session_state();
 
-  s->temp_owners.erase(objid);
-  s->temp_acls.erase(objid);
-  if (find_object(s, key, &object))
-    s->changes.push_back(
-        {GetCurrentTransactionNestLevel(), key, false, object});
+  aa_forget_temp(s, objid);
+  aa_forget_object(s, GetCurrentTransactionNestLevel(), aa_key_t(dbid, objid));
 }
 
 /* The database dbid goes: every entry of its with it, after the commit. */
 void pg_global_forget_database(uint64_t dbid) {
-  session_state()->dropped_dbs.push_back(dbid);
+  aa_forget_database(session_state(), dbid);
 }
 
 /*
@@ -1317,24 +544,21 @@ void pg_global_forget_database(uint64_t dbid) {
  */
 void pg_global_set_acl(uint64_t dbid, Oid classid, Oid objid, Oid owner,
                        const Acl *acl, bool temp) {
-  pg_global_session_t *s = session_state();
-  object_key_t key(dbid, objid);
+  aa_session_t *s = session_state();
+  std::string text = aa_acl_text(acl_items_of(acl));
   pg_global_object_t object;
-  std::string text = acl_text(acl_items_of(acl));
 
   if (temp) {
-    s->temp_acls[objid] = text;
+    aa_set_temp_acl(s, objid, text);
     return;
   }
-  if (!find_object(s, key, &object)) {
-    object.dbid = dbid;
-    object.objid = objid;
-    object.classid = classid;
+  if (!find_object(s, aa_key_t(dbid, objid), &object)) {
+    object = entry_of(s, dbid, classid, objid);
     object.owner = owner;
   }
   object.has_acl = true;
   object.acl = text;
-  s->changes.push_back({GetCurrentTransactionNestLevel(), key, true, object});
+  aa_set_object(s, GetCurrentTransactionNestLevel(), object);
   /* The relation's cache entry has no ACL, but is a view's: as an owner's. */
   if (RelationRelationId == classid && pg_global_dbid(MyDatabaseId) == dbid)
     CacheInvalidateRelcacheByOid(objid);
@@ -1346,21 +570,19 @@ void pg_global_set_acl(uint64_t dbid, Oid classid, Oid objid, Oid owner,
  * none, which is its owner's default one.
  */
 Acl *pg_global_acl(uint64_t dbid, Oid objid) {
-  pg_global_session_t *s;
+  aa_session_t *s;
   pg_global_object_t object;
+  std::string text;
 
   if (!pg_global_is_loaded())
     return NULL;
-  s = nullptr != tcb ? tcb->pg_global.get() : NULL;
-  if (NULL != s && pg_global_dbid(MyDatabaseId) == dbid) {
-    auto temp = s->temp_acls.find(objid);
-
-    if (s->temp_acls.end() != temp)
-      return acl_of_items(acl_items(temp->second));
-  }
-  if (!find_object(s, object_key_t(dbid, objid), &object) || !object.has_acl)
+  s = session_if_any();
+  if (NULL != s && pg_global_dbid(MyDatabaseId) == dbid &&
+      aa_temp_acl(s, objid, &text))
+    return acl_of_items(aa_acl_items(text));
+  if (!find_object(s, aa_key_t(dbid, objid), &object) || !object.has_acl)
     return NULL;
-  return acl_of_items(acl_items(object.acl));
+  return acl_of_items(aa_acl_items(object.acl));
 }
 
 /*
@@ -1382,13 +604,10 @@ void pg_global_change_owner(uint64_t dbid, Oid classid, Oid objid, Oid owner,
 
 /* A subtransaction commits: its changes are its parent's. */
 void pg_global_subcommit(void) {
-  pg_global_session_t *s = nullptr != tcb ? tcb->pg_global.get() : NULL;
-  int level = GetCurrentTransactionNestLevel();
+  aa_session_t *s = session_if_any();
 
   if (NULL != s)
-    for (object_change_t &c : s->changes)
-      if (c.level >= level)
-        c.level = level - 1;
+    aa_subcommit(s, GetCurrentTransactionNestLevel());
 }
 
 /*
@@ -1397,224 +616,26 @@ void pg_global_subcommit(void) {
  * messages its abort processes.
  */
 void pg_global_subabort(void) {
-  pg_global_session_t *s = nullptr != tcb ? tcb->pg_global.get() : NULL;
-  int level = GetCurrentTransactionNestLevel();
+  aa_session_t *s = session_if_any();
 
-  if (NULL == s)
-    return;
-  while (!s->changes.empty() && s->changes.back().level >= level)
-    s->changes.pop_back();
-}
-
-/* An entry's ACL items, or its owner's default ones if it keeps none. */
-static std::vector<acl_item_t> acl_or_default(const pg_global_object_t &o) {
-  ObjectType type = NamespaceRelationId == o.classid  ? OBJECT_SCHEMA
-                    : DatabaseRelationId == o.classid ? OBJECT_DATABASE
-                                                      : OBJECT_TABLE;
-
-  return o.has_acl ? acl_items(o.acl) : acl_items_of(acldefault(type, o.owner));
-}
-
-/*
- * The items of a granted in b too, each with the privileges both grant:
- * what the two ACLs grant alike.
- */
-static std::vector<acl_item_t> acl_intersect(const std::vector<acl_item_t> &a,
-                                             const std::vector<acl_item_t> &b) {
-  std::vector<acl_item_t> out;
-
-  for (const acl_item_t &x : a)
-    for (const acl_item_t &y : b)
-      if (x.grantee == y.grantee && x.grantor == y.grantor &&
-          0 != (x.privs & y.privs))
-        out.push_back({x.grantee, x.grantor, x.privs & y.privs});
-  return out;
-}
-
-/* Whether two entries say the same: owner and ACL. */
-static bool same_object(const pg_global_object_t &a,
-                        const pg_global_object_t &b) {
-  return a.owner == b.owner && a.has_acl == b.has_acl &&
-         (!a.has_acl || a.acl == b.acl);
-}
-
-/*
- * The entries the session's transaction changes that grant less after the
- * database's commit than before it, in part: each as it is now (base), and
- * as it is to be until that commit (middle), granting what both grant and
- * no more -- the superuser its owner if the owner changes, and of its ACL
- * what both ACLs grant (pg_global_commit()).
- */
-static std::vector<intermediate_t> intermediates(const pg_global_session_t *s) {
-  std::map<object_key_t, const object_change_t *> last;
-  std::vector<intermediate_t> out;
-  std::shared_ptr<const pg_global_objects_t> all;
-
-  if (s->changes.empty())
-    return out;
-  for (const object_change_t &c : s->changes)
-    last[c.key] = &c;
-  all = shared_objects();
-  for (const auto &[key, c] : last) {
-    auto found = all->find(key);
-    pg_global_object_t middle;
-
-    if (all->end() == found || !c->present ||
-        same_object(found->second, c->object))
-      continue;
-    middle = found->second;
-    if (c->object.owner != middle.owner)
-      middle.owner = BOOTSTRAP_SUPERUSERID;
-    if (c->object.has_acl != middle.has_acl ||
-        (middle.has_acl && c->object.acl != middle.acl)) {
-      middle.has_acl = true;
-      middle.acl = acl_text(acl_intersect(acl_or_default(found->second),
-                                          acl_or_default(c->object)));
-    }
-    if (!same_object(middle, found->second))
-      out.push_back({key, found->second, middle});
-  }
-  return out;
-}
-
-/* pg_object of pg_global, open to write in session's transaction. */
-static sm_tbl_t *open_objects(sm_session_t *session) {
-  uint64_t table = table_oid(session, PG_OBJECT_TABLE, ERROR);
-  sm_tbl_t *tbl;
-
-  /* IX: writes to the table's rows. */
-  if (0 != sm_tbl_open(session, table, SM_LOCKMODE_IX, &tbl))
-    sm_failed(ERROR, "open a table");
-  return tbl;
-}
-
-/*
- * Make pg_object's row for key object, or no row if object is NULL,
- * through tbl.
- */
-static void write_object(sm_tbl_t *tbl, const object_key_t &key,
-                         const pg_global_object_t *object) {
-  sm_datum_t keyv[2] = {SM_DATUM_FROM_INT64(key.first),
-                        SM_DATUM_FROM_INT64(key.second)};
-  bool keyn[2] = {false, false};
-  sm_row_key_t rowkey = {keyv, keyn, 2};
-  sm_datum_t v[O_NATTS];
-  bool isnull[O_NATTS];
-  const void *tuple;
-  size_t len;
-  uint64_t id;
-  int rc = sm_tbl_read(tbl, rowkey, &tuple, &len);
-
-  if (0 > rc)
-    sm_failed(ERROR, "read a row");
-  if (NULL == object) {
-    if (0 == rc && 0 != sm_tbl_delete(tbl, rowkey))
-      sm_failed(ERROR, "delete a row");
-    return;
-  }
-  object_row(*object, v, isnull);
-  rc = 0 == rc ? sm_tbl_update(tbl, rowkey, v, isnull, O_NATTS)
-               : sm_tbl_insert(tbl, v, isnull, O_NATTS, &id);
-  if (0 != rc)
-    sm_failed(ERROR, "write a row");
-}
-
-/*
- * Write to pg_object, by write(), in a transaction of pg_global's of its
- * own; an error is a warning, saying what failed.  True if it committed.
- */
-template <typename F> static bool write_quietly(const char *what, F write) {
-  sm_session_t *session = NULL;
-  MemoryContext cxt = CurrentMemoryContext;
-  bool done = false;
-
-  PG_TRY();
-  {
-    session = write_session();
-    if (0 != sm_begin(session, SM_XCT_READ_COMMITTED, 0))
-      sm_failed(ERROR, "begin a transaction");
-    sm_tbl_t *tbl = open_objects(session);
-
-    write(tbl);
-    sm_tbl_close(tbl);
-    if (0 != sm_commit(session))
-      sm_failed(ERROR, "commit");
-    done = true;
-  }
-  PG_CATCH();
-  {
-    ErrorData *err;
-
-    MemoryContextSwitchTo(cxt);
-    err = CopyErrorData();
-    FlushErrorState();
-    if (NULL != session)
-      (void)sm_abort(session);
-    ereport(WARNING, (errmsg("could not %s: %s", what, err->message)));
-    FreeErrorData(err);
-  }
-  PG_END_TRY();
-  return done;
-}
-
-/*
- * Replace the objects' snapshot with it as committed, with the changes
- * last and the databases dropped applied, under the lock; record which
- * objects changed, for other sessions' caches.
- */
-static void
-publish_objects(const std::map<object_key_t, const object_change_t *> &last,
-                const std::vector<uint64_t> &dropped) {
-  pg_global_t *g = shmem->pg_global.get();
-  std::lock_guard<std::mutex> lock(g->mutex);
-  auto next = std::make_shared<pg_global_objects_t>(*g->objects);
-  uint64_t epoch = g->objects_epoch.load() + 1;
-
-  for (const auto &[key, c] : last) {
-    if (c->present)
-      (*next)[key] = c->object;
-    else
-      next->erase(key);
-    g->changed.push_back({epoch, key});
-  }
-  for (uint64_t dbid : dropped)
-    next->erase(next->lower_bound(object_key_t(dbid, 0)),
-                next->lower_bound(object_key_t(dbid + 1, 0)));
-  while (g->changed.size() > CHANGED_KEPT)
-    g->changed.pop_front();
-  g->objects = next;
-  g->objects_epoch.store(epoch);
+  if (NULL != s)
+    aa_subabort(s, GetCurrentTransactionNestLevel());
 }
 
 /*
  * At the start of a transaction: drop what this session's relation cache
  * keeps of the relations whose owner another session changed since it
- * last looked; of every relation if they are more than pg_global keeps.
+ * last looked; of every relation if they are more than aa keeps.
  */
 void pg_global_objects_moved(void) {
-  pg_global_session_t *s;
-  std::vector<Oid> oids;
-  bool all = false;
-  uint64_t epoch, dbid;
+  aa_session_t *s;
+  std::vector<aa_oid_t> oids;
+  bool all;
 
   if (!pg_global_is_loaded() || NULL == (s = session_state()))
     return;
-  if (shmem->pg_global->objects_epoch.load() == s->objects_epoch)
-    return;
-  dbid = pg_global_dbid(MyDatabaseId);
-  {
-    pg_global_t *g = shmem->pg_global.get();
-    std::lock_guard<std::mutex> lock(g->mutex);
-
-    epoch = g->objects_epoch.load();
-    all = g->changed.empty() || g->changed.front().first > s->objects_epoch + 1;
-    if (!all)
-      for (const auto &[e, key] : g->changed)
-        if (e > s->objects_epoch && key.first == dbid)
-          oids.push_back(key.second);
-  }
-  s->objects_epoch = epoch;
-  if (!OidIsValid(MyDatabaseId))
+  if (!aa_objects_moved(s, pg_global_dbid(MyDatabaseId), &oids, &all) ||
+      !OidIsValid(MyDatabaseId))
     return;
   if (all)
     RelationCacheInvalidate(false);
@@ -1625,138 +646,41 @@ void pg_global_objects_moved(void) {
 
 /*
  * At the commit of the session's transaction, before its database's: write
- * what it changed of the roles to pg_global, in one transaction there, and
- * replace the snapshot every session reads.  An error fails the commit.
+ * what it changed of the roles to pg_global, and what is to grant less as
+ * granting only what it grants before and after (aa_commit()).  An error
+ * fails the commit.
  */
 void pg_global_commit(void) {
-  pg_global_session_t *s = nullptr != tcb ? tcb->pg_global.get() : NULL;
-  std::vector<intermediate_t> before;
-  bool roles;
-  sm_session_t *session;
+  aa_session_t *s = session_if_any();
 
-  if (NULL == s)
-    return;
-  roles = nullptr != s->working;
-  before = intermediates(s);
-  if (!roles && before.empty())
-    return;
-  session = write_session();
-  if (0 != sm_begin(session, SM_XCT_READ_COMMITTED, 0))
-    sm_failed(ERROR, "begin a transaction");
-  PG_TRY();
-  {
-    if (roles) {
-      write_changes(session, AUTHID_TABLE, A_NATTS, s->base->roles,
-                    s->working->roles, role_row, role_of_row, same_role);
-      write_changes(
-          session, MEMBERS_TABLE, M_NATTS, s->base->members,
-          s->working->members, member_row,
-          [](const sm_datum_t *v, const bool *) { return member_of_row(v); },
-          same_member);
-    }
-    if (!before.empty()) {
-      sm_tbl_t *tbl = open_objects(session);
-
-      /*
-       * Each object that is to grant less grants, until the database
-       * commits, only what it grants before and after: a crash between
-       * leaves less granted, not more.
-       */
-      for (const intermediate_t &i : before)
-        write_object(tbl, i.key, &i.middle);
-      sm_tbl_close(tbl);
-    }
-    if (0 != sm_commit(session)) {
-      if (SM_ERR_UPDATED == sm_errnum() || sm_retryable())
-        concurrent_change(AUTHID_TABLE);
-      sm_failed(ERROR, "commit");
-    }
-  }
-  PG_CATCH();
-  {
-    (void)sm_abort(session);
-    PG_RE_THROW();
-  }
-  PG_END_TRY();
-  /* Put back if the database's commit fails (pg_global_abort()). */
-  s->to_restore.clear();
-  for (const intermediate_t &i : before)
-    s->to_restore.push_back({i.key, i.base});
-  if (!roles)
-    return;
-  s->base.reset();
-  s->working.reset();
-
-  /*
-   * Replace the snapshot with pg_global as it is now, read under the lock:
-   * the last to replace it read last, so no later read is lost to an
-   * earlier one.
-   */
-  std::lock_guard<std::mutex> lock(shmem->pg_global->mutex);
-  shmem->pg_global->roles = read_roles(session, ERROR);
-  s->epoch = ++shmem->pg_global->epoch;
+  if (NULL != s && 0 != aa_commit(s))
+    aa_failed(ERROR);
 }
 
 /*
  * At the abort of the session's transaction: forget what it changed, and
  * put back the entries written before the database's commit, which failed.
  * An error is a warning: an abort has nowhere to send it, and an entry not
- * put back leaves its object the superuser's.
+ * put back grants less, not more.
  */
 void pg_global_abort(void) {
-  pg_global_session_t *s = nullptr != tcb ? tcb->pg_global.get() : NULL;
+  aa_session_t *s = session_if_any();
 
-  if (NULL == s)
-    return;
-  s->base.reset();
-  s->working.reset();
-  s->changes.clear();
-  s->dropped_dbs.clear();
-  if (!s->to_restore.empty()) {
-    std::vector<std::pair<object_key_t, pg_global_object_t>> restore =
-        std::move(s->to_restore);
-
-    s->to_restore.clear();
-    write_quietly("put back an owner", [&](sm_tbl_t *tbl) {
-      for (const auto &[key, object] : restore)
-        write_object(tbl, key, &object);
-    });
-  }
+  if (NULL != s && 0 != aa_abort(s))
+    ereport(WARNING, (errmsg("could not put back an owner: %s", aa_errmsg())));
 }
 
 /*
  * After the database's commit: write the transaction's changes to objects'
  * entries, and the entries of the databases it dropped, which go, to
- * pg_global, and replace the snapshot every session reads.  The
- * transaction has committed, so an error is a warning: an entry not
- * written leaves its object its database's owner's.
+ * pg_global.  The transaction has committed, so an error is a warning: an
+ * entry not written leaves its object its database's owner's.
  */
 void pg_global_post_commit(void) {
-  pg_global_session_t *s = nullptr != tcb ? tcb->pg_global.get() : NULL;
-  std::map<object_key_t, const object_change_t *> last;
-  std::vector<uint64_t> dropped;
-  std::shared_ptr<const pg_global_objects_t> all;
+  aa_session_t *s = session_if_any();
 
-  if (NULL == s)
-    return;
-  s->to_restore.clear();
-  if (s->changes.empty() && s->dropped_dbs.empty())
-    return;
-  for (const object_change_t &c : s->changes)
-    last[c.key] = &c;
-  dropped = s->dropped_dbs;
-  all = shared_objects();
-  if (write_quietly("write an owner", [&](sm_tbl_t *tbl) {
-        for (const auto &[key, c] : last)
-          write_object(tbl, key, c->present ? &c->object : NULL);
-        for (uint64_t dbid : dropped)
-          for (auto it = all->lower_bound(object_key_t(dbid, 0));
-               all->end() != it && it->first.first == dbid; ++it)
-            write_object(tbl, it->first, NULL);
-      }))
-    publish_objects(last, dropped);
-  s->changes.clear();
-  s->dropped_dbs.clear();
+  if (NULL != s && 0 != aa_post_commit(s))
+    ereport(WARNING, (errmsg("could not write an owner: %s", aa_errmsg())));
 }
 
 /*
@@ -1764,14 +688,9 @@ void pg_global_post_commit(void) {
  * of them were made: true once, and then they are taken to be fresh.
  */
 bool pg_global_epoch_moved(void) {
-  pg_global_session_t *s;
-  uint64_t epoch;
+  aa_session_t *s;
 
   if (!pg_global_is_loaded() || NULL == (s = session_state()))
     return false;
-  epoch = shmem->pg_global->epoch.load();
-  if (epoch == s->epoch)
-    return false;
-  s->epoch = epoch;
-  return true;
+  return aa_roles_moved(s);
 }

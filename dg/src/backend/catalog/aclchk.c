@@ -1624,7 +1624,7 @@ static void ExecGrant_Relation(InternalGrant *istmt) {
   Relation attRelation;
   ListCell *cell;
 
-  /* A column's privileges are a later step's (sm/ROLE.md section 8). */
+  /* A column's privileges are a later step's (aa/ROLE.md section 8). */
   if (istmt->col_privs != NIL)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("column privileges are not supported yet")));
@@ -1800,7 +1800,7 @@ static void ExecGrant_Relation(InternalGrant *istmt) {
 
       /*
        * The ACL is pg_global's, written at the database's commit, and no
-       * pg_shdepend records its roles (sm/ROLE.md sections 3 and 4).
+       * pg_shdepend records its roles (aa/ROLE.md sections 3 and 4).
        */
       pg_global_set_acl(pg_global_dbid(MyDatabaseId), RelationRelationId,
                         relOid, ownerId, new_acl,
@@ -1881,7 +1881,7 @@ ExecGrant_common(InternalGrant *istmt, Oid classid, AclMode default_privs,
   ListCell *cell;
 
   /*
-   * A schema's and a database's privileges are pg_global's (sm/ROLE.md
+   * A schema's and a database's privileges are pg_global's (aa/ROLE.md
    * section 3); a function's, a type's and a language's are compiled in,
    * and PUBLIC's.
    */
@@ -1958,7 +1958,7 @@ ExecGrant_common(InternalGrant *istmt, Oid classid, AclMode default_privs,
 
     /*
      * The ACL is pg_global's, written at the database's commit, and no
-     * pg_shdepend records its roles (sm/ROLE.md sections 3 and 4): a
+     * pg_shdepend records its roles (aa/ROLE.md sections 3 and 4): a
      * database's by its own id, a schema's in this database.
      */
     if (DatabaseRelationId == classid)
@@ -2781,6 +2781,21 @@ AclMode pg_class_aclmask(Oid table_oid, Oid roleid, AclMode mask,
 }
 
 /*
+ * The privileges of mask roleid holds on the table or view relid of sm's,
+ * by its owner and ACL in pg_global, as its pg_class row would give them
+ * (catalog/catrel.c's relation_owner() and relation_acl()), without making
+ * the row, which the syscache does not keep (catrel_is_cached()): the
+ * check every statement on a table makes for a role not a superuser.  aa
+ * keeps the answer in the session until an owner, an ACL or a role
+ * changes (aa_object_mask()).
+ */
+static AclMode sm_table_aclmask(Oid relid, Oid roleid, AclMode mask) {
+  return aa_object_mask(pg_global_env(), pg_global_session(),
+                        pg_global_dbid(MyDatabaseId), relid, RelationRelationId,
+                        roleid, mask);
+}
+
+/*
  * Routine for examining a user's privileges for a table, with is_missing
  */
 static AclMode pg_class_aclmask_ext(Oid table_oid, Oid roleid, AclMode mask,
@@ -2792,6 +2807,7 @@ static AclMode pg_class_aclmask_ext(Oid table_oid, Oid roleid, AclMode mask,
   bool isNull;
   Acl *acl;
   Oid ownerId;
+  char relkind;
 
   /*
    * A superuser may do anything to a relation of sm's, and read a catalog a
@@ -2804,6 +2820,19 @@ static AclMode pg_class_aclmask_ext(Oid table_oid, Oid roleid, AclMode mask,
       return mask;
     if (cat_relation(table_oid) != NULL)
       return mask & ACL_SELECT;
+  }
+
+  /*
+   * A table or a view of sm's: no system class, and its owner and ACL its
+   * own, unlike an index's or a sequence's, which are its table's.  One a
+   * statement names is in the relation cache, opened as it was planned;
+   * any other is read from its row, below.
+   */
+  if (table_oid >= FirstNormalObjectId &&
+      RelationCacheKind(table_oid, &relkind) && RELKIND_INDEX != relkind &&
+      RELKIND_PARTITIONED_INDEX != relkind && RELKIND_SEQUENCE != relkind) {
+    result = sm_table_aclmask(table_oid, roleid, mask);
+    goto predefined;
   }
 
   /*
@@ -2874,6 +2903,8 @@ static AclMode pg_class_aclmask_ext(Oid table_oid, Oid roleid, AclMode mask,
     pfree(acl);
 
   ReleaseSysCache(tuple);
+
+predefined:
 
   /*
    * Check if ACL_SELECT is being checked and, if so, and not set already as

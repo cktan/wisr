@@ -46,7 +46,7 @@ build/digres --init "$work/empty" > "$work/empty.out" 2>&1 || fail "--init"
 #    secret, not the password, kept.
 # 5. Make alice NOLOGIN, CONNECTION LIMIT 0 and past VALID UNTIL: the
 #    data directory's owner, the OS user, still gets in as alice on the
-#    local socket, by peer (sm/ROLE.md section 5, "Locked out"); eve,
+#    local socket, by peer (aa/ROLE.md section 5, "Locked out"); eve,
 #    another role, does not without its password.
 echo "secret" > "$work/pw"
 $initdb -D "$work/named" -U alice --pwfile="$work/pw" -E UTF8 \

@@ -91,7 +91,7 @@ static bool peer_user(hbaPort *port, std::string *name, bool *owner) {
 
 /*
  * Choose how the connection is authenticated: no pg_hba.conf, but the rule
- * of sm/ROLE.md section 5.  On the local socket, by the OS user at its
+ * of aa/ROLE.md section 5.  On the local socket, by the OS user at its
  * other end (peer) if that user is the role's name, or is the data
  * directory's owner asking for the bootstrap superuser; else by the role's
  * password.  Over TCP, by the role's password.  Passwords are SCRAM-SHA-256.
@@ -99,28 +99,20 @@ static bool peer_user(hbaPort *port, std::string *name, bool *owner) {
 void hba_getauthmethod(hbaPort *port) {
   HbaLine *hba = (HbaLine *)palloc0(sizeof(HbaLine));
 
-  port->datadir_owner = false;
-  if (port->raddr.addr.ss_family == AF_UNIX) {
-    std::string os_user;
-    pg_global_role_t bootstrap;
-    bool owner = false;
+  bool local = port->raddr.addr.ss_family == AF_UNIX;
+  std::string os_user;
+  bool owner = false, known = false;
 
-    hba->conntype = ctLocal;
-    hba->auth_method = uaSCRAM;
-    if (peer_user(port, &os_user, &owner)) {
-      if (os_user == port->user_name)
-        hba->auth_method = uaPeer;
-      else if (owner &&
-               pg_global_role_by_oid(BOOTSTRAP_SUPERUSERID, &bootstrap) &&
-               bootstrap.rolname == port->user_name) {
-        hba->auth_method = uaPeer;
-        port->datadir_owner = true;
-      }
-    }
-  } else {
-    hba->conntype = ctHost;
-    hba->auth_method = uaSCRAM;
-  }
+  if (local)
+    known = peer_user(port, &os_user, &owner);
+  /* The rule is aa's (aa_auth_method()); the socket's peer is ours. */
+  hba->conntype = local ? ctLocal : ctHost;
+  hba->auth_method =
+      AA_PEER == aa_auth_method(pg_global_env(), port->user_name, local,
+                                known ? os_user.c_str() : NULL, owner,
+                                &port->datadir_owner)
+          ? uaPeer
+          : uaSCRAM;
   port->hba = hba;
 }
 

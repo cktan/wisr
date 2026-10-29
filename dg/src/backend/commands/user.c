@@ -1130,7 +1130,7 @@ void DropRole(DropRoleStmt *stmt) {
 
     /*
      * Check for what depends on this role: in pg_global alone, as there is
-     * no pg_shdepend (sm/ROLE.md section 4).
+     * no pg_shdepend (aa/ROLE.md section 4).
      *
      * This needs to happen after we've completed removing any
      * pg_auth_members entries that can be removed silently, in order to
@@ -1404,7 +1404,7 @@ static void refuse_pinned(Oid roleid, const char *message) {
 
 /*
  * DROP OWNED's, as PostgreSQL's shdepDropOwned() does from pg_shdepend,
- * from pg_global's entries (sm/ROLE.md section 4): of each role of
+ * from pg_global's entries (aa/ROLE.md section 4): of each role of
  * roleids, revoke what an ACL grants it, in this database and on the
  * databases; delete the memberships it granted; and drop what it owns in
  * this database, its relations, the newest first, then its schemas.  A

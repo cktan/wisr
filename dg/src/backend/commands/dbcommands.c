@@ -119,7 +119,7 @@ Oid createdb(ParseState *pstate, const CreatedbStmt *stmt) {
     ereport(ERROR, (errcode(ERRCODE_DUPLICATE_DATABASE),
                     errmsg("database \"%s\" already exists", stmt->dbname)));
   db_id = datadir_database_oid(stmt->dbname);
-  /* Its owner, the current role, is pg_global's (sm/ROLE.md). */
+  /* Its owner, the current role, is pg_global's (aa/ROLE.md). */
   pg_global_set_owner(pg_global_dbid(db_id), DatabaseRelationId, InvalidOid,
                       GetUserId(), false);
   return db_id;
@@ -154,7 +154,7 @@ void dropdb(const char *dbname, bool missing_ok, bool force) {
   for (int tries = 0;; tries++) {
     switch (datadir_drop_database(dbname)) {
     case DATADIR_DROPPED:
-      /* Its entries in pg_global go, after the commit (sm/ROLE.md). */
+      /* Its entries in pg_global go, after the commit (aa/ROLE.md). */
       pg_global_forget_database(pg_global_dbid(db_id));
       return;
     case DATADIR_NO_DATABASE:
@@ -224,7 +224,7 @@ Oid AlterDatabaseSet(AlterDatabaseSetStmt *stmt) {
 
 /*
  * ALTER DATABASE name OWNER TO: the owner is pg_global's, written after
- * the commit (sm/ROLE.md section 3), with PostgreSQL's checks: a role that
+ * the commit (aa/ROLE.md section 3), with PostgreSQL's checks: a role that
  * is not a superuser must own the database, be able to become the new
  * owner, and have CREATEDB.
  */

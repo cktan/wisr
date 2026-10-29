@@ -210,7 +210,7 @@ typedef struct Port {
   /*
    * The client is the data directory's owner, on the local socket, asking
    * for the bootstrap superuser: let in by peer whatever the role says
-   * (sm/ROLE.md section 5, "Locked out").
+   * (aa/ROLE.md section 5, "Locked out").
    */
   bool datadir_owner;
 
