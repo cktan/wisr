@@ -153,7 +153,7 @@ struct sm1::session_t {
   struct mark_t {
     size_t undo = 0;              /* undo.size() at the mark */
     uint32_t seq_hwm = 0;         /* seq_hwm at the mark */
-    size_t locks = 0;             /* locks.size() at the mark */
+    wisr::lock_mark_t locks;      /* the lock list at the mark */
     size_t created = 0;           /* created.size() at the mark */
     size_t dropped = 0;           /* dropped.size() at the mark */
     size_t dropped_seqs = 0;      /* dropped_seqs.size() at the mark */
@@ -181,37 +181,26 @@ struct sm1::session_t {
   std::string doom_msg;
 
   /*
-   * Locks, row and OID (§5.1); guarded by the database's lock_mu. A
-   * row lock's exact key is in lock_keys, at row_off: appended as
-   * the lock is taken, so a list cut at a savepoint cuts it too.
+   * Locks, row and OID (§5.1); guarded by the database's lock_mu,
+   * and by fp_mu for an entry in a slot. lockref_t is db.h's.
    */
-  struct lockref_t {
-    wisr::lockid_t id{}; /* its lock table entry's id */
-    size_t row_off = 0;  /* a row lock's key, in lock_keys */
-    uint32_t row_len = 0;
-    sm1::locktype_t type = sm1::LOCKTYPE_ROW;
-    sm1::lockmode_t mode = sm1::SM_LOCKMODE_SH; /* held now, after
-                                                       conversions */
-    bool latest = false; /* read_latest done: the write may go ahead */
-    int8_t slot = -1;    /* its fast-path slot, or -1 in the table */
-    bool strong = false; /* counted in the db's fp_strong */
-  };
-  std::vector<lockref_t> locks; /* held, in acquisition order */
-  std::vector<char> lock_keys;  /* the row locks' keys, in locks' order */
-  size_t latest_marks = 0;      /* locks with latest set; 0 skips scans */
+  using lockref_t = wisr::lockref_t;
+  wisr::lock_list_t locks;     /* held, in acquisition order */
+  wisr::lock_keys_t lock_keys; /* the row locks' keys, in locks' order */
+  size_t latest_marks = 0;     /* locks with latest set; 0 skips scans */
 
   /*
    * The fast path (§5.1): an OID lock taken IS or IX, while no
    * strong lock is held or asked on a key that hashes with it,
    * is in a slot here and not in the lock table. Guarded by
    * fp_mu, which only the session and a strong locker's sweep
-   * take; a slot's idx is its entry in locks.
+   * take; a slot's ref is its entry in locks.
    */
   static constexpr int fp_slots = 32;
   struct fp_slot_t {
     wisr::lockid_t id{};
     sm1::lockmode_t mode = sm1::SM_LOCKMODE_IS;
-    size_t idx = 0;
+    wisr::lock_list_t::iterator_t ref;
     bool used = false;
   };
   std::mutex fp_mu;
@@ -503,12 +492,11 @@ void lock_clear_latest(sm1::session_t *session, uint64_t storeid,
 extern std::atomic<bool> lock_test_rows_collide;
 
 /*
- * Append to out the name of s's lock l: its type byte, be64(storeid),
+ * Append to out the name of lock l: its type byte, be64(storeid),
  * then its key, as lock_status reports it and a prepared
  * transaction's record keeps it (§8.4).
  */
-void lock_put_name(std::string *out, const sm1::session_t *s,
-                   const sm1::session_t::lockref_t &l);
+void lock_put_name(std::string *out, const sm1::session_t::lockref_t &l);
 
 /* The length of that name. */
 size_t lock_name_size(const sm1::session_t::lockref_t &l);
@@ -550,10 +538,10 @@ int lock_self_modified(sm1::session_t *session, uint32_t own_seq);
 void lock_release_all(sm1::session_t *session);
 
 /*
- * Release the locks the session took after its first n, the
- * ones a rollback to a savepoint gives back (§6.5).
+ * Release the locks the session took after m, the ones a rollback
+ * to a savepoint gives back (§6.5).
  */
-void lock_release_from(sm1::session_t *session, size_t n);
+void lock_release_from(sm1::session_t *session, const lock_mark_t &m);
 
 /*
  * Delete the COMMITTED status records with commit_ts <= w0, for

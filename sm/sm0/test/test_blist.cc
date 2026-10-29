@@ -65,6 +65,8 @@ TEST_CASE("blist entries never move as the list grows") {
   }
   CHECK(l.size() == 10);
   CHECK(values(l) == upto(10));
+  CHECK(&*l.last() == p[9]);
+  CHECK(l.last()->v == 9);
 
   item_t *d = l.emplace();
   CHECK(d->v == -1);
@@ -112,6 +114,7 @@ TEST_CASE("blist cut drops what followed a mark, at every boundary") {
   l.cut(m4);
   CHECK(values(l) == upto(4));
   CHECK(after(l, m4).empty());
+  CHECK(l.last()->v == 3);
   l.emplace(4);
   CHECK(values(l) == upto(5));
   CHECK(l.size() == 5);
@@ -124,8 +127,10 @@ TEST_CASE("blist reuses the blocks a cut gives up") {
   // 2. Emplace past the full block: it takes that spare's
   //    storage, the same address the cut entry had.
   // 3. Fill eight blocks and clear: four spares kept.
-  // 4. reserve() on a list with none makes one; an append
-  //    consumes it.
+  // 4. reserve() on an empty list makes a spare, which an append
+  //    consumes; with room in the last block it makes none.
+  // 5. reserve(n) of bytes makes a spare only when the last block
+  //    lacks n.
   sm0::blist_t<item_t, 4> l;
   for (int i = 0; i < 4; i++) {
     l.emplace(i);
@@ -151,6 +156,15 @@ TEST_CASE("blist reuses the blocks a cut gives up") {
   CHECK(r.spares() == 1);
   r.emplace(0);
   CHECK(r.spares() == 0);
+  r.reserve();
+  CHECK(r.spares() == 0);
+
+  sm0::blist_t<char, 8> k;
+  k.alloc(5);
+  k.reserve(3);
+  CHECK(k.spares() == 0);
+  k.reserve(4);
+  CHECK(k.spares() == 1);
 }
 
 TEST_CASE("blist alloc never splits a key across blocks") {

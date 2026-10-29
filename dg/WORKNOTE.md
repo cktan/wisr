@@ -10122,3 +10122,30 @@ The lock list and its key buffer are vectors, which grow under
   capped; keys kept whole; swap. 15 mutations caught, under
   ASan and UBSan.
 - **Left**: sm1's lock list and key buffer still vectors.
+
+## Step 341: the lock list and its keys in blocks
+
+A session's lock list and its row keys were vectors, grown under
+`lock_mu` as a row lock was taken there, moving what they held:
+a holder and a slot named their entry by index, an entry its key
+by offset.
+
+- **sm1** (`../sm/sm1/SM1_DESIGN.md` §5.1): both are step 340's
+  `blist_t`, of 256 entries and 8 KB a block; `lockref_t` moves
+  to `db.h`. A holder keeps its first entry's position, a slot
+  its entry's, an entry a pointer to its key, a savepoint a mark
+  of each (`lock_mark_t`); a release cuts both back, keeping up to
+  four blocks each. `lock_try` makes room before it takes
+  `lock_mu`, and no key is longer than a key block
+  (`max_keylen`, 4096), so the list and its keys allocate nothing
+  under it. The list links only forward: a search of it looks at
+  the newest entry, then from the oldest; one from a holder runs
+  forward from its first. `lock_put_name` no longer takes the
+  session.
+- **Tests**: sm1, 512 row locks hashed alike, two blocks exactly,
+  a savepoint at the second's end, 300 more and two of
+  `max_keylen`, the holder's first entry converted, a rollback and
+  a commit; a slot whose entry is not the list's first, converted,
+  listed and swept. dg, `select_for_update_many.sql`, 1,000 rows
+  FOR UPDATE past a savepoint, as `pg_lock_status()` lists them.
+  9 mutations caught.

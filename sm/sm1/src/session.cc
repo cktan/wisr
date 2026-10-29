@@ -288,11 +288,12 @@ int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
         // Each of the holder's list entries the key stands for,
         // from the first: more than one if row keys hash alike.
         const auto &locks = h.session->locks;
-        for (size_t i = h.idx, n = h.refs; n > 0 && i < locks.size(); i++) {
-          if (locks[i].id == k) {
+        uint32_t n = h.refs;
+        for (auto it = h.first; n > 0 && it != locks.end(); ++it) {
+          if (it->id == k) {
             std::string name;
-            lock_put_name(&name, h.session, locks[i]);
-            entry(name, locks[i].mode, h.session, true);
+            lock_put_name(&name, *it);
+            entry(name, it->mode, h.session, true);
             n--;
           }
         }
@@ -305,9 +306,9 @@ int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
       // Its locks in slots, which the table does not hold.
       for (int i = 0; s->fp_used > 0 && i < sm1::session_t::fp_slots; i++) {
         if (s->fp[i].used) {
-          const sm1::session_t::lockref_t &l = s->locks[s->fp[i].idx];
+          const sm1::session_t::lockref_t &l = *s->fp[i].ref;
           std::string name;
-          lock_put_name(&name, s, l);
+          lock_put_name(&name, l);
           entry(name, l.mode, s, true);
         }
       }

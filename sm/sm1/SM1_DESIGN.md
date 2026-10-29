@@ -696,14 +696,21 @@ whose keys hash alike share an entry, and so block each other,
 and could deadlock: a false conflict, never a missed one, and
 with 64 bits not one a workload meets. What must be exact is
 kept exact in the transaction's own lock list, `T.locks`, each
-row's key in one buffer of the session's (`lock_keys`), appended
-as the lock is taken and cut back with the list at a savepoint:
-whether it holds a key and in which mode, the mark §5.4 sets,
-the prepared record's lock set (§8.4) and `sm1::lock_status`. A
+row's key in a buffer of the session's (`lock_keys`), taken as
+the lock is and cut back with the list at a savepoint: whether
+it holds a key and in which mode, the mark §5.4 sets, the
+prepared record's lock set (§8.4) and `sm1::lock_status`. A
 holder counts the entries of its list that share its table
-entry, so releasing one leaves the others held. The id costs no
-allocation, as the table needs none to find or add an entry, and
-a row's key none once the buffer has grown to the transaction's.
+entry, from the first, so releasing one leaves the others held.
+The list and the buffer are sm0's `blist_t`, blocks whose
+entries never move: a holder keeps its first entry's position,
+a fast-path slot its entry's, an entry its key's pointer, and a
+savepoint a mark of each. A cut keeps up to four blocks for the
+locks to come, and `lock_try` makes room before it takes
+`lock_mu`, a key never longer than a key block, so a lock
+allocates nothing under the mutex for the list or its key. The
+id costs no allocation either, as the table needs none to find
+or add an entry.
 One mutex covers the table and every waiter's waits-for list,
 which keeps a deadlock walk consistent.
 

@@ -390,7 +390,7 @@ int savepoint(sm1::session_t *s) {
     // Hold lock_mu while reading the lock list.
     std::lock_guard<std::mutex> guard(s->db->lock_mu);
     // Mark the lock list.
-    m.locks = s->locks.size();
+    m.locks = {s->locks.mark(), s->lock_keys.mark()};
   }
   s->savepoints.push_back(m);
   // The new mark's depth.
@@ -905,7 +905,7 @@ std::string encode_prepared(const sm1::session_t *t, const std::string &gid,
   sm0::put_be32(v, static_cast<uint32_t>(t->locks.size()));
   for (const sm1::session_t::lockref_t &l : t->locks) {
     sm0::put_be32(v, static_cast<uint32_t>(lock_name_size(l)));
-    lock_put_name(&v, t, l);
+    lock_put_name(&v, l);
     v.push_back(static_cast<char>(l.mode));
   }
   // The storeids created, then those dropped, each counted.
@@ -1514,7 +1514,7 @@ bool xct_decode_prepared(db_t *db, uint64_t xid, rocksdb::Slice val,
       return false;
     }
     l.mode = static_cast<sm1::lockmode_t>(m);
-    g->locks.push_back(std::move(l));
+    g->locks.emplace(l);
   }
   // Read the storeids created, then dropped.
   for (std::vector<uint64_t> *stores : {&g->created, &g->dropped}) {

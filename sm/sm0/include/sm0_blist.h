@@ -14,7 +14,7 @@
  * its mark to a list of spares, keeping up to four, and the
  * appends that follow take them before allocating, so a list
  * that is filled and emptied again and again settles into
- * allocating nothing. reserve() makes sure of a spare before a
+ * allocating nothing. reserve() makes sure of room before a
  * caller takes a lock it must not allocate under.
  *
  * T must be trivially destructible: a cut only moves the top, and
@@ -61,6 +61,9 @@ public:
   /* A position in the list, from oldest entry to newest. */
   class iterator_t {
   public:
+    /* No position: the end of every list. */
+    iterator_t() : m_b(nullptr), m_i(0) {}
+
     /* The entry here. */
     T &operator*() const { return blist_t::at(m_b, m_i); }
 
@@ -159,13 +162,14 @@ public:
   /* Drop every entry, keeping the blocks as spares. */
   void clear() { cut(mark_t{}); }
 
-  /* Make sure of a spare, so the next block an append needs is
-   * allocated now. */
-  void reserve() {
-    if (nullptr == m_spare) {
-      block_t *b = make(N);
-      b->next = nullptr;
-      m_spare = b;
+  /* Make sure of room for n more entries, allocating now what
+   * they would need; n above N is allocated by alloc() itself. */
+  void reserve(size_t n = 1) {
+    if (nullptr != m_tail && m_tail->cap - m_tail->top >= n) {
+      return;
+    }
+    if (n <= N && nullptr == m_spare) {
+      m_spare = make(N);
       m_nspare = 1;
     }
   }
@@ -190,6 +194,12 @@ public:
 
   /* The oldest entry's position. */
   iterator_t begin() const { return iterator_t(m_head, 0); }
+
+  /* The newest entry's position, in a list emplace() made. */
+  iterator_t last() const {
+    assert(nullptr != m_tail && 0 < m_tail->top);
+    return iterator_t(m_tail, m_tail->top - 1);
+  }
 
   /* The position past the newest entry. */
   iterator_t end() const { return iterator_t(nullptr, 0); }
