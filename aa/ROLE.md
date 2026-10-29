@@ -2,13 +2,15 @@
 
 **Being built**, a step at a time (§9): steps 1 to 6 are
 done; the later steps are not. Roles and memberships are
-`pg_global`'s, made, changed and dropped by SQL; no privilege
-on an object is refused yet, and every object's owner is the
-superuser. This file says what roles and privileges digres
-takes from PostgreSQL, where sm keeps them, and how a client
-is let in, by a rule much simpler than `pg_hba.conf`. aa
-(`README.md`) is the code that keeps them. Paths are relative
-to `aa/`; sm's are under `../sm/`, digres's under `../dg/`.
+`pg_global`'s, made, changed and dropped by SQL; an object
+is owned by the role that made it, and privileges on
+databases, schemas, tables, views, sequences and functions
+are granted, revoked and checked. This file says what roles
+and privileges digres takes from PostgreSQL, where sm keeps
+them, and how a client is let in, by a rule much simpler
+than `pg_hba.conf`. aa (`README.md`) is the code that keeps
+them. Paths are relative to `aa/`; sm's are under `../sm/`,
+digres's under `../dg/`.
 
 ---
 
@@ -28,10 +30,10 @@ to `aa/`; sm's are under `../sm/`, digres's under `../dg/`.
   A database copied or replicated to another server takes no
   role with it, and that server gives it its own.
 - **PostgreSQL's privilege checks stay as they are.** The 183
-  calls into `aclchk.c` are in digres's tree and pass today
-  only because every role is the superuser. The work is to
-  store owners, privileges and roles, and to hand them to the
-  checks; not to write checks.
+  calls into `aclchk.c` are in digres's tree, and aa hands
+  them the owners, privileges and roles it stores. The work
+  was to store them and to hand them to the checks; not to
+  write checks.
 - **No `pg_hba.conf`.** Who may connect, to what, and how, is
   four checks, all from SQL: the role may log in, it may
   connect to the database, and it proves who it is by the
