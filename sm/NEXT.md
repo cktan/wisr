@@ -127,6 +127,108 @@ and so are the catalog tables psql reads
       reach PostgreSQL only at 8 KB a page, as a second
       storage engine: its own latches, splits, vacuum,
       predicate locks, unique checks and visibility map.
+4. **sm1's lock table, a hash table of its own**
+   (`sm1/SM1_DESIGN.md` §5.1). `../bench/roles.sh`'s t16,
+   sixteen tables a statement, scaled 2.8× from 1 to 16
+   clients, every table lock taken and released under the one
+   `lock_mu`. Keyed by two words (`../dg/WORKNOTE.md` step 337)
+   it went from 38.7 to 72–76 thousand tps at 16 clients; with
+   the fast path, a table's IS and IX in slots of the session's
+   own (step 338), to 125 thousand, 8.6×, and no time is spent
+   waiting for `lock_mu` in t16. The table is still a
+   `std::unordered_map`, and a table that contended should not
+   be the language's:
+
+   - **An allocation an entry, under the mutex**: a node, and
+     the holders' `std::vector` in it; both freed when the last
+     holder goes. Row locks are mostly of distinct keys, so a
+     row lock pays two allocations and two frees under
+     `lock_mu`. Step 337 measured what allocations under it
+     cost: taking the string keys' out nearly doubled t16.
+   - **A rehash, under the mutex**: past its load factor the
+     table rehashes every entry in one call, a transaction
+     locking a million rows several times over, every other
+     locker waiting; the bucket array never shrinks.
+   - **Its layout and its policy are not ours**: bucket array,
+     node, then the holders' array, a likely miss each; and
+     when it grows, how full it runs, and its allocator, which
+     we do not choose.
+   - **The hash it is given**: `lockid_hash_t`, `lo ^ (hi *
+     K)`. libstdc++ takes `hash % bucket_count`, the count a
+     prime (`_Mod_range_hashing`, `_Prime_rehash_policy` in
+     `bits/hashtable_policy.h`), which hides weak low bits, at
+     a 64-bit division a lookup. A power of two does not hide
+     them: `fp_strong` takes the hash modulo 1,024, and the low
+     bits of `hi * K` depend only on `hi`'s low bits, so a
+     table lock's count is its `oid % 1024`, the type bit and a
+     storeid's high bits never reaching it. Tables 1,024 oids
+     apart share a count, and one's DDL sends the other's
+     readers to the slow path; correct, only slower. The fix is
+     a finalizer, MurmurHash3's `fmix64`, after the combine, so
+     every bit of both words reaches every bit of the hash; an
+     OID lock's id stays exact, `lo` one-to-one for a fixed
+     `hi`. `operator()` should be `noexcept`, or libstdc++ keeps
+     the hash in each node. Lock ids are never persisted (a
+     prepared transaction's record keeps the names), so the
+     hash can change at any time.
+
+   PostgreSQL keeps its own for the same reasons: `dynahash`,
+   sized once, entries from a free list, in 16 partitions. What
+   to build:
+
+   - **Partitions**, by the id's hash, each with its own mutex;
+     the deadlock search takes them all, in order, as
+     PostgreSQL's does.
+   - **In a partition**: a power-of-two bucket array, indexed
+     by `fmix64`, no division; entries from a pool kept by a
+     free list, no allocation under the mutex; a few holders
+     inline, one to four, the rest in an overflow; a count of
+     the holders granted each mode in each entry, so a conflict
+     check is O(1), not a walk of the holders, as PostgreSQL's
+     `LOCK.granted[]`; growth by adding a block to the pool,
+     never a rehash of the whole partition under its mutex.
+   - **What it is measured on**: after the fast path, t16 does
+     not reach the table. What does: row locks, `SELECT ...
+     FOR UPDATE` and `FOR SHARE`, the foreign-key check's FOR
+     KEY SHARE of the parent row at every child insert, index
+     entries and catalog keys; and the strong table locks.
+
+   **Measured without digres or sm.** The table is a module of
+   its own, `sm1/src/locktab.h` and `.cc`, that depends on
+   nothing but sm0: no RocksDB, no `db_t`, no `session_t`. A
+   holder is an opaque owner; the module finds, adds and drops
+   entries and their holders, and answers whether a mode
+   conflicts and with whom. Waiting, the waits-for graph, the
+   deadlock search, the fast path and the session's lock list
+   stay in `lockmgr.cc`, which calls it. Then:
+
+   - **A benchmark of the module alone**, `sm1/bench/
+     locktab_bench`, threads calling it directly: a
+     transaction takes N locks, then releases them all, as
+     commit does. Its workloads: distinct row keys at random
+     (`FOR UPDATE`); a few hot keys, shared (foreign-key
+     parents); one transaction of a million locks, then its
+     release, beside others (a rehash's pause); strong and weak
+     locks mixed. Each at 1 to 32 threads, reporting locks a
+     second, the latency of a lock and of a release at p50,
+     p99 and the maximum, and the allocations a lock makes
+     (counted by `operator new`).
+   - **Both tables behind the one interface**: today's
+     `std::unordered_map`, moved there first unchanged, as the
+     baseline the benchmark records; then the hand-written one,
+     the first's numbers to beat.
+   - **Its own unit tests** in `sm1/test`, the module's alone,
+     beside `test_lock.cc`, which keeps testing the lock
+     manager through `sm1.h`; and the isolation scenarios,
+     unchanged, the claim that nothing above it moved.
+   - **Then digres**: a row-lock workload in `../bench/`
+     (clients inserting children of a few parent rows; `SELECT
+     ... FOR UPDATE` of keys at random), before and after, to
+     show the module's gain reaches a client.
+
+   The order: the module with today's table, and its
+   benchmark's baseline; `fmix64`; the partitions; the
+   hand-written partition; each a step, measured.
 
 Low priority:
 

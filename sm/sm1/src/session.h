@@ -15,7 +15,9 @@
 #include <functional>
 #include <list>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -151,7 +153,7 @@ struct sm1::session_t {
   struct mark_t {
     size_t undo = 0;              /* undo.size() at the mark */
     uint32_t seq_hwm = 0;         /* seq_hwm at the mark */
-    size_t locks = 0;             /* locks.size() at the mark */
+    wisr::lock_mark_t locks;      /* the lock list at the mark */
     size_t created = 0;           /* created.size() at the mark */
     size_t dropped = 0;           /* dropped.size() at the mark */
     size_t dropped_seqs = 0;      /* dropped_seqs.size() at the mark */
@@ -178,28 +180,57 @@ struct sm1::session_t {
   /* The failed rollback's message, while doomed is SM_ERR_DOOMED. */
   std::string doom_msg;
 
-  /* Locks, row and OID (§5.1); guarded by the database's lock_mu. */
-  struct lockref_t {
-    std::string key;                            /* the lock table key */
-    sm1::lockmode_t mode = sm1::SM_LOCKMODE_SH; /* held now, after
-                                                       conversions */
-    bool latest = false; /* read_latest done: the write may go ahead */
-  };
-  std::vector<lockref_t> locks; /* held, in acquisition order */
-  size_t latest_marks = 0;      /* locks with latest set; 0 skips scans */
   /*
-   * The holders blocking us, empty when we are not waiting. A
-   * shared lock has many, so the waits-for graph branches and
-   * §5.1's cycle search walks it rather than a chain.
+   * Locks, row and OID (§5.1); guarded by the database's lock_mu,
+   * and by fp_mu for an entry in a slot. lockref_t is db.h's.
+   */
+  using lockref_t = wisr::lockref_t;
+  wisr::lock_list_t locks;     /* held, in acquisition order */
+  wisr::lock_keys_t lock_keys; /* the row locks' keys, in locks' order */
+  size_t latest_marks = 0;     /* locks with latest set; 0 skips scans */
+
+  /*
+   * The fast path (§5.1): an OID lock taken IS or IX, while no
+   * strong lock is held or asked on a key that hashes with it,
+   * is in a slot here and not in the lock table. Guarded by
+   * fp_mu, which only the session and a strong locker's sweep
+   * take; a slot's ref is its entry in locks.
+   */
+  static constexpr int fp_slots = 32;
+  struct fp_slot_t {
+    wisr::lockid_t id{};
+    sm1::lockmode_t mode = sm1::SM_LOCKMODE_IS;
+    wisr::lock_list_t::iterator_t ref;
+    bool used = false;
+  };
+  std::mutex fp_mu;
+  fp_slot_t fp[fp_slots];
+  int fp_used = 0; /* slots in use */
+  /*
+   * The holders blocking us when our wait last looked, empty when
+   * we are not waiting. Ours alone: it goes stale as they release,
+   * so the cycle search reads the table instead (lock_blockers).
    */
   std::vector<sm1::session_t *> waiting_for;
   /*
-   * The lock table key and mode of the lock we wait for in
-   * lock_wait, for lock_status; the key is empty when we wait for
-   * none, or behind a writer. Under the database's lock_mu.
+   * The lock we wait for in lock_wait, for lock_status and the
+   * cycle search: its type, storeid and key, the key the caller's,
+   * alive for the wait; its id and mode. waiting_lock is false when
+   * we wait for none, or behind a writer. Under the database's
+   * lock_mu.
    */
-  std::string waiting_key;
+  bool waiting_lock = false;
+  sm1::locktype_t waiting_type = sm1::LOCKTYPE_ROW;
+  uint64_t waiting_storeid = 0;
+  rocksdb::Slice waiting_row;
+  wisr::lockid_t waiting_id{};
   sm1::lockmode_t waiting_mode = sm1::SM_LOCKMODE_SH;
+  /*
+   * The transaction we wait for in lock_wait_xact, or 0, and the
+   * database's rollback_epoch as the wait began. Under lock_mu.
+   */
+  uint64_t waiting_xid = 0;
+  uint64_t waiting_epoch = 0;
 
   wisr::ssi_node_t *ssi = nullptr; /* SERIALIZABLE only (§7) */
 
@@ -364,6 +395,30 @@ int xct_fail_retryable(sm1::session_t *session, sm1::errnum_t e,
 std::mutex &lock_latch(db_t *db, uint64_t storeid, rocksdb::Slice key);
 
 /*
+ * The sessions s waits for now, into out, read from the table under
+ * lock_mu, which the caller holds: the holders whose modes conflict
+ * with the lock s waits for, or the transaction it waits for, while
+ * it runs. Empty if s waits for nothing, or no longer has to.
+ */
+void lock_blockers(db_t *db, sm1::session_t *s,
+                   std::vector<sm1::session_t *> *out);
+
+/*
+ * Take the OID lock (storeid, key) in mode, by the fast path
+ * when it can (§5.1): 0 once held; with nowait, 1 if another
+ * holder conflicts, taking nothing; else, a wait that failed,
+ * -1 with the error set (lock_wait_error).
+ */
+int lock_oid(sm1::session_t *session, uint64_t storeid, rocksdb::Slice key,
+             sm1::lockmode_t mode, bool nowait);
+
+/* Add the session to its database's, for a strong locker's sweep. */
+void lock_register(sm1::session_t *session);
+
+/* Take the session out of its database's, its locks all released. */
+void lock_unregister(sm1::session_t *session);
+
+/*
  * Take the lock (type, storeid, key) in mode if no other holder
  * conflicts, recording it; a holder already converts to the
  * weakest mode covering both. Returns 0, or 2 if another holder
@@ -430,7 +485,33 @@ bool lock_has_latest(sm1::session_t *session, uint64_t storeid,
 void lock_clear_latest(sm1::session_t *session, uint64_t storeid,
                        rocksdb::Slice key);
 
-/* Move every lock s holds to g, the prepared object (§8.4). */
+/*
+ * Test hook: while set, every row lock's key hashes to 0, so a
+ * store's row locks share one lock table entry (lockid_t).
+ */
+extern std::atomic<bool> lock_test_rows_collide;
+
+/*
+ * Append to out the name of lock l: its type byte, be64(storeid),
+ * then its key, as lock_status reports it and a prepared
+ * transaction's record keeps it (§8.4).
+ */
+void lock_put_name(std::string *out, const sm1::session_t::lockref_t &l);
+
+/* The length of that name. */
+size_t lock_name_size(const sm1::session_t::lockref_t &l);
+
+/*
+ * The lock list entry of g's a name stands for, its row key added to
+ * g's lock_keys: false if it is no name.
+ */
+bool lock_from_name(std::string_view name, sm1::session_t *g,
+                    sm1::session_t::lockref_t *l);
+
+/*
+ * Move every lock s holds, and its lock list, to g, the prepared
+ * object (§8.4).
+ */
 void lock_transfer(db_t *db, sm1::session_t *s, sm1::session_t *g);
 
 /* Put a restored transaction's locks back in the table (§9.1). */
@@ -457,10 +538,10 @@ int lock_self_modified(sm1::session_t *session, uint32_t own_seq);
 void lock_release_all(sm1::session_t *session);
 
 /*
- * Release the locks the session took after its first n, the
- * ones a rollback to a savepoint gives back (§6.5).
+ * Release the locks the session took after m, the ones a rollback
+ * to a savepoint gives back (§6.5).
  */
-void lock_release_from(sm1::session_t *session, size_t n);
+void lock_release_from(sm1::session_t *session, const lock_mark_t &m);
 
 /*
  * Delete the COMMITTED status records with commit_ts <= w0, for

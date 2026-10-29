@@ -1,0 +1,23 @@
+# h04 -- a rollback to a savepoint gives back a slot.
+#
+# T1 takes the table's IS after its savepoint, in a slot, and
+# rolls back to the savepoint: the lock goes with what was
+# undone, so T2's X on the table is granted at once, while T1's
+# IS on oid 2, taken before the savepoint, still stops T2's X
+# on oid 2.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 lockoid 2 is -> ok
+@3 T1 savepoint -> 1
+@4 T1 lockoid 1 is -> ok
+@5 T1 rollback 1 -> ok
+@6 T2 lockoid 1 exclusive -> ok
+@7 T2 lockoid 2 exclusive blocks -> blocked
+@8 T1 commit -> ok
+@7 T2 lockoid 2 exclusive blocks -> ok (resumed)
+@9 check last T2 ok -> satisfied
+@10 T2 commit -> ok
+@11 check committed T1 T2 -> satisfied

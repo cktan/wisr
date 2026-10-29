@@ -36,7 +36,7 @@ are the reason the language has the features it has:
 The language stays small for the same reason: one verb per
 API call, no expressions, no variables, no control flow. A
 scenario that needs more belongs in C++ beside `e01` to
-`e03` and `e06`.
+`e03`, `e06` and `e07`.
 
 ## 1. Usage
 
@@ -187,6 +187,7 @@ can be read at a glance. Several steps may share a time.
 | `rollback` | `<depth>` | `ok`, or an error name |
 | `lock` | `<row> <is\|ix\|shared\|six\|exclusive>` | `ok`, or an error name |
 | `lockread` | as `lock` | as `lock`; `selfmodified` on a row changed since the statement began |
+| `lockoid` | `<n> <is\|ix\|shared\|six\|exclusive>` | `ok`, or an error name |
 | `seek` | `<cursor> <key>` | `ok`, or an error name |
 | `stmt` | — | `ok`: starts a statement, for `rc` |
 | `readlatest` | `<row>` | the newest committed value, or `-`; at `rc`, under a lock the session holds |
@@ -225,7 +226,11 @@ transaction's snapshot, so `lock` can also answer `conflict`.
 **`lockread`** is `lock` of a row the running statement read,
 as SQL's FOR UPDATE takes it (`sm1::lock`'s `as_read`): a row
 the transaction changed after the statement began answers
-`selfmodified`, and is not locked (`a18`).
+`selfmodified`, and is not locked (`a18`). **`lockoid`** takes
+the OID lock on the number `n`, as sm3 locks a table by its
+oid: no row and no store, and no check against a snapshot.
+IS and IX take the fast path of `SM1_DESIGN.md` §5.1 while no
+stronger mode is held or asked on the name (`h01` to `h06`).
 
 **`seek`** moves an open cursor forward to a key, that key
 included, keeping the snapshot and bounds it opened with. It
@@ -408,8 +413,8 @@ noise.
   opaque single words; the second, holding the same rows, is
   reached only by `lookup` and `rmstore`.
 - **No expressions, variables, or control flow.** A scenario
-  that needs them belongs in C++ beside `e01` to `e03` and
-  `e06`.
+  that needs them belongs in C++ beside `e01` to `e03`,
+  `e06` and `e07`.
 - **Sessions are one step at a time.** A session with a
   blocked step cannot be given another; doing so is reported
   as an error rather than queued.

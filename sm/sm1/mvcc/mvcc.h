@@ -143,6 +143,9 @@ public:
   /* The store every operation below works on. */
   uint64_t store() const { return m_store; }
 
+  /* The environment, for a session the test opens itself. */
+  sm1::env_t *env() const { return m_env; }
+
   /* Begin T<n> at the level pairing p gives it. */
   void begin(int n, pairing_t p) {
     REQUIRE_MESSAGE(sm1::begin(session(n), level_of(p, n == 3 ? 2 : n)) == 0,

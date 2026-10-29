@@ -1,0 +1,21 @@
+# h06 -- writers share a table; a builder waits for them all.
+#
+# T1 and T2 both take IX, as writers of one table do, each in
+# a slot; IX and IX are compatible, so neither waits. T3's S,
+# as an index build takes it, conflicts with IX: it sweeps both
+# slots into the table and waits for both writers.
+
+
+== pairing RR/RR == T1=RR T2=RR T3=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 lockoid 1 ix -> ok
+@3 T2 lockoid 1 ix -> ok
+@4 T3 lockoid 1 shared blocks -> blocked
+@5 T1 commit -> ok
+@6 T2 commit -> ok
+@4 T3 lockoid 1 shared blocks -> ok (resumed)
+@7 check last T3 ok -> satisfied
+@8 T3 commit -> ok
+@9 check committed T1 T2 T3 -> satisfied

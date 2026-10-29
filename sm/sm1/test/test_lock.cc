@@ -15,6 +15,7 @@
 #include "util.h"
 
 #include "session.h"
+#include "sm0_defer.h"
 #include "sm1.h"
 #include "sm_sys.h"
 
@@ -63,6 +64,31 @@ private:
 /* Set key in store 1 to val; the result of sm1::update. */
 int set(sm1::session_t *s, const std::string &key, const std::string &val) {
   return sm1::update(s, g_store, key, val);
+}
+
+/* The OID lock name of n: 8 bytes, big-endian. */
+std::string oid_of(uint64_t n) {
+  std::string k;
+  for (int i = 7; i >= 0; i--) {
+    k.push_back(static_cast<char>(n >> (8 * i)));
+  }
+  return k;
+}
+
+/* Whether every strong-lock count of s's database is 0. */
+bool no_strong(sm1::session_t *s) {
+  for (const auto &c : s->db->fp_strong) {
+    if (0 != c.load()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/* The number of entries in s's database's lock table. */
+size_t table_size(sm1::session_t *s) {
+  std::lock_guard<std::mutex> guard(s->db->lock_mu);
+  return s->db->lock_table.size();
 }
 
 /* Give a blocking call time to reach its wait. */
@@ -1064,6 +1090,319 @@ TEST_CASE("lock_status lists each lock held, and each waited for in lock") {
   for (int i = 0; i < 4; i++) {
     sm1::closedb(s[i]);
   }
+}
+
+TEST_CASE("a lock list across blocks keeps each lock exact past a savepoint") {
+  // Verify the lock list's blocks (lock_list_t): positions, keys and
+  // a cut hold across block ends, of the list and of its keys.
+  // 1. Make every row key hash alike, so one table entry's holder
+  //    reaches each lock from its first; A locks 512 keys shared,
+  //    exactly two blocks of the list, and converts k0, the
+  //    holder's first entry, and k300 to exclusive, which adds no
+  //    entry.
+  // 2. A sets a savepoint, at the second block's end, then locks
+  //    300 keys more and two of max_keylen, which cannot share a
+  //    key block's room with the keys before.
+  // 3. lock_held finds k0 and k300 exclusive, the last, and the
+  //    long keys; lock_status lists all 814.
+  // 4. A rolls back to the savepoint: only the 512 are held, k300
+  //    still exclusive, and the row keys are cut back to theirs.
+  // 5. A locks one key more, past the savepoint again, then commits:
+  //    the table, the list and the keys are empty.
+  lock_fixture_t f;
+  wisr::lock_test_rows_collide = true;
+  defer { wisr::lock_test_rows_collide = false; };
+  sm1::session_t *a = f.open();
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  auto key = [](int i) { return "k" + std::to_string(i); };
+  auto held = [&](const std::string &k) {
+    sm1::lockmode_t mode;
+    return wisr::lock_held(a, g_store, k, &mode) ? int(mode) : -1;
+  };
+  size_t bytes = 0;
+  for (int i = 0; i < 512; i++) {
+    REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, key(i),
+                      sm1::SM_LOCKMODE_SH) == 0);
+    bytes += key(i).size();
+  }
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, key(0),
+                    sm1::SM_LOCKMODE_EX) == 0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, key(300),
+                    sm1::SM_LOCKMODE_EX) == 0);
+  CHECK(a->locks.size() == 512);
+
+  REQUIRE(sm1::savepoint(a) == 1);
+  for (int i = 512; i < 812; i++) {
+    REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, key(i),
+                      sm1::SM_LOCKMODE_SH) == 0);
+  }
+  std::string big(sm1::max_keylen, 'b');
+  std::string big2(sm1::max_keylen, 'c');
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, big, sm1::SM_LOCKMODE_SH) ==
+          0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, big2, sm1::SM_LOCKMODE_SH) ==
+          0);
+  CHECK(held(key(0)) == sm1::SM_LOCKMODE_EX);
+  CHECK(held(key(811)) == sm1::SM_LOCKMODE_SH);
+  CHECK(held(key(300)) == sm1::SM_LOCKMODE_EX);
+  CHECK(held(big) == sm1::SM_LOCKMODE_SH);
+  CHECK(held(big2) == sm1::SM_LOCKMODE_SH);
+  {
+    std::vector<sm1::lock_status_t> out;
+    REQUIRE(sm1::lock_status(f.env(), out) == 0);
+    CHECK(out.size() == 814);
+  }
+
+  REQUIRE(sm1::rollback(a, 1) == 0);
+  CHECK(a->locks.size() == 512);
+  CHECK(held(key(511)) == sm1::SM_LOCKMODE_SH);
+  CHECK(held(key(512)) == -1);
+  CHECK(held(big) == -1);
+  CHECK(held(big2) == -1);
+  CHECK(held(key(300)) == sm1::SM_LOCKMODE_EX);
+  CHECK(a->lock_keys.size() == bytes);
+
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, key(900),
+                    sm1::SM_LOCKMODE_SH) == 0);
+  CHECK(held(key(900)) == sm1::SM_LOCKMODE_SH);
+  REQUIRE(sm1::commit(a) == 0);
+  {
+    std::lock_guard<std::mutex> guard(a->db->lock_mu);
+    CHECK(a->db->lock_table.empty());
+  }
+  CHECK(a->locks.empty());
+  CHECK(a->lock_keys.empty());
+  sm1::closedb(a);
+}
+
+TEST_CASE("row keys that hash alike share an entry and still lock exactly") {
+  // Verify a lock table entry two row keys share (lockid_t): each
+  // lock stays exact in its holder's list, and is released alone.
+  // 1. Make every row key hash alike; A locks "x" shared and "y"
+  //    exclusive, which share one table entry.
+  // 2. lock_held reports each in its own mode, and "z" not held;
+  //    lock_status lists "x" and "y", each in its own mode.
+  // 3. B's lock of "z", which A never locked, meets the shared entry:
+  //    under qa_nowait it fails with SM_ERR_BLOCKED.
+  // 4. A sets a savepoint, locks "z" shared, and rolls back to it:
+  //    "z" is no longer held, and "x" and "y" still are, so B's lock
+  //    of "z" is still refused; A's row keys are cut back to the two
+  //    taken before the savepoint.
+  // 5. A commits: the table and A's row keys are empty, and B locks
+  //    "z".
+  lock_fixture_t f;
+  wisr::lock_test_rows_collide = true;
+  defer { wisr::lock_test_rows_collide = false; };
+  sm1::session_t *a = f.open(), *b = f.open();
+  REQUIRE(sm1::set_tag(a, 101) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
+          0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "y", sm1::SM_LOCKMODE_EX) ==
+          0);
+  {
+    std::lock_guard<std::mutex> guard(a->db->lock_mu);
+    CHECK(a->db->lock_table.size() == 1);
+  }
+
+  // Each lock A holds, as "key mode", and whether "x", "y", "z" are held.
+  auto rows = [&] {
+    std::vector<sm1::lock_status_t> out;
+    REQUIRE(sm1::lock_status(f.env(), out) == 0);
+    std::vector<std::string> got;
+    for (const auto &r : out) {
+      CHECK(r.storeid == g_store);
+      got.push_back(r.key + " " + std::to_string(r.mode) +
+                    (r.granted ? " held" : " waits"));
+    }
+    std::sort(got.begin(), got.end());
+    return got;
+  };
+  auto held = [&](const char *key) {
+    sm1::lockmode_t mode;
+    return wisr::lock_held(a, g_store, key, &mode) ? int(mode) : -1;
+  };
+  CHECK(held("x") == sm1::SM_LOCKMODE_SH);
+  CHECK(held("y") == sm1::SM_LOCKMODE_EX);
+  CHECK(held("z") == -1);
+  CHECK(rows() == std::vector<std::string>{
+                      "x " + std::to_string(sm1::SM_LOCKMODE_SH) + " held",
+                      "y " + std::to_string(sm1::SM_LOCKMODE_EX) + " held",
+                  });
+
+  REQUIRE(sm1::set_qa_nowait(b, true) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
+        -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+
+  REQUIRE(sm1::savepoint(a) == 1);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
+          0);
+  CHECK(held("z") == sm1::SM_LOCKMODE_SH);
+  REQUIRE(sm1::rollback(a, 1) == 0);
+  CHECK(held("z") == -1);
+  CHECK(held("x") == sm1::SM_LOCKMODE_SH);
+  CHECK(held("y") == sm1::SM_LOCKMODE_EX);
+  CHECK(a->lock_keys.size() == 2);
+  CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
+        -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+
+  REQUIRE(sm1::commit(a) == 0);
+  {
+    std::lock_guard<std::mutex> guard(a->db->lock_mu);
+    CHECK(a->db->lock_table.empty());
+  }
+  CHECK(a->lock_keys.empty());
+  CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
+        0);
+  REQUIRE(sm1::commit(b) == 0);
+  sm1::closedb(a);
+  sm1::closedb(b);
+}
+
+TEST_CASE("a weak table lock takes a slot, and a strong one moves it") {
+  // Verify the fast path (§5.1): IS and IX on an oid are in the
+  // session's slots, and a strong lock meets them in the table.
+  // 1. A locks oid 1 IS and oid 2 IX: two slots, an empty table.
+  // 2. B's trylock of oid 1 X fails: A's IS moved to the table,
+  //    and the count B took is given back.
+  // 3. C locks oid 1 IS: no count, so a slot, and the table holds
+  //    A's alone.
+  // 4. A and C commit: no slot, no entry, no count is left.
+  lock_fixture_t f;
+  sm1::session_t *a = f.open(), *b = f.open(), *c = f.open();
+  for (sm1::session_t *s : {a, b, c}) {
+    REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  }
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid_of(1), sm1::SM_LOCKMODE_IS) ==
+          0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid_of(2), sm1::SM_LOCKMODE_IX) ==
+          0);
+  CHECK(a->fp_used == 2);
+  CHECK(table_size(a) == 0);
+
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(1), sm1::SM_LOCKMODE_EX) ==
+        1);
+  CHECK(a->fp_used == 1);
+  CHECK(table_size(a) == 1);
+  CHECK(no_strong(a));
+
+  REQUIRE(sm1::lock(c, sm1::LOCKTYPE_OID, 0, oid_of(1), sm1::SM_LOCKMODE_IS) ==
+          0);
+  CHECK(c->fp_used == 1);
+  CHECK(table_size(a) == 1);
+
+  REQUIRE(sm1::commit(a) == 0);
+  REQUIRE(sm1::commit(c) == 0);
+  CHECK(a->fp_used == 0);
+  CHECK(c->fp_used == 0);
+  CHECK(table_size(a) == 0);
+  CHECK(no_strong(a));
+  REQUIRE(sm1::commit(b) == 0);
+  for (sm1::session_t *s : {a, b, c}) {
+    sm1::closedb(s);
+  }
+}
+
+TEST_CASE("a slot's entry is its own, wherever it is in the list") {
+  // Verify a fast-path slot keeps its own list entry's position:
+  // a conversion in the slot, a listing and a sweep reach it, not
+  // the entry before it.
+  // 1. A locks row "x" shared, then oid 7 IS, in a slot, then
+  //    oid 7 IX, which the slot converts.
+  // 2. lock_status lists "x" shared and oid 7 IX.
+  // 3. B's trylock of oid 7 S fails: A's slot is moved to the table,
+  //    so no slot is used, and the table holds "x" and oid 7.
+  // 4. lock_status lists the same two.
+  // 5. A commits: no entry, slot or count is left.
+  lock_fixture_t f;
+  sm1::session_t *a = f.open(), *b = f.open();
+  for (sm1::session_t *s : {a, b}) {
+    REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  }
+  // What the database lists, as "key mode", the oid as "oid".
+  auto rows = [&] {
+    std::vector<sm1::lock_status_t> out;
+    REQUIRE(sm1::lock_status(f.env(), out) == 0);
+    std::vector<std::string> got;
+    for (const auto &r : out) {
+      got.push_back((sm1::LOCKTYPE_OID == r.type ? "oid" : r.key) + " " +
+                    std::to_string(r.mode));
+    }
+    std::sort(got.begin(), got.end());
+    return got;
+  };
+  const std::vector<std::string> want = {
+      "oid " + std::to_string(sm1::SM_LOCKMODE_IX),
+      "x " + std::to_string(sm1::SM_LOCKMODE_SH),
+  };
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
+          0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid_of(7), sm1::SM_LOCKMODE_IS) ==
+          0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid_of(7), sm1::SM_LOCKMODE_IX) ==
+          0);
+  CHECK(a->fp_used == 1);
+  CHECK(rows() == want);
+
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(7), sm1::SM_LOCKMODE_SH) ==
+        1);
+  CHECK(a->fp_used == 0);
+  CHECK(table_size(a) == 2);
+  CHECK(rows() == want);
+
+  REQUIRE(sm1::commit(a) == 0);
+  CHECK(a->fp_used == 0);
+  CHECK(table_size(a) == 0);
+  CHECK(no_strong(a));
+  REQUIRE(sm1::commit(b) == 0);
+  sm1::closedb(a);
+  sm1::closedb(b);
+}
+
+TEST_CASE("table locks past the slots go to the table, and all are held") {
+  // Verify a transaction with more table locks than slots (§5.1).
+  // 1. A locks 40 oids IS: 32 in slots, 8 in the table.
+  // 2. lock_status lists all 40, held.
+  // 3. B's trylock X fails on the first oid, in a slot, and on the
+  //    last, in the table.
+  // 4. A commits: B's X on both is granted, and once B commits no
+  //    slot, entry or count is left.
+  lock_fixture_t f;
+  sm1::session_t *a = f.open(), *b = f.open();
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  for (uint64_t n = 1; n <= 40; n++) {
+    REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid_of(n),
+                      sm1::SM_LOCKMODE_IS) == 0);
+  }
+  CHECK(a->fp_used == sm1::session_t::fp_slots);
+  CHECK(table_size(a) == 40 - sm1::session_t::fp_slots);
+  std::vector<sm1::lock_status_t> out;
+  REQUIRE(sm1::lock_status(f.env(), out) == 0);
+  CHECK(out.size() == 40);
+  for (const auto &r : out) {
+    CHECK(r.granted);
+    CHECK(r.mode == sm1::SM_LOCKMODE_IS);
+  }
+
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(1), sm1::SM_LOCKMODE_EX) ==
+        1);
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(40),
+                     sm1::SM_LOCKMODE_EX) == 1);
+  REQUIRE(sm1::commit(a) == 0);
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(1), sm1::SM_LOCKMODE_EX) ==
+        0);
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(40),
+                     sm1::SM_LOCKMODE_EX) == 0);
+  REQUIRE(sm1::commit(b) == 0);
+  CHECK(a->fp_used == 0);
+  CHECK(table_size(a) == 0);
+  CHECK(no_strong(a));
+  sm1::closedb(a);
+  sm1::closedb(b);
 }
 
 TEST_CASE("a cycle a wait closes is found as it begins, whatever deadlock_ms") {

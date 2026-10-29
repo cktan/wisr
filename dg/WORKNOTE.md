@@ -10012,3 +10012,173 @@ each made reachable in turn:
   as PostgreSQL 18's has; collations and operator classes
   other than a column's own are refused for an index key, so
   `LIKE` never copies one.
+
+## Step 337: the lock table keyed by two words
+
+`bench/roles.sh`'s t16, sixteen tables a statement, scaled 2.8×
+from 1 to 16 clients, the superuser's as much as a role's. The
+gdb profile: 57% of the session threads' busy samples waiting
+for sm1's `lock_mu` in `lock_try`, 12% waking the next; a
+statement takes 16 table locks and releases them at commit, all
+under that one mutex, ~640 thousand holds a second.
+
+- **sm1** (`../sm/sm1/SM1_DESIGN.md` §5.1): the lock table's key
+  is `lock_key_t`, two 64-bit words, the storeid and the oid, or
+  a hash of a row's key; no allocation finds or adds an entry,
+  where the string key was allocated, and an entry's string again
+  as it was made, under the mutex. A row's exact key stays in the
+  session's lock list; a holder counts the entries of its list
+  that share its table entry, and knows the first, so two rows
+  hashed alike are still released alone. `lock_transfer` moves
+  the list with the holders, under one hold of the mutex.
+- **Tests**: sm1, with every row key hashed alike: two locks stay
+  exact, a third key conflicts, a savepoint releases only its own,
+  and a prepared transaction's come back exactly after a restart.
+  5 mutations caught.
+- **Measured**, release, prepared t16 at 1, 4, 8, 16 clients:
+  13.1, 36.4, 41.9, 38.7 thousand tps before; 14.3–14.6,
+  41.5–42.5, 59.1–60.6, 71.9–75.5 after, two runs; the server's
+  CPU a transaction at 16 clients 208 to 121 µs. t1 unchanged.
+- **Found**: 36% of the busy samples at 16 clients still wait for
+  `lock_mu` in `lock_try`. Next, PostgreSQL's fast path: a table's
+  IS and IX locks in slots of the session's own.
+
+## Step 338: a table's IS and IX in slots of the session's own
+
+After step 337, 36% of t16's busy samples at 16 clients still
+waited for `lock_mu` in `lock_try`: every statement takes its
+tables' IS, and every session meets every other at that mutex.
+
+- **sm1** (`../sm/sm1/SM1_DESIGN.md` §5.1, PostgreSQL's fast
+  path): an OID lock taken IS or IX is kept in one of 32 slots
+  of the session's own, under its `fp_mu`, not in the lock
+  table, while a count in `fp_strong`, 1,024 by the key's hash,
+  is 0. A strong lock (S, SIX, X) raises its key's count, then
+  sweeps the slots of every session of the database
+  (`fp_sessions`) for its key into the table, and locks as any
+  lock; its count goes when it is released, or at once if none
+  is taken. A transaction whose locks are all in slots takes no
+  `lock_mu` to take or release them. A prepare moves the slots
+  into the table; a restored transaction counts its strong OID
+  locks again; `lock_status` lists the slots.
+- **`lock_oid`** takes an OID lock, out of `access.cc`'s
+  `lock_row`; its doc comment has a SELECT that skips `lock_mu`
+  and an ALTER TABLE that cannot.
+- **Tests**: 6 isolation scenarios, `h01` to `h06`, through a
+  new driver verb, `lockoid`: DDL waits for a reader in a slot;
+  a reader waits for DDL; a reader converts its own slot; a
+  savepoint gives a slot back; a deadlock through a moved slot;
+  writers share a table and a builder waits for them. sm1: slots
+  and the table counted directly; 40 locks past the 32 slots;
+  a prepared transaction's table locks across a restart. 8
+  mutations caught.
+- **Measured**, release, prepared t16 at 1, 4, 8, 16 clients:
+  14.5–14.8, 44.7–45.2, 74.6–75.1, 124.5–125.8 thousand tps,
+  8.6× (step 337: 72–76 at 16); the server's CPU a transaction
+  at 16 clients 65 µs (step 337: 121). No sample waits for
+  `lock_mu`; 14% wait for the snapshot's mutex
+  (`db_take_snapshot`, `db_release_snapshot`).
+- **Next** (`../sm/NEXT.md` §1, item 4): the lock table a hash
+  table of its own, measured without digres or sm.
+
+## Step 339: the deadlock search reads its edges from the table
+
+A stress test of table locks, `e07`, written to check step 338
+under load, found transactions doomed as deadlock victims though
+every one waited in one order of oids, so none could close a
+cycle; at step 337 too, so older than the fast path. The cycles
+were of edges no longer there: a waiter's `waiting_for` is what
+its wait saw when it last looked. A holder that releases wakes
+it, but until it runs again its list still names the holder,
+which may by then wait, in a transaction of its own, on
+something the waiter holds; the search walked those lists.
+
+- **sm1** (`../sm/sm1/SM1_DESIGN.md` §5.1): the search reads a
+  waiter's edges from the lock table as it walks
+  (`lock_blockers`), as PostgreSQL's detector does: the holders
+  that hold, now, a mode conflicting with the one it asks, or the
+  transaction it waits for, while that runs and was not rolled
+  back since. `sm1::waits_for` reads them the same way.
+- **Tests**: `e07`, eight threads locking four oids in all five
+  modes, converting, rolling back to savepoints, aborting and
+  preparing, sessions opened and closed and the locks listed
+  meanwhile; a count per oid and mode beside the engine finds
+  two incompatible modes granted at once. 121 to 135 victims a
+  run at step 337, 31 at step 338, none now. Mutations caught:
+  the old edges; and of step 338, no count read, no sweep, no
+  count released, no slot moved at a prepare. Not caught by it:
+  the count released before the hold, its window a few
+  instructions under `lock_mu`.
+- **TSan**: sm1's tests, `e07` among them, and digres's tsan
+  build (`run.sh`, 11 files in 8 sessions; `server.sh`): no
+  report.
+
+## Step 340: a lock's key in a buffer of the session's
+
+A row lock kept its exact key in a `std::string` of its list
+entry, allocated, past 15 bytes, under `lock_mu`; a waiter copied
+its lock's name; a prepared record built each name in a string
+of its own.
+
+- **sm1** (`../sm/sm1/SM1_DESIGN.md` §5.1): a row lock's key is
+  appended to `lock_keys`, one buffer of the session's, its entry
+  keeping the offset and length; a rollback to a savepoint cuts
+  the buffer back with the list, a commit empties it, keeping its
+  room; a prepare hands it to the prepared transaction with the
+  list. A waiter keeps its key as the caller's `Slice`, alive for
+  the wait. `lock_put_name` appends a name to the prepared record,
+  which is unchanged on disk. Only `lock_status` makes strings,
+  the public `lock_status_t::key`.
+- **Tests**: sm1, the buffer cut back at a savepoint and empty at
+  commit; after a prepare, the session's empty and the prepared
+  transaction's locks listed exactly. 4 mutations caught: no cut,
+  a cut of all, the buffer kept from the prepared transaction,
+  every key at offset 0.
+- **Left**: the buffer, and the lock list, grow under `lock_mu`,
+  a row lock appending there.
+
+## Step 341: a list of blocks, cut back to a mark
+
+The lock list and its key buffer are vectors, which grow under
+`lock_mu`, moving what they hold.
+
+- **sm0** (`../sm/sm0/README.md`): `blist_t<T, N>`, in
+  `include/sm0_blist.h`, a list of blocks of N entries, linked
+  oldest first. An entry never moves; `emplace` constructs one
+  in place; a mark is a block and its top, and a cut to it gives
+  the blocks past it to a list of spares, up to four, which the
+  appends that follow take before allocating. `reserve()` makes
+  sure of a spare. With `T = char`, `alloc(n)` takes n bytes that
+  never straddle two blocks, and n above N a block of its own.
+- **Tests**: sm0, entries stable across blocks; cuts at the
+  start, mid-block and a full block's end; spares reused and
+  capped; keys kept whole; swap. 15 mutations caught, under
+  ASan and UBSan.
+- **Left**: sm1's lock list and key buffer still vectors.
+
+## Step 342: the lock list and its keys in blocks
+
+A session's lock list and its row keys were vectors, grown under
+`lock_mu` as a row lock was taken there, moving what they held:
+a holder and a slot named their entry by index, an entry its key
+by offset.
+
+- **sm1** (`../sm/sm1/SM1_DESIGN.md` §5.1): both are step 341's
+  `blist_t`, of 256 entries and 8 KB a block; `lockref_t` moves
+  to `db.h`. A holder keeps its first entry's position, a slot
+  its entry's, an entry a pointer to its key, a savepoint a mark
+  of each (`lock_mark_t`); a release cuts both back, keeping up to
+  four blocks each. `lock_try` makes room before it takes
+  `lock_mu`, and no key is longer than a key block
+  (`max_keylen`, 4096), so the list and its keys allocate nothing
+  under it. The list links only forward: a search of it looks at
+  the newest entry, then from the oldest; one from a holder runs
+  forward from its first. `lock_put_name` no longer takes the
+  session.
+- **Tests**: sm1, 512 row locks hashed alike, two blocks exactly,
+  a savepoint at the second's end, 300 more and two of
+  `max_keylen`, the holder's first entry converted, a rollback and
+  a commit; a slot whose entry is not the list's first, converted,
+  listed and swept. dg, `select_for_update_many.sql`, 1,000 rows
+  FOR UPDATE past a savepoint, as `pg_lock_status()` lists them.
+  9 mutations caught.

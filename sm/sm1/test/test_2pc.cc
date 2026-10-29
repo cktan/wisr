@@ -10,6 +10,7 @@
 
 #include "db.h"
 #include "session.h"
+#include "sm0_defer.h"
 #include "sm1.h"
 
 #include <signal.h>
@@ -18,8 +19,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <set>
 #include <string>
 #include <thread>
@@ -446,6 +449,116 @@ TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
   CHECK(rc == 0);
   REQUIRE(sm1::commit(u) == 0);
   sm1::closedb(u);
+  sm1::closedb(v);
+}
+
+TEST_CASE("row locks whose keys hash alike come back exactly after a "
+          "restart") {
+  // Verify a prepared transaction's record keeps each row lock by its
+  // exact key, though the two share a lock table entry (§8.4, §9.1).
+  // 1. Make every row key hash alike; S locks "a" shared and "b"
+  //    exclusive, writes nothing, and prepares "g": S keeps no row
+  //    key, and lock_status lists g's two locks, "a" shared and "b"
+  //    exclusive, their keys gone to g with them.
+  // 2. Restart the environment, so "g" is rebuilt from its record.
+  // 3. lock_status lists g's two locks again, and the table holds
+  //    them as one hold of g's, of two.
+  // 4. Aborting "g" by gid leaves the lock table empty.
+  tpc_fixture_t f;
+  wisr::lock_test_rows_collide = true;
+  defer { wisr::lock_test_rows_collide = false; };
+  sm1::session_t *s = f.open();
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "a", sm1::SM_LOCKMODE_SH) ==
+          0);
+  REQUIRE(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "b", sm1::SM_LOCKMODE_EX) ==
+          0);
+  REQUIRE(sm1::prepare(s, "g") == 0);
+  CHECK(s->lock_keys.empty());
+
+  // The locks lock_status lists, as "key mode", sorted.
+  auto listed = [&] {
+    std::vector<sm1::lock_status_t> out;
+    REQUIRE(sm1::lock_status(f.home().env(), out) == 0);
+    std::vector<std::string> got;
+    for (const auto &r : out) {
+      got.push_back(r.key + " " + std::to_string(r.mode));
+    }
+    std::sort(got.begin(), got.end());
+    return got;
+  };
+  const std::vector<std::string> both = {
+      "a " + std::to_string(sm1::SM_LOCKMODE_SH),
+      "b " + std::to_string(sm1::SM_LOCKMODE_EX),
+  };
+  CHECK(listed() == both);
+  sm1::closedb(s);
+  f.restart();
+
+  sm1::session_t *v = f.open();
+  CHECK(listed() == both);
+  {
+    std::lock_guard<std::mutex> guard(v->db->lock_mu);
+    REQUIRE(v->db->lock_table.size() == 1);
+    const auto &holders = v->db->lock_table.begin()->second.holders;
+    REQUIRE(holders.size() == 1);
+    CHECK(holders[0].refs == 2);
+  }
+  REQUIRE(sm1::abort_prepared(v, "g") == 0);
+  {
+    std::lock_guard<std::mutex> guard(v->db->lock_mu);
+    CHECK(v->db->lock_table.empty());
+  }
+  sm1::closedb(v);
+}
+
+TEST_CASE("a prepared transaction's table locks keep DDL out, across a "
+          "restart") {
+  // Verify the fast path's locks reach the PREPARED record, and a
+  // strong one's count comes back with it (§5.1, §8.4, §9.1).
+  // 1. S locks oid 1 IS, in a slot, and oid 2 X, and prepares "g".
+  // 2. V's trylock of oid 1 X fails, the IS gone to the table with
+  //    the prepare, and of oid 2 IS fails, X counted.
+  // 3. Restart; both fail again, "g" rebuilt from its record.
+  // 4. Aborting "g" frees both: V's two trylocks succeed, and no
+  //    count is left.
+  tpc_fixture_t f;
+  std::string oid1(7, '\0'), oid2(7, '\0');
+  oid1.push_back('\x01');
+  oid2.push_back('\x02');
+  sm1::session_t *s = f.open();
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::lock(s, sm1::LOCKTYPE_OID, 0, oid1, sm1::SM_LOCKMODE_IS) == 0);
+  REQUIRE(sm1::lock(s, sm1::LOCKTYPE_OID, 0, oid2, sm1::SM_LOCKMODE_EX) == 0);
+  CHECK(s->fp_used == 1);
+  REQUIRE(sm1::prepare(s, "g") == 0);
+  CHECK(s->fp_used == 0);
+
+  // V's two tries, each refused while "g" holds its locks.
+  auto refused = [&](sm1::session_t *v) {
+    REQUIRE(sm1::begin(v, sm1::xctlevel_t::repeatable_read) == 0);
+    CHECK(sm1::trylock(v, sm1::LOCKTYPE_OID, 0, oid1, sm1::SM_LOCKMODE_EX) ==
+          1);
+    CHECK(sm1::trylock(v, sm1::LOCKTYPE_OID, 0, oid2, sm1::SM_LOCKMODE_IS) ==
+          1);
+    REQUIRE(sm1::commit(v) == 0);
+  };
+  sm1::session_t *v = f.open();
+  refused(v);
+  sm1::closedb(v);
+  sm1::closedb(s);
+  f.restart();
+
+  v = f.open();
+  refused(v);
+  REQUIRE(sm1::abort_prepared(v, "g") == 0);
+  REQUIRE(sm1::begin(v, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(sm1::trylock(v, sm1::LOCKTYPE_OID, 0, oid1, sm1::SM_LOCKMODE_EX) == 0);
+  CHECK(sm1::trylock(v, sm1::LOCKTYPE_OID, 0, oid2, sm1::SM_LOCKMODE_IS) == 0);
+  REQUIRE(sm1::commit(v) == 0);
+  for (const auto &c : v->db->fp_strong) {
+    CHECK(0 == c.load());
+  }
   sm1::closedb(v);
 }
 

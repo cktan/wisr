@@ -686,12 +686,63 @@ refused with `SM_ERR_UPDATED` keeps the key locked X until
 the re-read (§5.4). A wait on a transaction is an edge in the
 waits-for graph to the session running it, found through a
 map from `xid` to session beside the active table; a prepared
-transaction waits on no one. The
-key is exact, so two distinct keys never share an entry and never
-block or deadlock each other. One mutex covers the table and
-every waiter's waits-for list, which keeps a deadlock walk
-consistent; sharding it is a later optimization if a benchmark
-shows contention.
+transaction waits on no one.
+
+A lock's id in the table is two 64-bit words, `lockid_t`
+(`src/db.h`): the storeid, its top bit flipped for an OID lock
+so the two types never meet, and the oid itself or a 64-bit hash
+of a row's key. An OID lock's id is exact. Two rows of a store
+whose keys hash alike share an entry, and so block each other,
+and could deadlock: a false conflict, never a missed one, and
+with 64 bits not one a workload meets. What must be exact is
+kept exact in the transaction's own lock list, `T.locks`, each
+row's key in a buffer of the session's (`lock_keys`), taken as
+the lock is and cut back with the list at a savepoint: whether
+it holds a key and in which mode, the mark §5.4 sets, the
+prepared record's lock set (§8.4) and `sm1::lock_status`. A
+holder counts the entries of its list that share its table
+entry, from the first, so releasing one leaves the others held.
+The list and the buffer are sm0's `blist_t`, blocks whose
+entries never move: a holder keeps its first entry's position,
+a fast-path slot its entry's, an entry its key's pointer, and a
+savepoint a mark of each. A cut keeps up to four blocks for the
+locks to come, and `lock_try` makes room before it takes
+`lock_mu`, a key never longer than a key block, so a lock
+allocates nothing under the mutex for the list or its key. The
+id costs no allocation either, as the table needs none to find
+or add an entry.
+One mutex covers the table and every waiter's waits-for list,
+which keeps a deadlock walk consistent.
+
+**The fast path**, PostgreSQL's for a relation's weak locks
+(its `lock.c`, 9.2). A table's readers and writers take IS and
+IX on its oid, which never conflict with each other, so each
+needs to be seen only by a strong lock, S, SIX or X, which DDL
+takes. An OID lock in IS or IX is kept in one of 32 slots of
+its session's own, under the session's `fp_mu`, and not in the
+table, while no strong lock is held or asked on a key that
+hashes with it: one of 1,024 counts in the database,
+`fp_strong`, is 0. A strong locker adds itself to its key's
+count, then sweeps every session of the database (`fp_sessions`,
+under `fp_reg_mu`), moving each slot for its key into the table
+under that session's `fp_mu`; then it locks as any lock does,
+meeting the weak holders there, in the waits-for graph too. Its
+count goes when the lock is released, or at once if none is
+taken. The two orders meet at the session's `fp_mu`: a weak
+locker reads the count under it, and a sweep takes it after the
+count is raised, so either the sweep finds the slot or the weak
+locker sees the count and goes to the table. A strong lock of
+the session's own on the key is counted already and sweeps
+nothing; a weak lock asked while the count is not 0 moves the
+session's own slot for the key to the table first. A slot is
+released at commit, abort or a rollback past it, under `fp_mu`
+alone: a transaction whose locks are all in slots takes no
+`lock_mu` at all. A prepare moves the slots into the table,
+the prepared transaction being in no sweep's list, and a
+restored one counts its strong OID locks again. `lock_status`
+lists the slots with the table. The mutexes are taken in one
+order: the environment's, `fp_reg_mu`, a session's `fp_mu`,
+`lock_mu`. Row locks take no fast path.
 
 **Conversions.** A transaction holding a key in one mode and
 asking for one it does not cover — including by writing it —
@@ -760,6 +811,22 @@ and each `deadlock_ms` after. If it can reach itself, the
 fails with `SM_ERR_DEADLOCK`. The search is a walk of the
 waits-for edges under `lock_mu`, so a wait pays for one as it
 begins; there is no detector thread.
+
+**The edges are read from the lock table as the search walks**
+(`lock_blockers`), as PostgreSQL's detector reads its lock
+table: a waiter waits on the holders that hold, now, a mode
+conflicting with the one it asks, or on the transaction it waits
+for while that still runs, and was not rolled back since. A
+waiter's own list, `waiting_for`, is what its wait saw when it
+last looked, and goes stale the moment a holder releases: the
+waiter is woken, but until it runs again its list still names
+the holder, which may by then be waiting in a new transaction
+on something the waiter holds. Walking those lists found such
+cycles that no longer existed and doomed a transaction that
+did not need to fail (`../dg/WORKNOTE.md` step 339; `e07`).
+Every lock a waiter can wait on is in the table: a strong lock
+moves the weak ones from their slots before it waits, and a weak
+lock waits only on strong ones (§5.1).
 
 The waits-for edges form a **graph, not a chain**: a waiter waits
 on every holder whose mode conflicts with the one it asks, and
