@@ -91,6 +91,42 @@ and so are the catalog tables psql reads
       costs within 3% of a superuser's. What is left, if more,
       is the checks PostgreSQL itself makes, and is PostgreSQL's
       cost too.
+3. **A secondary index's scan, against PostgreSQL's**
+   (`../dg/WORKNOTE.md` steps 333 and 335). Instructions
+   counted per statement, servers pinned, on 2026-10-29: Q9,
+   `sum(c1)` of 100 rows by `wide_mixed`'s `c2`, costs digres
+   about 11,400 a row and PostgreSQL 1,470; of digres's, 2,800
+   the index entry and 8,400 the row read by its key.
+
+   | Per row or entry | digres | PostgreSQL |
+   | --- | --- | --- |
+   | an index entry, index-only scan | 2,820 | 695 |
+   | a row, by its key (`MultiGet`) | 8,400 | |
+   | a row, from a cursor (Q6's primary key range) | 2,300 | 1,470 |
+
+   In order, each measured as above:
+
+   1. **Read sorted, close keys with one cursor**, a seek and
+      then the next, not `MultiGet` (`BATCHREAD.md`): about
+      6,000 a row of Q9. A design change; a note first.
+   2. **sm2 decodes an entry's value once** (`idx_scannxt()`
+      and `entry_row()` in `sm2/src/rel/index.cc`): the cut
+      flag and the row's key are each decoded alone, and the
+      value copied; about 540 an entry.
+   3. **An entry that is all key**, as MyRocks's: the row's
+      key, which a non-unique entry's key already ends with,
+      not repeated in its value, and the cut flag a byte of
+      the key, so an index without INCLUDE columns has an
+      empty value. A format change of sm2's.
+   4. **Entries packed many to a key**, to be decided. RocksDB's
+      `Next` alone costs about 1,110 a key, more than all of
+      PostgreSQL's entry: one key an entry cannot reach it.
+      Packed, frozen entries keyed by a run's last entry keep
+      sm1's MVCC for new writes but need repacking and a
+      second cursor; B-tree pages of their own, latched,
+      reach PostgreSQL only at 8 KB a page, as a second
+      storage engine: its own latches, splits, vacuum,
+      predicate locks, unique checks and visibility map.
 
 Low priority:
 
