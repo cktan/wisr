@@ -113,6 +113,9 @@ void pg_global_load(sm_env_t *env) {
 /* Whether the roles were read: not in a process with no data directory. */
 bool pg_global_is_loaded(void) { return nullptr != shmem->pg_global; }
 
+/* aa's state of pg_global, for a call of aa's own; loaded at startup. */
+aa_env_t *pg_global_env(void) { return shmem->pg_global.get(); }
+
 /* This session's aa state, made at its first use; NULL with no session. */
 static aa_session_t *session_state(void) {
   if (nullptr == tcb)

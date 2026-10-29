@@ -9707,3 +9707,30 @@ design, `ROLE.md`, moves with it to `../aa/ROLE.md`.
   temporary objects; ACL text, default and intersection. Each
   of 11 mutations of aa was caught by its case. digres's
   suites pass unchanged.
+
+## Step 327: how a client gets in, decided by aa
+
+`../aa/ROLE.md` §5's checks, but CONNECT, move to aa
+(`../aa/src/aa_auth.cc`), as three calls, one for each moment
+of a connection they fall in; digres reads the socket's peer,
+the clock and its sessions, passes them in, and tells the
+client what it told it before.
+
+- **Before the exchange**, `aa_auth_method()`: peer on the
+  local socket if the OS user is the role's name, or owns the
+  data directory and asks for the bootstrap superuser (then
+  `Port.datadir_owner`); else the password, and over TCP
+  always. `hba_getauthmethod()` calls it.
+- **During it**, `aa_role_secret()`: the SCRAM secret, or why
+  there is none for the log: no such role, no password, past
+  VALID UNTIL. `get_role_password()` calls it.
+- **After it**, `aa_login_refused()`: LOGIN, VALID UNTIL, and
+  CONNECTION LIMIT by the sessions digres counts, which a
+  superuser has none of; the data directory's owner passes.
+  `InitializeSessionUserId()` calls it.
+- **CONNECT stays in `CheckMyDatabase()`**: it follows
+  memberships, which aa does not evaluate yet.
+- **Tests**: aa's, three cases, each of 11 mutations caught,
+  one only after a case was added (another OS user asking for
+  the superuser). digres's `initdb.sh` and `server.sh` cases of
+  §5 pass unchanged.

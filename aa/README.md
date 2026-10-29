@@ -50,6 +50,7 @@ messages (`../dg/src/backend/utils/init/pg_global.c`).
 | `src/aa.cc` | the process's state, a session's, and the commit protocol |
 | `src/aa_store.cc` | `pg_global`'s tables: made, read, written |
 | `src/aa_acl.cc` | ACLs: their text, the default, the intersection |
+| `src/aa_auth.cc` | how a client gets in: the method, the secret, the login checks |
 | `src/aa_error.cc` | the thread's error state |
 | `src/aa_internal.h` | what aa's files share |
 | `test/` | doctest cases, on a throwaway home (`home.h`) |
@@ -76,6 +77,14 @@ messages (`../dg/src/backend/utils/init/pg_global.c`).
   writes each entry as the transaction left it.
   `aa_abort()` puts back what `aa_commit()` wrote if the
   database's commit failed.
+- **How a client gets in** (`ROLE.md` §5) is decided here and
+  carried out by digres: `aa_auth_method()` before the
+  exchange, peer or password; `aa_role_secret()` during it;
+  `aa_login_refused()` after it, LOGIN, VALID UNTIL and
+  CONNECTION LIMIT. digres reads the socket's peer, the clock
+  and its sessions, and passes them in; CONNECT on the
+  database is still digres's, until privileges are evaluated
+  here.
 - **Other sessions learn of a change by its epoch**:
   `aa_roles_moved()` once the roles are replaced, and
   `aa_objects_moved()` with the oids of the objects changed,

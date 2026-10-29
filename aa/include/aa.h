@@ -309,4 +309,40 @@ bool aa_roles_moved(aa_session_t *s);
 bool aa_objects_moved(aa_session_t *s, uint64_t dbid,
                       std::vector<aa_oid_t> *oids, bool *all);
 
+/* ---- authentication: ROLE.md section 5 ---- */
+
+/* How a client proves who it is. */
+enum aa_method_t {
+  AA_PEER = 1,    /* the OS user at the socket's other end */
+  AA_PASSWORD = 2 /* the role's SCRAM-SHA-256 secret */
+};
+
+/*
+ * What a client connecting as rolname must prove, before the exchange:
+ * on the local socket (local), peer if os_user, the OS user at its other
+ * end, is rolname, or if os_owner, that user owns the data directory and
+ * rolname is the bootstrap superuser's name, *as_owner then set; else
+ * the password. Over TCP, the password. os_user is NULL if the kernel
+ * cannot say, or over TCP.
+ */
+aa_method_t aa_auth_method(aa_env_t *env, const char *rolname, bool local,
+                           const char *os_user, bool os_owner, bool *as_owner);
+
+/*
+ * The SCRAM secret of rolname's password, into *secret, for the
+ * exchange: false, with why for the log, if the role does not exist, has
+ * no password, or is past VALID UNTIL at now (PostgreSQL's TimestampTz).
+ */
+bool aa_role_secret(aa_env_t *env, const char *rolname, int64_t now,
+                    std::string *secret, std::string *why);
+
+/*
+ * After the exchange: why role may not log in, for the log, or NULL if
+ * it may: not LOGIN, past VALID UNTIL at now, or past its CONNECTION
+ * LIMIT with sessions of its own open, this one among them (a superuser
+ * has no limit). as_owner, the data directory's owner, is always let in.
+ */
+const char *aa_login_refused(const aa_role_t &role, int64_t now, int sessions,
+                             bool as_owner);
+
 #endif /* AA_H */

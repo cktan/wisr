@@ -608,18 +608,15 @@ void InitializeSessionUserId(const char *rolename, Oid roleid,
    * directory's owner, as the bootstrap superuser, always is.  The client
    * is told what a wrong password tells it, and the log which check failed.
    */
-  if (IsUnderPostmaster && !bypass_login_check &&
-      !(NULL != MyProcPort && MyProcPort->datadir_owner)) {
-    const char *why = NULL;
+  if (IsUnderPostmaster && !bypass_login_check) {
+    /* Only a regular backend counts against a CONNECTION LIMIT. */
+    int sessions = 0 <= role.rolconnlimit && AmRegularBackendProcess()
+                       ? sessions_of_role(role.oid)
+                       : 0;
+    const char *why = aa_login_refused(
+        role, GetCurrentTimestamp(), sessions,
+        NULL != MyProcPort && MyProcPort->datadir_owner);
 
-    if (!role.rolcanlogin)
-      why = "is not permitted to log in";
-    else if (role.has_validuntil &&
-             role.rolvaliduntil < GetCurrentTimestamp())
-      why = "is past its VALID UNTIL";
-    else if (0 <= role.rolconnlimit && AmRegularBackendProcess() &&
-             !role.rolsuper && sessions_of_role(role.oid) > role.rolconnlimit)
-      why = "has reached its CONNECTION LIMIT";
     if (NULL != why)
       ereport(FATAL, (errcode(ERRCODE_INVALID_PASSWORD),
                       errmsg("password authentication failed for user \"%s\"",

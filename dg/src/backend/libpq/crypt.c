@@ -36,24 +36,15 @@ thread_local /*LOCAL*/ bool md5_password_warnings = true;
  * sent to the client, to avoid giving away user information!
  */
 char *get_role_password(const char *role, const char **logdetail) {
-  /* The roles are pg_global's (utils/init/pg_global.c). */
-  pg_global_role_t found;
+  /* The roles are pg_global's, and which secret serves is aa's. */
+  std::string secret, why;
 
-  if (!pg_global_role_by_name(role, &found)) {
-    *logdetail = psprintf(_("Role \"%s\" does not exist."), role);
-    return NULL; /* no such user */
-  }
-  if (!found.has_password) {
-    *logdetail = psprintf(_("User \"%s\" has no password assigned."), role);
-    return NULL; /* user has no password */
-  }
-
-  /* Password OK, but check to be sure we are not past rolvaliduntil */
-  if (found.has_validuntil && found.rolvaliduntil < GetCurrentTimestamp()) {
-    *logdetail = psprintf(_("User \"%s\" has an expired password."), role);
+  if (!aa_role_secret(pg_global_env(), role, GetCurrentTimestamp(), &secret,
+                      &why)) {
+    *logdetail = pstrdup(why.c_str());
     return NULL;
   }
-  return pstrdup(found.rolpassword.c_str());
+  return pstrdup(secret.c_str());
 }
 
 /*

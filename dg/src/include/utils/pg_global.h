@@ -34,6 +34,7 @@ extern int pg_global_create(sm_env_t *env, const char *superuser,
                             const char *secret);
 extern void pg_global_load(sm_env_t *env);
 extern bool pg_global_is_loaded(void);
+extern aa_env_t *pg_global_env(void);
 extern std::shared_ptr<const pg_global_roles_t> pg_global_roles(void);
 extern bool pg_global_role_by_oid(Oid oid, pg_global_role_t *out);
 extern bool pg_global_role_by_name(const char *name, pg_global_role_t *out);
