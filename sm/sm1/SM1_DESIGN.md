@@ -2810,14 +2810,19 @@ does: a versioned key's userkey is split from its tail by
 length alone. Measured on Q7 of the benchmark, a row read by
 its key: 0.3 thousand instructions fewer a query. A scan pays
 nothing, and the table is a few bytes, as a 16 KB block of
-Q7's rows has two restart intervals. A block of more than 253
+Q7's rows has eight restart intervals. A block of more than 253
 restart intervals goes without it.
-A restart point at every entry (`block_restart_interval` 1,
-not 16) was tried with it and dropped: Q7 a further 1.1
-thousand instructions fewer, but keys no longer share a
-prefix and each entry carries a restart point, so the
-benchmark's narrow table grew 15% and its scans slowed by up to
-13%.
+From the restart point the index lands on, a `Get` reads
+entries one by one to its key, each past its neighbour's value:
+up to 15 of them with RocksDB's 16 entries an interval. A store
+CF restarts every 4 (`store_restart_interval`): measured with
+`MultiGet` (`../BATCHREAD.md`) and servers pinned to the same
+CPUs, Q7 and Q9 ran 8.5% fewer instructions a query, the
+benchmark's sequential scans no more, and its tables grew
+under 4%. A restart point at every entry was tried and
+dropped: under 1% fewer instructions still, but keys no longer
+share a prefix and each entry carries a restart point, so the
+narrow table grew 15% and its scans slowed by up to 13%.
 Bloom filters are worth enabling on store CFs, and `CF:txn`
 benefits from a
 large block cache since it is small and hot. For store CFs the

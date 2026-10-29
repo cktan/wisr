@@ -9895,6 +9895,29 @@ TID costs a seventh as much (0.212 ms in all).
   records, PostgreSQL 18's; each of four parts disabled fails
   them.
 - **Measured** (release, one client): Q9 0.357 to 0.214 ms,
-  PostgreSQL's 0.212; Q7 0.49 ms either way, its Zipfian keys
-  each in a block of its own; Q7 at 16 clients 34,086 to
-  38,485 transactions a second, Q8 about the same.
+  PostgreSQL's 0.212, a best run (step 333); Q7 0.49 ms either
+  way; Q7 at 16 clients 34,086 to 38,485 transactions a
+  second, Q8 about the same.
+
+## Step 333: a restart point every 4 entries
+
+Q7's profile: 68% of it RocksDB's `MultiGet`, all of it on
+cached blocks, 29% a data block's search, 13.7% of it reading
+entries one by one from the restart point the hash index lands
+on to the key, up to 15 with RocksDB's 16 entries an interval.
+
+- **sm1** (`../sm/sm1/SM1_DESIGN.md` §12.2): a store CF's data
+  blocks restart every 4 entries (`store_restart_interval`).
+- **Tests**: sm1, a block's restart count is its entries over
+  4; 16 fails it.
+- **Measured**, servers pinned to the same CPUs, instructions
+  a query (steady to 0.1%, run to run): Q7 1,065 to 974
+  thousand, Q9 1,468 to 1,343; the sequential scans Q1 to Q5
+  no more; tables under 4% larger. Latency moved within its
+  noise.
+- **Found**: digres's latency, not PostgreSQL's, swings run to
+  run on this machine, with the same instructions: Q9 0.22 to
+  0.46 ms, PostgreSQL 0.19 to 0.23 ms, pinned or not. Step
+  326's 0.214 ms was a best run; Q9 typically runs 0.3 to
+  0.4 ms. Q7's Zipfian keys are not each in a block of their
+  own: half are 100 or below, a few blocks.

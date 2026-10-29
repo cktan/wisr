@@ -140,11 +140,12 @@ use.
   again before; the read-ahead did, and a scan of an IN list
   on a text index whose rows it read never ended. It keeps
   `ra_done` now (`in_list.test` hung without it).
-- **Keys far apart share nothing**: Q7's 100 Zipfian keys over
-  a million rows lie in as many data blocks, so `MultiGet`
-  saves only its calls; Q7 stays at 0.49 ms. Q9's rows lie
-  together, and it went from 0.357 ms to 0.214 ms,
-  PostgreSQL's 0.212.
+- **Keys far apart share little**: half of Q7's 100 Zipfian
+  keys are 100 or below, a few data blocks; the rest lie one a
+  block. Q7 stays at 0.49 ms. Q9's rows lie together, and it
+  went from 0.357 ms to 0.214 ms in its best run,
+  PostgreSQL's 0.212; it typically runs 0.3 to 0.4 ms
+  (`../dg/WORKNOTE.md` step 333).
 
 ## 5. Left out
 

@@ -355,6 +355,8 @@ rocksdb::ColumnFamilyOptions store_cf_options(db_t *db, uint64_t storeid) {
   // restart interval instead of searching the block (§12.2).
   bbto.data_block_index_type =
       rocksdb::BlockBasedTableOptions::kDataBlockBinaryAndHash;
+  // A restart point every few entries, where that index lands.
+  bbto.block_restart_interval = store_restart_interval;
   // Ten bits per key.
   bbto.filter_policy.reset(rocksdb::NewBloomFilterPolicy(10));
   // Whole version keys are never looked up.

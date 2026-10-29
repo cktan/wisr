@@ -142,6 +142,15 @@ public:
     return w[0] | w[1] << 8 | w[2] << 16 | uint32_t(w[3]) << 24;
   }
 
+  /* The entries of the store's one data block; one file of one block. */
+  uint64_t sole_block_entries() {
+    rocksdb::TablePropertiesCollection props;
+    REQUIRE(m_s->db->rdb->GetPropertiesOfAllTables(cf(), &props).ok());
+    REQUIRE(1 == props.size());
+    REQUIRE(1 == props.begin()->second->num_data_blocks);
+    return props.begin()->second->num_entries;
+  }
+
   /* The version of the store's LSM tree, RocksDB's super version. */
   uint64_t tree_version() {
     uint64_t v = 0;
@@ -507,6 +516,21 @@ TEST_CASE("a store's data blocks carry a hash index") {
   f.load('a', 20, 10);
   f.flush();
   CHECK(0 != (f.sole_block_restarts() & 0x80000000u));
+}
+
+TEST_CASE("a store's data blocks restart every store_restart_interval") {
+  // Verify a store CF writes a restart point every
+  // store_restart_interval entries of a data block, not RocksDB's 16.
+  // 1. Load 20 short rows and flush: one file of one data block.
+  // 2. The block's restart count, its last word less the hash index's
+  //    bit, is its entries over store_restart_interval, rounded up.
+  stats_fixture_t f;
+  f.load('a', 20, 10);
+  f.flush();
+  uint64_t n = f.sole_block_entries();
+  REQUIRE(n >= 20);
+  CHECK((n + wisr::store_restart_interval - 1) / wisr::store_restart_interval ==
+        (f.sole_block_restarts() & 0x7fffffffu));
 }
 
 TEST_CASE("a store's blocks are store_block_size") {

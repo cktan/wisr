@@ -552,6 +552,13 @@ constexpr uint32_t store_max_range_deletions = 1000;
 constexpr size_t store_block_size = 16 << 10;
 
 /*
+ * Entries between a store CF's data block restart points, not
+ * RocksDB's 16: a Get that the hash index lands on a restart point
+ * reads a quarter as many entries to find its key (§12.2).
+ */
+constexpr int store_restart_interval = 4;
+
+/*
  * Options for a fixed CF: RocksDB's defaults, LZ4, its
  * blocks read through cache when one is given.
  */
