@@ -9915,10 +9915,11 @@ on to the key, up to 15 with RocksDB's 16 entries an interval.
   thousand, Q9 1,468 to 1,343; the sequential scans Q1 to Q5
   no more; tables under 4% larger. Latency moved within its
   noise.
-- **Found**: digres's latency, not PostgreSQL's, swings run to
-  run on this machine, with the same instructions: Q9 0.22 to
-  0.46 ms, PostgreSQL 0.19 to 0.23 ms, pinned or not. Step
-  326's 0.214 ms was a best run; Q9 typically runs 0.3 to
+- **Found**: latency swings run to run on this machine, with
+  the same instructions, digres's and PostgreSQL's alike: Q9
+  0.22 to 0.46 ms, PostgreSQL's Q7 0.36 to 0.47 ms, pinned or
+  not; the host varies the clock. Step 332's 0.214 ms was a
+  best run; Q9 typically runs 0.3 to
   0.4 ms. Q7's Zipfian keys are not each in a block of their
   own: half are 100 or below, a few blocks.
 
@@ -9955,3 +9956,26 @@ listed the data directory.
   `pg_get_backend_memory_contexts()`; the superuser runs
   `pg_ls_dir()`; `pg_proc` shows the ACLs. Each of two mutations,
   no ACL, and the grant left out, was caught.
+
+## Step 335: an index entry's value deformed only for its INCLUDE columns
+
+What an index entry costs digres, counted exactly (`count(*)`
+of 10,000 and of no entries of `wide_mixed`'s `c2`, an
+index-only scan on both sides): 3,215 instructions, where
+PostgreSQL's costs 695. Of digres's, 34% RocksDB's iterator,
+12% deforming the entry's value for its INCLUDE columns,
+which an index without them has none of.
+
+- **dg** (`smstore.c`, `entry_includes()`): an index without
+  INCLUDE columns does not deform the entry's value.
+- **Tests**: `index_only_cut.test` reads an INCLUDE column by
+  an index-only scan; skipping it always fails the test.
+- **Measured**, pinned instructions: an index entry 3,215 to
+  2,820; `count(*)` of 100 entries 512 to 471 thousand. Q9,
+  an index scan, reads no entry's INCLUDE columns: no change.
+- **Found**: at benchmark time the `c2` index is in no
+  memtable; `vacuum` compacts each store into one sorted run.
+  What is left of an entry's cost: RocksDB's `Next` 1,110,
+  sm1's version 225, sm2 decoding the value twice (the cut
+  flag, the row's key) 540, the key's columns 325, the scan's
+  keys checked again 190.

@@ -7755,6 +7755,9 @@ bool smstore_index_getrowno(smstore_scan_t *scan) {
 static void entry_includes(smstore_scan_t *scan, TupleTableSlot *slot) {
   int nkeys = scan->form->indnkeyatts;
 
+  /* No INCLUDE columns: the value holds none for the slot. */
+  if (nkeys == scan->form->indnatts)
+    return;
   if (scan->entry_values == NULL) {
     scan->entry_ncols = sm_tbl_idx_ncols(scan->tbl, scan->index);
     scan->entry_values =
