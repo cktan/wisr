@@ -149,23 +149,21 @@ struct ssi_range_t {
 };
 
 /*
- * A lock table key (§5.1): hi is the storeid, its top bit flipped
+ * A lock's id in the lock table (§5.1): hi is the storeid, its top bit flipped
  * for an OID lock so the two types never meet; lo is the oid of an
  * OID lock, exact, or a hash of a row lock's key. Two rows of a
  * store whose keys hash alike share an entry: a false conflict,
  * never a missed one. The exact key is in the holder's lock list.
  */
-struct lock_key_t {
+struct lockid_t {
   uint64_t hi;
   uint64_t lo;
-  bool operator==(const lock_key_t &o) const {
-    return hi == o.hi && lo == o.lo;
-  }
+  bool operator==(const lockid_t &o) const { return hi == o.hi && lo == o.lo; }
 };
 
 /* The lock table's hash of a key: lo is an oid or a hash already. */
-struct lock_key_hash_t {
-  size_t operator()(const lock_key_t &k) const {
+struct lockid_hash_t {
+  size_t operator()(const lockid_t &k) const {
     return k.lo ^ (k.hi * 0x9e3779b97f4a7c15ULL);
   }
 };
@@ -343,7 +341,7 @@ struct db_t {
   };
   std::mutex lock_mu;
   std::condition_variable lock_cv;
-  std::unordered_map<lock_key_t, lock_ent_t, lock_key_hash_t> lock_table;
+  std::unordered_map<lockid_t, lock_ent_t, lockid_hash_t> lock_table;
   int deadlock_ms = 50;
   /*
    * The fast path (§5.1): the strong OID locks (S, SIX, X) held

@@ -117,7 +117,7 @@ and so are the catalog tables psql reads
      node, then the holders' array, a likely miss each; and
      when it grows, how full it runs, and its allocator, which
      we do not choose.
-   - **The hash it is given**: `lock_key_hash_t`, `lo ^ (hi *
+   - **The hash it is given**: `lockid_hash_t`, `lo ^ (hi *
      K)`. libstdc++ takes `hash % bucket_count`, the count a
      prime (`_Mod_range_hashing`, `_Prime_rehash_policy` in
      `bits/hashtable_policy.h`), which hides weak low bits, at

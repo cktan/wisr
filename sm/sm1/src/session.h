@@ -182,8 +182,8 @@ struct sm1::session_t {
 
   /* Locks, row and OID (§5.1); guarded by the database's lock_mu. */
   struct lockref_t {
-    wisr::lock_key_t key{}; /* the lock table key */
-    std::string row;        /* a row lock's key */
+    wisr::lockid_t id{}; /* its lock table entry's id */
+    std::string row;     /* a row lock's key */
     sm1::locktype_t type = sm1::LOCKTYPE_ROW;
     sm1::lockmode_t mode = sm1::SM_LOCKMODE_SH; /* held now, after
                                                        conversions */
@@ -203,7 +203,7 @@ struct sm1::session_t {
    */
   static constexpr int fp_slots = 32;
   struct fp_slot_t {
-    wisr::lock_key_t key{};
+    wisr::lockid_t id{};
     sm1::lockmode_t mode = sm1::SM_LOCKMODE_IS;
     size_t idx = 0;
     bool used = false;
@@ -224,7 +224,7 @@ struct sm1::session_t {
    * database's lock_mu.
    */
   std::string waiting_key;
-  wisr::lock_key_t waiting_id{};
+  wisr::lockid_t waiting_id{};
   sm1::lockmode_t waiting_mode = sm1::SM_LOCKMODE_SH;
   /*
    * The transaction we wait for in lock_wait_xact, or 0, and the
@@ -488,7 +488,7 @@ void lock_clear_latest(sm1::session_t *session, uint64_t storeid,
 
 /*
  * Test hook: while set, every row lock's key hashes to 0, so a
- * store's row locks share one lock table entry (lock_key_t).
+ * store's row locks share one lock table entry (lockid_t).
  */
 extern std::atomic<bool> lock_test_rows_collide;
 

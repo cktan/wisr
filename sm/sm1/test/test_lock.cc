@@ -1093,7 +1093,7 @@ TEST_CASE("lock_status lists each lock held, and each waited for in lock") {
 }
 
 TEST_CASE("row keys that hash alike share an entry and still lock exactly") {
-  // Verify a lock table entry two row keys share (lock_key_t): each
+  // Verify a lock table entry two row keys share (lockid_t): each
   // lock stays exact in its holder's list, and is released alone.
   // 1. Make every row key hash alike; A locks "x" shared and "y"
   //    exclusive, which share one table entry.

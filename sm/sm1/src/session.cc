@@ -276,7 +276,7 @@ int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
       }
     }
     std::lock_guard<std::mutex> lock_guard(db->lock_mu);
-    // A lock table key is the type byte, be64(storeid), then the key.
+    // A lock's name is the type byte, be64(storeid), then the key.
     auto entry = [&](const std::string &k, sm1::lockmode_t mode,
                      const sm1::session_t *s, bool granted) {
       out.push_back({name, db->dbid, static_cast<sm1::locktype_t>(k[0]),
@@ -289,7 +289,7 @@ int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
         // from the first: more than one if row keys hash alike.
         const auto &locks = h.session->locks;
         for (size_t i = h.idx, n = h.refs; n > 0 && i < locks.size(); i++) {
-          if (locks[i].key == k) {
+          if (locks[i].id == k) {
             entry(lock_name(locks[i]), locks[i].mode, h.session, true);
             n--;
           }

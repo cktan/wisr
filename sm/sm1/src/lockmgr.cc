@@ -109,9 +109,8 @@ using lockref_t = sm1::session_t::lockref_t;
 /* The top bit of a lock key's hi: set for an OID lock. */
 uint64_t type_bit(sm1::locktype_t type) { return uint64_t(type) << 63; }
 
-/* The lock table key of (type, storeid, userkey); see lock_key_t. */
-lock_key_t lock_key(sm1::locktype_t type, uint64_t storeid,
-                    rocksdb::Slice key) {
+/* The lock id of (type, storeid, userkey); see lockid_t. */
+lockid_t lockid(sm1::locktype_t type, uint64_t storeid, rocksdb::Slice key) {
   // The type flips the top bit, so no two namespaces share a lock.
   uint64_t hi = storeid ^ type_bit(type);
   // An oid is the key exactly; a row's key is hashed into 64 bits.
@@ -140,10 +139,10 @@ std::string name_of(sm1::locktype_t type, uint64_t storeid,
 }
 
 /* A lock list entry for (type, userkey), at k, held in mode. */
-lockref_t make_ref(const lock_key_t &k, sm1::locktype_t type,
-                   rocksdb::Slice key, lmode_t mode) {
+lockref_t make_ref(const lockid_t &k, sm1::locktype_t type, rocksdb::Slice key,
+                   lmode_t mode) {
   lockref_t l;
-  l.key = k;
+  l.id = k;
   // Only a row's key is not in k exactly.
   if (sm1::LOCKTYPE_ROW == type) {
     l.row.assign(key.data(), key.size());
@@ -154,9 +153,9 @@ lockref_t make_ref(const lock_key_t &k, sm1::locktype_t type,
 }
 
 /* Whether the list entry l is the lock (type, userkey) at k. */
-bool is_ref(const lockref_t &l, const lock_key_t &k, sm1::locktype_t type,
+bool is_ref(const lockref_t &l, const lockid_t &k, sm1::locktype_t type,
             rocksdb::Slice key) {
-  return l.key == k && l.type == type &&
+  return l.id == k && l.type == type &&
          (sm1::LOCKTYPE_OID == type || rocksdb::Slice(l.row) == key);
 }
 
@@ -168,12 +167,12 @@ bool is_ref(const lockref_t &l, const lock_key_t &k, sm1::locktype_t type,
 lockref_t *exact_ref(sm1::session_t *s, const holder_t &h, sm1::locktype_t type,
                      rocksdb::Slice key) {
   lockref_t &first = s->locks[h.idx];
-  if (is_ref(first, first.key, type, key)) {
+  if (is_ref(first, first.id, type, key)) {
     return &first;
   }
   // Keys that hash alike: look among the later entries, newest first.
   for (size_t i = s->locks.size(); i-- > h.idx + 1;) {
-    if (is_ref(s->locks[i], first.key, type, key)) {
+    if (is_ref(s->locks[i], first.id, type, key)) {
       return &s->locks[i];
     }
   }
@@ -185,7 +184,7 @@ lockref_t *exact_ref(sm1::session_t *s, const holder_t &h, sm1::locktype_t type,
  * the last, dropping the entry once the last holder goes. The
  * caller holds lock_mu.
  */
-void lock_drop_holder(db_t *db, const lock_key_t &k, sm1::session_t *s) {
+void lock_drop_holder(db_t *db, const lockid_t &k, sm1::session_t *s) {
   auto it = db->lock_table.find(k);
   // Gone already: a rollback may have released it.
   if (it == db->lock_table.end()) {
@@ -214,7 +213,7 @@ void lock_drop_holder(db_t *db, const lock_key_t &k, sm1::session_t *s) {
  */
 lockref_t *find_lockref(sm1::session_t *s, sm1::locktype_t type,
                         uint64_t storeid, rocksdb::Slice key) {
-  lock_key_t k = lock_key(type, storeid, key);
+  lockid_t k = lockid(type, storeid, key);
   for (size_t i = s->locks.size(); i-- > 0;) {
     if (is_ref(s->locks[i], k, type, key)) {
       return &s->locks[i];
@@ -290,7 +289,7 @@ void check_deadlock(db_t *db, sm1::session_t *s) {
  * out, with lock_mu held; sets *mine to s's own hold, if any, and
  * *want to the mode s would hold. Returns false if k has no entry.
  */
-bool conflicting(db_t *db, sm1::session_t *s, const lock_key_t &k, lmode_t mode,
+bool conflicting(db_t *db, sm1::session_t *s, const lockid_t &k, lmode_t mode,
                  holder_t **mine, lmode_t *want,
                  std::vector<sm1::session_t *> *out) {
   out->clear();
@@ -371,8 +370,8 @@ bool is_weak(lmode_t mode) {
 }
 
 /* The count of strong locks on keys that hash with k. */
-std::atomic<uint32_t> &strong_count(db_t *db, const lock_key_t &k) {
-  return db->fp_strong[lock_key_hash_t{}(k) % db_t::fp_strong_slots];
+std::atomic<uint32_t> &strong_count(db_t *db, const lockid_t &k) {
+  return db->fp_strong[lockid_hash_t{}(k) % db_t::fp_strong_slots];
 }
 
 /*
@@ -384,7 +383,7 @@ void fp_move(db_t *db, sm1::session_t *s, int i) {
   {
     // Hold lock_mu while editing the table.
     std::lock_guard<std::mutex> guard(db->lock_mu);
-    std::vector<holder_t> &holders = db->lock_table[f.key].holders;
+    std::vector<holder_t> &holders = db->lock_table[f.id].holders;
     holder_t *mine = nullptr;
     for (holder_t &h : holders) {
       if (h.session == s) {
@@ -409,14 +408,14 @@ void fp_move(db_t *db, sm1::session_t *s, int i) {
  * Move every session's slot for k into the lock table, where a
  * strong locker, counted already, meets them (§5.1).
  */
-void fp_sweep(db_t *db, const lock_key_t &k) {
+void fp_sweep(db_t *db, const lockid_t &k) {
   // Hold fp_reg_mu, so no session in the list is freed meanwhile.
   std::lock_guard<std::mutex> reg(db->fp_reg_mu);
   for (sm1::session_t *o : db->fp_sessions) {
     // Hold its fp_mu, so it takes no slot as we look.
     std::lock_guard<std::mutex> fp(o->fp_mu);
     for (int i = 0; o->fp_used > 0 && i < sm1::session_t::fp_slots; i++) {
-      if (o->fp[i].used && o->fp[i].key == k) {
+      if (o->fp[i].used && o->fp[i].id == k) {
         fp_move(db, o, i);
       }
     }
@@ -428,15 +427,15 @@ void fp_sweep(db_t *db, const lock_key_t &k) {
  * false if it must go to the table, with s's slot for k moved
  * there first when a strong lock hashes with it.
  */
-bool fp_take(db_t *db, sm1::session_t *s, const lock_key_t &k,
-             rocksdb::Slice key, lmode_t mode) {
+bool fp_take(db_t *db, sm1::session_t *s, const lockid_t &k, rocksdb::Slice key,
+             lmode_t mode) {
   // Hold our fp_mu: a sweep reads our slots under it.
   std::lock_guard<std::mutex> fp(s->fp_mu);
   int mine = -1, free = -1;
   for (int i = 0; i < sm1::session_t::fp_slots; i++) {
     if (!s->fp[i].used) {
       free = free < 0 ? i : free;
-    } else if (s->fp[i].key == k) {
+    } else if (s->fp[i].id == k) {
       mine = i;
       break;
     }
@@ -469,9 +468,9 @@ bool fp_take(db_t *db, sm1::session_t *s, const lock_key_t &k,
 }
 
 /* s's first list entry for the OID lock k, or null. */
-lockref_t *first_ref(sm1::session_t *s, const lock_key_t &k) {
+lockref_t *first_ref(sm1::session_t *s, const lockid_t &k) {
   for (lockref_t &l : s->locks) {
-    if (sm1::LOCKTYPE_OID == l.type && l.key == k) {
+    if (sm1::LOCKTYPE_OID == l.type && l.id == k) {
       return &l;
     }
   }
@@ -496,7 +495,7 @@ std::mutex &lock_latch(db_t *db, uint64_t storeid, rocksdb::Slice key) {
 int lock_try(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
              rocksdb::Slice key, sm1::lockmode_t mode) {
   db_t *db = s->db;
-  lock_key_t k = lock_key(type, storeid, key);
+  lockid_t k = lockid(type, storeid, key);
   // Hold lock_mu for the table.
   std::lock_guard<std::mutex> guard(db->lock_mu);
   holder_t *mine;
@@ -568,9 +567,7 @@ int lock_try(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
 int lock_oid(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
              sm1::lockmode_t mode, bool nowait) {
   db_t *db = s->db;
-  // TODO: there are too many uses of keys in the project. Rename to
-  // lock_name_t.
-  lock_key_t k = lock_key(sm1::LOCKTYPE_OID, storeid, key);
+  lockid_t k = lockid(sm1::LOCKTYPE_OID, storeid, key);
   bool counted = false;
   if (is_weak(mode)) {
     if (fp_take(db, s, k, key, mode)) {
@@ -633,7 +630,7 @@ void lock_unregister(sm1::session_t *s) {
 int lock_write_check(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   db_t *db = s->db;
   // A write meets row locks and no other lock type.
-  lock_key_t k = lock_key(sm1::LOCKTYPE_ROW, storeid, key);
+  lockid_t k = lockid(sm1::LOCKTYPE_ROW, storeid, key);
   // Hold lock_mu for the table.
   std::lock_guard<std::mutex> guard(db->lock_mu);
   holder_t *mine;
@@ -663,7 +660,7 @@ int lock_write_check(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
 int lock_wait(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
               rocksdb::Slice key, sm1::lockmode_t mode) {
   db_t *db = s->db;
-  lock_key_t k = lock_key(type, storeid, key);
+  lockid_t k = lockid(type, storeid, key);
   // Hold lock_mu for the table and the waits-for lists.
   std::unique_lock<std::mutex> guard(db->lock_mu);
   // However it returns, it no longer waits for k: still under lock_mu.
@@ -840,7 +837,7 @@ void lock_transfer(db_t *db, sm1::session_t *s, sm1::session_t *g) {
   std::lock_guard<std::mutex> guard(db->lock_mu);
   // Re-point each entry's holder list at g.
   for (const lockref_t &l : s->locks) {
-    auto it = db->lock_table.find(l.key);
+    auto it = db->lock_table.find(l.id);
     // Replace s with g among the holders.
     if (it != db->lock_table.end()) {
       for (holder_t &h : it->second.holders) {
@@ -866,10 +863,10 @@ void lock_restore(db_t *db, sm1::session_t *g) {
     // A strong OID lock keeps the fast path off its key, as when
     // it was taken.
     if (sm1::LOCKTYPE_OID == l.type && !is_weak(l.mode)) {
-      strong_count(db, l.key).fetch_add(1);
+      strong_count(db, l.id).fetch_add(1);
       l.strong = true;
     }
-    std::vector<holder_t> &holders = db->lock_table[l.key].holders;
+    std::vector<holder_t> &holders = db->lock_table[l.id].holders;
     holder_t *mine = nullptr;
     for (holder_t &h : holders) {
       if (h.session == g) {
@@ -888,11 +885,11 @@ void lock_restore(db_t *db, sm1::session_t *g) {
 
 /* A lock's name; see session.h. */
 std::string lock_name(const lockref_t &l) {
-  uint64_t storeid = l.key.hi ^ type_bit(l.type);
+  uint64_t storeid = l.id.hi ^ type_bit(l.type);
   // An OID lock's key is its oid, big-endian.
   if (sm1::LOCKTYPE_OID == l.type) {
     std::string oid;
-    sm0::put_be64(oid, l.key.lo);
+    sm0::put_be64(oid, l.id.lo);
     return name_of(l.type, storeid, oid);
   }
   return name_of(l.type, storeid, l.row);
@@ -912,8 +909,8 @@ bool lock_from_name(std::string_view name, lockref_t *l) {
     return false;
   }
   sm1::locktype_t t = static_cast<sm1::locktype_t>(type);
-  *l = make_ref(lock_key(t, sm0::get_be64(name.data() + 1), key), t, key,
-                l->mode);
+  *l =
+      make_ref(lockid(t, sm0::get_be64(name.data() + 1), key), t, key, l->mode);
   return true;
 }
 
@@ -997,10 +994,10 @@ void lock_release_from(sm1::session_t *s, size_t n) {
       s->fp[l.slot].used = false;
       s->fp_used--;
     } else {
-      lock_drop_holder(db, l.key, s);
+      lock_drop_holder(db, l.id, s);
       // Only once the hold is gone may a weak lock take a slot.
       if (l.strong) {
-        strong_count(db, l.key).fetch_sub(1);
+        strong_count(db, l.id).fetch_sub(1);
       }
     }
     // A mark goes with its lock.
