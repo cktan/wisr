@@ -9828,3 +9828,44 @@ table, and 2.1% of it reading the ACL's text in aa
 - **Tests**: aa's, a case of malformed text, an empty field, a
   sign, two spaces between items; four mutations of the reader
   caught.
+
+## Step 331: a role's check on an object, cached
+
+The rule (`../aa/AA_DESIGN.md`): a check must be cheap; making,
+changing and granting roles may be slow. After step 330 a
+role's check on a table still found the table's entry twice,
+copying `pg_global`'s snapshot pointer under its one mutex each
+time, copied the ACL's text and parsed it.
+
+- **`aa_object_mask()`**: every privilege a role holds on an
+  object, computed once, its owner and ACL found as
+  `pg_global_owner()` and `pg_global_acl()` find them, and
+  kept in the session by (database, object, role), up to 4096,
+  until the stamp moves: the roles' and objects' epochs, and
+  the session's own version, which a change to a temporary
+  object's owner or ACL now moves too. A check repeated takes
+  no lock, allocates nothing, copies no `shared_ptr` and parses
+  nothing. `pg_class_aclmask_ext()`'s path for sm's tables and
+  views calls it.
+- **`aa_login_okay()` and `aa_connect_okay()`**, were
+  `aa_login_refused()` and `aa_connect_refused()`: true if
+  allowed, the reason in an argument otherwise.
+- **`../bench/roles.sh`**: what checking costs, apart from data:
+  statements that read no row, `select 1`, one table, sixteen
+  by UNION ALL and a function, by the superuser, a role granted
+  SELECT, and one granted it two memberships up; each client
+  authenticates once. With one client and prepared statements,
+  an object's check costs a role 0.07 µs more than the
+  superuser, was 0.33 to 0.44; sixteen checks 1.5 µs, were 7 to
+  9.
+- **Left**: with sixteen clients, a statement of sixteen tables
+  runs at 2.8 times one client's rate, the superuser's too:
+  not roles'. And no function has an ACL: PostgreSQL revokes
+  EXECUTE from PUBLIC on 58 functions at initdb
+  (`system_functions.sql`), digres on none, so a role may call
+  `pg_ls_dir()` and `pg_read_file()`.
+- **Tests**: aa's, an object's mask: by ACL, default, owner of
+  each kind, membership, temporary object, CONNECT, a cache made
+  stale by the session and by another's commit. Of 7 mutations,
+  6 caught, three only after the case was tightened; the
+  seventh, a cache that never hits, is slower, not wrong.

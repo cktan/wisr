@@ -613,11 +613,10 @@ void InitializeSessionUserId(const char *rolename, Oid roleid,
     int sessions = 0 <= role.rolconnlimit && AmRegularBackendProcess()
                        ? sessions_of_role(role.oid)
                        : 0;
-    const char *why = aa_login_refused(
-        role, GetCurrentTimestamp(), sessions,
-        NULL != MyProcPort && MyProcPort->datadir_owner);
+    const char *why;
 
-    if (NULL != why)
+    if (!aa_login_okay(role, GetCurrentTimestamp(), sessions,
+                       NULL != MyProcPort && MyProcPort->datadir_owner, &why))
       ereport(FATAL, (errcode(ERRCODE_INVALID_PASSWORD),
                       errmsg("password authentication failed for user \"%s\"",
                              role.rolname.c_str()),

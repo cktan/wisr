@@ -22,16 +22,17 @@ inside, see `AA_DESIGN.md`. Every function is declared in
 | Start / end a client session | `aa_session_new()` / `aa_session_free()` |
 | Decide between peer and password login | `aa_auth_method()` |
 | Get a role's password secret for SCRAM | `aa_role_secret()` |
-| Check LOGIN, VALID UNTIL, CONNECTION LIMIT | `aa_login_refused()` |
-| Check CONNECT on a database | `aa_connect_refused()` |
+| Check LOGIN, VALID UNTIL, CONNECTION LIMIT | `aa_login_okay()` |
+| Check CONNECT on a database | `aa_connect_okay()` |
 | Look up a role by name or oid | `aa_session_roles()` |
 | Ask if a role is a superuser | `aa_is_superuser()` |
 | Ask if a role has another role's privileges | `aa_has_privs_of_role()` |
 | Ask if a role may SET ROLE to another | `aa_can_set_role()` |
 | Ask if a role is a member of another | `aa_is_member_of_role()` |
 | Ask if a role may administer another | `aa_is_admin_of_role()` |
+| Check a role's privileges on an object (fast, cached) | `aa_object_mask()` |
+| Compute privileges from an ACL you already have | `aa_acl_mask()` |
 | Get an object's owner and ACL | `aa_find_object()` |
-| Compute a role's privileges on an object | `aa_acl_mask()` |
 | Find who a GRANT should be recorded as | `aa_select_best_grantor()` |
 | List what a role owns or is granted | `aa_objects_of()` |
 | Learn that another session changed something | `aa_roles_moved()`, `aa_objects_moved()` |
@@ -75,9 +76,10 @@ PostgreSQL oids (`aa_oid_t`). Privilege bits match PostgreSQL's
 **Errors.** Functions that can fail return `0` on success and
 `-1` on failure. After a failure, `aa_errnum()` gives the error
 code and `aa_errmsg()` the message. Lookups return `false` when
-nothing is found. The "refused" checks return `NULL` when the
-answer is yes, and otherwise a short reason meant for the server
-log. aa never throws exceptions.
+nothing is found. The "okay" checks return `true` when the
+answer is yes; when it is no, they return `false` and set their
+`why` argument to a short reason meant for the server log. aa
+never throws exceptions.
 
 ---
 
@@ -169,14 +171,14 @@ role's VALID UNTIL.
 ### Step 3: May the role log in? (after the exchange)
 
 ```cpp
-const char *why = aa_login_refused(
-    role,               // the aa_role_t, looked up by name (§4.1)
-    now,
-    sessions_of_role,   // how many sessions this role has open,
-                        // counting this one
-    as_owner);          // from step 1
-
-if (why != NULL)
+const char *why;
+if (!aa_login_okay(
+        role,              // the aa_role_t, looked up by name (§4.1)
+        now,
+        sessions_of_role,  // how many sessions this role has open,
+                           // counting this one
+        as_owner,          // from step 1
+        &why))             // set to the reason when refused
   refuse_and_log("Role \"%s\" %s.", role.rolname.c_str(), why);
 ```
 
@@ -188,8 +190,8 @@ superuser has no connection limit. The data directory's owner
 ### Step 4: May the role connect to this database?
 
 ```cpp
-const char *why = aa_connect_refused(env, s, dbid, role.oid);
-if (why != NULL)
+const char *why;
+if (!aa_connect_okay(env, s, dbid, role.oid, &why))
   refuse_and_log("Role %s \"%s\".", why, dbname);
 ```
 
@@ -269,58 +271,65 @@ Which one to use:
 
 ### 4.4 May a role do something to an object?
 
-For a table, view, sequence, schema or database, three steps:
-find the object's owner and ACL, use the default ACL if it has
-none, then ask for the privileges.
+This is the check a server makes most often, so it is one call,
+and it is cached:
 
 ```cpp
-// 1. Find the object's owner and ACL. The key is (database id,
-//    object oid); a database's own entry has object oid 0.
-aa_object_t obj;
-if (!aa_find_object(env, s, aa_key_t(dbid, table_oid), &obj)) {
-  // No entry: the object belongs to its database's owner.
-  aa_object_t db;
-  obj.owner = aa_find_object(env, s, aa_key_t(dbid, 0), &db)
-                  ? db.owner
-                  : AA_BOOTSTRAP_SUPERUSER;
-}
-
-// 2. Its ACL, or the default ACL if it has none. The default
-//    gives the owner every privilege (and, for a database,
-//    gives PUBLIC CONNECT and TEMPORARY).
-std::vector<aa_acl_item_t> acl =
-    obj.has_acl ? aa_acl_items(obj.acl)
-                : aa_acl_default(AA_CLASS_RELATION, obj.owner);
-
-// 3. Which of SELECT and UPDATE does the role hold?
-uint64_t held = aa_acl_mask(env, s, dbid,
-                            acl.data(), acl.size(),
-                            roleid, obj.owner,
-                            AA_SELECT | AA_UPDATE,  // what to check
-                            false);                 // see below
+uint64_t held = aa_object_mask(env, s, dbid,
+                               table_oid,          // the object
+                               AA_CLASS_RELATION,  // its kind
+                               roleid,
+                               AA_SELECT | AA_UPDATE);
 
 bool can_select = (held & AA_SELECT) != 0;
 bool can_update = (held & AA_UPDATE) != 0;
 ```
 
-Notes on `aa_acl_mask()`:
+It returns the privileges, among those asked for, that the
+role holds on the object. Use `AA_CLASS_RELATION` for a table,
+view or sequence, `AA_CLASS_NAMESPACE` for a schema, and
+`AA_CLASS_DATABASE` with object oid 0 for a database itself.
 
-- **The last argument.** `false` returns exactly which of the
-  asked-for privileges the role holds. `true` returns as soon
-  as it finds any one of them: use it when you only need to
-  know whether the result is zero.
-- **Where privileges come from.** A role holds a privilege if
-  it was granted to the role itself, to PUBLIC, or to any role
-  whose privileges it has (§4.3).
+What it does for you:
+
+- **Finds the owner**: a temporary object's (kept in the
+  session), else the object's own entry, else its database's
+  owner.
+- **Finds the ACL**: the object's, or the owner's default ACL
+  if it has none (the owner holds every privilege; for a
+  database, PUBLIC also holds CONNECT and TEMPORARY).
+- **Follows memberships**: a role holds a privilege granted to
+  itself, to PUBLIC, or to any role whose privileges it has
+  (§4.3). Anyone with the owner's privileges holds every grant
+  option.
+- **Caches the answer**: the first call for an object and a role
+  computes every privilege the role holds on it. Later calls,
+  for any privilege on that object, are a hash lookup: no lock,
+  no memory allocated, no ACL parsed. The cache empties itself
+  when a role, membership, owner or ACL changes.
+
+Notes:
+
 - **Grant options** ("WITH GRANT OPTION") are the privilege bit
-  shifted left by 32: `AA_SELECT << 32`. The owner, and any role
-  that has the owner's privileges, holds every grant option.
+  shifted left by 32: `AA_SELECT << 32`.
 - **Superusers.** The mask gives a superuser only what some ACL
   item grants. PostgreSQL checks for a superuser first and skips
-  the mask; do the same with `aa_is_superuser()`.
-- **Temporary objects** keep their owner and ACL in the session
-  only. Look them up with `aa_temp_owner()` and `aa_temp_acl()`
-  instead of `aa_find_object()`.
+  the check; do the same with `aa_is_superuser()`.
+- **Pass the session.** With `NULL`, nothing is cached and every
+  call does the whole lookup.
+
+**If you have the ACL items yourself**, compute the privileges
+directly with `aa_acl_mask()`. It is not cached:
+
+```cpp
+std::vector<aa_acl_item_t> acl = aa_acl_items(acl_text);
+uint64_t held = aa_acl_mask(env, s, dbid, acl.data(), acl.size(),
+                            roleid, owner, AA_SELECT, false);
+```
+
+The last argument `false` returns exactly which of the asked-for
+privileges the role holds; `true` returns as soon as it finds
+any one of them, for when you only need zero or not zero.
 
 **If you already have a PostgreSQL `Acl`**, pass its items
 directly; no copy is needed. `AclItem` and `aa_acl_item_t` have
@@ -340,9 +349,14 @@ the two layouts match.
 
 When a role that is not the owner grants a privilege, PostgreSQL
 records the grant as made by the role that actually holds the
-grant option. This finds it:
+grant option. This finds it, given the object's ACL items and
+owner (from `aa_find_object()`, as GRANT changes the object):
 
 ```cpp
+aa_object_t obj;
+aa_find_object(env, s, aa_key_t(dbid, table_oid), &obj);
+std::vector<aa_acl_item_t> acl = aa_acl_items(obj.acl);
+
 aa_oid_t grantor;
 uint64_t grant_options;
 aa_select_best_grantor(env, s, dbid,
@@ -456,14 +470,17 @@ A transaction that aborts without trying to commit calls only
 
 ## 6. Performance tips
 
-- **Pass the session.** With a session, a repeated role or
-  membership check is a cache hit with no lock. With `NULL`,
-  every call is computed again. Object lookups
-  (`aa_find_object()`) are not cached either way: each takes a
-  short lock shared by all sessions.
+- **Use `aa_object_mask()` to check an object.** A repeated
+  check is a hash lookup with no lock and no allocation.
+  `aa_find_object()` and `aa_acl_mask()` are not cached: use
+  them for changes, or when you already hold the ACL.
+- **Pass the session.** With a session, repeated checks are
+  cache hits with no lock. With `NULL`, every call is computed
+  again.
 - **Don't refetch snapshots in a loop.** `aa_session_roles()` and
   `aa_objects()` return shared pointers; each call updates a
   count every session shares. Fetch once, use many times.
 - **Check for a superuser first.** `aa_is_superuser()` is cached;
   a superuser needs no ACL check.
-- **Pass PostgreSQL ACLs without copying them**, as in §4.4.
+- **Pass PostgreSQL ACLs to `aa_acl_mask()` without copying
+  them**, as at the end of §4.4.

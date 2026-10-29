@@ -236,11 +236,13 @@ void aa_forget_database(aa_session_t *s, uint64_t dbid) {
 
 /* Make owner the owner of the session's temporary object objid. */
 void aa_set_temp_owner(aa_session_t *s, aa_oid_t objid, aa_oid_t owner) {
+  s->version++;
   s->temp_owners[objid] = owner;
 }
 
 /* Make acl the ACL of the session's temporary object objid. */
 void aa_set_temp_acl(aa_session_t *s, aa_oid_t objid, const std::string &acl) {
+  s->version++;
   s->temp_acls[objid] = acl;
 }
 
@@ -266,6 +268,7 @@ bool aa_temp_acl(aa_session_t *s, aa_oid_t objid, std::string *acl) {
 
 /* The session's temporary object objid goes: its owner and ACL too. */
 void aa_forget_temp(aa_session_t *s, aa_oid_t objid) {
+  s->version++;
   s->temp_owners.erase(objid);
   s->temp_acls.erase(objid);
 }

@@ -248,13 +248,14 @@ TEST_CASE("authz: best grantor") {
 // 2. Give DB an ACL granting B alone CONNECT.
 // 3. Confirm A, in B, may; C may not; S may.
 TEST_CASE("authz: connect") {
+  const char *why;
   home_t h;
   aa_session_t *s = aa_session_new(h.aa());
   aa_object_t db;
 
   // 1.
   make_roles(h);
-  CHECK(nullptr == aa_connect_refused(h.aa(), s, DB, A));
+  CHECK(aa_connect_okay(h.aa(), s, DB, A, &why));
 
   // 2.
   db.dbid = DB;
@@ -265,10 +266,10 @@ TEST_CASE("authz: connect") {
   aa_set_object(s, 1, db);
 
   // 3.
-  CHECK(nullptr == aa_connect_refused(h.aa(), s, DB, A));
-  CHECK(std::string("has no CONNECT privilege on database") ==
-        aa_connect_refused(h.aa(), s, DB, C));
-  CHECK(nullptr == aa_connect_refused(h.aa(), s, DB, S));
+  CHECK(aa_connect_okay(h.aa(), s, DB, A, &why));
+  CHECK(!aa_connect_okay(h.aa(), s, DB, C, &why));
+  CHECK(std::string("has no CONNECT privilege on database") == why);
+  CHECK(aa_connect_okay(h.aa(), s, DB, S, &why));
   aa_session_free(s);
 }
 
@@ -315,5 +316,93 @@ TEST_CASE("authz: caches go stale") {
   REQUIRE(0 == aa_post_commit(s2));
   CHECK(aa_has_privs_of_role(h.aa(), s1, DB, E, AA_PG_DATABASE_OWNER));
   aa_session_free(s1);
+  aa_session_free(s2);
+}
+
+// Verify an object's mask, cached: privileges by the object's ACL, its
+// default, its owner (its entry's, a temporary object's, its
+// database's), through memberships, and a cached answer made stale by
+// the session's own change and by another session's commit.
+// 1. Give table 20000, owned by C, an ACL granting B SELECT.
+// 2. Confirm A, in B, holds SELECT and not UPDATE, asked twice; E, in A,
+//    holds SELECT; C holds every privilege of its own table, asked for
+//    SELECT, then for UPDATE.
+// 3. Make A owner of DB: confirm A holds every privilege of table 20001,
+//    which has no entry, and C, not its owner, none.
+// 4. Confirm C holds nothing of temporary table 30000, its owner not
+//    set; make C its owner: confirm C holds UPDATE.
+// 5. Confirm PUBLIC's CONNECT on DB itself, which has no ACL.
+// 6. Take B's grant away in the session: confirm A's cached SELECT goes;
+//    abort, and confirm it is back.
+// 7. Take it away in another session and commit: confirm A loses it.
+TEST_CASE("authz: object mask") {
+  home_t h;
+  make_roles(h);
+  aa_session_t *s = aa_session_new(h.aa());
+  aa_session_t *s2 = aa_session_new(h.aa());
+  aa_object_t t, db;
+  uint64_t both = AA_SELECT | AA_UPDATE;
+
+  // 1.
+  t.dbid = DB;
+  t.objid = 20000;
+  t.classid = AA_CLASS_RELATION;
+  t.owner = C;
+  t.has_acl = true;
+  t.acl = aa_acl_text({{C, C, AA_ALL_RIGHTS_RELATION}, {B, C, AA_SELECT}});
+  aa_set_object(s2, 1, t);
+  REQUIRE(0 == aa_commit(s2));
+  REQUIRE(0 == aa_post_commit(s2));
+
+  // 2.
+  CHECK(AA_SELECT ==
+        aa_object_mask(h.aa(), s, DB, 20000, AA_CLASS_RELATION, A, both));
+  CHECK(AA_SELECT ==
+        aa_object_mask(h.aa(), s, DB, 20000, AA_CLASS_RELATION, A, both));
+  CHECK(AA_SELECT ==
+        aa_object_mask(h.aa(), s, DB, 20000, AA_CLASS_RELATION, E, both));
+  CHECK(AA_SELECT ==
+        aa_object_mask(h.aa(), s, DB, 20000, AA_CLASS_RELATION, C, AA_SELECT));
+  CHECK(AA_UPDATE ==
+        aa_object_mask(h.aa(), s, DB, 20000, AA_CLASS_RELATION, C, AA_UPDATE));
+  CHECK(AA_ALL_RIGHTS_RELATION == aa_object_mask(h.aa(), s, DB, 20000,
+                                                 AA_CLASS_RELATION, C,
+                                                 AA_ALL_RIGHTS_RELATION));
+
+  // 3.
+  db.dbid = DB;
+  db.classid = AA_CLASS_DATABASE;
+  db.owner = A;
+  aa_set_object(s, 1, db);
+  CHECK(both ==
+        aa_object_mask(h.aa(), s, DB, 20001, AA_CLASS_RELATION, A, both));
+  CHECK(0 == aa_object_mask(h.aa(), s, DB, 20001, AA_CLASS_RELATION, C, both));
+
+  // 4.
+  CHECK(0 ==
+        aa_object_mask(h.aa(), s, DB, 30000, AA_CLASS_RELATION, C, AA_UPDATE));
+  aa_set_temp_owner(s, 30000, C);
+  CHECK(AA_UPDATE ==
+        aa_object_mask(h.aa(), s, DB, 30000, AA_CLASS_RELATION, C, AA_UPDATE));
+
+  // 5.
+  CHECK(AA_CONNECT == aa_object_mask(h.aa(), s, OTHER_DB, 0, AA_CLASS_DATABASE,
+                                     C, AA_CONNECT));
+
+  // 6.
+  t.acl = aa_acl_text({{C, C, AA_ALL_RIGHTS_RELATION}});
+  aa_set_object(s, 1, t);
+  CHECK(0 == aa_object_mask(h.aa(), s, DB, 20000, AA_CLASS_RELATION, A, both));
+  REQUIRE(0 == aa_abort(s));
+  CHECK(AA_SELECT ==
+        aa_object_mask(h.aa(), s, DB, 20000, AA_CLASS_RELATION, A, both));
+
+  // 7.
+  t.acl = aa_acl_text({{C, C, AA_ALL_RIGHTS_RELATION}});
+  aa_set_object(s2, 1, t);
+  REQUIRE(0 == aa_commit(s2));
+  REQUIRE(0 == aa_post_commit(s2));
+  CHECK(0 == aa_object_mask(h.aa(), s, DB, 20000, AA_CLASS_RELATION, A, both));
+  aa_session_free(s);
   aa_session_free(s2);
 }

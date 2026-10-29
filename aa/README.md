@@ -82,9 +82,9 @@ messages (`../dg/src/backend/utils/init/pg_global.c`).
 - **How a client gets in** (`ROLE.md` §5) is decided here and
   carried out by digres: `aa_auth_method()` before the
   exchange, peer or password; `aa_role_secret()` during it;
-  `aa_login_refused()` after it, LOGIN, VALID UNTIL and
-  CONNECTION LIMIT; `aa_connect_refused()` once the database
-  is chosen, CONNECT. digres reads the socket's peer, the
+  `aa_login_okay()` after it, LOGIN, VALID UNTIL and
+  CONNECTION LIMIT; `aa_connect_okay()` once the database is
+  chosen, CONNECT. digres reads the socket's peer, the
   clock and its sessions, and passes them in.
 - **Who holds which privilege** is computed here, as
   PostgreSQL's `acl.c` does: the roles one is a member of,

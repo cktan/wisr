@@ -14,6 +14,15 @@ Related documents:
 - `USAGE.md` explains how to call aa.
 - `README.md` lists the files and explains the build.
 
+**The guiding rule: checks must be cheap; changes may be
+slow.** A server checks privileges on every statement, many
+times a second, but creates, alters and grants roles rarely.
+So aa does work when something changes, or the first time a
+question is asked, and keeps the answer, so that a repeated
+check is a lookup: no lock, no memory allocated, no text
+parsed, no object copied. Making changes, and the first answer
+after one, may cost whatever it must.
+
 ---
 
 ## 1. What aa does, and what it does not
@@ -201,8 +210,8 @@ connection:
 | --- | --- | --- |
 | `aa_auth_method()` | before the password exchange | peer login if the OS user's name equals the role's name, or if the OS user owns the data directory and asks for the bootstrap superuser; otherwise a password, and always a password over TCP |
 | `aa_role_secret()` | during the exchange | the role's SCRAM secret, or why there is none: no such role, no password, password expired |
-| `aa_login_refused()` | after the exchange | LOGIN, VALID UNTIL, CONNECTION LIMIT (none for a superuser); the data directory's owner always passes |
-| `aa_connect_refused()` | after the database is chosen | the CONNECT privilege on the database, including through role memberships; a superuser always passes |
+| `aa_login_okay()` | after the exchange | LOGIN, VALID UNTIL, CONNECTION LIMIT (none for a superuser); the data directory's owner always passes |
+| `aa_connect_okay()` | after the database is chosen | the CONNECT privilege on the database, including through role memberships; a superuser always passes |
 
 A refusal comes back as a short reason for the server log. The
 client is always told the same generic message, so it cannot
@@ -244,19 +253,39 @@ owner. Otherwise it is recorded as made by the role, among those
 whose privileges it has, that holds the most of the needed grant
 options, the nearest one winning a tie.
 
-**Caching.** Each session caches the roles snapshot, the answer
-to the last "is this role a superuser?", and, for each kind of
-grant, the last membership list computed. Like PostgreSQL, it
-keeps one membership list per kind, for the most recent role.
-Each cache is stamped with the two shared epochs and a counter
-of the session's own changes. A cached answer is used while its
-stamp matches the current values. Checking the stamp reads
-three numbers and takes no lock; when it does not match, the
-answer is recomputed.
+**Caching.** Each session caches:
 
-Looking up an object's owner and ACL (`aa_find_object()`) is not
-cached: it copies the objects snapshot's pointer under the
-mutex each time.
+- the roles snapshot;
+- the answer to the last "is this role a superuser?";
+- for each kind of grant, the last membership list computed
+  (like PostgreSQL, one per kind, for the most recent role);
+- for each (database, object, role) asked about, every
+  privilege the role holds on the object (`aa_object_mask()`),
+  up to 4096 of them.
+
+Each cache is stamped with the two shared epochs and a counter
+of the session's own changes, which every change the session
+makes (to roles, owners, ACLs, temporary objects) increases. A
+cached answer is used while its stamp matches the current
+values; when it does not, the cache is emptied and the answer
+recomputed.
+
+**The hot path.** "May this role access this object?" is one
+call, `aa_object_mask()`. When the answer is cached, the call
+reads the three numbers of the stamp and finds the object in a
+hash map by a plain 16-byte key. It takes no lock, allocates no
+memory, copies no `shared_ptr` (which would touch a count all
+sessions share), and parses no ACL. On a miss it does the
+work once: the owner (a temporary object's, the object's entry,
+or its database's), the ACL (or the owner's default), parsed,
+and the role's privileges through its memberships; then it
+keeps all of them, so a later check for any privilege on the
+object is a hit.
+
+Looking up an object's owner and ACL directly
+(`aa_find_object()`) is not cached: it copies the objects
+snapshot's pointer under the mutex each time. It is for
+changes, not for checks.
 
 ---
 

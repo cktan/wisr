@@ -337,13 +337,13 @@ bool aa_role_secret(aa_env_t *env, const char *rolname, int64_t now,
                     std::string *secret, std::string *why);
 
 /*
- * After the exchange: why role may not log in, for the log, or NULL if
- * it may: not LOGIN, past VALID UNTIL at now, or past its CONNECTION
+ * After the exchange: whether role may log in. If not, *why says why, for
+ * the log: not LOGIN, past VALID UNTIL at now, or past its CONNECTION
  * LIMIT with sessions of its own open, this one among them (a superuser
  * has no limit). as_owner, the data directory's owner, is always let in.
  */
-const char *aa_login_refused(const aa_role_t &role, int64_t now, int sessions,
-                             bool as_owner);
+bool aa_login_okay(const aa_role_t &role, int64_t now, int sessions,
+                   bool as_owner, const char **why);
 
 /* ---- authorization: who holds which privilege ---- */
 
@@ -432,11 +432,24 @@ void aa_select_best_grantor(aa_env_t *env, aa_session_t *s, uint64_t dbid,
                             uint64_t *goptions);
 
 /*
- * The last of ROLE.md section 5's checks, once the database dbid is
- * chosen: why roleid may not connect to it, for the log, or NULL if it
- * may: a superuser, or CONNECT on it by its ACL.
+ * The privileges of mask roleid holds on the object objid of the database
+ * dbid, of class classid (AA_CLASS_RELATION, ...), as s sees it: by its
+ * ACL, or its owner's default if it keeps none, its owner a temporary
+ * object's, its entry's, or else its database's (aa_acl_mask()). Every
+ * privilege the role holds on the object is computed once, and kept in
+ * s until a role, a membership, an owner or an ACL changes: a check
+ * repeated is a lookup, with no lock taken.
  */
-const char *aa_connect_refused(aa_env_t *env, aa_session_t *s, uint64_t dbid,
-                               aa_oid_t roleid);
+uint64_t aa_object_mask(aa_env_t *env, aa_session_t *s, uint64_t dbid,
+                        aa_oid_t objid, aa_oid_t classid, aa_oid_t roleid,
+                        uint64_t mask);
+
+/*
+ * The last of ROLE.md section 5's checks, once the database dbid is
+ * chosen: whether roleid may connect to it, a superuser, or one with
+ * CONNECT on it by its ACL. If not, *why says why, for the log.
+ */
+bool aa_connect_okay(aa_env_t *env, aa_session_t *s, uint64_t dbid,
+                     aa_oid_t roleid, const char **why);
 
 #endif /* AA_H */

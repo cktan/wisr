@@ -13,6 +13,9 @@
 
 #include "aa_internal.h"
 
+/* How many objects' masks a session keeps (aa_object_mask()). */
+#define MASKS_KEPT 4096
+
 /* Which grants a closure follows (roles_is_member_of()'s types). */
 enum aa_recurse_t {
   AA_RECURSE_MEMBERS = 0, /* every grant */
@@ -320,14 +323,72 @@ void aa_select_best_grantor(aa_env_t *env, aa_session_t *s, uint64_t dbid,
   }
 }
 
-/* Why roleid may not connect to the database dbid, or NULL if it may. */
-const char *aa_connect_refused(aa_env_t *env, aa_session_t *s, uint64_t dbid,
-                               aa_oid_t roleid) {
+/*
+ * The owner and the ACL items of the object objid of the database dbid, of
+ * class classid, as s sees it, each found apart: the owner a temporary
+ * object's, else its entry's, else its database's; the ACL a temporary
+ * object's, else its entry's, else the owner's default.
+ */
+static void owner_and_acl(aa_env_t *env, aa_session_t *s, uint64_t dbid,
+                          aa_oid_t objid, aa_oid_t classid, aa_oid_t *owner,
+                          std::vector<aa_acl_item_t> *items) {
+  aa_object_t o;
+  std::string acl;
+  bool entry = NULL != env && aa_find_object(env, s, aa_key_t(dbid, objid), &o);
+
+  if (NULL == s || !aa_temp_owner(s, objid, owner))
+    *owner = entry        ? o.owner
+             : 0 == objid ? AA_BOOTSTRAP_SUPERUSER
+                          : database_owner(env, s, dbid);
+  if (NULL != s && aa_temp_acl(s, objid, &acl))
+    *items = aa_acl_items(acl);
+  else if (entry && o.has_acl)
+    *items = aa_acl_items(o.acl);
+  else
+    *items = aa_acl_default(classid, *owner);
+}
+
+/* The privileges of mask roleid holds on an object, from s's cache. */
+uint64_t aa_object_mask(aa_env_t *env, aa_session_t *s, uint64_t dbid,
+                        aa_oid_t objid, aa_oid_t classid, aa_oid_t roleid,
+                        uint64_t mask) {
+  std::vector<aa_acl_item_t> items;
+  aa_oid_t owner;
+  uint64_t all;
+
+  if (NULL != s && NULL != env) {
+    aa_stamp_t st = stamp_of(s);
+
+    if (!(st == s->mask_stamp)) {
+      s->masks.clear();
+      s->mask_stamp = st;
+    }
+    auto hit = s->masks.find({dbid, objid, roleid});
+    if (s->masks.end() != hit)
+      return hit->second & mask;
+  }
+  /* Every privilege, so any mask asked of it later is answered here. */
+  owner_and_acl(env, s, dbid, objid, classid, &owner, &items);
+  all = aa_acl_mask(env, s, dbid, items.data(), items.size(), roleid, owner,
+                    ~0ULL, false);
+  if (NULL != s && NULL != env) {
+    /* Bounded: a session that reads many objects starts again. */
+    if (s->masks.size() >= MASKS_KEPT)
+      s->masks.clear();
+    s->masks[{dbid, objid, roleid}] = all;
+  }
+  return all & mask;
+}
+
+/* Whether roleid may connect to the database dbid, and if not, why. */
+bool aa_connect_okay(aa_env_t *env, aa_session_t *s, uint64_t dbid,
+                     aa_oid_t roleid, const char **why) {
   std::vector<aa_acl_item_t> items;
   aa_object_t o;
 
+  *why = NULL;
   if (aa_is_superuser(env, s, roleid))
-    return NULL;
+    return true;
   if (NULL == env || !aa_find_object(env, s, aa_key_t(dbid, 0), &o)) {
     o.owner = AA_BOOTSTRAP_SUPERUSER;
     o.has_acl = false;
@@ -336,6 +397,6 @@ const char *aa_connect_refused(aa_env_t *env, aa_session_t *s, uint64_t dbid,
                     : aa_acl_default(AA_CLASS_DATABASE, o.owner);
   if (0 == aa_acl_mask(env, s, dbid, items.data(), items.size(), roleid,
                        o.owner, AA_CONNECT, true))
-    return "has no CONNECT privilege on database";
-  return NULL;
+    *why = "has no CONNECT privilege on database";
+  return NULL == *why;
 }

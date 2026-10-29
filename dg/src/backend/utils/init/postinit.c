@@ -176,16 +176,15 @@ static void CheckMyDatabase(const char *name, bool am_superuser,
                             bool override_allow_connections) {
   /*
    * The second of aa/ROLE.md section 5's checks: CONNECT on the database,
-   * which a superuser need not have, decided by aa (aa_connect_refused()).
+   * which a superuser need not have, decided by aa (aa_connect_okay()).
    * The client is told what a wrong password tells it, and the log which
    * check failed.
    */
   if (IsUnderPostmaster && !am_superuser) {
-    const char *why =
-        aa_connect_refused(pg_global_env(), pg_global_session(),
-                           pg_global_dbid(MyDatabaseId), GetUserId());
+    const char *why;
 
-    if (NULL != why)
+    if (!aa_connect_okay(pg_global_env(), pg_global_session(),
+                         pg_global_dbid(MyDatabaseId), GetUserId(), &why))
       ereport(FATAL, (errcode(ERRCODE_INVALID_PASSWORD),
                       errmsg("password authentication failed for user \"%s\"",
                              GetUserNameFromId(GetUserId(), false)),

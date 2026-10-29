@@ -71,19 +71,21 @@ bool aa_role_secret(aa_env_t *env, const char *rolname, int64_t now,
 }
 
 /*
- * Why role may not log in, or NULL if it may: LOGIN, VALID UNTIL, and
+ * Whether role may log in, and if not, why: LOGIN, VALID UNTIL, and
  * CONNECTION LIMIT, by sessions open, this one among them; the data
  * directory's owner always may.
  */
-const char *aa_login_refused(const aa_role_t &role, int64_t now, int sessions,
-                             bool as_owner) {
+bool aa_login_okay(const aa_role_t &role, int64_t now, int sessions,
+                   bool as_owner, const char **why) {
+  *why = NULL;
   if (as_owner)
-    return NULL;
+    return true;
   if (!role.rolcanlogin)
-    return "is not permitted to log in";
-  if (role.has_validuntil && role.rolvaliduntil < now)
-    return "is past its VALID UNTIL";
-  if (0 <= role.rolconnlimit && !role.rolsuper && sessions > role.rolconnlimit)
-    return "has reached its CONNECTION LIMIT";
-  return NULL;
+    *why = "is not permitted to log in";
+  else if (role.has_validuntil && role.rolvaliduntil < now)
+    *why = "is past its VALID UNTIL";
+  else if (0 <= role.rolconnlimit && !role.rolsuper &&
+           sessions > role.rolconnlimit)
+    *why = "has reached its CONNECTION LIMIT";
+  return NULL == *why;
 }

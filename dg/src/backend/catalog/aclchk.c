@@ -2785,19 +2785,14 @@ AclMode pg_class_aclmask(Oid table_oid, Oid roleid, AclMode mask,
  * by its owner and ACL in pg_global, as its pg_class row would give them
  * (catalog/catrel.c's relation_owner() and relation_acl()), without making
  * the row, which the syscache does not keep (catrel_is_cached()): the
- * check every statement on a table makes for a role not a superuser.
+ * check every statement on a table makes for a role not a superuser.  aa
+ * keeps the answer in the session until an owner, an ACL or a role
+ * changes (aa_object_mask()).
  */
-static AclMode sm_table_aclmask(Oid relid, Oid roleid, AclMode mask,
-                                AclMaskHow how) {
-  Oid ownerId = pg_global_owner(relid);
-  Acl *acl = pg_global_acl(pg_global_dbid(MyDatabaseId), relid);
-  AclMode result;
-
-  if (NULL == acl)
-    acl = acldefault(OBJECT_TABLE, ownerId);
-  result = aclmask(acl, roleid, ownerId, mask, how);
-  pfree(acl);
-  return result;
+static AclMode sm_table_aclmask(Oid relid, Oid roleid, AclMode mask) {
+  return aa_object_mask(pg_global_env(), pg_global_session(),
+                        pg_global_dbid(MyDatabaseId), relid, RelationRelationId,
+                        roleid, mask);
 }
 
 /*
@@ -2836,7 +2831,7 @@ static AclMode pg_class_aclmask_ext(Oid table_oid, Oid roleid, AclMode mask,
   if (table_oid >= FirstNormalObjectId &&
       RelationCacheKind(table_oid, &relkind) && RELKIND_INDEX != relkind &&
       RELKIND_PARTITIONED_INDEX != relkind && RELKIND_SEQUENCE != relkind) {
-    result = sm_table_aclmask(table_oid, roleid, mask, how);
+    result = sm_table_aclmask(table_oid, roleid, mask);
     goto predefined;
   }
 

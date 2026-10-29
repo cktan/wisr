@@ -7,6 +7,7 @@
 #include <atomic>
 #include <deque>
 #include <mutex>
+#include <unordered_map>
 
 #include "aa.h"
 #include "sm.h"
@@ -43,6 +44,22 @@ struct aa_stamp_t {
   uint64_t objects_epoch = UINT64_MAX;
   uint64_t version = UINT64_MAX;
   bool operator==(const aa_stamp_t &) const = default;
+};
+
+/* What aa_object_mask() caches a mask by: an object, and a role. */
+struct aa_mask_key_t {
+  uint64_t dbid;
+  aa_oid_t objid;
+  aa_oid_t roleid;
+  bool operator==(const aa_mask_key_t &) const = default;
+};
+
+/* aa_mask_key_t's hash, for the session's map of masks. */
+struct aa_mask_key_hash_t {
+  size_t operator()(const aa_mask_key_t &k) const {
+    return std::hash<uint64_t>()(k.dbid * 0x9E3779B97F4A7C15ULL ^
+                                 ((uint64_t)k.objid << 32 | k.roleid));
+  }
 };
 
 /* The roles a role is a member of, by one kind of grant, in a database. */
@@ -96,6 +113,10 @@ struct aa_session_t {
   aa_oid_t super_role = 0;
   bool super = false;
   aa_member_cache_t member_cache[3]; /* by aa_recurse_t */
+  /* Every privilege a role holds on an object, by (dbid, objid, role),
+   * all of them as of mask_stamp (aa_object_mask()). */
+  aa_stamp_t mask_stamp;
+  std::unordered_map<aa_mask_key_t, uint64_t, aa_mask_key_hash_t> masks;
 };
 
 /* ---- pg_global's tables (aa_store.cc) ---- */

@@ -102,36 +102,37 @@ TEST_CASE("auth: secret") {
 // 3. Give it a limit of 2; check with 2 sessions and with 3.
 // 4. Make it a superuser; check with 3.
 // 5. Take LOGIN away again; check as the data directory's owner.
-TEST_CASE("auth: login refused") {
+TEST_CASE("auth: login okay") {
+  const char *why;
   aa_role_t r;
 
   // 1.
   r.rolcanlogin = true;
-  CHECK(nullptr == aa_login_refused(r, 0, 100, false));
+  CHECK(aa_login_okay(r, 0, 100, false, &why));
 
   // 2.
   r.rolcanlogin = false;
-  CHECK(std::string("is not permitted to log in") ==
-        aa_login_refused(r, 0, 1, false));
+  CHECK(!aa_login_okay(r, 0, 1, false, &why));
+  CHECK(std::string("is not permitted to log in") == why);
   r.rolcanlogin = true;
   r.has_validuntil = true;
   r.rolvaliduntil = 10;
-  CHECK(nullptr == aa_login_refused(r, 10, 1, false));
-  CHECK(std::string("is past its VALID UNTIL") ==
-        aa_login_refused(r, 11, 1, false));
+  CHECK(aa_login_okay(r, 10, 1, false, &why));
+  CHECK(!aa_login_okay(r, 11, 1, false, &why));
+  CHECK(std::string("is past its VALID UNTIL") == why);
   r.has_validuntil = false;
 
   // 3.
   r.rolconnlimit = 2;
-  CHECK(nullptr == aa_login_refused(r, 0, 2, false));
-  CHECK(std::string("has reached its CONNECTION LIMIT") ==
-        aa_login_refused(r, 0, 3, false));
+  CHECK(aa_login_okay(r, 0, 2, false, &why));
+  CHECK(!aa_login_okay(r, 0, 3, false, &why));
+  CHECK(std::string("has reached its CONNECTION LIMIT") == why);
 
   // 4.
   r.rolsuper = true;
-  CHECK(nullptr == aa_login_refused(r, 0, 3, false));
+  CHECK(aa_login_okay(r, 0, 3, false, &why));
 
   // 5.
   r.rolcanlogin = false;
-  CHECK(nullptr == aa_login_refused(r, 0, 1, true));
+  CHECK(aa_login_okay(r, 0, 1, true, &why));
 }
