@@ -91,42 +91,54 @@ and so are the catalog tables psql reads
       costs within 3% of a superuser's. What is left, if more,
       is the checks PostgreSQL itself makes, and is PostgreSQL's
       cost too.
-3. **A secondary index's scan, against PostgreSQL's**
-   (`../dg/WORKNOTE.md` steps 333 and 335). Instructions
-   counted per statement, servers pinned, on 2026-10-29: Q9,
-   `sum(c1)` of 100 rows by `wide_mixed`'s `c2`, costs digres
-   about 11,400 a row and PostgreSQL 1,470; of digres's, 2,800
-   the index entry and 8,400 the row read by its key.
+3. **A secondary index's scan, within 1.5 times PostgreSQL's**
+   (`BTREE.md`, `../dg/WORKNOTE.md` steps 333 to 336). An
+   index scan may cost digres no more than 1.5 times what it
+   costs PostgreSQL; a sequential scan may, as OLTP runs none.
+   Instructions a statement, servers pinned, on 2026-10-29:
 
-   | Per row or entry | digres | PostgreSQL |
-   | --- | --- | --- |
-   | an index entry, index-only scan | 2,820 | 695 |
-   | a row, by its key (`MultiGet`) | 8,400 | |
-   | a row, from a cursor (Q6's primary key range) | 2,300 | 1,470 |
+   | Scan | Rows | digres | PostgreSQL | Ratio |
+   | --- | --- | --- | --- | --- |
+   | primary key, a range | 100 | 445k | 381k | 1.17 |
+   | Q7, by primary key | 100 | 976k | 802k | 1.22 |
+   | secondary, a range of `c2` (Q9's) | 10 | 376k | 249k | 1.51 |
+   | | 100 | 1,345k | 377k | 3.57 |
+   | secondary, an uncorrelated range | 10 | 432k | 258k | 1.67 |
+   | Q10, Q7's rows by `c2` | 100 | 2,946k | 802k | 3.67 |
 
-   In order, each measured as above:
+   Reads by the primary key pass; reads by a secondary index
+   fail from about 10 rows. A probe of one costs about 30k
+   instructions more than one of the primary key: a RocksDB
+   iterator made and destroyed a probe, its `Seek`, and
+   sm's wrappers. An entry of a range costs 2,820 against
+   PostgreSQL's 695, RocksDB's `Next` alone 1,110 of it.
+   In order:
 
-   1. **Read sorted, close keys with one cursor**, a seek and
-      then the next, not `MultiGet` (`BATCHREAD.md`): about
-      6,000 a row of Q9. A design change; a note first.
-   2. **sm2 decodes an entry's value once** (`idx_scannxt()`
-      and `entry_row()` in `sm2/src/rel/index.cc`): the cut
-      flag and the row's key are each decoded alone, and the
-      value copied; about 540 an entry.
-   3. **An entry that is all key**, as MyRocks's: the row's
-      key, which a non-unique entry's key already ends with,
-      not repeated in its value, and the cut flag a byte of
-      the key, so an index without INCLUDE columns has an
-      empty value. A format change of sm2's.
-   4. **Entries packed many to a key**, to be decided. RocksDB's
-      `Next` alone costs about 1,110 a key, more than all of
-      PostgreSQL's entry: one key an entry cannot reach it.
-      Packed, frozen entries keyed by a run's last entry keep
-      sm1's MVCC for new writes but need repacking and a
-      second cursor; B-tree pages of their own, latched,
-      reach PostgreSQL only at 8 KB a page, as a second
-      storage engine: its own latches, splits, vacuum,
-      predicate locks, unique checks and visibility map.
+   1. **Secondary indexes as B+trees** (`BTREE.md`): a tree
+      per index, beside today's entries, chosen when the index
+      is made; inner pages kept in memory, leaves read from
+      RocksDB. Built in `sm2/src/tree/` a part at a time, each
+      with its tests: the page, the inner-page cache, the
+      writers' latch table, the tree; then sm1's class
+      `0x04` and SSI on keys not stored, sm3's index kind, and
+      digres's way to ask for one (`BTREE.md` §11, question
+      4). Estimated: Q10 1.6 to 1.7 times.
+   2. **Rows of sorted, close keys read by one cursor**, a
+      seek and then the next, not `MultiGet` (`BATCHREAD.md`):
+      about 6,000 a row of Q9, which a tree alone leaves at
+      2.9 times. A design change; a note first.
+   3. **Then measure** the grid again, on both kinds of index
+      (`BTREE.md` §12): what is left past 1.5 is recorded
+      here, and the kind that loses every workload goes.
+
+   For today's entries, only if they stay (`BTREE.md` §12):
+   one cursor a scan, moved from probe to probe, not one
+   opened a probe (`open_probe()` in
+   `../dg/src/backend/access/sm/smstore.c`), with each
+   probe's range an SIREAD of its own, about 10k a probe; sm2
+   decoding an entry's value once (`idx_scannxt()` and
+   `entry_row()` in `sm2/src/rel/index.cc`), about 540 an
+   entry; and an entry that is all key, as MyRocks's.
 4. **sm1's lock table, a hash table of its own**
    (`sm1/SM1_DESIGN.md` §5.1). `../bench/roles.sh`'s t16,
    sixteen tables a statement, scaled 2.8× from 1 to 16
