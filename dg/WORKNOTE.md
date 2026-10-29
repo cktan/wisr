@@ -10103,3 +10103,22 @@ of its own.
   every key at offset 0.
 - **Left**: the buffer, and the lock list, grow under `lock_mu`,
   a row lock appending there.
+
+## Step 340: a list of blocks, cut back to a mark
+
+The lock list and its key buffer are vectors, which grow under
+`lock_mu`, moving what they hold.
+
+- **sm0** (`../sm/sm0/README.md`): `blist_t<T, N>`, in
+  `include/sm0_blist.h`, a list of blocks of N entries, linked
+  oldest first. An entry never moves; `emplace` constructs one
+  in place; a mark is a block and its top, and a cut to it gives
+  the blocks past it to a list of spares, up to four, which the
+  appends that follow take before allocating. `reserve()` makes
+  sure of a spare. With `T = char`, `alloc(n)` takes n bytes that
+  never straddle two blocks, and n above N a block of its own.
+- **Tests**: sm0, entries stable across blocks; cuts at the
+  start, mid-block and a full block's end; spares reused and
+  capped; keys kept whole; swap. 15 mutations caught, under
+  ASan and UBSan.
+- **Left**: sm1's lock list and key buffer still vectors.
