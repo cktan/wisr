@@ -34,6 +34,25 @@ struct aa_env_t {
   std::deque<std::pair<uint64_t, aa_key_t>> changed;
 };
 
+/*
+ * What a session's cache is of: the shared roles' and objects' epochs and
+ * the session's own version; equal stamps, the same view.
+ */
+struct aa_stamp_t {
+  uint64_t epoch = UINT64_MAX;
+  uint64_t objects_epoch = UINT64_MAX;
+  uint64_t version = UINT64_MAX;
+  bool operator==(const aa_stamp_t &) const = default;
+};
+
+/* The roles a role is a member of, by one kind of grant, in a database. */
+struct aa_member_cache_t {
+  aa_stamp_t stamp;
+  aa_oid_t roleid = 0;
+  uint64_t dbid = 0;
+  std::vector<aa_oid_t> roles;
+};
+
 /* A change to an object's entry the session's transaction made. */
 struct aa_change_t {
   int level;    /* the subtransaction's nesting level that made it */
@@ -66,6 +85,17 @@ struct aa_session_t {
   /* The session's temporary objects' owners and ACLs, never written. */
   std::map<aa_oid_t, aa_oid_t> temp_owners;
   std::map<aa_oid_t, std::string> temp_acls;
+
+  /* Bumped at each change to what the session sees of the roles or the
+   * objects' entries: with the shared epochs, what its caches are of. */
+  uint64_t version = 0;
+  /* The caches of aa_authz.cc, each valid while its stamp is current. */
+  aa_stamp_t roles_stamp;
+  std::shared_ptr<const aa_roles_t> roles;
+  aa_stamp_t super_stamp;
+  aa_oid_t super_role = 0;
+  bool super = false;
+  aa_member_cache_t member_cache[3]; /* by aa_recurse_t */
 };
 
 /* ---- pg_global's tables (aa_store.cc) ---- */

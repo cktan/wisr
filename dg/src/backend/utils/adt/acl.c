@@ -36,7 +36,6 @@
 #include "common/hashfn.h"
 #include "foreign/foreign.h"
 #include "funcapi.h"
-#include "lib/bloomfilter.h"
 #include "lib/qunique.h"
 #include "miscadmin.h"
 #include "utils/acl.h"
@@ -46,6 +45,7 @@
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/pg_global.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/varlena.h"
@@ -55,37 +55,25 @@ typedef struct {
   AclMode value;
 } priv_map;
 
-/*
- * We frequently need to test whether a given role is a member of some other
- * role.  In most of these tests the "given role" is the same, namely the
- * active current user.  So we can optimize it by keeping cached lists of all
- * the roles the "given role" is a member of, directly or indirectly.
- *
- * Possibly this mechanism should be generalized to allow caching membership
- * info for multiple roles?
- *
- * Each element of cached_roles is an OID list of constituent roles for the
- * corresponding element of cached_role (always including the cached_role
- * itself).  There's a separate cache for each RoleRecurseType, with the
- * corresponding semantics.
- */
-enum RoleRecurseType {
-  ROLERECURSE_MEMBERS = 0, /* recurse unconditionally */
-  ROLERECURSE_PRIVS = 1,   /* recurse through inheritable grants */
-  ROLERECURSE_SETROLE = 2  /* recurse through grants with set_option */
-};
-static thread_local /*LOCAL*/ Oid cached_role[] = {InvalidOid, InvalidOid,
-                                                   InvalidOid};
-static thread_local /*LOCAL*/ List *cached_roles[] = {NIL, NIL, NIL};
+/* DATABASEOID syscache hash value of this session's database. */
 thread_local /*LOCAL*/ uint32 cached_db_hash;
 
 /*
- * If the list of roles gathered by roles_is_member_of() grows larger than the
- * below threshold, a Bloom filter is created to speed up list membership
- * checks.  This threshold is set arbitrarily high to avoid the overhead of
- * creating the Bloom filter until it seems likely to provide a net benefit.
+ * An ACL's items as aa's (aa_acl_item_t): PostgreSQL's AclItem, laid out
+ * alike, so an Acl's are passed to aa as they are.
  */
-#define ROLES_LIST_BLOOM_THRESHOLD 1024
+static_assert(sizeof(AclItem) == sizeof(aa_acl_item_t) &&
+                  offsetof(AclItem, ai_grantee) ==
+                      offsetof(aa_acl_item_t, grantee) &&
+                  offsetof(AclItem, ai_grantor) ==
+                      offsetof(aa_acl_item_t, grantor) &&
+                  offsetof(AclItem, ai_privs) == offsetof(aa_acl_item_t, privs),
+              "AclItem and aa_acl_item_t differ");
+
+/* The items of acl, as aa takes them. */
+static const aa_acl_item_t *acl_items(const Acl *acl) {
+  return reinterpret_cast<const aa_acl_item_t *>(ACL_DAT(acl));
+}
 
 static const char *getid(const char *s, char *n, Node *escontext);
 static void putid(char *p, const char *s);
@@ -126,9 +114,6 @@ static AclMode convert_type_priv_string(text *priv_type_text);
 static AclMode convert_parameter_priv_string(text *priv_text);
 static AclMode convert_role_priv_string(text *priv_type_text);
 static AclResult pg_role_aclcheck(Oid role_oid, Oid roleid, AclMode mode);
-
-static void RoleMembershipCacheCallback(Datum arg, int cacheid,
-                                        uint32 hashvalue);
 
 /*
  * Test whether an identifier char can be left unquoted in ACLs.
@@ -1236,11 +1221,6 @@ restart:
  */
 AclMode aclmask(const Acl *acl, Oid roleid, Oid ownerId, AclMode mask,
                 AclMaskHow how) {
-  AclMode result;
-  AclMode remaining;
-  AclItem *aidat;
-  int i, num;
-
   /*
    * Null ACL should not happen, since caller should have inserted
    * appropriate default
@@ -1250,59 +1230,10 @@ AclMode aclmask(const Acl *acl, Oid roleid, Oid ownerId, AclMode mask,
 
   check_acl(acl);
 
-  /* Quick exit for mask == 0 */
-  if (mask == 0)
-    return 0;
-
-  result = 0;
-
-  /* Owner always implicitly has all grant options */
-  if ((mask & ACLITEM_ALL_GOPTION_BITS) && has_privs_of_role(roleid, ownerId)) {
-    result = mask & ACLITEM_ALL_GOPTION_BITS;
-    if ((how == ACLMASK_ALL) ? (result == mask) : (result != 0))
-      return result;
-  }
-
-  num = ACL_NUM(acl);
-  aidat = ACL_DAT(acl);
-
-  /*
-   * Check privileges granted directly to roleid or to public
-   */
-  for (i = 0; i < num; i++) {
-    AclItem *aidata = &aidat[i];
-
-    if (aidata->ai_grantee == ACL_ID_PUBLIC || aidata->ai_grantee == roleid) {
-      result |= aidata->ai_privs & mask;
-      if ((how == ACLMASK_ALL) ? (result == mask) : (result != 0))
-        return result;
-    }
-  }
-
-  /*
-   * Check privileges granted indirectly via role memberships. We do this in
-   * a separate pass to minimize expensive indirect membership tests.  In
-   * particular, it's worth testing whether a given ACL entry grants any
-   * privileges still of interest before we perform the has_privs_of_role
-   * test.
-   */
-  remaining = mask & ~result;
-  for (i = 0; i < num; i++) {
-    AclItem *aidata = &aidat[i];
-
-    if (aidata->ai_grantee == ACL_ID_PUBLIC || aidata->ai_grantee == roleid)
-      continue; /* already checked it */
-
-    if ((aidata->ai_privs & remaining) &&
-        has_privs_of_role(roleid, aidata->ai_grantee)) {
-      result |= aidata->ai_privs & mask;
-      if ((how == ACLMASK_ALL) ? (result == mask) : (result != 0))
-        return result;
-      remaining = mask & ~result;
-    }
-  }
-
-  return result;
+  /* Who holds what is aa's to say (aa_acl_mask()). */
+  return aa_acl_mask(pg_global_env(), pg_global_session(), pg_global_aa_dbid(),
+                     acl_items(acl), ACL_NUM(acl), roleid, ownerId, mask,
+                     ACLMASK_ANY == how);
 }
 
 /*
@@ -1313,10 +1244,6 @@ AclMode aclmask(const Acl *acl, Oid roleid, Oid ownerId, AclMode mask,
  */
 static AclMode aclmask_direct(const Acl *acl, Oid roleid, Oid ownerId,
                               AclMode mask, AclMaskHow how) {
-  AclMode result;
-  AclItem *aidat;
-  int i, num;
-
   /*
    * Null ACL should not happen, since caller should have inserted
    * appropriate default
@@ -1326,36 +1253,8 @@ static AclMode aclmask_direct(const Acl *acl, Oid roleid, Oid ownerId,
 
   check_acl(acl);
 
-  /* Quick exit for mask == 0 */
-  if (mask == 0)
-    return 0;
-
-  result = 0;
-
-  /* Owner always implicitly has all grant options */
-  if ((mask & ACLITEM_ALL_GOPTION_BITS) && roleid == ownerId) {
-    result = mask & ACLITEM_ALL_GOPTION_BITS;
-    if ((how == ACLMASK_ALL) ? (result == mask) : (result != 0))
-      return result;
-  }
-
-  num = ACL_NUM(acl);
-  aidat = ACL_DAT(acl);
-
-  /*
-   * Check privileges granted directly to roleid (and not to public)
-   */
-  for (i = 0; i < num; i++) {
-    AclItem *aidata = &aidat[i];
-
-    if (aidata->ai_grantee == roleid) {
-      result |= aidata->ai_privs & mask;
-      if ((how == ACLMASK_ALL) ? (result == mask) : (result != 0))
-        return result;
-    }
-  }
-
-  return result;
+  return aa_acl_mask_direct(acl_items(acl), ACL_NUM(acl), roleid, ownerId, mask,
+                            ACLMASK_ANY == how);
 }
 
 /*
@@ -4398,215 +4297,13 @@ static AclResult pg_role_aclcheck(Oid role_oid, Oid roleid, AclMode mode) {
 }
 
 /*
- * initialization function (called by InitPostgres)
+ * initialization function (called by InitPostgres): the membership caches
+ * are aa's, and follow the roles themselves (aa_authz.cc).
  */
 void initialize_acl(void) {
-  if (!IsBootstrapProcessingMode()) {
+  if (!IsBootstrapProcessingMode())
     cached_db_hash =
         GetSysCacheHashValue1(DATABASEOID, ObjectIdGetDatum(MyDatabaseId));
-
-    /*
-     * In normal mode, set a callback on any syscache invalidation of rows
-     * of pg_auth_members (for roles_is_member_of()) pg_database (for
-     * roles_is_member_of())
-     */
-    CacheRegisterSyscacheCallback(AUTHMEMROLEMEM, RoleMembershipCacheCallback,
-                                  (Datum)0);
-    CacheRegisterSyscacheCallback(AUTHOID, RoleMembershipCacheCallback,
-                                  (Datum)0);
-    CacheRegisterSyscacheCallback(DATABASEOID, RoleMembershipCacheCallback,
-                                  (Datum)0);
-  }
-}
-
-/*
- * RoleMembershipCacheCallback
- *		Syscache inval callback function
- */
-static void RoleMembershipCacheCallback(Datum arg, int cacheid,
-                                        uint32 hashvalue) {
-  if (cacheid == DATABASEOID && hashvalue != cached_db_hash && hashvalue != 0) {
-    return; /* ignore pg_database changes for other DBs */
-  }
-
-  /* Force membership caches to be recomputed on next use */
-  cached_role[ROLERECURSE_MEMBERS] = InvalidOid;
-  cached_role[ROLERECURSE_PRIVS] = InvalidOid;
-  cached_role[ROLERECURSE_SETROLE] = InvalidOid;
-}
-
-/*
- * A helper function for roles_is_member_of() that provides an optimized
- * implementation of list_append_unique_oid() via a Bloom filter.  The caller
- * (i.e., roles_is_member_of()) is responsible for freeing bf once it is done
- * using this function.
- */
-static inline List *roles_list_append(List *roles_list, bloom_filter **bf,
-                                      Oid role) {
-  unsigned char *roleptr = (unsigned char *)&role;
-
-  /*
-   * If there is a previously-created Bloom filter, use it to try to
-   * determine whether the role is missing from the list.  If it says yes,
-   * that's a hard fact and we can go ahead and add the role.  If it says
-   * no, that's only probabilistic and we'd better search the list.  Without
-   * a filter, we must always do an ordinary linear search through the
-   * existing list.
-   */
-  if ((*bf && bloom_lacks_element(*bf, roleptr, sizeof(Oid))) ||
-      !list_member_oid(roles_list, role)) {
-    /*
-     * If the list is large, we take on the overhead of creating and
-     * populating a Bloom filter to speed up future calls to this
-     * function.
-     */
-    if (*bf == NULL && list_length(roles_list) > ROLES_LIST_BLOOM_THRESHOLD) {
-      *bf = bloom_create(ROLES_LIST_BLOOM_THRESHOLD * 10, work_mem, 0);
-      foreach_oid(roleid, roles_list)
-          bloom_add_element(*bf, (unsigned char *)&roleid, sizeof(Oid));
-    }
-
-    /*
-     * Finally, add the role to the list and the Bloom filter, if it
-     * exists.
-     */
-    roles_list = lappend_oid(roles_list, role);
-    if (*bf)
-      bloom_add_element(*bf, roleptr, sizeof(Oid));
-  }
-
-  return roles_list;
-}
-
-/*
- * Get a list of roles that the specified roleid is a member of
- *
- * Type ROLERECURSE_MEMBERS recurses through all grants; ROLERECURSE_PRIVS
- * recurses only through inheritable grants; and ROLERECURSE_SETROLE recurses
- * only through grants with set_option.
- *
- * Since indirect membership testing is relatively expensive, we cache
- * a list of memberships.  Hence, the result is only guaranteed good until
- * the next call of roles_is_member_of()!
- *
- * For the benefit of select_best_grantor, the result is defined to be
- * in breadth-first order, ie, closer relationships earlier.
- *
- * If admin_of is not InvalidOid, this function sets *admin_role, either
- * to the OID of the first role in the result list that directly possesses
- * ADMIN OPTION on the role corresponding to admin_of, or to InvalidOid if
- * there is no such role.
- */
-static List *roles_is_member_of(Oid roleid, enum RoleRecurseType type,
-                                Oid admin_of, Oid *admin_role) {
-  Oid dba;
-  List *roles_list;
-  ListCell *l;
-  List *new_cached_roles;
-  MemoryContext oldctx;
-  bloom_filter *bf = NULL;
-
-  Assert(OidIsValid(admin_of) == PointerIsValid(admin_role));
-  if (admin_role != NULL)
-    *admin_role = InvalidOid;
-
-  /* If cache is valid and ADMIN OPTION not sought, just return the list */
-  if (cached_role[type] == roleid && !OidIsValid(admin_of) &&
-      OidIsValid(cached_role[type]))
-    return cached_roles[type];
-
-  /* With no database chosen yet, no role gets pg_database_owner. */
-  if (!OidIsValid(MyDatabaseId))
-    dba = InvalidOid;
-  else {
-    HeapTuple dbtup;
-
-    dbtup = SearchSysCache1(DATABASEOID, ObjectIdGetDatum(MyDatabaseId));
-    if (!HeapTupleIsValid(dbtup))
-      elog(ERROR, "cache lookup failed for database %u", MyDatabaseId);
-    dba = ((Form_pg_database)GETSTRUCT(dbtup))->datdba;
-    ReleaseSysCache(dbtup);
-  }
-
-  /*
-   * Find all the roles that roleid is a member of, including multi-level
-   * recursion.  The role itself will always be the first element of the
-   * resulting list.
-   *
-   * Each element of the list is scanned to see if it adds any indirect
-   * memberships.  We can use a single list as both the record of
-   * already-found memberships and the agenda of roles yet to be scanned.
-   * This is a bit tricky but works because the foreach() macro doesn't
-   * fetch the next list element until the bottom of the loop.
-   */
-  roles_list = list_make1_oid(roleid);
-
-  foreach (l, roles_list) {
-    Oid memberid = lfirst_oid(l);
-    CatCList *memlist;
-    int i;
-
-    /* Find roles that memberid is directly a member of */
-    memlist = SearchSysCacheList1(AUTHMEMMEMROLE, ObjectIdGetDatum(memberid));
-    for (i = 0; i < memlist->n_members; i++) {
-      HeapTuple tup = &memlist->members[i]->tuple;
-      Form_pg_auth_members form = (Form_pg_auth_members)GETSTRUCT(tup);
-      Oid otherid = form->roleid;
-
-      /*
-       * While otherid==InvalidOid shouldn't appear in the catalog, the
-       * OidIsValid() avoids crashing if that arises.
-       */
-      if (otherid == admin_of && form->admin_option && OidIsValid(admin_of) &&
-          !OidIsValid(*admin_role))
-        *admin_role = memberid;
-
-      /* If we're supposed to ignore non-heritable grants, do so. */
-      if (type == ROLERECURSE_PRIVS && !form->inherit_option)
-        continue;
-
-      /* If we're supposed to ignore non-SET grants, do so. */
-      if (type == ROLERECURSE_SETROLE && !form->set_option)
-        continue;
-
-      /*
-       * Even though there shouldn't be any loops in the membership
-       * graph, we must test for having already seen this role. It is
-       * legal for instance to have both A->B and A->C->B.
-       */
-      roles_list = roles_list_append(roles_list, &bf, otherid);
-    }
-    ReleaseSysCacheList(memlist);
-
-    /* implement pg_database_owner implicit membership */
-    if (memberid == dba && OidIsValid(dba))
-      roles_list = roles_list_append(roles_list, &bf, ROLE_PG_DATABASE_OWNER);
-  }
-
-  /*
-   * Free the Bloom filter created by roles_list_append(), if there is one.
-   */
-  if (bf)
-    bloom_free(bf);
-
-  /*
-   * Copy the completed list into TopMemoryContext so it will persist.
-   */
-  oldctx = MemoryContextSwitchTo(TopMemoryContext);
-  new_cached_roles = list_copy(roles_list);
-  MemoryContextSwitchTo(oldctx);
-  list_free(roles_list);
-
-  /*
-   * Now safe to assign to state variable
-   */
-  cached_role[type] = InvalidOid; /* just paranoia */
-  list_free(cached_roles[type]);
-  cached_roles[type] = new_cached_roles;
-  cached_role[type] = roleid;
-
-  /* And now we can return the answer */
-  return cached_roles[type];
 }
 
 /*
@@ -4621,17 +4318,8 @@ bool has_privs_of_role(Oid member, Oid role) {
   /* Fast path for simple case */
   if (member == role)
     return true;
-
-  /* Superusers have every privilege, so are part of every role */
-  if (superuser_arg(member))
-    return true;
-
-  /*
-   * Find all the roles that member has the privileges of, including
-   * multi-level recursion, then see if target role is any one of them.
-   */
-  return list_member_oid(
-      roles_is_member_of(member, ROLERECURSE_PRIVS, InvalidOid, NULL), role);
+  return aa_has_privs_of_role(pg_global_env(), pg_global_session(),
+                              pg_global_aa_dbid(), member, role);
 }
 
 /*
@@ -4642,27 +4330,12 @@ bool has_privs_of_role(Oid member, Oid role) {
  *
  * It doesn't matter whether the grants are inheritable. That's a separate
  * question; see has_privs_of_role.
- *
- * This function should be used to determine whether the session user can
- * use SET ROLE to become the target user. We also use it to determine whether
- * the session user can change an existing object to be owned by the target
- * user, or create new objects owned by the target user.
  */
 bool member_can_set_role(Oid member, Oid role) {
-  /* Fast path for simple case */
   if (member == role)
     return true;
-
-  /* Superusers have every privilege, so can always SET ROLE */
-  if (superuser_arg(member))
-    return true;
-
-  /*
-   * Find all the roles that member can access via SET ROLE, including
-   * multi-level recursion, then see if target role is any one of them.
-   */
-  return list_member_oid(
-      roles_is_member_of(member, ROLERECURSE_SETROLE, InvalidOid, NULL), role);
+  return aa_can_set_role(pg_global_env(), pg_global_session(),
+                         pg_global_aa_dbid(), member, role);
 }
 
 /*
@@ -4681,173 +4354,62 @@ void check_can_set_role(Oid member, Oid role) {
  * This is defined to recurse through grants whether they are inherited or not.
  *
  * Do not use this for privilege checking, instead use has_privs_of_role().
- * Don't use it for determining whether it's possible to SET ROLE to some
- * other role; for that, use member_can_set_role(). And don't use it for
- * determining whether it's OK to create an object owned by some other role:
- * use member_can_set_role() for that, too.
- *
- * In short, calling this function is the wrong thing to do nearly everywhere.
  */
 bool is_member_of_role(Oid member, Oid role) {
-  /* Fast path for simple case */
   if (member == role)
     return true;
-
-  /* Superusers have every privilege, so are part of every role */
-  if (superuser_arg(member))
-    return true;
-
-  /*
-   * Find all the roles that member is a member of, including multi-level
-   * recursion, then see if target role is any one of them.
-   */
-  return list_member_oid(
-      roles_is_member_of(member, ROLERECURSE_MEMBERS, InvalidOid, NULL), role);
+  return aa_is_member_of_role(pg_global_env(), pg_global_session(),
+                              pg_global_aa_dbid(), member, role, false);
 }
 
 /*
  * Is member a member of role, not considering superuserness?
  *
- * This is identical to is_member_of_role except we ignore superuser
- * status.
- *
  * Do not use this for privilege checking, instead use has_privs_of_role()
  */
 bool is_member_of_role_nosuper(Oid member, Oid role) {
-  /* Fast path for simple case */
   if (member == role)
     return true;
-
-  /*
-   * Find all the roles that member is a member of, including multi-level
-   * recursion, then see if target role is any one of them.
-   */
-  return list_member_oid(
-      roles_is_member_of(member, ROLERECURSE_MEMBERS, InvalidOid, NULL), role);
+  return aa_is_member_of_role(pg_global_env(), pg_global_session(),
+                              pg_global_aa_dbid(), member, role, true);
 }
 
 /*
- * Is member an admin of role?	That is, is member the role itself (subject to
- * restrictions below), a member (directly or indirectly) WITH ADMIN OPTION,
- * or a superuser?
+ * Is member an admin of role?	That is, is member a member (directly or
+ * indirectly) WITH ADMIN OPTION, or a superuser?  Never role itself.
  */
 bool is_admin_of_role(Oid member, Oid role) {
-  Oid admin_role;
-
-  if (superuser_arg(member))
-    return true;
-
-  /* By policy, a role cannot have WITH ADMIN OPTION on itself. */
-  if (member == role)
-    return false;
-
-  (void)roles_is_member_of(member, ROLERECURSE_MEMBERS, role, &admin_role);
-  return OidIsValid(admin_role);
+  return aa_is_admin_of_role(pg_global_env(), pg_global_session(),
+                             pg_global_aa_dbid(), member, role);
 }
 
 /*
  * Find a role whose privileges "member" inherits which has ADMIN OPTION
- * on "role", ignoring super-userness.
- *
- * There might be more than one such role; prefer one which involves fewer
- * hops. That is, if member has ADMIN OPTION, prefer that over all other
- * options; if not, prefer a role from which member inherits more directly
- * over more indirect inheritance.
+ * on "role", ignoring super-userness, preferring fewer hops.
  */
 Oid select_best_admin(Oid member, Oid role) {
-  Oid admin_role;
-
-  /* By policy, a role cannot have WITH ADMIN OPTION on itself. */
-  if (member == role)
-    return InvalidOid;
-
-  (void)roles_is_member_of(member, ROLERECURSE_PRIVS, role, &admin_role);
-  return admin_role;
+  return aa_select_best_admin(pg_global_env(), pg_global_session(),
+                              pg_global_aa_dbid(), member, role);
 }
 
 /*
- * Select the effective grantor ID for a GRANT or REVOKE operation.
- *
- * The grantor must always be either the object owner or some role that has
- * been explicitly granted grant options.  This ensures that all granted
- * privileges appear to flow from the object owner, and there are never
- * multiple "original sources" of a privilege.  Therefore, if the would-be
- * grantor is a member of a role that has the needed grant options, we have
- * to do the grant as that role instead.
- *
- * It is possible that the would-be grantor is a member of several roles
- * that have different subsets of the desired grant options, but no one
- * role has 'em all.  In this case we pick a role with the largest number
- * of desired options.  Ties are broken in favor of closer ancestors.
- *
- * roleId: the role attempting to do the GRANT/REVOKE
- * privileges: the privileges to be granted/revoked
- * acl: the ACL of the object in question
- * ownerId: the role owning the object in question
- * *grantorId: receives the OID of the role to do the grant as
- * *grantOptions: receives the grant options actually held by grantorId
+ * Select the effective grantor ID for a GRANT or REVOKE operation: the
+ * object owner, or a role whose privileges roleId has that holds the
+ * needed grant options, the most of them, nearest first
+ * (aa_select_best_grantor()).
  *
  * If no grant options exist, we set grantorId to roleId, grantOptions to 0.
  */
 void select_best_grantor(Oid roleId, AclMode privileges, const Acl *acl,
                          Oid ownerId, Oid *grantorId, AclMode *grantOptions) {
-  AclMode needed_goptions = ACL_GRANT_OPTION_FOR(privileges);
-  List *roles_list;
-  int nrights;
-  ListCell *l;
+  aa_oid_t grantor;
+  uint64_t goptions;
 
-  /*
-   * The object owner is always treated as having all grant options, so if
-   * roleId is the owner it's easy.  Also, if roleId is a superuser it's
-   * easy: superusers are implicitly members of every role, so they act as
-   * the object owner.
-   */
-  if (roleId == ownerId || superuser_arg(roleId)) {
-    *grantorId = ownerId;
-    *grantOptions = needed_goptions;
-    return;
-  }
-
-  /*
-   * Otherwise we have to do a careful search to see if roleId has the
-   * privileges of any suitable role.  Note: we can hang onto the result of
-   * roles_is_member_of() throughout this loop, because aclmask_direct()
-   * doesn't query any role memberships.
-   */
-  roles_list = roles_is_member_of(roleId, ROLERECURSE_PRIVS, InvalidOid, NULL);
-
-  /* initialize candidate result as default */
-  *grantorId = roleId;
-  *grantOptions = ACL_NO_RIGHTS;
-  nrights = 0;
-
-  foreach (l, roles_list) {
-    Oid otherrole = lfirst_oid(l);
-    AclMode otherprivs;
-
-    otherprivs =
-        aclmask_direct(acl, otherrole, ownerId, needed_goptions, ACLMASK_ALL);
-    if (otherprivs == needed_goptions) {
-      /* Found a suitable grantor */
-      *grantorId = otherrole;
-      *grantOptions = otherprivs;
-      return;
-    }
-
-    /*
-     * If it has just some of the needed privileges, remember best
-     * candidate.
-     */
-    if (otherprivs != ACL_NO_RIGHTS) {
-      int nnewrights = pg_popcount64(otherprivs);
-
-      if (nnewrights > nrights) {
-        *grantorId = otherrole;
-        *grantOptions = otherprivs;
-        nrights = nnewrights;
-      }
-    }
-  }
+  aa_select_best_grantor(
+      pg_global_env(), pg_global_session(), pg_global_aa_dbid(), roleId,
+      privileges, acl_items(acl), ACL_NUM(acl), ownerId, &grantor, &goptions);
+  *grantorId = grantor;
+  *grantOptions = goptions;
 }
 
 /*

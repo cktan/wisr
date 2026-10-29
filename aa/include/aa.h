@@ -345,4 +345,98 @@ bool aa_role_secret(aa_env_t *env, const char *rolname, int64_t now,
 const char *aa_login_refused(const aa_role_t &role, int64_t now, int sessions,
                              bool as_owner);
 
+/* ---- authorization: who holds which privilege ---- */
+
+/* PostgreSQL's pg_database_owner, the role a database's owner is in. */
+#define AA_PG_DATABASE_OWNER 6171
+
+/* The grant option bits of an ACL item's privileges, PostgreSQL's. */
+#define AA_ALL_GOPTION_BITS (0xFFFFFFFFULL << 32)
+
+/* The database of a call made before a session has one. */
+#define AA_NO_DATABASE UINT64_MAX
+
+/*
+ * Each call below reads the roles and the objects' entries as session s
+ * sees them, or as last committed if s is NULL, or none if env is NULL
+ * too, in the database dbid, by sm's id, whose owner is a member of
+ * pg_database_owner (AA_NO_DATABASE: none). s caches what they find,
+ * until the roles or the entries change.
+ */
+
+/* Whether roleid is a superuser: the bootstrap superuser always is. */
+bool aa_is_superuser(aa_env_t *env, aa_session_t *s, aa_oid_t roleid);
+
+/*
+ * Whether member has role's privileges: it is role, a superuser, or a
+ * member of it through grants each with INHERIT (has_privs_of_role()).
+ */
+bool aa_has_privs_of_role(aa_env_t *env, aa_session_t *s, uint64_t dbid,
+                          aa_oid_t member, aa_oid_t role);
+
+/*
+ * Whether member may SET ROLE to role: it is role, a superuser, or a
+ * member of it through grants each with SET (member_can_set_role()).
+ */
+bool aa_can_set_role(aa_env_t *env, aa_session_t *s, uint64_t dbid,
+                     aa_oid_t member, aa_oid_t role);
+
+/*
+ * Whether member is role or a member of it through any grants, or, if
+ * not nosuper, a superuser (is_member_of_role(), and its _nosuper).
+ */
+bool aa_is_member_of_role(aa_env_t *env, aa_session_t *s, uint64_t dbid,
+                          aa_oid_t member, aa_oid_t role, bool nosuper);
+
+/*
+ * Whether member may administer role: a superuser, or a member, through
+ * any grants, of a role granted role WITH ADMIN OPTION; never role
+ * itself (is_admin_of_role()).
+ */
+bool aa_is_admin_of_role(aa_env_t *env, aa_session_t *s, uint64_t dbid,
+                         aa_oid_t member, aa_oid_t role);
+
+/*
+ * The role whose privileges member has, nearest first, granted role
+ * WITH ADMIN OPTION, superusers aside; 0 if none (select_best_admin()).
+ */
+aa_oid_t aa_select_best_admin(aa_env_t *env, aa_session_t *s, uint64_t dbid,
+                              aa_oid_t member, aa_oid_t role);
+
+/*
+ * The privileges of mask roleid holds by the ACL items, n of them, of an
+ * object owner owns: granted it, PUBLIC, or a role whose privileges it
+ * has, and as one of those the owner's grant options. With any, as soon
+ * as one is found (PostgreSQL's aclmask(), ACLMASK_ANY).
+ */
+uint64_t aa_acl_mask(aa_env_t *env, aa_session_t *s, uint64_t dbid,
+                     const aa_acl_item_t *items, size_t n, aa_oid_t roleid,
+                     aa_oid_t owner, uint64_t mask, bool any);
+
+/* Likewise, granted roleid itself only, or as the owner (aclmask_direct()). */
+uint64_t aa_acl_mask_direct(const aa_acl_item_t *items, size_t n,
+                            aa_oid_t roleid, aa_oid_t owner, uint64_t mask,
+                            bool any);
+
+/*
+ * Who roleid grants or revokes privs as on an object of owner with the
+ * ACL items: the owner, if roleid is it or a superuser; else the role
+ * whose privileges it has with the most of their grant options, nearest
+ * first, into *grantor, and those options into *goptions; roleid and none
+ * if no role has any (select_best_grantor()).
+ */
+void aa_select_best_grantor(aa_env_t *env, aa_session_t *s, uint64_t dbid,
+                            aa_oid_t roleid, uint64_t privs,
+                            const aa_acl_item_t *items, size_t n,
+                            aa_oid_t owner, aa_oid_t *grantor,
+                            uint64_t *goptions);
+
+/*
+ * The last of ROLE.md section 5's checks, once the database dbid is
+ * chosen: why roleid may not connect to it, for the log, or NULL if it
+ * may: a superuser, or CONNECT on it by its ACL.
+ */
+const char *aa_connect_refused(aa_env_t *env, aa_session_t *s, uint64_t dbid,
+                               aa_oid_t roleid);
+
 #endif /* AA_H */

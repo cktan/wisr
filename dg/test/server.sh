@@ -3311,6 +3311,37 @@ PGPASSWORD=p2 psql -X -A -t -h 127.0.0.1 -p "$port" -U rg2 -d gdb \
 grep -q 'password authentication failed for user "rg2"' "$work/gdb2.out" ||
   fail "grant: CONNECT's message"
 
+# Verify that a role has the privileges of the roles it is in, through
+# grants with INHERIT alone (../aa/src/aa_authz.cc): an owner's, a
+# table's grant, and CONNECT reach a member that inherits them.
+# 1. Make group rgg, owner of table gm with a row, granted CONNECT on
+#    gdb; grant rgg to rg1, and to rg2 WITH INHERIT FALSE; make rg3 LOGIN
+#    in rgg.
+# 2. rg1 reads gm and ALTERs it, as rgg's; rg2 is refused both.
+# 3. rg3, in rgg, connects to gdb, which PUBLIC may not.
+local_psql -c 'create role rgg' -c 'create table gm (a int4)' \
+  -c 'insert into gm values (5)' -c 'alter table gm owner to rgg' \
+  -c 'grant rgg to rg1' -c 'grant rgg to rg2 with inherit false' \
+  -c "create role rg3 login password 'p3' in role rgg" > "$work/gm.out" 2>&1 ||
+  fail "grant: make the group"
+local_psql -d gdb -c 'grant connect on database gdb to rgg' \
+  >> "$work/gm.out" 2>&1 || fail "grant: CONNECT to the group"
+tcp_psql p1 -U rg1 -c 'select a from gm' \
+  -c 'alter table gm add column b int4' > "$work/gm1.out" 2>&1
+tcp_psql p2 -U rg2 -c 'select a from gm' \
+  -c 'alter table gm add column c int4' >> "$work/gm1.out" 2>&1
+cat > "$work/gm1.expected" << OUT
+5
+ALTER TABLE
+ERROR:  permission denied for table gm
+ERROR:  must be owner of table gm
+OUT
+cmp -s "$work/gm1.out" "$work/gm1.expected" ||
+  fail "grant: what a member inherits"
+[ "$(PGPASSWORD=p3 psql -X -A -t -h 127.0.0.1 -p "$port" -U rg3 -d gdb \
+  -c 'select 1' 2> "$work/gm3.err")" = 1 ] ||
+  fail "grant: CONNECT through the group"
+
 # Verify that a REVOKE whose transaction fails at its commit leaves the
 # ACL as it was: what pg_global took away before the commit, it puts back
 # (checked again after the restart below, which reads pg_global).

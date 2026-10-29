@@ -125,6 +125,20 @@ static aa_session_t *session_state(void) {
   return tcb->pg_global.get();
 }
 
+/*
+ * This session's aa state, for a call of aa's own: made at its first use;
+ * NULL with no session, or no pg_global loaded.
+ */
+aa_session_t *pg_global_session(void) {
+  return pg_global_is_loaded() ? session_state() : NULL;
+}
+
+/* sm's id of this session's database, or AA_NO_DATABASE before it has one. */
+uint64_t pg_global_aa_dbid(void) {
+  return OidIsValid(MyDatabaseId) ? pg_global_dbid(MyDatabaseId)
+                                  : AA_NO_DATABASE;
+}
+
 /* This session's aa state, if it made one; NULL if not. */
 static aa_session_t *session_if_any(void) {
   return nullptr != tcb ? tcb->pg_global.get() : NULL;

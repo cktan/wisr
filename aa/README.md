@@ -51,6 +51,7 @@ messages (`../dg/src/backend/utils/init/pg_global.c`).
 | `src/aa_store.cc` | `pg_global`'s tables: made, read, written |
 | `src/aa_acl.cc` | ACLs: their text, the default, the intersection |
 | `src/aa_auth.cc` | how a client gets in: the method, the secret, the login checks |
+| `src/aa_authz.cc` | who holds which privilege: closures, ACL masks, grantors, CONNECT |
 | `src/aa_error.cc` | the thread's error state |
 | `src/aa_internal.h` | what aa's files share |
 | `test/` | doctest cases, on a throwaway home (`home.h`) |
@@ -81,10 +82,19 @@ messages (`../dg/src/backend/utils/init/pg_global.c`).
   carried out by digres: `aa_auth_method()` before the
   exchange, peer or password; `aa_role_secret()` during it;
   `aa_login_refused()` after it, LOGIN, VALID UNTIL and
-  CONNECTION LIMIT. digres reads the socket's peer, the clock
-  and its sessions, and passes them in; CONNECT on the
-  database is still digres's, until privileges are evaluated
-  here.
+  CONNECTION LIMIT; `aa_connect_refused()` once the database
+  is chosen, CONNECT. digres reads the socket's peer, the
+  clock and its sessions, and passes them in.
+- **Who holds which privilege** is computed here, as
+  PostgreSQL's `acl.c` does: the roles one is a member of,
+  through grants with INHERIT, with SET, or any, breadth
+  first, a database's owner in `pg_database_owner` there;
+  WITH ADMIN OPTION; an ACL's mask for a role; the grantor a
+  GRANT is made as. digres's `has_privs_of_role()`,
+  `aclmask()` and the rest call it, an `Acl`'s items passed as
+  they are, laid out as `aa_acl_item_t`. A session caches
+  the roles and each closure under a stamp, the shared epochs
+  and its own version, so a hit takes no lock.
 - **Other sessions learn of a change by its epoch**:
   `aa_roles_moved()` once the roles are replaced, and
   `aa_objects_moved()` with the oids of the objects changed,

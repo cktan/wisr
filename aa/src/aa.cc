@@ -139,6 +139,7 @@ int aa_new_oid(aa_session_t *s, aa_oid_t *out) {
  * snapshot at its first change in the transaction.
  */
 static aa_roles_t &working(aa_session_t *s) {
+  s->version++;
   if (nullptr == s->working) {
     s->base = aa_roles(s->env);
     s->working = std::make_shared<aa_roles_t>(*s->base);
@@ -213,6 +214,7 @@ bool aa_find_object(aa_env_t *env, aa_session_t *s, const aa_key_t &key,
 
 /* Make object the entry of its key, at the subtransaction's level. */
 void aa_set_object(aa_session_t *s, int level, const aa_object_t &object) {
+  s->version++;
   s->changes.push_back(
       {level, aa_key_t(object.dbid, object.objid), true, object});
 }
@@ -221,8 +223,10 @@ void aa_set_object(aa_session_t *s, int level, const aa_object_t &object) {
 void aa_forget_object(aa_session_t *s, int level, const aa_key_t &key) {
   aa_object_t object;
 
-  if (aa_find_object(s->env, s, key, &object))
+  if (aa_find_object(s->env, s, key, &object)) {
+    s->version++;
     s->changes.push_back({level, key, false, object});
+  }
 }
 
 /* The database dbid goes: every entry of its with it, after the commit. */
@@ -314,6 +318,7 @@ void aa_subcommit(aa_session_t *s, int level) {
 
 /* A subtransaction at level aborts: its changes, the last made, go. */
 void aa_subabort(aa_session_t *s, int level) {
+  s->version++;
   while (!s->changes.empty() && s->changes.back().level >= level)
     s->changes.pop_back();
 }
@@ -472,6 +477,7 @@ int aa_commit(aa_session_t *s) {
     return 0;
   s->base.reset();
   s->working.reset();
+  s->version++;
 
   /*
    * Replace the snapshot with pg_global as it is now, read under the
@@ -499,6 +505,7 @@ int aa_abort(aa_session_t *s) {
   s->base.reset();
   s->working.reset();
   s->changes.clear();
+  s->version++;
   s->dropped_dbs.clear();
   s->to_restore.clear();
   if (restore.empty())
@@ -570,6 +577,7 @@ int aa_post_commit(aa_session_t *s) {
     publish_objects(s->env, last, s->dropped_dbs);
   s->changes.clear();
   s->dropped_dbs.clear();
+  s->version++;
   return rc;
 }
 

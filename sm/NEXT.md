@@ -227,19 +227,6 @@ Owed, and blocking nothing above:
 
 ## 3. Not blocking
 
-- **Roles, authentication and authorization, the rest of `aa`**
-  (`../aa/README.md`). Moved out of digres so far: the roles,
-  memberships, owners and ACLs, their storage in `pg_global`, the
-  transaction's changes and their writes around the database's
-  commit, tested without a server, the crash between the two
-  commits among the tests (`../dg/WORKNOTE.md` step 326); and
-  `../aa/ROLE.md` §5's checks but CONNECT (step 327). Left in
-  digres, to move next: the evaluation of privileges, with the
-  closures over the membership graph that INHERIT, SET and ADMIN
-  make (`acl.c`), and CONNECT on the database with it. What
-  stays: PostgreSQL's protocol (the SCRAM exchange, the socket's
-  peer), its SQL (`user.c`, `aclchk.c`'s calls), the catalog
-  relations and the caches' invalidation.
 - **Explore dropping a chained store's OLD entries at
   startup.** After a restart no snapshot is older than the
   start, so an old entry (class `0x02`, `VCHAIN.md` §2) whose

@@ -56,6 +56,7 @@
 #include "utils/injection_point.h"
 #include "utils/memutils.h"
 #include "utils/pg_locale.h"
+#include "utils/pg_global.h"
 #include "utils/portal.h"
 #include "utils/ps_status.h"
 #include "utils/snapmgr.h"
@@ -175,18 +176,21 @@ static void CheckMyDatabase(const char *name, bool am_superuser,
                             bool override_allow_connections) {
   /*
    * The second of aa/ROLE.md section 5's checks: CONNECT on the database,
-   * which a superuser need not have.  The client is told what a wrong
-   * password tells it, and the log which check failed.
+   * which a superuser need not have, decided by aa (aa_connect_refused()).
+   * The client is told what a wrong password tells it, and the log which
+   * check failed.
    */
-  if (IsUnderPostmaster && !am_superuser &&
-      ACLCHECK_OK != object_aclcheck(DatabaseRelationId, MyDatabaseId,
-                                     GetUserId(), ACL_CONNECT))
-    ereport(FATAL,
-            (errcode(ERRCODE_INVALID_PASSWORD),
-             errmsg("password authentication failed for user \"%s\"",
-                    GetUserNameFromId(GetUserId(), false)),
-             errdetail_log("Role has no CONNECT privilege on database \"%s\".",
-                           name)));
+  if (IsUnderPostmaster && !am_superuser) {
+    const char *why =
+        aa_connect_refused(pg_global_env(), pg_global_session(),
+                           pg_global_dbid(MyDatabaseId), GetUserId());
+
+    if (NULL != why)
+      ereport(FATAL, (errcode(ERRCODE_INVALID_PASSWORD),
+                      errmsg("password authentication failed for user \"%s\"",
+                             GetUserNameFromId(GetUserId(), false)),
+                      errdetail_log("Role %s \"%s\".", why, name)));
+  }
 
   /*
    * digres keeps no pg_database row to check otherwise.  Its encoding is

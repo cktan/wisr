@@ -9734,3 +9734,43 @@ client what it told it before.
   one only after a case was added (another OS user asking for
   the superuser). digres's `initdb.sh` and `server.sh` cases of
   §5 pass unchanged.
+
+## Step 328: who holds which privilege, computed by aa
+
+The evaluation of privileges moves from `acl.c` to aa
+(`../aa/src/aa_authz.cc`), and CONNECT at a connect with it:
+what is left of `../aa/ROLE.md` §5 in digres is the protocol.
+`../sm/NEXT.md` §3's item on the module is done, and goes.
+
+- **The closures**: the roles a role is a member of through
+  grants with INHERIT, with SET, or any, breadth first, a
+  database's owner in `pg_database_owner` there; WITH ADMIN
+  OPTION, and the nearest role holding it. `acl.c`'s
+  `has_privs_of_role()`, `member_can_set_role()`,
+  `is_member_of_role()` and its `_nosuper`,
+  `is_admin_of_role()` and `select_best_admin()` call aa.
+  `roles_is_member_of()`, its caches, their syscache callbacks
+  and its Bloom filter go.
+- **An ACL's mask**, `aclmask()` and `aclmask_direct()`, and
+  the grantor a GRANT is made as, `select_best_grantor()`: an
+  `Acl`'s items go to aa as they are, `AclItem` and
+  `aa_acl_item_t` laid out alike (a `static_assert` says so).
+- **CONNECT**, in `CheckMyDatabase()`: `aa_connect_refused()`,
+  the database's ACL, or its default, by the same mask.
+- **The caches**: a session keeps the roles it reads, the last
+  superuser asked of, and one closure of each kind, as
+  PostgreSQL kept one; each holds while its stamp, the roles'
+  and objects' epochs and the session's own version, bumped at
+  each of its changes, is current. A hit takes no lock.
+- **Tests**: aa's, seven cases: the closures, pg_database_owner
+  by database, ADMIN, an ACL's mask, the best grantor, CONNECT,
+  and the caches going stale on the session's own change, its
+  abort, another's commit of a role and of a database's owner.
+  Of 19 mutations, 18 were caught, five only after a case was
+  added; the one left, the grantor search's early return, is
+  equivalent: the scan after it picks the same role.
+  `server.sh` gains a case: a member reads and ALTERs its
+  group's table, one WITH INHERIT FALSE is refused both, and
+  CONNECT granted to a group lets its member in. It catches
+  `has_privs_of_role()` answering for the superuser alone,
+  which the suites before let pass.
