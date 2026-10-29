@@ -3,9 +3,10 @@
 Roles, authentication and authorization: what every database of
 a server shares about who may do what. It is a library,
 `build/libaa.a`, with its interface in `include/aa.h`, and
-digres links it beside sm and sq. `ROLE.md` is the design: what
-digres takes of PostgreSQL's roles and privileges, where they
-are kept, and how a client is let in.
+digres links it beside sm and sq. `ROLE.md` is why: what digres
+takes of PostgreSQL's roles and privileges, where they are kept,
+and how a client is let in. `AA_DESIGN.md` is the design of
+record, and `USAGE.md` how to call it.
 
 ```
 make -j4         build build/libaa.a and its tests
