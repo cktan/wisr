@@ -9809,3 +9809,22 @@ ACL's evaluation, aa's, was under 1%.
   mutations of the new path, its mask, its default ACL's
   owner, and the predefined roles skipped after it, were each
   caught.
+
+## Step 330: an ACL read without sscanf()
+
+What a role paid after step 329, profiled again with the simple
+protocol: of the role's busy time, 3.6% was the check on a
+table, and 2.1% of it reading the ACL's text in aa
+(`aa_acl_items()`), by `sscanf()` at each check.
+
+- **`aa_acl_items()` reads the text by `strtoull()`**, a field
+  at a time, stopping at the first item that is not
+  `grantee,grantor,privs`, as before.
+- **Measured**, as before, one client: a role loses 0 to 2% to
+  the superuser, within the runs' noise, on reads by key and on
+  statements that read no row. Sixteen clients lose 2 to 9%:
+  what is left is likely the one mutex every owner and ACL
+  lookup takes (`../sm/NEXT.md` §1, step 4).
+- **Tests**: aa's, a case of malformed text, an empty field, a
+  sign, two spaces between items; four mutations of the reader
+  caught.

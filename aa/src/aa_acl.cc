@@ -2,7 +2,8 @@
  * aa_acl.cc -- ACLs as pg_global keeps them: their text, their items,
  * what two of them grant alike, and the one an object keeps none of.
  */
-#include <cstdio>
+#include <cctype>
+#include <cstdlib>
 
 #include "aa.h"
 
@@ -22,20 +23,35 @@ std::string aa_acl_text(const std::vector<aa_acl_item_t> &items) {
   return out;
 }
 
-/* The items of an ACL as pg_global keeps it (aa_acl_text()). */
+/*
+ * The number at *p, into *out, and *p past it: false if there is none.
+ * strtoull() alone, not sscanf(): an ACL is read at each privilege check.
+ */
+static bool number(const char **p, uint64_t *out) {
+  char *end;
+
+  if (!isdigit((unsigned char)**p))
+    return false;
+  *out = strtoull(*p, &end, 10);
+  *p = end;
+  return true;
+}
+
+/*
+ * The items of an ACL as pg_global keeps it (aa_acl_text()), up to the
+ * first that is not "grantee,grantor,privs".
+ */
 std::vector<aa_acl_item_t> aa_acl_items(const std::string &text) {
   std::vector<aa_acl_item_t> out;
   const char *p = text.c_str();
 
   while ('\0' != *p) {
-    unsigned long grantee, grantor;
-    unsigned long long privs;
-    int n = 0;
+    uint64_t grantee, grantor, privs;
 
-    if (3 != sscanf(p, "%lu,%lu,%llu%n", &grantee, &grantor, &privs, &n))
+    if (!number(&p, &grantee) || ',' != *p++ || !number(&p, &grantor) ||
+        ',' != *p++ || !number(&p, &privs))
       break;
-    out.push_back({(aa_oid_t)grantee, (aa_oid_t)grantor, (uint64_t)privs});
-    p += n;
+    out.push_back({(aa_oid_t)grantee, (aa_oid_t)grantor, privs});
     while (' ' == *p)
       p++;
   }

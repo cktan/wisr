@@ -31,6 +31,30 @@ TEST_CASE("acl: text round trip") {
   CHECK(aa_acl_items("").empty());
 }
 
+// Verify that reading an ACL's text stops at the first item that is not
+// "grantee,grantor,privs", keeping those before it, and takes items
+// apart by any number of spaces.
+// 1. Read text whose second item has an empty field, one whose second has
+//    a sign, and one cut short.
+// 2. Confirm the first two keep one item each, the third none.
+// 3. Read two items two spaces apart; confirm both.
+TEST_CASE("acl: text malformed") {
+  // 1.
+  std::vector<aa_acl_item_t> empty = aa_acl_items("16384,10,2 ,10,2");
+  std::vector<aa_acl_item_t> sign = aa_acl_items("16384,10,2 -1,10,2");
+  std::vector<aa_acl_item_t> cut = aa_acl_items("16384,10");
+
+  // 2.
+  REQUIRE(1 == empty.size());
+  CHECK(16384 == empty[0].grantee);
+  CHECK(2 == empty[0].privs);
+  CHECK(1 == sign.size());
+  CHECK(cut.empty());
+
+  // 3.
+  CHECK(2 == aa_acl_items("16384,10,2  0,10,2").size());
+}
+
 // Verify that an object with no ACL gets PostgreSQL's acldefault().
 // 1. Ask for a table's, a schema's and a database's default.
 // 2. Confirm the owner has all rights of the class, and a database
