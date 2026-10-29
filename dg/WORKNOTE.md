@@ -10009,3 +10009,41 @@ under that one mutex, ~640 thousand holds a second.
 - **Found**: 36% of the busy samples at 16 clients still wait for
   `lock_mu` in `lock_try`. Next, PostgreSQL's fast path: a table's
   IS and IX locks in slots of the session's own.
+
+## Step 337: a table's IS and IX in slots of the session's own
+
+After step 336, 36% of t16's busy samples at 16 clients still
+waited for `lock_mu` in `lock_try`: every statement takes its
+tables' IS, and every session meets every other at that mutex.
+
+- **sm1** (`../sm/sm1/SM1_DESIGN.md` §5.1, PostgreSQL's fast
+  path): an OID lock taken IS or IX is kept in one of 32 slots
+  of the session's own, under its `fp_mu`, not in the lock
+  table, while a count in `fp_strong`, 1,024 by the key's hash,
+  is 0. A strong lock (S, SIX, X) raises its key's count, then
+  sweeps the slots of every session of the database
+  (`fp_sessions`) for its key into the table, and locks as any
+  lock; its count goes when it is released, or at once if none
+  is taken. A transaction whose locks are all in slots takes no
+  `lock_mu` to take or release them. A prepare moves the slots
+  into the table; a restored transaction counts its strong OID
+  locks again; `lock_status` lists the slots.
+- **`lock_oid`** takes an OID lock, out of `access.cc`'s
+  `lock_row`; its doc comment has a SELECT that skips `lock_mu`
+  and an ALTER TABLE that cannot.
+- **Tests**: 6 isolation scenarios, `h01` to `h06`, through a
+  new driver verb, `lockoid`: DDL waits for a reader in a slot;
+  a reader waits for DDL; a reader converts its own slot; a
+  savepoint gives a slot back; a deadlock through a moved slot;
+  writers share a table and a builder waits for them. sm1: slots
+  and the table counted directly; 40 locks past the 32 slots;
+  a prepared transaction's table locks across a restart. 8
+  mutations caught.
+- **Measured**, release, prepared t16 at 1, 4, 8, 16 clients:
+  14.5–14.8, 44.7–45.2, 74.6–75.1, 124.5–125.8 thousand tps,
+  8.6× (step 336: 72–76 at 16); the server's CPU a transaction
+  at 16 clients 65 µs (step 336: 121). No sample waits for
+  `lock_mu`; 14% wait for the snapshot's mutex
+  (`db_take_snapshot`, `db_release_snapshot`).
+- **Next** (`../sm/NEXT.md` §1, item 3): the lock table a hash
+  table of its own, measured without digres or sm.

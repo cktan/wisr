@@ -1,0 +1,21 @@
+# h05 -- a deadlock through a lock that was in a slot.
+#
+# T1 reads table 1, its IS in a slot; T2 alters table 2; T1
+# asks X on table 2 and waits for T2. T2 then asks X on table
+# 1: its sweep moves T1's IS into the lock table, T2 waits for
+# T1, and the cycle is found. The younger, T2, is the victim,
+# and T1's X on table 2 is granted.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 lockoid 1 is -> ok
+@3 T2 lockoid 2 exclusive -> ok
+@4 T1 lockoid 2 exclusive blocks -> blocked
+@5 T2 lockoid 1 exclusive -> deadlock
+@4 T1 lockoid 2 exclusive blocks -> ok (resumed)
+@6 check last T2 deadlock -> satisfied
+@7 check last T1 ok -> satisfied
+@8 T1 commit -> ok
+@9 check committed T1 -> satisfied

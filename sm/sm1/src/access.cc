@@ -344,27 +344,6 @@ int write_row(sm1::session_t *s, write_op_t op, uint64_t storeid,
   return 0;
 }
 
-/*
- * A lock on a name in a namespace nothing writes: no store is
- * read and no version is checked, since none can exist. Only
- * the lock table is touched (sm1.h, locktype_t).
- */
-int lock_name(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
-              const char *key, size_t klen, sm1::lockmode_t mode) {
-  rocksdb::Slice k(key ? key : "", klen);
-  for (;;) {
-    // No writer of this name can exist, so no latch is needed.
-    if (lock_try(s, type, storeid, k, mode) == 0) {
-      return 0;
-    }
-    // Wait for the holders that conflict.
-    int waited = lock_wait(s, type, storeid, k, mode);
-    if (waited != 0) {
-      return lock_wait_error(s, waited);
-    }
-  }
-}
-
 /* sm1::lock, minus the out-of-memory guard. */
 int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
              const char *key, size_t klen, sm1::lockmode_t mode,
@@ -386,21 +365,22 @@ int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
     return set_error(sm1::SM_ERR_INVALID,
                      "a LOCKTYPE_OID key is 8 bytes, not {}", klen);
   }
-  // A name outside any store takes the lock and nothing else.
+  // A name outside any store takes the lock and nothing else: no
+  // store is read and no version is checked, since none can exist.
   if (type != sm1::LOCKTYPE_ROW) {
-    if (!nowait) {
-      return lock_name(s, type, storeid, key, klen, mode);
-    }
-    // Taken, or converted, only if no other holder conflicts.
-    return lock_try(s, type, storeid, rocksdb::Slice(key ? key : "", klen),
-                    mode) == 0
-               ? 0
-               : 1;
+    return lock_oid(s, storeid, rocksdb::Slice(key ? key : "", klen), mode,
+                    nowait);
   }
   // Validate the storeid and key at the current view.
   if (enter(s, xct_view(s), storeid, key, klen) != 0) {
     return -1;
   }
+  // TODO: above read committed, a row lock reads the key twice:
+  // latest_version under the latch, then access_check_current
+  // after the lock. The first read's commit_ts can serve the
+  // check: once the lock is held with no write in flight, no
+  // version can come between, a writer taking the latch and
+  // waiting for the lock. One RocksDB read saved a row lock.
   rocksdb::Slice k(key ? key : "", klen);
   // Find the store's CF.
   const store_t &st = store_of(s, storeid);

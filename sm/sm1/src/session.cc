@@ -116,6 +116,8 @@ sm1::session_t *open_session(sm1::env_t *env, const char *dbname,
   db->nsessions++;
   // Register the session for sm1::detach.
   env->sessions.insert(s.get());
+  // And with its database, for a strong lock's sweep (§5.1).
+  lock_register(s.get());
   return s.release();
 }
 
@@ -168,8 +170,9 @@ int sm1::closedb(sm1::session_t *session) {
   {
     // Hold the env mutex while updating the registries.
     std::lock_guard<std::mutex> guard(env->mu);
-    // Unregister the session.
+    // Unregister the session, here and from its database's sweep.
     env->sessions.erase(session);
+    lock_unregister(session);
     // Drop the session count; the last session closes the database,
     // or leaves it to the reaper for its idle time.
     if (--db->nsessions == 0) {
@@ -260,7 +263,15 @@ int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
   // Hold the env mutex while reading the databases and the registry.
   std::lock_guard<std::mutex> guard(env->mu);
   for (const auto &[name, db] : env->dbs) {
-    // Hold the database's lock_mu while reading its table and waits.
+    // Hold each of its sessions' fp_mu, then lock_mu, while reading
+    // the slots, the table, the lock lists and the waits: a session
+    // adds to its list under fp_mu alone, for a slot.
+    std::vector<std::unique_lock<std::mutex>> fps;
+    for (sm1::session_t *s : env->sessions) {
+      if (s->db == db) {
+        fps.emplace_back(s->fp_mu);
+      }
+    }
     std::lock_guard<std::mutex> lock_guard(db->lock_mu);
     // A lock table key is the type byte, be64(storeid), then the key.
     auto entry = [&](const std::string &k, sm1::lockmode_t mode,
@@ -283,7 +294,17 @@ int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
       }
     }
     for (const sm1::session_t *s : env->sessions) {
-      if (s->db == db && !s->waiting_key.empty()) {
+      if (s->db != db) {
+        continue;
+      }
+      // Its locks in slots, which the table does not hold.
+      for (int i = 0; s->fp_used > 0 && i < sm1::session_t::fp_slots; i++) {
+        if (s->fp[i].used) {
+          const sm1::session_t::lockref_t &l = s->locks[s->fp[i].idx];
+          entry(lock_name(l), l.mode, s, true);
+        }
+      }
+      if (!s->waiting_key.empty()) {
         entry(s->waiting_key, s->waiting_mode, s, false);
       }
     }

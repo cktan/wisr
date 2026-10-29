@@ -16,6 +16,7 @@
 #include "driver.h"
 
 #include "session.h"
+#include "sm0_codec.h"
 #include "sm1.h"
 
 #include <stdlib.h>
@@ -340,22 +341,31 @@ std::string execute(worker_t *w, const item_t &it) {
     return sm1::rollback(w->sess, atoi(a[0].c_str())) == 0 ? "ok"
                                                            : error_name();
   }
-  if (it.verb == "lock" || it.verb == "lockread") {
+  if (it.verb == "lock" || it.verb == "lockread" || it.verb == "lockoid") {
     // lock <row> <is|ix|shared|six|exclusive>: take the row
     // lock in one of Gray's modes without writing the row;
-    // lockread, as a row the statement read (sm1::lock's as_read).
+    // lockread, as a row the statement read (sm1::lock's as_read);
+    // lockoid <n>, the OID lock on n, as sm3 locks a table.
     static const std::pair<const char *, sm1::lockmode_t> modes[] = {
         {"is", sm1::SM_LOCKMODE_IS},        {"ix", sm1::SM_LOCKMODE_IX},
         {"shared", sm1::SM_LOCKMODE_SH},    {"six", sm1::SM_LOCKMODE_SIX},
         {"exclusive", sm1::SM_LOCKMODE_EX},
     };
     for (const auto &[name, mode] : modes) {
-      if (a[1] == name) {
-        return row_lock(w->sess, w->store, a[0], mode, it.verb == "lockread") ==
-                       0
+      if (a[1] != name) {
+        continue;
+      }
+      if (it.verb == "lockoid") {
+        // An OID lock's key is the oid, 8 bytes big-endian.
+        std::string oid;
+        sm0::put_be64(oid, strtoull(a[0].c_str(), nullptr, 10));
+        return sm1::lock(w->sess, sm1::LOCKTYPE_OID, 0, oid, mode) == 0
                    ? "ok"
                    : error_name();
       }
+      return row_lock(w->sess, w->store, a[0], mode, it.verb == "lockread") == 0
+                 ? "ok"
+                 : error_name();
     }
     return "ERROR: lock mode must be is, ix, shared, six or exclusive, not " +
            a[1];

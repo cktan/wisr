@@ -66,6 +66,31 @@ int set(sm1::session_t *s, const std::string &key, const std::string &val) {
   return sm1::update(s, g_store, key, val);
 }
 
+/* The OID lock name of n: 8 bytes, big-endian. */
+std::string oid_of(uint64_t n) {
+  std::string k;
+  for (int i = 7; i >= 0; i--) {
+    k.push_back(static_cast<char>(n >> (8 * i)));
+  }
+  return k;
+}
+
+/* Whether every strong-lock count of s's database is 0. */
+bool no_strong(sm1::session_t *s) {
+  for (const auto &c : s->db->fp_strong) {
+    if (0 != c.load()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/* The number of entries in s's database's lock table. */
+size_t table_size(sm1::session_t *s) {
+  std::lock_guard<std::mutex> guard(s->db->lock_mu);
+  return s->db->lock_table.size();
+}
+
 /* Give a blocking call time to reach its wait. */
 void settle() { std::this_thread::sleep_for(std::chrono::milliseconds(150)); }
 
@@ -1146,6 +1171,93 @@ TEST_CASE("row keys that hash alike share an entry and still lock exactly") {
   CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
         0);
   REQUIRE(sm1::commit(b) == 0);
+  sm1::closedb(a);
+  sm1::closedb(b);
+}
+
+TEST_CASE("a weak table lock takes a slot, and a strong one moves it") {
+  // Verify the fast path (§5.1): IS and IX on an oid are in the
+  // session's slots, and a strong lock meets them in the table.
+  // 1. A locks oid 1 IS and oid 2 IX: two slots, an empty table.
+  // 2. B's trylock of oid 1 X fails: A's IS moved to the table,
+  //    and the count B took is given back.
+  // 3. C locks oid 1 IS: no count, so a slot, and the table holds
+  //    A's alone.
+  // 4. A and C commit: no slot, no entry, no count is left.
+  lock_fixture_t f;
+  sm1::session_t *a = f.open(), *b = f.open(), *c = f.open();
+  for (sm1::session_t *s : {a, b, c}) {
+    REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  }
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid_of(1), sm1::SM_LOCKMODE_IS) ==
+          0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid_of(2), sm1::SM_LOCKMODE_IX) ==
+          0);
+  CHECK(a->fp_used == 2);
+  CHECK(table_size(a) == 0);
+
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(1), sm1::SM_LOCKMODE_EX) ==
+        1);
+  CHECK(a->fp_used == 1);
+  CHECK(table_size(a) == 1);
+  CHECK(no_strong(a));
+
+  REQUIRE(sm1::lock(c, sm1::LOCKTYPE_OID, 0, oid_of(1), sm1::SM_LOCKMODE_IS) ==
+          0);
+  CHECK(c->fp_used == 1);
+  CHECK(table_size(a) == 1);
+
+  REQUIRE(sm1::commit(a) == 0);
+  REQUIRE(sm1::commit(c) == 0);
+  CHECK(a->fp_used == 0);
+  CHECK(c->fp_used == 0);
+  CHECK(table_size(a) == 0);
+  CHECK(no_strong(a));
+  REQUIRE(sm1::commit(b) == 0);
+  for (sm1::session_t *s : {a, b, c}) {
+    sm1::closedb(s);
+  }
+}
+
+TEST_CASE("table locks past the slots go to the table, and all are held") {
+  // Verify a transaction with more table locks than slots (§5.1).
+  // 1. A locks 40 oids IS: 32 in slots, 8 in the table.
+  // 2. lock_status lists all 40, held.
+  // 3. B's trylock X fails on the first oid, in a slot, and on the
+  //    last, in the table.
+  // 4. A commits: B's X on both is granted, and once B commits no
+  //    slot, entry or count is left.
+  lock_fixture_t f;
+  sm1::session_t *a = f.open(), *b = f.open();
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  for (uint64_t n = 1; n <= 40; n++) {
+    REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid_of(n),
+                      sm1::SM_LOCKMODE_IS) == 0);
+  }
+  CHECK(a->fp_used == sm1::session_t::fp_slots);
+  CHECK(table_size(a) == 40 - sm1::session_t::fp_slots);
+  std::vector<sm1::lock_status_t> out;
+  REQUIRE(sm1::lock_status(f.env(), out) == 0);
+  CHECK(out.size() == 40);
+  for (const auto &r : out) {
+    CHECK(r.granted);
+    CHECK(r.mode == sm1::SM_LOCKMODE_IS);
+  }
+
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(1), sm1::SM_LOCKMODE_EX) ==
+        1);
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(40),
+                     sm1::SM_LOCKMODE_EX) == 1);
+  REQUIRE(sm1::commit(a) == 0);
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(1), sm1::SM_LOCKMODE_EX) ==
+        0);
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(40),
+                     sm1::SM_LOCKMODE_EX) == 0);
+  REQUIRE(sm1::commit(b) == 0);
+  CHECK(a->fp_used == 0);
+  CHECK(table_size(a) == 0);
+  CHECK(no_strong(a));
   sm1::closedb(a);
   sm1::closedb(b);
 }

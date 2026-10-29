@@ -346,6 +346,19 @@ struct db_t {
   std::unordered_map<lock_key_t, lock_ent_t, lock_key_hash_t> lock_table;
   int deadlock_ms = 50;
   /*
+   * The fast path (§5.1): the strong OID locks (S, SIX, X) held
+   * or being asked, by the hash of their key; a weak one takes a
+   * slot of its session's only while its key's count is 0. A
+   * strong locker counts itself, then moves every session's
+   * slots for its key into the table: the sessions of the
+   * database, in fp_sessions, under fp_reg_mu. Order: the env's
+   * mu, fp_reg_mu, a session's fp_mu, lock_mu.
+   */
+  static constexpr size_t fp_strong_slots = 1024;
+  std::atomic<uint32_t> fp_strong[fp_strong_slots] = {};
+  std::mutex fp_reg_mu;
+  std::vector<sm1::session_t *> fp_sessions;
+  /*
    * Bumped, under lock_mu, by every rollback to a savepoint: it
    * deletes versions, so a writer waiting for the transaction
    * looks again (WRITELOCK.md §3.4).

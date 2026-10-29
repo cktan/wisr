@@ -15,6 +15,7 @@
 #include <functional>
 #include <list>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -187,9 +188,29 @@ struct sm1::session_t {
     sm1::lockmode_t mode = sm1::SM_LOCKMODE_SH; /* held now, after
                                                        conversions */
     bool latest = false; /* read_latest done: the write may go ahead */
+    int8_t slot = -1;    /* its fast-path slot, or -1 in the table */
+    bool strong = false; /* counted in the db's fp_strong */
   };
   std::vector<lockref_t> locks; /* held, in acquisition order */
   size_t latest_marks = 0;      /* locks with latest set; 0 skips scans */
+
+  /*
+   * The fast path (§5.1): an OID lock taken IS or IX, while no
+   * strong lock is held or asked on a key that hashes with it,
+   * is in a slot here and not in the lock table. Guarded by
+   * fp_mu, which only the session and a strong locker's sweep
+   * take; a slot's idx is its entry in locks.
+   */
+  static constexpr int fp_slots = 32;
+  struct fp_slot_t {
+    wisr::lock_key_t key{};
+    sm1::lockmode_t mode = sm1::SM_LOCKMODE_IS;
+    size_t idx = 0;
+    bool used = false;
+  };
+  std::mutex fp_mu;
+  fp_slot_t fp[fp_slots];
+  int fp_used = 0; /* slots in use */
   /*
    * The holders blocking us, empty when we are not waiting. A
    * shared lock has many, so the waits-for graph branches and
@@ -365,6 +386,21 @@ int xct_fail_retryable(sm1::session_t *session, sm1::errnum_t e,
 
 /* The write latch (storeid, key) hashes to (WRITELOCK.md §3.1). */
 std::mutex &lock_latch(db_t *db, uint64_t storeid, rocksdb::Slice key);
+
+/*
+ * Take the OID lock (storeid, key) in mode, by the fast path
+ * when it can (§5.1): 0 once held; with nowait, 1 if another
+ * holder conflicts, taking nothing; else, a wait that failed,
+ * -1 with the error set (lock_wait_error).
+ */
+int lock_oid(sm1::session_t *session, uint64_t storeid, rocksdb::Slice key,
+             sm1::lockmode_t mode, bool nowait);
+
+/* Add the session to its database's, for a strong locker's sweep. */
+void lock_register(sm1::session_t *session);
+
+/* Take the session out of its database's, its locks all released. */
+void lock_unregister(sm1::session_t *session);
 
 /*
  * Take the lock (type, storeid, key) in mode if no other holder

@@ -703,8 +703,37 @@ share its table entry, so releasing one leaves the others held.
 The key costs no allocation, as the table needs none to find or
 add an entry. One mutex covers the table and
 every waiter's waits-for list, which keeps a deadlock walk
-consistent; sharding it is a later optimization if a benchmark
-shows contention.
+consistent.
+
+**The fast path**, PostgreSQL's for a relation's weak locks
+(its `lock.c`, 9.2). A table's readers and writers take IS and
+IX on its oid, which never conflict with each other, so each
+needs to be seen only by a strong lock, S, SIX or X, which DDL
+takes. An OID lock in IS or IX is kept in one of 32 slots of
+its session's own, under the session's `fp_mu`, and not in the
+table, while no strong lock is held or asked on a key that
+hashes with it: one of 1,024 counts in the database,
+`fp_strong`, is 0. A strong locker adds itself to its key's
+count, then sweeps every session of the database (`fp_sessions`,
+under `fp_reg_mu`), moving each slot for its key into the table
+under that session's `fp_mu`; then it locks as any lock does,
+meeting the weak holders there, in the waits-for graph too. Its
+count goes when the lock is released, or at once if none is
+taken. The two orders meet at the session's `fp_mu`: a weak
+locker reads the count under it, and a sweep takes it after the
+count is raised, so either the sweep finds the slot or the weak
+locker sees the count and goes to the table. A strong lock of
+the session's own on the key is counted already and sweeps
+nothing; a weak lock asked while the count is not 0 moves the
+session's own slot for the key to the table first. A slot is
+released at commit, abort or a rollback past it, under `fp_mu`
+alone: a transaction whose locks are all in slots takes no
+`lock_mu` at all. A prepare moves the slots into the table,
+the prepared transaction being in no sweep's list, and a
+restored one counts its strong OID locks again. `lock_status`
+lists the slots with the table. The mutexes are taken in one
+order: the environment's, `fp_reg_mu`, a session's `fp_mu`,
+`lock_mu`. Row locks take no fast path.
 
 **Conversions.** A transaction holding a key in one mode and
 asking for one it does not cover — including by writing it —

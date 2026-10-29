@@ -32,6 +32,7 @@
 #include "sm0_defer.h"
 #include "sm_sys.h"
 
+#include <algorithm>
 #include <functional>
 #include <string_view>
 #include <unordered_set>
@@ -358,6 +359,119 @@ bool wait_once(db_t *db, sm1::session_t *s, std::unique_lock<std::mutex> &guard,
   return true;
 }
 
+/* Whether an OID lock in mode may take the fast path: IS or IX. */
+bool is_weak(lmode_t mode) {
+  return sm1::SM_LOCKMODE_IS == mode || sm1::SM_LOCKMODE_IX == mode;
+}
+
+/* The count of strong locks on keys that hash with k. */
+std::atomic<uint32_t> &strong_count(db_t *db, const lock_key_t &k) {
+  return db->fp_strong[lock_key_hash_t{}(k) % db_t::fp_strong_slots];
+}
+
+/*
+ * Move s's slot i into the lock table, as a hold of s's, joining
+ * one s has there already. The caller holds s->fp_mu, not lock_mu.
+ */
+void fp_move(db_t *db, sm1::session_t *s, int i) {
+  sm1::session_t::fp_slot_t &f = s->fp[i];
+  {
+    // Hold lock_mu while editing the table.
+    std::lock_guard<std::mutex> guard(db->lock_mu);
+    std::vector<holder_t> &holders = db->lock_table[f.key].holders;
+    holder_t *mine = nullptr;
+    for (holder_t &h : holders) {
+      if (h.session == s) {
+        mine = &h;
+      }
+    }
+    if (mine) {
+      mine->refs++;
+      mine->mode = cover(mine->mode, f.mode);
+      mine->idx = std::min(mine->idx, f.idx);
+    } else {
+      holders.push_back({s, f.mode, 1, f.idx});
+    }
+    // Its list entry is the table's from now on.
+    s->locks[f.idx].slot = -1;
+  }
+  f.used = false;
+  s->fp_used--;
+}
+
+/*
+ * Move every session's slot for k into the lock table, where a
+ * strong locker, counted already, meets them (§5.1).
+ */
+void fp_sweep(db_t *db, const lock_key_t &k) {
+  // Hold fp_reg_mu, so no session in the list is freed meanwhile.
+  std::lock_guard<std::mutex> reg(db->fp_reg_mu);
+  for (sm1::session_t *o : db->fp_sessions) {
+    // Hold its fp_mu, so it takes no slot as we look.
+    std::lock_guard<std::mutex> fp(o->fp_mu);
+    for (int i = 0; o->fp_used > 0 && i < sm1::session_t::fp_slots; i++) {
+      if (o->fp[i].used && o->fp[i].key == k) {
+        fp_move(db, o, i);
+      }
+    }
+  }
+}
+
+/*
+ * Take the weak OID lock (key, at k) in mode by a slot of s's:
+ * false if it must go to the table, with s's slot for k moved
+ * there first when a strong lock hashes with it.
+ */
+bool fp_take(db_t *db, sm1::session_t *s, const lock_key_t &k,
+             rocksdb::Slice key, lmode_t mode) {
+  // Hold our fp_mu: a sweep reads our slots under it.
+  std::lock_guard<std::mutex> fp(s->fp_mu);
+  int mine = -1, free = -1;
+  for (int i = 0; i < sm1::session_t::fp_slots; i++) {
+    if (!s->fp[i].used) {
+      free = free < 0 ? i : free;
+    } else if (s->fp[i].key == k) {
+      mine = i;
+      break;
+    }
+  }
+  // Read under fp_mu: a strong locker counts itself before its
+  // sweep takes it, so either it sees our slot or we see its count.
+  if (0 != strong_count(db, k).load()) {
+    if (mine >= 0) {
+      fp_move(db, s, mine);
+    }
+    return false;
+  }
+  if (mine >= 0) {
+    // Ours already: IS and IX cover each other as IX, still weak.
+    sm1::session_t::fp_slot_t &f = s->fp[mine];
+    f.mode = cover(f.mode, mode);
+    s->locks[f.idx].mode = f.mode;
+    return true;
+  }
+  // Every slot taken: the table holds it.
+  if (free < 0) {
+    return false;
+  }
+  s->fp[free] = {k, mode, s->locks.size(), true};
+  s->fp_used++;
+  lockref_t l = make_ref(k, sm1::LOCKTYPE_OID, key, mode);
+  l.slot = static_cast<int8_t>(free);
+  s->locks.push_back(std::move(l));
+  return true;
+}
+
+/* s's first list entry for the OID lock k, or null. */
+lockref_t *first_ref(sm1::session_t *s, const lock_key_t &k) {
+  for (lockref_t &l : s->locks) {
+    if (sm1::LOCKTYPE_OID == l.type && l.key == k) {
+      return &l;
+    }
+  }
+  return nullptr;
+}
+
 } // namespace
 
 namespace wisr {
@@ -405,6 +519,108 @@ int lock_try(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
   // Remember the lock for release at commit or abort.
   s->locks.push_back(make_ref(k, type, key, want));
   return 0;
+}
+
+/*
+ * Take the OID lock (storeid, key) in mode; see session.h.
+ *
+ * The fast path (SM1_DESIGN.md §5.1) keeps a table's weak locks,
+ * IS and IX, out of the lock table and its lock_mu. IS and IX never
+ * conflict with each other, so only a strong lock, S, SIX or X,
+ * must see them. A weak lock goes in a slot of the session's own,
+ * under its fp_mu, unless a strong lock is held or asked on a key
+ * that hashes with it: its count in fp_strong is not 0. A strong
+ * locker raises that count first, then moves every session's slot
+ * for its key into the table (fp_sweep), and locks as any lock does.
+ *
+ * Skipping lock_mu: a SELECT on t1, with no DDL on t1.
+ *   1. sm3 asks IS on t1's oid. fp_take takes our fp_mu, finds
+ *      t1's count 0 and a slot free, fills it, and adds the entry
+ *      to our lock list.
+ *   2. The commit clears the slot under fp_mu alone, in
+ *      lock_release_from: our locks all in slots, it takes no
+ *      lock_mu either.
+ *
+ * Not skipping it: an ALTER TABLE t1 while that SELECT runs.
+ *   1. The ALTER asks X on t1's oid. It raises t1's count, then
+ *      sweeps: under the SELECT session's fp_mu, it moves that
+ *      session's IS slot into the table, as a holder.
+ *   2. lock_try, under lock_mu, finds the IS, which conflicts with
+ *      X, and lock_wait sleeps until the SELECT commits.
+ *   3. A second SELECT asks IS on t1 meanwhile. fp_take sees the
+ *      count and declines, and the IS goes through lock_try under
+ *      lock_mu: granted, the ALTER not yet a holder, as sm1 keeps
+ *      no queue.
+ *   4. The ALTER commits, its count goes back to 0, and the next
+ *      SELECT on t1 takes a slot again.
+ *
+ * Why no lock is missed: both sides meet at the weak session's
+ * fp_mu. fp_take reads the count under it, and a sweep takes it
+ * after raising the count. If fp_take ran first, the sweep finds
+ * its slot; if after, it sees the count and goes to the table.
+ */
+int lock_oid(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
+             sm1::lockmode_t mode, bool nowait) {
+  db_t *db = s->db;
+  // TODO: there are too many uses of keys in the project. Rename to
+  // lock_name_t.
+  lock_key_t k = lock_key(sm1::LOCKTYPE_OID, storeid, key);
+  bool counted = false;
+  if (is_weak(mode)) {
+    if (fp_take(db, s, k, key, mode)) {
+      return 0;
+    }
+  } else {
+    lockref_t *l = first_ref(s, k);
+    // A strong lock of ours on k counts already, and keeps slots off it.
+    if (!l || !l->strong) {
+      // Count ourselves, then meet every weak holder in the table.
+      strong_count(db, k).fetch_add(1);
+      counted = true;
+      fp_sweep(db, k);
+    }
+  }
+  int rc;
+  for (;;) {
+    // No writer of this name can exist, so no latch is needed.
+    if (0 == lock_try(s, sm1::LOCKTYPE_OID, storeid, key, mode)) {
+      rc = 0;
+      break;
+    }
+    if (nowait) {
+      rc = 1;
+      break;
+    }
+    // Wait for the holders that conflict.
+    int waited = lock_wait(s, sm1::LOCKTYPE_OID, storeid, key, mode);
+    if (0 != waited) {
+      rc = lock_wait_error(s, waited);
+      break;
+    }
+  }
+  if (counted) {
+    if (0 == rc) {
+      // The count goes with the first entry, released last: a
+      // conversion outlives a rollback past the later ones.
+      first_ref(s, k)->strong = true;
+    } else {
+      strong_count(db, k).fetch_sub(1);
+    }
+  }
+  return rc;
+}
+
+/* Add the session to its database's sweep list; see session.h. */
+void lock_register(sm1::session_t *s) {
+  std::lock_guard<std::mutex> reg(s->db->fp_reg_mu);
+  s->db->fp_sessions.push_back(s);
+}
+
+/* Take the session out of its database's sweep list; see session.h. */
+void lock_unregister(sm1::session_t *s) {
+  std::lock_guard<std::mutex> reg(s->db->fp_reg_mu);
+  std::vector<sm1::session_t *> &v = s->db->fp_sessions;
+  v.erase(std::find(v.begin(), v.end(), s));
 }
 
 /* For a write: 2 if another holder conflicts, else convert our own. */
@@ -576,6 +792,14 @@ void lock_wake(db_t *db, bool rollback) {
 
 /* Move every lock s holds, and its list, to g, which takes its place. */
 void lock_transfer(db_t *db, sm1::session_t *s, sm1::session_t *g) {
+  // Hold our fp_mu: our slots go to the table first, g being in
+  // no sweep's list.
+  std::lock_guard<std::mutex> fp(s->fp_mu);
+  for (int i = 0; s->fp_used > 0 && i < sm1::session_t::fp_slots; i++) {
+    if (s->fp[i].used) {
+      fp_move(db, s, i);
+    }
+  }
   // Hold lock_mu while editing the table.
   std::lock_guard<std::mutex> guard(db->lock_mu);
   // Re-point each entry's holder list at g.
@@ -602,7 +826,13 @@ void lock_restore(db_t *db, sm1::session_t *g) {
   std::lock_guard<std::mutex> guard(db->lock_mu);
   // Re-take each lock in the mode the record carries.
   for (size_t i = 0; i < g->locks.size(); i++) {
-    const lockref_t &l = g->locks[i];
+    lockref_t &l = g->locks[i];
+    // A strong OID lock keeps the fast path off its key, as when
+    // it was taken.
+    if (sm1::LOCKTYPE_OID == l.type && !is_weak(l.mode)) {
+      strong_count(db, l.key).fetch_add(1);
+      l.strong = true;
+    }
     std::vector<holder_t> &holders = db->lock_table[l.key].holders;
     holder_t *mine = nullptr;
     for (holder_t &h : holders) {
@@ -709,26 +939,47 @@ void lock_release_all(sm1::session_t *s) {
 /* Drop the locks taken after the first n and wake the waiters. */
 void lock_release_from(sm1::session_t *s, size_t n) {
   db_t *db = s->db;
-  // Hold lock_mu while editing the table.
-  std::lock_guard<std::mutex> guard(db->lock_mu);
-  // We no longer wait on anyone.
-  s->waiting_for.clear();
-  // Nothing past n to release.
-  if (s->locks.size() <= n) {
-    return;
+  // Hold our fp_mu: a sweep may be moving our slots.
+  std::lock_guard<std::mutex> fp(s->fp_mu);
+  // The table is ours to edit only for a lock in it, or to stop a
+  // wait; a lock in a slot is released without it.
+  bool table = !s->waiting_for.empty();
+  for (size_t i = n; !table && i < s->locks.size(); i++) {
+    table = s->locks[i].slot < 0;
+  }
+  std::unique_lock<std::mutex> guard(db->lock_mu, std::defer_lock);
+  if (table) {
+    // Hold lock_mu while editing the table.
+    guard.lock();
+    // We no longer wait on anyone.
+    s->waiting_for.clear();
   }
   // Drop our hold on every lock past the first n.
   for (size_t i = n; i < s->locks.size(); i++) {
-    lock_drop_holder(db, s->locks[i].key, s);
+    lockref_t &l = s->locks[i];
+    if (l.slot >= 0) {
+      s->fp[l.slot].used = false;
+      s->fp_used--;
+    } else {
+      lock_drop_holder(db, l.key, s);
+      // Only once the hold is gone may a weak lock take a slot.
+      if (l.strong) {
+        strong_count(db, l.key).fetch_sub(1);
+      }
+    }
     // A mark goes with its lock.
-    if (s->locks[i].latest) {
+    if (l.latest) {
       s->latest_marks--;
     }
   }
   // Forget them in the session's list.
-  s->locks.resize(n);
-  // Wake the waiters to retry.
-  db->lock_cv.notify_all();
+  if (s->locks.size() > n) {
+    s->locks.resize(n);
+  }
+  // Wake the waiters to retry: no one waits on a slot.
+  if (table) {
+    db->lock_cv.notify_all();
+  }
 }
 
 } // namespace wisr

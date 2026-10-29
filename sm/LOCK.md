@@ -48,7 +48,7 @@ path, not just a prefix:
 | type | what sm1 does |
 | --- | --- |
 | `LOCKTYPE_ROW` | validates the store and key, waits for an uncommitted writer of the key, and once held runs the currency check of §1.1 |
-| `LOCKTYPE_OID` | an object id in no store, exactly 8 bytes: no store is read, no version is checked, no latch is taken. A lock-table entry and nothing else |
+| `LOCKTYPE_OID` | an object id in no store, exactly 8 bytes: no store is read, no version is checked, no latch is taken. A lock-table entry and nothing else, or, taken IS or IX, a slot of the session's own (`sm1/SM1_DESIGN.md` §5.1, the fast path) |
 
 A lock is named `type ‖ be64(storeid) ‖ userkey`, so **two
 locks of different types never conflict**, however equal their
