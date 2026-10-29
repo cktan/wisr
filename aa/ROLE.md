@@ -90,10 +90,14 @@ to `aa/`; sm's are under `../sm/`, digres's under `../dg/`.
 
 **Later**, each on its own: column privileges (§8 question 2);
 `ALTER DEFAULT PRIVILEGES`; row-level security, which needs roles
-first (`../sm/FEATURELIST.md` §7); privileges on functions, types
-and languages, which are compiled into digres and all `PUBLIC`'s;
-PostgreSQL's predefined roles (`pg_read_all_data` and the rest);
-TLS, after roles, by one setting (§8 question 4).
+first (`../sm/FEATURELIST.md` §7); GRANT and REVOKE on functions,
+types and languages, which are compiled into digres: each is
+`PUBLIC`'s, as PostgreSQL's are, but the functions PostgreSQL's
+initdb takes EXECUTE on from `PUBLIC`, which are the superuser's
+alone, or a predefined role's too as initdb grants them
+(`../dg/WORKNOTE.md` step 334); PostgreSQL's predefined roles
+(`pg_read_all_data` and the rest); TLS, after roles, by one
+setting (§8 question 4).
 
 **Not at all**: `pg_hba.conf`, `pg_ident.conf`, and the
 methods only they choose — trust, ident, md5, password in the

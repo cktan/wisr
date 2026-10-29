@@ -33,8 +33,13 @@ columns, and cat_relation(oid) and cat_relation_named(name) to find
 one: a catalog relation, a catalog a query can read (SYSCATALOG.md).
 For one in TEXT_ROWS it writes its rows too, each value as text, NULL
 for a null.
+
+And it writes cat_function_acl(oid): the functions PostgreSQL's initdb
+takes EXECUTE on from PUBLIC, and the role it gives it back to, if any
+(INITDB_SQL), which digres runs none of.
 """
 
+import os
 import re
 import sys
 
@@ -101,6 +106,96 @@ INDEXES = {
                      "amopstrategy"],
     },
 }
+
+
+# The scripts PostgreSQL's initdb runs that REVOKE EXECUTE on functions
+# from PUBLIC, and GRANT it to predefined roles: their statements, read
+# here, are the ACLs of those functions (cat_function_acl()).
+INITDB_SQL = ["system_functions.sql", "system_views.sql"]
+
+# A type's name in SQL, as pg_type names it, where the two differ.
+SQL_TYPES = {
+    "boolean": "bool",
+    "smallint": "int2",
+    "integer": "int4",
+    "bigint": "int8",
+    "timestamp with time zone": "timestamptz",
+}
+
+
+def column(catalogs, catalog, name):
+    """The position of the column name in catalog's rows."""
+    return [c for c, _ in catalogs[catalog][0]].index(name)
+
+
+def function_acls(catalogs):
+    """The functions INITDB_SQL takes EXECUTE on from PUBLIC: oid -> the
+    oid of the role it grants EXECUTE again, or 0. A function digres has
+    no function of that name of is left out: it cannot be called. Any
+    other statement whose function or role is not found stops the
+    build."""
+    def value(catalog, row, name):
+        return row[column(catalogs, catalog, name)][1]
+
+    types = {value("pg_type", r, "typname"): value("pg_type", r, "oid")
+             for r in catalogs["pg_type"][1]}
+    roles = {value("pg_authid", r, "rolname"): int(value("pg_authid", r, "oid"))
+             for r in catalogs["pg_authid"][1]}
+    procs = {(value("pg_proc", r, "proname"),
+              tuple(value("pg_proc", r, "proargtypes").split())):
+             int(value("pg_proc", r, "oid")) for r in catalogs["pg_proc"][1]}
+    names = {name for name, _ in procs}
+
+    def function(sig):
+        """The oid of the function sig, or None if digres has none so named."""
+        name, args = re.match(r"(\w+)\s*\((.*)\)$", sig).groups()
+        if name not in names:
+            return None
+        argtypes = []
+        for a in filter(None, (a.strip().lower() for a in args.split(","))):
+            if SQL_TYPES.get(a, a) not in types:
+                sys.exit(f"gen_cat.py: no type {a} in {sig}")
+            argtypes.append(types[SQL_TYPES.get(a, a)])
+        if (name, tuple(argtypes)) not in procs:
+            sys.exit(f"gen_cat.py: no function {sig}")
+        return procs[(name, tuple(argtypes))]
+
+    acls = {}
+    statement = re.compile(r"^(REVOKE|GRANT)\s+EXECUTE\s+ON\s+FUNCTION\s+"
+                           r"(\w+\s*\([^)]*\))\s+(FROM|TO)\s+(\w+)\s*;",
+                           flags=re.I | re.M)
+    here = os.path.dirname(os.path.abspath(__file__))
+    for script in INITDB_SQL:
+        for m in statement.finditer(open(os.path.join(here, script)).read()):
+            oid, role = function(" ".join(m.group(2).split())), m.group(4).lower()
+            if oid is None:
+                continue
+            if m.group(1).upper() == "REVOKE":
+                if role != "public":
+                    sys.exit(f"gen_cat.py: REVOKE from {role}, not PUBLIC")
+                acls.setdefault(oid, 0)
+            elif oid not in acls or acls[oid] != 0 or role not in roles:
+                sys.exit(f"gen_cat.py: GRANT of {m.group(2)} to {role}")
+            else:
+                acls[oid] = roles[role]
+    return acls
+
+
+def write_function_acls(catalogs, w):
+    """Write cat_function_acl(): function_acls(), in oid order."""
+    acls = function_acls(catalogs)
+    w("\n/* ---- functions whose EXECUTE initdb takes from PUBLIC ---- */\n\n")
+    w("static const cat_function_acl_t function_acls[] = {\n")
+    for oid in sorted(acls):
+        w(f"    {{{oid}, {acls[oid]}}},\n")
+    w("};\n\n")
+    w("/* The function's ACL as initdb leaves it: a binary search. */\n")
+    w("const cat_function_acl_t *cat_function_acl(Oid oid) {\n")
+    w("  int lo = 0, hi = lengthof(function_acls) - 1;\n\n")
+    w("  while (lo <= hi) {\n    int mid = (lo + hi) / 2;\n\n")
+    w("    if (function_acls[mid].oid == oid)\n      return &function_acls[mid];\n")
+    w("    if (function_acls[mid].oid < oid)\n      lo = mid + 1;\n")
+    w("    else\n      hi = mid - 1;\n  }\n  return NULL;\n}\n")
 
 
 def key_col(entry):
@@ -297,7 +392,13 @@ def write_header(catalogs, out):
     w("/* The catalog relation named name, or NULL. */\n")
     w("extern const cat_relation_t *cat_relation_named(const char *name);\n\n")
     w("/* Every catalog relation, and how many in *count. */\n")
-    w("extern const cat_relation_t *cat_relations(int *count);\n")
+    w("extern const cat_relation_t *cat_relations(int *count);\n\n")
+    w("/*\n * A function PostgreSQL's initdb takes EXECUTE on from PUBLIC\n")
+    w(" * (system_functions.sql, system_views.sql): its owner alone may run\n")
+    w(" * it, and grantee, a predefined role, if not InvalidOid.\n */\n")
+    w("typedef struct cat_function_acl_t {\n  Oid oid;\n  Oid grantee;\n} cat_function_acl_t;\n\n")
+    w("/* The function oid's, or NULL: PUBLIC may run it, as by default. */\n")
+    w("extern const cat_function_acl_t *cat_function_acl(Oid oid);\n")
     w("\n#endif /* CAT_BUILTIN_H */\n")
 
 
@@ -539,6 +640,7 @@ def main():
     writers[sys.argv[2]](catalogs, sys.stdout)
     if sys.argv[2] == "source":
         write_relations(catalogs, oids, forced, sys.stdout.write)
+        write_function_acls(catalogs, sys.stdout.write)
 
 
 if __name__ == "__main__":

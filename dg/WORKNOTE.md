@@ -9921,3 +9921,37 @@ on to the key, up to 15 with RocksDB's 16 entries an interval.
   326's 0.214 ms was a best run; Q9 typically runs 0.3 to
   0.4 ms. Q7's Zipfian keys are not each in a block of their
   own: half are 100 or below, a few blocks.
+
+## Step 334: the functions initdb keeps from PUBLIC
+
+PostgreSQL's initdb takes EXECUTE on some functions from PUBLIC,
+and grants it to a predefined role or two (`system_functions.sql`,
+`system_views.sql`); the functions check nothing themselves. digres
+runs neither script and kept no function's ACL, so any role could
+call `pg_ls_dir()`, `pg_read_file()` and the rest: a plain role
+listed the data directory.
+
+- **`gen_cat.py` reads the two scripts**: each `REVOKE EXECUTE ON
+  FUNCTION ... FROM PUBLIC`, and each `GRANT EXECUTE ... TO` a
+  role, resolved by name and argument types to the function's oid
+  in `postgres.bki`, into `cat_function_acl()`. A function digres
+  has none of that name of is left out (the scripts here already
+  drop the statements of the functions digres dropped: no
+  function digres has lost its REVOKE); any other that does not
+  resolve stops the build.
+- **`pg_proc`'s rows carry them** (`catrel.c`'s `gen_text_rows()`):
+  the owner's EXECUTE alone, and the role initdb grants, as
+  PostgreSQL's `proacl` shows them. 19 functions: `pg_ls_dir`,
+  `pg_read_file`, `pg_read_binary_file`, `pg_stat_file`, each
+  form; `pg_reload_conf`, `pg_config`, `pg_show_all_file_settings`,
+  `pg_log_backend_memory_contexts`; `pg_ls_tmpdir`, also
+  `pg_monitor`'s, and `pg_get_backend_memory_contexts`, also
+  `pg_read_all_stats`'s.
+- **The views** initdb keeps from PUBLIC (`pg_shadow`,
+  `pg_statistic`, `pg_file_settings`, `pg_hba_file_rules`,
+  `pg_config` and the rest): digres has none of them.
+- **Tests**: `server.sh` gains a case: a role refused three of
+  them and not `now()`; granted `pg_read_all_stats`, it runs
+  `pg_get_backend_memory_contexts()`; the superuser runs
+  `pg_ls_dir()`; `pg_proc` shows the ACLs. Each of two mutations,
+  no ACL, and the grant left out, was caught.

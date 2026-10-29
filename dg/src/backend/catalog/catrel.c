@@ -116,10 +116,11 @@ static const cat_relation_t *cat_rels(Oid only, int *count) {
 
 /*
  * An ACL of two items, granted by owner: owner_privs to owner, and
- * public_privs to PUBLIC if there are any.
+ * grantee_privs to grantee, a role or PUBLIC, if there are any.
  */
-static Datum make_acl(Oid owner, AclMode owner_privs, AclMode public_privs) {
-  int n = ACL_NO_RIGHTS == public_privs ? 1 : 2;
+static Datum make_acl_to(Oid owner, AclMode owner_privs, Oid grantee,
+                         AclMode grantee_privs) {
+  int n = ACL_NO_RIGHTS == grantee_privs ? 1 : 2;
   /* As acl.c's allocacl() makes one: a one-dimensional aclitem array. */
   Acl *acl = (Acl *)palloc0(ACL_N_SIZE(n));
   AclItem *items;
@@ -135,12 +136,35 @@ static Datum make_acl(Oid owner, AclMode owner_privs, AclMode public_privs) {
   items[0].ai_grantee = owner;
   items[0].ai_grantor = owner;
   ACLITEM_SET_PRIVS_GOPTIONS(items[0], owner_privs, ACL_NO_RIGHTS);
-  if (ACL_NO_RIGHTS != public_privs) {
-    items[1].ai_grantee = ACL_ID_PUBLIC;
+  if (ACL_NO_RIGHTS != grantee_privs) {
+    items[1].ai_grantee = grantee;
     items[1].ai_grantor = owner;
-    ACLITEM_SET_PRIVS_GOPTIONS(items[1], public_privs, ACL_NO_RIGHTS);
+    ACLITEM_SET_PRIVS_GOPTIONS(items[1], grantee_privs, ACL_NO_RIGHTS);
   }
   return PointerGetDatum(acl);
+}
+
+/*
+ * An ACL of two items, granted by owner: owner_privs to owner, and
+ * public_privs to PUBLIC if there are any.
+ */
+static Datum make_acl(Oid owner, AclMode owner_privs, AclMode public_privs) {
+  return make_acl_to(owner, owner_privs, ACL_ID_PUBLIC, public_privs);
+}
+
+/*
+ * The ACL of the built-in function oid, owned by owner, as PostgreSQL's
+ * initdb leaves it, or (Datum) 0 for none, which lets PUBLIC run it: one
+ * initdb takes EXECUTE on from PUBLIC is its owner's alone, and a
+ * predefined role's too if initdb grants it that (cat_function_acl()).
+ */
+static Datum function_acl(Oid oid, Oid owner) {
+  const cat_function_acl_t *f = cat_function_acl(oid);
+
+  if (NULL == f)
+    return (Datum)0;
+  return make_acl_to(owner, ACL_EXECUTE, f->grantee,
+                     OidIsValid(f->grantee) ? ACL_EXECUTE : ACL_NO_RIGHTS);
 }
 
 /*
@@ -666,6 +690,14 @@ static void gen_text_rows(const cat_relation_t *cat, Tuplestorestate *ts,
       continue;
     for (int a = 0; a < cat->natts; a++)
       read(row, a);
+    /* A function's ACL is not in its text: initdb's, which no SQL sets. */
+    if (ProcedureRelationId == cat->oid) {
+      values[Anum_pg_proc_proacl - 1] =
+          function_acl(DatumGetObjectId(values[Anum_pg_proc_oid - 1]),
+                       DatumGetObjectId(values[Anum_pg_proc_proowner - 1]));
+      nulls[Anum_pg_proc_proacl - 1] =
+          (Datum)0 == values[Anum_pg_proc_proacl - 1];
+    }
     tuplestore_putvalues(ts, desc, values, nulls);
   }
 }

@@ -3368,6 +3368,40 @@ OUT
 cmp -s "$work/fast1.out" "$work/fast1.expected" ||
   fail "grant: a temporary table, a sequence, pg_read_all_data"
 
+# Verify that the functions PostgreSQL's initdb takes EXECUTE on from
+# PUBLIC are refused a role, as initdb leaves them, and run by the
+# superuser and the predefined role initdb grants one to (gen_cat.py's
+# cat_function_acl(), WORKNOTE step 334).
+# 1. As rg2, pg_ls_dir, pg_read_file and pg_show_all_file_settings are
+#    refused; now() is not.
+# 2. GRANT pg_read_all_stats to rg2: pg_get_backend_memory_contexts runs.
+# 3. The superuser runs pg_ls_dir; pg_proc shows the ACLs initdb leaves.
+tcp_psql p2 -U rg2 -c "select pg_ls_dir('.')" \
+  -c "select pg_read_file('postgresql.conf')" \
+  -c 'select count(*) from pg_show_all_file_settings()' \
+  -c 'select now() is not null' > "$work/fnacl1.out" 2>&1
+local_psql -c 'grant pg_read_all_stats to rg2' > "$work/fnacl.out" 2>&1 ||
+  fail "fnacl: grant pg_read_all_stats"
+tcp_psql p2 -U rg2 \
+  -c 'select count(*) > 0 from pg_get_backend_memory_contexts()' \
+  >> "$work/fnacl1.out" 2>&1
+local_psql -c "select count(*) > 0 from pg_ls_dir('.')" \
+  -c "select proname || ' ' || proacl::text from pg_proc
+        where proname in ('pg_ls_dir', 'pg_get_backend_memory_contexts')
+        order by oid limit 2" >> "$work/fnacl1.out" 2>&1
+cat > "$work/fnacl1.expected" << OUT
+ERROR:  permission denied for function pg_ls_dir
+ERROR:  permission denied for function pg_read_file
+ERROR:  permission denied for function pg_show_all_file_settings
+t
+t
+t
+pg_get_backend_memory_contexts {$me=X/$me,pg_read_all_stats=X/$me}
+pg_ls_dir {$me=X/$me}
+OUT
+cmp -s "$work/fnacl1.out" "$work/fnacl1.expected" ||
+  fail "fnacl: the functions initdb takes from PUBLIC"
+
 # Verify that a REVOKE whose transaction fails at its commit leaves the
 # ACL as it was: what pg_global took away before the commit, it puts back
 # (checked again after the restart below, which reads pg_global).

@@ -311,10 +311,12 @@ src/common/kwlist_d.h: $(I)/parser/kwlist.h src/tools/gen_keywordlist.pl
 	    -o src/common $<
 
 # The built-in catalog rows, compiled in (sm/PART4.md section 10): from
-# postgres.bki, where genbki.pl has resolved every reference to an oid.
+# postgres.bki, where genbki.pl has resolved every reference to an oid;
+# and the functions' ACLs from initdb's scripts, which digres runs none of.
 $(I)/catalog/cat_builtin.h: $(I)/catalog/.stamp $(B)/catalog/gen_cat.py
 	python3 $(B)/catalog/gen_cat.py $(I)/catalog/postgres.bki header > $@
-$(B)/catalog/cat_builtin.c: $(I)/catalog/.stamp $(B)/catalog/gen_cat.py
+$(B)/catalog/cat_builtin.c: $(I)/catalog/.stamp $(B)/catalog/gen_cat.py \
+    $(B)/catalog/system_functions.sql $(B)/catalog/system_views.sql
 	python3 $(B)/catalog/gen_cat.py $(I)/catalog/postgres.bki source > $@
 
 # That sq's nodes are digres's, held at compile time, and the statements

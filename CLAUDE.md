@@ -117,7 +117,9 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
 - **Unit tests in parallel:** the unit test suites of `aa/`,
   `sq/` and `sm/` are independent: when a change needs more
   than one, run them at once, each to its own log, and wait
-  for all.
+  for all. Build sm first (`make -C sm -j4`): aa's tests link
+  sm's library, and build it if it is stale, which races with
+  sm's own build.
 
 - **Code Formatting:** Always run `make format` in `sm/` before
   committing.
