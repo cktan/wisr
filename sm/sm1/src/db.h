@@ -149,6 +149,28 @@ struct ssi_range_t {
 };
 
 /*
+ * A lock table key (§5.1): hi is the storeid, its top bit flipped
+ * for an OID lock so the two types never meet; lo is the oid of an
+ * OID lock, exact, or a hash of a row lock's key. Two rows of a
+ * store whose keys hash alike share an entry: a false conflict,
+ * never a missed one. The exact key is in the holder's lock list.
+ */
+struct lock_key_t {
+  uint64_t hi;
+  uint64_t lo;
+  bool operator==(const lock_key_t &o) const {
+    return hi == o.hi && lo == o.lo;
+  }
+};
+
+/* The lock table's hash of a key: lo is an oid or a hash already. */
+struct lock_key_hash_t {
+  size_t operator()(const lock_key_t &k) const {
+    return k.lo ^ (k.hi * 0x9e3779b97f4a7c15ULL);
+  }
+};
+
+/*
  * One open database, shared by every session on it and held
  * in the environment's registry (SM1_DESIGN.md §1).
  */
@@ -306,15 +328,22 @@ struct db_t {
    * Every release and every doom notifies lock_cv.
    */
   struct lock_ent_t {
+    /*
+     * A session's hold: refs of its lock list's entries name this
+     * key, the first at index idx; more than one only when row
+     * keys hash alike. mode covers all of them.
+     */
     struct holder_t {
       sm1::session_t *session;
       sm1::lockmode_t mode;
+      uint32_t refs;
+      size_t idx;
     };
     std::vector<holder_t> holders; /* never empty */
   };
   std::mutex lock_mu;
   std::condition_variable lock_cv;
-  std::unordered_map<std::string, lock_ent_t> lock_table;
+  std::unordered_map<lock_key_t, lock_ent_t, lock_key_hash_t> lock_table;
   int deadlock_ms = 50;
   /*
    * Bumped, under lock_mu, by every rollback to a savepoint: it

@@ -9979,3 +9979,33 @@ which an index without them has none of.
   sm1's version 225, sm2 decoding the value twice (the cut
   flag, the row's key) 540, the key's columns 325, the scan's
   keys checked again 190.
+
+## Step 336: the lock table keyed by two words
+
+`bench/roles.sh`'s t16, sixteen tables a statement, scaled 2.8×
+from 1 to 16 clients, the superuser's as much as a role's. The
+gdb profile: 57% of the session threads' busy samples waiting
+for sm1's `lock_mu` in `lock_try`, 12% waking the next; a
+statement takes 16 table locks and releases them at commit, all
+under that one mutex, ~640 thousand holds a second.
+
+- **sm1** (`../sm/sm1/SM1_DESIGN.md` §5.1): the lock table's key
+  is `lock_key_t`, two 64-bit words, the storeid and the oid, or
+  a hash of a row's key; no allocation finds or adds an entry,
+  where the string key was allocated, and an entry's string again
+  as it was made, under the mutex. A row's exact key stays in the
+  session's lock list; a holder counts the entries of its list
+  that share its table entry, and knows the first, so two rows
+  hashed alike are still released alone. `lock_transfer` moves
+  the list with the holders, under one hold of the mutex.
+- **Tests**: sm1, with every row key hashed alike: two locks stay
+  exact, a third key conflicts, a savepoint releases only its own,
+  and a prepared transaction's come back exactly after a restart.
+  5 mutations caught.
+- **Measured**, release, prepared t16 at 1, 4, 8, 16 clients:
+  13.1, 36.4, 41.9, 38.7 thousand tps before; 14.3–14.6,
+  41.5–42.5, 59.1–60.6, 71.9–75.5 after, two runs; the server's
+  CPU a transaction at 16 clients 208 to 121 µs. t1 unchanged.
+- **Found**: 36% of the busy samples at 16 clients still wait for
+  `lock_mu` in `lock_try`. Next, PostgreSQL's fast path: a table's
+  IS and IX locks in slots of the session's own.

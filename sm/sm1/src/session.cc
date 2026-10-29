@@ -271,7 +271,15 @@ int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
     };
     for (const auto &[k, ent] : db->lock_table) {
       for (const auto &h : ent.holders) {
-        entry(k, h.mode, h.session, true);
+        // Each of the holder's list entries the key stands for,
+        // from the first: more than one if row keys hash alike.
+        const auto &locks = h.session->locks;
+        for (size_t i = h.idx, n = h.refs; n > 0 && i < locks.size(); i++) {
+          if (locks[i].key == k) {
+            entry(lock_name(locks[i]), locks[i].mode, h.session, true);
+            n--;
+          }
+        }
       }
     }
     for (const sm1::session_t *s : env->sessions) {

@@ -16,6 +16,7 @@
 #include <list>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -180,7 +181,9 @@ struct sm1::session_t {
 
   /* Locks, row and OID (§5.1); guarded by the database's lock_mu. */
   struct lockref_t {
-    std::string key;                            /* the lock table key */
+    wisr::lock_key_t key{}; /* the lock table key */
+    std::string row;        /* a row lock's key */
+    sm1::locktype_t type = sm1::LOCKTYPE_ROW;
     sm1::lockmode_t mode = sm1::SM_LOCKMODE_SH; /* held now, after
                                                        conversions */
     bool latest = false; /* read_latest done: the write may go ahead */
@@ -194,8 +197,8 @@ struct sm1::session_t {
    */
   std::vector<sm1::session_t *> waiting_for;
   /*
-   * The lock table key and mode of the lock we wait for in
-   * lock_wait, for lock_status; the key is empty when we wait for
+   * The name (lock_name) and mode of the lock we wait for in
+   * lock_wait, for lock_status; the name is empty when we wait for
    * none, or behind a writer. Under the database's lock_mu.
    */
   std::string waiting_key;
@@ -430,7 +433,26 @@ bool lock_has_latest(sm1::session_t *session, uint64_t storeid,
 void lock_clear_latest(sm1::session_t *session, uint64_t storeid,
                        rocksdb::Slice key);
 
-/* Move every lock s holds to g, the prepared object (§8.4). */
+/*
+ * Test hook: while set, every row lock's key hashes to 0, so a
+ * store's row locks share one lock table entry (lock_key_t).
+ */
+extern std::atomic<bool> lock_test_rows_collide;
+
+/*
+ * A lock's name: its type byte, be64(storeid), then its key, as
+ * lock_status reports it and a prepared transaction's record
+ * keeps it (§8.4).
+ */
+std::string lock_name(const sm1::session_t::lockref_t &l);
+
+/* The lock list entry a name stands for: false if it is no name. */
+bool lock_from_name(std::string_view name, sm1::session_t::lockref_t *l);
+
+/*
+ * Move every lock s holds, and its lock list, to g, the prepared
+ * object (§8.4).
+ */
 void lock_transfer(db_t *db, sm1::session_t *s, sm1::session_t *g);
 
 /* Put a restored transaction's locks back in the table (§9.1). */

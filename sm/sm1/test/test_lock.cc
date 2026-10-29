@@ -15,6 +15,7 @@
 #include "util.h"
 
 #include "session.h"
+#include "sm0_defer.h"
 #include "sm1.h"
 #include "sm_sys.h"
 
@@ -1064,6 +1065,89 @@ TEST_CASE("lock_status lists each lock held, and each waited for in lock") {
   for (int i = 0; i < 4; i++) {
     sm1::closedb(s[i]);
   }
+}
+
+TEST_CASE("row keys that hash alike share an entry and still lock exactly") {
+  // Verify a lock table entry two row keys share (lock_key_t): each
+  // lock stays exact in its holder's list, and is released alone.
+  // 1. Make every row key hash alike; A locks "x" shared and "y"
+  //    exclusive, which share one table entry.
+  // 2. lock_held reports each in its own mode, and "z" not held;
+  //    lock_status lists "x" and "y", each in its own mode.
+  // 3. B's lock of "z", which A never locked, meets the shared entry:
+  //    under qa_nowait it fails with SM_ERR_BLOCKED.
+  // 4. A sets a savepoint, locks "z" shared, and rolls back to it:
+  //    "z" is no longer held, and "x" and "y" still are, so B's lock
+  //    of "z" is still refused.
+  // 5. A commits: the table is empty, and B locks "z".
+  lock_fixture_t f;
+  wisr::lock_test_rows_collide = true;
+  defer { wisr::lock_test_rows_collide = false; };
+  sm1::session_t *a = f.open(), *b = f.open();
+  REQUIRE(sm1::set_tag(a, 101) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
+          0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "y", sm1::SM_LOCKMODE_EX) ==
+          0);
+  {
+    std::lock_guard<std::mutex> guard(a->db->lock_mu);
+    CHECK(a->db->lock_table.size() == 1);
+  }
+
+  // Each lock A holds, as "key mode", and whether "x", "y", "z" are held.
+  auto rows = [&] {
+    std::vector<sm1::lock_status_t> out;
+    REQUIRE(sm1::lock_status(f.env(), out) == 0);
+    std::vector<std::string> got;
+    for (const auto &r : out) {
+      CHECK(r.storeid == g_store);
+      got.push_back(r.key + " " + std::to_string(r.mode) +
+                    (r.granted ? " held" : " waits"));
+    }
+    std::sort(got.begin(), got.end());
+    return got;
+  };
+  auto held = [&](const char *key) {
+    sm1::lockmode_t mode;
+    return wisr::lock_held(a, g_store, key, &mode) ? int(mode) : -1;
+  };
+  CHECK(held("x") == sm1::SM_LOCKMODE_SH);
+  CHECK(held("y") == sm1::SM_LOCKMODE_EX);
+  CHECK(held("z") == -1);
+  CHECK(rows() == std::vector<std::string>{
+                      "x " + std::to_string(sm1::SM_LOCKMODE_SH) + " held",
+                      "y " + std::to_string(sm1::SM_LOCKMODE_EX) + " held",
+                  });
+
+  REQUIRE(sm1::set_qa_nowait(b, true) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
+        -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+
+  REQUIRE(sm1::savepoint(a) == 1);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
+          0);
+  CHECK(held("z") == sm1::SM_LOCKMODE_SH);
+  REQUIRE(sm1::rollback(a, 1) == 0);
+  CHECK(held("z") == -1);
+  CHECK(held("x") == sm1::SM_LOCKMODE_SH);
+  CHECK(held("y") == sm1::SM_LOCKMODE_EX);
+  CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
+        -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+
+  REQUIRE(sm1::commit(a) == 0);
+  {
+    std::lock_guard<std::mutex> guard(a->db->lock_mu);
+    CHECK(a->db->lock_table.empty());
+  }
+  CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
+        0);
+  REQUIRE(sm1::commit(b) == 0);
+  sm1::closedb(a);
+  sm1::closedb(b);
 }
 
 TEST_CASE("a cycle a wait closes is found as it begins, whatever deadlock_ms") {
