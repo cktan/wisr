@@ -903,11 +903,11 @@ std::string encode_prepared(const sm1::session_t *t, const std::string &gid,
   // The lock set: every lock key, length-prefixed, each
   // followed by the mode byte it is held in (§8.4).
   sm0::put_be32(v, static_cast<uint32_t>(t->locks.size()));
-  for (const sm1::session_t::lockref_t &l : t->locks) {
+  t->locks.each([&](const sm1::session_t::lockref_t &l) {
     sm0::put_be32(v, static_cast<uint32_t>(lock_name_size(l)));
     lock_put_name(&v, l);
     v.push_back(static_cast<char>(l.mode));
-  }
+  });
   // The storeids created, then those dropped, each counted.
   for (const std::vector<uint64_t> *stores : {&t->created, &t->dropped}) {
     sm0::put_be32(v, static_cast<uint32_t>(stores->size()));

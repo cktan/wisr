@@ -10182,3 +10182,24 @@ by offset.
   listed and swept. dg, `select_for_update_many.sql`, 1,000 rows
   FOR UPDATE past a savepoint, as `pg_lock_status()` lists them.
   9 mutations caught.
+
+## Step 343: a block list walked by callbacks
+
+`blist_t`'s iterator was there to walk the list across its
+blocks and to keep a position to walk on from; a holder and a
+slot kept one.
+
+- **sm0**: the iterator goes; `each`, `each_from`, `find` and
+  `find_from` walk the entries, oldest first, from the start or
+  a mark, and `last()` is the newest entry's pointer.
+- **sm1**: a holder keeps a pointer to its first entry, a slot to
+  its own. Keys that hash alike, only a test's in practice, are
+  found by a walk of the whole list: `exact_ref` once its first
+  entry is not the key, and `lock_status` for a holder of more
+  than one.
+- **Tests**: sm0, find from the start and from marks, mid-block
+  and at a full block's end; 20 mutations caught. sm1, a release
+  wakes a lock's waiter at once, at a rollback to a savepoint and
+  at a commit, with its deadlock check 10 s away: the release's
+  look for a lock in the table, taken out, was not caught before.
+  6 mutations caught.

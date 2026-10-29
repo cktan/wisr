@@ -7,6 +7,7 @@
  *   auto m = locks.mark();                   // a savepoint
  *   ...
  *   locks.cut(m);                            // drop what followed
+ *   locks.each([](lockref_t &l) { ... });    // every entry, oldest first
  *
  * An entry never moves: a pointer to one stays good until a cut
  * drops it, unlike std::vector's, which a growth moves. Blocks of
@@ -56,48 +57,6 @@ public:
   struct mark_t {
     block_t *b = nullptr; /* nullptr: the list's start */
     uint32_t top = 0;
-  };
-
-  /* A position in the list, from oldest entry to newest. */
-  class iterator_t {
-  public:
-    /* No position: the end of every list. */
-    iterator_t() : m_b(nullptr), m_i(0) {}
-
-    /* The entry here. */
-    T &operator*() const { return blist_t::at(m_b, m_i); }
-
-    /* The entry here, for a member's access. */
-    T *operator->() const { return &blist_t::at(m_b, m_i); }
-
-    /* Step to the next entry, across a block's end. */
-    iterator_t &operator++() {
-      m_i++;
-      skip();
-      return *this;
-    }
-
-    /* Whether two positions are the same. */
-    bool operator==(const iterator_t &o) const {
-      return m_b == o.m_b && m_i == o.m_i;
-    }
-
-  private:
-    friend class blist_t;
-
-    /* The position at entry i of b, or past it if b has no more. */
-    iterator_t(block_t *b, uint32_t i) : m_b(b), m_i(i) { skip(); }
-
-    /* Leave the blocks with nothing at or past m_i. */
-    void skip() {
-      while (nullptr != m_b && m_i == m_b->top) {
-        m_b = m_b->next;
-        m_i = 0;
-      }
-    }
-
-    block_t *m_b;
-    uint32_t m_i;
   };
 
   blist_t() = default;
@@ -192,26 +151,64 @@ public:
   /* The spares kept, for the tests. */
   int spares() const { return m_nspare; }
 
-  /* The oldest entry's position. */
-  iterator_t begin() const { return iterator_t(m_head, 0); }
+  /* The newest entry, or nullptr if there is none. */
+  T *last() { return newest(); }
+  const T *last() const { return newest(); }
 
-  /* The newest entry's position, in a list emplace() made. */
-  iterator_t last() const {
-    assert(nullptr != m_tail && 0 < m_tail->top);
-    return iterator_t(m_tail, m_tail->top - 1);
+  /* The first entry after m that pred(entry) is true of, oldest
+   * first, or nullptr. */
+  template <class F> T *find_from(mark_t m, F pred) { return scan(m, pred); }
+  template <class F> const T *find_from(mark_t m, F pred) const {
+    return scan(m, [&](T &x) { return pred(static_cast<const T &>(x)); });
   }
 
-  /* The position past the newest entry. */
-  iterator_t end() const { return iterator_t(nullptr, 0); }
-
-  /* The position of the first entry after m. */
-  iterator_t from(mark_t m) const {
-    return nullptr == m.b ? begin() : iterator_t(m.b, m.top);
+  /* The first entry pred(entry) is true of, oldest first, or nullptr. */
+  template <class F> T *find(F pred) { return find_from(mark_t{}, pred); }
+  template <class F> const T *find(F pred) const {
+    return find_from(mark_t{}, pred);
   }
+
+  /* Call fn(entry) on each entry after m, oldest first. */
+  template <class F> void each_from(mark_t m, F fn) {
+    find_from(m, [&](T &x) {
+      fn(x);
+      return false;
+    });
+  }
+  template <class F> void each_from(mark_t m, F fn) const {
+    find_from(m, [&](const T &x) {
+      fn(x);
+      return false;
+    });
+  }
+
+  /* Call fn(entry) on each entry, oldest first. */
+  template <class F> void each(F fn) { each_from(mark_t{}, fn); }
+  template <class F> void each(F fn) const { each_from(mark_t{}, fn); }
 
 private:
   /* The most spares a cut keeps. */
   static constexpr int keep = 4;
+
+  /* The newest entry, or nullptr: the last block's last, in a list
+   * emplace() made, whose blocks are never left empty. */
+  T *newest() const {
+    return nullptr == m_tail || 0 == m_tail->top ? nullptr
+                                                 : &at(m_tail, m_tail->top - 1);
+  }
+
+  /* The first entry after m that pred is true of, or nullptr. */
+  template <class F> T *scan(mark_t m, F &&pred) const {
+    block_t *b = nullptr == m.b ? m_head : m.b;
+    for (uint32_t i = m.top; nullptr != b; b = b->next, i = 0) {
+      for (; i < b->top; i++) {
+        if (pred(at(b, i))) {
+          return &at(b, i);
+        }
+      }
+    }
+    return nullptr;
+  }
 
   /* Entry i of block b. */
   static T &at(block_t *b, uint32_t i) {

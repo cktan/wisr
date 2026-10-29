@@ -200,7 +200,7 @@ struct sm1::session_t {
   struct fp_slot_t {
     wisr::lockid_t id{};
     sm1::lockmode_t mode = sm1::SM_LOCKMODE_IS;
-    wisr::lock_list_t::iterator_t ref;
+    wisr::lockref_t *ref = nullptr;
     bool used = false;
   };
   std::mutex fp_mu;

@@ -1405,6 +1405,51 @@ TEST_CASE("table locks past the slots go to the table, and all are held") {
   sm1::closedb(b);
 }
 
+TEST_CASE(
+    "a release wakes a lock's waiter at once, not at its deadlock check") {
+  // Verify that giving back a lock in the table wakes its waiters: a
+  // waiter whose next look is deadlock_ms away is granted at once.
+  // 1. B waits 10 s between deadlock checks. A locks "x" and, past a
+  //    savepoint, "y", both exclusive.
+  // 2. B asks "y" shared and waits; A rolls back to the savepoint,
+  //    and B is granted "y" well inside 10 s.
+  // 3. B asks "x" shared and waits; A commits, and B is granted "x"
+  //    well inside 10 s.
+  lock_fixture_t f;
+  sm1::session_t *a = f.open();
+  sm1::session_t *b = f.open();
+  REQUIRE(sm1::set_deadlock_ms(b, 10000) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_EX) ==
+          0);
+  REQUIRE(sm1::savepoint(a) == 1);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "y", sm1::SM_LOCKMODE_EX) ==
+          0);
+  // B's lock of key, waiting, granted after A's release: its rc, and
+  // the milliseconds from the release to the grant.
+  auto granted_after = [&](const char *key, auto release) {
+    int rc = -2;
+    std::thread tb([&] {
+      rc = sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, key, sm1::SM_LOCKMODE_SH);
+    });
+    settle();
+    auto start = std::chrono::steady_clock::now();
+    release();
+    tb.join();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::now() - start)
+                  .count();
+    CHECK(rc == 0);
+    return ms;
+  };
+  CHECK(granted_after("y", [&] { REQUIRE(sm1::rollback(a, 1) == 0); }) < 2000);
+  CHECK(granted_after("x", [&] { REQUIRE(sm1::commit(a) == 0); }) < 2000);
+  REQUIRE(sm1::commit(b) == 0);
+  sm1::closedb(a);
+  sm1::closedb(b);
+}
+
 TEST_CASE("a cycle a wait closes is found as it begins, whatever deadlock_ms") {
   // Verify that a waiter looks for a cycle as it begins to wait (§5.1), and
   // that set_deadlock_ms, PostgreSQL's deadlock_timeout, does not delay it.

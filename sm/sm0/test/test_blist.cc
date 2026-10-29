@@ -20,18 +20,14 @@ struct item_t {
 /* The values in l, oldest first. */
 template <typename L> std::vector<int> values(const L &l) {
   std::vector<int> out;
-  for (const item_t &x : l) {
-    out.push_back(x.v);
-  }
+  l.each([&](const item_t &x) { out.push_back(x.v); });
   return out;
 }
 
 /* The values in l after m, oldest first. */
 template <typename L, typename M> std::vector<int> after(const L &l, M m) {
   std::vector<int> out;
-  for (auto it = l.from(m); it != l.end(); ++it) {
-    out.push_back(it->v);
-  }
+  l.each_from(m, [&](const item_t &x) { out.push_back(x.v); });
   return out;
 }
 
@@ -65,7 +61,7 @@ TEST_CASE("blist entries never move as the list grows") {
   }
   CHECK(l.size() == 10);
   CHECK(values(l) == upto(10));
-  CHECK(&*l.last() == p[9]);
+  CHECK(l.last() == p[9]);
   CHECK(l.last()->v == 9);
 
   item_t *d = l.emplace();
@@ -90,7 +86,8 @@ TEST_CASE("blist cut drops what followed a mark, at every boundary") {
   CHECK(after(l, m0) == upto(6));
   l.cut(m0);
   CHECK(l.empty());
-  CHECK(l.begin() == l.end());
+  CHECK(nullptr == l.last());
+  CHECK(nullptr == l.find([](const item_t &) { return true; }));
 
   for (int i = 0; i < 2; i++) {
     l.emplace(i);
@@ -219,4 +216,41 @@ TEST_CASE("blist swap exchanges two lists") {
   b.emplace(6);
   CHECK(values(a) == upto(2));
   CHECK(values(b) == upto(7));
+}
+
+TEST_CASE("blist find returns the first match, from a mark") {
+  // Verify find and find_from: oldest first, across blocks, and
+  // the entry itself, to change in place.
+  // 1. Ten entries in blocks of four, two of each value mod 5: find
+  //    of v % 5 == 3 returns the first, 3, in the first block.
+  // 2. find_from a mark after six entries returns the next, 8, in
+  //    the third block; find_from a mark at a full block's end
+  //    starts in the next block.
+  // 3. No match is nullptr; a change through the pointer is seen by
+  //    each.
+  sm0::blist_t<item_t, 4> l;
+  sm0::blist_t<item_t, 4>::mark_t m4, m6;
+  for (int i = 0; i < 10; i++) {
+    if (4 == i) {
+      m4 = l.mark();
+    }
+    if (6 == i) {
+      m6 = l.mark();
+    }
+    l.emplace(i);
+  }
+  auto is3 = [](const item_t &x) { return 3 == x.v % 5; };
+  item_t *f = l.find(is3);
+  REQUIRE(nullptr != f);
+  CHECK(f->v == 3);
+  item_t *g = l.find_from(m6, is3);
+  REQUIRE(nullptr != g);
+  CHECK(g->v == 8);
+  const item_t *h = l.find_from(m4, [](const item_t &) { return true; });
+  REQUIRE(nullptr != h);
+  CHECK(h->v == 4);
+
+  CHECK(nullptr == l.find([](const item_t &x) { return 10 == x.v; }));
+  f->v = 30;
+  CHECK(values(l) == std::vector<int>{0, 1, 2, 30, 4, 5, 6, 7, 8, 9});
 }

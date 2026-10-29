@@ -188,7 +188,7 @@ struct lockref_t {
 
 /*
  * A session's lock list and its row keys: blocks whose entries
- * never move, so a position or a key into them holds until a cut.
+ * never move, so a pointer into them holds until a cut.
  */
 using lock_list_t = sm0::blist_t<lockref_t, 256>;
 using lock_keys_t = sm0::blist_t<char, 8192>;
@@ -361,14 +361,14 @@ struct db_t {
   struct lock_ent_t {
     /*
      * A session's hold: refs of its lock list's entries name this
-     * key, the first at first; more than one only when row keys
-     * hash alike. mode covers all of them.
+     * key, the first of them first; more than one only when row
+     * keys hash alike. mode covers all of them.
      */
     struct holder_t {
       sm1::session_t *session;
       sm1::lockmode_t mode;
       uint32_t refs;
-      lock_list_t::iterator_t first;
+      lockref_t *first;
     };
     std::vector<holder_t> holders; /* never empty */
   };

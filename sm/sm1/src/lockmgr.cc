@@ -105,7 +105,6 @@ lmode_t cover(lmode_t a, lmode_t b) {
 }
 
 using holder_t = db_t::lock_ent_t::holder_t;
-using lock_pos_t = lock_list_t::iterator_t;
 
 /* The top bit of a lock key's hi: set for an OID lock. */
 uint64_t type_bit(sm1::locktype_t type) { return uint64_t(type) << 63; }
@@ -166,13 +165,12 @@ bool is_ref(const lockref_t &l, const lockid_t &k, sm1::locktype_t type,
 lockref_t *exact_ref(sm1::session_t *s, const holder_t &h, sm1::locktype_t type,
                      rocksdb::Slice key) {
   const lockid_t &k = h.first->id;
-  // Keys that hash alike: their entries follow the first.
-  for (lock_pos_t it = h.first; it != s->locks.end(); ++it) {
-    if (is_ref(*it, k, type, key)) {
-      return &*it;
-    }
+  if (is_ref(*h.first, k, type, key)) {
+    return h.first;
   }
-  return nullptr;
+  // Keys that hash alike share the hold: look through the list.
+  return s->locks.find(
+      [&](const lockref_t &l) { return is_ref(l, k, type, key); });
 }
 
 /*
@@ -210,19 +208,16 @@ void lock_drop_holder(db_t *db, const lockid_t &k, sm1::session_t *s) {
  */
 lockref_t *find_lockref(sm1::session_t *s, sm1::locktype_t type,
                         uint64_t storeid, rocksdb::Slice key) {
-  if (s->locks.empty()) {
+  lockref_t *last = s->locks.last();
+  if (nullptr == last) {
     return nullptr;
   }
   lockid_t k = lockid(type, storeid, key);
-  if (is_ref(*s->locks.last(), k, type, key)) {
-    return &*s->locks.last();
+  if (is_ref(*last, k, type, key)) {
+    return last;
   }
-  for (lockref_t &l : s->locks) {
-    if (is_ref(l, k, type, key)) {
-      return &l;
-    }
-  }
-  return nullptr;
+  return s->locks.find(
+      [&](const lockref_t &l) { return is_ref(l, k, type, key); });
 }
 
 /*
@@ -474,20 +469,16 @@ bool fp_take(db_t *db, sm1::session_t *s, const lockid_t &k, rocksdb::Slice key,
   }
   lockref_t l = make_ref(s, k, sm1::LOCKTYPE_OID, key, mode);
   l.slot = static_cast<int8_t>(free);
-  s->locks.emplace(l);
-  s->fp[free] = {k, mode, s->locks.last(), true};
+  s->fp[free] = {k, mode, s->locks.emplace(l), true};
   s->fp_used++;
   return true;
 }
 
 /* s's first list entry for the OID lock k, or nullptr. */
 lockref_t *first_ref(sm1::session_t *s, const lockid_t &k) {
-  for (lockref_t &l : s->locks) {
-    if (sm1::LOCKTYPE_OID == l.type && l.id == k) {
-      return &l;
-    }
-  }
-  return nullptr;
+  return s->locks.find([&](const lockref_t &l) {
+    return sm1::LOCKTYPE_OID == l.type && l.id == k;
+  });
 }
 
 } // namespace
@@ -545,8 +536,8 @@ int lock_try(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
                                        ? it->second.holders
                                        : db->lock_table[k].holders;
   // Remember the lock for release at commit or abort.
-  s->locks.emplace(make_ref(s, k, type, key, want));
-  holders.push_back({s, want, 1, s->locks.last()});
+  holders.push_back(
+      {s, want, 1, s->locks.emplace(make_ref(s, k, type, key, want))});
   return 0;
 }
 
@@ -867,7 +858,7 @@ void lock_transfer(db_t *db, sm1::session_t *s, sm1::session_t *g) {
   // Hold lock_mu while editing the table.
   std::lock_guard<std::mutex> guard(db->lock_mu);
   // Re-point each entry's holder list at g.
-  for (const lockref_t &l : s->locks) {
+  s->locks.each([&](const lockref_t &l) {
     auto it = db->lock_table.find(l.id);
     // Replace s with g among the holders.
     if (it != db->lock_table.end()) {
@@ -877,7 +868,7 @@ void lock_transfer(db_t *db, sm1::session_t *s, sm1::session_t *g) {
         }
       }
     }
-  }
+  });
   // Move the list with them, and its keys: a holder's first and an
   // entry's row point into them.
   g->locks.swap(s->locks);
@@ -891,8 +882,7 @@ void lock_restore(db_t *db, sm1::session_t *g) {
   // Hold lock_mu while editing the table.
   std::lock_guard<std::mutex> guard(db->lock_mu);
   // Re-take each lock in the mode the record carries.
-  for (lock_pos_t it = g->locks.begin(); it != g->locks.end(); ++it) {
-    lockref_t &l = *it;
+  g->locks.each([&](lockref_t &l) {
     // A strong OID lock keeps the fast path off its key, as when
     // it was taken.
     if (sm1::LOCKTYPE_OID == l.type && !is_weak(l.mode)) {
@@ -906,9 +896,9 @@ void lock_restore(db_t *db, sm1::session_t *g) {
       holders[mine].refs++;
       holders[mine].mode = cover(holders[mine].mode, l.mode);
     } else {
-      holders.push_back({g, l.mode, 1, it});
+      holders.push_back({g, l.mode, 1, &l});
     }
-  }
+  });
 }
 
 /* Append a lock's name; see session.h. */
@@ -1007,11 +997,10 @@ void lock_release_from(sm1::session_t *s, const lock_mark_t &m) {
   std::lock_guard<std::mutex> fp(s->fp_mu);
   // The table is ours to edit only for a lock in it, or to stop a
   // wait; a lock in a slot is released without it.
-  bool table = !s->waiting_for.empty();
-  for (lock_pos_t it = s->locks.from(m.locks); !table && it != s->locks.end();
-       ++it) {
-    table = it->slot < 0;
-  }
+  bool table = !s->waiting_for.empty() ||
+               nullptr != s->locks.find_from(m.locks, [](const lockref_t &l) {
+                 return l.slot < 0;
+               });
   std::unique_lock<std::mutex> guard(db->lock_mu, std::defer_lock);
   if (table) {
     // Hold lock_mu while editing the table.
@@ -1020,8 +1009,7 @@ void lock_release_from(sm1::session_t *s, const lock_mark_t &m) {
     s->waiting_for.clear();
   }
   // Drop our hold on every lock past the mark.
-  for (lock_pos_t it = s->locks.from(m.locks); it != s->locks.end(); ++it) {
-    lockref_t &l = *it;
+  s->locks.each_from(m.locks, [&](const lockref_t &l) {
     if (l.slot >= 0) {
       s->fp[l.slot].used = false;
       s->fp_used--;
@@ -1036,7 +1024,7 @@ void lock_release_from(sm1::session_t *s, const lock_mark_t &m) {
     if (l.latest) {
       s->latest_marks--;
     }
-  }
+  });
   // Forget them in the session's list, and their row keys, keeping
   // the blocks for the locks to come.
   s->locks.cut(m.locks);

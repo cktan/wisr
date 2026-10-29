@@ -703,9 +703,10 @@ prepared record's lock set (§8.4) and `sm1::lock_status`. A
 holder counts the entries of its list that share its table
 entry, from the first, so releasing one leaves the others held.
 The list and the buffer are sm0's `blist_t`, blocks whose
-entries never move: a holder keeps its first entry's position,
-a fast-path slot its entry's, an entry its key's pointer, and a
-savepoint a mark of each. A cut keeps up to four blocks for the
+entries never move: a holder keeps a pointer to its first
+entry, a fast-path slot to its own, an entry to its key, and a
+savepoint a mark of each. Keys that hash alike are found by a
+walk of the whole list, from its oldest entry. A cut keeps up to four blocks for the
 locks to come, and `lock_try` makes room before it takes
 `lock_mu`, a key never longer than a key block, so a lock
 allocates nothing under the mutex for the list or its key. The
