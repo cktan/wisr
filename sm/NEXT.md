@@ -53,6 +53,13 @@ and so are the catalog tables psql reads
      or ACL looked up copies a `shared_ptr` under the lock
      every session takes.
 
+   **Profiled, and the most of it gone** (`../dg/WORKNOTE.md`
+   step 329): 19% of a role's busy time was the syscache
+   missing the table's `pg_class` row at each check, which is
+   now read from `pg_global` and the relation cache instead. A
+   read by key loses 4 to 7%; a statement that reads no row 2
+   to 3 µs, was 7 to 10. The steps below are for what is left.
+
    The plan, a step at a time, each measured as above:
 
    1. **Keep the benchmark**: the script that made the table,

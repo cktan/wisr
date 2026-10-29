@@ -3342,6 +3342,32 @@ cmp -s "$work/gm1.out" "$work/gm1.expected" ||
   -c 'select 1' 2> "$work/gm3.err")" = 1 ] ||
   fail "grant: CONNECT through the group"
 
+# Verify a role's checks by both ways pg_class_aclmask_ext() reads a
+# relation's owner and ACL: a table's of sm's from pg_global directly, a
+# sequence's from its pg_class row (WORKNOTE step 329).
+# 1. As rg1, make temporary table tt, write it and read it.
+# 2. Make sequence gsq; GRANT USAGE on it to rg1: rg1 draws from it, rg2
+#    is refused.
+# 3. GRANT pg_read_all_data to rg3: it reads gt, granted nothing on it.
+tcp_psql p1 -U rg1 -c 'create temporary table tt (a int4)' \
+  -c 'insert into tt values (3)' -c 'select a from tt' > "$work/fast1.out" 2>&1
+local_psql -c 'create sequence gsq' -c 'grant usage on sequence gsq to rg1' \
+  -c 'grant pg_read_all_data to rg3' > "$work/fast.out" 2>&1 ||
+  fail "grant: make the sequence"
+tcp_psql p1 -U rg1 -c "select nextval('gsq')" >> "$work/fast1.out" 2>&1
+tcp_psql p2 -U rg2 -c "select nextval('gsq')" >> "$work/fast1.out" 2>&1
+tcp_psql p3 -U rg3 -c 'select a from gt' >> "$work/fast1.out" 2>&1
+cat > "$work/fast1.expected" << OUT
+CREATE TABLE
+INSERT 0 1
+3
+1
+ERROR:  permission denied for sequence gsq
+7
+OUT
+cmp -s "$work/fast1.out" "$work/fast1.expected" ||
+  fail "grant: a temporary table, a sequence, pg_read_all_data"
+
 # Verify that a REVOKE whose transaction fails at its commit leaves the
 # ACL as it was: what pg_global took away before the commit, it puts back
 # (checked again after the restart below, which reads pg_global).

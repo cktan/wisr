@@ -2781,6 +2781,26 @@ AclMode pg_class_aclmask(Oid table_oid, Oid roleid, AclMode mask,
 }
 
 /*
+ * The privileges of mask roleid holds on the table or view relid of sm's,
+ * by its owner and ACL in pg_global, as its pg_class row would give them
+ * (catalog/catrel.c's relation_owner() and relation_acl()), without making
+ * the row, which the syscache does not keep (catrel_is_cached()): the
+ * check every statement on a table makes for a role not a superuser.
+ */
+static AclMode sm_table_aclmask(Oid relid, Oid roleid, AclMode mask,
+                                AclMaskHow how) {
+  Oid ownerId = pg_global_owner(relid);
+  Acl *acl = pg_global_acl(pg_global_dbid(MyDatabaseId), relid);
+  AclMode result;
+
+  if (NULL == acl)
+    acl = acldefault(OBJECT_TABLE, ownerId);
+  result = aclmask(acl, roleid, ownerId, mask, how);
+  pfree(acl);
+  return result;
+}
+
+/*
  * Routine for examining a user's privileges for a table, with is_missing
  */
 static AclMode pg_class_aclmask_ext(Oid table_oid, Oid roleid, AclMode mask,
@@ -2792,6 +2812,7 @@ static AclMode pg_class_aclmask_ext(Oid table_oid, Oid roleid, AclMode mask,
   bool isNull;
   Acl *acl;
   Oid ownerId;
+  char relkind;
 
   /*
    * A superuser may do anything to a relation of sm's, and read a catalog a
@@ -2804,6 +2825,19 @@ static AclMode pg_class_aclmask_ext(Oid table_oid, Oid roleid, AclMode mask,
       return mask;
     if (cat_relation(table_oid) != NULL)
       return mask & ACL_SELECT;
+  }
+
+  /*
+   * A table or a view of sm's: no system class, and its owner and ACL its
+   * own, unlike an index's or a sequence's, which are its table's.  One a
+   * statement names is in the relation cache, opened as it was planned;
+   * any other is read from its row, below.
+   */
+  if (table_oid >= FirstNormalObjectId &&
+      RelationCacheKind(table_oid, &relkind) && RELKIND_INDEX != relkind &&
+      RELKIND_PARTITIONED_INDEX != relkind && RELKIND_SEQUENCE != relkind) {
+    result = sm_table_aclmask(table_oid, roleid, mask, how);
+    goto predefined;
   }
 
   /*
@@ -2874,6 +2908,8 @@ static AclMode pg_class_aclmask_ext(Oid table_oid, Oid roleid, AclMode mask,
     pfree(acl);
 
   ReleaseSysCache(tuple);
+
+predefined:
 
   /*
    * Check if ACL_SELECT is being checked and, if so, and not set already as

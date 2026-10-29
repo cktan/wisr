@@ -9774,3 +9774,38 @@ what is left of `../aa/ROLE.md` §5 in digres is the protocol.
   CONNECT granted to a group lets its member in. It catches
   `has_privs_of_role()` answering for the superuser alone,
   which the suites before let pass.
+
+## Step 329: a role's check on a table, without its pg_class row
+
+What a role that is not a superuser pays: 12 to 16% of a read
+by key on `digres-release` (`../sm/NEXT.md` §1). Statements that
+read no row (`WHERE ... AND false`) cost the role 7 to 10 µs
+more each, and `select 1` nothing, so the cost is the check on
+the table. A profile of the session thread by gdb, stopping it
+by SIGUSR2, which digres ignores (gdb never sees a SIGINT, read
+from a signalfd, and takes a SIGSTOP as its own), put 19% of
+the role's busy time
+in `pg_class_aclmask_ext()`, nearly all of it a syscache miss
+on `RELOID`: sm's rows are not cached (step 321), so each check
+scanned the catalog relation and made the table's whole
+`pg_class` row, to read its owner, its ACL and its kind. The
+ACL's evaluation, aa's, was under 1%.
+
+- **A table or a view of sm's is checked by its owner and ACL
+  in `pg_global`**, as its row would give them
+  (`catrel.c`'s `relation_owner()`, `relation_acl()`), and its
+  kind from the relation cache, which holds any relation a
+  statement names: `RelationCacheKind()` reads it there and
+  builds no entry, which a sequence of sm's could not have.
+  An index, a sequence, and a relation not in the cache are
+  read from their row as before. `pg_read_all_data` and the
+  rest are checked after either.
+- **Measured**, as before: a read by key loses 4 to 7%, was
+  12 to 16%; a statement that reads no row 2 to 3 µs, was 7 to
+  10.
+- **Tests**: `server.sh` gains a case: a role's own temporary
+  table, a sequence granted and refused, and
+  `pg_read_all_data` reading a table granted nothing. Three
+  mutations of the new path, its mask, its default ACL's
+  owner, and the predefined roles skipped after it, were each
+  caught.
