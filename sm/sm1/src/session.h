@@ -212,18 +212,26 @@ struct sm1::session_t {
   fp_slot_t fp[fp_slots];
   int fp_used = 0; /* slots in use */
   /*
-   * The holders blocking us, empty when we are not waiting. A
-   * shared lock has many, so the waits-for graph branches and
-   * §5.1's cycle search walks it rather than a chain.
+   * The holders blocking us when our wait last looked, empty when
+   * we are not waiting. Ours alone: it goes stale as they release,
+   * so the cycle search reads the table instead (lock_blockers).
    */
   std::vector<sm1::session_t *> waiting_for;
   /*
-   * The name (lock_name) and mode of the lock we wait for in
-   * lock_wait, for lock_status; the name is empty when we wait for
-   * none, or behind a writer. Under the database's lock_mu.
+   * The name (lock_name), id and mode of the lock we wait for in
+   * lock_wait, for lock_status and the cycle search; the name is
+   * empty when we wait for none, or behind a writer. Under the
+   * database's lock_mu.
    */
   std::string waiting_key;
+  wisr::lock_key_t waiting_id{};
   sm1::lockmode_t waiting_mode = sm1::SM_LOCKMODE_SH;
+  /*
+   * The transaction we wait for in lock_wait_xact, or 0, and the
+   * database's rollback_epoch as the wait began. Under lock_mu.
+   */
+  uint64_t waiting_xid = 0;
+  uint64_t waiting_epoch = 0;
 
   wisr::ssi_node_t *ssi = nullptr; /* SERIALIZABLE only (§7) */
 
@@ -386,6 +394,15 @@ int xct_fail_retryable(sm1::session_t *session, sm1::errnum_t e,
 
 /* The write latch (storeid, key) hashes to (WRITELOCK.md §3.1). */
 std::mutex &lock_latch(db_t *db, uint64_t storeid, rocksdb::Slice key);
+
+/*
+ * The sessions s waits for now, into out, read from the table under
+ * lock_mu, which the caller holds: the holders whose modes conflict
+ * with the lock s waits for, or the transaction it waits for, while
+ * it runs. Empty if s waits for nothing, or no longer has to.
+ */
+void lock_blockers(db_t *db, sm1::session_t *s,
+                   std::vector<sm1::session_t *> *out);
 
 /*
  * Take the OID lock (storeid, key) in mode, by the fast path

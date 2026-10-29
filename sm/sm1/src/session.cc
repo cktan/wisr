@@ -234,9 +234,12 @@ int sm1::waits_for(sm1::env_t *env, uint64_t tag, std::vector<uint64_t> *out) {
   if (!waiter) {
     return 0;
   }
-  // Hold the database's lock_mu while reading the waiter's edges.
+  // Hold the database's lock_mu while reading the waiter's edges,
+  // from the table: those its wait recorded may be gone.
   std::lock_guard<std::mutex> lock_guard(waiter->db->lock_mu);
-  for (sm1::session_t *holder : waiter->waiting_for) {
+  std::vector<sm1::session_t *> blockers;
+  lock_blockers(waiter->db, waiter, &blockers);
+  for (sm1::session_t *holder : blockers) {
     if (!env->sessions.count(holder)) {
       continue;
     }

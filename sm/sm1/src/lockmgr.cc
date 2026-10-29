@@ -23,7 +23,9 @@
  * woken; every member of a cycle is blocked, so the victim is
  * always waiting in lock_wait or lock_wait_xact and fails from
  * there. A waiter for a shared lock waits on every holder at
- * once, so the search walks a graph, not a chain.
+ * once, so the search walks a graph, not a chain, its edges read
+ * from the table as it goes (lock_blockers): a waiter's own list
+ * goes stale as its holders release, before it wakes to look.
  */
 
 #include "error.h"
@@ -230,8 +232,12 @@ lockref_t *find_lockref(sm1::session_t *s, sm1::locktype_t type,
 bool find_cycle(sm1::session_t *s, sm1::session_t *cur,
                 std::unordered_set<sm1::session_t *> *seen,
                 std::vector<sm1::session_t *> *path) {
-  // Follow every holder this transaction waits on.
-  for (sm1::session_t *next : cur->waiting_for) {
+  // Follow every session this transaction waits on now: an edge
+  // its wait recorded may be gone, the holder released, the
+  // waiter not yet awake to look again.
+  std::vector<sm1::session_t *> blockers;
+  lock_blockers(s->db, cur, &blockers);
+  for (sm1::session_t *next : blockers) {
     // Back at s: path holds the rest of the cycle.
     if (next == s) {
       return true;
@@ -686,8 +692,9 @@ int lock_wait(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
     // As the wait begins, a cycle it closes is found at once.
     if (!checked) {
       checked = true;
-      // What it waits for, for lock_status.
+      // What it waits for, for lock_status and the cycle search.
       s->waiting_key = name_of(type, storeid, key);
+      s->waiting_id = k;
       s->waiting_mode = mode;
       check_deadlock(db, s);
       if (s->doomed) {
@@ -702,6 +709,30 @@ int lock_wait(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
   }
 }
 
+/* The sessions s waits for now; see session.h. */
+void lock_blockers(db_t *db, sm1::session_t *s,
+                   std::vector<sm1::session_t *> *out) {
+  out->clear();
+  // A lock: the holders now in the table whose modes conflict, the
+  // weak ones in slots moved there by the strong lock it waits for.
+  if (!s->waiting_key.empty()) {
+    holder_t *mine;
+    lmode_t want;
+    conflicting(db, s, s->waiting_id, s->waiting_mode, &mine, &want, out);
+    return;
+  }
+  // A transaction, still running and not rolled back since: its owner.
+  if (0 != s->waiting_xid && db->rollback_epoch == s->waiting_epoch) {
+    // Hold txn_mu while reading the active table.
+    std::lock_guard<std::mutex> t(db->txn_mu);
+    auto it = db->xid_owner.find(s->waiting_xid);
+    if (db->active.count(s->waiting_xid) && it != db->xid_owner.end() &&
+        it->second != s) {
+      out->push_back(it->second);
+    }
+  }
+}
+
 /* Block until xid ends, or rolls back to a savepoint. */
 int lock_wait_xact(sm1::session_t *s, uint64_t xid) {
   db_t *db = s->db;
@@ -709,6 +740,11 @@ int lock_wait_xact(sm1::session_t *s, uint64_t xid) {
   std::unique_lock<std::mutex> guard(db->lock_mu);
   // A rollback from now on may delete what we wait for.
   uint64_t epoch = db->rollback_epoch;
+  // What we wait for, for the cycle search; however it returns,
+  // still under lock_mu, we no longer do.
+  s->waiting_xid = xid;
+  s->waiting_epoch = epoch;
+  defer { s->waiting_xid = 0; };
   // Time the deadlock check after the first, made as the wait begins.
   int64_t deadline = sm_now_us() + int64_t(deadlock_wait_ms(s)) * 1000;
   bool checked = false;

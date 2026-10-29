@@ -10047,3 +10047,35 @@ tables' IS, and every session meets every other at that mutex.
   (`db_take_snapshot`, `db_release_snapshot`).
 - **Next** (`../sm/NEXT.md` §1, item 3): the lock table a hash
   table of its own, measured without digres or sm.
+
+## Step 338: the deadlock search reads its edges from the table
+
+A stress test of table locks, `e07`, written to check step 337
+under load, found transactions doomed as deadlock victims though
+every one waited in one order of oids, so none could close a
+cycle; at step 336 too, so older than the fast path. The cycles
+were of edges no longer there: a waiter's `waiting_for` is what
+its wait saw when it last looked. A holder that releases wakes
+it, but until it runs again its list still names the holder,
+which may by then wait, in a transaction of its own, on
+something the waiter holds; the search walked those lists.
+
+- **sm1** (`../sm/sm1/SM1_DESIGN.md` §5.1): the search reads a
+  waiter's edges from the lock table as it walks
+  (`lock_blockers`), as PostgreSQL's detector does: the holders
+  that hold, now, a mode conflicting with the one it asks, or the
+  transaction it waits for, while that runs and was not rolled
+  back since. `sm1::waits_for` reads them the same way.
+- **Tests**: `e07`, eight threads locking four oids in all five
+  modes, converting, rolling back to savepoints, aborting and
+  preparing, sessions opened and closed and the locks listed
+  meanwhile; a count per oid and mode beside the engine finds
+  two incompatible modes granted at once. 121 to 135 victims a
+  run at step 336, 31 at step 337, none now. Mutations caught:
+  the old edges; and of step 337, no count read, no sweep, no
+  count released, no slot moved at a prepare. Not caught by it:
+  the count released before the hold, its window a few
+  instructions under `lock_mu`.
+- **TSan**: sm1's tests, `e07` among them, and digres's tsan
+  build (`run.sh`, 11 files in 8 sessions; `server.sh`): no
+  report.

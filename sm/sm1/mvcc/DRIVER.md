@@ -36,7 +36,7 @@ are the reason the language has the features it has:
 The language stays small for the same reason: one verb per
 API call, no expressions, no variables, no control flow. A
 scenario that needs more belongs in C++ beside `e01` to
-`e03` and `e06`.
+`e03`, `e06` and `e07`.
 
 ## 1. Usage
 
@@ -413,8 +413,8 @@ noise.
   opaque single words; the second, holding the same rows, is
   reached only by `lookup` and `rmstore`.
 - **No expressions, variables, or control flow.** A scenario
-  that needs them belongs in C++ beside `e01` to `e03` and
-  `e06`.
+  that needs them belongs in C++ beside `e01` to `e03`,
+  `e06` and `e07`.
 - **Sessions are one step at a time.** A session with a
   blocked step cannot be given another; doing so is reported
   as an error rather than queued.

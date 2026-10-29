@@ -803,6 +803,22 @@ fails with `SM_ERR_DEADLOCK`. The search is a walk of the
 waits-for edges under `lock_mu`, so a wait pays for one as it
 begins; there is no detector thread.
 
+**The edges are read from the lock table as the search walks**
+(`lock_blockers`), as PostgreSQL's detector reads its lock
+table: a waiter waits on the holders that hold, now, a mode
+conflicting with the one it asks, or on the transaction it waits
+for while that still runs, and was not rolled back since. A
+waiter's own list, `waiting_for`, is what its wait saw when it
+last looked, and goes stale the moment a holder releases: the
+waiter is woken, but until it runs again its list still names
+the holder, which may by then be waiting in a new transaction
+on something the waiter holds. Walking those lists found such
+cycles that no longer existed and doomed a transaction that
+did not need to fail (`../dg/WORKNOTE.md` step 338; `e07`).
+Every lock a waiter can wait on is in the table: a strong lock
+moves the weak ones from their slots before it waits, and a weak
+lock waits only on strong ones (§5.1).
+
 The waits-for edges form a **graph, not a chain**: a waiter waits
 on every holder whose mode conflicts with the one it asks, and
 there can be many, so the search is a depth-first walk with a

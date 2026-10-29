@@ -416,6 +416,7 @@ Four of the rest say more than their row can:
 | e04 | `sm1::lsstore` and `sm1::mkstore` follow the same predicate rules as rows | all | `in/e04_catalog_predicate.t` |
 | e05 | Four RR transactions that each read everything and write one row all commit | RR | `in/e05_rr_many_readers_writers.t` |
 | e06 | Four READ COMMITTED threads incrementing three hot counters through the `updated` / `readlatest` exchange, with compaction running, lose no increment | RC | `e06_rc_contention_stress.cc` |
+| e07 | Eight threads locking four oids in all five modes, converting, rolling back to savepoints, aborting and preparing, while sessions open and close and the locks are listed, are never granted two incompatible modes at once, and never deadlock: they wait in one order | RC | `e07_table_lock_stress.cc` |
 
 e02 and e03 are the pair that states the trade in one line:
 the same contention that SERIALIZABLE resolves by failing
@@ -539,7 +540,7 @@ chosen because it is the one that distinguishes the levels.
 Interleavings other than the ones written here are not
 explored, and the thirty blocking scenarios (b09 to b11,
 b16, b17, b19 to b28, b30 to b36, f01 to f06, f08 and f11)
-and three stress scenarios (e02, e03, e06) are the only
+and four stress scenarios (e02, e03, e06, e07) are the only
 places where real concurrency, rather than a scripted order,
 is involved. They are also where it belongs:
 `test/test_lock.cc` and `test/test_savepoint.cc` used to
