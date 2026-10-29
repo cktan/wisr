@@ -1464,6 +1464,16 @@ int tbl_read_key(table_t* table, std::string_view key, pin_ref_t& ref,
                  std::string_view& tuple);
 
 /*
+ * tbl_read_key of n keys in one call (../BATCHREAD.md): key i's row
+ * into a pin, refs[i] and tuples[i], rc[i] 0, or rc[i] 1 with refs[i]
+ * zero if there is none. A ref that holds a pin is read into again,
+ * as tbl_read's is. Returns 0, or -1 on an error, every ref then
+ * zero.
+ */
+int tbl_read_keys(table_t* table, const std::string_view* keys, size_t n,
+                  pin_ref_t* refs, std::string_view* tuples, int* rc);
+
+/*
  * Read the newest committed version of the row with _id id, as
  * sm2::rel_read_latest does: what a read committed writer that met
  * SM_ERR_UPDATED checks its filter against, and what lets sm1 take

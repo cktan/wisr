@@ -1902,6 +1902,73 @@ static Janet cfun_read(int32_t argc, Janet *argv) {
   return janet_wrap_tuple(janet_tuple_end(vals));
 }
 
+/*
+ * (read-keys table [key ...]) in a table with a primary key: each
+ * key's row as (read) gives it, nil for none, read in one
+ * sm_tbl_read_keys (../BATCHREAD.md).
+ */
+static Janet cfun_read_keys(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 2);
+  session_ctx_t *s = require_session();
+  std::string tbl_name = identifier_of(argv[0]);
+
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IS, "read-keys");
+  sm_tbl_t *tbl = p_tdef->tbl;
+  if (primary_of(p_tdef) == nullptr) {
+    janet_panicf("read-keys: %s has no primary key", tbl_name.c_str());
+  }
+  JanetView keys = janet_getindexed(argv, 1);
+  size_t n = static_cast<size_t>(keys.len);
+  // Each key encoded as an index entry names its row.
+  std::vector<std::string> enc(n);
+  for (size_t i = 0; i < n; i++) {
+    row_name_t name;
+    Janet k = keys.items[i];
+    row_name_of(p_tdef, &k, 0, name, "read-keys");
+    if (sm_tbl_row_key(tbl, name.key, enc[i]) != 0) {
+      panic_sm_error("read-keys sm_tbl_row_key");
+    }
+  }
+  std::vector<const void *> kp(n);
+  std::vector<size_t> kl(n);
+  for (size_t i = 0; i < n; i++) {
+    kp[i] = enc[i].data();
+    kl[i] = enc[i].size();
+  }
+  std::vector<sm_pin_ref_t> refs(n, sm_pin_ref_t{});
+  std::vector<const void *> tuples(n);
+  std::vector<size_t> lens(n);
+  std::vector<int> rc(n);
+  if (sm_tbl_read_keys(tbl, kp.data(), kl.data(), n, refs.data(), tuples.data(),
+                       lens.data(), rc.data()) != 0) {
+    panic_sm_error("read-keys sm_tbl_read_keys");
+  }
+
+  size_t ncols = p_tdef->columns.size();
+  JanetArray *out = janet_array(static_cast<int32_t>(n));
+  for (size_t i = 0; i < n; i++) {
+    if (rc[i] == 1) {
+      janet_array_push(out, janet_wrap_nil());
+      continue;
+    }
+    row_values_t row(ncols);
+    if (sm_tbl_deform(tbl, tuples[i], lens[i], row.values.data(),
+                      row.isnull.get(), ncols) != 0) {
+      panic_sm_error("read-keys sm_tbl_deform");
+    }
+    Janet *vals = janet_tuple_begin(static_cast<int32_t>(ncols));
+    for (size_t c = 0; c < ncols; c++) {
+      vals[c] = value_to_janet(row.values[c], row.isnull[c],
+                               p_tdef->columns[c].type_code,
+                               p_tdef->columns[c].typmod, tbl);
+    }
+    janet_array_push(out, janet_wrap_tuple(janet_tuple_end(vals)));
+    // The row is copied out: its pin is no one's now.
+    sm_unpin(&refs[i]);
+  }
+  return janet_wrap_array(out);
+}
+
 /* (read-latest table id), or by key as (read) */
 static Janet cfun_read_latest(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 2);
@@ -2857,6 +2924,7 @@ static const JanetReg s_rel_cfuns[] = {
     {"_insert", cfun_insert, "internal"},
     {"_read", cfun_read, "internal"},
     {"_read-latest", cfun_read_latest, "internal"},
+    {"_read-keys", cfun_read_keys, "internal"},
     {"_lock-row", cfun_lock_row, "internal"},
     {"_truncate", cfun_truncate, "internal"},
     {"_compact", cfun_compact, "internal"},
@@ -2958,6 +3026,9 @@ static const char *s_prelude = R"janet(
 
 (defmacro read-latest [tbl rowno]
   ~(_read-latest (string ',tbl) ,rowno))
+
+(defmacro read-keys [tbl keys]
+  ~(_read-keys (string ',tbl) ,keys))
 
 (defmacro lock-row [tbl rowno mode]
   ~(_lock-row (string ',tbl) ,rowno ,mode))

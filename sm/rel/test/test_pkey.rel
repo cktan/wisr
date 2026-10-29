@@ -27,6 +27,11 @@
 # 12. add-primary-key and its index-drop on a table with rows, each
 #     inside a statement, as digres runs them: the rewrite writes a
 #     store the statement made.
+# 13. read-keys reads many rows by key in one call
+#     (../BATCHREAD.md), each as read reads it: over keys out of
+#     order, repeated and not there, a row updated, one deleted,
+#     another session's uncommitted insert and update, and this
+#     transaction's own update and delete.
 
 (def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_pkey"))
 (rm-rf test-dir)
@@ -233,6 +238,37 @@
 (stmt-begin)
 (assert-err :err-dupkey (add-primary-key stm id))
 (abort)
+
+# 13. read-keys.
+(begin :rc)
+(table-create bk (columns (id :int8) (v :text)) (primary-key id))
+(each i [1 2 3 4 5 6 7 8] (insert bk [i (string "v" i)]))
+(commit)
+(begin :rc)
+(update bk [2] [2 "v2b"])
+(delete bk [5])
+(commit)
+(session-open s2 "pkdb")
+(session-use s2)
+(begin :rc)
+(insert bk [20 "w"])
+(update bk [3] [3 "v3w"])
+(session-use default)
+(begin :rc)
+(def keys [[8] [2] [5] [3] [20] [99] [2] [1]])
+(assert-eq (read-keys bk keys) (map |(read bk $) keys))
+(assert-eq (read-keys bk keys)
+           @[[8 "v8"] [2 "v2b"] nil [3 "v3"] nil nil [2 "v2b"] [1 "v1"]])
+(update bk [4] [4 "v4o"])
+(delete bk [6])
+(stmt-begin)
+(assert-eq (read-keys bk [[4] [6] [7]]) @[[4 "v4o"] nil [7 "v7"]])
+(assert-eq (read-keys bk []) @[])
+(commit)
+(session-use s2)
+(abort)
+(session-use default)
+(session-close s2)
 
 (db-close)
 (env-detach)

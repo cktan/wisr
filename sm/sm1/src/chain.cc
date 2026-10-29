@@ -644,6 +644,9 @@ int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
   return 0;
 }
 
+int chain_resolve(sm1::session_t *s, const store_t &st, const view_t &view,
+                  int r, chain_version_t &v, sm1::rawpin_t *pin);
+
 /*
  * The version of key a reader at view sees, into pin: 0, 1 if it
  * sees none, or -1 (../VCHAIN.md §4).
@@ -660,6 +663,17 @@ int chain_get(sm1::session_t *s, const store_t &st, uint64_t storeid,
   defer { db_read_leave(s->db, epoch); };
   chain_version_t v;
   int r = get_curr(st, key, &pin->got, &v);
+  return chain_resolve(s, st, view, r, v, pin);
+}
+
+/*
+ * From v, a key's newest version as get_curr() read it with r, to
+ * the version a reader at view sees, into pin, following the chain
+ * through OLD: 0, 1 if it sees none, or -1 (../VCHAIN.md §4). The
+ * caller holds a read epoch.
+ */
+int chain_resolve(sm1::session_t *s, const store_t &st, const view_t &view,
+                  int r, chain_version_t &v, sm1::rawpin_t *pin) {
   for (;;) {
     if (r != 0) {
       return r;
@@ -714,6 +728,94 @@ int read_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
     return r;
   }
   data = std::string_view(pin->row.data(), pin->row.size());
+  return 0;
+}
+
+/*
+ * sm1::chain_read_batch, minus the argument checks' details
+ * (../BATCHREAD.md): each key's checks and SIREAD entry as a single
+ * read makes them, every key's newest version by one MultiGet, then
+ * each resolved as chain_get() resolves one.
+ */
+int read_chained_batch(sm1::session_t *s, uint64_t storeid,
+                       const std::string_view *keys, size_t n,
+                       sm1::rawpin_t **pins, std::string_view *data, int *rc) {
+  if (xct_check_active(s) != 0) {
+    return -1;
+  }
+  if (n > 0 && (!keys || !pins || !data || !rc)) {
+    return set_error(sm1::SM_ERR_INVALID,
+                     "sm1_chain_read_batch: an argument is NULL");
+  }
+  for (size_t i = 0; i < n; i++) {
+    if (!pins[i]) {
+      return set_error(sm1::SM_ERR_INVALID,
+                       "sm1_chain_read_batch: a pin is NULL");
+    }
+    // Each pin lets go of what it held, as any read into it does.
+    sm1::unpin(pins[i]);
+    data[i] = std::string_view();
+    rc[i] = 1;
+  }
+  if (n == 0) {
+    return 0;
+  }
+  view_t view = xct_read_view(s);
+  for (size_t i = 0; i < n; i++) {
+    if (access_enter(s, view, storeid, keys[i].data(), keys[i].size()) != 0) {
+      return -1;
+    }
+  }
+  const store_t &st = chained_store(s, storeid);
+  if (!st.cf) {
+    return -1;
+  }
+  // Under SERIALIZABLE, the SIREAD entries come before the reads.
+  if (!st.owner) {
+    for (size_t i = 0; i < n; i++) {
+      ssi_on_read(s, storeid, rocksdb::Slice(keys[i].data(), keys[i].size()));
+    }
+  }
+  // Hold a read epoch until the statuses are resolved.
+  uint64_t epoch = db_read_enter(s->db);
+  defer { db_read_leave(s->db, epoch); };
+  // Every key's newest version in one call, RocksDB sorting them.
+  std::vector<std::string> ckeys(n);
+  std::vector<rocksdb::Slice> slices(n);
+  for (size_t i = 0; i < n; i++) {
+    ckeys[i] = curr_key(rocksdb::Slice(keys[i].data(), keys[i].size()));
+    slices[i] = rocksdb::Slice(ckeys[i]);
+  }
+  std::vector<rocksdb::PinnableSlice> got(n);
+  std::vector<rocksdb::Status> status(n);
+  st.rdb->MultiGet(rocksdb::ReadOptions(), st.cf, n, slices.data(), got.data(),
+                   status.data(), false);
+  for (size_t i = 0; i < n; i++) {
+    sm1::rawpin_t *pin = pins[i];
+    chain_version_t v;
+    int r = 0;
+    if (status[i].IsNotFound()) {
+      r = 1;
+    } else if (!status[i].ok()) {
+      return set_status_error(status[i], "read a version");
+    } else {
+      // The version's bytes into the key's pin, then decoded there.
+      pin->got = std::move(got[i]);
+      if (!chain_decode(pin->got, &v, false)) {
+        return set_error(sm1::SM_ERR_CORRUPT, "malformed version");
+      }
+    }
+    r = chain_resolve(s, st, view, r, v, pin);
+    if (r < 0) {
+      return -1;
+    }
+    rc[i] = r;
+    if (r == 0) {
+      data[i] = std::string_view(pin->row.data(), pin->row.size());
+    } else {
+      sm1::unpin(pin);
+    }
+  }
   return 0;
 }
 
@@ -1162,6 +1264,14 @@ int sm1::chain_read(sm1::session_t *session, uint64_t storeid,
                     std::string_view key, sm1::rawpin_t *pin,
                     std::string_view &data) {
   return read_chained(session, storeid, key, pin, data);
+}
+
+/* Read many chained keys into their pins in one call; see sm1.h. */
+int sm1::chain_read_batch(sm1::session_t *session, uint64_t storeid,
+                          const std::string_view *keys, size_t n,
+                          sm1::rawpin_t **pins, std::string_view *data,
+                          int *rc) {
+  return read_chained_batch(session, storeid, keys, n, pins, data, rc);
 }
 
 /* Read a chained key into the session's own pin; see sm1.h. */

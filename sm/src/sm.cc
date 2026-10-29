@@ -1893,6 +1893,37 @@ int sm_tbl_read_key(sm_tbl_t *tbl, const void *key, size_t len,
   });
 }
 
+/* Read the rows at keys into pins in one call; see sm.h. */
+int sm_tbl_read_keys(sm_tbl_t *tbl, const void *const *keys, const size_t *lens,
+                     size_t n, sm_pin_ref_t *refs, const void **tuples,
+                     size_t *tuple_lens, int *rc) {
+  return guard(tbl->session, [&] {
+    if (n > 0 && (!keys || !lens || !refs || !tuples || !tuple_lens || !rc)) {
+      return null_arg("sm_tbl_read_keys", "an array");
+    }
+    std::vector<std::string_view> kv(n);
+    std::vector<sm3::pin_ref_t> r(n);
+    std::vector<std::string_view> v(n);
+    for (size_t i = 0; i < n; i++) {
+      kv[i] = std::string_view(static_cast<const char *>(keys[i]), lens[i]);
+      r[i] = pin_ref_of(refs[i]);
+    }
+    int ret =
+        sm3::tbl_read_keys(tbl->table, kv.data(), n, r.data(), v.data(), rc);
+    // Each ref is set either way: a pin, or none.
+    for (size_t i = 0; i < n; i++) {
+      refs[i] = sm_pin_ref_t{r[i].pin, r[i].gen};
+      if (ret == 0 && rc[i] == 0) {
+        view_out(v[i], &tuples[i], &tuple_lens[i]);
+      } else {
+        tuples[i] = nullptr;
+        tuple_lens[i] = 0;
+      }
+    }
+    return ret;
+  });
+}
+
 /* Read the newest committed version of a row into a pin. */
 int sm_tbl_read_latest(sm_tbl_t *tbl, uint64_t id, sm_pin_ref_t *ref,
                        const void **tuple, size_t *len) {

@@ -783,6 +783,31 @@ int rel_read(rel_t *rel, std::string_view key, sm1::rawpin_t *pin,
       tuple, id);
 }
 
+/* Read the rows at keys into raw pins in one call; see sm2.h. */
+int rel_read_batch(rel_t *rel, const std::string_view *keys, size_t n,
+                   sm1::rawpin_t **pins, std::string_view *tuples, int *rc) {
+  std::vector<std::string> ks(n);
+  std::vector<std::string_view> kv(n);
+  for (size_t i = 0; i < n; i++) {
+    ks[i] = row_key(rel->relid, keys[i]);
+    kv[i] = ks[i];
+  }
+  if (rel->chained) {
+    return sm1::chain_read_batch(rel->session, rel->storeid, kv.data(), n, pins,
+                                 tuples, rc);
+  }
+  for (size_t i = 0; i < n; i++) {
+    rc[i] = sm1::read(rel->session, rel->storeid, kv[i], pins[i], tuples[i]);
+    if (rc[i] < 0) {
+      return -1;
+    }
+    if (rc[i] == 1) {
+      tuples[i] = {};
+    }
+  }
+  return 0;
+}
+
 /* Lock the row at key in mode, without writing it. */
 int rel_lock(rel_t *rel, std::string_view key, sm1::lockmode_t mode,
              bool as_read) {

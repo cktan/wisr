@@ -9869,3 +9869,32 @@ time, copied the ACL's text and parsed it.
   stale by the session and by another's commit. Of 7 mutations,
   6 caught, three only after the case was tightened; the
   seventh, a cache that never hits, is slower, not wrong.
+
+## Step 332: rows read by key, many in one call
+
+A row a secondary index's entry names was read by its key, one
+RocksDB `Get` a row, each a fresh seek of the sorted file's
+index block, block cache and data block: Q9, 100 rows by `c2`,
+spent 68% of its 0.357 ms so, where PostgreSQL's heap fetch by
+TID costs a seventh as much (0.212 ms in all).
+
+- **sm** (`../sm/BATCHREAD.md`): a batch read at each level,
+  sm1's `chain_read_batch()` reading the keys' newest versions
+  by one `MultiGet` and resolving each as a single read does,
+  through sm2 and sm3 to `sm_tbl_read_keys()`; `rel`'s
+  `read-keys`.
+- **digres** (`smstore.c`): a secondary index's scan that
+  reads rows, and an array's probes of the whole primary key,
+  read their rows ahead, 1, 2, 4, then 8 a call, and hand
+  them out in the index's order, each the row the scan is on
+  for WHERE CURRENT OF and the fetches of a row it read.
+- **Found**: past its end an array's probes begin again; the
+  read-ahead keeps that they ended (`in_list.test` hung).
+- **Tests**: sm1, a batch against single reads at four views;
+  `rel` `test_pkey.rel` 13; `test/slt/batch_read.test`, 28
+  records, PostgreSQL 18's; each of four parts disabled fails
+  them.
+- **Measured** (release, one client): Q9 0.357 to 0.214 ms,
+  PostgreSQL's 0.212; Q7 0.49 ms either way, its Zipfian keys
+  each in a block of its own; Q7 at 16 clients 34,086 to
+  38,485 transactions a second, Q8 about the same.

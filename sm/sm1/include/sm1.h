@@ -1415,6 +1415,17 @@ int chain_read_latest(session_t* session, uint64_t storeid,
 int chain_read_latest(session_t* session, uint64_t storeid,
                       std::string_view key, rawpin_t* pin,
                       std::string_view& data);
+/*
+ * sm1::chain_read of n keys in one call (../BATCHREAD.md): key i's
+ * row into pins[i] and data[i], rc[i] 0, or rc[i] 1 if the read sees
+ * none, its pin then empty. The keys' newest versions are read
+ * together, in RocksDB's MultiGet, in any order; each key is checked,
+ * takes its SIREAD entry and is resolved as a single read of it is.
+ * Returns 0, or -1 on an error, the rows then undefined.
+ */
+int chain_read_batch(session_t* session, uint64_t storeid,
+                     const std::string_view* keys, size_t n,
+                     rawpin_t** pins, std::string_view* data, int* rc);
 int chain_lock(session_t* session, uint64_t storeid,
                std::string_view key, lockmode_t mode, bool as_read = false);
 int chain_trylock(session_t* session, uint64_t storeid,

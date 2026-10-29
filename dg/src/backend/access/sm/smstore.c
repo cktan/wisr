@@ -2594,6 +2594,13 @@ void smstore_load_end(Relation rel) {
  * A scan of the table's primary key is a cursor over its rows, in the key's
  * order (../sm/CLUSTER.md section 6).
  */
+/*
+ * The most rows a scan reads ahead in one call (../sm/BATCHREAD.md): enough
+ * to share a data block's lookups among rows next to each other, few enough
+ * that a scan stopped early has read little it did not use.
+ */
+static constexpr int read_batch_max = 8;
+
 struct smstore_scan_t {
   sm_tbl_t *tbl;
   /* The table's oid, each row's tableoid, as WHERE CURRENT OF checks. */
@@ -2690,6 +2697,29 @@ struct smstore_scan_t {
   /* Each array key's elements but its nulls, for keys_met(); NULL if none. */
   Datum **elems;
   int *nelems;
+  /*
+   * Rows read ahead, many by one sm_tbl_read_keys() (../sm/BATCHREAD.md): a
+   * secondary index's entries' rows (ra_rows), or the rows of a primary
+   * key's probes (ra_point); ra_done once the entries or probes ended.  ra_n of them, ra_at
+   * the next to hand out, each its rowno, its key, copied, its pin and
+   * whether the transaction sees it; ra_batch the next read's size, doubling
+   * to read_batch_max.  A row handed out moves its pin to ref and its key to
+   * cur_key, the row the scan is on.
+   */
+  bool ra_rows;
+  bool ra_point;
+  bool ra_done;
+  int ra_n;
+  int ra_at;
+  int ra_batch;
+  uint64_t ra_rowno[read_batch_max];
+  char *ra_key[read_batch_max];
+  size_t ra_klen[read_batch_max];
+  size_t ra_kcap[read_batch_max];
+  sm_pin_ref_t ra_ref[read_batch_max];
+  int ra_rc[read_batch_max];
+  const char *cur_key;
+  size_t cur_klen;
 };
 
 /*
@@ -3158,8 +3188,13 @@ void smstore_endscan(smstore_scan_t *scan) {
   std::erase(open_scans, scan);
   sm_rel_scanend(scan->cursor);
   sm_idx_scanend(scan->icursor);
-  /* The row it read last by rowno is no one's now. */
+  /* The row it read last by rowno is no one's now, nor those read ahead. */
   sm_unpin(&scan->ref);
+  for (int i = scan->ra_at; i < scan->ra_n; i++)
+    sm_unpin(&scan->ra_ref[i]);
+  for (int i = 0; i < read_batch_max; i++)
+    if (scan->ra_key[i])
+      pfree(scan->ra_key[i]);
   if (scan->slot_end)
     pfree(scan->slot_end);
   if (scan->point_key)
@@ -7178,10 +7213,10 @@ static void open_probe(smstore_scan_t *scan) {
 }
 
 /*
- * Open the index scan's next probe: the next combination of its arrays'
- * values, the last array's first; false after the last.
+ * Set the index scan's bounds to its next probe's: the next combination of
+ * its arrays' values, the last array's first; false after the last.
  */
-static bool next_probe(smstore_scan_t *scan) {
+static bool advance_probe(smstore_scan_t *scan) {
   int a = scan->narrays - 1;
 
   while (a >= 0 && ++scan->arr_at[a] == scan->arr_n[a])
@@ -7192,6 +7227,13 @@ static bool next_probe(smstore_scan_t *scan) {
     scan->lo_vals[scan->arr_col[i]] = scan->arr_lo[i][scan->arr_at[i]];
     scan->hi_vals[scan->arr_col[i]] = scan->arr_hi[i][scan->arr_at[i]];
   }
+  return true;
+}
+
+/* Open the index scan's next probe; false after the last. */
+static bool next_probe(smstore_scan_t *scan) {
+  if (!advance_probe(scan))
+    return false;
   open_probe(scan);
   return true;
 }
@@ -7423,39 +7465,156 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   }
   /* An equality on each of the primary key's columns: a read by key. */
   scan->point = form->indisprimary && ncols == neq;
-  if (!scan->empty)
+  /*
+   * Rows read ahead, many a call (../sm/BATCHREAD.md): a secondary index's
+   * entries' rows, and an array's probes of the whole primary key, whose
+   * first probe is read with the rest.
+   */
+  scan->ra_rows = !form->indisprimary;
+  scan->ra_point = scan->point && scan->narrays > 0;
+  scan->ra_batch = 1;
+  if (!scan->empty && !scan->ra_point)
     open_probe(scan);
   open_scans.push_back(scan);
   return scan;
 }
 
-/*
- * The row of the index scan's last entry, at the key the entry names it by
- * (sm_idx_scan_row()), as this transaction sees it, read into the pin ref
- * names, and into slot by the ref, its tid its rowno; false, the slot empty,
- * if it sees none.  One read where the row by rowno is two in a table with a
- * primary key (../sm/CLUSTER.md section 5).  Out of line, so a primary
- * key's scan (smstore_index_getnext()) pays for no stack protector.
- */
-static pg_noinline bool pin_entry_row(smstore_scan_t *scan, uint64_t rowno,
-                                      TupleTableSlot *slot) {
-  const void *key, *tuple;
-  size_t klen, len;
+/* Keep len bytes of key in the read-ahead's place i, grown as needed. */
+static void ra_keep_key(smstore_scan_t *scan, int i, const void *key,
+                        size_t len) {
+  if (scan->ra_kcap[i] < len) {
+    size_t cap = Max(len, 64);
 
-  ExecClearTuple(slot);
-  if (sm_idx_scan_row(scan->icursor, &key, &klen) != 0)
-    sm_error("read an index entry");
-  switch (sm_tbl_read_key(scan->tbl, key, klen, &scan->ref, &tuple, &len)) {
-  case 0:
-    break;
-  case 1:
-    return false;
-  default:
-    sm_error("read a row");
+    /* In the scan's own context, as it lives as long as the scan. */
+    scan->ra_key[i] =
+        scan->ra_key[i] != NULL
+            ? (char *)repalloc(scan->ra_key[i], cap)
+            : (char *)MemoryContextAlloc(GetMemoryChunkContext(scan), cap);
+    scan->ra_kcap[i] = cap;
   }
-  scan->cur_pinned = true;
-  ref_into_slot(scan->ref, rowno, slot);
-  return true;
+  memcpy(scan->ra_key[i], key, len);
+  scan->ra_klen[i] = len;
+}
+
+/*
+ * Read the rows of the first n keys kept, in one call, to be handed out
+ * from the first; the next read is twice as many, up to read_batch_max.
+ */
+static void ra_read(smstore_scan_t *scan, int n) {
+  const void *keys[read_batch_max];
+  const void *tuples[read_batch_max];
+  size_t tuple_lens[read_batch_max];
+
+  for (int i = 0; i < n; i++)
+    keys[i] = scan->ra_key[i];
+  if (sm_tbl_read_keys(scan->tbl, keys, scan->ra_klen, (size_t)n,
+                       scan->ra_ref, tuples, tuple_lens, scan->ra_rc) != 0)
+    sm_error("read rows");
+  scan->ra_n = n;
+  scan->ra_at = 0;
+  scan->ra_batch = Min(scan->ra_batch * 2, read_batch_max);
+}
+
+/*
+ * The next row read ahead that the transaction sees, made the row the scan
+ * is on: its pin in ref, as a single read would leave it, its rowno and its
+ * key the scan's.  False if every row read ahead is handed out.
+ */
+static bool ra_next(smstore_scan_t *scan) {
+  while (scan->ra_at < scan->ra_n) {
+    int i = scan->ra_at++;
+
+    if (scan->ra_rc[i] != 0)
+      continue;
+    /* The row handed out before is no one's now. */
+    sm_unpin(&scan->ref);
+    scan->ref = scan->ra_ref[i];
+    scan->ra_ref[i] = sm_pin_ref_t{};
+    scan->cur = true;
+    scan->cur_pinned = true;
+    scan->cur_rowno = scan->ra_rowno[i];
+    scan->cur_key = scan->ra_key[i];
+    scan->cur_klen = scan->ra_klen[i];
+    return true;
+  }
+  return false;
+}
+
+/*
+ * A secondary index's scan's next row that meets its keys into slot, by its
+ * pin, its tid its rowno; false at the end.  Its entries' rows are read
+ * ahead, many in one call (../sm/BATCHREAD.md), their keys copied as the
+ * cursor moves on.  Out of line, so a primary key's scan pays for none of it.
+ */
+static pg_noinline bool next_read_row(smstore_scan_t *scan,
+                                      TupleTableSlot *slot) {
+  for (;;) {
+    ExecClearTuple(slot);
+    if (ra_next(scan)) {
+      ref_into_slot(scan->ref, scan->cur_rowno, slot);
+      if (keys_met(scan, slot, false))
+        return true;
+      continue;
+    }
+    int n = 0;
+
+    scan->ra_n = scan->ra_at = 0;
+    /* Its entries ended: asked again, the probes would begin again. */
+    if (scan->ra_done)
+      return false;
+    while (n < scan->ra_batch) {
+      const void *key;
+      size_t klen;
+
+      if (!smstore_index_getrowno(scan)) {
+        scan->ra_done = true;
+        break;
+      }
+      if (sm_idx_scan_row(scan->icursor, &key, &klen) != 0)
+        sm_error("read an index entry");
+      ra_keep_key(scan, n, key, klen);
+      scan->ra_rowno[n++] = scan->cur_rowno;
+    }
+    /* On no row until one read ahead is handed out. */
+    scan->cur = false;
+    if (n == 0)
+      return false;
+    ra_read(scan, n);
+  }
+}
+
+/*
+ * An array's probes of the whole primary key: the next row they name that
+ * the transaction sees, made the row the scan is on; false after the last.
+ * The probes' keys are made from their bounds and their rows read ahead,
+ * many in one call (../sm/BATCHREAD.md).
+ */
+static pg_noinline bool next_point_row(smstore_scan_t *scan) {
+  for (;;) {
+    if (ra_next(scan))
+      return true;
+    scan->ra_n = scan->ra_at = 0;
+    if (scan->ra_done)
+      return false;
+    int n = 0;
+
+    while (n < scan->ra_batch) {
+      sm_row_key_t key = {scan->lo_vals, scan->lo.isnull,
+                          (size_t)scan->form->indnkeyatts};
+      std::string bytes;
+
+      if (0 != sm_tbl_row_key(scan->tbl, key, bytes))
+        sm_error("name a row by its key");
+      ra_keep_key(scan, n, bytes.data(), bytes.size());
+      /* A row read by its key has no rowno. */
+      scan->ra_rowno[n++] = 0;
+      if (!advance_probe(scan)) {
+        scan->ra_done = true;
+        break;
+      }
+    }
+    ra_read(scan, n);
+  }
 }
 
 /*
@@ -7492,24 +7651,20 @@ static bool read_row_at(sm_tbl_t *tbl, const std::string &key, int natts,
 bool smstore_index_recheck(smstore_scan_t *scan) { return scan->recheck; }
 
 /*
- * The index scan's next row that meets its keys into slot, by its pin
- * (pin_entry_row()), its tid its rowno; false at the end.
+ * The index scan's next row that meets its keys into slot, by its pin, its
+ * tid its rowno; false at the end.  A secondary index's rows are read ahead
+ * (next_read_row()).
  */
 bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
   slot->tts_tableOid = scan->relid;
+  if (scan->ra_rows)
+    return next_read_row(scan, slot);
   while (smstore_index_getrowno(scan)) {
     /* A primary key's entry is its row, in the cursor's pin or the scan's. */
-    if (scan->cursor != NULL || scan->point) {
-      ExecClearTuple(slot);
-      ref_into_slot(scan->point ? scan->ref : scan->row_ref, scan->cur_rowno,
-                    slot);
-      if (keys_met(scan, slot, false))
-        return true;
-      continue;
-    }
-    /* A row the transaction does not see is passed. */
-    if (pin_entry_row(scan, scan->cur_rowno, slot) &&
-        keys_met(scan, slot, false))
+    ExecClearTuple(slot);
+    ref_into_slot(scan->point ? scan->ref : scan->row_ref, scan->cur_rowno,
+                  slot);
+    if (keys_met(scan, slot, false))
       return true;
   }
   ExecClearTuple(slot);
@@ -7527,7 +7682,7 @@ static pg_noinline bool next_entry(smstore_scan_t *scan) {
   switch (sm_idx_scannxt(scan->icursor, &scan->cur_rowno, &cut, &scan->value,
                          &scan->len)) {
   case 0:
-    /* Its row is pinned once read (pin_entry_row(), entry_from_row()). */
+    /* Its row is pinned once read (next_read_row(), entry_from_row()). */
     scan->cur = true;
     scan->cur_pinned = false;
     return true;
@@ -7581,6 +7736,9 @@ bool smstore_index_getrowno(smstore_scan_t *scan) {
   scan->cur = false;
   if (scan->empty)
     return false;
+  /* An array's probes of the whole primary key, their rows read ahead. */
+  if (scan->ra_point)
+    return next_point_row(scan);
   for (;;) {
     if (probe_row(scan))
       return true;
@@ -7873,7 +8031,11 @@ static smstore_scan_t *scan_at(Oid oid, const std::string &key);
 static void scan_key(smstore_scan_t *scan, const void **key, size_t *len) {
   *key = NULL;
   *len = 0;
-  if (scan != NULL && scan->point) {
+  /* A row read ahead: its own key, the cursor being on past it. */
+  if (scan != NULL && (scan->ra_rows || scan->ra_point)) {
+    *key = scan->cur_key;
+    *len = scan->cur_klen;
+  } else if (scan != NULL && scan->point) {
     *key = scan->point_key;
     *len = scan->point_len;
   } else if (scan != NULL &&

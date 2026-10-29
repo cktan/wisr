@@ -941,3 +941,102 @@ TEST_CASE("a session's handle of a store is read again once the store map "
   CHECK(!f.s->store_handles.count(e2));
   REQUIRE(sm1::closedb(t) == 0);
 }
+
+namespace {
+
+/* Each key's row as single reads give them: the value, or "-". */
+std::vector<std::string> single_reads(sm1::session_t *s, uint64_t storeid,
+                                      const std::vector<std::string> &keys) {
+  std::vector<std::string> out;
+  for (const std::string &k : keys) {
+    out.push_back(chain_get(s, storeid, k));
+  }
+  return out;
+}
+
+/* Each key's row as one batch read gives them: the value, or "-". */
+std::vector<std::string> batch_reads(sm1::session_t *s, uint64_t storeid,
+                                     const std::vector<std::string> &keys) {
+  size_t n = keys.size();
+  std::vector<std::string_view> kv(keys.begin(), keys.end());
+  std::vector<std::unique_ptr<sm1::rawpin_t>> own;
+  std::vector<sm1::rawpin_t *> pins;
+  for (size_t i = 0; i < n; i++) {
+    own.push_back(std::make_unique<sm1::rawpin_t>());
+    pins.push_back(own.back().get());
+  }
+  std::vector<std::string_view> data(n);
+  std::vector<int> rc(n, -2);
+  REQUIRE_MESSAGE(sm1::chain_read_batch(s, storeid, kv.data(), n, pins.data(),
+                                        data.data(), rc.data()) == 0,
+                  sm1::errmsg());
+  std::vector<std::string> out;
+  for (size_t i = 0; i < n; i++) {
+    REQUIRE((rc[i] == 0 || rc[i] == 1));
+    out.push_back(rc[i] == 1 ? "-" : std::string(data[i]));
+  }
+  for (sm1::rawpin_t *p : pins) {
+    sm1::unpin(p);
+  }
+  return out;
+}
+
+} // namespace
+
+TEST_CASE("a batch read gives each key's row as a single read does") {
+  // Verify sm1::chain_read_batch against sm1::chain_read
+  // (../BATCHREAD.md).
+  // 1. Write k0..k9; update k1 twice and k2 once, so older versions
+  //    are in OLD; erase k5. Session C takes a snapshot before the
+  //    updates, R a snapshot after.
+  // 2. Session W updates k3 and inserts k7b, uncommitted.
+  // 3. Session O, this one, updates k4 and erases k6, uncommitted.
+  // 4. Over keys out of order, repeated, and missing, each session's
+  //    batch gives what its single reads give, row by row.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  for (int i = 0; i < 10; i++) {
+    chain_put(f.s, c, "k" + std::to_string(i), "v" + std::to_string(i), true);
+  }
+  sm1::session_t *old = f.open();
+  begin_xct(old, sm1::xctlevel_t::repeatable_read);
+  CHECK(chain_get(old, c, "k1") == "v1");
+  chain_put(f.s, c, "k1", "v1b", false);
+  chain_put(f.s, c, "k1", "v1c", false);
+  chain_put(f.s, c, "k2", "v2b", false);
+  begin_xct(f.s);
+  REQUIRE(sm1::chain_erase(f.s, c, "k5") == 0);
+  commit_xct(f.s);
+  sm1::session_t *now = f.open();
+  begin_xct(now, sm1::xctlevel_t::repeatable_read);
+  CHECK(chain_get(now, c, "k0") == "v0");
+
+  sm1::session_t *w = f.open();
+  begin_xct(w);
+  REQUIRE(sm1::chain_update(w, c, "k3", "v3w") == 0);
+  REQUIRE(sm1::chain_insert(w, c, "k7b", "w") == 0);
+  begin_xct(f.s);
+  REQUIRE(sm1::chain_update(f.s, c, "k4", "v4o") == 0);
+  REQUIRE(sm1::chain_erase(f.s, c, "k6") == 0);
+
+  std::vector<std::string> keys = {"k9", "k1", "k2",  "k3", "k1", "k5",
+                                   "k4", "k6", "k7b", "zz", "k0", "k2"};
+  for (sm1::session_t *s : {old, now, f.s}) {
+    std::vector<std::string> single = single_reads(s, c, keys);
+    CHECK(batch_reads(s, c, keys) == single);
+  }
+  CHECK(batch_reads(old, c, {"k1", "k2", "k5"}) ==
+        std::vector<std::string>{"v1", "v2", "v5"});
+  CHECK(batch_reads(now, c, {"k1", "k2", "k5", "k3"}) ==
+        std::vector<std::string>{"v1c", "v2b", "-", "v3"});
+  CHECK(batch_reads(f.s, c, {"k4", "k6", "k7b"}) ==
+        std::vector<std::string>{"v4o", "-", "-"});
+  CHECK(batch_reads(f.s, c, {}).empty());
+  REQUIRE(sm1::abort(w) == 0);
+  REQUIRE(sm1::abort(f.s) == 0);
+  commit_xct(old);
+  commit_xct(now);
+  sm1::closedb(old);
+  sm1::closedb(now);
+  sm1::closedb(w);
+}

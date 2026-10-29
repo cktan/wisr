@@ -700,6 +700,17 @@ int rel_read(rel_t* rel, std::string_view key, sm1::rawpin_t* pin,
              std::string_view& tuple, uint64_t* id = nullptr);
 
 /*
+ * rel_read into a raw pin of the rows at n keys, in one call
+ * (../BATCHREAD.md): key i's tuple into pins[i] and tuples[i], rc[i]
+ * 0, or rc[i] 1 if there is none. A chained store's are read by
+ * sm1::chain_read_batch, a versioned store's one by one. Returns 0,
+ * or -1 on an error.
+ */
+int rel_read_batch(rel_t* rel, const std::string_view* keys, size_t n,
+                   sm1::rawpin_t** pins, std::string_view* tuples,
+                   int* rc);
+
+/*
  * Read the newest committed version of the row at key, as
  * sm1::read_latest does, for a READ COMMITTED writer that met
  * SM_ERR_UPDATED to check its filter against. The tuple views sm1

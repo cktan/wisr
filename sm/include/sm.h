@@ -1370,6 +1370,17 @@ int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t id, const void** tuple,
                        size_t* len);
 
 /*
+ * Read the rows at n keys, as index entries name them, each into a
+ * pin as sm_tbl_read_key does, in one call (../BATCHREAD.md): key
+ * i's row in refs[i], tuples[i] and tuple_lens[i], rc[i] 0, or rc[i]
+ * 1 with refs[i] zero if there is none. Returns 0, or -1 on an
+ * error, every ref then zero.
+ */
+int sm_tbl_read_keys(sm_tbl_t* tbl, const void* const* keys,
+                     const size_t* lens, size_t n, sm_pin_ref_t* refs,
+                     const void** tuples, size_t* tuple_lens, int* rc);
+
+/*
  * Read the row at key, as an index entry names it (sm_idx_scan_row),
  * into a pin as sm_tbl_read does. 0, 1 if none, or -1.
  */

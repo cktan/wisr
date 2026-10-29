@@ -1211,6 +1211,51 @@ int tbl_read_key(table_t *table, std::string_view key, pin_ref_t &ref,
   });
 }
 
+/* Read the rows at keys into pins in one call; see sm3.h. */
+int tbl_read_keys(table_t *table, const std::string_view *keys, size_t n,
+                  pin_ref_t *refs, std::string_view *tuples, int *rc) {
+  std::vector<pin_t *> pins(n, nullptr);
+  std::vector<sm1::rawpin_t *> raws(n, nullptr);
+  // Each pin given back, and each ref zero, if the read fails.
+  auto give_back = [&] {
+    for (size_t i = 0; i < n; i++) {
+      if (pins[i]) {
+        pin_put(pins[i]);
+      }
+      refs[i] = pin_ref_t{};
+      tuples[i] = {};
+    }
+  };
+  // A pin each: the one its ref holds, as read_into() rereads it, or
+  // one from the session's pool.
+  for (size_t i = 0; i < n; i++) {
+    tuples[i] = {};
+    pins[i] = pin_reread(refs[i]);
+    if (!pins[i]) {
+      pins[i] = pin_take(table->session);
+    }
+    if (!pins[i]) {
+      give_back();
+      return -1;
+    }
+    raws[i] = pins[i]->raw;
+  }
+  if (sm2::rel_read_batch(table->rel, keys, n, raws.data(), tuples, rc) != 0) {
+    give_back();
+    return -1;
+  }
+  for (size_t i = 0; i < n; i++) {
+    if (rc[i] == 0) {
+      pin_hold(pins[i], table->def, tuples[i], refs[i]);
+    } else {
+      pin_put(pins[i]);
+      refs[i] = pin_ref_t{};
+      tuples[i] = {};
+    }
+  }
+  return 0;
+}
+
 /* Read the newest committed version of the row into a pin. */
 int tbl_read_latest(table_t *table, uint64_t id, pin_ref_t &ref,
                     std::string_view &tuple) {
