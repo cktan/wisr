@@ -9979,3 +9979,36 @@ which an index without them has none of.
   sm1's version 225, sm2 decoding the value twice (the cut
   flag, the row's key) 540, the key's columns 325, the scan's
   keys checked again 190.
+
+## Step 336: CREATE TABLE ... (LIKE t INCLUDING INDEXES)
+
+Refused since step 325 fixed its crash: `relation 2616 cannot
+be opened`. Under that error were two more, which the fix of
+each made reachable in turn:
+
+- **An index column's operator class** is read from the
+  compiled-in catalog (`cat_opclass()`), not the syscache of
+  `pg_opclass`, which digres cannot open (`get_opclass()` in
+  `parse_utilcmd.c`).
+- **A table's not-null constraints** are made from its
+  columns' `attnotnull` (`RelationGetNotNullConstraints()` in
+  `pg_constraint.c`): digres's `pg_constraint` has no row of
+  one. `LIKE`, which copies them whatever its options, copied
+  none, so a copy lost every NOT NULL and its primary key was
+  refused as on a column that may be null.
+- **`pg_index`'s `indpred` is one expression**, its clauses
+  ANDed, as PostgreSQL's `index_create()` writes it, not sm's
+  list of them (`catrel.c`). A partial index copied by `LIKE`
+  took the list as its WHERE clause, and the server's first
+  read of the copy failed an assertion in
+  `canonicalize_qual()`.
+- **Tests**: `create_table_like.test`, on PostgreSQL 18 and
+  digres: a primary key and an index copied, a keyless table's
+  index, NOT NULL kept by `LIKE` alone, and partial indexes of
+  one clause and of two. Each fix undone fails it, the last
+  by a crash. pgregress: the 14 files that use `LIKE` trimmed
+  again.
+- **Left**: a NOT NULL constraint has no `pg_constraint` row,
+  as PostgreSQL 18's has; collations and operator classes
+  other than a column's own are refused for an index key, so
+  `LIKE` never copies one.

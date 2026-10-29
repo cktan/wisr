@@ -548,7 +548,7 @@ CREATE TABLE FKTABLE (
   FOREIGN KEY (tid, fk_id_del_set_default) REFERENCES PKTABLE ON DELETE SET DEFAULT (fk_id_del_set_default, fk_id_del_set_default)
 );
 
-SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'fktable'::regclass::oid ORDER BY oid;
+SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'fktable'::regclass::oid ORDER BY conname COLLATE "C";
 
 INSERT INTO PKTABLE VALUES (1, 0), (1, 1), (1, 2);
 INSERT INTO FKTABLE VALUES
@@ -1653,7 +1653,7 @@ INSERT INTO fk_notpartitioned_pk (a,b) VALUES (2502, 2503);
 -- Child constraint will remain valid.
 --dg-cascade
 --dg SELECT conname, convalidated, conrelid::regclass FROM pg_constraint
---dg WHERE conrelid::regclass::text like 'fk_partitioned_fk%' ORDER BY oid::regclass::text;
+--dg WHERE conrelid::regclass::text like 'fk_partitioned_fk%' ORDER BY conname COLLATE "C";
 
 -- Validate the constraint
 --dg-cascade
@@ -1662,7 +1662,7 @@ INSERT INTO fk_notpartitioned_pk (a,b) VALUES (2502, 2503);
 -- All constraints are now valid.
 --dg-cascade
 --dg SELECT conname, convalidated, conrelid::regclass FROM pg_constraint
---dg WHERE conrelid::regclass::text like 'fk_partitioned_fk%' ORDER BY oid::regclass::text;
+--dg WHERE conrelid::regclass::text like 'fk_partitioned_fk%' ORDER BY conname COLLATE "C";
 
 -- Attaching a child with a NOT VALID constraint.
 --dg-cascade
@@ -1682,7 +1682,7 @@ TRUNCATE fk_partitioned_fk_2;
 -- The child constraint will also be valid.
 --dg-cascade
 --dg SELECT conname, convalidated FROM pg_constraint
---dg WHERE conrelid = 'fk_partitioned_fk_2'::regclass ORDER BY oid::regclass::text;
+--dg WHERE conrelid = 'fk_partitioned_fk_2'::regclass ORDER BY conname COLLATE "C";
 
 -- Test case where the child constraint is invalid, the grandchild constraint
 -- is valid, and the validation for the grandchild should be skipped when a
@@ -1703,7 +1703,7 @@ TRUNCATE fk_partitioned_fk_2;
 -- All constraints are now valid.
 --dg-cascade
 --dg SELECT conname, convalidated, conrelid::regclass FROM pg_constraint
---dg WHERE conrelid::regclass::text like 'fk_partitioned_fk%' ORDER BY oid::regclass::text;
+--dg WHERE conrelid::regclass::text like 'fk_partitioned_fk%' ORDER BY conname COLLATE "C";
 
 --dg-cascade
 --dg DROP TABLE fk_partitioned_fk, fk_notpartitioned_pk;
@@ -1730,7 +1730,7 @@ INSERT INTO fk_notpartitioned_fk VALUES(100,100), (1000,1000);
 -- All constraints will be invalid, and _fkey2 constraints will not be enforced.
 --dg-cascade
 --dg SELECT conname, conenforced, convalidated FROM pg_constraint
---dg WHERE conrelid = 'fk_notpartitioned_fk'::regclass ORDER BY oid::regclass::text;
+--dg WHERE conrelid = 'fk_notpartitioned_fk'::regclass ORDER BY conname COLLATE "C";
 
 --dg-cascade
 --dg ALTER TABLE fk_notpartitioned_fk VALIDATE CONSTRAINT fk_notpartitioned_fk_a_b_fkey;
@@ -1740,7 +1740,7 @@ INSERT INTO fk_notpartitioned_fk VALUES(100,100), (1000,1000);
 -- All constraints are now valid and enforced.
 --dg-cascade
 --dg SELECT conname, conenforced, convalidated FROM pg_constraint
---dg WHERE conrelid = 'fk_notpartitioned_fk'::regclass ORDER BY oid::regclass::text;
+--dg WHERE conrelid = 'fk_notpartitioned_fk'::regclass ORDER BY conname COLLATE "C";
 
 -- test a self-referential FK
 --dg-cascade
@@ -1753,7 +1753,7 @@ INSERT INTO fk_notpartitioned_fk VALUES(100,100), (1000,1000);
 --dg-cascade
 --dg SELECT conname, conenforced, convalidated FROM pg_constraint
 --dg WHERE conrelid = 'fk_partitioned_pk'::regclass AND contype = 'f'
---dg ORDER BY oid::regclass::text;
+--dg ORDER BY conname COLLATE "C";
 --dg-cascade
 --dg ALTER TABLE fk_partitioned_pk_2 VALIDATE CONSTRAINT selffk;
 --dg-cascade
@@ -1761,7 +1761,7 @@ INSERT INTO fk_notpartitioned_fk VALUES(100,100), (1000,1000);
 --dg-cascade
 --dg SELECT conname, conenforced, convalidated FROM pg_constraint
 --dg WHERE conrelid = 'fk_partitioned_pk'::regclass AND contype = 'f'
---dg ORDER BY oid::regclass::text;
+--dg ORDER BY conname COLLATE "C";
 
 --dg-cascade
 --dg DROP TABLE fk_notpartitioned_fk, fk_partitioned_pk;

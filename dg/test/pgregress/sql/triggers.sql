@@ -2015,6 +2015,35 @@ alter table parted1_irreg drop column fd;
 --dg-cascade
 --dg drop function parted_trigfunc();
 
+-- Test exception handling in a deferred constraint trigger at COMMIT.
+create table deferred_trigger_test (a int);
+--dg-skip: language "?" does not exist
+--dg create function deferred_trigger_func() returns trigger
+--dg   language plpgsql as $$
+--dg begin
+--dg   perform 1 / 0;
+--dg   return new;
+--dg exception when division_by_zero then
+--dg   raise notice 'caught division_by_zero';
+--dg   return new;
+--dg end;
+--dg $$;
+--dg-cascade
+--dg create constraint trigger deferred_trigger
+--dg   after insert on deferred_trigger_test
+--dg   deferrable initially deferred
+--dg   for each row execute function deferred_trigger_func();
+
+begin;
+insert into deferred_trigger_test values (1);
+--dg-cascade
+--dg commit;
+select * from deferred_trigger_test;
+
+drop table deferred_trigger_test;
+--dg-cascade
+--dg drop function deferred_trigger_func();
+
 --
 -- Constraint triggers and partitioned tables
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
@@ -2026,7 +2055,8 @@ alter table parted1_irreg drop column fd;
 --dg-cascade
 --dg alter table parted_constr_ancestor attach partition parted_constr
 --dg   for values from ('aaaa') to ('zzzz');
-create table parted1_constr (a int, b text);
+--dg-cascade
+--dg create table parted1_constr (a int, b text);
 --dg-cascade
 --dg alter table parted_constr attach partition parted1_constr
 --dg   for values from ('aaaa') to ('bbbb');
@@ -2043,7 +2073,8 @@ create table parted1_constr (a int, b text);
 -- The immediate constraint is fired immediately; the WHEN clause of the
 -- deferred constraint is also called immediately.  The deferred constraint
 -- is fired at commit time.
-begin;
+--dg-cascade
+--dg begin;
 --dg-cascade
 --dg insert into parted_constr values (1, 'aardvark');
 --dg-cascade

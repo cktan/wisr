@@ -16,6 +16,7 @@
 
 #include "access/genam.h"
 #include "access/htup_details.h"
+#include "access/relation.h"
 #include "access/sysattr.h"
 #include "access/table.h"
 #include "catalog/catalog.h"
@@ -733,34 +734,26 @@ bool AdjustNotNullInheritance(Oid relid, AttrNumber attnum,
  *
  * Caller can request cooked constraints, or raw.
  *
- * This is seldom needed, so we just scan pg_constraint each time.
- *
- * 'include_noinh' determines whether to include NO INHERIT constraints or not.
+ * digres keeps a not-null constraint as its column's attnotnull alone, with
+ * no row of pg_constraint (catrel.c), so each is made from its column, named
+ * as PostgreSQL names one.  None is NO INHERIT, as digres has no inheritance,
+ * so 'include_noinh' changes nothing.
  */
 List *RelationGetNotNullConstraints(Oid relid, bool cooked,
                                     bool include_noinh) {
   List *notnulls = NIL;
-  Relation constrRel;
-  HeapTuple htup;
-  SysScanDesc conscan;
-  ScanKeyData skey;
+  /* The caller holds the relation's lock. */
+  Relation rel = relation_open(relid, NoLock);
+  TupleDesc tupdesc = RelationGetDescr(rel);
 
-  constrRel = table_open(ConstraintRelationId, AccessShareLock);
-  ScanKeyInit(&skey, Anum_pg_constraint_conrelid, BTEqualStrategyNumber,
-              F_OIDEQ, ObjectIdGetDatum(relid));
-  conscan = systable_beginscan(constrRel, ConstraintRelidTypidNameIndexId, true,
-                               NULL, 1, &skey);
+  for (int i = 0; i < tupdesc->natts; i++) {
+    Form_pg_attribute att = TupleDescAttr(tupdesc, i);
+    char *conname;
 
-  while (HeapTupleIsValid(htup = systable_getnext(conscan))) {
-    Form_pg_constraint conForm = (Form_pg_constraint)GETSTRUCT(htup);
-    AttrNumber colnum;
-
-    if (conForm->contype != CONSTRAINT_NOTNULL)
+    if (att->attisdropped || !att->attnotnull)
       continue;
-    if (conForm->connoinherit && !include_noinh)
-      continue;
-
-    colnum = extractNotNullColumn(htup);
+    conname = makeObjectName(RelationGetRelationName(rel),
+                             NameStr(att->attname), "not_null");
 
     if (cooked) {
       CookedConstraint *cooked;
@@ -768,15 +761,15 @@ List *RelationGetNotNullConstraints(Oid relid, bool cooked,
       cooked = (CookedConstraint *)palloc(sizeof(CookedConstraint));
 
       cooked->contype = CONSTR_NOTNULL;
-      cooked->conoid = conForm->oid;
-      cooked->name = pstrdup(NameStr(conForm->conname));
-      cooked->attnum = colnum;
+      cooked->conoid = InvalidOid;
+      cooked->name = conname;
+      cooked->attnum = att->attnum;
       cooked->expr = NULL;
       cooked->is_enforced = true;
-      cooked->skip_validation = !conForm->convalidated;
+      cooked->skip_validation = false;
       cooked->is_local = true;
       cooked->inhcount = 0;
-      cooked->is_no_inherit = conForm->connoinherit;
+      cooked->is_no_inherit = false;
 
       notnulls = lappend(notnulls, cooked);
     } else {
@@ -784,21 +777,20 @@ List *RelationGetNotNullConstraints(Oid relid, bool cooked,
 
       constr = makeNode(Constraint);
       constr->contype = CONSTR_NOTNULL;
-      constr->conname = pstrdup(NameStr(conForm->conname));
+      constr->conname = conname;
       constr->deferrable = false;
       constr->initdeferred = false;
       constr->location = -1;
-      constr->keys = list_make1(makeString(get_attname(relid, colnum, false)));
+      constr->keys = list_make1(makeString(pstrdup(NameStr(att->attname))));
       constr->is_enforced = true;
-      constr->skip_validation = !conForm->convalidated;
+      constr->skip_validation = false;
       constr->initially_valid = true;
-      constr->is_no_inherit = conForm->connoinherit;
+      constr->is_no_inherit = false;
       notnulls = lappend(notnulls, constr);
     }
   }
 
-  systable_endscan(conscan);
-  table_close(constrRel, AccessShareLock);
+  relation_close(rel, NoLock);
 
   return notnulls;
 }

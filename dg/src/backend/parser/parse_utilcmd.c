@@ -28,6 +28,7 @@
 #include "access/reloptions.h"
 #include "access/table.h"
 #include "access/toast_compression.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
 #include "catalog/index.h"
@@ -2073,23 +2074,20 @@ static List *get_collation(Oid collation, Oid actual_datatype) {
  */
 static List *get_opclass(Oid opclass, Oid actual_datatype) {
   List *result = NIL;
-  HeapTuple ht_opc;
-  Form_pg_opclass opc_rec;
+  /* Every operator class is compiled in (catalog/cat_builtin.h). */
+  const cat_opclass_t *opc_rec = cat_opclass(opclass);
 
-  ht_opc = SearchSysCache1(CLAOID, ObjectIdGetDatum(opclass));
-  if (!HeapTupleIsValid(ht_opc))
+  if (NULL == opc_rec)
     elog(ERROR, "cache lookup failed for opclass %u", opclass);
-  opc_rec = (Form_pg_opclass)GETSTRUCT(ht_opc);
 
   if (GetDefaultOpClass(actual_datatype, opc_rec->opcmethod) != opclass) {
     /* For simplicity, we always schema-qualify the name */
     char *nsp_name = get_namespace_name(opc_rec->opcnamespace);
-    char *opc_name = pstrdup(NameStr(opc_rec->opcname));
+    char *opc_name = pstrdup(opc_rec->opcname);
 
     result = list_make2(makeString(nsp_name), makeString(opc_name));
   }
 
-  ReleaseSysCache(ht_opc);
   return result;
 }
 

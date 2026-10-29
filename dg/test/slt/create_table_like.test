@@ -1,0 +1,119 @@
+# Verify CREATE TABLE ... (LIKE t INCLUDING INDEXES) copies t's primary
+# key and indexes as PostgreSQL does, and LIKE alone copies none but
+# keeps every NOT NULL.
+# 1. A table with a primary key and an index of another column.
+# 2. LIKE it INCLUDING INDEXES: the copy has both, named as PostgreSQL
+#    names them, its key refuses a duplicate, and its rows are read by
+#    the index.
+# 3. LIKE it alone: the copy has no index and takes a duplicate, and
+#    its key's column and a NOT NULL one refuse a null.
+# 4. LIKE INCLUDING INDEXES of a keyless table with one index.
+# 5. LIKE INCLUDING INDEXES of partial indexes, of one clause and of
+#    two: the copies have their predicates, and a unique one refuses a
+#    duplicate only where its predicate holds.
+
+# 1. The table copied.
+statement ok
+create table lk (id int8 primary key, c2 int8, c3 text not null)
+
+statement ok
+create index lk_c2 on lk (c2)
+
+# 2. Its indexes copied.
+statement ok
+create table lk_i (like lk including indexes)
+
+query TII
+select indexrelid::regclass::text, indisprimary::int, indisunique::int from pg_index where indrelid = 'lk_i'::regclass order by 1
+----
+lk_i_c2_idx	0	0
+lk_i_pkey	1	1
+
+query T
+select pg_get_indexdef('lk_i_c2_idx'::regclass)
+----
+CREATE INDEX lk_i_c2_idx ON public.lk_i USING btree (c2)
+
+statement ok
+insert into lk_i select g, 100 - g, 'r' || g from generate_series(1, 50) g
+
+statement error duplicate key value violates unique constraint "lk_i_pkey"
+insert into lk_i values (7, 0, 'again')
+
+statement ok
+set enable_seqscan = off
+
+query IT
+select id, c3 from lk_i where c2 between 60 and 62 order by id
+----
+38	r38
+39	r39
+40	r40
+
+statement ok
+reset enable_seqscan
+
+# 3. LIKE alone: no index.
+statement ok
+create table lk_n (like lk)
+
+query I
+select count(*) from pg_index where indrelid = 'lk_n'::regclass
+----
+0
+
+statement ok
+insert into lk_n values (1, 1, 'a'), (1, 2, 'b')
+
+query TI
+select attname, attnotnull::int from pg_attribute where attrelid = 'lk_n'::regclass and attnum > 0 order by attnum
+----
+id	1
+c2	0
+c3	1
+
+statement error null value in column "id" of relation "lk_n" violates not-null constraint
+insert into lk_n values (null, 3, 'c')
+
+statement error null value in column "c3" of relation "lk_n" violates not-null constraint
+insert into lk_n values (2, 3, null)
+
+# 4. A keyless table's one index.
+statement ok
+create table lkk (a int4, b text)
+
+statement ok
+create index lkk_b on lkk (b)
+
+statement ok
+create table lkk_i (like lkk including indexes)
+
+query TII
+select indexrelid::regclass::text, indisprimary::int, indisunique::int from pg_index where indrelid = 'lkk_i'::regclass order by 1
+----
+lkk_i_b_idx	0	0
+
+# 5. Partial indexes copied.
+statement ok
+create table lp (a text, b int4)
+
+statement ok
+create unique index lp_a on lp (a) where a <> 'test'
+
+statement ok
+create index lp_b on lp (b) where b > 1 and b < 9
+
+statement ok
+create table lp_i (like lp including indexes)
+
+query T
+select pg_get_indexdef(indexrelid) from pg_index where indrelid = 'lp_i'::regclass order by 1
+----
+CREATE INDEX lp_i_b_idx ON public.lp_i USING btree (b) WHERE ((b > 1) AND (b < 9))
+CREATE UNIQUE INDEX lp_i_a_idx ON public.lp_i USING btree (a) WHERE (a <> 'test'::text)
+
+statement ok
+insert into lp_i values ('test', 1), ('test', 2), ('x', 3)
+
+statement error duplicate key value violates unique constraint "lp_i_a_idx"
+insert into lp_i values ('x', 4)

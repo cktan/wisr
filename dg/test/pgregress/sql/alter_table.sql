@@ -996,6 +996,40 @@ insert into atacc1 (test) values (0);
 --dg alter table atacc1 add column test2 int default 0 primary key;
 drop table atacc1;
 
+-- Replacing a NOT NULL column must create a new constraint for the primary key.
+create table atacc1 (id int not null);
+alter table atacc1 drop column id, add column id int, add primary key (id);
+drop table atacc1;
+-- A NOT NULL constraint dropped in the same ALTER TABLE must be replaced.
+create table atacc1 (id int not null);
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg alter table atacc1 alter column id drop not null, add primary key (id);
+drop table atacc1;
+create table atacc1 (id int constraint atacc1_id_nn not null);
+--dg-skip: constraint "?" of relation "?" does not exist
+--dg alter table atacc1 drop constraint atacc1_id_nn, add primary key (id);
+drop table atacc1;
+-- ADD PRIMARY KEY must prefer an explicitly named replacement NOT NULL.
+create table atacc1 (id int not null);
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg alter table atacc1 alter column id drop not null,
+--dg   add primary key (id), add constraint atacc1_id_nn not null id;
+drop table atacc1;
+create table atacc1 (id int not null);
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg alter table atacc1 alter column id drop not null,
+--dg   add constraint atacc1_id_nn not null id, add primary key (id);
+drop table atacc1;
+-- The replacement NOT NULL constraint must propagate to the partitions too.
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table atacc1 (id int not null) partition by range (id);
+--dg-cascade
+--dg create table atacc1_1 partition of atacc1 for values from (0) to (10);
+--dg-cascade
+--dg alter table atacc1 alter column id drop not null, add primary key (id);
+--dg-cascade
+--dg drop table atacc1;
+
 -- this combination used to have order-of-execution problems (bug #15580)
 create table atacc1 (a int);
 insert into atacc1 values(1);

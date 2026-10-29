@@ -64,6 +64,7 @@
 #include "commands/defrem.h"
 #include "optimizer/optimizer.h"
 #include "mb/pg_wchar.h"
+#include "nodes/makefuncs.h"
 #include "utils/acl.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
@@ -374,9 +375,10 @@ static void index_row(Tuplestorestate *ts, TupleDesc desc,
           CStringGetTextDatum(nodeToString(exprs));
       nulls[Anum_pg_index_indexprs - 1] = false;
     }
+    /* The predicate one clause, an AND of its clauses, as index_create()'s. */
     if (pred != NIL) {
       values[Anum_pg_index_indpred - 1] =
-          CStringGetTextDatum(nodeToString(pred));
+          CStringGetTextDatum(nodeToString(make_ands_explicit(pred)));
       nulls[Anum_pg_index_indpred - 1] = false;
     }
   }

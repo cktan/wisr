@@ -60,10 +60,8 @@ CREATE TABLE test_like_id_1 (a bigint GENERATED ALWAYS AS IDENTITY, b text);
 INSERT INTO test_like_id_1 (b) VALUES ('b1');
 SELECT * FROM test_like_id_1;
 CREATE TABLE test_like_id_2 (LIKE test_like_id_1);
---dg-differs: the result
---dg \d test_like_id_2
---dg-differs: no error where PostgreSQL has: null value in column "?" of relation "?" violates not-null constraint
---dg INSERT INTO test_like_id_2 (b) VALUES ('b2');
+\d test_like_id_2
+INSERT INTO test_like_id_2 (b) VALUES ('b2');
 SELECT * FROM test_like_id_2;  -- identity was not copied
 --dg-skip: copying a sequence's options is not supported yet
 --dg CREATE TABLE test_like_id_3 (LIKE test_like_id_1 INCLUDING IDENTITY);
@@ -170,41 +168,28 @@ CREATE TABLE test_like_6c (LIKE test_like_6 INCLUDING ALL);
 --dg DROP TABLE test_like_5, test_like_5x, test_like_5c;
 DROP TABLE test_like_6, test_like_6c;
 
---dg-skip: relation pg_opclass cannot be opened: digres has no catalog tables
---dg CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, y text);
- /* copies indexes */
---dg-cascade
---dg INSERT INTO inhg VALUES (5, 10);
---dg-cascade
---dg INSERT INTO inhg VALUES (20, 10); -- should fail
---dg-cascade
---dg DROP TABLE inhg;
+CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, y text); /* copies indexes */
+INSERT INTO inhg VALUES (5, 10);
+INSERT INTO inhg VALUES (20, 10); -- should fail
+DROP TABLE inhg;
 /* Multiple primary keys creation should fail */
---dg-differs: another error: relation pg_opclass cannot be opened: digres has no catalog tables
+--dg-differs: another error: could not create an index: create index: the table has a primary key, inhg_pkey
 --dg CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, PRIMARY KEY(x));
  /* fails */
 CREATE TABLE inhz (xx text DEFAULT 'text', yy int UNIQUE);
 CREATE UNIQUE INDEX inhz_xx_idx on inhz (xx) WHERE xx <> 'test';
 /* Ok to create multiple unique indexes */
---dg-skip: relation pg_opclass cannot be opened: digres has no catalog tables
---dg CREATE TABLE inhg (x text UNIQUE, LIKE inhz INCLUDING INDEXES);
---dg-cascade
---dg INSERT INTO inhg (xx, yy, x) VALUES ('test', 5, 10);
---dg-cascade
---dg INSERT INTO inhg (xx, yy, x) VALUES ('test', 10, 15);
---dg-cascade
---dg INSERT INTO inhg (xx, yy, x) VALUES ('foo', 10, 15); -- should fail
---dg-cascade
---dg DROP TABLE inhg;
+CREATE TABLE inhg (x text UNIQUE, LIKE inhz INCLUDING INDEXES);
+INSERT INTO inhg (xx, yy, x) VALUES ('test', 5, 10);
+INSERT INTO inhg (xx, yy, x) VALUES ('test', 10, 15);
+INSERT INTO inhg (xx, yy, x) VALUES ('foo', 10, 15); -- should fail
+DROP TABLE inhg;
 DROP TABLE inhz;
 
 /* Use primary key imported by LIKE for self-referential FK constraint */
---dg-skip: relation pg_opclass cannot be opened: digres has no catalog tables
---dg CREATE TABLE inhz (x text REFERENCES inhz, LIKE inhx INCLUDING INDEXES);
---dg-cascade
---dg \d inhz
---dg-cascade
---dg DROP TABLE inhz;
+CREATE TABLE inhz (x text REFERENCES inhz, LIKE inhx INCLUDING INDEXES);
+\d inhz
+DROP TABLE inhz;
 
 -- including storage and comments
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
