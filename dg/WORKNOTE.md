@@ -10079,3 +10079,27 @@ something the waiter holds; the search walked those lists.
 - **TSan**: sm1's tests, `e07` among them, and digres's tsan
   build (`run.sh`, 11 files in 8 sessions; `server.sh`): no
   report.
+
+## Step 339: a lock's key in a buffer of the session's
+
+A row lock kept its exact key in a `std::string` of its list
+entry, allocated, past 15 bytes, under `lock_mu`; a waiter copied
+its lock's name; a prepared record built each name in a string
+of its own.
+
+- **sm1** (`../sm/sm1/SM1_DESIGN.md` §5.1): a row lock's key is
+  appended to `lock_keys`, one buffer of the session's, its entry
+  keeping the offset and length; a rollback to a savepoint cuts
+  the buffer back with the list, a commit empties it, keeping its
+  room; a prepare hands it to the prepared transaction with the
+  list. A waiter keeps its key as the caller's `Slice`, alive for
+  the wait. `lock_put_name` appends a name to the prepared record,
+  which is unchanged on disk. Only `lock_status` makes strings,
+  the public `lock_status_t::key`.
+- **Tests**: sm1, the buffer cut back at a savepoint and empty at
+  commit; after a prepare, the session's empty and the prepared
+  transaction's locks listed exactly. 4 mutations caught: no cut,
+  a cut of all, the buffer kept from the prepared transaction,
+  every key at offset 0.
+- **Left**: the buffer, and the lock list, grow under `lock_mu`,
+  a row lock appending there.

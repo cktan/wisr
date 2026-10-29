@@ -1103,8 +1103,10 @@ TEST_CASE("row keys that hash alike share an entry and still lock exactly") {
   //    under qa_nowait it fails with SM_ERR_BLOCKED.
   // 4. A sets a savepoint, locks "z" shared, and rolls back to it:
   //    "z" is no longer held, and "x" and "y" still are, so B's lock
-  //    of "z" is still refused.
-  // 5. A commits: the table is empty, and B locks "z".
+  //    of "z" is still refused; A's row keys are cut back to the two
+  //    taken before the savepoint.
+  // 5. A commits: the table and A's row keys are empty, and B locks
+  //    "z".
   lock_fixture_t f;
   wisr::lock_test_rows_collide = true;
   defer { wisr::lock_test_rows_collide = false; };
@@ -1159,6 +1161,7 @@ TEST_CASE("row keys that hash alike share an entry and still lock exactly") {
   CHECK(held("z") == -1);
   CHECK(held("x") == sm1::SM_LOCKMODE_SH);
   CHECK(held("y") == sm1::SM_LOCKMODE_EX);
+  CHECK(a->lock_keys.size() == 2);
   CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
         -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
@@ -1168,6 +1171,7 @@ TEST_CASE("row keys that hash alike share an entry and still lock exactly") {
     std::lock_guard<std::mutex> guard(a->db->lock_mu);
     CHECK(a->db->lock_table.empty());
   }
+  CHECK(a->lock_keys.empty());
   CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
         0);
   REQUIRE(sm1::commit(b) == 0);

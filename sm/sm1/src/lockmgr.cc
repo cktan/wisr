@@ -125,38 +125,36 @@ lockid_t lockid(sm1::locktype_t type, uint64_t storeid, rocksdb::Slice key) {
                   std::string_view(key.data(), key.size()))};
 }
 
-/* The name of (type, storeid, userkey); see lock_name. */
-std::string name_of(sm1::locktype_t type, uint64_t storeid,
-                    rocksdb::Slice key) {
-  std::string k;
-  // Reserve room for the type byte, the storeid and the key.
-  k.reserve(1 + 8 + key.size());
-  // Lead with the type, then the storeid, then the userkey.
-  k.push_back(static_cast<char>(type));
-  sm0::put_be64(k, storeid);
-  k.append(key.data(), key.size());
-  return k;
-}
-
-/* A lock list entry for (type, userkey), at k, held in mode. */
-lockref_t make_ref(const lockid_t &k, sm1::locktype_t type, rocksdb::Slice key,
-                   lmode_t mode) {
+/*
+ * A lock list entry of s's for (type, userkey), at k, held in mode:
+ * a row's key, which k does not hold exactly, appended to s's
+ * lock_keys.
+ */
+lockref_t make_ref(sm1::session_t *s, const lockid_t &k, sm1::locktype_t type,
+                   rocksdb::Slice key, lmode_t mode) {
   lockref_t l;
   l.id = k;
-  // Only a row's key is not in k exactly.
   if (sm1::LOCKTYPE_ROW == type) {
-    l.row.assign(key.data(), key.size());
+    l.row_off = s->lock_keys.size();
+    l.row_len = static_cast<uint32_t>(key.size());
+    s->lock_keys.insert(s->lock_keys.end(), key.data(),
+                        key.data() + key.size());
   }
   l.type = type;
   l.mode = mode;
   return l;
 }
 
-/* Whether the list entry l is the lock (type, userkey) at k. */
-bool is_ref(const lockref_t &l, const lockid_t &k, sm1::locktype_t type,
-            rocksdb::Slice key) {
+/* The key of s's row lock l. */
+rocksdb::Slice row_of(const sm1::session_t *s, const lockref_t &l) {
+  return rocksdb::Slice(s->lock_keys.data() + l.row_off, l.row_len);
+}
+
+/* Whether s's list entry l is the lock (type, userkey) at k. */
+bool is_ref(const sm1::session_t *s, const lockref_t &l, const lockid_t &k,
+            sm1::locktype_t type, rocksdb::Slice key) {
   return l.id == k && l.type == type &&
-         (sm1::LOCKTYPE_OID == type || rocksdb::Slice(l.row) == key);
+         (sm1::LOCKTYPE_OID == type || row_of(s, l) == key);
 }
 
 /*
@@ -167,12 +165,12 @@ bool is_ref(const lockref_t &l, const lockid_t &k, sm1::locktype_t type,
 lockref_t *exact_ref(sm1::session_t *s, const holder_t &h, sm1::locktype_t type,
                      rocksdb::Slice key) {
   lockref_t &first = s->locks[h.idx];
-  if (is_ref(first, first.id, type, key)) {
+  if (is_ref(s, first, first.id, type, key)) {
     return &first;
   }
   // Keys that hash alike: look among the later entries, newest first.
   for (size_t i = s->locks.size(); i-- > h.idx + 1;) {
-    if (is_ref(s->locks[i], first.id, type, key)) {
+    if (is_ref(s, s->locks[i], first.id, type, key)) {
       return &s->locks[i];
     }
   }
@@ -215,7 +213,7 @@ lockref_t *find_lockref(sm1::session_t *s, sm1::locktype_t type,
                         uint64_t storeid, rocksdb::Slice key) {
   lockid_t k = lockid(type, storeid, key);
   for (size_t i = s->locks.size(); i-- > 0;) {
-    if (is_ref(s->locks[i], k, type, key)) {
+    if (is_ref(s, s->locks[i], k, type, key)) {
       return &s->locks[i];
     }
   }
@@ -461,7 +459,7 @@ bool fp_take(db_t *db, sm1::session_t *s, const lockid_t &k, rocksdb::Slice key,
   }
   s->fp[free] = {k, mode, s->locks.size(), true};
   s->fp_used++;
-  lockref_t l = make_ref(k, sm1::LOCKTYPE_OID, key, mode);
+  lockref_t l = make_ref(s, k, sm1::LOCKTYPE_OID, key, mode);
   l.slot = static_cast<int8_t>(free);
   s->locks.push_back(std::move(l));
   return true;
@@ -516,13 +514,13 @@ int lock_try(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
     }
     // Another row's key hashed alike: this one joins the hold.
     mine->refs++;
-    s->locks.push_back(make_ref(k, type, key, mode));
+    s->locks.push_back(make_ref(s, k, type, key, mode));
     return 0;
   }
   // Join the holders, or make the entry.
   db->lock_table[k].holders.push_back({s, want, 1, s->locks.size()});
   // Remember the lock for release at commit or abort.
-  s->locks.push_back(make_ref(k, type, key, want));
+  s->locks.push_back(make_ref(s, k, type, key, want));
   return 0;
 }
 
@@ -664,7 +662,7 @@ int lock_wait(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
   // Hold lock_mu for the table and the waits-for lists.
   std::unique_lock<std::mutex> guard(db->lock_mu);
   // However it returns, it no longer waits for k: still under lock_mu.
-  defer { s->waiting_key.clear(); };
+  defer { s->waiting_lock = false; };
   // Time the deadlock check after the first, made as the wait begins.
   int64_t deadline = sm_now_us() + int64_t(deadlock_wait_ms(s)) * 1000;
   bool checked = false;
@@ -690,7 +688,10 @@ int lock_wait(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
     if (!checked) {
       checked = true;
       // What it waits for, for lock_status and the cycle search.
-      s->waiting_key = name_of(type, storeid, key);
+      s->waiting_lock = true;
+      s->waiting_type = type;
+      s->waiting_storeid = storeid;
+      s->waiting_row = key;
       s->waiting_id = k;
       s->waiting_mode = mode;
       check_deadlock(db, s);
@@ -712,7 +713,7 @@ void lock_blockers(db_t *db, sm1::session_t *s,
   out->clear();
   // A lock: the holders now in the table whose modes conflict, the
   // weak ones in slots moved there by the strong lock it waits for.
-  if (!s->waiting_key.empty()) {
+  if (s->waiting_lock) {
     holder_t *mine;
     lmode_t want;
     conflicting(db, s, s->waiting_id, s->waiting_mode, &mine, &want, out);
@@ -847,8 +848,10 @@ void lock_transfer(db_t *db, sm1::session_t *s, sm1::session_t *g) {
       }
     }
   }
-  // Move the list with them: a holder's idx points into it.
+  // Move the list with them, and its keys: a holder's idx points
+  // into it.
   g->locks.swap(s->locks);
+  g->lock_keys.swap(s->lock_keys);
   // Waiters re-read their holders.
   db->lock_cv.notify_all();
 }
@@ -883,20 +886,28 @@ void lock_restore(db_t *db, sm1::session_t *g) {
   }
 }
 
-/* A lock's name; see session.h. */
-std::string lock_name(const lockref_t &l) {
-  uint64_t storeid = l.id.hi ^ type_bit(l.type);
+/* Append a lock's name; see session.h. */
+void lock_put_name(std::string *out, const sm1::session_t *s,
+                   const lockref_t &l) {
+  // The type, then the storeid, then the userkey.
+  out->push_back(static_cast<char>(l.type));
+  sm0::put_be64(*out, l.id.hi ^ type_bit(l.type));
   // An OID lock's key is its oid, big-endian.
   if (sm1::LOCKTYPE_OID == l.type) {
-    std::string oid;
-    sm0::put_be64(oid, l.id.lo);
-    return name_of(l.type, storeid, oid);
+    sm0::put_be64(*out, l.id.lo);
+    return;
   }
-  return name_of(l.type, storeid, l.row);
+  rocksdb::Slice row = row_of(s, l);
+  out->append(row.data(), row.size());
+}
+
+/* The length of a lock's name; see session.h. */
+size_t lock_name_size(const lockref_t &l) {
+  return 1 + 8 + (sm1::LOCKTYPE_OID == l.type ? 8 : l.row_len);
 }
 
 /* The entry a name stands for; see session.h. */
-bool lock_from_name(std::string_view name, lockref_t *l) {
+bool lock_from_name(std::string_view name, sm1::session_t *g, lockref_t *l) {
   // The type byte and the storeid at least.
   if (name.size() < 9) {
     return false;
@@ -909,8 +920,8 @@ bool lock_from_name(std::string_view name, lockref_t *l) {
     return false;
   }
   sm1::locktype_t t = static_cast<sm1::locktype_t>(type);
-  *l =
-      make_ref(lockid(t, sm0::get_be64(name.data() + 1), key), t, key, l->mode);
+  *l = make_ref(g, lockid(t, sm0::get_be64(name.data() + 1), key), t, key,
+                l->mode);
   return true;
 }
 
@@ -1005,7 +1016,14 @@ void lock_release_from(sm1::session_t *s, size_t n) {
       s->latest_marks--;
     }
   }
-  // Forget them in the session's list.
+  // Forget them in the session's list, and their row keys, the
+  // first of them where the keys past n begin.
+  for (size_t i = n; i < s->locks.size(); i++) {
+    if (sm1::LOCKTYPE_ROW == s->locks[i].type) {
+      s->lock_keys.resize(s->locks[i].row_off);
+      break;
+    }
+  }
   if (s->locks.size() > n) {
     s->locks.resize(n);
   }

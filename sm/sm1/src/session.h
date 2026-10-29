@@ -180,10 +180,15 @@ struct sm1::session_t {
   /* The failed rollback's message, while doomed is SM_ERR_DOOMED. */
   std::string doom_msg;
 
-  /* Locks, row and OID (§5.1); guarded by the database's lock_mu. */
+  /*
+   * Locks, row and OID (§5.1); guarded by the database's lock_mu. A
+   * row lock's exact key is in lock_keys, at row_off: appended as
+   * the lock is taken, so a list cut at a savepoint cuts it too.
+   */
   struct lockref_t {
     wisr::lockid_t id{}; /* its lock table entry's id */
-    std::string row;     /* a row lock's key */
+    size_t row_off = 0;  /* a row lock's key, in lock_keys */
+    uint32_t row_len = 0;
     sm1::locktype_t type = sm1::LOCKTYPE_ROW;
     sm1::lockmode_t mode = sm1::SM_LOCKMODE_SH; /* held now, after
                                                        conversions */
@@ -192,6 +197,7 @@ struct sm1::session_t {
     bool strong = false; /* counted in the db's fp_strong */
   };
   std::vector<lockref_t> locks; /* held, in acquisition order */
+  std::vector<char> lock_keys;  /* the row locks' keys, in locks' order */
   size_t latest_marks = 0;      /* locks with latest set; 0 skips scans */
 
   /*
@@ -218,12 +224,16 @@ struct sm1::session_t {
    */
   std::vector<sm1::session_t *> waiting_for;
   /*
-   * The name (lock_name), id and mode of the lock we wait for in
-   * lock_wait, for lock_status and the cycle search; the name is
-   * empty when we wait for none, or behind a writer. Under the
-   * database's lock_mu.
+   * The lock we wait for in lock_wait, for lock_status and the
+   * cycle search: its type, storeid and key, the key the caller's,
+   * alive for the wait; its id and mode. waiting_lock is false when
+   * we wait for none, or behind a writer. Under the database's
+   * lock_mu.
    */
-  std::string waiting_key;
+  bool waiting_lock = false;
+  sm1::locktype_t waiting_type = sm1::LOCKTYPE_ROW;
+  uint64_t waiting_storeid = 0;
+  rocksdb::Slice waiting_row;
   wisr::lockid_t waiting_id{};
   sm1::lockmode_t waiting_mode = sm1::SM_LOCKMODE_SH;
   /*
@@ -493,14 +503,22 @@ void lock_clear_latest(sm1::session_t *session, uint64_t storeid,
 extern std::atomic<bool> lock_test_rows_collide;
 
 /*
- * A lock's name: its type byte, be64(storeid), then its key, as
- * lock_status reports it and a prepared transaction's record
- * keeps it (§8.4).
+ * Append to out the name of s's lock l: its type byte, be64(storeid),
+ * then its key, as lock_status reports it and a prepared
+ * transaction's record keeps it (§8.4).
  */
-std::string lock_name(const sm1::session_t::lockref_t &l);
+void lock_put_name(std::string *out, const sm1::session_t *s,
+                   const sm1::session_t::lockref_t &l);
 
-/* The lock list entry a name stands for: false if it is no name. */
-bool lock_from_name(std::string_view name, sm1::session_t::lockref_t *l);
+/* The length of that name. */
+size_t lock_name_size(const sm1::session_t::lockref_t &l);
+
+/*
+ * The lock list entry of g's a name stands for, its row key added to
+ * g's lock_keys: false if it is no name.
+ */
+bool lock_from_name(std::string_view name, sm1::session_t *g,
+                    sm1::session_t::lockref_t *l);
 
 /*
  * Move every lock s holds, and its lock list, to g, the prepared

@@ -904,9 +904,8 @@ std::string encode_prepared(const sm1::session_t *t, const std::string &gid,
   // followed by the mode byte it is held in (§8.4).
   sm0::put_be32(v, static_cast<uint32_t>(t->locks.size()));
   for (const sm1::session_t::lockref_t &l : t->locks) {
-    std::string name = lock_name(l);
-    sm0::put_be32(v, static_cast<uint32_t>(name.size()));
-    v.append(name);
+    sm0::put_be32(v, static_cast<uint32_t>(lock_name_size(l)));
+    lock_put_name(&v, t, l);
     v.push_back(static_cast<char>(l.mode));
   }
   // The storeids created, then those dropped, each counted.
@@ -1502,7 +1501,7 @@ bool xct_decode_prepared(db_t *db, uint64_t xid, rocksdb::Slice val,
     }
     // Take the lock's name.
     sm1::session_t::lockref_t l;
-    if (!lock_from_name(std::string_view(p, len), &l)) {
+    if (!lock_from_name(std::string_view(p, len), g.get(), &l)) {
       return false;
     }
     p += len;

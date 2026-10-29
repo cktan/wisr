@@ -695,14 +695,17 @@ of a row's key. An OID lock's id is exact. Two rows of a store
 whose keys hash alike share an entry, and so block each other,
 and could deadlock: a false conflict, never a missed one, and
 with 64 bits not one a workload meets. What must be exact is
-kept exact in the transaction's own lock list, `T.locks`, which
-holds each row's key: whether it holds a key and in which mode,
-the mark §5.4 sets, the prepared record's lock set (§8.4) and
-`sm1::lock_status`. A holder counts the entries of its list that
-share its table entry, so releasing one leaves the others held.
-The id costs no allocation, as the table needs none to find or
-add an entry. One mutex covers the table and every waiter's
-waits-for list, which keeps a deadlock walk consistent.
+kept exact in the transaction's own lock list, `T.locks`, each
+row's key in one buffer of the session's (`lock_keys`), appended
+as the lock is taken and cut back with the list at a savepoint:
+whether it holds a key and in which mode, the mark §5.4 sets,
+the prepared record's lock set (§8.4) and `sm1::lock_status`. A
+holder counts the entries of its list that share its table
+entry, so releasing one leaves the others held. The id costs no
+allocation, as the table needs none to find or add an entry, and
+a row's key none once the buffer has grown to the transaction's.
+One mutex covers the table and every waiter's waits-for list,
+which keeps a deadlock walk consistent.
 
 **The fast path**, PostgreSQL's for a relation's weak locks
 (its `lock.c`, 9.2). A table's readers and writers take IS and

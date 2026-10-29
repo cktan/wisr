@@ -290,7 +290,9 @@ int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
         const auto &locks = h.session->locks;
         for (size_t i = h.idx, n = h.refs; n > 0 && i < locks.size(); i++) {
           if (locks[i].id == k) {
-            entry(lock_name(locks[i]), locks[i].mode, h.session, true);
+            std::string name;
+            lock_put_name(&name, h.session, locks[i]);
+            entry(name, locks[i].mode, h.session, true);
             n--;
           }
         }
@@ -304,11 +306,16 @@ int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
       for (int i = 0; s->fp_used > 0 && i < sm1::session_t::fp_slots; i++) {
         if (s->fp[i].used) {
           const sm1::session_t::lockref_t &l = s->locks[s->fp[i].idx];
-          entry(lock_name(l), l.mode, s, true);
+          std::string name;
+          lock_put_name(&name, s, l);
+          entry(name, l.mode, s, true);
         }
       }
-      if (!s->waiting_key.empty()) {
-        entry(s->waiting_key, s->waiting_mode, s, false);
+      if (s->waiting_lock) {
+        std::string name(1, static_cast<char>(s->waiting_type));
+        sm0::put_be64(name, s->waiting_storeid);
+        name.append(s->waiting_row.data(), s->waiting_row.size());
+        entry(name, s->waiting_mode, s, false);
       }
     }
   }
