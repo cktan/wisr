@@ -165,10 +165,11 @@ psql -h localhost -p 5432 -U NAME -d postgres    # TCP, with the password
 ```
 
 - **Use PostgreSQL 18's `psql`** (`~/p/postgres18/install/bin`,
-  above) for its backslash commands: an older one's `\l` and
-  `\d` read catalog columns PostgreSQL 18 changed, and fail.
-  Plain SQL works from any `psql`, and any PostgreSQL driver
-  connects.
+  above). Ubuntu 24.04's `psql` 16 connects and runs SQL, and
+  `\d`, `\dt` and `\di` work, but `\l` fails, as it does
+  against PostgreSQL 18 itself: it reads
+  `pg_database.daticulocale`, which PostgreSQL 17 renamed
+  `datlocale`. Any PostgreSQL driver connects.
 - `CREATE DATABASE app` makes another database; each is a
   directory, `base/app`, of its own.
 - What digres does not run yet fails with an error, not a
