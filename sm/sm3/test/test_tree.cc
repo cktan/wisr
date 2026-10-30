@@ -1006,3 +1006,89 @@ TEST_CASE("tree: a cursor of rows aimed again gives each probe's rows") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 }
+
+TEST_CASE("tree: a table rewritten keyed anew keeps its trees") {
+  // Verify a rewrite into a new store, a primary key added to rows,
+  // makes each tree anew and fills it.
+  // 1. Insert rows; add a primary key on id: the rows are rewritten.
+  // 2. The trees give each state's rows, now named by their key, and
+  //    an insert after is given too.
+  trees_t f;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  for (int i = 0; i < 60; i++) {
+    row_t r(i, "s" + std::to_string(i % 3), "O" + std::to_string(i));
+    uint64_t id;
+    REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  std::vector<sm3::index_key_spec_t> by_id = {{0, false, false, std::nullopt}};
+  uint64_t pkey = 0;
+  REQUIRE_MESSAGE(sm3::create_index(f.a, f.jobs, "pkey", by_id, {}, true, pkey,
+                                    true, true) == 0,
+                  sm1::errmsg());
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  for (int s = 0; s < 3; s++) {
+    std::vector<int32_t> want;
+    for (int i = s; i < 60; i += 3) {
+      want.push_back(i);
+    }
+    std::vector<int32_t> got =
+        ids(t, f.by_state, "s" + std::to_string(s), "s" + std::to_string(s));
+    std::sort(got.begin(), got.end());
+    CHECK(want == got);
+  }
+  row_t r(100, "s1", "late");
+  uint64_t id;
+  REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
+  CHECK(21u == ids(t, f.by_state, "s1", "s1").size());
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("tree: a temporary table's tree") {
+  // Verify a tree of a temporary table, whose pages are the temporary
+  // instance's, unlogged.
+  // 1. Make a temporary table and a tree on it; insert rows.
+  // 2. Scans give each state's rows; an update moves one; vacuum
+  //    leaves one entry a row.
+  trees_t f;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  std::vector<sm3::column_spec_t> cols = {
+      {"id", sm2::type_int4.code, -1, true},
+      {"state", sm2::type_text.code, -1, false},
+      {"owner", sm2::type_text.code, -1, false}};
+  uint64_t tmp = 0;
+  REQUIRE_MESSAGE(sm3::create_temp_table(f.a, "tmp", cols, tmp) == 0,
+                  sm1::errmsg());
+  std::vector<sm3::index_key_spec_t> state = {{1, false, false, std::nullopt}};
+  uint64_t ts = 0;
+  REQUIRE_MESSAGE(sm3::create_index(f.a, tmp, "tmp_state", state, {}, false, ts,
+                                    false, false, true) == 0,
+                  sm1::errmsg());
+  sm3::table_t *t = nullptr;
+  REQUIRE(sm3::tbl_open(f.a, tmp, sm1::SM_LOCKMODE_IX, t) == 0);
+  uint64_t rid[10];
+  for (int i = 0; i < 10; i++) {
+    row_t r(i, i < 5 ? "x" : "y", "O");
+    REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), rid[i]) == 0);
+  }
+  CHECK(5u == ids(t, ts, "x", "x").size());
+  row_t moved(0, "y", "O");
+  REQUIRE(sm3::tbl_update(t, rid[0], moved.d(), moved.null()) == 0);
+  CHECK(4u == ids(t, ts, "x", "x").size());
+  CHECK(6u == ids(t, ts, "y", "y").size());
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::tbl_open(f.a, tmp, sm1::SM_LOCKMODE_IX, t) == 0);
+  REQUIRE(sm3::tbl_compact(t) == 0);
+  CHECK(10u == entries_of(t, ts));
+  CHECK(6u == ids(t, ts, "y", "y").size());
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
