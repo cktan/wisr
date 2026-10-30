@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -32,12 +33,6 @@
 #include <rocksdb/write_batch.h>
 
 using namespace wisr;
-
-/* A page pinned in the block cache: its handle, and the cache's. */
-struct sm1::page_t {
-  rocksdb::Cache *cache = nullptr;
-  rocksdb::Cache::Handle *handle = nullptr;
-};
 
 namespace {
 
@@ -56,17 +51,38 @@ const rocksdb::Cache::CacheItemHelper
 
 /*
  * The cache key of key in storeid of db: a tag no RocksDB block key
- * starts with at this length, the database, the store, the key.
+ * starts with at this length, the database, the store, the key. Made
+ * in place for a key the length of a tree's, on the heap past it:
+ * every read of a page makes one.
  */
-std::string cache_key(const db_t *db, uint64_t storeid, std::string_view key) {
-  std::string ck;
-  ck.reserve(1 + 8 + 8 + key.size());
-  ck.push_back('P');
-  sm0::put_be64(ck, db->dbid);
-  sm0::put_be64(ck, storeid);
-  ck.append(key);
-  return ck;
-}
+class cache_key_t {
+public:
+  cache_key_t(const db_t *db, uint64_t storeid, std::string_view key) {
+    size_t n = 1 + 8 + 8 + key.size();
+    char *p = m_buf;
+    if (n > sizeof(m_buf)) {
+      m_big.resize(n);
+      p = m_big.data();
+    }
+    p[0] = 'P';
+    for (int i = 0; i < 8; i++) {
+      p[1 + i] = static_cast<char>(db->dbid >> (56 - 8 * i));
+      p[9 + i] = static_cast<char>(storeid >> (56 - 8 * i));
+    }
+    memcpy(p + 17, key.data(), key.size());
+    m_view = std::string_view(p, n);
+  }
+  cache_key_t(const cache_key_t &) = delete;
+  cache_key_t &operator=(const cache_key_t &) = delete;
+
+  std::string_view view() const { return m_view; }
+  operator rocksdb::Slice() const { return {m_view.data(), m_view.size()}; }
+
+private:
+  char m_buf[64];
+  std::string m_big;
+  std::string_view m_view;
+};
 
 /* The stripe of the fill latch a page's cache key is under. */
 size_t stripe_of(std::string_view ck) {
@@ -134,12 +150,12 @@ int sm1::page_read(sm1::session_t *session, uint64_t storeid,
     return -1;
   }
   rocksdb::Cache *cache = session->db->block_cache.get();
-  std::string ck = cache_key(session->db, storeid, key);
+  cache_key_t ck(session->db, storeid, key);
   rocksdb::Cache::Handle *h = cache->Lookup(ck);
   if (!h) {
     // A miss: read the page and insert it under its stripe's fill
     // latch, so no write lands between the two (file comment).
-    std::lock_guard<std::mutex> fill(fill_latch[stripe_of(ck)]);
+    std::lock_guard<std::mutex> fill(fill_latch[stripe_of(ck.view())]);
     h = cache->Lookup(ck);
     if (!h) {
       auto *value = new std::string;
@@ -153,7 +169,8 @@ int sm1::page_read(sm1::session_t *session, uint64_t storeid,
         delete value;
         return set_status_error(rs, "read a page");
       }
-      size_t charge = sizeof(std::string) + value->capacity() + ck.size();
+      size_t charge =
+          sizeof(std::string) + value->capacity() + ck.view().size();
       rs = cache->Insert(ck, value, &page_helper, charge, &h,
                          inner ? rocksdb::Cache::Priority::HIGH
                                : rocksdb::Cache::Priority::LOW);
@@ -163,17 +180,18 @@ int sm1::page_read(sm1::session_t *session, uint64_t storeid,
       }
     }
   }
-  out = new sm1::page_t{cache, h};
+  // The handle is the page, so a read allocates nothing on a hit.
+  out = reinterpret_cast<sm1::page_t *>(h);
   const auto *value = static_cast<const std::string *>(cache->Value(h));
   bytes = *value;
   return 0;
 }
 
 /* Release a page page_read pinned; see sm1.h. */
-void sm1::page_release(sm1::page_t *page) {
+void sm1::page_release(sm1::session_t *session, sm1::page_t *page) {
   if (page) {
-    page->cache->Release(page->handle);
-    delete page;
+    session->db->block_cache->Release(
+        reinterpret_cast<rocksdb::Cache::Handle *>(page));
   }
 }
 
@@ -197,7 +215,7 @@ int sm1::page_write(sm1::session_t *session, uint64_t storeid,
     } else {
       batch.Put(st->cf, page_key(p.key), p.bytes);
     }
-    cks.push_back(cache_key(session->db, storeid, p.key));
+    cks.emplace_back(cache_key_t(session->db, storeid, p.key).view());
     stripes.push_back(stripe_of(cks.back()));
   }
   // Hold every page's fill latch, in stripe order so two writes
@@ -278,8 +296,8 @@ int sm1::page_drop(sm1::session_t *session, uint64_t storeid,
   for (it->Seek(lo); it->Valid(); it->Next()) {
     rocksdb::Slice k = it->key();
     std::string_view key(k.data() + 1, k.size() - 1);
-    std::string ck = cache_key(session->db, storeid, key);
-    std::lock_guard<std::mutex> fill(fill_latch[stripe_of(ck)]);
+    cache_key_t ck(session->db, storeid, key);
+    std::lock_guard<std::mutex> fill(fill_latch[stripe_of(ck.view())]);
     cache->Erase(ck);
   }
   if (!it->status().ok()) {

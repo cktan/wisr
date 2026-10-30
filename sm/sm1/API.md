@@ -2149,7 +2149,7 @@ storeid, it names a store's pages across the process.
 ### int sm1::page_read(sm1::session_t* session, uint64_t storeid, std::string_view key, bool inner, sm1::page_t*& out, std::string_view& bytes)
 
 Read the page at `key`: 0 with it pinned in `out` and its bytes
-in `bytes`, valid until `sm1::page_release(out)`; 1 if there is
+in `bytes`, valid until `sm1::page_release(session, out)`; 1 if there is
 none. A miss reads it into the cache, at high priority if
 `inner`. A read sees a page as one write left it.
 
@@ -2157,7 +2157,7 @@ Errors: `SM_ERR_INVALID` (store 0, a key too long),
 `SM_ERR_NOTFOUND`, `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
 `SM_ERR_IO`.
 
-### void sm1::page_release(sm1::page_t* page)
+### void sm1::page_release(sm1::session_t* session, sm1::page_t* page)
 
 Release a page `sm1::page_read` pinned; `nullptr` is a no-op.
 

@@ -1509,14 +1509,28 @@ int tbl_scan_rows(table_t *table, scan_t *&out) {
 static int still_has(table_t *t, size_t i, std::string_view tuple,
                      std::string_view row, std::string_view key) {
   const table_def_t &def = *t->def;
+  const index_def_t &x = def.indexes[i];
+  // The row read only as far as the last column the key and the
+  // evaluator read: a wide row's others cost nothing; they are null
+  // to the evaluator, which reads none of them.
+  size_t n = 0;
+  for (int32_t att : x.key_attnums) {
+    n = std::max(n, static_cast<size_t>(att + 1));
+  }
+  for (int32_t att : x.reads) {
+    n = std::max(n, static_cast<size_t>(att + 1));
+  }
   deformed_t d(def.schema.size());
-  if (sm2::tup_deform(def.desc, tuple, d.d, {d.null.get(), d.n}) != 0) {
+  std::fill(d.null.get(), d.null.get() + d.n, true);
+  sm2::tup_reader_t reader;
+  if (sm2::tup_read_begin(def.desc, tuple, reader) != 0 ||
+      sm2::tup_read(reader, n, d.d, {d.null.get(), d.n}) != 0) {
     return -1;
   }
   image_t img(d.row());
   entry_t e;
-  if (fetch_for(t, def.indexes[i], img) != 0 ||
-      make_entry(t, i, img.row(), e) != 0) {
+  if (fetch_cols(t, img, x.key_attnums) != 0 ||
+      fetch_cols(t, img, x.reads) != 0 || make_entry(t, i, img.row(), e) != 0) {
     return -1;
   }
   if (!e.belongs) {

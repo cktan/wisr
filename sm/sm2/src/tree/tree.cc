@@ -100,17 +100,18 @@ page_name_t name_of(const tree_t &tree, uint64_t pageid) {
 
 /* A page pinned in the cache and viewed; released at scope's end. */
 struct pinned_t {
+  sm1::session_t *session = nullptr;
   sm1::page_t *pin = nullptr;
   page_view_t view;
 
   pinned_t() = default;
   pinned_t(const pinned_t &) = delete;
   pinned_t &operator=(const pinned_t &) = delete;
-  ~pinned_t() { sm1::page_release(pin); }
+  ~pinned_t() { sm1::page_release(session, pin); }
 
   /* Release the page now. */
   void release() {
-    sm1::page_release(pin);
+    sm1::page_release(session, pin);
     pin = nullptr;
   }
 };
@@ -118,6 +119,7 @@ struct pinned_t {
 /* Read and view page pageid of tree; a missing page is corrupt. */
 int read_page(tree_t &tree, uint64_t pageid, bool inner, pinned_t &out) {
   out.release();
+  out.session = tree.session;
   std::string_view bytes;
   int rc = sm1::page_read(tree.session, tree.storeid, key_of(tree, pageid),
                           inner, out.pin, bytes);
@@ -151,7 +153,7 @@ int read_meta(tree_t &tree, meta_t &m) {
     m.next = get_le64(bytes.data() + 12);
     m.height = get_le64(bytes.data() + 20);
   }
-  sm1::page_release(pin);
+  sm1::page_release(tree.session, pin);
   if (!ok || 0 == m.root || 0 == m.height) {
     return corrupt("the meta page of index " + std::to_string(tree.relid) +
                    " is not one");
@@ -507,8 +509,7 @@ void cursor_seek(cursor_t &cursor, const std::string &lo, bool inclusive) {
   cursor.from = lo;
   cursor.from_inclusive = inclusive;
   cursor.started = false;
-  cursor.batch.clear();
-  cursor.at = 0;
+  cursor.at = cursor.end = 0;
 }
 
 namespace {
@@ -523,12 +524,12 @@ bool past_hi(const cursor_t &c, std::string_view key) {
 
 /*
  * Read the next batch: the keys past from, or at it, in range, of the
- * first leaf from the cursor's on that has any, moving right.
+ * first leaf from the cursor's on that has any, moving right; the
+ * leaf's bytes copied whole, once, and its entries viewed in them.
  */
 int fill(cursor_t &c) {
   tree_t &tree = *c.tree;
-  c.batch.clear();
-  c.at = 0;
+  c.at = c.end = 0;
   uint64_t pageid = c.leaf;
   if (!c.started) {
     if (0 != descend(tree, c.from, 0, false, pageid)) {
@@ -546,15 +547,24 @@ int fill(cursor_t &c) {
     if (i < v.count() && !c.from_inclusive && v.key(i) == c.from) {
       i++;
     }
-    for (; i < v.count(); i++) {
-      if (past_hi(c, v.key(i))) {
-        c.done = true;
-        break;
-      }
-      c.batch.emplace_back(std::string(v.key(i)), std::string(v.value(i)));
+    size_t j = i;
+    while (j < v.count() && !past_hi(c, v.key(j))) {
+      j++;
     }
+    c.done = j < v.count();
     c.leaf = pageid;
-    if (!c.batch.empty() || c.done) {
+    if (j > i) {
+      // The leaf is let go before the caller reads rows (../BTREE.md
+      // §4): its bytes are copied whole, and viewed where they lie.
+      c.bytes.assign(v.bytes());
+      if (0 != c.view.open(c.bytes)) {
+        return -1;
+      }
+      c.at = i;
+      c.end = j;
+      return 0;
+    }
+    if (c.done) {
       return 0;
     }
     // Nothing here: every key to the right is at or past the high key.
@@ -571,25 +581,25 @@ int fill(cursor_t &c) {
 /* The next key of a cursor; see tree.h. */
 int cursor_next(cursor_t &cursor, std::string_view &key,
                 std::string_view &value) {
-  if (cursor.at == cursor.batch.size()) {
+  if (cursor.at == cursor.end) {
     if (cursor.done) {
       return 1;
     }
     // The next batch starts past the last key handed out.
-    if (!cursor.batch.empty()) {
-      cursor.from = cursor.batch.back().first;
+    if (cursor.end > 0) {
+      cursor.from.assign(cursor.view.key(cursor.end - 1));
       cursor.from_inclusive = false;
     }
     if (0 != fill(cursor)) {
       return -1;
     }
-    if (cursor.batch.empty()) {
+    if (cursor.at == cursor.end) {
       return 1;
     }
   }
-  const auto &e = cursor.batch[cursor.at++];
-  key = e.first;
-  value = e.second;
+  key = cursor.view.key(cursor.at);
+  value = cursor.view.value(cursor.at);
+  cursor.at++;
   return 0;
 }
 

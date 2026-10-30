@@ -35,7 +35,7 @@ std::string read_page(sm1::session_t *s, uint64_t store, std::string_view key) {
     return "<none>";
   }
   std::string out(bytes);
-  sm1::page_release(page);
+  sm1::page_release(s, page);
   return out;
 }
 
@@ -80,7 +80,7 @@ TEST_CASE("page: written outside the transaction, read through the cache") {
   CHECK("uno" == read_page(t, store, "a"));
   CHECK("<none>" == read_page(t, store, "b"));
   CHECK("one" == held_bytes);
-  sm1::page_release(held);
+  sm1::page_release(t, held);
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::commit(t) == 0);
   REQUIRE(sm1::closedb(t) == 0);
@@ -140,7 +140,7 @@ TEST_CASE("page: a read that misses never puts back a page replaced") {
         std::string_view b;
         std::string key = "k" + std::to_string((x >> 8) % pages);
         if (sm1::page_read(s, store, key, false, page, b) == 0) {
-          sm1::page_release(page);
+          sm1::page_release(s, page);
         }
       }
       sm1::commit(s);
@@ -159,7 +159,7 @@ TEST_CASE("page: a read that misses never puts back a page replaced") {
     if (count_of(b) != counts[p]) {
       stale++;
     }
-    sm1::page_release(page);
+    sm1::page_release(w, page);
   }
   stop = true;
   for (auto &th : readers) {

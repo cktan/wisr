@@ -96,6 +96,8 @@ public:
   bool has_high() const { return 0 != (m_flags & page_has_high); }
   std::string_view high() const { return m_high; }
   size_t count() const { return m_count; }
+  /* The page's bytes, as open() was given them. */
+  std::string_view bytes() const { return m_bytes; }
 
   /* Entry i's key and value, i below count(). */
   std::string_view key(size_t i) const;

@@ -85,10 +85,15 @@ struct cursor_t {
   bool from_inclusive = true;
   bool started = false;
   bool done = false;
-  /* The leaf the batch was read from, and the batch. */
+  /*
+   * The leaf the batch was read from, its bytes copied whole, viewed,
+   * and the batch: its entries at to end.
+   */
   uint64_t leaf = 0;
-  std::vector<std::pair<std::string, std::string>> batch;
+  std::string bytes;
+  page_view_t view;
   size_t at = 0;
+  size_t end = 0;
 };
 
 /*

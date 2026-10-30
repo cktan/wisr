@@ -150,8 +150,8 @@ TEST_CASE("tree: a cursor moves on past splits made under it") {
     REQUIRE(0 == cursor_next(c, k, v));
     CHECK(key_of(n) == k);
   }
-  REQUIRE_FALSE(c.batch.empty());
-  int copied = std::stoi(c.batch.back().first);
+  REQUIRE(c.end > c.at);
+  int copied = std::stoi(std::string(c.view.key(c.end - 1)));
   for (int n = 1; n < 4000; n += 2) {
     REQUIRE(0 == tree_insert(t.tree, key_of(n), "o"));
   }

@@ -1630,7 +1630,8 @@ struct page_put_t {
 
 /*
  * Read the page at key in storeid: 0 with it pinned in out and its
- * bytes in bytes, valid until sm1::page_release(out); 1 if there is
+ * bytes in bytes, valid until sm1::page_release(session, out), which
+ * the session's closing does not do for the caller; 1 if there is
  * none, out untouched. A miss reads it from the store into the
  * cache, at the priority inner asks for (sm1::page_put_t). A read
  * sees a page as one write left it, never a mix of two.
@@ -1642,7 +1643,7 @@ int page_read(session_t* session, uint64_t storeid, std::string_view key,
               bool inner, page_t*& out, std::string_view& bytes);
 
 /* Release a page sm1::page_read pinned; nullptr is a no-op. */
-void page_release(page_t* page);
+void page_release(session_t* session, page_t* page);
 
 /*
  * Write puts to storeid at once, outside every transaction: in
