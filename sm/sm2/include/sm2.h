@@ -1248,6 +1248,14 @@ int idx_scan_entry(index_scan_t* scan, uint64_t& id, bool& cut,
                    std::string_view& row);
 
 /*
+ * Aim a tree's cursor at the entries between lo and hi, as idx_scan
+ * takes them, as if opened anew: an IN list's next probe, with no
+ * cursor made for it. SM_ERR_INVALID on a cursor not a tree's.
+ */
+int idx_scan_rebound(index_scan_t* scan, const bound_t* lo,
+                     const bound_t* hi, bool* widened = nullptr);
+
+/*
  * The whole key of the entry a tree's cursor last gave, valid until
  * the next call on the cursor: as idx_entry_key makes it.
  */

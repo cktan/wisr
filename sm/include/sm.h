@@ -609,6 +609,14 @@ int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* id, sm_pin_ref_t* ref);
 int sm_rel_scan_seek(sm_rel_scan_t* scan, uint64_t id);
 
 /*
+ * Aim a cursor of a tree's rows (sm_tbl_idx_scan_rows) at the rows
+ * between lo and hi, as if opened anew: an IN list's next probe, with
+ * no cursor made for it. SM_ERR_INVALID on any other cursor.
+ */
+int sm_rel_scan_rebound(sm_rel_scan_t* scan, const sm_bound_t* lo,
+                        const sm_bound_t* hi);
+
+/*
  * The key of the row sm_rel_scannxt last gave, past its relid, as
  * sm_idx_scan_row gives an entry's, encoded as sm_tbl_row_key
  * encodes a row's name: valid as the row is. 0, or -1.

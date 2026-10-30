@@ -1609,6 +1609,15 @@ int tbl_idx_scan_rows(table_t* table, uint64_t index, const sm2::bound_t* lo,
                       const sm2::bound_t* hi, scan_t*& out,
                       bool* widened = nullptr);
 
+/*
+ * Aim a tree's cursor of rows (tbl_idx_scan_rows) at the rows between
+ * lo and hi, as if opened anew: an IN list's next probe, with no
+ * cursor made for it. Refs to its row go stale. SM_ERR_INVALID on any
+ * other cursor.
+ */
+int tbl_scan_rebound(scan_t* scan, const sm2::bound_t* lo,
+                     const sm2::bound_t* hi, bool* widened = nullptr);
+
 /* Move the cursor forward to _id id, as sm2::rel_scan_seek does. */
 int tbl_scan_seek(scan_t* scan, uint64_t id);
 

@@ -10519,3 +10519,19 @@ on the release builds, unpinned.
   load, Q9's and Q10's instructions, and the two 16-client mixes,
   of one kind of index a run; every number of steps 347 to 353 is
   one of its lines.
+
+## Step 354: an IN list's probes on one tree cursor
+
+- **sm**: a tree's cursor of rows is aimed at new bounds, as if
+  opened anew, its buffers and batch vectors kept: sm2's
+  `idx_scan_rebound` and the tree's `cursor_rebound`, sm3's
+  `tbl_scan_rebound`, `sm_rel_scan_rebound` in sm.h.
+- **dg**: `open_probe()` aims a tree's cursor at the next probe's
+  bounds, where it ended one and opened another.
+- **Measured** (`../bench/btree.sh`): Q10 through a tree 1,907k to
+  1,562k user instructions a statement, 2.0 times PostgreSQL's;
+  Q11 18,420 to 19,721 tps, the key-moving write 16,621 to 18,196,
+  under 16 clients.
+- **Tests**: sm3, a cursor aimed at a, e, b and a state with no
+  rows after reading part of c, each probe's rows whole, and a
+  cursor not a tree's refused; dg, `btree_tree.test`'s IN list.

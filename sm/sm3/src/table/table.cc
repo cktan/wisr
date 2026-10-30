@@ -1952,6 +1952,24 @@ int tbl_scannxt(scan_t *scan, uint64_t &id, std::string_view &tuple) {
   return tbl_scannxt(scan, id, ref, tuple);
 }
 
+/* Aim a tree's cursor of rows at new bounds; see sm3.h. */
+int tbl_scan_rebound(scan_t *scan, const sm2::bound_t *lo,
+                     const sm2::bound_t *hi, bool *widened) {
+  if (!scan->entries) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "table: only a tree's cursor is aimed again");
+  }
+  if (sm2::idx_scan_rebound(scan->entries, lo, hi, widened) != 0) {
+    return -1;
+  }
+  // Its batch, read under the old bounds, goes; its buffers stay.
+  pin_scan_move(scan->pin, std::string_view());
+  scan->at = scan->n = 0;
+  scan->batch = 1;
+  scan->entries_done = false;
+  return 0;
+}
+
 /* Move the cursor forward to _id id; see sm3.h. */
 int tbl_scan_seek(scan_t *scan, uint64_t id) {
   if (scan->entries) {

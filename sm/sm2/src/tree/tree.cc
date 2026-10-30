@@ -722,6 +722,15 @@ void cursor_open(tree_t &tree, cursor_t &cursor, const std::string *lo,
   }
 }
 
+/* Aim a cursor at new bounds; see tree.h. */
+void cursor_rebound(cursor_t &cursor, const std::string *lo, bool lo_inclusive,
+                    const std::string *hi, bool hi_inclusive) {
+  std::string bytes = std::move(cursor.bytes);
+  cursor_open(*cursor.tree, cursor, lo, lo_inclusive, hi, hi_inclusive);
+  bytes.clear();
+  cursor.bytes = std::move(bytes);
+}
+
 /* Move a cursor forward; see tree.h. */
 void cursor_seek(cursor_t &cursor, const std::string &lo, bool inclusive) {
   cursor.from = lo;

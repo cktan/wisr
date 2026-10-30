@@ -156,6 +156,14 @@ void cursor_open(tree_t &tree, cursor_t &cursor, const std::string *lo,
 int cursor_next(cursor_t &cursor, std::string_view &key,
                 std::string_view &value);
 
+/*
+ * Aim cursor at the keys from lo to hi, as cursor_open does, over the
+ * tree it was opened on; its buffer kept, as an IN list's probes each
+ * aim one cursor.
+ */
+void cursor_rebound(cursor_t &cursor, const std::string *lo, bool lo_inclusive,
+                    const std::string *hi, bool hi_inclusive);
+
 /* Move cursor forward to lo, in the range or not as inclusive says. */
 void cursor_seek(cursor_t &cursor, const std::string &lo, bool inclusive);
 

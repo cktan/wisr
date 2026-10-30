@@ -117,10 +117,10 @@ and so are the catalog tables psql reads
       | --- | --- | --- |
       | PostgreSQL 18 | 395k | 768k |
       | today's entries | 1,344k (3.4) | 3,670k (4.8) |
-      | a tree | 955k (2.4) | 1,903k (2.5) |
+      | a tree | 955k (2.4) | 1,562k (2.0) |
 
       Under 16 clients, Q11 and a write moving `c2`'s key one
-      in ten, a tree runs 18,420 and 16,621 tps, today's
+      in ten, a tree runs 19,721 and 18,196 tps, today's
       entries 12,250 and 10,874, PostgreSQL 33,512 and 26,904
       (`../dg/WORKNOTE.md` step 353). Neither is under 1.5 yet. What a tree's Q9 spends now:
       malloc and free a fifth, the executor's own share, each

@@ -7191,6 +7191,13 @@ static int array_elems(ScanKey key, Datum **elems) {
  * entries.  The last probe's cursor is closed first.
  */
 static void open_probe(smstore_scan_t *scan) {
+  /* A tree's cursor is aimed at the next probe's bounds, not made anew. */
+  if (scan->tree && scan->cursor != NULL) {
+    if (sm_rel_scan_rebound(scan->cursor, scan->lo.n > 0 ? &scan->lo : NULL,
+                            scan->hi.n > 0 ? &scan->hi : NULL) != 0)
+      sm_error("scan an index");
+    return;
+  }
   sm_rel_scanend(scan->cursor);
   sm_idx_scanend(scan->icursor);
   scan->cursor = NULL;

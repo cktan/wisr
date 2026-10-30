@@ -923,6 +923,30 @@ int idx_scannxt(index_scan_t *scan, uint64_t &id, bool &cut,
   return 0;
 }
 
+/* Aim a tree's cursor at new bounds; see sm2.h. */
+int idx_scan_rebound(index_scan_t *scan, const bound_t *lo, const bound_t *hi,
+                     bool *widened) {
+  if (!scan->cursor) {
+    return sm1::seterr(sm1::SM_ERR_INVALID, "index: not a tree's cursor");
+  }
+  const index_t *index = scan->index;
+  bool wide = false;
+  std::string start;
+  std::optional<std::string> end;
+  if (scan_range(index, lo, hi, start, end, wide) != 0 ||
+      sm1::ssi_read_range(index->session, index->storeid, start.data(),
+                          start.size(), 1, end ? end->data() : nullptr,
+                          end ? end->size() : 0, 0) != 0) {
+    return -1;
+  }
+  tree::cursor_rebound(*scan->cursor, &start, true, end ? &*end : nullptr,
+                       false);
+  if (widened) {
+    *widened = wide;
+  }
+  return 0;
+}
+
 /* A tree's next entry, its key and its row's; see sm2.h. */
 int idx_scan_entry(index_scan_t *scan, uint64_t &id, bool &cut,
                    std::string_view &row) {

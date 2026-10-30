@@ -1150,6 +1150,26 @@ int sm_rel_scan_seek(sm_rel_scan_t *scan, uint64_t id) {
                [&] { return sm3::tbl_scan_seek(rel_scan_of(scan), id); });
 }
 
+/* Aim a tree's cursor of rows at new bounds. */
+int sm_rel_scan_rebound(sm_rel_scan_t *scan, const sm_bound_t *lo,
+                        const sm_bound_t *hi) {
+  return guard(nullptr, [&] {
+    if (bad_bound(lo) || bad_bound(hi)) {
+      return null_arg("sm_rel_scan_rebound", "a bound's prefix or isnull");
+    }
+    sm2::bound_t lo_b, hi_b;
+    if (lo != nullptr) {
+      lo_b = bound_of(*lo);
+    }
+    if (hi != nullptr) {
+      hi_b = bound_of(*hi);
+    }
+    return sm3::tbl_scan_rebound(rel_scan_of(scan),
+                                 lo != nullptr ? &lo_b : nullptr,
+                                 hi != nullptr ? &hi_b : nullptr);
+  });
+}
+
 /* The key of a cursor's last row. */
 int sm_rel_scan_key(sm_rel_scan_t *scan, const void **key, size_t *len) {
   return guard(nullptr, [&] {

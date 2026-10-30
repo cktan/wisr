@@ -936,3 +936,73 @@ TEST_CASE("tree: a unique tree keeps one live row a key under writers") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 }
+
+TEST_CASE("tree: a cursor of rows aimed again gives each probe's rows") {
+  // Verify tbl_scan_rebound, an IN list's probes on one cursor.
+  // 1. Insert rows of states a to e.
+  // 2. Open a tree's cursor on c; read part of it; aim it at a, then
+  //    at e, then at b again, then at a state with no rows: each
+  //    gives that state's rows, whole.
+  // 3. A cursor not a tree's is refused.
+  trees_t f;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  for (int i = 0; i < 100; i++) {
+    row_t r(i, std::string(1, static_cast<char>('a' + i % 5)), "O");
+    uint64_t id;
+    REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
+  }
+  auto bound = [](std::string &v, const std::string &s, sm2::datum_t *d,
+                  bool *nn) {
+    v = sm2::make_varlena(s);
+    d[0] = sm2::datum_from_ptr(v.data());
+    nn[0] = false;
+    return sm2::bound_t{std::span(d, 1), std::span(nn, 1), true};
+  };
+  auto drain_ids = [&](sm3::scan_t *scan) {
+    std::vector<int32_t> out;
+    uint64_t id;
+    std::string_view tuple;
+    while (sm3::tbl_scannxt(scan, id, tuple) == 0) {
+      sm2::datum_t d;
+      bool n;
+      REQUIRE(sm2::tup_decode(sm3::tbl_def(t).desc, tuple, 0, d, n) == 0);
+      out.push_back(sm2::datum_to_int32(d));
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+  };
+  auto want = [](int k) {
+    std::vector<int32_t> out;
+    for (int i = k; i < 100; i += 5) {
+      out.push_back(i);
+    }
+    return out;
+  };
+  std::string v;
+  sm2::datum_t d[1];
+  bool nn[1];
+  sm2::bound_t b = bound(v, "c", d, nn);
+  sm3::scan_t *scan = nullptr;
+  REQUIRE(sm3::tbl_idx_scan_rows(t, f.by_state, &b, &b, scan) == 0);
+  uint64_t id;
+  std::string_view tuple;
+  REQUIRE(sm3::tbl_scannxt(scan, id, tuple) == 0);
+  for (auto [s, k] :
+       std::vector<std::pair<std::string, int>>{{"a", 0}, {"e", 4}, {"b", 1}}) {
+    sm2::bound_t nb = bound(v, s, d, nn);
+    REQUIRE(sm3::tbl_scan_rebound(scan, &nb, &nb) == 0);
+    CHECK(want(k) == drain_ids(scan));
+  }
+  sm2::bound_t none = bound(v, "z", d, nn);
+  REQUIRE(sm3::tbl_scan_rebound(scan, &none, &none) == 0);
+  CHECK(drain_ids(scan).empty());
+  sm3::tbl_scanend(scan);
+  sm3::scan_t *rows = nullptr;
+  REQUIRE(sm3::tbl_scan(t, 0, UINT64_MAX, rows) == 0);
+  CHECK(-1 == sm3::tbl_scan_rebound(rows, &b, &b));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  sm3::tbl_scanend(rows);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
