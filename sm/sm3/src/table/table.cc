@@ -1543,31 +1543,98 @@ static int still_has(table_t *t, size_t i, std::string_view tuple,
   return k == key ? 1 : 0;
 }
 
+/* The most entries a tree's cursor reads the rows of in one call. */
+constexpr size_t tree_batch_max = 64;
+
 /*
- * A tree's cursor's next row: the next entry's row, read at the
- * transaction's snapshot into the cursor's pin, that still has the
- * entry's key; an entry whose row does not is dead, and skipped.
+ * Read a tree's cursor's next entries, scan->batch of them or what is
+ * left, and their rows at the transaction's snapshot, in one call
+ * (../../BATCHREAD.md); the batch doubles for the next.
  */
-static int tree_next(scan_t *scan, uint64_t &id, std::string_view &tuple) {
+static int tree_fill(scan_t *scan) {
   table_t *t = scan->table;
-  for (;;) {
+  scan->at = scan->n = 0;
+  size_t want = scan->batch;
+  scan->batch = std::min(scan->batch * 2, tree_batch_max);
+  if (scan->keys.size() < want) {
+    scan->keys.resize(want);
+    scan->rows.resize(want);
+    scan->ids.resize(want);
+    scan->tuples.resize(want);
+    scan->rcs.resize(want);
+    // The first row is read into the cursor's own pin, so a probe of
+    // one row, an IN list's, makes none.
+    if (scan->raws.empty()) {
+      scan->raws.push_back(scan->pin->raw);
+    }
+    while (scan->raws.size() < want) {
+      scan->raws.push_back(sm1::rawpin_new());
+    }
+  }
+  while (scan->n < want && !scan->entries_done) {
     std::string_view row;
     bool cut;
-    int rc = sm2::idx_scan_entry(scan->entries, id, cut, row);
-    if (rc != 0) {
-      return rc;
-    }
-    rc = sm2::rel_read(t->rel, row, scan->pin->raw, tuple);
+    int rc = sm2::idx_scan_entry(scan->entries, scan->ids[scan->n], cut, row);
     if (rc < 0) {
       return -1;
     }
     if (rc == 1) {
+      scan->entries_done = true;
+      break;
+    }
+    scan->keys[scan->n].assign(sm2::idx_scan_entry_key(scan->entries));
+    scan->rows[scan->n].assign(row);
+    scan->n++;
+  }
+  if (scan->n == 0) {
+    return 0;
+  }
+  if (scan->n == 1) {
+    int rc =
+        sm2::rel_read(t->rel, scan->rows[0], scan->raws[0], scan->tuples[0]);
+    scan->rcs[0] = rc;
+    return rc < 0 ? -1 : 0;
+  }
+  std::vector<std::string_view> keys(scan->rows.begin(),
+                                     scan->rows.begin() + scan->n);
+  return sm2::rel_read_batch(t->rel, keys.data(), scan->n, scan->raws.data(),
+                             scan->tuples.data(), scan->rcs.data());
+}
+
+/*
+ * A tree's cursor's next row: the next entry's row, as the
+ * transaction's snapshot shows it, that still has the entry's key; an
+ * entry whose row does not is dead, and skipped. The row stays in its
+ * batch's raw pin, which the cursor's pin then views, until the next
+ * batch is read.
+ */
+static int tree_next(scan_t *scan, uint64_t &id, std::string_view &tuple) {
+  table_t *t = scan->table;
+  for (;;) {
+    if (scan->at == scan->n) {
+      if (scan->entries_done) {
+        return 1;
+      }
+      if (tree_fill(scan) != 0) {
+        return -1;
+      }
+      if (scan->n == 0) {
+        return 1;
+      }
+    }
+    size_t i = scan->at++;
+    if (scan->rcs[i] != 0) {
       continue;
     }
-    rc = still_has(t, scan->index, tuple, row,
-                   sm2::idx_scan_entry_key(scan->entries));
-    if (rc != 0) {
-      return rc < 0 ? -1 : 0;
+    int rc = still_has(t, scan->index, scan->tuples[i], scan->rows[i],
+                       scan->keys[i]);
+    if (rc < 0) {
+      return -1;
+    }
+    if (rc == 1) {
+      id = scan->ids[i];
+      tuple = scan->tuples[i];
+      return 0;
     }
   }
 }
@@ -1649,7 +1716,7 @@ int tbl_scan_seek_key(scan_t *scan, std::string_view key) {
 
 /* The key of the cursor's last row; see sm3.h. */
 std::string_view tbl_scan_key(const scan_t *scan) {
-  return scan->entries ? sm2::idx_scan_row(scan->entries)
+  return scan->entries ? std::string_view(scan->rows[scan->at - 1])
                        : sm2::rel_scan_key(scan->rel);
 }
 

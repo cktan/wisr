@@ -175,21 +175,6 @@ int page_view_t::open(std::string_view bytes) {
   if (entries > bytes.size()) {
     return corrupt("slots past its end");
   }
-  // Each entry, its key and its value, within the page.
-  for (size_t i = 0; i < count; i++) {
-    size_t at = get_le(p + slots + 2 * i, 2);
-    if (at < entries || at + 2 > bytes.size()) {
-      return corrupt("an entry's offset out of the page");
-    }
-    size_t key_len = get_le(p + at, 2);
-    if (at + 2 + key_len + 2 > bytes.size()) {
-      return corrupt("an entry's key past its end");
-    }
-    size_t value_len = get_le(p + at + 2 + key_len, 2);
-    if (at + 2 + key_len + 2 + value_len > bytes.size()) {
-      return corrupt("an entry's value past its end");
-    }
-  }
   m_bytes = bytes;
   m_level = static_cast<uint8_t>(p[0]);
   m_flags = flags;
@@ -201,23 +186,73 @@ int page_view_t::open(std::string_view bytes) {
   return 0;
 }
 
+/* Check every entry lies within the page; see page.h. */
+int page_view_t::check() const {
+  const char *p = m_bytes.data();
+  size_t entries = m_slots + 2 * m_count;
+  size_t end = entries;
+  for (size_t i = 0; i < m_count; i++) {
+    size_t at = get_le(p + m_slots + 2 * i, 2);
+    if (at != end || at + 2 > m_bytes.size()) {
+      return corrupt("an entry's offset out of the page, or out of order");
+    }
+    size_t key_len = get_le(p + at, 2);
+    if (at + 2 + key_len + 2 > m_bytes.size()) {
+      return corrupt("an entry's key past its end");
+    }
+    size_t value_len = get_le(p + at + 2 + key_len, 2);
+    end = at + 2 + key_len + 2 + value_len;
+    if (end > m_bytes.size()) {
+      return corrupt("an entry's value past its end");
+    }
+  }
+  return 0;
+}
+
 /* Entry i's offset, from its slot. */
 size_t page_view_t::offset(size_t i) const {
   assert(i < m_count);
   return get_le(m_bytes.data() + m_slots + 2 * i, 2);
 }
 
-/* Entry i's key; see page.h. */
-std::string_view page_view_t::key(size_t i) const {
-  size_t at = offset(i);
-  return m_bytes.substr(at + 2, get_le(m_bytes.data() + at, 2));
+/*
+ * The length-prefixed bytes at at, empty if they run past the page:
+ * open() checked no entry, so each read stays within the bytes.
+ */
+std::string_view page_view_t::field(size_t at) const {
+  if (at + 2 > m_bytes.size()) {
+    return {};
+  }
+  size_t len = get_le(m_bytes.data() + at, 2);
+  if (at + 2 + len > m_bytes.size()) {
+    return {};
+  }
+  return std::string_view(m_bytes.data() + at + 2, len);
 }
+
+/* Entry i's key; see page.h. */
+std::string_view page_view_t::key(size_t i) const { return field(offset(i)); }
 
 /* Entry i's value; see page.h. */
 std::string_view page_view_t::value(size_t i) const {
   size_t at = offset(i);
-  at += 2 + get_le(m_bytes.data() + at, 2);
-  return m_bytes.substr(at + 2, get_le(m_bytes.data() + at, 2));
+  return field(at + 2 + field(at).size());
+}
+
+/* Entries i to j - 1, their bytes in order; see page.h. */
+std::string_view page_view_t::span(size_t i, size_t j) const {
+  if (i >= j) {
+    return {};
+  }
+  size_t from = offset(i);
+  size_t last = offset(j - 1);
+  std::string_view k = field(last);
+  std::string_view v = field(last + 2 + k.size());
+  size_t to = last + 2 + k.size() + 2 + v.size();
+  if (from > to || to > m_bytes.size()) {
+    return {};
+  }
+  return m_bytes.substr(from, to - from);
 }
 
 /* The first entry whose key is at or past key; see page.h. */

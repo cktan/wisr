@@ -86,14 +86,16 @@ struct cursor_t {
   bool started = false;
   bool done = false;
   /*
-   * The leaf the batch was read from, its bytes copied whole, viewed,
-   * and the batch: its entries at to end.
+   * The leaf the batch was read from, and the batch: its entries'
+   * bytes copied end to end, the next one's place in them, and how
+   * many have been handed out, at, of end; the last one's key.
    */
   uint64_t leaf = 0;
   std::string bytes;
-  page_view_t view;
+  size_t pos = 0;
   size_t at = 0;
   size_t end = 0;
+  std::string_view last;
 };
 
 /*

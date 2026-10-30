@@ -57,6 +57,12 @@ uint64_t get_le64(const char *p) {
   return v;
 }
 
+/* The little-endian 16-bit integer at p. */
+size_t get_le16(const char *p) {
+  return static_cast<uint8_t>(p[0]) |
+         static_cast<size_t>(static_cast<uint8_t>(p[1])) << 8;
+}
+
 /* An inner entry's value: its child's page id. */
 std::string child_value(uint64_t pageid) {
   std::string v;
@@ -244,6 +250,10 @@ int latch_covering(tree_t &tree, std::string_view key, uint64_t &pageid,
       return -1;
     }
     if (!p.view.past_high(key)) {
+      // A writer checks every entry of the page it is to change.
+      if (0 != p.view.check()) {
+        return -1;
+      }
       p.view.load(page);
       return 0;
     }
@@ -509,7 +519,7 @@ void cursor_seek(cursor_t &cursor, const std::string &lo, bool inclusive) {
   cursor.from = lo;
   cursor.from_inclusive = inclusive;
   cursor.started = false;
-  cursor.at = cursor.end = 0;
+  cursor.at = cursor.end = cursor.pos = 0;
 }
 
 namespace {
@@ -529,7 +539,7 @@ bool past_hi(const cursor_t &c, std::string_view key) {
  */
 int fill(cursor_t &c) {
   tree_t &tree = *c.tree;
-  c.at = c.end = 0;
+  c.at = c.end = c.pos = 0;
   uint64_t pageid = c.leaf;
   if (!c.started) {
     if (0 != descend(tree, c.from, 0, false, pageid)) {
@@ -555,13 +565,17 @@ int fill(cursor_t &c) {
     c.leaf = pageid;
     if (j > i) {
       // The leaf is let go before the caller reads rows (../BTREE.md
-      // §4): its bytes are copied whole, and viewed where they lie.
-      c.bytes.assign(v.bytes());
-      if (0 != c.view.open(c.bytes)) {
-        return -1;
+      // §4): the entries in range are copied, end to end as the page
+      // holds them, and read from the copy.
+      std::string_view span = v.span(i, j);
+      if (span.empty()) {
+        return sm1::seterr(sm1::SM_ERR_CORRUPT,
+                           "tree: a leaf's entries past its end");
       }
-      c.at = i;
-      c.end = j;
+      c.bytes.assign(span);
+      c.at = 0;
+      c.end = j - i;
+      c.pos = 0;
       return 0;
     }
     if (c.done) {
@@ -587,7 +601,7 @@ int cursor_next(cursor_t &cursor, std::string_view &key,
     }
     // The next batch starts past the last key handed out.
     if (cursor.end > 0) {
-      cursor.from.assign(cursor.view.key(cursor.end - 1));
+      cursor.from.assign(cursor.last);
       cursor.from_inclusive = false;
     }
     if (0 != fill(cursor)) {
@@ -597,8 +611,25 @@ int cursor_next(cursor_t &cursor, std::string_view &key,
       return 1;
     }
   }
-  key = cursor.view.key(cursor.at);
-  value = cursor.view.value(cursor.at);
+  // The next entry of the copy: a key's length, the key, a value's
+  // length, the value.
+  const std::string &b = cursor.bytes;
+  size_t at = cursor.pos;
+  if (at + 2 > b.size()) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT, "tree: a leaf's entry cut short");
+  }
+  size_t klen = get_le16(b.data() + at);
+  if (at + 2 + klen + 2 > b.size()) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT, "tree: a leaf's entry cut short");
+  }
+  size_t vlen = get_le16(b.data() + at + 2 + klen);
+  if (at + 2 + klen + 2 + vlen > b.size()) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT, "tree: a leaf's entry cut short");
+  }
+  key = std::string_view(b.data() + at + 2, klen);
+  value = std::string_view(b.data() + at + 2 + klen + 2, vlen);
+  cursor.last = key;
+  cursor.pos = at + 2 + klen + 2 + vlen;
   cursor.at++;
   return 0;
 }
@@ -619,7 +650,7 @@ int tree_prune(
     // The leaf's writers wait while its entries are judged.
     l.latch = page_latch_t(page_latches(), name_of(tree, pageid));
     pinned_t p;
-    if (0 != read_page(tree, pageid, false, p)) {
+    if (0 != read_page(tree, pageid, false, p) || 0 != p.view.check()) {
       return -1;
     }
     p.view.load(l.page);
@@ -680,6 +711,9 @@ int tree_check(tree_t &tree) {
         return -1;
       }
       const page_view_t &v = p.view;
+      if (0 != v.check()) {
+        return -1;
+      }
       if (v.level() != level) {
         return corrupt("page " + std::to_string(pageid) + " at level " +
                        std::to_string(v.level()) + ", not " +

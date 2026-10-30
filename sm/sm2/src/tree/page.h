@@ -83,11 +83,24 @@ int page_insert(page_t &page, std::string_view key, std::string_view value,
 void page_split(page_t &page, page_t &right, std::string_view key,
                 std::string_view value, size_t limit = page_limit);
 
-/* A page read where its bytes lie, checked once, by open(). */
+/*
+ * A page read where its bytes lie. open() checks its header and its
+ * slots alone, as every read of a page opens one; an entry read stays
+ * within the bytes, empty if it would run past them; check() checks
+ * every entry, as a writer does before it changes a page.
+ */
 class page_view_t {
 public:
-  /* Check bytes, a page's, and view them: 0, or -1 with SM_ERR_CORRUPT. */
+  /* Check bytes' header and slots, and view them: 0, or -1 with SM_ERR_CORRUPT.
+   */
   int open(std::string_view bytes);
+
+  /*
+   * Check every entry lies within the page, after the slots, in slot
+   * order and end to end, as page_bytes() lays them: 0, or -1 with
+   * SM_ERR_CORRUPT.
+   */
+  int check() const;
 
   uint8_t level() const { return m_level; }
   uint8_t flags() const { return m_flags; }
@@ -102,6 +115,13 @@ public:
   /* Entry i's key and value, i below count(). */
   std::string_view key(size_t i) const;
   std::string_view value(size_t i) const;
+
+  /*
+   * The bytes of entries i to j - 1, end to end as check() finds
+   * them, each a key's length, the key, a value's length, the value;
+   * empty if none, or if they run past the page.
+   */
+  std::string_view span(size_t i, size_t j) const;
 
   /* The first entry whose key is at or past key: count() if none. */
   size_t lower_bound(std::string_view key) const;
@@ -123,6 +143,9 @@ public:
 private:
   /* Entry i's offset, from its slot. */
   size_t offset(size_t i) const;
+
+  /* The length-prefixed bytes at at, empty past the page. */
+  std::string_view field(size_t at) const;
 
   std::string_view m_bytes;
   std::string_view m_high;

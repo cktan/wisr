@@ -247,9 +247,11 @@ TEST_CASE(
 }
 
 TEST_CASE("tree page: bytes that are not a page are refused") {
-  // Verify open()'s checks, so a damaged value is not read past.
-  // 1. A page of three entries opens.
-  // 2. Cut short anywhere, its bytes are refused with SM_ERR_CORRUPT.
+  // Verify open()'s and check()'s checks, so a damaged value is not
+  // read past.
+  // 1. A page of three entries opens and checks.
+  // 2. Cut short anywhere, its bytes are refused with SM_ERR_CORRUPT,
+  //    by open() or by check(); its entries read empty, never past it.
   // 3. A slot pointing past the end is refused; so is a high key with
   //    no flag for it.
   page_t page;
@@ -259,14 +261,24 @@ TEST_CASE("tree page: bytes that are not a page are refused") {
   std::string bytes = page_bytes(page);
   page_view_t view;
   REQUIRE(0 == view.open(bytes));
+  REQUIRE(0 == view.check());
   for (size_t n = 0; n < bytes.size(); n++) {
-    CHECK(-1 == view.open(std::string_view(bytes).substr(0, n)));
+    std::string_view cut = std::string_view(bytes).substr(0, n);
+    bool refused = 0 != view.open(cut) || 0 != view.check();
+    CHECK(refused);
     CHECK(sm1::SM_ERR_CORRUPT == sm1::errnum());
+    if (0 == view.open(cut)) {
+      for (size_t i = 0; i < view.count(); i++) {
+        std::string_view k = view.key(i), v = view.value(i);
+        CHECK((k.empty() || k.data() + k.size() <= cut.data() + cut.size()));
+        CHECK((v.empty() || v.data() + v.size() <= cut.data() + cut.size()));
+      }
+    }
   }
   std::string bad = bytes;
   bad[page_header_size] = '\xff';
   bad[page_header_size + 1] = '\x7f';
-  CHECK(-1 == view.open(bad));
+  CHECK((-1 == view.open(bad) || -1 == view.check()));
   std::string flagless = bytes;
   flagless[20] = 1;
   CHECK(-1 == view.open(flagless));

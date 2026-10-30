@@ -9,7 +9,9 @@
 #include "../catalog/internal.h"
 
 #include <memory>
+#include <string>
 #include <string_view>
+#include <vector>
 
 /*
  * A pin: one row's bytes kept in memory, and how far they are
@@ -39,6 +41,25 @@ struct sm3::scan_t {
   sm2::index_scan_t *entries = nullptr;
   table_t *table = nullptr;
   size_t index = 0; /* the tree's place in the table's indexes */
+  /*
+   * A tree's entries read ahead, their rows read in one call
+   * (../../BATCHREAD.md): each entry's key, its row's key and _id,
+   * and the row in a raw pin of the batch's; batch the next read's
+   * size, doubling to tree_batch_max, as digres's read-ahead does.
+   */
+  std::vector<std::string> keys, rows;
+  std::vector<uint64_t> ids;
+  std::vector<sm1::rawpin_t *> raws;
+  std::vector<std::string_view> tuples;
+  std::vector<int> rcs;
+  size_t at = 0, n = 0, batch = 1;
+  bool entries_done = false;
+  /* raws[0] is the cursor's pin's own, the batch's others its. */
+  ~scan_t() {
+    for (size_t i = 1; i < raws.size(); i++) {
+      sm1::rawpin_free(raws[i]);
+    }
+  }
 };
 
 namespace sm3 {
