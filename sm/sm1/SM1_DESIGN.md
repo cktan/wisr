@@ -212,7 +212,7 @@ Notes on the encoding:
   versioned keys this section describes; `0x01` and `0x02` for a
   chained key's newest and older versions (`../VCHAIN.md` §2);
   `0x04` for a page, unversioned, which the level above lays
-  out as a B+tree's (`../BTREE.md`, `sm1::page_read`). sm1 adds
+  out as a B+tree's (`../BTREE.md`, `sm1::pin_page`). sm1 adds
   it when it builds a key and strips it when it hands a userkey
   out; no caller sees it. A page is no version: the GC filter
   keeps it as it is, and a load's emptiness and a load's

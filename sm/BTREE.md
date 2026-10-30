@@ -95,7 +95,10 @@ Proposed here:
     `Release`: the count is the leaf's own, so it is contended
     only as the leaf is popular.
   - **Inner pages go in at high priority**
-    (`Cache::Priority::HIGH`), so the leaves are evicted first.
+    (`Cache::Priority::HIGH`), so a leaf read once is evicted
+    first. Leaves are cached too; one read again, a hit, moves
+    to the high-priority pool beside them, as RocksDB's LRU
+    cache does with any entry.
 - **Lehman and Yao's B-link tree**: each page has a right link
   and a high key, so a split never blocks a descent. **A reader
   takes no latch**: a page is replaced whole, in RocksDB and in
@@ -304,7 +307,7 @@ design deletes them. The GC filter does not touch class
     with no RocksDB;
   - **the page cache**: pages as entries of the block cache,
     write-through, a miss's fill latched against writes. It is
-    sm1's (`sm1::page_read`, `sm1::page_write`), as sm1 is the
+    sm1's (`sm1::pin_page`, `sm1::page_write`), as sm1 is the
     only channel into RocksDB (`../MAJORDECISION.md` D2, D3);
     the index's version and a session's pin on its inner
     pages (§2) are not built: an open index remembers its root
@@ -462,7 +465,7 @@ section proposes, each on review before it is built.
 tests each names and more (`../dg/WORKNOTE.md` steps 345 to
 350); where one went otherwise than written here,
 `../MAJORDECISION.md` says how. sm1's calls are
-`page_read`, `page_write`, `page_drop`, `page_approxsize`,
+`pin_page`, `page_write`, `page_drop`, `page_approxsize`,
 `read_settled`, `read_newest`, `wait_writer`,
 `ssi_read_range` and `ssi_write_key`; the mvcc scenarios step
 4 names are unit tests of sm1 and sm3 instead, as the

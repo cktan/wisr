@@ -111,8 +111,8 @@ int read_page(tree_t &tree, uint64_t pageid, bool inner, pinned_t &out) {
   out.release();
   out.session = tree.session;
   std::string_view bytes;
-  int rc = sm1::page_read(tree.session, tree.storeid, key_of(tree, pageid),
-                          inner, out.pin, bytes);
+  int rc = sm1::pin_page(tree.session, tree.storeid, key_of(tree, pageid),
+                         inner, out.pin, bytes);
   if (rc < 0) {
     return -1;
   }
@@ -128,8 +128,8 @@ int read_page(tree_t &tree, uint64_t pageid, bool inner, pinned_t &out) {
 int read_meta(tree_t &tree, meta_t &m) {
   sm1::page_t *pin = nullptr;
   std::string_view bytes;
-  int rc = sm1::page_read(tree.session, tree.storeid, key_of(tree, meta_id),
-                          true, pin, bytes);
+  int rc = sm1::pin_page(tree.session, tree.storeid, key_of(tree, meta_id),
+                         true, pin, bytes);
   if (rc < 0) {
     return -1;
   }
@@ -143,7 +143,7 @@ int read_meta(tree_t &tree, meta_t &m) {
     m.next = get_le64(bytes.data() + 12);
     m.height = get_le64(bytes.data() + 20);
   }
-  sm1::page_release(tree.session, pin);
+  sm1::unpin_page(tree.session, pin);
   if (!ok || 0 == m.root || 0 == m.height) {
     return corrupt("the meta page of index " + std::to_string(tree.relid) +
                    " is not one");
@@ -193,6 +193,9 @@ int descend(tree_t &tree, std::string_view key, uint8_t level, bool from_meta,
     tree.root = pageid = m.root;
   }
   pinned_t p;
+  // Whether the page to read is inner: the root is taken to be, as
+  // every descent reads it; below it, the page above says.
+  bool inner = true;
   // A descent that moves right went by a page changed since it was
   // held, or by a root no longer the root: the next starts afresh.
   bool moved = false;
@@ -213,7 +216,7 @@ int descend(tree_t &tree, std::string_view key, uint8_t level, bool from_meta,
       }
     }
     if (nullptr == v) {
-      if (0 != read_page(tree, pageid, true, p)) {
+      if (0 != read_page(tree, pageid, inner, p)) {
         return -1;
       }
       v = &p.view;
@@ -226,6 +229,7 @@ int descend(tree_t &tree, std::string_view key, uint8_t level, bool from_meta,
     }
     if (v->past_high(key)) {
       pageid = v->right();
+      inner = 0 != v->level();
       moved = true;
       continue;
     }
@@ -256,19 +260,21 @@ int descend(tree_t &tree, std::string_view key, uint8_t level, bool from_meta,
     if (0 == child) {
       return corrupt("an inner entry names no page");
     }
+    inner = v->level() > 1;
     pageid = child;
   }
 }
 
 /*
- * Latch page pageid and read it decoded into page, moving right,
- * the latch coupled, while key is at or past its high key.
+ * Latch page pageid, inner or not, and read it decoded into page,
+ * moving right, the latch coupled, while key is at or past its high
+ * key.
  */
 int latch_covering(tree_t &tree, std::string_view key, uint64_t &pageid,
-                   page_latch_t &latch, pinned_t &p) {
+                   page_latch_t &latch, pinned_t &p, bool inner) {
   latch = page_latch_t(page_latches(), name_of(tree, pageid));
   for (;;) {
-    if (0 != read_page(tree, pageid, false, p)) {
+    if (0 != read_page(tree, pageid, inner, p)) {
       return -1;
     }
     if (!p.view.past_high(key)) {
@@ -282,11 +288,11 @@ int latch_covering(tree_t &tree, std::string_view key, uint64_t &pageid,
   }
 }
 
-/* latch_covering, the page decoded into page. */
+/* latch_covering of an inner page, decoded into page. */
 int latch_covering(tree_t &tree, std::string_view key, uint64_t &pageid,
                    page_latch_t &latch, page_t &page) {
   pinned_t p;
-  if (0 != latch_covering(tree, key, pageid, latch, p)) {
+  if (0 != latch_covering(tree, key, pageid, latch, p, true)) {
     return -1;
   }
   p.view.load(page);
@@ -392,7 +398,8 @@ int post(tree_t &tree, uint64_t childid, page_t &child, page_latch_t &latch,
     for (uint64_t id : {stale_root, childid}) {
       page_latch_t l(page_latches(), name_of(tree, id));
       pinned_t p;
-      if (0 != read_page(tree, id, false, p) || 0 != p.view.check()) {
+      if (0 != read_page(tree, id, 0 != child.level, p) ||
+          0 != p.view.check()) {
         return -1;
       }
       if (0 == (p.view.flags() & page_incomplete)) {
@@ -474,7 +481,7 @@ void tree_open(tree_t &tree, sm1::session_t *session, uint64_t storeid,
 /* Release the inner pages a tree holds; see tree.h. */
 void tree_close(tree_t &tree) {
   for (held_t &h : tree.held) {
-    sm1::page_release(tree.session, h.pin);
+    sm1::unpin_page(tree.session, h.pin);
   }
   tree.held.clear();
 }
@@ -517,7 +524,7 @@ int latch_leaf(tree_t &tree, std::string_view key, latched_t &out) {
     if (0 != descend(tree, key, 0, false, pageid)) {
       return -1;
     }
-    if (0 != latch_covering(tree, key, pageid, out.latch, out.pin)) {
+    if (0 != latch_covering(tree, key, pageid, out.latch, out.pin, false)) {
       return -1;
     }
     if (0 != (out.pin.view.flags() & page_incomplete)) {

@@ -2162,20 +2162,27 @@ the page the write replaced. A hit takes no latch.
 The dbid of the database the session is open on; with a
 storeid, it names a store's pages across the process.
 
-### int sm1::page_read(sm1::session_t* session, uint64_t storeid, std::string_view key, bool inner, sm1::page_t*& out, std::string_view& bytes)
+### int sm1::pin_page(sm1::session_t* session, uint64_t storeid, std::string_view key, bool inner, sm1::page_t*& out, std::string_view& bytes)
 
 Read the page at `key`: 0 with it pinned in `out` and its bytes
-in `bytes`, valid until `sm1::page_release(session, out)`; 1 if there is
-none. A miss reads it into the cache, at high priority if
-`inner`. A read sees a page as one write left it.
+in `bytes`, valid until `sm1::unpin_page(session, out)`; 1 if
+there is none. A miss reads it into the cache, at high priority
+if `inner`. A read sees a page as one write left it. A pin has
+no mode: a write replaces the page's cache entry, and the pin
+keeps the bytes it has.
 
 Errors: `SM_ERR_INVALID` (store 0, a key too long),
 `SM_ERR_NOTFOUND`, `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
 `SM_ERR_IO`.
 
-### void sm1::page_release(sm1::session_t* session, sm1::page_t* page)
+### void sm1::unpin_page(sm1::session_t* session, sm1::page_t* page)
 
-Release a page `sm1::page_read` pinned; `nullptr` is a no-op.
+Release a page `sm1::pin_page` pinned; `nullptr` is a no-op.
+
+### bool sm1::page_cached(sm1::session_t* session, uint64_t storeid, std::string_view key)
+
+Whether the page at `key` is in the block cache, a look that
+counts as a hit on it: for tests.
 
 ### int sm1::page_write(sm1::session_t* session, uint64_t storeid, const std::vector<sm1::page_put_t>& puts)
 
@@ -2194,10 +2201,11 @@ apart: a tree's size, for the planner's statistics.
 ### int sm1::page_drop(sm1::session_t* session, uint64_t storeid, std::string_view prefix)
 
 Remove every page whose key starts with `prefix`, with a
-range delete, and drop each one's cache entry. It may be made
-with no transaction active, from an `sm1::on_commit` function:
-the store is then taken as the database has it, and a store
-gone is no error.
+range delete, and drop each one's cache entry: how a tree goes,
+when one is made under its relid and when DROP INDEX of one
+commits. It may be made with no transaction active, from an
+`sm1::on_commit` function: the store is then taken as the
+database has it, and a store gone is no error.
 
 ## Build
 

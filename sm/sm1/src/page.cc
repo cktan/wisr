@@ -141,9 +141,9 @@ uint64_t sm1::session_dbid(const sm1::session_t *session) {
 }
 
 /* Read a page through the block cache; see sm1.h. */
-int sm1::page_read(sm1::session_t *session, uint64_t storeid,
-                   std::string_view key, bool inner, sm1::page_t *&out,
-                   std::string_view &bytes) {
+int sm1::pin_page(sm1::session_t *session, uint64_t storeid,
+                  std::string_view key, bool inner, sm1::page_t *&out,
+                  std::string_view &bytes) {
   bytes = std::string_view();
   const store_t *st = nullptr;
   if (enter_pages(session, storeid, st) != 0 || check_page_key(key) != 0) {
@@ -187,12 +187,24 @@ int sm1::page_read(sm1::session_t *session, uint64_t storeid,
   return 0;
 }
 
-/* Release a page page_read pinned; see sm1.h. */
-void sm1::page_release(sm1::session_t *session, sm1::page_t *page) {
+/* Unpin a page pin_page pinned; see sm1.h. */
+void sm1::unpin_page(sm1::session_t *session, sm1::page_t *page) {
   if (page) {
     session->db->block_cache->Release(
         reinterpret_cast<rocksdb::Cache::Handle *>(page));
   }
+}
+
+/* Whether a page is in the block cache; see sm1.h. */
+bool sm1::page_cached(sm1::session_t *session, uint64_t storeid,
+                      std::string_view key) {
+  rocksdb::Cache *cache = session->db->block_cache.get();
+  cache_key_t ck(session->db, storeid, key);
+  rocksdb::Cache::Handle *h = cache->Lookup(ck);
+  if (h) {
+    cache->Release(h);
+  }
+  return nullptr != h;
 }
 
 /* Write pages, outside every transaction; see sm1.h. */

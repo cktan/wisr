@@ -11,6 +11,8 @@
 
 #include "../src/tree/tree.h"
 
+#include "sm0_codec.h"
+
 #include <algorithm>
 #include <atomic>
 #include <map>
@@ -412,6 +414,52 @@ TEST_CASE("tree: inner pages held stale still route every probe") {
   tree_close(r.tree);
   CHECK(r.tree.held.empty());
   REQUIRE_MESSAGE(0 == tree_check(r.tree), std::string(sm1::errmsg()));
+}
+
+TEST_CASE("tree: a leaf a probe reads is evicted before the inner pages") {
+  // Verify a descent's miss of a leaf caches it as a leaf, not inner.
+  // 1. Attach with a cache of 256 KB, and make a tree over many leaves.
+  // 2. Write other pages, more than the cache holds, so its leaves go.
+  // 3. A tree opened anew probes the first key, missing its leaf.
+  // 4. Write as many other pages again.
+  // 5. The leaf is gone; the root and the meta page stayed.
+  sm1::env_options_t opt;
+  opt.block_cache_bytes = 256 << 10;
+  db_t d(&opt);
+  open_tree_t t(d, 21, 512);
+  REQUIRE(0 == tree_create(t.tree));
+  auto key_of = [](int n) { return std::to_string(1000000 + n); };
+  for (int n = 0; n < 500; n++) {
+    REQUIRE(0 == tree_insert(t.tree, key_of(n), "v"));
+  }
+  const std::string pad(4000, 'p');
+  auto write_others = [&](int from) {
+    for (int n = from; n < from + 128; n++) {
+      std::string k = "other" + std::to_string(n);
+      std::vector<sm1::page_put_t> puts{{k, pad, false, false}};
+      REQUIRE(0 == sm1::page_write(t.s, d.store(), puts));
+    }
+  };
+  write_others(0);
+  tree_t probe;
+  tree_open(probe, t.s, d.store(), 21, 512);
+  cursor_t c;
+  std::string k = key_of(0);
+  cursor_open(probe, c, &k, true, &k, true);
+  REQUIRE(1u == drain(c).size());
+  uint64_t root = probe.root;
+  REQUIRE(1 != root);
+  // Let the pinned inner pages go, so only their priority keeps them.
+  tree_close(probe);
+  write_others(1000);
+  auto cached = [&](uint64_t pageid) {
+    std::string name{static_cast<char>(0), static_cast<char>(21)};
+    sm0::put_be64(name, pageid);
+    return sm1::page_cached(t.s, d.store(), name);
+  };
+  CHECK_FALSE(cached(1));
+  CHECK(cached(root));
+  CHECK(cached(0));
 }
 
 TEST_CASE("tree: a unique insert judges every entry of its prefix") {

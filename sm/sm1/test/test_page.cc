@@ -29,13 +29,13 @@ void write_page(sm1::session_t *s, uint64_t store, std::string_view key,
 std::string read_page(sm1::session_t *s, uint64_t store, std::string_view key) {
   sm1::page_t *page = nullptr;
   std::string_view bytes;
-  int r = sm1::page_read(s, store, key, false, page, bytes);
+  int r = sm1::pin_page(s, store, key, false, page, bytes);
   REQUIRE_MESSAGE(r >= 0, sm1::errmsg());
   if (r == 1) {
     return "<none>";
   }
   std::string out(bytes);
-  sm1::page_release(s, page);
+  sm1::unpin_page(s, page);
   return out;
 }
 
@@ -72,7 +72,7 @@ TEST_CASE("page: written outside the transaction, read through the cache") {
 
   sm1::page_t *held = nullptr;
   std::string_view held_bytes;
-  REQUIRE(sm1::page_read(t, store, "a", true, held, held_bytes) == 0);
+  REQUIRE(sm1::pin_page(t, store, "a", true, held, held_bytes) == 0);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
   std::vector<sm1::page_put_t> change{{"a", "uno", false, true},
                                       {"b", {}, true, false}};
@@ -80,7 +80,7 @@ TEST_CASE("page: written outside the transaction, read through the cache") {
   CHECK("uno" == read_page(t, store, "a"));
   CHECK("<none>" == read_page(t, store, "b"));
   CHECK("one" == held_bytes);
-  sm1::page_release(t, held);
+  sm1::unpin_page(t, held);
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::commit(t) == 0);
   REQUIRE(sm1::closedb(t) == 0);
@@ -139,8 +139,8 @@ TEST_CASE("page: a read that misses never puts back a page replaced") {
         sm1::page_t *page = nullptr;
         std::string_view b;
         std::string key = "k" + std::to_string((x >> 8) % pages);
-        if (sm1::page_read(s, store, key, false, page, b) == 0) {
-          sm1::page_release(s, page);
+        if (sm1::pin_page(s, store, key, false, page, b) == 0) {
+          sm1::unpin_page(s, page);
         }
       }
       sm1::commit(s);
@@ -155,11 +155,11 @@ TEST_CASE("page: a read that misses never puts back a page replaced") {
     write_page(w, store, key, bytes_of(++counts[p]));
     sm1::page_t *page = nullptr;
     std::string_view b;
-    REQUIRE(sm1::page_read(w, store, key, false, page, b) == 0);
+    REQUIRE(sm1::pin_page(w, store, key, false, page, b) == 0);
     if (count_of(b) != counts[p]) {
       stale++;
     }
-    sm1::page_release(w, page);
+    sm1::unpin_page(w, page);
   }
   stop = true;
   for (auto &th : readers) {
@@ -335,6 +335,45 @@ TEST_CASE("page: the bytes of a prefix's pages") {
   CHECK(0u == cd + cm);
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::closedb(s) == 0);
+}
+
+TEST_CASE("page: a page not inner, read once, is the first evicted") {
+  // Verify every page is cached, and which outlast which.
+  // 1. Attach with a cache of 256 KB.
+  // 2. Write a page "once", a page "twice" and an inner page, and read
+  //    "twice" back, a hit.
+  // 3. Write other pages, more than the cache holds.
+  // 4. "once" is gone; "twice" and the inner page stayed, and the last
+  //    page written, not inner, is cached.
+  tmpdir_t tmp;
+  REQUIRE(sm1::init(tmp.path()) == 0);
+  sm1::env_options_t opt;
+  opt.block_cache_bytes = 256 << 10;
+  sm1::env_t *env = nullptr;
+  REQUIRE_MESSAGE(sm1::attach(tmp.path(), env, &opt) == 0, sm1::errmsg());
+  REQUIRE(sm1::mkdb(env, "db", nullptr) == 0);
+  sm1::session_t *s = opendb(env, "db");
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t store = mkstore(s);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  write_page(s, store, "once", "a");
+  write_page(s, store, "twice", "b");
+  std::vector<sm1::page_put_t> inner{{"inner", "c", false, true}};
+  REQUIRE(sm1::page_write(s, store, inner) == 0);
+  CHECK("b" == read_page(s, store, "twice"));
+  const std::string pad(4000, 'p');
+  for (int i = 0; i < 128; i++) {
+    write_page(s, store, "k" + std::to_string(i), pad);
+  }
+  CHECK_FALSE(sm1::page_cached(s, store, "once"));
+  CHECK(sm1::page_cached(s, store, "twice"));
+  CHECK(sm1::page_cached(s, store, "inner"));
+  CHECK(sm1::page_cached(s, store, "k127"));
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::closedb(s) == 0);
+  REQUIRE(sm1::detach(env, 1) == 0);
 }
 
 TEST_CASE("page: dropped outside a transaction, after a commit") {

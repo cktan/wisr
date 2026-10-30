@@ -1122,9 +1122,9 @@ TEST_CASE("tree: a dropped tree's pages go once the drop commits") {
     sm1::page_t *p = nullptr;
     std::string_view bytes;
     int rc =
-        sm1::page_read(sm3::session_sm1(f.a), storeid, meta, true, p, bytes);
+        sm1::pin_page(sm3::session_sm1(f.a), storeid, meta, true, p, bytes);
     REQUIRE(rc >= 0);
-    sm1::page_release(sm3::session_sm1(f.a), p);
+    sm1::unpin_page(sm3::session_sm1(f.a), p);
     return rc == 0;
   };
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);

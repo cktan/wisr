@@ -2,7 +2,7 @@
  * tree.h -- a B+tree of an index's own pages (../BTREE.md), a
  * Lehman and Yao B-link tree: each page has a high key and a right
  * link, so a reader takes no latch, and a split never blocks one.
- * Its pages are sm1's (sm1::page_read, sm1::page_write), under the
+ * Its pages are sm1's (sm1::pin_page, sm1::page_write), under the
  * index's relid:
  *
  *   page key = relid (2B, big-endian) | pageid (8B, big-endian)
@@ -201,11 +201,11 @@ struct pinned_t {
   pinned_t() = default;
   pinned_t(const pinned_t &) = delete;
   pinned_t &operator=(const pinned_t &) = delete;
-  ~pinned_t() { sm1::page_release(session, pin); }
+  ~pinned_t() { sm1::unpin_page(session, pin); }
 
   /* Release the page now. */
   void release() {
-    sm1::page_release(session, pin);
+    sm1::unpin_page(session, pin);
     pin = nullptr;
   }
 };

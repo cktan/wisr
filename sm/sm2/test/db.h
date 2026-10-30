@@ -35,13 +35,16 @@ struct rawpin_ptr_t
  */
 class db_t {
 public:
-  /* Initialize a home, a database "db", a store, "rowno" and "toast". */
-  db_t() {
+  /*
+   * Initialize a home, a database "db", a store, "rowno" and "toast",
+   * attached with opt, if any.
+   */
+  explicit db_t(const sm1::env_options_t *opt = nullptr) {
     std::string tmpl =
         (std::filesystem::temp_directory_path() / "sm2-rel-XXXXXX").string();
     m_path = mkdtemp(tmpl.data());
     REQUIRE(sm1::init(m_path) == 0);
-    REQUIRE(sm1::attach(m_path, m_env) == 0);
+    REQUIRE(sm1::attach(m_path, m_env, opt) == 0);
     REQUIRE(sm1::mkdb(m_env, "db") == 0);
     sm1::session_t *s = open();
     REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);

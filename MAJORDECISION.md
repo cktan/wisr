@@ -26,8 +26,8 @@ take to undo. Nothing here is merged into `main`.
 ## D2. sm1 owns a page's I/O and its cache entry
 
 - **Decided:** the page cache's RocksDB half is in sm1, as
-  four calls on keys of class `0x04`: `page_read` (through the
-  block cache, pinned until `page_release`), `page_write` (a
+  four calls on keys of class `0x04`: `pin_page` (through the
+  block cache, pinned until `unpin_page`), `page_write` (a
   top-level `WriteBatch`, then each cache entry replaced), and
   `page_drop` (a prefix's pages and their cache entries). sm2's
   tree calls them; it holds no RocksDB handle. `BTREE.md` §9

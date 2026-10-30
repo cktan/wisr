@@ -1512,7 +1512,7 @@ int load_open(session_t* session, uint64_t storeid, loader_t*& out);
 /*
  * Whether storeid holds no key at all, in empty: no version of
  * any kind, live, dead or deleted, of any transaction; its pages
- * (sm1::page_read), which are no versions, aside. It is what
+ * (sm1::pin_page), which are no versions, aside. It is what
  * load_open requires, asked without opening anything; without a
  * lock on the store the answer may change at once.
  *
@@ -1639,20 +1639,16 @@ int ssi_write_key(session_t* session, uint64_t storeid, std::string_view key);
  */
 uint64_t session_dbid(const session_t* session);
 
-/* A page pinned in the block cache, by sm1::page_read. */
+/* A page pinned in the block cache, by sm1::pin_page. */
 struct page_t;
 
 /*
- * A page to write: its key, and its bytes, or erase for none. inner
- * asks the cache to keep it before the pages without (an inner page
- * of a tree, which every probe reads).
+ * A page to write: its key, and its bytes, or erase for none. Every
+ * page is cached. inner asks the cache to evict it after the pages
+ * without (an inner page of a tree, which every probe reads); one of
+ * those read again, a hit, joins the inner pages (a tree's hot leaf).
  */
 struct page_put_t {
-	/*
-	 * TODO: there is no reason why we would not cache leaf pages.
-	 * we should just raise their score when selecting victims
-	 * for eviction.
-	 */
     std::string_view key;
     std::string_view bytes;
     bool             erase = false;
@@ -1660,28 +1656,37 @@ struct page_put_t {
 };
 
 /*
- * TODO: rename page_read to pin_page, page_release to unpin_page.
- *  - do we want to allow SH/EX mode for pinning pages? 
- *  - always cache the root page in a btree somewhere, invalidate
- *    on updates or on detection of updates.
+ * TODO: always cache the root page in a btree somewhere, invalidate
+ * on updates or on detection of updates.
  */
 
 /*
  * Read the page at key in storeid: 0 with it pinned in out and its
- * bytes in bytes, valid until sm1::page_release(session, out), which
+ * bytes in bytes, valid until sm1::unpin_page(session, out), which
  * the session's closing does not do for the caller; 1 if there is
  * none, out untouched. A miss reads it from the store into the
  * cache, at the priority inner asks for (sm1::page_put_t). A read
  * sees a page as one write left it, never a mix of two.
  *
+ * A pin has no mode. Its bytes never change: a write replaces the
+ * page's cache entry, and the pin keeps the one it has, so a reader
+ * needs no shared mode. A writer's exclusion is by page, not by entry,
+ * so it is the level above's (sm2's latches, ../BTREE.md §2).
+ *
  * Errors: SM_ERR_INVALID (store 0, a key too long), SM_ERR_NOTFOUND,
  * SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_IO.
  */
-int page_read(session_t* session, uint64_t storeid, std::string_view key,
-              bool inner, page_t*& out, std::string_view& bytes);
+int pin_page(session_t* session, uint64_t storeid, std::string_view key,
+             bool inner, page_t*& out, std::string_view& bytes);
 
-/* Release a page sm1::page_read pinned; nullptr is a no-op. */
-void page_release(session_t* session, page_t* page);
+/* Release a page sm1::pin_page pinned; nullptr is a no-op. */
+void unpin_page(session_t* session, page_t* page);
+
+/*
+ * Whether the page at key in storeid is in the block cache, a look
+ * that counts as a hit on it: for tests.
+ */
+bool page_cached(session_t* session, uint64_t storeid, std::string_view key);
 
 /*
  * Write puts to storeid at once, outside every transaction: in
@@ -1706,12 +1711,13 @@ int page_approxsize(session_t* session, uint64_t storeid,
 
 /*
  * Remove every page of storeid whose key starts with prefix, and its
- * cache entry, outside every transaction, as sm1::page_write. Unlike
- * the other page calls, it may be made with no transaction active,
- * from an sm1::on_commit function: the store is then taken as the
- * database has it, and a store gone is no error.
- *
- * TODO: what's this for? 
+ * cache entry, outside every transaction, as sm1::page_write. It is
+ * how a tree goes: when one is made, whatever a tree before it under
+ * its relid left, and when DROP INDEX of one commits. A rollback must
+ * keep a dropped tree's pages, so that drop waits for the commit, and
+ * only this page call may be made with no transaction active, from an
+ * sm1::on_commit function: the store is then taken as the database
+ * has it, and a store gone is no error.
  *
  * Errors: as sm1::page_write.
  */
