@@ -121,7 +121,8 @@ These are settled and drive `SM3_DESIGN.md`.
   shape is no longer forced (`PART4.md` §2). Settled in
   `SM3_DESIGN.md` §5: tuple at a time. Filter pushdown, the
   other reason for sets of rows, went when sm3 was given no
-  evaluator, and fewer calls per scan waits for a profile.
+  evaluator. Rows read by key, many in one call, are built
+  (`../BATCHREAD.md`); a scan stays tuple at a time.
 - **Privacy of a catalog change until commit** — settled and
   built: a session's overlay keeps its transaction's DDL to
   itself, undone on abort and savepoint rollback, and publishes

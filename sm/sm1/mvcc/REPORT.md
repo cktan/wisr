@@ -50,9 +50,10 @@ The suite is in six families:
   its expected output gives.
 
 These counts are as of the audit, 109 scripts (`AUDIT.md`
-dates it). The suite has 114 now, in seven families: C runs
-to `c36`, F to `f11`, and family G (`g01`, `g02`) holds a
-key's versions (`MVCC.md` §7c).
+dates it). The suite has 122 now, in eight families: A runs
+to `a19`, C to `c36`, E to `e07`, F to `f11`, family G
+(`g01`, `g02`) holds a key's versions (`MVCC.md` §7c), and
+family H (`h01`–`h06`) table locks (§7d).
 
 ---
 

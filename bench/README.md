@@ -14,7 +14,9 @@ the queries are chosen so the scan is nearly all of the time:
 - a sequential scan, reading only a table's first column, and
   only its last;
 - a sequential scan over values stored out of line (TOAST);
-- an index scan, a range of rows and single rows by key.
+- an index scan, a range of rows and a batch of rows by key,
+  by the primary key and by a secondary index;
+- those reads under 16 clients, with updates among them.
 
 And one question of its own: **what converting sm's tuple
 format costs** — sm2's tuple deformed into PostgreSQL's
@@ -23,9 +25,10 @@ tuple (`DESIGN.md` §6).
 
 ## What it is not
 
-Not a test of the executor, the planner, joins, sorts or
-writes, which digres has not changed; not of concurrency; and
-not a tuning exercise. Both servers run as built, with the
+Not a test of the executor, the planner, joins or sorts,
+which digres has not changed; of writes and concurrency only
+as Q8's and Q11's updates under 16 clients; and not a tuning
+exercise. Both servers run as built, with the
 few settings `DESIGN.md` §3 lists to make the comparison
 fair.
 
@@ -37,10 +40,11 @@ fair.
 | `DESIGN.md` | the builds, the data, the queries, the method |
 | `CODE.md` | rules for running it: optimized builds only |
 | `run.sh` | builds, loads, runs, and writes a report |
-| `sql/` | the schema, the load, PostgreSQL's one setting of storage (`pg_only.sql`), Q1-Q6 one a line in `queries.txt`, and Q7, pgbench's script, in `q7.sql` |
+| `sql/` | the schema, the load, PostgreSQL's one setting of storage (`pg_only.sql`), Q1-Q6 and Q9 one a line in `queries.txt`, and pgbench's scripts for Q7, Q8, Q10 and Q11 (`q7.sql`, `q8.sql`, `q10.sql`, `q11.sql`) |
+| `roles.sh` | what checking privileges costs a role that is not a superuser (`../sm/NEXT.md` §1) |
 | `smbench/` | the floor of a scan and a point read in sm, layer by layer down to RocksDB, on the same rows; `sqlbench.sh` times those rows through SQL in digres and PostgreSQL |
 | `getseek/` | one row read by key in RocksDB, a seek to its newest version against a Get of the plain key (`../sm/VCHAIN.md` §1) |
-| `relq6/` | Q6 as the calls it makes through sm to RocksDB, run by rel on a wide_mixed of its own, timed per row with no SQL above them |
+| `relq6/` | a range of 10,000 rows by primary key, the Q6 of before 2026-10-28 (Q6 is 100 rows now), as the calls it makes through sm to RocksDB, run by rel on a wide_mixed of its own, timed per row with no SQL above them |
 | `results/` | one report per run, dated, with the machine and commits |
 | `results/LOG.md` | the log of every report: date, commit, machine |
 

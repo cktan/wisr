@@ -11,8 +11,10 @@ full MVCC, for OLTP workloads.
   key**: the value is stored with its key, rows are ordered by
   key, and the key is the only access path.
 - Keys are ordered **bytewise (`memcmp`)**; there is no custom
-  comparator. Callers encode composite or typed keys into byte
-  strings whose `memcmp` order is the order they want.
+  comparator of user keys (a store CF's, `wisr.store.v2`, only
+  orders each key's versions, `SM1_DESIGN.md` §3.1). Callers
+  encode composite or typed keys into byte strings whose
+  `memcmp` order is the order they want.
 - **Secondary indexes are not provided.** They can be built by
   another layer on top of this one, for example as separate
   stores maintained in the same transaction.
@@ -25,7 +27,7 @@ full MVCC, for OLTP workloads.
   whose key bytes are inverted, scanned forward. The stack
   above does that per index column, and keeps no mirror copy
   of an index to serve the other direction; an order an index
-  does not have is a sort (`PART4.md` §5).
+  does not have is a sort (`../PART4.md` §5).
 
 ## Goals
 
@@ -66,7 +68,7 @@ These were open; they are now settled and drive `SM1_DESIGN.md`.
   dependency tracking with SIREAD predicate locks and pivot detection.
   No read locks; serialization failures surface as errors at commit.
   Write-write conflicts are still prevented eagerly
-  (first-writer-wins), with no lock kept for a write: a second
+  (first-committer-wins), with no lock kept for a write: a second
   writer of a key waits for the transaction whose uncommitted
   version it meets, and fails if that one commits
   (`WRITELOCK.md`). At read committed a write that meets a newer
@@ -83,9 +85,12 @@ These were open; they are now settled and drive `SM1_DESIGN.md`.
   transaction id), so a prepared transaction survives a crash and
   can be committed or aborted after restart by an external
   coordinator. Recovery must restore prepared transactions and
-  re-acquire their row locks.
-- **Deployment is a single process, multi-threaded.** All sessions in
-  a process share one open RocksDB instance; the transaction table,
+  re-acquire their explicit locks (a write keeps none,
+  `WRITELOCK.md`).
+- **Deployment is a single process, multi-threaded.** All
+  sessions on a database in a process share its one open
+  RocksDB instance (the root db and temporary tables have one
+  each, `SM1_DESIGN.md` §3.5); the transaction table,
   lock manager, and SSI structures are ordinary in-process data
   structures. This is what RocksDB's single-writer-process rule
   effectively forces.

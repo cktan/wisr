@@ -126,8 +126,9 @@ ordered key as the only access path below sm2.
       — already closed, sm3/SM3_DESIGN.md §3
 - [x] online ADD COLUMN
       — via each row's attribute count, as PostgreSQL's natts
-- [x] other online ALTER (type change, drop column)
-      — not yet decided
+- [ ] other online ALTER (type change, drop column)
+      — DROP COLUMN built (`sm_cat_drop_column`); ALTER
+        COLUMN TYPE refused (`../dg/UNSUPPORTED.md`)
 
 ## 7. Replication / backup / ops
 

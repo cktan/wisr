@@ -175,14 +175,15 @@ S+S either side of a write skew may be the one doomed -- the
 script writes `commit?`, which records the result without
 printing it, and states what must hold with a `check`.
 
-Four scenarios are not timelines and stay in C++, built into
+Five scenarios are not timelines and stay in C++, built into
 `build/mvcc_tests`: `e01` reaches into the database object to
 prove SSI state is released, `e02` and `e03` run four threads
-for fifty rounds each, with retries, and `e06` runs four READ
+for fifty rounds each, with retries, `e06` runs four READ
 COMMITTED threads for forty rounds each, with compaction
-running. Everything else -- families A, B, C, F, G and P, and
-`e04` and `e05`, the blocking scenarios included -- is a
-script, 114 of them, and `make scenarios` runs each twice, on
+running, and `e07` runs eight threads taking table locks.
+Everything else -- families A, B, C, F, G, H and P, and `e04`
+and `e05`, the blocking scenarios included -- is a script, 122
+of them, and `make scenarios` runs each twice, on
 versioned stores and on chained ones (`DRIVER.md` §7).
 
 ## 4. Family A — visibility
@@ -211,6 +212,8 @@ visibility is a function of the snapshot alone.
 | a15 | `T1 (RC): r(R1) s(P)` ‖ `W: w(R1) i(R2) c` ‖ `T1: r(R1) s(P)`, and T2 at RR alongside | RC sees both, RR neither | — | — | `in/a15_read_committed_statements.t` |
 | a16 | `T1 (RC): stmt r(R1)` ‖ `W: w(R1) c` ‖ `T1: r(R1)` ‖ `T1: stmt r(R1)` | pinned until the next `stmt` | — | — | `in/a16_statement_boundary.t` |
 | a17 | `T1: lookup(R1)` ‖ `T2: rmstore c` ‖ `T1: lookup(R1)`, then a fresh T3 | T1 reads on, T3 gets NOTFOUND | same | same | `in/a17_read_of_dropped_relation.t` |
+| a18 | `T: stmt w(R1) d(R2)`, `lockread(R1, R2)`, `lock(R1)`, `stmt lockread(R1, R2)`, at RC, RR and S | SELFMODIFIED, both; the plain lock ok; after the next `stmt` both ok | — | — | `in/a18_lock_of_row_changed_since.t` |
+| a19 | `T: stmt w(R1) r(R1) readlatest(R1)`, `lock(R2) readlatest(R2)`, at RR, S and RC | `r` the old value, `readlatest` its own; R2 INVALID above RC, read at RC | — | — | `in/a19_read_latest_of_own_version.t` |
 
 Note what a06 does **not** say: T1 may not go on to *write*
 on the strength of that scan and still be serializable. That
@@ -491,6 +494,22 @@ by an abort and then written over.
 | g01 | `T1: r(R1)` ‖ `T2: w(R1 = 1) c` ‖ `T3: r(R1)` ‖ `T2: w(R1 = 0) c` ‖ `T1, T3: r(R1)`, `T3: w(R1)` | RR | T1 reads 0, T3 reads 1 still; T3's write CONFLICT | `in/g01_value_set_back.t` |
 | g02 | `T2: w(R1) w(R1) a` ‖ `T1, T3: r(R1)` ‖ `T3: w(R1) c` | all | readers pass both dead versions to 0; T3's insert of R2 DUPKEY, write of R9 NOTFOUND; T3 writes over the dead versions, T1 still reads 0 | `in/g02_dead_version_overwritten.t` |
 
+## 7d. Family H — table locks
+
+A table's IS or IX is kept in a slot of its session, not in
+the lock table (`SM1_DESIGN.md` §5.1); S, SIX and X on the oid
+move every session's slot for it into the table first. These
+show a slot still meets what conflicts with it.
+
+| # | Schedule | Outcome | File |
+|---|---|---|---|
+| h01 | `T1: IS(1)` in a slot ‖ `T2: X(1)` ‖ `T1: c` | BLOCK → OK | `in/h01_reader_holds_table_ddl_waits.t` |
+| h02 | `T1: X(1)` ‖ `T2: IS(1)` ‖ `T1: c` ‖ `T3: IS(1)` | T2 BLOCK → OK, in the table; T3 at once, in a slot | `in/h02_ddl_holds_table_reader_waits.t` |
+| h03 | `T1: IS(1) X(1)` ‖ `T2: IS(1)` ‖ `T1: c` | T1 converts its own slot; T2 BLOCK → OK | `in/h03_reader_converts_to_exclusive.t` |
+| h04 | `T1: IS(2)`, savepoint, `IS(1)`, rollback ‖ `T2: X(1) X(2)` | X(1) at once; X(2) BLOCK → OK at T1's commit | `in/h04_savepoint_releases_fast_lock.t` |
+| h05 | `T1: IS(1)` ‖ `T2: X(2)` ‖ `T1: X(2)` ‖ `T2: X(1)` | T2 DEADLOCK, the younger; T1's X(2) granted | `in/h05_deadlock_through_a_slot.t` |
+| h06 | `T1: IX(1)` ‖ `T2: IX(1)` ‖ `T3: S(1)` | IX and IX at once; T3 BLOCK → OK once both commit | `in/h06_writers_share_a_table.t` |
+
 ## 8. What wisr does not detect, by design
 
 At REPEATABLE READ, wisr **does not** detect, and must not
@@ -538,11 +557,11 @@ c24, c30, c31 — plus the shapes that must not fail.
 **It is not a model check.** Each scenario is one schedule,
 chosen because it is the one that distinguishes the levels.
 Interleavings other than the ones written here are not
-explored, and the thirty blocking scenarios (b09 to b11,
-b16, b17, b19 to b28, b30 to b36, f01 to f06, f08 and f11)
-and four stress scenarios (e02, e03, e06, e07) are the only
-places where real concurrency, rather than a scripted order,
-is involved. They are also where it belongs:
+explored, and the thirty-six blocking scenarios (b09 to b11,
+b16, b17, b19 to b28, b30 to b36, f01 to f06, f08, f11 and
+h01 to h06) and four stress scenarios (e02, e03, e06, e07)
+are the only places where real concurrency, rather than a
+scripted order, is involved. They are also where it belongs:
 `test/test_lock.cc` and `test/test_savepoint.cc` used to
 play the same timelines out with threads and sleeps, and
 keep only what a script cannot say — error codes, argument

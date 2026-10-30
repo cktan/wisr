@@ -263,9 +263,12 @@ struct sm_view_def_t {
   oid the view's own, `ev_action` its query. ruleutils.c's
   `pg_get_viewdef()` reads that row over SPI, so psql's `\dv`
   and `\d+ v` work with no change to it.
-- **Tests**: `test/slt` files from the corpus's views,
-  `evidence/slt_lang_createview.test`,
-  `slt_lang_dropview.test` and a part of `index/view/`; the
+- **Tests**: `../dg/test/slt/view.test`, `view_alter.test`,
+  `view_catalog.test` and `view_temp.test`; SQLite's corpus's
+  views, `evidence/slt_lang_createview.test`,
+  `slt_lang_dropview.test` and a part of `index/view/`, paths
+  in the corpus `make slt-corpus` fetches
+  (`../dg/test/slt_corpus.sh`), not files here; the
   regression file `create_view` as a measure; and in
   `server.sh`, two sessions: a replace seen by the other's
   next statement, a drop waiting for a reader, a `DROP TABLE`

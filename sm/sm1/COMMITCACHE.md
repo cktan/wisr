@@ -137,13 +137,15 @@ the same record a million times.
 ### 3.3 It is read on every unstamped version of another transaction
 
 One routine, `xct_status`, does steps 1 to 4 of §1. It is
-called from three places:
+called from these places:
 
 | Caller | For |
 | --- | --- |
 | a read or a scan (`access.cc`) | whether a version is visible at the snapshot |
 | a write (`access.cc`) | whether the newest version of the key committed, and when |
 | the compaction filter (`gc.cc`) | whether to drop a version, keep it, or stamp it |
+| a chained key's read or write (`chain.cc`) | the same, for the chain's newest version |
+| recovery's sweep of orphan CFs (`recover.cc`) | which catalog versions committed, so which storeids live |
 
 A hit returns the `commit_ts` under the mutex and reads
 nothing from RocksDB.
@@ -201,10 +203,10 @@ true, and once every version is stamped nothing asks for it.
 ### 3.6 It dies with the database object
 
 The cache belongs to `db_t`, which exists from the first
-`sm1::opendb` of a database in the process until the last
-session on it closes. Every session on the database shares
-it. Closing the last session frees it; opening the database
-again starts with an empty one.
+`sm1::opendb` of a database in the process until
+`idle_close_ms` after the last session on it closes. Every
+session on the database shares it. Closing the database
+frees it; opening it again starts with an empty one.
 
 ---
 
@@ -287,7 +289,7 @@ gone is still true, and nothing asks for it (§3.5).
   of the tree and is compacted soon, so for ordinary writes
   the gap is short. A version in a file at the bottom of the
   tree is reached only by the sweep's forced pass. That is
-  where a bulk load's ingested files land (`BULKLOAD.md`
+  where a bulk load's ingested files land (`../BULKLOAD.md`
   §5.5), so their rows lean on the cache, and then on
   `CF:txn`, for a long time.
 - **The sweep is expensive.** It rewrites every store to

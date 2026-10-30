@@ -276,7 +276,7 @@ Estimates, to be measured as each part lands:
 - **Q9**: an entry about 200 instructions, not 2,820; but each
   row read by key costs about 8,400. Q9 about 1.1M, **2.9
   times**, until rows of sorted, close keys are read by one
-  cursor (`NEXT.md` §1 item 3, step 1): then about 0.5M, 1.3
+  cursor (`NEXT.md` §1 item 3, step 2): then about 0.5M, 1.3
   times.
 - **Writes**: an indexed insert writes an 8 KB page into
   RocksDB's WAL and memtable, against an entry of about 40

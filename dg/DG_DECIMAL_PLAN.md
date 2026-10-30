@@ -242,9 +242,10 @@ suite before the next.
    → verify: `server.sh` reads and writes `numeric(10, 2)`,
    `numeric(17, 17)` and `numeric(30, 5)`; `1.5` is a
    `decimal64`, a 20-digit literal a `decimal128`;
-   `1.23456::numeric` is `1.235`, `(2^62)::numeric` an error
-   and `(2^62)::numeric(30, 0)` not; `'numeric'::regtype` is
-   1700.
+   `1.23456::numeric` is `1.235` (superseded: a bare
+   `numeric` keeps its scale since `WORKNOTE.md` step 256),
+   `(2^62)::numeric` an error and `(2^62)::numeric(30, 0)`
+   not; `'numeric'::regtype` is 1700.
 5. **Comparison, indexes, sorts and hashing** (§3.2), in
    step 4's commit: `server.sh` sorts and indexes
    `numeric(10, 2)` columns, so step 4 alone fails the suite.
@@ -260,7 +261,8 @@ suite before the next.
    `numeric(15, 2)` columns.
 7. **The client's view** (§3.5) and the other readers of §4.
    → verify: psql's `\d`, `pg_typeof()` and
-   `information_schema.columns` say `numeric`; a
+   `information_schema.columns` say `numeric` (not
+   applicable: digres has no `information_schema`); a
    binary-format fetch.
 8. **The documents**: `DECIMAL.md` §2 and §5.
 

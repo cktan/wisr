@@ -210,7 +210,9 @@ Where it stood before §3 was built.
    frequency times the rows; of `<` a histogram's share; a
    join's estimate uses the distinct counts; an expression
    index's statistics drive a filter on that expression. The
-   last waits: digres has no expression index yet.
+   last is not checked: expression indexes are built
+   (`WORKNOTE.md` step 311), their statistics not
+   (`EXPRINDEX.md` §10 step 6).
 4. `pg_stats` (§2.5).
    → verify: after ANALYZE, `pg_stats('t')` gives a row a
    column, with the common values and bounds a known

@@ -131,7 +131,7 @@ RUBiS. The suite below is where the cases live.
 | `simple-write-skew` | `c02_write_skew_point_reads` |
 | `receipt-report`, `read-only-anomaly*` | `c07_read_only_anomaly` |
 | `classroom-scheduling`, `temporal-range-integrity`, `project-manager` | `c03`, `c04`, `c22`: write skew through predicates |
-| `eval-plan-qual` | `f01` to `f10`: the READ COMMITTED re-read |
+| `eval-plan-qual` | `f01` to `f11`: the READ COMMITTED re-read |
 | `deadlock-simple`, `deadlock-hard` | `b16` to `b21` |
 | `prepared-transactions` | `test/test_2pc.cc` |
 | `truncate-conflict` | `rel/test/test_truncate.rel`, step 4 |
@@ -156,7 +156,7 @@ PostgreSQL.
 
 - `nowait*`, `skip-locked*`, `lock-nowait`, `timeouts`: the wait
   policies are digres's, on sm1's `trylock` and a timer's
-  cancel (`NEXT.md` §2); no scenario here drives them.
+  cancel (`../../NEXT.md` §2); no scenario here drives them.
 - `fk-*`, `ri-trigger`, `referential-integrity`,
   `insert-conflict-*`, `merge-*`: the host's, above the
   stack.

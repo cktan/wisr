@@ -57,7 +57,7 @@ the two differ, `CLAUDE.md` wins.
   tests in order, then the `rel` suite, on the debug build
   (`-O0 -g`, with `assert()`), as `CLAUDE.md` requires. It
   passes when every doctest line reads `0 failed`, sm1's line
-  reads `scenarios: 114 scripts match, versioned and chained`
+  reads `scenarios: 122 scripts match, versioned and chained`
   (or however many there are), and the last line is
   `All rel tests passed.`
 - **Run the full suite before every commit** that touches
@@ -103,8 +103,8 @@ the two differ, `CLAUDE.md` wins.
 - **An exception may pass through sm**: one from the C++
   library (`std::system_error` when a thread cannot start),
   or from a callback whose contract allows one. sm1, sm2 and
-  sm3 catch nothing; the C wrapper is the one catch-all
-  (`DESIGN.md` §5).
+  sm3 catch nothing but in the index builder's worker (below);
+  the C wrapper is the one catch-all (`DESIGN.md` §5).
 - **Release with RAII, not catch and rethrow.** What a frame
   must undo on the way out is held by a guard: a
   `std::lock_guard`, a `std::unique_ptr`, or sm0's `defer` and

@@ -6,10 +6,11 @@ seeks, the primary key's included, where PostgreSQL's heap fetch
 is a buffer lookup. This file is the pivot away from it: a table
 is kept in its primary key's order, and a hidden `_id` kept the
 6-byte TID PostgreSQL's executor ran on. Steps 1 and 2 of §11 are
-built. `ROWKEY.md` took the next step, built: digres names a row
-by its key, nothing in it is a TID, and a table with a primary
-key has no `_id` and no `_id` index. The state before the pivot
-is on the branch `prepivot-heap-with-recno`.
+built, and of step 3 ADD and DROP PRIMARY KEY. `ROWKEY.md`
+took the next step, built: digres names a row by its key,
+nothing in it is a TID, and a table with a primary key has no
+`_id` and no `_id` index. The state before the pivot is on the
+branch `prepivot-heap-with-recno`.
 
 Paths are relative to `sm/`; digres's are under `../dg/`.
 

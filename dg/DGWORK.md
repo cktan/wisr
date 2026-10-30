@@ -4,6 +4,9 @@ A recommendation, written when every file in `dg/` first
 compiled as strict C++ and nothing linked yet. `README.md` says
 what builds.
 
+**Status: a record.** §1 to §3 are done (`WORKNOTE.md` steps 1,
+2, 3 and 5).
+
 **Do the client first, and delete it rather than carve it out.**
 
 ## 1. Drop the client and use stock `psql`

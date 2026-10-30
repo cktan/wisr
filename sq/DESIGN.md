@@ -254,7 +254,7 @@ That parser is no longer built here. Its answers are:
 - **`test/*/expected/`**: for each SQL file here, what
   PostgreSQL's parser printed — the trees, or the error with its
   position, detail and hint — and for some, the trees again with
-  every location shown, and what its scanner printed. 93 files:
+  every location shown, and what its scanner printed. 96 files:
   statements of every family, one for each error the scanner
   raises, one for each error an action of the grammar raises,
   and type names.

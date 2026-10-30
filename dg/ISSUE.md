@@ -14,11 +14,12 @@ seeing its own transaction's later DELETE, in step 304; issue
 declared, in step 305; issue 9, ON CONFLICT above READ
 COMMITTED saying sm1's error, in step 306; issue 8, a table
 made in pg_catalog, in step 307; issue 11, a foreign key
-keeping a SET DEFAULT column twice, in step 308; and issue 10,
-CREATE TABLE (LIKE a, LIKE a) saying sm's error, in step 309.
-Issue 12, the hash access method saying it cannot exclude, was
-closed as digres's answer, not a bug, in step 310: digres has
-no hash index.
+keeping a SET DEFAULT column twice, in step 308; issue 10,
+CREATE TABLE (LIKE a, LIKE a) saying sm's error, in step 309;
+and issue 13, a FOR UPDATE cursor now and then reading no
+rows, in step 315. Issue 12, the hash access method saying it
+cannot exclude, was closed as digres's answer, not a bug, in
+step 310: digres has no hash index.
 
 ---
 
@@ -67,33 +68,3 @@ one of:
 - **Run `_PG_init()` once per process**, with process-wide
   hooks under a lock. Undoes the per-session hooks
   (`WORKNOTE.md` step 222).
-
-## Issue 13: a FOR UPDATE cursor now and then reads no rows
-
-```sql
--- test/select_cursor.sql, one of 8 sessions run at once,
--- each on its own temporary table
-create temp table uf (a int);
-insert into uf values (1), (2), (3);
-begin isolation level read committed;
-declare c5 cursor for select a from uf for update;
-update uf set a = 20 where a = 2;
-fetch all from c5;
--- expected: 1, 3
--- now and then: (0 rows)
-```
-
-`run.sh`'s run of `select_cursor` in 8 sessions fails in 2 to 4
-of the 8 in each of three full `make test` runs; in `run.sh`
-alone, 2 of 24 sessions at `e5e9240d` and 2 of 24 after
-`WORKNOTE.md` step 311; looped alone, 5 of 160. Never in the
-file's run in one session. `fkey_delete_set` failed once in the
-same way, in 3 of 8 sessions of one `make test` run: ON DELETE
-SET NULL on a session's own temporary table left the child's
-column set; not seen in 12 runs of `run.sh` alone, at `e5e9240d`
-or after step 311. The table is each session's own, so no other
-session writes or locks its rows. **Where to start**: what sm1
-shares between sessions that a FOR UPDATE fetch reads to pass
-over a row as changed since (step 305): the commit cache, the
-lock table, or a store or key id two sessions' temporary tables
-may both have.

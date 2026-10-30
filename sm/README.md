@@ -69,6 +69,12 @@ the wrapper through the `rel/` test suite.
 - `sm1/COMMITCACHE.md` — the commit cache: what it holds,
   the life of an entry, and that it starts empty after a
   restart
+- `sm1/COMMITVISIBLE.md` — a commit returns once it is
+  visible, to any snapshot taken after; built
+- `sm1/STORECACHE.md` — a session's handles of the stores it
+  reads, kept so a read by key copies no shared counter; built
+- `sm1/WALPREALLOC.md` — RocksDB's log in files already their
+  size, so a commit's sync writes no journal entry; built
 - `sm1/SAVEPOINT.md` — a rollback to a savepoint that
   deletes nothing: rolled-back writes marked dead by their
   `seq`; designed, not built, and leaning towards not
@@ -123,6 +129,10 @@ the wrapper through the `rel/` test suite.
   store's one column family, `chain.<storeid>`; built
 - `PIN.md` and `ROW.md` — a row read without a copy, as a pin,
   and deformed only as far as it is read; built
+- `BATCHREAD.md` — rows read by key, many in one call, at
+  every level; built
+- `BTREE.md` — secondary indexes as B+trees of their own
+  pages; proposed, not built
 - `SM_DECIMAL_PLAN.md` — the decimals carry their scale in
   the datum; built
 - `LOGICALDECODE.md` — a change feed for replication: a

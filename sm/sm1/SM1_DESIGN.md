@@ -362,6 +362,8 @@ rather than any one database in it.
 key = "D" | dbname        →  dbid (8B, big-endian)
 key = "M" | "next_dbid"   →  8B high-water mark
 key = "M" | "version"     →  home directory format version
+key = "M" | "wal_prealloc" → 8B size a new log is zero-filled to
+                             (WALPREALLOC.md §2)
 ```
 
 A database directory is named by its `dbid` in decimal, so
@@ -824,7 +826,7 @@ waiter is woken, but until it runs again its list still names
 the holder, which may by then be waiting in a new transaction
 on something the waiter holds. Walking those lists found such
 cycles that no longer existed and doomed a transaction that
-did not need to fail (`../dg/WORKNOTE.md` step 339; `e07`).
+did not need to fail (`../../dg/WORKNOTE.md` step 339; `e07`).
 Every lock a waiter can wait on is in the table: a strong lock
 moves the weak ones from their slots before it waits, and a weak
 lock waits only on strong ones (§5.1).
@@ -2320,13 +2322,16 @@ own. With it a read into one pin costs what RocksDB's `Get` of
 the exact version key does: 3.6 against 3.3 µs at random, 0.9
 against 1.1 µs in key order.
 
-**No batched read.** An index lookup followed by N base reads
-costs N reads, and a call taking N keys was considered. RocksDB's
+**No batched read of versioned keys.** An index lookup
+followed by N base reads costs N reads, and a call taking N
+keys was considered. For versioned (class `0x00`) keys RocksDB's
 `MultiGet` does not apply: a read here is an iterator seek
 across a key's version run, not a point `Get`. With the pin's
 iterator sought again, what a batched call would add is seeking
 in sorted order, which an index range already does, so it is
-not built.
+not built. A chained key's newest version is a point `Get`, and
+for those it is built: `sm1::chain_read_batch`, on `MultiGet`
+(`../BATCHREAD.md`).
 
 ### 10.2 Scan
 
@@ -2852,10 +2857,12 @@ Two consequences for the implementation:
 
 ### 12.2 Configuration knobs
 
-`durability_sync` (default on), `group_commit_us`, `deadlock_ms`,
-`ssi_max_entries`, `commit_cache_entries`,
-`savepoint_undo_bytes`, `ts_lease`, plus
-pass-through RocksDB options (block cache size, write buffer
+`durability_sync` (default on), `group_commit_us` (unused),
+`deadlock_ms`, `ssi_max_entries` (unused),
+`commit_cache_entries`, `savepoint_undo_bytes`, `ts_lease`,
+`idle_close_ms`, and a bulk load's `load_small_bytes`,
+`load_sort_bytes` and `load_file_bytes` (`API.md`, Options),
+plus pass-through RocksDB options (block cache size, write buffer
 size, compaction style). Every column family is compressed
 with LZ4, at every level: a block takes less disk, and a read
 from disk decompresses it before the block cache holds it, so
@@ -2891,7 +2898,7 @@ under 4%. A restart point at every entry was tried and
 dropped: under 1% fewer instructions still, but keys no longer
 share a prefix and each entry carries a restart point, so the
 narrow table grew 15% and its scans slowed by up to 13%.
-Bloom filters are worth enabling on store CFs, and `CF:txn`
+Store CFs have Bloom filters, ten bits a key, and `CF:txn`
 benefits from a
 large block cache since it is small and hot. For store CFs the
 prefix extractor (`wisr.prefix.v2`) strips a versioned key's
@@ -2960,6 +2967,8 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
 src/stats.cc            sm1::approxsize, sm1::probes, sm1::compact
 src/memcount.cc         memtable bytes of a store's writes, by key prefix
 src/error.cc            set_status_error: a RocksDB status as an error
+src/walfs.cc            file system zero-filling each new WAL before
+                        RocksDB writes it (WALPREALLOC.md)
 test/                   the engine's tests: API, limits, locks, GC,
                         2PC, crash, sequences, logging
 mvcc/                   isolation: MVCC.md and one file per scenario
@@ -3129,7 +3138,9 @@ bullets below cover the rest of the engine.
 - **Crash.** A fault-injection harness that kills the process at every
   RocksDB write boundary during a workload, restarts, and checks that
   the surviving state is exactly one of the legal prefixes of the
-  commit order.
+  commit order. Not built: `test/test_crash.cc` kills a commit
+  loop at random points, round after round, and checks the
+  same prefix.
 - **2PC.** Kill between prepare and commit; verify the transaction is
   restored in-doubt, and that both resolutions produce the right state.
   Replay the §8.4 write-skew history across a restart and assert
@@ -3164,7 +3175,8 @@ bullets below cover the rest of the engine.
   the same results as with a large cache (§3.4).
 - **Linearizability.** A concurrent random-op checker comparing the
   engine against a model, validating that observed histories are
-  serializable at SERIALIZABLE and snapshot-isolated at RR.
+  serializable at SERIALIZABLE and snapshot-isolated at RR. Not
+  built.
 
 ---
 

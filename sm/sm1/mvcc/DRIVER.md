@@ -96,8 +96,8 @@ behaviour: read the diff first.
    against what the design claims before believing it.
 3. `make accept` to record it, then commit the script and its
    `good/` transcript together.
-4. Add a row to the tables in `MVCC.md`, which are
-   cross-checked against the directory.
+4. Add a row to the tables in `MVCC.md`, which are kept by
+   hand.
 
 ## 2. The language
 

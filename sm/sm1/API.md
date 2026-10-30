@@ -1038,7 +1038,7 @@ turn, so a lock taken or let go meanwhile may be in or out.
 
 Errors: `SM_ERR_INVALID`.
 
-### int sm1::lock(sm1::session_t* session, sm1::locktype_t type, uint64_t storeid, std::string_view key, sm1::lockmode_t mode)
+### int sm1::lock(sm1::session_t* session, sm1::locktype_t type, uint64_t storeid, std::string_view key, sm1::lockmode_t mode, bool as_read = false)
 
 `type` says what the lock names. `LOCKTYPE_ROW` is a key in a
 store: the lock meets the write path and runs the currency
@@ -1108,6 +1108,15 @@ what makes "lock, then read, then act" safe. At
 newer commit; the caller reads the row with `sm1::read_latest`,
 which returns the newest committed version.
 
+`as_read` says the row is one the running statement read, as
+SQL's `FOR UPDATE` and `FOR SHARE` lock it. Then a row whose
+newest version this transaction wrote after the statement
+began (`sm1::stmt_begin`) is not locked: the call fails with
+`SM_ERR_SELFMODIFIED`, as a write of it does, since the
+statement does not see that version. It is not an abort;
+PostgreSQL's `FOR UPDATE` passes over such a row. Without it,
+no such check is made.
+
 The lock is held to the end of the transaction, or until an
 `sm1::rollback` past the point it was taken. A conversion is
 never undone by a rollback: the row stays locked in the
@@ -1120,10 +1129,11 @@ may take those rows until a coordinator resolves it.
 
 Errors: `SM_ERR_CONFLICT` (not at READ COMMITTED) /
 `SM_ERR_DEADLOCK` (retryable), `SM_ERR_BLOCKED` (under
-`sm1::set_qa_nowait`), `SM_ERR_NOTFOUND` (no such store),
-`SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`.
+`sm1::set_qa_nowait`), `SM_ERR_SELFMODIFIED` (`as_read`),
+`SM_ERR_NOTFOUND` (no such store), `SM_ERR_NOTRANS`,
+`SM_ERR_PREPARED`, `SM_ERR_INVALID`.
 
-### int sm1::trylock(sm1::session_t* session, sm1::locktype_t type, uint64_t storeid, std::string_view key, sm1::lockmode_t mode)
+### int sm1::trylock(sm1::session_t* session, sm1::locktype_t type, uint64_t storeid, std::string_view key, sm1::lockmode_t mode, bool as_read = false)
 
 Take a lock as `sm1::lock` does, if it can be had at once. It
 never waits. Returns 0 with the lock held to the end of the
@@ -1798,14 +1808,17 @@ Read the newest committed version of one key, ignoring the
 snapshot. Returns as `sm1::read` does: **0** found, **1** no
 such key (or deleted), **-1** on error.
 
-It exists for `sm1::xctlevel_t::read_committed`, and needs a row
-lock the transaction already holds on the key: the one a write
-that failed with `SM_ERR_UPDATED` left behind, or one taken with
-`sm1::lock`. A write of the key by the transaction, still in
-effect, does as well, since every other writer waits for it.
-That is what keeps the version from changing before commit. At
-any other level, or with neither, it fails with
-`SM_ERR_INVALID`.
+It exists for `sm1::xctlevel_t::read_committed`. Above it, it
+reads only a newest version that is the transaction's own,
+which its snapshot cannot hide and no other writer can change,
+as an insert's arbiter reads a key its own statement took. It
+needs a row lock the transaction already holds on the key: the
+one a write that failed with `SM_ERR_UPDATED` left behind, or
+one taken with `sm1::lock`. A write of the key by the
+transaction, still in effect, does as well, since every other
+writer waits for it. That is what keeps the version from
+changing before commit. Above read committed with no version
+of its own, or with neither, it fails with `SM_ERR_INVALID`.
 
 Under an exclusive lock the call also lets the next write of
 this key go ahead, once. Under a shared lock it reads but
@@ -1827,10 +1840,10 @@ if (rc != 0 && sm1::errnum() == sm1::SM_ERR_UPDATED) {
 
 Errors: `SM_ERR_NOTFOUND` (the *store* does not exist),
 `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`
-(not READ COMMITTED, or neither a lock held nor a write of the
-key), `SM_ERR_MOVED` (the newest version is a move's
-tombstone, `sm1::erase_moved`), `SM_ERR_CORRUPT`,
-`SM_ERR_IO`.
+(above READ COMMITTED with no version of the transaction's
+own, or neither a lock held nor a write of the key),
+`SM_ERR_MOVED` (the newest version is a move's tombstone,
+`sm1::erase_moved`), `SM_ERR_CORRUPT`, `SM_ERR_IO`.
 
 ### Raw pins
 
@@ -2041,11 +2054,24 @@ int chain_read_latest(session_t* session, uint64_t storeid,
 int chain_read_latest(session_t* session, uint64_t storeid,
                       std::string_view key, rawpin_t* pin,
                       std::string_view& data);
+int chain_read_batch(session_t* session, uint64_t storeid,
+                     const std::string_view* keys, size_t n,
+                     rawpin_t** pins, std::string_view* data, int* rc);
 int chain_lock(session_t* session, uint64_t storeid,
-               std::string_view key, lockmode_t mode);
+               std::string_view key, lockmode_t mode,
+               bool as_read = false);
 int chain_trylock(session_t* session, uint64_t storeid,
-                  std::string_view key, lockmode_t mode);
+                  std::string_view key, lockmode_t mode,
+                  bool as_read = false);
 ```
+
+`sm1::chain_read_batch` is `sm1::chain_read` of `n` keys in one
+call (`../BATCHREAD.md`): key `i`'s row into `pins[i]` and
+`data[i]`, `rc[i]` 0, or `rc[i]` 1 if the read sees none, its
+pin then empty. The keys' newest versions are read together,
+in RocksDB's MultiGet, in any order; each key is checked,
+takes its SIREAD entry and is resolved as a single read of it
+is. Returns 0, or -1 on an error, the rows then undefined.
 
 ### int sm1::store_chained(sm1::session_t* session, uint64_t storeid, bool& out)
 
@@ -2081,7 +2107,7 @@ build.
 
 ## Divergences from the earlier sketch
 
-These changes were made against the previous `API.txt`.
+These changes were made against the earlier sketch.
 Each is a decision, not a detail, and `SM1_DESIGN.md` §10.3 and
 §12.1 should be reconciled with the ones marked (D).
 
@@ -2215,7 +2241,7 @@ ones.
     is how a layer does `SELECT ... FOR UPDATE`, and its
     shared mode is what lets a secondary-index builder wait
     out the writers that cannot yet know the index exists.
-    The index build (`sm3/SM3_DESIGN.md` §3) is the case that
+    The index build (`../sm3/SM3_DESIGN.md` §3) is the case that
     asked for it; it was the only missing primitive whose
     absence made correct behaviour impossible rather than
     merely awkward.

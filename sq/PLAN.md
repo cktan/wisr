@@ -23,6 +23,10 @@ exposing only C++ vector, C++ string and C++ string-view.
 
 ## Decisions taken
 
+As first taken; step 7 changed the first two: a node is
+digres's, byte for byte, and no converter is needed
+(`DESIGN.md` §3).
+
 - **sq has its own tree.** It is not PostgreSQL's node tree. A
   converter in `../dg` turns it into PostgreSQL's nodes for the
   analyzer, and is written last (step 7).
@@ -552,15 +556,15 @@ The first target is `SELECT 1 + 1` running in digres
 None of it is owed to a step. Each is a choice made on the way
 and written where it was made:
 
-- **A tree holds 6% more memory than its nodes need**, since a
-  list assigned to a field is copied (`DESIGN.md` §9). Measured,
-  and left: moving the lists would recover part of 6% and make
-  an action that uses a list twice a bug.
+- **A tree holds a little more memory than its nodes need**: a
+  list's outgrown cells, and the scanner's strings no node kept
+  (`DESIGN.md` §9). A list assigned to a field is shared, not
+  copied (`DESIGN.md` §6).
 - ~~The locations in a tree are not held by a test that
   stays.~~ They are now. `sq_to_string_with_locations` prints
   them; `expected/*.loc` and a third digest in
   `test/regress.digest` hold what PostgreSQL's parser gave, for
-  the 25 files of statements here and the 49,034 pieces. That
+  the 28 files of statements here and the 49,034 pieces. That
   parser was built again from this repository's history to
   write them. digres's `digres --parse --locations` is held to
   the same files.

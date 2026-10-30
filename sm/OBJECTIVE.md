@@ -105,8 +105,9 @@ These are settled; they bind every level below.
     the thread-local `sm1::errnum()` and `sm1::errmsg()` — one
     errno namespace for the whole stack, every code defined
     in the root's `include/sm_error.h` (`DESIGN.md` §5).
-  - *Only the top level catches.* An exception may pass
-    through sm1, sm2 and sm3 unchanged; the C wrapper catches
+  - *Only the top level catches*, but for the index
+    builder's worker. An exception may pass through sm1, sm2
+    and sm3 unchanged; the C wrapper catches
     everything, because a PostgreSQL `longjmp` across C++
     frames, or a C++ exception through PostgreSQL's C frames,
     is undefined behaviour (`DESIGN.md` §5).

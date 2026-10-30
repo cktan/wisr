@@ -16,8 +16,11 @@ it. What runs so far, each a step of `WORKNOTE.md`:
   `date`, `time`, `timestamp`, `timestamptz`, `interval` and
   `uuid`; with NOT NULL, DEFAULT, PRIMARY KEY, UNIQUE and
   FOREIGN KEY, SERIAL and identity columns, and indexes on
-  them;
-- ALTER TABLE's ADD, DROP and RENAME, and CREATE TABLE AS;
+  them, partial and expression ones too;
+- a column's update default, `DEFAULT x ON UPDATE`, digres's
+  own (`ONUPDATE.md`);
+- ALTER TABLE's ADD, DROP and RENAME, a primary key and a
+  unique constraint among them, and CREATE TABLE AS;
 - views, temporary ones too;
 - temporary tables, with ON COMMIT;
 - sequences;
@@ -27,10 +30,13 @@ it. What runs so far, each a step of `WORKNOTE.md`:
 - INSERT, UPDATE and DELETE, with RETURNING; TRUNCATE; COPY
   to and from a table, into an empty one as a bulk load from
   sorted files;
-- sequential, index and index-only scans, joins,
-  GROUP BY and ORDER BY;
+- sequential, index and index-only scans, an index scan of
+  `= ANY(array)` and `IN (...)` too, joins, GROUP BY and ORDER
+  BY;
 - transactions and savepoints at READ COMMITTED, REPEATABLE
   READ and SERIALIZABLE, which are sm's;
+- roles, with owners and GRANT and REVOKE, kept in the database
+  `pg_global` (`../aa/ROLE.md`);
 - ANALYZE, and the planner reading its statistics;
 - psql's `\d` commands, on catalog relations made from sm's
   catalog and the rows compiled in (`SYSCATALOG.md`).
@@ -62,7 +68,15 @@ its catalog is being replaced, not created (`../sm/PART4.md`
 - `STATISTICS.md`: how ANALYZE and the planner use sm's
   statistics.
 - `SCHEMACACHE.md`: a session's schema kept across
-  transactions; proposed.
+  transactions; built.
+- `EXPRINDEX.md`: partial and expression indexes; built.
+- `INLIST.md`: an index scan of `= ANY(array)` and `IN
+  (...)`; built.
+- `ONUPDATE.md`: a column's default on UPDATE; built.
+- `PKDDL.md`: primary keys and unique constraints added and
+  dropped; built.
+- `test/pgregress/README.md`: PostgreSQL 18's regression
+  files, ported to digres.
 - `SHMEM.md`: what is left of PostgreSQL's shared memory,
   locks and signals, and what replaces it.
 - `WIP_THREADS.md`: the record of the step that made a
@@ -134,14 +148,14 @@ are rejected (`WORKNOTE.md` step 8).
 `build/digres -D DIR` starts on such a directory, with no
 configuration file and no installation, and listens on TCP and
 on a local socket (`-p PORT`, `-k SOCKETDIR`). It reads the
-superuser and the list of databases from the directory. There
-is no `pg_hba.conf`: a local socket connection is admitted if
-the OS user is the superuser, and a TCP connection by the
-superuser's password. `WORKNOTE.md` step 9 lists what was cut
-to get here. What does not work yet fails with an error: a
-statement that still looks in a catalog table, and what a
-table in sm does not take, such as a column of another type,
-MERGE.
+roles from `pg_global` and the list of databases from the
+directory. There is no `pg_hba.conf`: a client gets in as the
+data directory section above says (`../aa/ROLE.md` §5,
+`WORKNOTE.md` steps 320 and 327). `WORKNOTE.md` step 9 lists
+what was cut to get here. What does not work yet fails with an
+error: a statement that still looks in a catalog table, and
+what a table in sm does not take, such as a column of another
+type, MERGE.
 `make test` starts a server and connects with `psql`, if there
 is one on the path.
 

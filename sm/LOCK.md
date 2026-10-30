@@ -92,7 +92,7 @@ name can exist.
 **One type serves every object.** Every sm3 object -- table,
 index, namespace, collation -- draws its oid from the one
 sequence `sm3.oid`, so `be64(oid)` is unambiguous across kinds
-and subjects 1 and 4 to 7 of §2 all lock `LOCKTYPE_OID`, with
+and subjects 1, 4 to 6 and 8 of §2 all lock `LOCKTYPE_OID`, with
 no kind byte and no collision. sm1 refuses a key of any other
 length for it.
 
@@ -112,7 +112,8 @@ something the caller is not writing.
 | 4 | a namespace | `OID`, `be64(oid)` | `DROP SCHEMA` against `CREATE` in it | built: `cat_put_table`, `cat_put_collation` take S, `cat_del_namespace` X → `lock_table` → `sm1::lock` |
 | 5 | a collation or type in use | `(oid)` | `DROP COLLATION` with a column using it | not built |
 | 6 | an index as an object | `(oid)` | `DROP INDEX` against a scan on it | subsumed by 1 |
-| 7 | a sequence as an object | `(oid)` | `CREATE` / `DROP SEQUENCE` | no sm3 sequence object yet |
+| 7 | a sequence as an object | `(oid)` | `CREATE` / `DROP SEQUENCE` | none: its record is a catalog key (3), read in the transaction; `cat_put_sequence` takes its namespace S (4) (`VIEW.md` §11) |
+| 8 | a view's definition | `OID`, `be64(oid)` | `DROP VIEW`, `CREATE OR REPLACE` against a query expanding it | built: `cat_lock_view` → `lock_table` → `sm1::lock` (`VIEW.md` §7) |
 
 A name is **fixed-width** but for a row's: 9 bytes for a
 table-oid lock, the width of its kind for each catalog key DDL
@@ -335,8 +336,8 @@ holders that conflict.
 ```
 T1  lock(k, IX)      ok
 T2  lock(k, IX)      ok, IX and IX are compatible
-T1  write k   ->     wants X, waits for T2
-T2  write k   ->     wants X, waits for T1
+T1  lock(k, X)  ->   converts, waits for T2
+T2  lock(k, X)  ->   converts, waits for T1
 ```
 
 sm1's detector picks a victim and fails it with

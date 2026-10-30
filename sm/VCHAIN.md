@@ -27,9 +27,9 @@ versioned keys.
 
 Paths are relative to `sm/`; digres's are under `../dg/`. An
 earlier build (branches `aborted-wip-vchain-1` to `-3`, and
-`../VCHAIN-REPORT.md` there) used three column families a store
-and unversioned index entries; both are dropped here, for
-simplicity.
+`../VCHAIN-REPORT.md` on `-3` alone) used three column
+families a store and unversioned index entries; both are
+dropped here, for simplicity.
 
 ---
 

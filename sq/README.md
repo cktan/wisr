@@ -89,8 +89,8 @@ it to what PostgreSQL's own scanner and parser printed.
 - **`test/run.sh`**: each SQL file here is parsed, and for some
   scanned, and what sq prints is compared with
   `expected/NAME.out`, or `NAME.loc` for trees with their
-  locations, or `NAME.tok` for tokens. 93 files:
-  - `test/*.sql`: statements of every family, and three errors;
+  locations, or `NAME.tok` for tokens. 96 files:
+  - `test/*.sql`: statements of every family, and five errors;
   - `test/scan/`: literals and operators, and one file for each
     error the scanner raises;
   - `test/errors/`: one statement for each error an action of
@@ -114,4 +114,6 @@ built here beside sq's until sq could stand alone, and they
 cannot be made again without it. `test/run.sh --accept` would
 replace them with sq's own output, which checks nothing: use it
 only for a difference that has been read and is known to be
-PostgreSQL's too.
+PostgreSQL's too. The exception is digres's one rule,
+`ON UPDATE` (`DESIGN.md` §2): `test/on_update.sql` and the two
+`test/err_on_update_*.sql` files expect sq's own output.

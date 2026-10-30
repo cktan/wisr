@@ -15,7 +15,7 @@ nearly all of them go to asking sm, in every transaction, what
 the schema is: which table a name means, what its definition and
 version are, how big it is, what its statistics say. PostgreSQL
 answers the same questions from its system caches, which outlive
-transactions. This file proposes that digres do the same: each
+transactions. This file proposed that digres do the same: each
 session keeps those answers, and knows they are still good from
 one number sm gives it, the catalog's epoch.
 

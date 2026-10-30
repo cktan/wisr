@@ -1,5 +1,9 @@
 # QUESTIONS — sm2, before any code
 
+Status: every question is answered, and sm2 is built. The file
+is kept as a record of how each was settled; its [BLOCKING]
+and [ASSUMABLE] marks are history.
+
 What has to be decided before sm2 can be written, gathered in
 one place so none of it is discovered halfway through a format
 that is already on disk.
@@ -97,4 +101,5 @@ Settled, and listed so nobody reopens them by accident:
   and checked in — `SM2_DESIGN.md` §8.3.
 - That sm2's interface is `include/sm2.h` in `namespace sm2`,
   and its failures go through sm1's error state with codes of
-  its own appended to `sm1::errnum_t` — `SM2_DESIGN.md` §5.
+  its own appended to `sm_errnum_t`
+  (`../include/sm_error.h`) — `SM2_DESIGN.md` §5.

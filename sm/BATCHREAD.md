@@ -14,7 +14,7 @@ select c1 from wide_mixed where id = any(array[:k1, ..., :k100]::int8[]);
 A row a secondary index's entry names is read by its key, one
 call a row: `sm_tbl_read_key()` down to sm1's `read_chained()`
 and a RocksDB `Get` of the key's current version
-(`sm1/VCHAIN.md` §4). So is each row an IN list's probes name
+(`VCHAIN.md` §4). So is each row an IN list's probes name
 on the primary key (`../dg/INLIST.md`). Each `Get` starts
 afresh: the store's catalog check, a seek of the sorted file's
 index block, a look in the block cache, a search of the data
@@ -65,7 +65,7 @@ version reading it late would.
 ### 2.2 digres: two scans read ahead
 
 - **A secondary index's scan that reads rows**
-  (`smstore_index_getnext()`, `pin_entry_row()`,
+  (`smstore_index_getnext()`, `next_read_row()`,
   `../dg/src/backend/access/sm/smstore.c`): it reads the next
   entries from the index cursor into a buffer -- each entry's
   rowno and its row's key, copied, as the cursor moves on --

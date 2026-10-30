@@ -21,10 +21,10 @@ DROP INDEX p_pkey;
 --        table p requires it
 ```
 
-Today digres refuses `ADD CONSTRAINT` for anything but a
-foreign key, finds no primary key or unique constraint to `DROP
-CONSTRAINT`, and lets `DROP INDEX` drop a constraint's index,
-which PostgreSQL refuses.
+Before step 312 digres refused `ADD CONSTRAINT` for anything
+but a foreign key, found no primary key or unique constraint
+to `DROP CONSTRAINT`, and let `DROP INDEX` drop a constraint's
+index, which PostgreSQL refuses.
 
 ---
 

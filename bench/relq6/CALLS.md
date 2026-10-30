@@ -9,7 +9,9 @@ One query of `q6.rel`'s timed loop, at `a` = 500000:
 ```
 
 in SQL `select sum(c1) from wide_mixed where id between :a and
-:a + 9999`, its rows counted, not summed. These are the calls it
+:a + 9999`, its rows counted, not summed: the benchmark's Q6
+of before 2026-10-28, which reads 100 rows now
+(`../sql/queries.txt`). These are the calls it
 makes into RocksDB, in order, with the sm function that makes
 each (`../../sm`).
 
@@ -50,13 +52,13 @@ each (`../../sm`).
 
 ## The same calls in digres
 
-digres's Q6 makes these calls too. Its plan is an index scan
-of `wide_mixed_pkey`, and a primary key is its table
+digres's Q6 makes these calls too, over 100 rows. Its plan is an
+index scan of `wide_mixed_pkey`, and a primary key is its table
 (`../../sm/CLUSTER.md` §0): `smstore_index_beginscan` opens
 `sm_tbl_idx_scan_rows`, which reaches `sm1::chain_scan` on the
-table's store over the rows' keys. A row's key is there
-`relid ‖ encode(id)`, here `relid ‖ _id`, which the load makes
-the row's id; the calls are the same.
+table's store over the rows' keys. A row's key is there `relid ‖
+encode(id)`, here `relid ‖ _id`, which the load makes the row's
+id; the calls are the same.
 
 ## How they were found
 

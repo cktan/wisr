@@ -6,9 +6,9 @@ thread of it, and every allocation is shared but what is
 `thread_local` (`CODE.md` §3–4). PostgreSQL's shared memory,
 locks and signals were built for processes that share nothing
 else: here they are an indirect, often unsafe, way of doing
-what C++ does plainly. This file is the survey and the order of
-work; a step done is recorded in `WORKNOTE.md` and leaves this
-file.
+what C++ does plainly. This file was the survey and the order of
+work. Every step of §7 is done, recorded in `WORKNOTE.md`, so
+it is now a record of how the machinery went.
 
 Paths are under `src/`. A function is named with its module.
 
@@ -397,8 +397,8 @@ has a caller still, and goes with the step that removes it:
    dynahash's shared mode (174).
 
 Each step is checked by the full suite and by `make tsan`;
-asserts are on in every build (`dg.mk`), so a broken invariant
-fails a test. Steps 2 to 4 change what sessions see of each
-other, which `test/server.sh` checks only in part: DDL seen by
-another session, `pg_cancel_backend()`, a session that ends
-abnormally.
+asserts are on in the debug build (`dg.mk`), so a broken
+invariant fails a test. Steps 2 to 4 change what sessions see
+of each other, which `test/server.sh` checks only in part: DDL
+seen by another session, `pg_cancel_backend()`, a session that
+ends abnormally.

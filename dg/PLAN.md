@@ -11,13 +11,15 @@ the spike after them: digres is one process with a thread a
 session, and its tables are sm's. §1 is where it stood then;
 `README.md` says what runs now, `CODE.md` how the code is
 kept, and `WORKNOTE.md` each step since. §7's decisions
-stand, and are added to. §3.5, §8 and §9 are as they were
-then too: the hazards and gaps they list are mostly closed
-(the default collation, `WORKNOTE.md` step 89; names through
-the search path, steps 70 and 90; the loaded libraries,
-steps 223 and 251), and `CODE.md` and `../CLAUDE.md` hold
-the practices, branches and merges among them, that apply
-now.
+stand, and are added to. §3.5, §5.1, §6, §8 and §9 are as
+they were then too: the signal, latch and timer model of §5.1
+and §6 is replaced (`WORKNOTE.md` steps 31 to 33 and 136,
+`CODE.md` §4), and the hazards and gaps the others list are
+mostly closed (the default collation, `WORKNOTE.md` step 89;
+names through the search path, steps 70 and 90; the loaded
+libraries, steps 223 and 251), and `CODE.md` and
+`../CLAUDE.md` hold the practices, branches and merges among
+them, that apply now.
 
 Written on 2026-10-09, with `main` and `wip-dg` both at
 `edf7fad`. Step 1 is done since, in `43137f7` on `wip-dg`; §3
@@ -361,8 +363,7 @@ and sm is attached once; no auxiliary process is left (step
   and `EXEC_BACKEND` are gone (`WORKNOTE.md` steps 23 and 24),
   and there is no shared memory: each structure the threads
   share is an ordinary allocation (steps 25 and 26), and
-  dynamic shared memory is gone (step 29). The semaphores are
-  left.
+  dynamic shared memory is gone (step 29).
   The auxiliary processes are gone: autovacuum, the WAL writer,
   the archiver, the I/O workers, the checkpointer, the
   background writer, background workers and the startup
@@ -401,10 +402,10 @@ Do not reopen these without the owner:
 - **SPI stays.** SQL-language functions are cut.
 - **One encoding, UTF8; default collation C;** ICU for a column
   or a query that asks.
-- **Authentication is fixed**: peer on the local socket, SCRAM
-  over TCP, no `pg_hba.conf`. Its parser is gone too
-  (`WORKNOTE.md` step 92): what replaces the rule, once there
-  are roles, will not be that file.
+- **Authentication is not configured**: no `pg_hba.conf`, and
+  its parser is gone (`WORKNOTE.md` step 92). The rule is
+  `../aa/ROLE.md` §5's, built in `WORKNOTE.md` steps 320 and
+  327.
 - **Every writable global is `thread_local`**, marked
   `/*LOCAL*/`, and the build fails otherwise (§3.2, §3.6). A
   thread shares only through `pcb` and `shmem`
@@ -422,14 +423,13 @@ Do not reopen these without the owner:
   moved in `WORKNOTE.md` step 229, with the copy table and the
   two-pass link: the only writable globals outside
   `thread_local` are `pcb` and `shmem`.
-- **The GUC variables and tables are per thread** (§3.4). GUC
-  is not otherwise to be touched until the thread model is
-  done.
+- **The GUC variables and tables are per thread** (§3.4).
 - **No parallel workers.** Parallel query, index build and
   vacuum are removed, planner included; sorting and temporary
   files stay serial.
 - **No VACUUM.** sm collects its own garbage. `VACUUM`
-  succeeds and does nothing; `ANALYZE` stays. `CLUSTER` and
+  compacts each table's store and no more (`WORKNOTE.md` step
+  284); `ANALYZE` stays. `CLUSTER` and
   `REINDEX` succeed too, doing nothing, with a warning: a table
   in sm is kept in its primary key's order, or by its `_id`
   without one (rowno once; `../sm/ROWKEY.md`), and its indexes

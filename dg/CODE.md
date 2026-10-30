@@ -16,7 +16,7 @@ wins over convenience and over what PostgreSQL did.
 
 - **Everything a database needs to be read is inside its
   directory**: its catalog, its rows, its sequences, its id
-  allocators, its prepared transactions.
+  allocators.
 - **The package is what is transactionally consistent**: a
   database's data and its WAL, both in its RocksDB directory.
   State that must agree with a database's committed data goes
@@ -63,11 +63,11 @@ The import itself is not built yet (`PLAN.md` §7).
   with these lines:
 
   ```
-  run: PASSED (118 files)
-  run: PASSED (11 files, alone and in 8 sessions)
+  run: PASSED (124 files)
+  run: PASSED (12 files, alone and in 8 sessions)
   initdb: PASSED
   server: PASSED
-  slt: PASSED (42 files on digres, 10192 records, 10 skipped)
+  slt: PASSED (49 files on digres, 10711 records, 11 skipped)
   all 231 ok
   ```
 

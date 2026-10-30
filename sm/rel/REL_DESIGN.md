@@ -27,8 +27,8 @@ simulates a full relational database without SQL:
 
 - Tables have typed schemas and secondary indexes.
 - Operations manipulate rows directly via first-class tuples.
-- Relational operators (scan, filter, project, join) operate
-  directly over row streams.
+- Scans return Janet arrays of rows, which Janet's own
+  `filter` and `map` compose over.
 - Statements map 1:1 to `include/sm.h` C API calls.
 - Multi-session scripting enables deterministic concurrency,
   isolation anomaly reproduction, and crash-consistency tests.
@@ -148,8 +148,10 @@ columns, sort order, and uniqueness.
 ### 3.3 Direct Row Manipulation
 
 Rows are manipulated directly as tuples without SQL
-`INSERT INTO`, `UPDATE`, or `DELETE` syntax. A `rel` table has
-no primary key, so each row is named by its `_id`:
+`INSERT INTO`, `UPDATE`, or `DELETE` syntax. A row of a table
+without a primary key is named by its `_id`, as below; one of a
+table with one (`table-create`'s `(primary-key ...)`, or
+`add-primary-key`) by its key's values, a tuple:
 
 ```lisp
 # 1. Insert a row directly: returns generated _id (e.g. 1)
@@ -352,11 +354,21 @@ no index and computes no key. The call sets no savepoint, so a
 write that fails partway, on a duplicate in a unique index for
 one, has left its earlier steps done. `rel` then aborts the
 transaction, as PostgreSQL does on an error, and that undoes
-them. `SM_ERR_UPDATED` and `SM_ERR_BLOCKED` are outcomes, not
-errors, and leave the transaction active. One limit follows:
+them. `SM_ERR_UPDATED`, `SM_ERR_BLOCKED` and
+`SM_ERR_SELFMODIFIED`, a row the statement already changed,
+are outcomes, not errors, and leave the transaction active.
+One limit follows:
 a `SM_ERR_BLOCKED` that struck after the row's write, on a
 later index, cannot be repeated safely, and a script that
 meets one must abort.
+
+The calls below are shown by `_id`. In a table with a primary
+key, `read`, `read-latest`, `lock-row`, `update` and `delete`
+take the key's values and call the same function's
+`sm_row_key_t` overload; `scan`'s bounds are key values, and it
+calls `sm_tbl_idx_scan_rows` on the primary key, giving
+`[key row]` pairs; `(read-keys <table> [key ...])` reads many
+rows in one `sm_tbl_read_keys` (`BATCHREAD.md`).
 
 #### `(insert <table> <row-tuple>)`
 1. Validates that `<row-tuple>` matches column count and types.
@@ -522,9 +534,11 @@ detailed diagnostics when an invariant is violated:
 - `(assert-eq <actual> <expected>)`: Value equality check.
 - `(assert-nil <expr>)`: Verifies expression evaluates to `nil`.
 - `(assert-count <n> <list>)`: Verifies row count.
+- `(assert-err <code> <expr>)`: Verifies `expr` fails with
+  the error `code`, as `:err-dupkey`.
 
-An expected failure is caught with Janet's `try`, and its code
-read with `(sm:errname)`, as in the example above.
+Any failure can also be caught with Janet's `try`, and its
+code read with `(sm:errname)`, as in the example above.
 
 ---
 

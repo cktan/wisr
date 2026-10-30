@@ -29,8 +29,9 @@ own port, with nothing else of note running.
   -DNDEBUG` without `USE_ASSERT_CHECKING`, as its TSan build
   has its own (`OBJ=tsan.o`), so the debug build the tests use
   stays as it is. It links sm built into `sm/build/release` at
-  `-O3 -DNDEBUG`, sq as `libsq-release.a` at `-O2 -DNDEBUG`,
-  and RocksDB 8.9.1 built by `test/rocksdb.sh release` at
+  `-O3 -DNDEBUG`, aa into `aa/build/release` at `-O3
+  -DNDEBUG`, sq as `libsq-release.a` at `-O2 -DNDEBUG`, and
+  RocksDB 8.9.1 built by `test/rocksdb.sh release` at
   `-O3 -DNDEBUG`, statically: the system's `librocksdb.so`
   keeps its `assert()`s (5,858 calls of `__assert_fail`).
   `CODE.md` makes this a rule, and `run.sh` checks it.

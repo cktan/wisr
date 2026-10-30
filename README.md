@@ -125,7 +125,7 @@ changes to threads, latches, locks or shared state.
   build shows `-DNDEBUG` on each, and RocksDB `static`.
 - **Flags are not tracked** by digres's make: after changing
   them, delete the `*.rel.o` objects under `dg/src` and
-  `sq/build/rel` before building the release again.
+  `sq/build/rel` itself before building the release again.
 - **A part alone** builds in its own directory, as
   `make -C sm/sm1 -j4`, `DEBUG=1` or not.
 - **`make format`** before a commit. dg is formatted by the
@@ -260,13 +260,13 @@ make -j4 bench                 # the release build, then bench/run.sh
 bench/run.sh dg                # one system, for a look; no report
 ```
 
-- `run.sh` loads each system in turn into
-  `bench/build/run`, checks each query's plan, times Q1 to Q6
-  (sequential and index scans) and runs pgbench for Q7, Q8,
-  Q10 and Q11 (reads by key, by a secondary index, and an
-  update), then writes `bench/results/<date>.md` and a line in
-  `bench/results/LOG.md`. `RUNS`, `WARM` and `Q7_SECONDS`
-  change how long.
+- `run.sh` loads each system in turn into `bench/build/run`,
+  records each query's plan, times Q1 to Q6 and Q9 (sequential
+  and index scans) and runs pgbench for Q7, Q8, Q10 and Q11
+  (reads by key, by a secondary index, and an update), then
+  writes `bench/results/<date>.md` and a line in
+  `bench/results/LOG.md`. `RUNS`, `WARM` and `Q7_SECONDS` change
+  how long.
 - It refuses a debug build of either side: a server whose
   `debug_assertions` is on, or a digres whose `--build` is not
   a release's.

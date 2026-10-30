@@ -11,12 +11,13 @@ select * from orders where cust = any($1) and day > '2026-01-01';
 ```
 
 PostgreSQL reads each through its index: one descent per
-distinct value, in the index's order. digres reads the whole
-table: its index access method says it takes no array
-(`amsearcharray = false`, `src/backend/access/sm/smindex.c`),
-so the planner offers no index path for the clause, and a
-sequential scan filters every row; with `enable_seqscan` off
-the plan is still `Seq Scan`, disabled. An IN list is what an
+distinct value, in the index's order. Before step 314 digres
+read the whole table: its index access method said it took no
+array (`amsearcharray = false`,
+`src/backend/access/sm/smindex.c`), so the planner offered no
+index path for the clause, and a sequential scan filtered
+every row; with `enable_seqscan` off the plan was still `Seq
+Scan`, disabled. An IN list is what an
 ORM's prefetch and a batch loader send, and the benchmark's
 Q7 is one (`../bench/DESIGN.md` §5): a million rows read for
 100.

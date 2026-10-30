@@ -60,11 +60,15 @@ is `true`, flushes and tears down active session handles.
 
 Manage database instances and concurrent client sessions.
 
-### `(db-create name)`
+### `(db-create name [opts])`
 Creates a new database named `name` in the attached environment.
+`opts`, a struct or table, sets `:durability-sync` and
+`:deadlock-ms` of its `sm_options_t`; the others keep their
+defaults.
 
 ```janet
 (db-create "mydb")
+(db-create "fastdb" {:durability-sync 0 :deadlock-ms 100})
 ```
 
 ### `(db-drop name)`
@@ -349,6 +353,7 @@ Supported column types:
 - Numeric: `:decimal64`, `:decimal128`
 - Boolean: `:bool`
 - Text: `:text`, `:varchar`
+- Binary: `:bytea`
 - UUID: `:uuid`
 - Temporal: `:date`, `:time`, `:timestamp`, `:timestamptz`,
   `:interval`
@@ -657,6 +662,17 @@ Returns a tuple of values `[val1 val2 ...]` or `nil` if absent.
 (def u (read users r1))
 ```
 
+### `(read-keys table keys)`
+Reads the rows of a table with a primary key named by `keys`,
+an array or tuple of key tuples, in one `sm_tbl_read_keys`
+call (`../BATCHREAD.md`). Returns an array of the rows, each
+as `read` gives it, `nil` for a key with none, in the order of
+`keys`. A table without a primary key panics.
+
+```janet
+(def rows (read-keys accounts [[1] [2] [7]]))
+```
+
 ### `(read-latest table id)`
 Reads the latest committed version of row `id`. Valid only under
 Read Committed isolation.
@@ -807,8 +823,9 @@ row's `_id`, or its key, read from the row, in a table with a
 primary key: `cut`
 is true when sm2 truncated an over-long key, so the caller must
 recheck the row; `include-tuple` is nil for an index without
-INCLUDE columns. The key itself is not returned, since the index
-holds it only in its sort-key encoding.
+INCLUDE columns. The key itself is not returned: sm2 can decode
+an entry's key columns (`sm_idx_scan_key`), but `rel` does not
+expose them.
 
 ```janet
 (def hits (idx-scan idx_users_email :ge ["alice@"] :le ["alice@~"]))
@@ -882,12 +899,14 @@ translates the error into a **Janet panic** via
    panics, as PostgreSQL does on an error. The write may have
    changed the row and some indexes before it failed, and the
    abort is what undoes that. A script that catches the panic
-   calls `(abort)`, which is harmless, and `(begin)` again. Two
-   outcomes are not errors and leave the transaction active:
-   `ERR_UPDATED`, answered with `(read-latest ...)`, and
+   calls `(abort)`, which is harmless, and `(begin)` again.
+   Three outcomes are not errors and leave the transaction
+   active: `ERR_UPDATED`, answered with `(read-latest ...)`,
    `ERR_BLOCKED` under `(qa-nowait true)`, answered by repeating
-   the step. A row that `rel` itself refuses, before any call
-   on the storage manager, aborts nothing.
+   the step, and `ERR_SELFMODIFIED`, a row the statement already
+   changed, which the script skips. A row that `rel` itself
+   refuses, before any call on the storage manager, aborts
+   nothing.
 
 5. **Diagnostic State:**
    Even after a panic is caught, the underlying storage manager

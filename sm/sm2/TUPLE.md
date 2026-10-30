@@ -214,6 +214,14 @@ entry and varlena of each attribute it reads.
     one at most, in one pass into the caller's arrays; fewer
     than every one are checked as `tup_decode` checks (§8).
     It allocates only the schema's widths, not its output.
+  - `tup_read_begin(desc, tuple, r)` and `tup_read(r, n,
+    datums, isnull)` read a tuple attribute by attribute
+    (`../ROW.md` §3): the header and bitmap parsed once, then
+    each call decodes the attributes from where the last
+    stopped up to `n`, checking only what it reads.
+  - `tup_size(desc, datums, isnull, len)` gives the length
+    `tup_encode` would make, a length past `max_tup_len`
+    given, not refused.
 
   A by-reference `datum_t` either one hands back points into
   the tuple, or into the schema's missing value, and lives

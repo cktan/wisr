@@ -376,8 +376,8 @@ audited.
   once, as a virtual tuple (`ref_into_slot()`).
 - **What goes**: the column count the sequential, index,
   bitmap heap and sample scans deformed to, and
-  `smtable_scan_set_natts()`. A TID scan, for `WHERE CURRENT
-  OF` or `_id = n` only (`../dg/UNSUPPORTED.md`), and a
+  `smtable_scan_set_natts()`. A key scan, for `WHERE CURRENT
+  OF` or `_id = n` only (`ROWKEY.md` §3.3), and a
   DELETE's RETURNING read a lent copy by the row's key and
   keep theirs (`smstore_scan_natts()`,
   `smstore_expr_natts()`).
@@ -429,5 +429,5 @@ next.
    run.
 
 Steps 1 to 6 are built (`../dg/WORKNOTE.md` step 276); the
-benchmark, step 7, is next. `PIN.md` points here for what
-moved.
+benchmark, step 7, has run since (`../bench/results/`).
+`PIN.md` points here for what moved.

@@ -59,7 +59,7 @@ files full size; RocksDB turns it off under
   that commit pays for 64 MB written and synced once. It is
   measured (§4); making the next log ahead, in the
   background, is left for later (§5).
-- **The temporary instance** writes no log (`TEMPTABLE.md`
+- **The temporary instance** writes no log (`../TEMPTABLE.md`
   §2): it is not wrapped.
 - **sm decides, once, for the home directory**: what a sync of
   a growing file costs is the file system's, and another may
@@ -87,7 +87,7 @@ files full size; RocksDB turns it off under
 | crash, last record torn | replay ends before it, as now |
 | crash while the zeros are written | the log is empty or zeros: nothing in it to replay |
 | 2PC, a prepared transaction across a restart | its PREPARED record is in the log like any other |
-| bulk load into files (`BULKLOAD.md`) | ingested files, no log: unchanged |
+| bulk load into files (`../BULKLOAD.md`) | ingested files, no log: unchanged |
 | temporary stores | no log: unchanged |
 | a database's directory copied | the logs are bigger by their zeros until RocksDB deletes them, after a flush |
 | a file system with no cost to growing a file | the first attach keeps 0: RocksDB's file system, unwrapped, as before |

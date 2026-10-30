@@ -311,15 +311,15 @@ leaves no bit behind.
 ## 9. How digres uses it
 
 - It defines its bits (`storage/procsignal.h`): `CANCEL`,
-  `DIE`, `QUIT`, `RELOAD`, and `PROCSIG`, which carries
-  invalidation catch-up, `NOTIFY` and the rest as reasons in
-  the target's ProcSignal slot.
-- A latch keeps its owner's handle, new'd when a thread owns
-  it and deleted when it lets go; `SetLatch()` on another
-  thread's latch is `sm_interrupt(owner, 0)`, a wake with no
-  bit, and from a signal handler of the owner's own,
-  `sm_interrupt_self(0)`. `InterruptProc(proc, bits)` raises
-  bits in the owner of the PGPROC's latch.
+  `DIE`, `QUIT`, `RELOAD`, `LOG_MEMORY` and `ALARM`, each with
+  a handler, and `INTERRUPT_LATCH`, which has none.
+- A latch is a thread's own `INTERRUPT_LATCH`: `SetLatch()`
+  raises the caller's bit with `sm_interrupt_self()`, safe in
+  a signal handler, and only on its own latch. Another thread
+  interrupts a session through its record,
+  `session_interrupt(record, bits)`
+  (`storage/session_registry.h`), an `sm_interrupt()` on the
+  session's thread.
 - `CHECK_FOR_INTERRUPTS` loads `sm_pending_word()` inline, and
   the epoll loop waits on `sm_wake_fd()`, in place of SIGURG
   and its signalfd.

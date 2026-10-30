@@ -27,10 +27,12 @@ be reported.
     on. `ldd dg/build/digres-release` names no `librocksdb`.
   - **sm** built into `sm/build/release`, `-O3 -DNDEBUG`.
   - **sq** as `sq/build/libsq-release.a`, `-O2 -DNDEBUG`.
+  - **aa** built into `aa/build/release`, `-O3 -DNDEBUG`,
+    which `digres --build` does not show.
 - **Flags are not tracked**: digres's make does not rebuild
   an object when its flags change, so after a change to them
   delete the `*.rel.o` objects under `dg/src` and
-  `sq/build/rel` before `make -C dg release`.
+  `sq/build/rel` itself before `make -C dg release`.
 - **`digres --build` says how a digres was built**: the
   flags of its objects, of sq and of sm, and the RocksDB it
   links. `digres-release --build` must show `-DNDEBUG` on

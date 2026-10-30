@@ -396,7 +396,7 @@ Each step lands on its own, with its tests.
    temporary sequences with them.
 4. **The temporary catalog in sm3** (§4). Built.
 5. **The wrapper, and `rel`** (§5). Built.
-6. **digres**: Built (`dg/WORKNOTE.md` step 80).
+6. **digres**: Built (`../dg/WORKNOTE.md` step 80).
    `CREATE TEMPORARY TABLE`, `ON COMMIT`, and
    the temporary namespace in the search path.
 

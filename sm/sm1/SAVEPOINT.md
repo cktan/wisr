@@ -56,7 +56,7 @@ change to the core and is argued here first.
 - A rollback writes nothing to RocksDB and takes the same
   time whatever was written since the mark.
 - A bulk load can be rolled back to a savepoint, by either of
-  its paths, with no code of its own (`BULKLOAD.md`).
+  its paths, with no code of its own (`../BULKLOAD.md`).
 
 **What it costs**
 
@@ -348,11 +348,11 @@ All of it is in sm1.
 | `xct.cc` | `savepoint`, `forget`, `rollback` as in §2.2; the range rule of §2.3; `xct_status` takes a `seq`; the list in the active table, the commit record, the commit cache, the prepare record and the in-doubt object |
 | `gc.cc` | the filter passes `seq` and drops a dead version before any committed rule |
 | `recover.cc` | the list restored with a prepared transaction |
-| `format.cc`, `db.h` | the status record's new field; format version 7 |
+| `db.h` | the status record's new field; format version 7 |
 | `SM1_DESIGN.md` | §3.2, §3.4, §4.4, §5, §6.5, §8.3, §8.4 and §13, rewritten to this |
 | `API.md` | the cost of holding a savepoint, and the `seq` limit |
 
-`BULKLOAD.md` loses its rule that a rollback past a load is
+`../BULKLOAD.md` loses its rule that a rollback past a load is
 refused. A load's versions carry a `seq` like any other, and
 a range covers them.
 

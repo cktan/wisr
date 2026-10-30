@@ -4,8 +4,9 @@
 done; the later steps are not. Roles and memberships are
 `pg_global`'s, made, changed and dropped by SQL; an object
 is owned by the role that made it, and privileges on
-databases, schemas, tables, views, sequences and functions
-are granted, revoked and checked. This file says what roles
+databases, schemas, tables, views and sequences are granted,
+revoked and checked; a column's and a function's are later
+(§2). This file says what roles
 and privileges digres takes from PostgreSQL, where sm keeps
 them, and how a client is let in, by a rule much simpler
 than `pg_hba.conf`. aa (`README.md`) is the code that keeps
@@ -18,8 +19,8 @@ digres's under `../dg/`.
 
 - **Roles are PostgreSQL's**: CREATE, ALTER and DROP ROLE,
   membership with GRANT role TO role, SET ROLE, ownership,
-  and GRANT and REVOKE on databases, schemas, tables, views,
-  sequences and columns. PostgreSQL 18's semantics, a subset.
+  and GRANT and REVOKE on databases, schemas, tables, views
+  and sequences. PostgreSQL 18's semantics, a subset.
 - **They live in a database of their own**, `pg_global`, an
   sm database no client connects to, as PostgreSQL keeps them
   in shared catalogs: a role is every database's.
@@ -43,7 +44,10 @@ digres's under `../dg/`.
 
 ---
 
-## 1. Where digres stands
+## 1. Where digres stood
+
+Before step 1 (`../dg/WORKNOTE.md` step 318), what this design
+set out from:
 
 - **One role, oid 10.** initdb writes its name, and the
   SCRAM secret of its password if one is given, to the data
@@ -97,9 +101,10 @@ types and languages, which are compiled into digres: each is
 `PUBLIC`'s, as PostgreSQL's are, but the functions PostgreSQL's
 initdb takes EXECUTE on from `PUBLIC`, which are the superuser's
 alone, or a predefined role's too as initdb grants them
-(`../dg/WORKNOTE.md` step 334); PostgreSQL's predefined roles
-(`pg_read_all_data` and the rest); TLS, after roles, by one
-setting (§8 question 4).
+(`../dg/WORKNOTE.md` step 334); most of what PostgreSQL's
+predefined roles imply, which exist, all 16
+(`AA_DESIGN.md` §2); TLS, after roles, by one setting (§8
+question 4).
 
 **Not at all**: `pg_hba.conf`, `pg_ident.conf`, and the
 methods only they choose — trust, ident, md5, password in the
@@ -128,7 +133,7 @@ a setting. So a database is its directory still
 on another server — replicated (`../sm/LOGICALDECODE.md`) or
 imported — finds no role of its source there, and that
 server's `pg_global` gives it roles of its own. Its tables,
-digres's (§6), hold:
+aa's (§6), hold:
 
 - **roles**: oid, name, attributes, the SCRAM secret,
   `VALID UNTIL`, `CONNECTION LIMIT`, `ALTER ROLE ... SET`,
@@ -226,9 +231,11 @@ a copy of the database names its source's role oids, which on
 another server name no role, or another role, which then
 holds what was granted.
 
-**A session caches the roles.** It reads `pg_global` at
-connect, and again when its epoch has moved, checked at a
-statement's start as a database's catalog is
+**Sessions share aa's snapshot of the roles.** aa reads
+`pg_global` once, when the server starts, and replaces a
+snapshot whole when something changes (`AA_DESIGN.md` §3); a
+session compares the snapshot's epoch with its own at a
+statement's start, as a database's catalog is checked
 (`../dg/SCHEMACACHE.md`): a REVOKE takes effect at the next
 statement of every session, as in PostgreSQL.
 
@@ -267,10 +274,12 @@ not.
   `CONNECT` and `TEMPORARY` to `PUBLIC`; the schema `public`
   owned by `pg_database_owner`, `USAGE` to `PUBLIC`, `CREATE`
   to no one else.
-- **The `aclitem[]` is stored as PostgreSQL's text form**,
-  `{alice=arw/bob}`, by role oid, in the object's entry in
-  `pg_global`: sm3 keeps it and does not read it, as it keeps
-  a column's default. No entry, or no `aclitem[]` in one, is
+- **The `aclitem[]` is stored as aa's text**, its items'
+  `grantee,grantor,privs` by role oid, space-separated
+  (`aa_acl_text()`, `src/aa_acl.cc`), so a role's rename
+  leaves it be, in the object's entry in `pg_global`: sm3
+  keeps it and does not read it, as it keeps a column's
+  default. No entry, or no `aclitem[]` in one, is
   PostgreSQL's null ACL: the owner's default privileges.
 - **A dropped role leaves nothing behind.** PostgreSQL refuses
   `DROP ROLE` while the role owns an object or holds a
@@ -340,11 +349,12 @@ as in PostgreSQL. No single-user mode is kept for this.
 ## 6. What changes, by level
 
 **sm**: nothing. `pg_global` is an sm database like any
-other, and its tables are digres's: `pg_authid`, a role a row,
-keyed by oid, with a unique index on the name; memberships,
-owners and privileges as their steps come. digres reads and
-writes them through `sm.h`'s table calls
-(`../dg/src/backend/utils/init/pg_global.c`), so sm learns
+other, and its tables are aa's (`src/aa_store.cc`):
+`pg_authid`, a role a row, keyed by oid, with a unique index
+on the name; memberships, owners and privileges. aa reads and
+writes them through `sm.h`'s table calls, and digres reaches
+them through aa (`../dg/src/backend/utils/init/pg_global.c`,
+its adapter), so sm learns
 nothing of roles, as §3 wants of sm1, and needs no record kind
 of its own for them.
 
@@ -388,6 +398,8 @@ it (`../CLAUDE.md`, "Test at every layer"):
   is tables, which sm's tests already cover, and no check of
   sm's reads them.
 - **mvcc**: none; roles change nothing of sm1.
+- **aa**: its unit tests (`test/`), of the API, the stores
+  and the checks (`AA_DESIGN.md` §10).
 - **digres**: `initdb.sh` for `pg_global` made, its
   superuser's name and secret, and a data directory without
   it refused; `server.sh` for `pg_authid` and `pg_roles`, a

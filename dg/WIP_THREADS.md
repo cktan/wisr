@@ -7,7 +7,10 @@ what was left.
 **A record, kept as it was written.** Much of it has changed
 since, each change a step of `WORKNOTE.md`: the `/*SHARED*/`
 variables and the copy table of item 5 are gone (step 229),
-and sm and RocksDB are built for TSan (`CODE.md` §1).
+with `src/tools/shared_tls.py`; the signal, latch and timer
+model of items 2 to 4 is replaced by interrupt bits
+(`WORKNOTE.md` steps 31 to 33 and 136, `CODE.md` §4); and sm
+and RocksDB are built for TSan (`CODE.md` §1).
 
 ## Done
 

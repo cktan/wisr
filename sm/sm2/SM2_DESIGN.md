@@ -290,7 +290,7 @@ struct per type:
 | `in` / `out` | text form, parsed and printed | `typinput` / `typoutput` |
 | `recv` / `send` | binary form over the wire — **deferred**: the slots exist in v1, unfilled, as sm2 has no wire protocol | `typreceive` / `typsend` |
 | `cmp` | the type's own total order (§2) | the btree opclass support function |
-| `hash` | for grouping and hash joins | the hash opclass support function |
+| `hash` | for grouping and hash joins — **deferred**: the slot exists, unfilled, until a step needs it | the hash opclass support function |
 | `key_encode` | the order-preserving, injective byte string (§3) | *no equivalent* |
 | `key_decode` | the inverse, where one exists — for index-only scans, not for reads (§3) | *no equivalent* |
 | `len`, `byval`, `align` | fixed or variable, and how it packs (§4) | `typlen`, `typbyval`, `typalign` |
@@ -991,9 +991,14 @@ its key, as `rel_insert` gives it:
 | --- | --- | --- |
 | `rel_insert` | writes a tuple under its key, and returns the key, and a keyless row's new `_id`, 0 for a keyed row; the tuple is encoded from datums, or handed in pre-encoded and checked by `tup_check` before an `_id` is drawn; the `_id` from a `seqref_t` looked up at the rel's first draw, and a keyless row's key, made of it, written unchecked, as none was before | `sm1::seqref`, `sm1::nextseq`, `sm1::insert`, `sm1::insert_new`; chained, `sm1::chain_insert`, `sm1::chain_insert_new` |
 | `rel_key` | the key of a row from its primary key's values, or a keyless row's from its `_id`, encoded; no read (`../ROWKEY.md` §1) | — |
+| `rel_row_key` | the key of a row from its `_id` and all its values, as `rel_key` | — |
+| `rel_reserve`, `rel_insert_at` | draws a keyless row's `_id` early, for a caller that writes something of the row first, then inserts as `rel_insert` under it | `sm1::nextseq`, then as `rel_insert` |
 | `rel_read` | reads a row by its key, and its `_id`, from the key, 0 for a keyed row | `sm1::read`; chained, `sm1::chain_read` |
+| `rel_read_batch` | the rows at n keys, in one call, each into a pin (`../BATCHREAD.md`) | `sm1::read` each; chained, `sm1::chain_read_batch` |
+| `rel_trylock` | as `rel_lock` (below), never waiting: 1 with nothing taken if it would have | `sm1::trylock`; chained, `sm1::chain_trylock` |
 | `rel_update`, `rel_delete` | by key; hands back the old image as a **tuple**, not bytes; `rel_update` takes datums or a pre-encoded tuple, checked as `rel_insert`'s is, and moves a row whose primary key changed, its old key erased with a move's tombstone (`../ROWKEY.md` §2.3) | `sm1::update`, `sm1::erase`, `sm1::erase_moved`, `sm1::insert`; chained, `sm1::chain_update`, `sm1::chain_erase`, `sm1::chain_erase_moved`, `sm1::chain_insert` |
 | `rel_read_latest` | the newest committed image, decoded | `sm1::read_latest`; chained, `sm1::chain_read_latest` |
+| `rel_load`, `idx_load` | puts a row, or an index's entry, into a bulk load of the store, as `rel_insert` or `idx_insert` would write it; nothing is in the store until the load is closed | `sm1::load_put` |
 | `rel_scan`, `rel_scan_seek` | tuples in `_id` order, forward only, of a keyless rel; a keyed one's are scanned by key (`idx_scan_rows`) | `sm1::scan`, `sm1::scan_seek`; chained, `sm1::chain_scan`, `sm1::scan_seek` |
 | `rel_scan_seek_key` | moves a scan in key order, `idx_scan_rows`' or a keyless rel's, forward to a key | `sm1::scan_seek` |
 | `rel_keys_at`, `rel_range_size` | the keys at fractions of the rel's bytes, by bisecting its key range on the store's size estimates, and the bytes of a key range; no row read (`../ROWKEY.md` §2.4) | `sm1::approxsize`; chained, `sm1::chain_approxsize` |
@@ -1048,6 +1053,10 @@ the same shape, keyed by its columns (`idx_open`,
   what remains, if anything. A cut key, or a text column under
   a non-deterministic collation, keeps no datum (§2.3); then
   the caller reads them from the row.
+- **`idx_find` gives the row a unique index has a key for**,
+  as the snapshot shows it, locking nothing; `idx_find_latest`
+  its newest committed version, under a shared lock on the
+  key, at READ COMMITTED.
 - **`idx_delete` removes an entry committed since the
   transaction began.** An entry is an sm1 key, so at READ
   COMMITTED sm1 refuses to erase one committed after the
@@ -1096,7 +1105,8 @@ The rules it must satisfy:
   type, a row with more attributes than its schema, a corrupt
   tuple: sm2
   records each with `sm1::seterr`, its codes appended to
-  `sm1::errnum_t` under a comment naming sm2, so one
+  `sm_errnum_t` (`../include/sm_error.h`) under a comment
+  naming sm2, so one
   `sm1::errmsg()` serves the whole stack (`DESIGN.md` §5 at the
   top level).
 - **Running out of memory is fatal to the process** once
@@ -1147,10 +1157,9 @@ The rules it must satisfy:
   has one schema, the current one, so there is nothing to copy
   for.
 
-Open: whether the tuple-at-a-time shape above is enough, or a
-batched form earns its keep once there are predicates to push
-down, which is a question for the level that has them
-(`sm3/SM3_DESIGN.md` §5).
+Rows read by key, many in one call, are built
+(`rel_read_batch`, `../BATCHREAD.md`); a scan stays tuple at a
+time (`sm3/SM3_DESIGN.md` §5).
 
 ---
 
@@ -1421,8 +1430,9 @@ codec is tested by property, not by interleaving — and the
 concurrency questions that need the second kind mostly arrive
 with sm3 (`sm3/SM3_DESIGN.md` §8).
 
-Whether sm2 gets its own driver or extends sm1's is a decision
-for the first scenario that needs it, not before.
+Neither: two-session scenarios above sm1 are `rel` scripts
+(`../rel/REL.md`), which drive sm2 and sm3 through `sm.h`
+(`sm3/SM3_DESIGN.md` §8.2).
 
 **Property tests are hand-rolled**, with no new dependency.
 Each type has a generator weighted toward small values and its
@@ -1480,9 +1490,10 @@ only for a fixture run:
 
 ### 8.4 What is deliberately not here
 
-- No catalog, no secondary index, no predicate scan, no
-  statistics, and no choice of which relid means what.
-  All of it is `sm3/SM3_DESIGN.md` §8.
+- No catalog semantics, no choice of which indexes exist, no
+  predicate scan, no statistics, and no choice of which relid
+  means what. All of it is `sm3/SM3_DESIGN.md` §8; sm2 gives
+  only the index `rel` and the catalog's bytes (`catkv`, §5).
 - No SQL, no planner, no executor.
 - No PostgreSQL dependency. `PART4.md` explains what the PG
   target forces on the decisions above; none of it requires a

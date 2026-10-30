@@ -66,7 +66,8 @@ past their first error, not that N files pass.
 
 At `9b60be7`, an assertion build at `-O0` on aarch64, against
 PostgreSQL 18.6's tree as REL_18_STABLE has it (`4732a5c53bd`);
-230 files in 4 minutes.
+230 files in 4 minutes. A snapshot of that run, not run again
+since: `../../WORKNOTE.md` has what changed after.
 
 - **19 pass.** 16 run in full: `boolean`, `char`, `varchar`,
   `md5`, `time`, `comments`, `copyselect`, `select_implicit`,
@@ -180,8 +181,9 @@ collation (step 274), which leaves `insert_conflict` at
 
 Bigger, and each needs a decision of record first:
 
-- **Roles** (19 files): `pg_authid` is compiled in, and roles
-  are the instance's, which a database must not depend on.
+- **Roles** (19 files): decided and built since, in
+  `pg_global` (`../../../aa/ROLE.md`, `../../WORKNOTE.md`
+  steps 318 to 331).
 - **SQL functions** (`sql` 7 files, `CREATE FUNCTION` 9 more)
   and **`CREATE TYPE`/`DOMAIN`** (8, and 6 composite types):
   refused by design now.

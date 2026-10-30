@@ -54,10 +54,8 @@ process and every backend thread shares sm1's transaction
 table, lock manager and SSI graph. A session is used by one
 thread at a time (`sm1/API.md`). The boundary between the
 executor and sm3 is a function call, not an RPC, so a per-row
-interface is no longer ruled out. Whether sm3 keeps a
-batch-shaped API anyway, for filter pushdown and fewer calls
-per scan, is open (§5), and nothing below depends on the
-answer.
+interface is no longer ruled out, and sm3's is tuple at a
+time (§5).
 
 | the stack gives sm3 | and the constraint it brings |
 | --- | --- |
@@ -1173,10 +1171,9 @@ predicate, and so no predicate scan.
   (`sm2/SM2_DESIGN.md` §5), and the C API hands that through.
 - **Tuple at a time.** Sets of rows in and out was forced by an
   IPC boundary that the threaded fork removes (§1), and its
-  other reason was filter pushdown, which is gone. Fewer calls
-  per scan is what is left of the case for batches, and it
-  waits for a profile that asks, as sm1's batched read does
-  (`sm1/SM1_DESIGN.md` §10.1).
+  other reason was filter pushdown, which is gone. Rows read
+  by key, many in one call, are built (`tbl_read_keys`,
+  `../BATCHREAD.md`); a scan stays tuple at a time.
 - **Forward only**, at every level (§1). An `ORDER BY x DESC`
   that an index could have served backwards is a top-N sort
   over a forward scan instead (§7).

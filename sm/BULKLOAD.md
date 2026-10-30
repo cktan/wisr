@@ -110,12 +110,12 @@ Since `sm1/WRITELOCK.md`, a write keeps no lock: the first
 step is the key's write latch, held for the write alone, and
 the lock entries below are gone. The rest stands.
 
-**Memory.** The lock entries are kept for the life of the
-transaction, and the undo entries too when a savepoint is
-set, so a load of `n` rows holds `n × (1 + k)` entries or
-twice that. `sm1/SM1_DESIGN.md` §13 records it: a transaction
-writing tens of millions of keys costs gigabytes, and "bulk
-loads want batching into many transactions."
+**Memory.** The undo entries are kept for the life of the
+transaction when a savepoint is set, so a load of `n` rows
+holds `n × (1 + k)` entries; the lock entries did too.
+`sm1/SM1_DESIGN.md` §13 records it: a transaction writing tens
+of millions of keys costs gigabytes, and "bulk loads want
+batching into many transactions."
 
 Batching into many transactions is what this design avoids.
 It would bound the memory and lose the atomicity: a failed

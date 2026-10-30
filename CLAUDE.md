@@ -121,8 +121,9 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
   sm's library, and build it if it is stale, which races with
   sm's own build.
 
-- **Code Formatting:** Always run `make format` in `sm/` before
-  committing.
+- **Code Formatting:** Always run `make format` at the top
+  before committing: it formats sm, sq and aa. dg is formatted
+  by the lines a change touches (`dg/CODE.md` §8).
 
 ### 2. Think Before Coding
 
@@ -181,14 +182,16 @@ Example:
 ```
 
 **Test at every layer the scenario reaches.** A test can go in
-three places:
+four places:
 
 1. **mvcc**: an isolation scenario in `sm/sm1/mvcc` (adding one
    is fine; changing an existing one needs approval, above).
 2. **sm**: the unit tests of the level concerned
    (`sm/smN/test`), and `rel` (`sm/rel/test`), which drives
    `sm.h`.
-3. **dg**: `dg/test` (`run.sh`'s `.sql` files, `server.sh`),
+3. **aa, sq**: their unit tests (`aa/test`, `sq/test`), for a
+   change in either library.
+4. **dg**: `dg/test` (`run.sh`'s `.sql` files, `server.sh`),
    and pgregress, ported again.
 
 If a test is warranted, add the scenario to as many of these

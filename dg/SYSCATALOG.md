@@ -130,8 +130,9 @@ what runs now.
   directly, and a syscache lookup in one fails, until its caller
   is converted.
 - **A column with nothing true to say** has a fixed value,
-  listed by catalog in §4: the owner is the superuser, an ACL
-  is null, a tablespace is 0. `reltuples` is -1 and
+  listed by catalog in §4: a tablespace is 0. An owner and an
+  ACL are `pg_global`'s (`WORKNOTE.md` steps 322 and 323).
+  `reltuples` is -1 and
   `relpages` 0, a table never analyzed as PostgreSQL has it
   (`class_row()` in `catrel.c`); the planner takes sm's
   estimates (`smstore_estimate_size()`), not these.
@@ -206,16 +207,20 @@ run.
 What a row says, for the first of them:
 
 - **`pg_namespace`**: the compiled-in ones, then sm's
-  (`sm_cat_list_namespaces`). `nspowner` is the superuser;
-  `nspacl` is null.
+  (`sm_cat_list_namespaces`). `nspowner` and `nspacl` are
+  `pg_global`'s, as the schema's DDL and GRANT left them; a
+  compiled-in schema without one there keeps PostgreSQL's.
+  An ACL not granted is null.
 - **`pg_class`**: a row a table, an index, a view and a
   sequence of sm's, and one a catalog relation.
   `relnamespace`, `relname`, `relkind`, `relnatts`,
-  `relpersistence` and `relam` are true; `relowner` is the
-  superuser; `relfilenode` is the oid, and 0 for a view;
-  `reltablespace` is 0; `relhasindex` is whether sm has an
-  index of it; `relhasrules` is true of a view alone; `relacl`
-  and `reloptions` are null.
+  `relpersistence` and `relam` are true; `relowner` and
+  `relacl` are `pg_global`'s, and a catalog relation the
+  superuser's, readable by PUBLIC but `pg_authid`;
+  `relfilenode` is the oid, and 0 for a view; `reltablespace`
+  is 0; `relhasindex` is whether sm has an index of it;
+  `relhasrules` is true of a view alone; `reloptions` is a
+  view's alone.
 - **`pg_attribute`**: a view's columns are its query's select
   list, as the relation cache makes them.
 - **`pg_rewrite`**: a row a view of sm's, its `_RETURN` rule,
@@ -277,6 +282,8 @@ runs the psql command and reads its output.
 | 8. A syscache miss in a compiled-in catalog | `pg_language` too; `pg_get_functiondef()`, `\sf`, step 124 |
 | 9. Views | `pg_rewrite`, `pg_views`, `\dv`, `\d+` of a view, `pg_get_viewdef()`, step 239 |
 | 10. Foreign keys | `pg_constraint`'s rows of type `f`, `relhastriggers`, `\d`'s Foreign-key constraints and Referenced by, `pg_get_constraintdef()`, step 246; a primary key's and a unique constraint's, `\d`'s UNIQUE CONSTRAINT, step 248 |
+| 11. Roles | `pg_authid`, step 318; owners, step 322; ACLs, step 323, and a function's, step 334 |
+| 12. Partial and expression indexes | `pg_index`'s `indexprs` and `indpred`, step 311; `indpred` one expression, step 336 |
 
 ---
 
@@ -292,8 +299,6 @@ runs the psql command and reads its output.
 - **`pg_stats`** stays the function it is (step 78), until
   this gives it a relation's name.
 - **An index on a catalog relation**, and a cache of its rows.
-- **Roles and privileges**: every owner is the superuser and
-  every ACL null until digres has roles (`PLAN.md` §7).
 - **Tab completion in psql**, which sends queries of its own
   on the same catalogs: it should come with steps 3 to 6, and
   is not checked here.

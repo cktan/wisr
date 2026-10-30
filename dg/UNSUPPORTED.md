@@ -20,7 +20,7 @@ Each entry is marked:
 
 "pgregress: N" is how many statements of PostgreSQL's
 regression files are taken out for it (`test/pgregress`,
-`--dg-skip` markers, 7,584 in all).
+`--dg-skip` markers, 6,063 in all).
 
 ---
 
@@ -49,17 +49,17 @@ regression files are taken out for it (`test/pgregress`,
   one has none (step 299). No table may have a column named
   `_id`.
 - **CREATE TABLE beyond columns, NOT NULL, PRIMARY KEY, UNIQUE
-  and TEMPORARY** — refused (pgregress: 604): table CHECK and
+  and TEMPORARY** — refused (pgregress: 605): table CHECK and
   EXCLUDE constraints, `OF type`, `UNLOGGED`, `TABLESPACE`,
   `USING`. Generated columns, column CHECK, column `COLLATE`
   and a DEFERRABLE `REFERENCES` are refused too (pgregress:
-  113). `WITH` takes only `fillfactor` and
+  114). `WITH` takes only `fillfactor` and
   `autovacuum_enabled`, and ignores them (step 208).
 - **Unlogged tables, temporary sequences, ON COMMIT on a
   permanent table** — refused (step 80).
 - **Materialized views, foreign tables, composite types,
   foreign data wrappers, servers, user mappings** — refused:
-  "a relation's storage cannot be made" (pgregress: 123, and
+  "a relation's storage cannot be made" (pgregress: 124, and
   329 for their ALTERs and DDL); `REFRESH MATERIALIZED VIEW`
   (step 64).
 - **Large objects** — removed (step 60).
@@ -123,7 +123,7 @@ regression files are taken out for it (`test/pgregress`,
 - **ALTER TABLE beyond ADD COLUMN, DROP COLUMN, ADD and DROP
   CONSTRAINT of a foreign key, a primary key or a unique
   constraint, a foreign key's VALIDATE CONSTRAINT, and
-  RENAME** — refused (pgregress: 267): CHECK constraints added
+  RENAME** — refused (pgregress: 271): CHECK constraints added
   later, `ADD CONSTRAINT ... USING INDEX`, `SET SCHEMA`,
   `ALTER COLUMN TYPE`, `SET`/`DROP NOT NULL`, `SET DEFAULT`,
   row level security, replica identity (step 231); dropping a
@@ -150,7 +150,7 @@ regression files are taken out for it (`test/pgregress`,
   106). No trigger can be made: there is no language to write
   one in.
 - **COMMENT ON** — refused (step 122); `obj_description` and
-  `col_description` are gone.
+  `col_description` answer null (step 120).
 - **CREATE DATABASE options, ALTER DATABASE** — refused
   (step 63).
 - **Publications, subscriptions, the REPLICATION attribute** —
@@ -158,7 +158,7 @@ regression files are taken out for it (`test/pgregress`,
 
 ## 4. Queries and DML
 
-- **MERGE into a table** — refused (pgregress: 57).
+- **MERGE into a table** — refused (pgregress: 64).
 - **LISTEN and NOTIFY** — refused; UNLISTEN does nothing;
   `pg_notify()` is gone (step 43).
 - **Backward movement of a cursor not declared SCROLL** —
@@ -166,13 +166,11 @@ regression files are taken out for it (`test/pgregress`,
   works (step 55).
 - **Whole-row references to a table** — refused: a table has
   no composite type, so `row_to_json(t)` and `t::tabletype`
-  fail (pgregress: 35).
+  fail (pgregress: 38).
 - **RANGE window frames with an offset** — refused
   (pgregress: 56).
 - **ANALYZE of a column list, BUFFER_USAGE_LIMIT** — refused;
   a temporary table is skipped (step 80).
-- **ON CONFLICT above READ COMMITTED** with rows that conflict
-  with each other — refused (pgregress: 2).
 - **Exported snapshots** — refused: `pg_export_snapshot()`,
   `SET TRANSACTION SNAPSHOT` (steps 149, 201).
 - **A key update that collides with itself** — differs:
@@ -204,7 +202,7 @@ regression files are taken out for it (`test/pgregress`,
 
 - **Procedural languages and SQL functions** — removed: no
   PL/pgSQL, no `sql` language, no `DO`, no function bodies
-  (steps 5, 6; pgregress: 820). SPI stays, for a scripting
+  (steps 5, 6; pgregress: 826). SPI stays, for a scripting
   language to come.
 - **Default arguments of built-in functions** — differs: none,
   so `jsonb_set`, `make_interval` and the like take every
@@ -228,8 +226,11 @@ regression files are taken out for it (`test/pgregress`,
   `pg_stat_*` views, background workers, AIO, synchronized
   scans, crash restart (steps 11, 20, 21, 28 and others). A
   session is a thread (`PLAN.md`).
-- **pg_hba.conf, pg_ident.conf, TLS, GSSAPI** — removed: peer
-  on the socket, SCRAM over TCP (step 92).
+- **pg_hba.conf, pg_ident.conf** — removed (step 92): a client
+  gets in by `../aa/ROLE.md` §5's checks, peer or a password
+  on the socket, a password over TCP (steps 320, 327).
+- **TLS, GSSAPI** — refused: their build options are off and
+  their files not compiled (`README.md`).
 - **Roles** — differs: roles, memberships, owners and ACLs are
   `pg_global`'s (`../aa/ROLE.md`, steps 318 to 324), and role
   DDL is refused in a transaction block; a column's
@@ -245,7 +246,7 @@ regression files are taken out for it (`test/pgregress`,
   five, so some conflict more (step 49).
 - **Lock wait queues** — differs: none, so a soft deadlock
   aborts a transaction where PostgreSQL reorders the waiters
-  (`PLAN.md` §7).
+  (`../sm/sm1/SM1_DESIGN.md` §5.1).
 - **SERIALIZABLE** — differs: sm's own, not PostgreSQL's SSI
   (`../sm/sm1/SM1_DESIGN.md` §7).
 - **pg_locks** — differs: sm's mode names; a keyed row's page
@@ -255,9 +256,9 @@ regression files are taken out for it (`test/pgregress`,
 
 - **Catalog tables** — removed: the catalog is sm's, and psql's
   `\d` reads relations made from it, read only
-  (`SYSCATALOG.md`). `information_schema`, the statistics views
-  and `pg_description` are missing; `pg_stats` is a function
-  (step 78).
+  (`SYSCATALOG.md`). `information_schema` and the statistics
+  views are missing; `pg_description` is empty (step 123);
+  `pg_stats` is a function (step 78).
 
 ## 10. What digres adds
 

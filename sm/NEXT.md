@@ -39,19 +39,7 @@ and so are the catalog tables psql reads
    | 9 reads, 1 update | prepared | 16 | 45,051 | 43,332 | 4% |
 
    About 8 µs a statement, and more as clients are added, so
-   some of it is contention. Where it is likely to go, not yet
-   profiled (`perf` does not run on this WSL kernel):
-
-   - **No row of `pg_class` or `pg_namespace` is kept by the
-     syscache** (`catrel_is_cached()`, `../dg/WORKNOTE.md`
-     step 321): each check makes the table's row again from
-     sm's definition, its columns and indexes with it, and the
-     search path's schema check every row of `pg_namespace`.
-   - **`pg_global`'s snapshots are read under one mutex**
-     (`shared_objects()`, `shared_roles()` in
-     `../dg/src/backend/utils/init/pg_global.c`): each owner
-     or ACL looked up copies a `shared_ptr` under the lock
-     every session takes.
+   some of it is contention.
 
    **Profiled, and the most of it gone** (`../dg/WORKNOTE.md`
    step 329): 19% of a role's busy time was the syscache
@@ -61,16 +49,16 @@ and so are the catalog tables psql reads
    a role's privileges on an object are kept in its session
    (step 331): an object's check costs a role 0.07 µs more than
    the superuser (`../bench/roles.sh`). What is left of the
-   steps below is the syscache for the rows other paths read.
+   steps below is the syscache for the rows other paths read
+   (`catrel_is_cached()`, step 321), and the one mutex every
+   owner or ACL looked up takes (step 330): `aa_roles()` and
+   `aa_objects()` in `../aa/src/aa.cc` copy a `shared_ptr`
+   under `env->mutex`.
 
    The plan, a step at a time, each measured as above:
 
-   1. **Keep the benchmark**: the script that made the table,
-      as `../bench/roles.sh`, so each step below is measured
-      the same way, and the gap can be checked again later.
-   2. **Profile first**, to confirm where the 8 µs go before
-      changing anything: a sampling profile where `perf` runs,
-      or the counters of the step 3 caches' misses.
+   1. **Keep the benchmark**: done, `../bench/roles.sh`.
+   2. **Profile first**: done, by gdb (step 329, above).
    3. **Keep sm's catalog rows in the syscache again**, made
       stale correctly: dropped when sm's catalog epoch moves
       (`sm_cat_epoch()`, checked where the namespaces' epoch
@@ -259,7 +247,7 @@ Low priority:
    around it (`../dg/PLAN.md` §7), and what it no longer needs
    is deleted as it is found. Nothing is moved out of it just
    so the file goes (`../dg/WORKNOTE.md` steps 232 to 236).
-   It is 2,874 lines.
+   It is 2,893 lines.
 
 ### Feature gaps against PostgreSQL
 
@@ -270,7 +258,7 @@ steps behind each entry).
 
 | Gap | pgregress | Why it matters | Effort |
 | --- | --- | --- | --- |
-| Users, authentication, authorization: one superuser; CREATE ROLE, SET ROLE, GRANT and REVOKE fail; no row-level security; peer on the socket and SCRAM over TCP only, no `pg_hba.conf`, no TLS, no GSSAPI | about 1,400, policies about 90 | separate application, read-only and admin roles; encryption on the wire; compliance | large: roles and object ACLs in sm's catalog, and every privilege check reading them; TLS and `pg_hba` put back what step 92 removed |
+| Users, authentication, authorization: roles, owners, GRANT and REVOKE are built (`../aa/ROLE.md`); a column's privileges, a function's, ALTER DEFAULT PRIVILEGES and row-level security fail; peer on the socket and SCRAM over TCP only, no `pg_hba.conf`, no TLS, no GSSAPI | policies about 90 | encryption on the wire; compliance | medium: TLS by one setting (`../aa/ROLE.md` §8); row-level security, now that roles exist; `pg_hba` is not planned |
 | Code in the server: no PL/pgSQL, no `sql` functions, no `DO`, so no triggers | 820, triggers 48, rules 132 | stored procedures, audit and `updated_at` triggers | large: waits for the scripting language SPI is kept for |
 | CREATE TABLE beyond columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY: CHECK, generated columns, `OF type`, UNLOGGED | 604, column-level 113 | CHECK is in most schemas | medium: constraints stored in sm's catalog, checked in the executor as PostgreSQL does |
 | ALTER TABLE: constraints added later, `ALTER COLUMN TYPE`, `SET`/`DROP NOT NULL`, `SET DEFAULT` | 264 | schema migrations | medium a subcommand; PRIMARY KEY is item 1 above |
@@ -278,8 +266,8 @@ steps behind each entry).
 
 - **Largest for adoption:** users and the scripting language;
   a production deployment needs both. Of the first, roles
-  with GRANT and REVOKE on tables come first, TLS second, and
-  row-level security last, as it needs roles.
+  with GRANT and REVOKE on tables are built; TLS is next, and
+  row-level security last.
 
 ---
 
@@ -348,7 +336,7 @@ Owed, and blocking nothing above:
   `smstore_expr_natts()`); they would read into a pin of their
   own.
 
-- **Views, the rest of them** (`VIEW.md` §10). CREATE, OR
+- **Views, the rest of them** (`VIEW.md` §9). CREATE, OR
   REPLACE, DROP and the cascades are built, sm3's and digres's
   (`../dg/WORKNOTE.md` step 238), and of SQLite's sample digres
   now fails nothing PostgreSQL 18 passes; psql's `\dv` and

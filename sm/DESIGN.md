@@ -563,14 +563,16 @@ design:
   columns while a child holds its key, as `FOR KEY SHARE`
   does against `FOR NO KEY UPDATE`, so such an update waits
   for the child's transaction.
-- **The API is tuple at a time, at every level.** Sets of
+- **The API is tuple at a time, at every level**, but for
+  rows read by key, many in one call (`BATCHREAD.md`). Sets of
   rows in and out was forced by an IPC boundary between a
   PostgreSQL backend process and sm1; the fork has moved
   PostgreSQL to threads (`PART4.md` §2), so the boundary is
   a function call and the shape is no longer forced. Its other
   reason was filter pushdown, and sm3 filters nothing (above).
   Fewer calls per scan is what is left of the case for
-  batches, and it waits for a profile that asks
+  batches; the keyed read is the one a profile asked for
+  (`BATCHREAD.md`), and the rest wait for one
   (`sm3/SM3_DESIGN.md` §5).
 - **READ COMMITTED writes wait, then proceed.** PostgreSQL's
   default level does not fail a concurrent update of the same

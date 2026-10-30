@@ -39,12 +39,12 @@ unchanged (`CLAUDE.md`).
 
 What it buys: a transaction's memory no longer grows with the
 keys it writes. Loading a million rows with three indexes holds
-four million lock entries today and none after. Mini-batch
-needs no lock path of its own (`BULKLOAD.md` §4.5).
+four million lock entries before and none after. Mini-batch
+needs no lock path of its own (`../BULKLOAD.md` §4.5).
 
 ---
 
-## 1. What a row lock does today
+## 1. What a row lock did
 
 A write takes the key's lock exclusive before anything else and
 holds it to commit (`SM1_DESIGN.md` §5, step 2). That one lock
@@ -75,7 +75,7 @@ writer still running, waits for that transaction to end, and
 checks again. Each transaction holds one lock on its own id, and
 that is the only lock a write leaves behind.
 
-`BULKLOAD.md` §6.1 goes through it step by step.
+`../BULKLOAD.md` §6.1 goes through it step by step.
 
 ---
 
@@ -217,7 +217,7 @@ to commit:
 
 - **The index build's backfill** takes a table row's lock shared
   and adds the row's entry, relying on a writer of the row
-  holding it exclusive to commit (`sm3/SM3_DESIGN.md` §3). The
+  holding it exclusive to commit (`../sm3/SM3_DESIGN.md` §3). The
   backfill's lock is explicit, so it now waits for the
   writer's uncommitted version (§3.3), and a writer waits for
   the backfill's lock (§3.2, step 2). Either way the two still
@@ -311,4 +311,4 @@ to commit:
    → verify: the in-doubt scenario across a restart.
 5. The documents of §6.
 
-Then batch mode and mini-batch (`BULKLOAD.md` §12).
+Then batch mode and mini-batch (`../BULKLOAD.md` §12).

@@ -521,9 +521,9 @@ the same error either way, and must not abort twice.
    test holds it to that. A row from `sm_tbl_read` is the
    session's, and the fork copies that one or uses it at
    once.
-2. **The identity of a row is 64 bits and a TID is 48.**
-   Known (§3): the fork widens `ctid`. The spike can pack a
-   small `rowno` into a TID and defer that.
+2. ~~**The identity of a row is 64 bits and a TID is 48.**~~
+   **Closed.** A row is named by its key, not a TID
+   (`ROWKEY.md`).
 
 **Not in the way of `SELECT` and `INSERT` on one table, but
 the next things the fork would hit:**
@@ -532,8 +532,8 @@ the next things the fork would hit:**
    SHARE` and `FOR NO KEY UPDATE` have nothing to map to, so
    an update of a parent row that leaves its key alone waits
    for a child's foreign-key check (`NEXT.md`).
-4. **No wait policy.** `NOWAIT` and `SKIP LOCKED` need a flag
-   on the calls that can wait; there is only the QA setting.
+4. ~~**No wait policy.**~~ **Closed.** `sm_tbl_trylock` and
+   `sm_tbl_tryopen` serve `NOWAIT` and `SKIP LOCKED`.
 5. **An index entry gives back its key columns only where its
    key keeps them.** `sm_idx_scan_key` decodes them, but a
    key cut to fit, or a text key under a non-deterministic
@@ -556,12 +556,12 @@ the next things the fork would hit:**
 9. **A sequence only goes forward.** No `setval`, no
    `ALTER SEQUENCE`, and none of a sequence's options: the
    stack's sequences are a name and a counter.
-10. **A row is at most 64 KB.** TOAST is the unbuilt part of
-    sm2, so a larger row is `SM_ERR_ROWTOOLONG`.
-11. **Nothing for the planner.** `relation_estimate_size`,
-    `relation_size` and the analyze callbacks have no
-    counterpart until statistics are built (`STATISTICS.md`).
-    The planner runs on its defaults meanwhile.
+10. ~~**A row is at most 64 KB.**~~ **Closed.** TOAST is
+    built: a row's long values are stored out of line
+    (`include/sm.h`).
+11. ~~**Nothing for the planner.**~~ **Closed.** Statistics
+    are built (`STATISTICS.md`): `sm_tbl_size`,
+    `sm_tbl_stats`.
 
 **The fork's own, with nothing to change here:**
 
@@ -589,8 +589,8 @@ backend — the stack needed one thing changed, gap 1, and that
 was a promise to write down, not code. Everything else in the
 way is the fork's: the slot, the oid map, the type map.
 
-Gaps 3 to 11 are the order of work after the spike, to be
-re-ranked by what it finds.
+The open gaps among 3 to 11 are the order of work after the
+spike, to be re-ranked by what it finds.
 
 ### 9.5 The first target: insert and scan, integers only
 

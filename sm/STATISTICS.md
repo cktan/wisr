@@ -10,11 +10,12 @@ It is a strategy, and the design is `sm3/SM3_DESIGN.md` §6,
 which makes the choices left open here.
 
 **§6 has now been measured and §7 checked**, against RocksDB
-9.11.2 through sm1 and against PostgreSQL 17.11's source and a
-server built from it. §6 carries the numbers, §7 the verdicts.
-Two things the strategy said of PostgreSQL were wrong, and both
-are corrected where they were said: how its sampler works
-(§3.3) and where the planner's size conversion lives (§3.7).
+9.11.2 through sm1 (the stack builds on 8.9.1 now) and against
+PostgreSQL 17.11's source and a server built from it. §6
+carries the numbers, §7 the verdicts. Two things the strategy
+said of PostgreSQL were wrong, and both are corrected where
+they were said: how its sampler works (§3.3) and where the
+planner's size conversion lives (§3.7).
 
 **Since then a table is clustered on its primary key**
 (`CLUSTER.md`), `rowno` is `_id` in sm, and a table with a
@@ -959,4 +960,5 @@ Steps 3 to 7 are built, as `sm3/SM3_DESIGN.md` §6.9 records.
    its statistics, and grows by its bytes (`ROWKEY.md` §5,
    step 4).
 
-The fork's own work in §4 is outside this repository.
+The fork's own work in §4 is digres's, in `../dg/`, and built
+(`../dg/STATISTICS.md`, `../dg/WORKNOTE.md` steps 74 to 78).
