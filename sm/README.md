@@ -1,7 +1,7 @@
 # wisr
 
-Wisconsin storage on rocks: a stack of storage levels, each one
-built on the level below it.
+Wisconsin Storage on the Rocks: a stack of storage levels, each
+one built on the level below it.
 
 | Level | Where | What it is |
 | --- | --- | --- |

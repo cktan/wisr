@@ -1,8 +1,8 @@
-# wisr
+# Wisr
 
-Wisconsin storage on rocks: a PostgreSQL whose tables live in a
-storage stack of its own, built on RocksDB. Four parts, one
-repository.
+Wisr is Wisconsin Storage on the Rocks: a PostgreSQL whose
+tables live in a storage stack of its own, built on RocksDB.
+Four parts, one repository.
 
 | Where | What it is |
 | --- | --- |
