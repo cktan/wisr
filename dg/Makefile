@@ -123,6 +123,10 @@ $(OBJDIR)/backend/utils/init/%.o:   CPPFLAGS += -I$(SM)/include
 $(OBJDIR)/backend/parser/%.o:       CPPFLAGS += -I$(SQ)/include
 $(OBJDIR)/backend/main/%.o:         CPPFLAGS += -I$(SM)/include -I$(SQ)/include
 
+# The flags the server's objects are built with, which "digres --build"
+# prints.
+$(OBJDIR)/backend/main/main.o: CPPFLAGS += -D'DG_BUILD_FLAGS="$(strip $(OPT) $(ASSERT))"'
+
 # Not compiled, each with the reason: a file that another #includes;
 # a variant for a library digres does not link; one for an
 # architecture, which the build never chooses (CODE.md section 1); or
