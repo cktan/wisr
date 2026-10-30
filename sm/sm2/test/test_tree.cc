@@ -458,3 +458,46 @@ TEST_CASE("tree: a unique insert judges every entry of its prefix") {
   cursor_open(t.tree, c, &lo, true, &hi, false);
   CHECK(304u == drain(c).size());
 }
+
+TEST_CASE("tree: a root's split cut short is finished by its right page's") {
+  // Verify a crash between a root's split's two writes, after which
+  // the meta page still names the old root, does not stop a split of
+  // the page to its right from posting.
+  // 1. Fill the root leaf until the next key splits it; make that
+  //    post fail: the root is flagged, its right page unposted.
+  // 2. Insert keys past every other, into the right page, until it
+  //    splits too: its post finds no level above it, so it finishes
+  //    the root's split first, then its own.
+  // 3. The tree checks whole, and holds every key.
+  db_t d;
+  open_tree_t t(d, 19, 512);
+  REQUIRE(0 == tree_create(t.tree));
+  std::set<std::string> keys;
+  int n = 0;
+  size_t height = 1;
+  detail::fail_posts = 1;
+  while (1 == height) {
+    std::string key = "k" + std::to_string(10000 + n++);
+    int rc = tree_insert(t.tree, key, "v");
+    keys.insert(key);
+    if (rc < 0) {
+      break;
+    }
+    REQUIRE(0 == tree_height(t.tree, height));
+  }
+  REQUIRE(0 == detail::fail_posts);
+  REQUIRE(0 == tree_height(t.tree, height));
+  CHECK(1u == height);
+  for (int i = 0; i < 200; i++) {
+    std::string key = "k" + std::to_string(10000 + n++);
+    REQUIRE_MESSAGE(0 == tree_insert(t.tree, key, "v"),
+                    std::string(sm1::errmsg()));
+    keys.insert(key);
+  }
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+  REQUIRE(0 == tree_height(t.tree, height));
+  CHECK(height >= 2u);
+  cursor_t c;
+  cursor_open(t.tree, c, nullptr, true, nullptr, true);
+  CHECK(keys.size() == drain(c).size());
+}

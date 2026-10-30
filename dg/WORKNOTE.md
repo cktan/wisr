@@ -10458,3 +10458,35 @@ and digres's read-ahead of today's entries alike.
   reported.
 - **Tests**: sm2, a splice against a decode, an insert and a
   layout, step by step, with a high key and without.
+- **Tried and undone**: a batch's rows left pinned in its
+  iterator's blocks (`ReadOptions::pin_data`), each row's pin
+  holding the iterator, to save the copy out of it (8% of Q9):
+  Q9 955k to 1,039k through a tree, 1,344k to 1,429k with
+  today's entries. A pinning iterator, and asking it per row
+  whether a value is pinned, cost more than the copies. The
+  test it came with stays: rows read stay valid in their pins
+  while the store is rewritten under them.
+
+## Step 352: two races of a tree, found reviewing it
+
+- **A root's split cut short**: the meta page still named the old
+  root, a leaf, flagged incomplete; a writer to its right moved
+  past it, latching it never, and when the right page split, its
+  post found no level above: "no page at level 1", every insert
+  into that range failing from then on. Now a post that finds
+  the root at its child's level finishes the root's split first,
+  then its own, the child's latch let go so the root's is taken
+  left before right; a writer holding another latch, a unique
+  insert's, leaves both for the next (`latches_held()`, a count
+  the latches keep by thread).
+- **An ON CONFLICT arbiter's entry before its row**: sm3 adds an
+  arbiter's entries before the row, for sm1's unique keys to wait
+  and refuse with nothing else written. A unique tree's entry so
+  added names a row not yet written, which another's check calls
+  dead: both rows of one key could commit. A tree arbiter's entry
+  now goes in after the row (MAJORDECISION D5), under a savepoint
+  the row is taken back to if the key is another's.
+- **Tests**: sm2, a root's split's post cut short, then 200 keys
+  into its right page; it failed before the fix. sm3, the unique
+  stress test inserts half its rows ON CONFLICT DO NOTHING. TSan,
+  every tree test: none reported.

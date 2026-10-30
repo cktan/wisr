@@ -343,12 +343,19 @@ int post(tree_t &tree, uint64_t childid, page_t &child, page_latch_t &latch,
   }
   uint8_t level = child.level + 1;
   child.flags &= static_cast<uint8_t>(~page_incomplete);
+  uint64_t stale_root = 0;
   {
     // The meta page's latch, last of all, so no root split races this.
     page_latch_t ml(page_latches(), name_of(tree, meta_id));
     meta_t m;
     if (0 != read_meta(tree, m)) {
       return -1;
+    }
+    // A root at the child's level, not the child: the root's own
+    // split was cut short, its right pages, the child among them, not
+    // posted, and there is no level above to post to yet.
+    if (m.root != childid && m.height <= level) {
+      stale_root = m.root;
     }
     if (m.root == childid) {
       // The root split: a new root over the two.
@@ -370,6 +377,35 @@ int post(tree_t &tree, uint64_t childid, page_t &child, page_latch_t &latch,
       latch.release();
       return 0;
     }
+  }
+  if (0 != stale_root) {
+    // Finish the root's split first, left before right: the child's
+    // latch let go, its post left half done as a crash leaves one,
+    // then the child's, if no writer has finished it meanwhile. A
+    // writer holding another latch, a unique insert's first leaf,
+    // could not take the root's in order: it leaves both for the next
+    // writer to latch the child.
+    latch.release();
+    if (0 != latches_held()) {
+      return 0;
+    }
+    for (uint64_t id : {stale_root, childid}) {
+      page_latch_t l(page_latches(), name_of(tree, id));
+      pinned_t p;
+      if (0 != read_page(tree, id, false, p) || 0 != p.view.check()) {
+        return -1;
+      }
+      if (0 == (p.view.flags() & page_incomplete)) {
+        continue;
+      }
+      page_t page;
+      p.view.load(page);
+      p.release();
+      if (0 != finish_split(tree, id, page, l)) {
+        return -1;
+      }
+    }
+    return 0;
   }
   for (;;) {
     uint64_t parentid = 0;

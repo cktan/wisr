@@ -1082,3 +1082,65 @@ TEST_CASE("a batch of ascending keys is read by steps and seeks alike") {
   }
   commit_xct(f.s);
 }
+
+TEST_CASE("rows of an ascending batch stay in their pins past the call") {
+  // Verify rows a batch read leaves pinned in its iterator's blocks
+  // stay valid until each pin lets go, whatever comes after.
+  // 1. Write k000..k199 and compact them into a file, so a read pins
+  //    blocks of it.
+  // 2. Read every other key, ascending, into pins.
+  // 3. Write each key again, flush and compact: the pinned rows still
+  //    read as they were.
+  // 4. Let go of half, read the rest again, let go of all.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  char buf[16];
+  begin_xct(f.s);
+  for (int i = 0; i < 200; i++) {
+    snprintf(buf, sizeof buf, "k%03d", i);
+    REQUIRE(sm1::chain_insert(f.s, c, buf, std::string(buf) + "-old") == 0);
+  }
+  commit_xct(f.s);
+  begin_xct(f.s);
+  REQUIRE(sm1::compact(f.s, c) == 0);
+  std::vector<std::string> keys;
+  for (int i = 0; i < 200; i += 2) {
+    snprintf(buf, sizeof buf, "k%03d", i);
+    keys.push_back(buf);
+  }
+  size_t n = keys.size();
+  std::vector<std::string_view> kv(keys.begin(), keys.end());
+  std::vector<std::unique_ptr<sm1::rawpin_t>> own;
+  std::vector<sm1::rawpin_t *> pins;
+  for (size_t i = 0; i < n; i++) {
+    own.push_back(std::make_unique<sm1::rawpin_t>());
+    pins.push_back(own.back().get());
+  }
+  std::vector<std::string_view> data(n);
+  std::vector<int> rc(n, -2);
+  REQUIRE(sm1::chain_read_batch(f.s, c, kv.data(), n, pins.data(), data.data(),
+                                rc.data()) == 0);
+  commit_xct(f.s);
+  begin_xct(f.s);
+  for (int i = 0; i < 200; i++) {
+    snprintf(buf, sizeof buf, "k%03d", i);
+    REQUIRE(sm1::chain_update(f.s, c, buf, std::string(buf) + "-new") == 0);
+  }
+  commit_xct(f.s);
+  begin_xct(f.s);
+  REQUIRE(sm1::compact(f.s, c) == 0);
+  for (size_t i = 0; i < n; i++) {
+    CHECK(0 == rc[i]);
+    CHECK(keys[i] + "-old" == data[i]);
+  }
+  for (size_t i = 0; i < n; i += 2) {
+    sm1::unpin(pins[i]);
+  }
+  for (size_t i = 1; i < n; i += 2) {
+    CHECK(keys[i] + "-old" == data[i]);
+  }
+  for (sm1::rawpin_t *p : pins) {
+    sm1::unpin(p);
+  }
+  commit_xct(f.s);
+}

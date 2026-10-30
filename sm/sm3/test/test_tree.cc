@@ -823,9 +823,10 @@ TEST_CASE("tree: scans agree with the rows under writers moving them") {
 TEST_CASE("tree: a unique tree keeps one live row a key under writers") {
   // Verify a unique tree's check under concurrent writers.
   // 1. Make a unique tree on owner.
-  // 2. Four writers insert rows of 300 owners at random, delete some
-  //    and move some to another owner, committing or aborting; a
-  //    duplicate fails its transaction, a deadlock too.
+  // 2. Four writers insert rows of 300 owners at random, half of them
+  //    ON CONFLICT DO NOTHING, delete some and move some to another
+  //    owner, committing or aborting; a duplicate fails its
+  //    transaction, a deadlock too.
   // 3. At the end, at one snapshot, no owner has two rows, and the
   //    tree gives each owner's row, once.
   trees_t f;
@@ -860,11 +861,21 @@ TEST_CASE("tree: a unique tree keeps one live row a key under writers") {
         for (int k = 0; ok && k < 3; k++) {
           std::string o = "o" + std::to_string(rng() % 300);
           int what = rng() % 6;
-          if (what < 4 || mine.empty()) {
+          if (what < 2 || mine.empty()) {
             row_t r(w * 10000 + round * 10 + k, "s", o);
             uint64_t id;
             ok = sm3::tbl_insert(tw, r.d(), r.null(), id) == 0;
             if (ok) {
+              added.push_back(id);
+            }
+          } else if (what < 4) {
+            // ON CONFLICT DO NOTHING: 1 is a row with the key.
+            row_t r(w * 10000 + round * 10 + k, "s", o);
+            uint64_t id;
+            std::vector<uint64_t> arb = {u};
+            int rc = sm3::tbl_insert_arbiter(tw, r.d(), r.null(), arb, id);
+            ok = rc >= 0;
+            if (rc == 0) {
               added.push_back(id);
             }
           } else if (what < 5) {

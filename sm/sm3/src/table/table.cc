@@ -773,6 +773,24 @@ look:
       sm2::rel_row_key(table->rel, r, values, isnull, key) != 0) {
     return -1;
   }
+  // A tree's entry goes in after its row, never before
+  // (../../MAJORDECISION.md D5): another's check would find it
+  // naming no row, and call it dead. So a tree arbiter's is added
+  // last, under a savepoint the row's write is taken back to if the
+  // key turns out another's.
+  std::vector<size_t> trees;
+  for (auto it = arb.begin(); it != arb.end();) {
+    if (def.indexes[*it].tree) {
+      trees.push_back(*it);
+      it = arb.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  int mark = 0;
+  if (!trees.empty() && (mark = sm3::savepoint(table->session)) < 0) {
+    return -1;
+  }
   for (size_t n = 0; n <= arb.size(); n++) {
     size_t i = n < arb.size() ? arb[n] : primary;
     int rc = n < arb.size() ? add_entry(table, i, entry[i], row.row(), key)
@@ -792,16 +810,48 @@ look:
       }
     }
     uint64_t found = 0;
+    if (0 != mark && 0 != sm3::forget(table->session, mark)) {
+      return -1;
+    }
     rc = find_now(table, i, entry[i], found, tuple);
     if (rc < 0) {
       return -1;
     }
     if (rc == 1) {
       // Gone again already, deleted and committed: look once more.
+      arb.insert(arb.end(), trees.begin(), trees.end());
       goto look;
     }
     id = found;
     return 1;
+  }
+  // The tree arbiters' entries, the row written: a key another's
+  // takes the row back, and says which row has it.
+  for (size_t i : trees) {
+    if (add_entry(table, i, entry[i], row.row(), key) == 0) {
+      continue;
+    }
+    if (sm1::errnum() != sm1::SM_ERR_DUPKEY) {
+      return -1;
+    }
+    if (0 != sm3::rollback(table->session, mark) ||
+        0 != sm3::forget(table->session, mark)) {
+      return -1;
+    }
+    uint64_t found = 0;
+    int rc = find_now(table, i, entry[i], found, tuple);
+    if (rc < 0) {
+      return -1;
+    }
+    if (rc == 1) {
+      arb.insert(arb.end(), trees.begin(), trees.end());
+      goto look;
+    }
+    id = found;
+    return 1;
+  }
+  if (0 != mark && 0 != sm3::forget(table->session, mark)) {
+    return -1;
   }
   // Its entries in the indexes that are no arbiter: a duplicate in
   // one of those is an error, as in tbl_insert.
