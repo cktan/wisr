@@ -527,7 +527,9 @@ Clauses:
   visibility: a scan of it is `(idx-rows)`, which reads each
   entry's row and gives it only while the row has the entry's
   key, and its dead entries stay until `(compact)` removes
-  them (`(idx-entries)` counts them). Not unique, yet.
+  them (`(idx-entries)` counts them). A unique tree checks a key
+  against the rows its equal entries name, waiting for a
+  running writer (`../BTREE.md` §6).
 
 The storage manager evaluates neither form. It calls `rel`'s
 own evaluator, as it would call PostgreSQL's in the fork.

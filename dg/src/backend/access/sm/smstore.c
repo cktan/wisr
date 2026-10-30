@@ -6402,9 +6402,9 @@ static bool tree_option(const IndexStmt *stmt) {
                              opt->defname)));
     tree = defGetBoolean(opt);
   }
-  if (tree && (stmt->unique || stmt->primary))
+  if (tree && stmt->primary)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("a unique index is not a tree yet")));
+                    errmsg("a primary key is not a tree")));
   return tree;
 }
 

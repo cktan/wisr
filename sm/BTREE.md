@@ -6,7 +6,8 @@ where one changed this design the text below says so. Built:
 §13's steps 1 to 8 for a non-unique index: the page, the
 latches, sm1's pages and cache, the tree, the index `rel` over
 it with vacuum's walk, sm3's kind, and digres's
-`WITH (tree = on)` (D7). Not built: a unique tree (§6, D9).
+`WITH (tree = on)` (D7), and a unique tree's check of §6
+(D13). Not built: a unique tree as an `ON CONFLICT` arbiter.
 
 ## 1. Why
 
@@ -251,7 +252,7 @@ design deletes them. The GC filter does not touch class
 | --- | --- |
 | TOAST | an entry is built from the detoasted value, as now; no entry is out of line |
 | non-unique index | §4, §5 |
-| unique index | §6; refused as a tree until it is built (D9) |
+| unique index | §6, built (D13); no `ON CONFLICT` arbiter yet |
 | primary key | unchanged: the rows' keys |
 | expression index | the key is the expression's value, as now; the recheck evaluates it on the row |
 | partial index | an entry only where the predicate holds, as now; the recheck needs only the key |

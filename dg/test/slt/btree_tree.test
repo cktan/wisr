@@ -163,13 +163,38 @@ select id from t where c2 = 9 and note like 'p%'
 ----
 5
 
-# Verify what digres refuses of a tree.
-# 1. A unique index made a tree is refused, as is another parameter.
-# 2. Dropping a tree leaves the table's other indexes answering.
+# Verify a unique index made a tree refuses a duplicate, and what digres
+# refuses of a tree.
+# 1. A unique tree on note refuses a second 'pete', and takes it once
+#    the first is deleted.
+# 2. ON CONFLICT on it is refused on digres, as is another parameter.
+# 3. Dropping a tree leaves the table's other indexes answering.
 
 onlyif digres
-statement error a unique index is not a tree yet
+statement ok
 create unique index t_u on t (note) with (tree = on)
+
+skipif digres
+statement ok
+create unique index t_u on t (note)
+
+statement error duplicate key value violates unique constraint "t_u"
+insert into t values (6, 1, 'pete')
+
+statement ok
+delete from t where id = 5
+
+statement ok
+insert into t values (6, 1, 'pete')
+
+query I rowsort
+select id from t where note = 'pete'
+----
+6
+
+onlyif digres
+statement error is a tree, which is no arbiter yet
+insert into t values (7, 1, 'pete') on conflict (note) do nothing
 
 onlyif digres
 statement error storage parameter "fillfactor" is not supported
@@ -181,4 +206,3 @@ drop index t_lower
 query I rowsort
 select id from t where c2 = 9 and note like 'p%'
 ----
-5

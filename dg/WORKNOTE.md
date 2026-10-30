@@ -10362,3 +10362,27 @@ and counts every thread):
   through sm.h: rows moved, deleted and rolled back, compact
   with an older snapshot open and without, an expression and a
   partial tree, a build, a truncate, a unique one refused.
+
+## Step 348: a tree's descent and reads, and a unique tree
+
+- **Measured** (step 347's method): Q9 through a tree 1,737k to
+  1,548k, Q10 3,371k to 2,255k, today's entries 1,659k and
+  3,565k, PostgreSQL 395k and 768k. A tree's rows read many to
+  a call; a page opened without walking its entries; a cursor
+  copying only its entries; inner pages held by an open tree
+  (MAJORDECISION D11); a recheck's key in a reused buffer.
+- **Found**: held inner pages gone stale routed a million-row
+  insert so far left that it took 424 s, not 51: a descent that
+  moves right now lets them go. The load is 34 s with pages of
+  4 KB, 51 s of 8 KB, 18 s with today's entries (D12).
+- **A unique tree** (D13): an insert judges every other entry
+  of its key by its row's newest version, under the latch of the
+  leaf that covers the key, waiting for a running writer with
+  every latch let go; sm1's `read_newest` and `wait_writer`. No
+  `ON CONFLICT` arbiter yet.
+- **Tests**: sm1, `read_newest` and `wait_writer` in both kinds
+  of store; sm2, a unique insert judging entries spread over
+  leaves; sm3, a duplicate by insert and by update, a reinsert, a
+  row's own entries, nulls, and a second writer waiting for the
+  first's commit and abort (failing with the wait taken out);
+  rel, `test_tree.rel`; dg, `btree_tree.test`.

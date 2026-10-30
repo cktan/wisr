@@ -109,11 +109,10 @@
 (commit)
 
 # Verify a tree of a table with a primary key, made on its rows, and what
-# a truncate and a unique tree do.
+# a truncate does.
 # 1. Make accounts keyed by id, with rows, then a tree on its owner: the
 #    build fills it, and it gives the rows by their key.
 # 2. TRUNCATE leaves the tree empty, and a row inserted after is given.
-# 3. A unique tree is refused.
 (begin :rc)
 (table-create accounts (columns (id :int4 :not-null) (owner :text))
   (primary-key id))
@@ -134,11 +133,31 @@
 (insert accounts [40 "x"])
 (assert-eq (ids (idx-rows accounts_owner)) @[40])
 (commit)
+
+# Verify a unique tree refuses a key a live row has (../BTREE.md §6).
+# 1. Make a unique tree on a new owner column's values: a second
+#    owner y is refused, and leaves nothing.
+# 2. Delete y's row and insert y again: taken, its old entry dead.
+# 3. Rows with no owner are many.
 (begin :rc)
-(assert-err :err-invalid
-  (index-create accounts_u (table accounts) (key (owner :asc)) :unique true
-    :tree true))
+(index-create accounts_u (table accounts) (key (owner :asc)) :unique true
+  :tree true)
+(commit)
+(index-wait accounts_u)
+(begin :rc)
+(insert accounts [50 "y"])
+(commit)
+(begin :rc)
+(assert-err :err-dupkey (insert accounts [60 "y"]))
 (abort)
+(begin :rc)
+(assert-eq (ids (idx-rows accounts_u :ge ["y"] :le ["y"])) @[50])
+(delete accounts [50])
+(insert accounts [70 "y"])
+(insert accounts [80 nil])
+(insert accounts [90 nil])
+(assert-eq (ids (idx-rows accounts_u :ge ["y"] :le ["y"])) @[70])
+(commit)
 
 (db-close)
 (env-detach)

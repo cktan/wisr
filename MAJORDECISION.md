@@ -178,7 +178,7 @@ take to undo. Nothing here is merged into `main`.
 - **Undo:** a batch read of the entries' rows in sm3, as
   `rel_read_batch`.
 
-## D9. A unique index is not a tree yet
+## D9. A unique index is not a tree yet (superseded: built)
 
 - **Decided:** `CREATE UNIQUE INDEX ... WITH (tree = on)`, and a
   primary key as a tree, are refused (sm3 and digres). `BTREE.md`
@@ -239,3 +239,25 @@ take to undo. Nothing here is merged into `main`.
   `max_pk_len`, at a third of a page.
 - **Undo:** the constant; a limit per index is a field of the
   meta page away.
+
+## D13. A unique tree is built; it is no ON CONFLICT arbiter yet
+
+- **Decided:** a unique index may be a tree (D9 is undone).
+  An insert latches the leaf that covers its key's prefix,
+  judges every other entry of the prefix, on that leaf and the
+  ones to its right, by its row's newest version past the
+  snapshot (`sm1::read_newest`), and inserts while still holding
+  that latch: a live row with the key, committed or this
+  transaction's, is `SM_ERR_DUPKEY`; one another transaction is
+  still writing is waited for (`sm1::wait_writer`, in the
+  deadlock check, with every latch let go), and the key checked
+  again. `INSERT ... ON CONFLICT` on a unique tree is refused,
+  and a primary key is never a tree.
+- **Why:** every insert of one prefix takes the same first
+  latch, so two take turns; the entries to the right are read
+  without a latch, as an insert of the prefix waits for the
+  first and a split only moves them right. An arbiter needs
+  `idx_find_latest`, the newest committed row of a key under a
+  lock on it, which a tree's entries cannot give without the
+  same check made at the snapshot's edge; it is the next piece.
+- **Undo:** none; the arbiter is additive.
