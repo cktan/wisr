@@ -10502,11 +10502,20 @@ on the release builds, unpinned.
 | | Q11 tps | key moved tps |
 | --- | --- | --- |
 | PostgreSQL 18 | 33,512 | 26,904 |
-| digres, today's entries | 12,570 | 11,060 |
-| digres, a tree | 18,290 | 16,818 |
+| digres, today's entries | 12,250 | 10,874 |
+| digres, a tree | 18,420 | 16,621 |
 
-- **What it says**: a tree is 45% and 52% ahead of today's
+- **What it says**: a tree is 50% and 53% ahead of today's
   entries under 16 clients, its writes among them; no error, and
   nothing in its latches, the fill latch's stripes or the block
   cache that shows as contention at this scale. Against
-  PostgreSQL, 0.55 and 0.63.
+  PostgreSQL, 0.55 and 0.62. Runs of 20 s spread: one gave the
+  tree's key moves 14,046.
+- **Found**: a first run of this measured a digres-release built
+  before an experiment was undone (step 351's pinned rows):
+  `make -C dg release` after every change measured, and
+  `bench/btree.sh` (below) to run it all again.
+- **bench** (`../bench/btree.sh`, `btree.py`, `sql/q12.sql`): the
+  load, Q9's and Q10's instructions, and the two 16-client mixes,
+  of one kind of index a run; every number of steps 347 to 353 is
+  one of its lines.

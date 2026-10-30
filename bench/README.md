@@ -42,6 +42,7 @@ fair.
 | `run.sh` | builds, loads, runs, and writes a report |
 | `sql/` | the schema, the load, PostgreSQL's one setting of storage (`pg_only.sql`), Q1-Q6 and Q9 one a line in `queries.txt`, and pgbench's scripts for Q7, Q8, Q10 and Q11 (`q7.sql`, `q8.sql`, `q10.sql`, `q11.sql`) |
 | `roles.sh` | what checking privileges costs a role that is not a superuser (`../sm/NEXT.md` §1) |
+| `btree.sh` | a secondary index as a tree against today's entries (`../sm/BTREE.md`): wide_mixed loaded with its c2 index of one kind, Q9's and Q10's instructions a statement, and Q11 and a key-moving write (`sql/q12.sql`) under 16 clients; `btree.py` writes its queries |
 | `rowlocks.sh` | what a row lock costs digres: rows read and locked FOR UPDATE, 1, 10 and 100 a statement, and inserts under a foreign key, with 1 and 16 clients (`../sm/NEXT.md` §1, item 4) |
 | `smbench/` | the floor of a scan and a point read in sm, layer by layer down to RocksDB, on the same rows; `sqlbench.sh` times those rows through SQL in digres and PostgreSQL |
 | `getseek/` | one row read by key in RocksDB, a seek to its newest version against a Get of the plain key (`../sm/VCHAIN.md` §1) |
