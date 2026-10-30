@@ -293,3 +293,46 @@ TEST_CASE("page: no version meets a page") {
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::closedb(s) == 0);
 }
+
+TEST_CASE("page: the bytes of a prefix's pages") {
+  // Verify sm1::page_approxsize counts a prefix's pages alone.
+  // 1. Write 200 pages of 4 KB under "a", one under "b".
+  // 2. Before a flush they are in memtables: "a"'s more than "b"'s,
+  //    "c"'s none.
+  // 3. Compacted, they are in files: "a"'s over 400 KB, "c"'s none.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  sm1::session_t *s = opendb(home.env(), "db");
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t store = mkstore(s);
+  // Bytes that do not compress, as a page's keys mostly do not.
+  std::string bytes(4096, '\0');
+  uint64_t x = 88172645463325252ULL;
+  auto fill = [&] {
+    for (char &c : bytes) {
+      x ^= x << 13;
+      x ^= x >> 7;
+      x ^= x << 17;
+      c = static_cast<char>(x);
+    }
+  };
+  for (int i = 0; i < 200; i++) {
+    fill();
+    write_page(s, store, "a" + std::to_string(1000 + i), bytes);
+  }
+  write_page(s, store, "b", bytes);
+  uint64_t ad = 0, am = 0, bd = 0, bm = 0, cd = 0, cm = 0;
+  REQUIRE(sm1::page_approxsize(s, store, "a", ad, am) == 0);
+  REQUIRE(sm1::page_approxsize(s, store, "b", bd, bm) == 0);
+  REQUIRE(sm1::page_approxsize(s, store, "c", cd, cm) == 0);
+  CHECK(am > bm);
+  CHECK(0u == cd + cm);
+  REQUIRE(sm1::compact(s, store) == 0);
+  REQUIRE(sm1::page_approxsize(s, store, "a", ad, am) == 0);
+  REQUIRE(sm1::page_approxsize(s, store, "c", cd, cm) == 0);
+  CHECK(ad > 400u * 1000);
+  CHECK(0u == cd + cm);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::closedb(s) == 0);
+}

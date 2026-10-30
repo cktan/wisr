@@ -1684,6 +1684,15 @@ int page_write(session_t* session, uint64_t storeid,
                const std::vector<page_put_t>& puts);
 
 /*
+ * The bytes of storeid's pages whose keys start with prefix, RocksDB's
+ * estimate, in its sorted files, disk, and in its memtables, mem.
+ *
+ * Errors: as sm1::page_write.
+ */
+int page_approxsize(session_t* session, uint64_t storeid,
+                    std::string_view prefix, uint64_t& disk, uint64_t& mem);
+
+/*
  * Remove every page of storeid whose key starts with prefix, and its
  * cache entry, outside every transaction, as sm1::page_write.
  *

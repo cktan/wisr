@@ -2185,6 +2185,12 @@ and never logged in the temporary instance. Each page's cache
 entry is replaced. Two writes of one page are ordered by the
 caller.
 
+### int sm1::page_approxsize(sm1::session_t* session, uint64_t storeid, std::string_view prefix, uint64_t& disk, uint64_t& mem)
+
+The bytes of the pages whose keys start with `prefix`,
+RocksDB's estimate, in its sorted files and in its memtables
+apart: a tree's size, for the planner's statistics.
+
 ### int sm1::page_drop(sm1::session_t* session, uint64_t storeid, std::string_view prefix)
 
 Remove every page whose key starts with `prefix`, with a

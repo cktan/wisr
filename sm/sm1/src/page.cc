@@ -260,6 +260,37 @@ int sm1::page_write(sm1::session_t *session, uint64_t storeid,
   return 0;
 }
 
+/* The bytes of the pages under a prefix; see sm1.h. */
+int sm1::page_approxsize(sm1::session_t *session, uint64_t storeid,
+                         std::string_view prefix, uint64_t &disk,
+                         uint64_t &mem) {
+  disk = mem = 0;
+  const store_t *st = nullptr;
+  if (enter_pages(session, storeid, st) != 0 || check_page_key(prefix) != 0) {
+    return -1;
+  }
+  std::string lo = page_key(prefix);
+  std::string hi = lo;
+  while (!hi.empty() && static_cast<unsigned char>(hi.back()) == 0xFF) {
+    hi.pop_back();
+  }
+  hi.back() = static_cast<char>(static_cast<unsigned char>(hi.back()) + 1);
+  rocksdb::Range range(lo, hi);
+  for (bool files : {true, false}) {
+    rocksdb::SizeApproximationOptions so;
+    so.include_files = files;
+    so.include_memtables = !files;
+    uint64_t n = 0;
+    rocksdb::Status rs =
+        st->rdb->GetApproximateSizes(so, st->cf, &range, 1, &n);
+    if (!rs.ok()) {
+      return set_status_error(rs, "approximate pages' size");
+    }
+    (files ? disk : mem) = n;
+  }
+  return 0;
+}
+
 /* Remove every page under a prefix; see sm1.h. */
 int sm1::page_drop(sm1::session_t *session, uint64_t storeid,
                    std::string_view prefix) {
