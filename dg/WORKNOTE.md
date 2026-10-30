@@ -10438,3 +10438,23 @@ and digres's read-ahead of today's entries alike.
   rows read by key at random, RocksDB's `Get`, its bloom filter
   and block cache, which an LSM pays where a heap reads a page
   it has.
+
+## Step 351: an insert spliced into a page's bytes; the tree under TSan
+
+- **Found** (`perf record` of the million-row load into a tree):
+  a fifth of it malloc and free, and 7% decoding a leaf into an
+  entry's two strings each and laying it out again, for every
+  insert; then the WAL's checksums, 8.5%, and LZ4, 5%, of 4 KB a
+  row written.
+- **sm2**: `page_insert_bytes` splices an entry and its slot into
+  a page's bytes, its version moved, no entry decoded; a latched
+  leaf keeps its pinned bytes, and decodes them only to split or
+  to remove.
+- **Measured**: the load 34 s to 27.7 s (today's entries 18 s);
+  Q9 and Q10 unchanged.
+- **TSan**: `make tsan` in sm2 runs every tree test, those that
+  reach RocksDB among them, against the RocksDB
+  `test/rocksdb.sh tsan` builds instrumented: 20 cases, none
+  reported.
+- **Tests**: sm2, a splice against a decode, an insert and a
+  layout, step by step, with a high key and without.

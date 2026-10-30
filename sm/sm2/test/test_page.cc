@@ -283,3 +283,49 @@ TEST_CASE("tree page: bytes that are not a page are refused") {
   flagless[20] = 1;
   CHECK(-1 == view.open(flagless));
 }
+
+TEST_CASE("tree page: an insert into the bytes lays out what a decode does") {
+  // Verify page_insert_bytes against page_insert and page_bytes.
+  // 1. Insert random keys, with a high key or not, one at a time, into
+  //    a page's bytes, and into the page decoded.
+  // 2. Each step's bytes are the same, the version moved by one.
+  // 3. A key there already is 1, untouched; a full page is 2; an
+  //    entry over the limit is refused.
+  std::mt19937_64 rng(9);
+  for (int round = 0; round < 40; round++) {
+    page_t page;
+    page.level = 0;
+    page.right = round;
+    if (round % 2) {
+      page.flags = page_has_high;
+      page.high = std::string(20, '\xff');
+    }
+    std::string bytes = page_bytes(page);
+    for (int tries = 0; tries < 100000; tries++) {
+      std::string key = random_key(rng, 4 + round % 60);
+      page_view_t v = view_of(bytes);
+      REQUIRE(0 == v.check());
+      std::string out;
+      int rc = page_insert_bytes(v, key, "vv", page_limit, out);
+      page_t want = page;
+      int wrc = page_insert(want, key, "vv", page_limit);
+      REQUIRE(wrc == rc);
+      if (2 == rc) {
+        break;
+      }
+      if (1 == rc) {
+        continue;
+      }
+      want.version++;
+      CHECK(page_bytes(want) == out);
+      page = want;
+      bytes = out;
+    }
+    std::string out;
+    CHECK(1 == page_insert_bytes(view_of(bytes), page.entries[0].first, "x",
+                                 page_limit, out));
+    CHECK(-1 == page_insert_bytes(view_of(bytes),
+                                  std::string(entry_max(page_limit), 'k'), "",
+                                  page_limit, out));
+  }
+}

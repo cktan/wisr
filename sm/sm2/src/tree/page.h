@@ -77,6 +77,19 @@ std::string page_bytes(const page_t &page);
 int page_insert(page_t &page, std::string_view key, std::string_view value,
                 size_t limit = page_limit);
 
+class page_view_t;
+
+/*
+ * Insert key, with value, into the page v views, which check() has
+ * passed, laid out anew in out with its version moved: 0; 1 if an
+ * entry has the key already, out untouched; 2 if there is no room
+ * under limit, so the page is to be decoded and split; -1 with
+ * SM_ERR_KEYTOOLONG as page_insert. No entry is decoded: the bytes
+ * are spliced, an insert's common case.
+ */
+int page_insert_bytes(const page_view_t &v, std::string_view key,
+                      std::string_view value, size_t limit, std::string &out);
+
 /*
  * Insert key, with value, into page, which page_insert found full,
  * and split it into itself and right, each under limit, their bytes
@@ -117,6 +130,10 @@ public:
   size_t count() const { return m_count; }
   /* The page's bytes, as open() was given them. */
   std::string_view bytes() const { return m_bytes; }
+  /* Where its slots begin, past the header and the high key. */
+  size_t slots_offset() const { return m_slots; }
+  /* Entry i's offset, from its slot, i below count(). */
+  size_t offset(size_t i) const;
 
   /* Entry i's key and value, i below count(). */
   std::string_view key(size_t i) const;
@@ -147,9 +164,6 @@ public:
   void load(page_t &out) const;
 
 private:
-  /* Entry i's offset, from its slot. */
-  size_t offset(size_t i) const;
-
   /* The length-prefixed bytes at at, empty past the page. */
   std::string_view field(size_t at) const;
 

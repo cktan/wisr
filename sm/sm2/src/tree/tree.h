@@ -184,11 +184,37 @@ int tree_check(tree_t &tree);
 
 namespace detail {
 
-/* A leaf latched for a change: its id, its latch, its page decoded. */
+/* A page pinned in the cache and viewed; released at scope's end. */
+struct pinned_t {
+  sm1::session_t *session = nullptr;
+  sm1::page_t *pin = nullptr;
+  page_view_t view;
+
+  pinned_t() = default;
+  pinned_t(const pinned_t &) = delete;
+  pinned_t &operator=(const pinned_t &) = delete;
+  ~pinned_t() { sm1::page_release(session, pin); }
+
+  /* Release the page now. */
+  void release() {
+    sm1::page_release(session, pin);
+    pin = nullptr;
+  }
+};
+
+/*
+ * A leaf latched for a change: its id, its latch, its bytes pinned
+ * and checked whole, and its page decoded, when a split or a removal
+ * asks for it (decode()).
+ */
 struct latched_t {
   uint64_t pageid = 0;
   page_latch_t latch;
+  pinned_t pin;
   page_t page;
+
+  /* The page decoded from its bytes into page. */
+  void decode() { pin.view.load(page); }
 };
 
 /* Find and latch the leaf that holds key, any split it shows finished. */
@@ -213,6 +239,7 @@ int tree_remove_if(tree_t &tree, std::string_view key, F keep) {
   if (0 != detail::latch_leaf(tree, key, l)) {
     return -1;
   }
+  l.decode();
   auto &entries = l.page.entries;
   size_t lo = 0, hi = entries.size();
   while (lo < hi) {

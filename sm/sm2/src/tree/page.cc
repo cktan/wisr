@@ -111,6 +111,62 @@ int page_insert(page_t &page, std::string_view key, std::string_view value,
   return 0;
 }
 
+/* Insert an entry by splicing a page's bytes; see page.h. */
+int page_insert_bytes(const page_view_t &v, std::string_view key,
+                      std::string_view value, size_t limit, std::string &out) {
+  size_t size = entry_size(key.size(), value.size());
+  if (size > entry_max(limit)) {
+    return sm1::seterr(sm1::SM_ERR_KEYTOOLONG,
+                       "tree page: an entry over a third of its page");
+  }
+  size_t n = v.count();
+  size_t i = v.lower_bound(key);
+  if (i < n && v.key(i) == key) {
+    return 1;
+  }
+  std::string_view old = v.bytes();
+  if (old.size() + size > limit) {
+    return 2;
+  }
+  // The new entry goes where entry i begins, the entries being end to
+  // end in slot order (check()); its slot goes in slot i's place.
+  size_t slots = v.slots_offset();
+  size_t first = slots + 2 * n;
+  size_t at = i < n ? v.offset(i) : old.size();
+  size_t grown = size - 2; /* the entry's bytes, past its slot */
+  out.resize(old.size() + size);
+  char *p = out.data();
+  memcpy(p, old.data(), slots);
+  // The header: one more entry, the version moved.
+  uint64_t count = n + 1, version = v.version() + 1;
+  for (int b = 0; b < 2; b++) {
+    p[2 + b] = static_cast<char>((count >> (8 * b)) & 0xFF);
+  }
+  for (int b = 0; b < 8; b++) {
+    p[4 + b] = static_cast<char>((version >> (8 * b)) & 0xFF);
+  }
+  auto put16 = [&](size_t pos, size_t x) {
+    p[pos] = static_cast<char>(x & 0xFF);
+    p[pos + 1] = static_cast<char>(x >> 8);
+  };
+  for (size_t j = 0; j < n; j++) {
+    size_t o = v.offset(j) + 2 + (j < i ? 0 : grown);
+    put16(slots + 2 * (j < i ? j : j + 1), o);
+  }
+  put16(slots + 2 * i, at + 2);
+  // The entries before it, it, and those after.
+  size_t to = first + 2;
+  memcpy(p + to, old.data() + first, at - first);
+  to += at - first;
+  put16(to, key.size());
+  memcpy(p + to + 2, key.data(), key.size());
+  put16(to + 2 + key.size(), value.size());
+  memcpy(p + to + 4 + key.size(), value.data(), value.size());
+  to += grown;
+  memcpy(p + to, old.data() + at, old.size() - at);
+  return 0;
+}
+
 /* Insert an entry into a full page and split it; see page.h. */
 void page_split(page_t &page, page_t &right, std::string_view key,
                 std::string_view value, size_t limit) {

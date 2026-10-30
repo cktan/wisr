@@ -331,8 +331,10 @@ Estimates, to be measured as each part lands:
   `wide_mixed` with its `c2` index: 18 s with today's entries,
   51 s with a tree of 8 KB pages, 34 s of 4 KB, 27 s of 2 KB;
   Q9 and Q10 within 2% of each other at all three
-  (`../MAJORDECISION.md` D12). Logging the entry and writing
-  the page later is what would close the rest.
+  (`../MAJORDECISION.md` D12). An entry spliced into the page's
+  bytes, none decoded, brought 4 KB to 27.7 s
+  (`../dg/WORKNOTE.md` step 351). Logging the entry and
+  writing the page later is what would close the rest.
 - **Index-only scans** get slower (§4).
 
 ## 11. Open questions

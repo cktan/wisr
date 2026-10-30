@@ -2,7 +2,7 @@
 #
 #   make -j4          libsm2.a and the test binary
 #   make test         build, then run the tests
-#   make tsan         the B+tree's latch tests under the thread sanitizer
+#   make tsan         the B+tree's tests under the thread sanitizer
 #   make format       clang-format src/ and test/ in place
 #   make clean        remove build/
 #
@@ -38,7 +38,10 @@ CXXFLAGS ?= $(OPTFLAGS)
 CXXFLAGS += -std=c++20 -fno-rtti -Wall -Wextra -Iinclude -Isrc/type -Isrc/ryu \
             -I$(SM1)/include -I$(SM0)/include -I../include \
             -MMD -MP
-LDLIBS   += -lrocksdb -licui18n -licuuc -licudata -lpthread
+# RocksDB: the system's, or with make tsan the instrumented one
+# ../dg/test/rocksdb.sh builds.
+ROCKSDB  ?= -lrocksdb
+LDLIBS   += $(ROCKSDB) -licui18n -licuuc -licudata -lpthread
 
 BUILD := build
 
@@ -106,13 +109,18 @@ $(BUILD)/test/%.o: test/%.cc $(FLAGS_FILE)
 test: all
 	$(RUN) $(TEST_BIN) $(TEST_ARGS)
 
-# The B+tree's latch tests, whose threads share latches,
-# built apart under the thread sanitizer; RocksDB is not instrumented,
-# so the tests that reach it are left out. The sanitizer cannot run
-# with the address space randomised, hence setarch -R.
+# The B+tree's tests, whose threads share pages, latches and the
+# block cache, built apart under the thread sanitizer, against the
+# RocksDB ../../dg/test/rocksdb.sh builds instrumented: the system's
+# is not, and its handovers would read as races. The sanitizer cannot
+# run with the address space randomised, hence setarch -R.
+TSAN_ROCKSDB := $(abspath ../../rocksdb/tsan/librocksdb.a) \
+    -lsnappy -llz4 -lzstd -lz -lbz2
 tsan:
+	../../dg/test/rocksdb.sh tsan
 	$(MAKE) BUILD=$(BUILD)/tsan OPTFLAGS="-O1 -g -fsanitize=thread" \
-	    RUN="setarch $$(uname -m) -R" TEST_ARGS='-tc="tree latch*"' test
+	    ROCKSDB="$(TSAN_ROCKSDB)" RUN="setarch $$(uname -m) -R" \
+	    TEST_ARGS='-tc="tree*"' test
 
 format:
 	clang-format -i $(FORMAT_FILES)

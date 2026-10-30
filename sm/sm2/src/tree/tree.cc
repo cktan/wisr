@@ -104,23 +104,7 @@ page_name_t name_of(const tree_t &tree, uint64_t pageid) {
   return page_name_t{tree.dbid, tree.storeid, tree.relid, pageid};
 }
 
-/* A page pinned in the cache and viewed; released at scope's end. */
-struct pinned_t {
-  sm1::session_t *session = nullptr;
-  sm1::page_t *pin = nullptr;
-  page_view_t view;
-
-  pinned_t() = default;
-  pinned_t(const pinned_t &) = delete;
-  pinned_t &operator=(const pinned_t &) = delete;
-  ~pinned_t() { sm1::page_release(session, pin); }
-
-  /* Release the page now. */
-  void release() {
-    sm1::page_release(session, pin);
-    pin = nullptr;
-  }
-};
+using detail::pinned_t;
 
 /* Read and view page pageid of tree; a missing page is corrupt. */
 int read_page(tree_t &tree, uint64_t pageid, bool inner, pinned_t &out) {
@@ -281,26 +265,32 @@ int descend(tree_t &tree, std::string_view key, uint8_t level, bool from_meta,
  * the latch coupled, while key is at or past its high key.
  */
 int latch_covering(tree_t &tree, std::string_view key, uint64_t &pageid,
-                   page_latch_t &latch, page_t &page) {
+                   page_latch_t &latch, pinned_t &p) {
   latch = page_latch_t(page_latches(), name_of(tree, pageid));
-  pinned_t p;
   for (;;) {
     if (0 != read_page(tree, pageid, false, p)) {
       return -1;
     }
     if (!p.view.past_high(key)) {
       // A writer checks every entry of the page it is to change.
-      if (0 != p.view.check()) {
-        return -1;
-      }
-      p.view.load(page);
-      return 0;
+      return p.view.check();
     }
     pageid = p.view.right();
     // Latch the right page before the left's goes: left to right.
     page_latch_t next(page_latches(), name_of(tree, pageid));
     latch = std::move(next);
   }
+}
+
+/* latch_covering, the page decoded into page. */
+int latch_covering(tree_t &tree, std::string_view key, uint64_t &pageid,
+                   page_latch_t &latch, page_t &page) {
+  pinned_t p;
+  if (0 != latch_covering(tree, key, pageid, latch, p)) {
+    return -1;
+  }
+  p.view.load(page);
+  return 0;
 }
 
 int post(tree_t &tree, uint64_t childid, page_t &child, page_latch_t &latch,
@@ -491,11 +481,12 @@ int latch_leaf(tree_t &tree, std::string_view key, latched_t &out) {
     if (0 != descend(tree, key, 0, false, pageid)) {
       return -1;
     }
-    if (0 != latch_covering(tree, key, pageid, out.latch, out.page)) {
+    if (0 != latch_covering(tree, key, pageid, out.latch, out.pin)) {
       return -1;
     }
-    if (0 != (out.page.flags & page_incomplete)) {
+    if (0 != (out.pin.view.flags() & page_incomplete)) {
       // A split a crash left half done: finish it, and look again.
+      out.decode();
       if (0 != finish_split(tree, pageid, out.page, out.latch)) {
         return -1;
       }
@@ -534,7 +525,9 @@ int check_entry(const tree_t &tree, std::string_view key,
  */
 int insert_into(tree_t &tree, detail::latched_t &l, std::string_view key,
                 std::string_view value) {
-  int rc = page_insert(l.page, key, value, tree.limit);
+  // Into the page's bytes, decoding no entry, while it has room.
+  std::vector<out_t> outs(1);
+  int rc = page_insert_bytes(l.pin.view, key, value, tree.limit, outs[0].bytes);
   if (rc < 0) {
     return -1;
   }
@@ -542,8 +535,12 @@ int insert_into(tree_t &tree, detail::latched_t &l, std::string_view key,
     return 1;
   }
   if (0 == rc) {
-    return detail::write_back(tree, l);
+    outs[0].pageid = l.pageid;
+    outs[0].inner = false;
+    return write_pages(tree, outs);
   }
+  // Full: decoded, and split with the entry.
+  l.decode();
   page_t right;
   page_split(l.page, right, key, value, tree.limit);
   uint64_t rightid = 0;
@@ -600,23 +597,19 @@ int tree_insert_unique(
       }
       return check(k, v);
     };
-    const auto &entries = first.page.entries;
-    size_t i = 0;
-    while (i < entries.size() && std::string_view(entries[i].first) < prefix) {
-      i++;
-    }
+    const page_view_t &fv = first.pin.view;
     bool more = true;
-    for (; i < entries.size(); i++) {
-      if (!begins(entries[i].first, prefix)) {
+    for (size_t i = fv.lower_bound(prefix); i < fv.count(); i++) {
+      if (!begins(fv.key(i), prefix)) {
         more = false;
         break;
       }
-      int r = judge(entries[i].first, entries[i].second);
+      int r = judge(fv.key(i), fv.value(i));
       if (0 != r) {
         return r == 2 ? 2 : -1;
       }
     }
-    uint64_t next = first.page.right;
+    uint64_t next = fv.right();
     pinned_t p;
     while (more && 0 != next) {
       if (0 != read_page(tree, next, false, p)) {
@@ -641,30 +634,31 @@ int tree_insert_unique(
     }
     // The key goes on the first leaf, or on one to its right, latched
     // left to right, the first still held.
-    if (!first.page.has_high_key() || key < first.page.high) {
+    if (!fv.has_high() || key < fv.high()) {
       return insert_into(tree, first, key, value);
     }
     detail::latched_t cur;
-    cur.pageid = first.page.right;
+    cur.pageid = fv.right();
     bool restart = false;
     for (;;) {
       page_latch_t latch(page_latches(), name_of(tree, cur.pageid));
       cur.latch = std::move(latch);
-      if (0 != read_page(tree, cur.pageid, false, p) || 0 != p.view.check()) {
+      if (0 != read_page(tree, cur.pageid, false, cur.pin) ||
+          0 != cur.pin.view.check()) {
         return -1;
       }
-      p.view.load(cur.page);
-      p.release();
-      if (0 != (cur.page.flags & page_incomplete)) {
+      const page_view_t &cv = cur.pin.view;
+      if (0 != (cv.flags() & page_incomplete)) {
         // A split a crash left half done: finish it, and begin again.
+        cur.decode();
         if (0 != finish_split(tree, cur.pageid, cur.page, cur.latch)) {
           return -1;
         }
         restart = true;
         break;
       }
-      if (cur.page.has_high_key() && key >= cur.page.high) {
-        cur.pageid = cur.page.right;
+      if (cv.has_high() && key >= cv.high()) {
+        cur.pageid = cv.right();
         continue;
       }
       break;
