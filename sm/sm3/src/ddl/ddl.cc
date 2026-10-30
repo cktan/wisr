@@ -221,6 +221,8 @@ static int make_table(session_t *session, uint64_t nspoid,
                   "sm3.id." + std::to_string(t),
                   first_index_relid,
                   {},
+                  {},
+                  {},
                   {}};
   for (const column_spec_t &c : columns) {
     rec.columns.push_back({c.name, c.type_code, c.typmod, c.not_null, false,
@@ -772,7 +774,7 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
   if (primary) {
     if (rekey(session, table, std::move(rec)) != 0 ||
         cat_put_index_state(session, table, i,
-                            {index_state_t::valid, sm1::SM_OK, {}}) != 0) {
+                            {index_state_t::valid, sm1::SM_OK, {}, {}}) != 0) {
       return -1;
     }
     oid = i;
@@ -802,7 +804,7 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
       return -1;
     }
     if (cat_put_index_state(session, table, i,
-                            {index_state_t::valid, sm1::SM_OK, {}}) != 0) {
+                            {index_state_t::valid, sm1::SM_OK, {}, {}}) != 0) {
       return -1;
     }
   } else {

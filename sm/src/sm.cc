@@ -305,8 +305,9 @@ sm_fkey_def_t api_fkey(const sm3::fkey_rec_t &fk) {
 }
 
 sm_table_def_t api_def(const sm3::session_t *ss, const sm3::table_def_t &d) {
-  sm_table_def_t out{d.oid, d.nspoid, d.name, {}, {}, {}};
-  out.version = sm3::cat_table_version(ss, d.oid);
+  sm_table_def_t out{
+      d.oid, d.nspoid, d.name, {}, {}, {}, sm3::cat_table_version(ss, d.oid),
+      {},    {}};
   for (const sm3::column_def_t &c : d.columns) {
     out.columns.push_back({c.name, c.type->code, c.typmod, c.not_null,
                            c.dropped, c.default_expr.has_value(),

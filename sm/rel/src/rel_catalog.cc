@@ -197,7 +197,8 @@ static std::unique_ptr<table_def_t> view_of(const std::string &name,
   t->tbl = tbl;
   t->def = def;
   for (const sm_column_def_t &c : def->columns) {
-    t->columns.push_back({c.name, c.type_code, c.typmod, c.not_null});
+    t->columns.push_back(
+        {c.name, c.type_code, c.typmod, c.not_null, std::nullopt});
   }
   for (const sm_index_def_t &x : def->indexes) {
     index_def_t idef;

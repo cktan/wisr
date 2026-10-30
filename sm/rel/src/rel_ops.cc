@@ -1747,7 +1747,7 @@ static void key_values_of(const table_def_t *p_tdef, const index_def_t *p_idef,
   for (int32_t j = 0; j < n; j++) {
     const key_col_def_t &k = p_idef->keys[j];
     col_def_t col = {p_tdef->columns[k.col_idx].name, k.type_code, k.typmod,
-                     false};
+                     false, std::nullopt};
     if (janet_to_value(items[j], col, vals.bufs[j], &vals.values[j],
                        &vals.isnull[j]) != 0) {
       janet_panicf("%s: invalid bound value for column '%s'", op,

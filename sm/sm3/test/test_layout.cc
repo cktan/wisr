@@ -28,9 +28,12 @@ sm3::table_rec_t sample_table() {
   t.id_seq = "orders_rowno";
   t.next_relid = 3;
   t.columns = {
-      {"id", 36, -1, true, false, std::nullopt, std::nullopt},
-      {"note", 64, -1, false, false, sm2::make_varlena("n/a"), 1000},
-      {"gone", 27, -1, false, true, std::nullopt, std::nullopt},
+      {"id", 36, -1, true, false, std::nullopt, std::nullopt, std::nullopt, 0,
+       0, std::nullopt},
+      {"note", 64, -1, false, false, sm2::make_varlena("n/a"), 1000,
+       std::nullopt, 0, 0, std::nullopt},
+      {"gone", 27, -1, false, true, std::nullopt, std::nullopt, std::nullopt, 0,
+       0, std::nullopt},
   };
   t.indexes = {
       {1100,
@@ -179,9 +182,9 @@ TEST_CASE("every catalog entity round trips through its value") {
   }
 
   for (const sm3::index_status_t &st :
-       {sm3::index_status_t{sm3::index_state_t::valid, sm1::SM_OK, {}},
-        sm3::index_status_t{sm3::index_state_t::failed, sm1::SM_ERR_DUPKEY,
-                            "two rows"}}) {
+       {sm3::index_status_t{sm3::index_state_t::valid, sm1::SM_OK, {}, {}},
+        sm3::index_status_t{
+            sm3::index_state_t::failed, sm1::SM_ERR_DUPKEY, "two rows", {}}}) {
     sm3::index_status_t st_back;
     REQUIRE(sm3::encode_index_state(st, v) == 0);
     REQUIRE(sm3::decode_index_state(v, st_back) == 0);

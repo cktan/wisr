@@ -142,11 +142,18 @@ TEST_CASE("the catalog stores a table's record and makes nothing else") {
   //    SM_ERR_NOTFOUND.
   cat_db_t db;
   uint64_t oid = 0, other = 0;
-  sm3::table_rec_t rec{
-      sm3::nsp_public,        "raw", 424242, "no.such.sequence",
-      sm3::first_index_relid, {},    {}};
-  rec.columns.push_back(
-      {"x", sm2::type_int4.code, -1, false, false, std::nullopt, std::nullopt});
+  sm3::table_rec_t rec{sm3::nsp_public,
+                       "raw",
+                       424242,
+                       "no.such.sequence",
+                       sm3::first_index_relid,
+                       {},
+                       {},
+                       {},
+                       {}};
+  rec.columns.push_back({"x", sm2::type_int4.code, -1, false, false,
+                         std::nullopt, std::nullopt, std::nullopt, 0, 0,
+                         std::nullopt});
   db.begin();
   REQUIRE(sm3::cat_new_oid(db.ss, oid) == 0);
   REQUIRE(sm3::cat_new_oid(db.ss, other) == 0);

@@ -999,7 +999,8 @@ int cat_put_sequence(session_t *session, uint64_t oid, uint64_t nspoid,
   // The name first, so a taken one fails before anything is made.
   if (insert_name(kv.get(), nspoid, name,
                   {kind_t::sequence, oid, std::nullopt}) != 0 ||
-      encode_sequence({nspoid, std::string(name), start, increment}, blob) !=
+      encode_sequence(
+          {nspoid, std::string(name), start, increment, std::nullopt}, blob) !=
           0 ||
       insert_entity(kv.get(), kind_t::sequence, oid, blob) != 0 ||
       sm1::mkseq(session->sm1, sequence_counter(oid), start, increment) != 0) {
