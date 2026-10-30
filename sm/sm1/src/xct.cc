@@ -421,12 +421,16 @@ int forget(sm1::session_t *s, int depth) {
 }
 
 /*
- * The range [first, end) that holds every key of store: 0, 1 if it
+ * The range [first, end) that holds every version of store, below its
+ * pages, which no transaction wrote (../BTREE.md §2): 0, 1 if it
  * holds none, or -1 with the error set.
  */
 int store_range(const store_t &store, std::string &first, std::string &end) {
-  std::unique_ptr<rocksdb::Iterator> it(
-      store.rdb->NewIterator(rocksdb::ReadOptions(), store.cf));
+  rocksdb::ReadOptions ro;
+  rocksdb::Slice pages(&key_class_page, 1);
+  ro.iterate_upper_bound = &pages;
+  ro.total_order_seek = true;
+  std::unique_ptr<rocksdb::Iterator> it(store.rdb->NewIterator(ro, store.cf));
   it->SeekToFirst();
   if (it->Valid()) {
     first = it->key().ToString();

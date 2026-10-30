@@ -1016,10 +1016,15 @@ void chain_repair(db_t *db, const std::vector<db_t::repair_t> &repairs) {
 
 /* The id after the store's last old version; see db.h. */
 uint64_t chain_next_old(rocksdb::DB *rdb, rocksdb::ColumnFamilyHandle *cf) {
-  // The old keys are the store's last: its last key is the highest
-  // id, if it has any.
-  std::unique_ptr<rocksdb::Iterator> it(
-      rdb->NewIterator(rocksdb::ReadOptions(), cf));
+  // The old keys are the store's last versions, below its pages
+  // (../BTREE.md §3): the last key before the pages' class is the
+  // highest id, if it has any. In total order, past the CF's prefix
+  // extractor.
+  rocksdb::ReadOptions ro;
+  rocksdb::Slice pages(&key_class_page, 1);
+  ro.iterate_upper_bound = &pages;
+  ro.total_order_seek = true;
+  std::unique_ptr<rocksdb::Iterator> it(rdb->NewIterator(ro, cf));
   it->SeekToLast();
   if (it->Valid() && it->key().size() == 9 && it->key()[0] == key_class_old) {
     return sm0::get_be64(it->key().data() + 1) + 1;

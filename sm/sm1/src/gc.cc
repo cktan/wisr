@@ -62,6 +62,11 @@ public:
    */
   bool Filter(int, const rocksdb::Slice &key, const rocksdb::Slice &value,
               std::string *new_value, bool *value_changed) const override {
+    // A page is no version: it is the level above's, and kept as it
+    // is (../BTREE.md §7).
+    if (!key.empty() && key[0] == key_class_page) {
+      return false;
+    }
     // A chained key's versions have rules of their own (../VCHAIN.md
     // §7).
     if (!key.empty() && key[0] != key_class_versioned) {

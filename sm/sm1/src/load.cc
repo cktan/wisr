@@ -361,11 +361,15 @@ int check_disjoint(const sm1::loader_t *l) {
 
 /*
  * Whether the store holds any key, a version of any kind: 1, 0, or
- * -1 on error. One seek.
+ * -1 on error. One seek. Its pages are no versions, and are left out
+ * (../BTREE.md §8, bulk load).
  */
 int holds_a_key(const store_t &st) {
-  std::unique_ptr<rocksdb::Iterator> it(
-      st.rdb->NewIterator(rocksdb::ReadOptions(), st.cf));
+  rocksdb::ReadOptions ro;
+  rocksdb::Slice pages(&key_class_page, 1);
+  ro.iterate_upper_bound = &pages;
+  ro.total_order_seek = true;
+  std::unique_ptr<rocksdb::Iterator> it(st.rdb->NewIterator(ro, st.cf));
   it->SeekToFirst();
   if (it->Valid()) {
     return 1;

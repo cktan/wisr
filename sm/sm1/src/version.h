@@ -32,6 +32,7 @@ constexpr size_t version_tail_size = 12;
 constexpr char key_class_versioned = 0x00; /* userkey | ~wts | ~seq */
 constexpr char key_class_current = 0x01;   /* a chained key's newest */
 constexpr char key_class_old = 0x02;       /* be64(id): an older one */
+constexpr char key_class_page = 0x04;      /* a page, unversioned */
 
 /* Value flags. */
 constexpr uint8_t version_tombstone = 0x01; /* this version is a delete */

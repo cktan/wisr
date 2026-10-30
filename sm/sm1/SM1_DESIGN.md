@@ -210,9 +210,13 @@ Notes on the encoding:
   version key is parsed from the tail. No escaping needed.
 - **The class byte** opens every key of a store: `0x00` for the
   versioned keys this section describes; `0x01` and `0x02` for a
-  chained key's newest and older versions (`../VCHAIN.md` §2).
-  sm1 adds it when it builds a key and strips it when it hands a
-  userkey out; no caller sees it.
+  chained key's newest and older versions (`../VCHAIN.md` §2);
+  `0x04` for a page, unversioned, which the level above lays
+  out as a B+tree's (`../BTREE.md`, `sm1::page_read`). sm1 adds
+  it when it builds a key and strips it when it hands a userkey
+  out; no caller sees it. A page is no version: the GC filter
+  keeps it as it is, and a load's emptiness and a load's
+  rollback leave it out.
 - **Comparator.** Store CFs use a custom comparator,
   `wisr.store.v2`: compare the class bytes; within class `0x00`,
   compare the `userkey` parts (key minus the class and the

@@ -1511,7 +1511,8 @@ int load_open(session_t* session, uint64_t storeid, loader_t*& out);
 
 /*
  * Whether storeid holds no key at all, in empty: no version of
- * any kind, live, dead or deleted, of any transaction. It is what
+ * any kind, live, dead or deleted, of any transaction; its pages
+ * (sm1::page_read), which are no versions, aside. It is what
  * load_open requires, asked without opening anything; without a
  * lock on the store the answer may change at once.
  *
@@ -1552,6 +1553,75 @@ int load_put(loader_t* loader, size_t stream, std::string_view key,
  * SM_ERR_DISKFULL, SM_ERR_IO.
  */
 int load_close(loader_t* loader);
+
+/*
+ * Pages (../BTREE.md §2): keys of a store the level above lays out
+ * as B+tree pages, apart from its versions, and none of a
+ * transaction's. A page is written outside every transaction, in one
+ * RocksDB write batch that commits when it is made, whatever the
+ * caller's transaction then does, and is read as it is, through the
+ * environment's block cache, where its bytes are an entry of their
+ * own, shared by every session. A page's key is the caller's, under
+ * a class of its own: no scan, read or write of versions meets it.
+ * Each call needs an active transaction, only to name the store.
+ */
+
+/*
+ * The dbid of the database session is open on (sm1::dbid): with a
+ * storeid, it names a store's pages across the process.
+ */
+uint64_t session_dbid(const session_t* session);
+
+/* A page pinned in the block cache, by sm1::page_read. */
+struct page_t;
+
+/*
+ * A page to write: its key, and its bytes, or erase for none. inner
+ * asks the cache to keep it before the pages without (an inner page
+ * of a tree, which every probe reads).
+ */
+struct page_put_t {
+    std::string_view key;
+    std::string_view bytes;
+    bool             erase = false;
+    bool             inner = false;
+};
+
+/*
+ * Read the page at key in storeid: 0 with it pinned in out and its
+ * bytes in bytes, valid until sm1::page_release(out); 1 if there is
+ * none, out untouched. A miss reads it from the store into the
+ * cache, at the priority inner asks for (sm1::page_put_t). A read
+ * sees a page as one write left it, never a mix of two.
+ *
+ * Errors: SM_ERR_INVALID (store 0, a key too long), SM_ERR_NOTFOUND,
+ * SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_IO.
+ */
+int page_read(session_t* session, uint64_t storeid, std::string_view key,
+              bool inner, page_t*& out, std::string_view& bytes);
+
+/* Release a page sm1::page_read pinned; nullptr is a no-op. */
+void page_release(page_t* page);
+
+/*
+ * Write puts to storeid at once, outside every transaction: in
+ * RocksDB's WAL, unsynced, as a later commit's sync covers it. Each
+ * page's cache entry is replaced, so the next read sees the write.
+ * Two writes of one page are ordered by the caller.
+ *
+ * Errors: SM_ERR_INVALID, SM_ERR_NOTFOUND, SM_ERR_NOTRANS,
+ * SM_ERR_PREPARED, SM_ERR_IO.
+ */
+int page_write(session_t* session, uint64_t storeid,
+               const std::vector<page_put_t>& puts);
+
+/*
+ * Remove every page of storeid whose key starts with prefix, and its
+ * cache entry, outside every transaction, as sm1::page_write.
+ *
+ * Errors: as sm1::page_write.
+ */
+int page_drop(session_t* session, uint64_t storeid, std::string_view prefix);
 
 /*
  * The compiler flags this level was built with, its Makefile's

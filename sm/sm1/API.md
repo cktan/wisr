@@ -2095,6 +2095,59 @@ key whose newest version the cursor does not see is handed
 out as the version it does, read from the chain as the store
 stood when the cursor opened.
 
+## Page API
+
+Pages (`../BTREE.md` §2): keys of a store the level above lays
+out as B+tree pages, apart from its versions and none of a
+transaction's. A page is written outside every transaction, in
+one RocksDB write batch that commits when it is made, whatever
+the caller's transaction then does, and read as it is, through
+the environment's block cache, where its bytes are an entry of
+their own, shared by every session. Its key is the caller's,
+under the class byte `0x04` (`SM1_DESIGN.md` §3.1), so no scan,
+read or write of versions meets it; the GC filter keeps it as
+it is. Each call needs an active transaction, only to name the
+store.
+
+A read that misses holds a fill latch, a stripe of 256 by the
+page, across its `Get` and its insert into the cache; a write
+holds the stripes of all its pages across its write and its
+inserts. So a read that missed before a write cannot put back
+the page the write replaced. A hit takes no latch.
+
+### uint64_t sm1::session_dbid(const sm1::session_t* session)
+
+The dbid of the database the session is open on; with a
+storeid, it names a store's pages across the process.
+
+### int sm1::page_read(sm1::session_t* session, uint64_t storeid, std::string_view key, bool inner, sm1::page_t*& out, std::string_view& bytes)
+
+Read the page at `key`: 0 with it pinned in `out` and its bytes
+in `bytes`, valid until `sm1::page_release(out)`; 1 if there is
+none. A miss reads it into the cache, at high priority if
+`inner`. A read sees a page as one write left it.
+
+Errors: `SM_ERR_INVALID` (store 0, a key too long),
+`SM_ERR_NOTFOUND`, `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
+`SM_ERR_IO`.
+
+### void sm1::page_release(sm1::page_t* page)
+
+Release a page `sm1::page_read` pinned; `nullptr` is a no-op.
+
+### int sm1::page_write(sm1::session_t* session, uint64_t storeid, const std::vector<sm1::page_put_t>& puts)
+
+Write `puts` at once, each a key and its bytes or `erase`:
+in RocksDB's WAL, unsynced, as a later commit's sync covers it,
+and never logged in the temporary instance. Each page's cache
+entry is replaced. Two writes of one page are ordered by the
+caller.
+
+### int sm1::page_drop(sm1::session_t* session, uint64_t storeid, std::string_view prefix)
+
+Remove every page whose key starts with `prefix`, with a
+range delete, and drop each one's cache entry.
+
 ## Build
 
 ### const char* sm1::build_flags()
