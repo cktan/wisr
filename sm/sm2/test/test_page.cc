@@ -50,7 +50,8 @@ void check_entries(const page_view_t &view,
 
 } // namespace
 
-TEST_CASE("a page holds its entries in key order, read where they lie") {
+TEST_CASE(
+    "tree page: a page holds its entries in key order, read where they lie") {
   // Verify inserts at random against a sorted map, through the bytes.
   // 1. Insert random keys, with values, until the page has no room.
   // 2. A key inserted again is no change, and is reported so.
@@ -104,11 +105,13 @@ TEST_CASE("a page holds its entries in key order, read where they lie") {
   }
 }
 
-TEST_CASE("a split's halves are the whole, in order, each under the limit") {
+TEST_CASE("tree page: a split's halves are the whole, in order, each under the "
+          "limit") {
   // Verify page_split at every size of page, by bytes.
   // 1. Fill pages of 2 entries up to full, of random lengths.
-  // 2. Split each: the halves' entries, together, are the whole's,
-  //    and every key of the left is below every key of the right.
+  // 2. Split each with one more key: the halves' entries, together,
+  //    are the whole's and the new key, and every key of the left is
+  //    below every key of the right.
   // 3. The left's high key is the right's first key; the right takes
   //    the left's high key and right link, the left none.
   // 4. Neither half is empty, and each is under the limit.
@@ -134,13 +137,15 @@ TEST_CASE("a split's halves are the whole, in order, each under the limit") {
         whole[key] = "x";
       }
     }
-    if (whole.size() < 2) {
-      continue;
-    }
+    std::string extra;
+    do {
+      extra = random_key(rng, 1 + round % 300);
+    } while (whole.count(extra) > 0);
+    whole[extra] = "y";
     page_t right;
     std::string old_high = page.high;
     uint8_t old_flags = page.flags;
-    page_split(page, right);
+    page_split(page, right, extra, "y");
     REQUIRE_FALSE(page.entries.empty());
     REQUIRE_FALSE(right.entries.empty());
     CHECK(page.entries.size() + right.entries.size() == whole.size());
@@ -164,9 +169,44 @@ TEST_CASE("a split's halves are the whole, in order, each under the limit") {
   }
 }
 
-TEST_CASE("an entry over a third of its page is refused") {
-  // Verify the entry limit, which keeps two entries a side at a split.
-  // 1. An entry of exactly a third of the limit is taken.
+TEST_CASE(
+    "tree page: a split of entries at the limit always takes the new one") {
+  // Verify a full page of the longest entries splits with room for one
+  // more anywhere, the high keys at their longest too.
+  // 1. Fill a page with a high key of the longest, by entries of the
+  //    longest, until it is full.
+  // 2. For a new longest entry at each position among them, split.
+  // 3. Both halves are under the limit, and hold every entry.
+  for (size_t limit : {size_t(512), size_t(1000), page_limit}) {
+    size_t key_len = entry_max(limit) - entry_size(0, 0);
+    page_t full;
+    full.flags = page_has_high;
+    full.high = std::string(key_len, '\xfe');
+    for (char c = 'b';; c += 2) {
+      int rc = page_insert(full, std::string(key_len, c), "", limit);
+      REQUIRE(rc >= 0);
+      if (2 == rc) {
+        break;
+      }
+    }
+    REQUIRE(full.entries.size() >= 2);
+    for (size_t i = 0; i <= full.entries.size(); i++) {
+      char c = static_cast<char>('a' + 2 * i);
+      page_t page = full;
+      page_t right;
+      page_split(page, right, std::string(key_len, c), "", limit);
+      CHECK(page_size(page) <= limit);
+      CHECK(page_size(right) <= limit);
+      CHECK(page.entries.size() + right.entries.size() ==
+            full.entries.size() + 1);
+    }
+  }
+}
+
+TEST_CASE("tree page: an entry over a third of its page is refused") {
+  // Verify the entry limit, which leaves a split a point where both
+  // halves fit.
+  // 1. An entry of exactly entry_max is taken.
   // 2. One byte more is refused with SM_ERR_KEYTOOLONG, and the page
   //    is not changed.
   page_t page;
@@ -179,7 +219,8 @@ TEST_CASE("an entry over a third of its page is refused") {
   CHECK(1u == page.entries.size());
 }
 
-TEST_CASE("an inner page descends by the last entry at or below a key") {
+TEST_CASE(
+    "tree page: an inner page descends by the last entry at or below a key") {
   // Verify child(), the descent of an inner page.
   // 1. An inner page of entries "" (below all), "f" and "p".
   // 2. A key below "f" descends by the first; "f" itself and a key
@@ -205,7 +246,7 @@ TEST_CASE("an inner page descends by the last entry at or below a key") {
   CHECK(view.past_high("y"));
 }
 
-TEST_CASE("bytes that are not a page are refused") {
+TEST_CASE("tree page: bytes that are not a page are refused") {
   // Verify open()'s checks, so a damaged value is not read past.
   // 1. A page of three entries opens.
   // 2. Cut short anywhere, its bytes are refused with SM_ERR_CORRUPT.

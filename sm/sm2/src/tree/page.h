@@ -24,16 +24,23 @@ constexpr uint8_t page_has_high = 0x01;
 /* Split, and its parent's entry for the new page not yet written. */
 constexpr uint8_t page_incomplete = 0x02;
 
-/* The bytes of a page's header before its high key. */
-constexpr size_t page_header_size = 1 + 1 + 2 + 8 + 8 + 2;
-
 /* The bytes an entry adds to a page: its key, its value, its slot. */
 constexpr size_t entry_size(size_t key_len, size_t value_len) {
   return 2 + key_len + 2 + value_len + 2;
 }
 
-/* The most an entry may take of a page of limit bytes: a third. */
-constexpr size_t entry_max(size_t limit) { return limit / 3; }
+/* The bytes of a page's header before its high key. */
+constexpr size_t page_header_size = 1 + 1 + 2 + 8 + 8 + 2;
+
+/*
+ * The most an entry may take of a page of limit bytes: a third of
+ * what the header leaves, as a half of a split holds its high key,
+ * no longer than an entry, and two entries; so a split always finds
+ * a point where both halves fit, with the entry that caused it.
+ */
+constexpr size_t entry_max(size_t limit) {
+  return (limit - page_header_size) / 3;
+}
 
 /*
  * A page decoded to be changed: its header, and its entries in key
@@ -65,13 +72,16 @@ int page_insert(page_t &page, std::string_view key, std::string_view value,
                 size_t limit = page_limit);
 
 /*
- * Split page, of two entries or more, into itself and right, about
- * half its entries' bytes each: right takes the upper entries, page's
+ * Insert key, with value, into page, which page_insert found full,
+ * and split it into itself and right, each under limit, their bytes
+ * as near half as that allows: right takes the upper entries, page's
  * high key and right link, and page's high key becomes right's first
- * key. The caller gives right its page id, links page to it, and
- * sets the flags the split is written with.
+ * key. key is not on page, and its entry is at most entry_max(limit).
+ * The caller gives right its page id, links page to it, and sets the
+ * flags the split is written with.
  */
-void page_split(page_t &page, page_t &right);
+void page_split(page_t &page, page_t &right, std::string_view key,
+                std::string_view value, size_t limit = page_limit);
 
 /* A page read where its bytes lie, checked once, by open(). */
 class page_view_t {

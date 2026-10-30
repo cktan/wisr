@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdint>
 #include <cstring>
 
 namespace sm2::tree {
@@ -110,23 +111,39 @@ int page_insert(page_t &page, std::string_view key, std::string_view value,
   return 0;
 }
 
-/* Split page into itself and right by bytes; see page.h. */
-void page_split(page_t &page, page_t &right) {
-  assert(page.entries.size() >= 2);
+/* Insert an entry into a full page and split it; see page.h. */
+void page_split(page_t &page, page_t &right, std::string_view key,
+                std::string_view value, size_t limit) {
+  assert(entry_size(key.size(), value.size()) <= entry_max(limit));
+  auto ins =
+      std::lower_bound(page.entries.begin(), page.entries.end(), key, key_less);
+  assert(page.entries.end() == ins || ins->first != key);
+  page.entries.emplace(ins, std::string(key), std::string(value));
   size_t total = 0;
-  for (const auto &[key, value] : page.entries) {
-    total += entry_size(key.size(), value.size());
+  for (const auto &[k, v] : page.entries) {
+    total += entry_size(k.size(), v.size());
   }
-  // The first entry of the upper half: past half the bytes, and
-  // leaving an entry or more on each side.
+  // The first entry of the upper half: of the points where both
+  // halves fit, the one nearest half the bytes. entry_max keeps one
+  // (page.h).
   size_t at = 0;
+  size_t best = SIZE_MAX;
   size_t lower = 0;
-  while (at < page.entries.size() - 1 && 2 * lower < total) {
-    lower += entry_size(page.entries[at].first.size(),
-                        page.entries[at].second.size());
-    at++;
+  for (size_t i = 1; i < page.entries.size(); i++) {
+    lower += entry_size(page.entries[i - 1].first.size(),
+                        page.entries[i - 1].second.size());
+    size_t left = page_header_size + page.entries[i].first.size() + lower;
+    size_t upper = page_header_size + page.high.size() + total - lower;
+    if (left > limit || upper > limit) {
+      continue;
+    }
+    size_t skew = left > upper ? left - upper : upper - left;
+    if (skew < best) {
+      best = skew;
+      at = i;
+    }
   }
-  at = std::max<size_t>(at, 1);
+  assert(0 != at);
   right = page_t{};
   right.level = page.level;
   right.flags = page.flags & page_has_high;
