@@ -91,15 +91,22 @@ sudo apt install build-essential cmake git flex bison python3 \
 
 ## Building
 
-Every build is `make -j4`, never plain `make`. digres builds
-sq, sm and aa first.
+From the top, as each part's own Makefile is driven by the
+one there (`Makefile`):
 
-| Build | Command | What it makes |
+```
+export DEBUG=1; make -j4    # debug: dg/build/digres
+unset DEBUG; make -j4       # release: dg/build/digres-release
+make -j4 tsan               # dg/build/digres-tsan, and its tests
+make format                 # clang-format sm, sq and aa
+make clean
+```
+
+| Build | What it makes | For |
 | --- | --- | --- |
-| debug | `DEBUG=1 make -C dg -j4` | `dg/build/digres`: digres `-O0 -g` with `Assert()`, sm `-O0 -g` with `assert()`, the system's RocksDB. What the tests run |
-| release | `make -C dg release -j4` | `dg/build/digres-release`: digres `-O2 -DNDEBUG`, sm in `sm/build/release` at `-O3 -DNDEBUG`, sq's `libsq-release.a`, and RocksDB 8.9.1 built `-O3 -DNDEBUG` and linked statically. What the benchmark runs |
-| TSan | `make -C dg tsan -j4` | `dg/build/digres-tsan` under the thread sanitizer, sm and RocksDB instrumented with it, then the threaded tests and `server.sh` on it |
-| one level | `DEBUG=1 make -C sm/sm1 -j4` | a level of the stack alone; without `DEBUG=1`, `-O3 -DNDEBUG` |
+| debug | `dg/build/digres`: digres `-O0 -g` with `Assert()`, sm and aa `-O0 -g` with `assert()`, the system's RocksDB | the tests, and running by hand |
+| release | `dg/build/digres-release`: digres `-O2 -DNDEBUG`, sm in `sm/build/release` and aa at `-O3 -DNDEBUG`, sq's `libsq-release.a`, and RocksDB 8.9.1 built `-O3 -DNDEBUG` and linked statically | the benchmark |
+| TSan | `dg/build/digres-tsan` under the thread sanitizer, sm and RocksDB instrumented with it | changes to threads, latches, locks or shared state |
 
 - **The release and TSan builds build RocksDB themselves** the
   first time: `dg/test/rocksdb.sh` clones v8.9.1 into
@@ -109,12 +116,13 @@ sq, sm and aa first.
 - **`digres --build` says how a binary was built**: the flags
   of digres, sq and sm, and which RocksDB it links. A release
   build shows `-DNDEBUG` on each, and RocksDB `static`.
-- **Flags are not tracked**: after changing build flags,
-  delete the `*.rel.o` objects under `dg/src` and
+- **Flags are not tracked** by digres's make: after changing
+  them, delete the `*.rel.o` objects under `dg/src` and
   `sq/build/rel` before building the release again.
-- **`make -j4 format`** in `sm/` (and `sq/`, `aa/`) before a
-  commit. dg is formatted by the lines a change touches
-  (`dg/CODE.md` §8).
+- **A part alone** builds in its own directory, as
+  `make -C sm/sm1 -j4`, `DEBUG=1` or not.
+- **`make format`** before a commit. dg is formatted by the
+  lines a change touches (`dg/CODE.md` §8).
 
 ## Running digres
 
@@ -177,30 +185,28 @@ psql -h localhost -p 5432 -U NAME -d postgres    # TCP, with the password
 
 ## Testing
 
-Tests run on the debug build. The full suites, in this order,
-each saved to a log of its own:
-
 ```
-make -C sm -j4                        # first: aa's tests link sm
-DEBUG=1 make -C sm -j4 test > sm.log 2>&1 &
-make -C sq -j4 test > sq.log 2>&1 &
-make -C aa -j4 test > aa.log 2>&1 &
-wait
-DEBUG=1 make -C dg -j4 test > dg.log 2>&1
+make -j4 test
 ```
 
-sm's, sq's and aa's unit tests are independent and run at
-once; dg's last. Every commit that touches source passes all
-four. dg's `test` passes with these lines:
+It runs every part's tests on the debug build, whatever
+`DEBUG` is, in order: sm, sq, aa, then digres, which runs on
+the other three, stopping at the first that fails. Every
+commit that touches source passes it. digres's part ends with
+these lines:
 
 ```
 run: PASSED (124 files)
-run: PASSED (11 files, alone and in 8 sessions)
+run: PASSED (12 files, alone and in 8 sessions)
 initdb: PASSED
 server: PASSED
 slt: PASSED (49 files on digres, 10711 records, 11 skipped)
 all 231 ok
 ```
+
+One part's alone is `make -j4 test-sm`, `test-sq`, `test-aa` or
+`test-dg`, on the debug build too. The output is long: save it
+to a file and read that.
 
 What each is:
 
@@ -230,7 +236,7 @@ Run on their own, outside `make test`:
 | `make -C dg -j4 pgregress` | the ported regression files alone |
 | `make -C dg -j4 isolation` | PostgreSQL 18's isolation specs, against `dg/test/isolation_specs.txt`; for any change to locks or waits; ten minutes |
 | `make -C dg -j4 regress` | PostgreSQL 18's whole regression suite, unported: only measures what is missing |
-| `make -C dg -j4 tsan` | the TSan build and its tests; for any change to threads, latches, locks or shared state |
+| `make -j4 tsan` | the TSan build and its tests; for any change to threads, latches, locks or shared state |
 
 A test is written with a one-line synopsis and numbered steps,
 and is shown to fail by breaking what it checks before it is
@@ -243,8 +249,7 @@ builds only (`bench/CODE.md`): a debug build's number measures
 the build.
 
 ```
-make -C dg release -j4         # dg/build/digres-release
-bench/run.sh                   # both systems, and a report
+make -j4 bench                 # the release build, then bench/run.sh
 bench/run.sh dg                # one system, for a look; no report
 ```
 
