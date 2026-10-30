@@ -89,8 +89,8 @@ aligned by hand, and `make format` leaves it out.
   made by `CREATE INDEX`, which an abort undoes; this one
   exists before any index.
 - **What it removes:** the allocation latch, so splits in one
-  tree no longer take turns, and a split's batch writes 2
-  pages, not 3.
+  tree no longer take turns, and the meta page's write from
+  every split's batch.
 
 ### 1.2 What changes in the tree's invariants
 
@@ -105,11 +105,40 @@ aligned by hand, and `make format` leaves it out.
   for the meta page's. Its bytes never change, and it still
   routes rightly: the children it names stay where they are.
 
+### 1.3 A left link, for a reverse scan later
+
+- **Every page has `prev`**, its left sibling's page id, 0 for
+  none, beside `right`, so a reverse scan can be built later.
+  The scan itself is not part of this plan: nothing reads
+  `prev` yet but `tree_check()`.
+- **A split keeps it in the first write's batch.** Page P splits
+  into P and a new page R, S being P's old right sibling:
+  `R.prev = P`, and `S.prev = R`. So the batch writes R, P and
+  S, atomically, and a post cut short by a crash leaves `prev`
+  and `right` agreeing. The rightmost page has no S: 2 pages.
+- **S is latched under P's latch**, left before right, the order
+  latches already take, and read anew under it. Its incomplete
+  flag, if it has one, stays. No deadlock: on a level, latches
+  are only ever taken left to right.
+- **A root split** sets `left.prev = 0`, `right.prev = left`.
+  Page 0 has no siblings, so 0 stays free to mean "none" here
+  as in `right`.
+- **Nothing else moves it.** No page is merged or freed, and
+  `tree_prune()` leaves empty leaves linked.
+- **What it costs:** 8 bytes of header, 22 to 30, so
+  `entry_max()` loses under 3 bytes a page limit's third, and
+  on a split that has S, one more page read and written, with
+  S's latch waited for. Splits are about 1 insert in 200.
+- **For the scan, later:** a page's `prev` may be stale as seen
+  by a reader, as its left sibling can split: having stepped
+  left, it must walk right until it reaches the page it came
+  from, as nbtree's `_bt_walk_left()` does.
+
 ---
 
 ## 2. Order of work
 
-Each of the steps 1, 5 and 6 ends with `DEBUG=1 make -C sm -j4
+Each of the steps 1, 5, 6 and 7 ends with `DEBUG=1 make -C sm -j4
 test` passing. Steps 2, 3 and 4 are one change: page 0 as the
 root does not pass until all three are in, as `tree_check()`
 stops before page 0 until step 4. Split them only to review
@@ -153,10 +182,23 @@ them.
    `tree_t::root`, `descend()`'s `from_meta`, and the
    `stale_root` path of `post()`. `latches_held()` loses its one
    caller outside `test_latch.cc`, so it and its test go too.
-6. **Documents.**
+6. **The left link** (§1.3), a change of its own, after page 0
+   is in and passing.
+   - `sm2/src/tree/page.h`, `page.cc`: `prev` in `page_t` and
+     `page_view_t`, in the header after `right`,
+     `page_header_size` 30; `page_split()` sets `right.prev`
+     once the id is known; `page_insert_bytes()` keeps it.
+   - `tree.cc`: `write_split()` latches S after P, reads it, and
+     puts it in the batch; `tree_check()` checks each page's
+     `prev` against the page before it on the level.
+   - The `static_assert` in `sm2/src/rel/index.cc` must still
+     hold.
+7. **Documents.**
    - `../MAJORDECISION.md`: D4 revised, D11's "forgets the root"
      revised, a new entry for §1 above.
-   - `BTREE.md` §2, §3 ("Page 0 is the index's meta page"), §13;
+   - `../MAJORDECISION.md` D1: the header's size, `limit - 30`.
+   - `BTREE.md` §2, §3 ("Page 0 is the index's meta page", the
+     header's layout), §13;
      `sm2/src/tree/tree.h`'s header; `sm1/include/sm1.h`'s
      comment on an inner page, if it changes.
    - Delete the root-caching TODO in `sm1/include/sm1.h`: with
@@ -164,7 +206,7 @@ them.
      one cache lookup, about 470 instructions (D11's numbers),
      for the risk of a stale root across a relid's reuse.
    - `../dg/WORKNOTE.md`: a step.
-7. **Measure.** `make -C ../dg release -j4`, then
+8. **Measure.** `make -C ../dg release -j4`, then
    `../bench/btree.sh`: Q9, Q10 and the two 16-client mixes,
    recorded in `NEXT.md` §1 item 3.
 
@@ -196,6 +238,17 @@ New or changed in `sm2/test/test_tree.cc`:
 - **Stale page 0**: a held root, grown past it by a writer, and
   a `post()` that asks for a level above it.
 - **Page ids go on across a restart**, and none is given twice.
+- **`prev` agrees with `right`**, at every level, after inserts
+  at random, ascending and descending: `tree_check()` fails a
+  tree where it does not, and is shown to, by a page written
+  wrong.
+- **A split cut short leaves `prev` right**: `fail_posts` set,
+  `S.prev` names the new page before the post is finished.
+- **Concurrent splits of neighbours**, under TSan: P and S both
+  splitting, `tree_check()` passes after.
+- **`sm2/test/test_page.cc`**: `prev` survives `page_bytes()`,
+  `page_insert_bytes()` and `load()`; an entry at the new
+  `entry_max()` still fits a split.
 - **`tree: a leaf a probe reads is evicted before the inner
   pages`**: it names page 1 as the leftmost leaf, and page 0 as
   the meta page; take the leftmost leaf from page 0's first
@@ -217,7 +270,7 @@ at `relid | 0`: only its name goes. Run the tree tests under TSan
   pgregress, which skipped: no PostgreSQL 18 build in
   `~/p/postgres18` (set `PG18_SRC`).
 - **Not started**: everything in §2. The root-caching TODO is
-  still in `sm1/include/sm1.h`, until step 6.
+  still in `sm1/include/sm1.h`, until step 7.
 - **A database made before this cannot be read**: its trees have
   a meta page at 0, and it has no sequence. Nothing keeps
   compatibility before production: run initdb again.
