@@ -1648,11 +1648,23 @@ struct page_t;
  * of a tree, which every probe reads).
  */
 struct page_put_t {
+	/*
+	 * TODO: there is no reason why we would not cache leaf pages.
+	 * we should just raise their score when selecting victims
+	 * for eviction.
+	 */
     std::string_view key;
     std::string_view bytes;
     bool             erase = false;
     bool             inner = false;
 };
+
+/*
+ * TODO: rename page_read to pin_page, page_release to unpin_page.
+ *  - do we want to allow SH/EX mode for pinning pages? 
+ *  - always cache the root page in a btree somewhere, invalidate
+ *    on updates or on detection of updates.
+ */
 
 /*
  * Read the page at key in storeid: 0 with it pinned in out and its
@@ -1698,6 +1710,8 @@ int page_approxsize(session_t* session, uint64_t storeid,
  * the other page calls, it may be made with no transaction active,
  * from an sm1::on_commit function: the store is then taken as the
  * database has it, and a store gone is no error.
+ *
+ * TODO: what's this for? 
  *
  * Errors: as sm1::page_write.
  */
