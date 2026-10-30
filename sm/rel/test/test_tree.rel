@@ -159,6 +159,34 @@
 (assert-eq (ids (idx-rows accounts_u :ge ["y"] :le ["y"])) @[70])
 (commit)
 
+# Verify a tree's entries, written outside every transaction, leave a
+# prepared transaction's row to decide, across a restart.
+# 1. Insert owners p1 and p2 in two transactions, and prepare both.
+# 2. Restart; commit p1's and abort p2's.
+# 3. The unique tree gives p1's row, and none for p2; p2 is taken by
+#    a new row, its old entry dead.
+(begin :rc)
+(insert accounts [101 "p1"])
+(prepare "tree_p1")
+(session-open "s2" "treedb")
+(session-use "s2")
+(begin :rc)
+(insert accounts [102 "p2"])
+(prepare "tree_p2")
+(session-use "default")
+(db-close)
+(env-detach :force true)
+(env-attach test-dir)
+(db-open "treedb")
+(commit-prepared "tree_p1")
+(abort-prepared "tree_p2")
+(begin :rc)
+(assert-eq (ids (idx-rows accounts_u :ge ["p1"] :le ["p1"])) @[101])
+(assert-eq (idx-rows accounts_u :ge ["p2"] :le ["p2"]) @[])
+(insert accounts [103 "p2"])
+(assert-eq (ids (idx-rows accounts_u :ge ["p2"] :le ["p2"])) @[103])
+(commit)
+
 (db-close)
 (env-detach)
 (rm-rf test-dir)
