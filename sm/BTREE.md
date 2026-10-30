@@ -51,6 +51,11 @@ Made with the user (2026-10-29):
   commits when it is made, whatever the user's transaction
   then does. Its abort does not take the entry out; the row,
   which the abort does take out, makes the entry dead.
+- **The page cache is read-only.** A page changes only by a
+  put to RocksDB, so a cached page is never dirty: no
+  write-back, no flush ordered against the WAL, no checkpoint,
+  nothing to recover; any page may be dropped at any time, and
+  a miss is a `Get`.
 
 Proposed here:
 
@@ -59,31 +64,35 @@ Proposed here:
   (`sm1/SM1_DESIGN.md` §3.1). A change's pages are one
   RocksDB `WriteBatch`, in RocksDB's WAL: it is atomic and
   durable with nothing of ours to recover.
-- **No buffer pool.** A shared pool needs a replacement
-  policy, and one of sm's own would be a second cache beside
-  RocksDB's block cache, competing with it for memory:
-  - **Inner pages are kept in memory**, decoded: per index an
-    immutable snapshot of them behind a
-    `std::atomic<std::shared_ptr>`, in sm's environment and
-    shared by every session, which a reader loads with no
-    lock and a split replaces. They are about 1/200 of an
-    index, 200 KB a million entries, so nothing is evicted
-    while they fit; past a size sm chooses at a home's first
-    attach, with no setting, the level above the leaves is
-    read from RocksDB instead, and the levels over it stay.
-  - **Leaves are read from RocksDB**, a `Get` of the page's
-    key through the block cache, which keeps and evicts them,
-    and are searched in place, in the pinned value (§3).
-  - If decoded leaves are ever worth keeping, they go into
-    the block cache as entries of their own
-    (`rocksdb::Cache::Insert`, a charge and a deleter): its
-    budget and its eviction, no policy of sm's.
-- **Lehman and Yao's B-link tree**: each page has a right
-  link and a high key, so a split never blocks a descent.
-  **A reader takes no latch**: a `Put` replaces a page whole,
-  so a `Get` sees it before or after a change, and the right
-  link covers a split under way. A writer latches the page in
-  a latch table by page id, as sm1 latches a key
+- **The page cache is RocksDB's block cache**, the one the
+  environment has: a page's bytes, as RocksDB holds them, are
+  an entry of its own there, by database, store and page id
+  (`rocksdb::Cache::Insert`, its charge the page's length, a
+  deleter), shared by every session. So there is one memory
+  budget and one replacement policy, RocksDB's, and none of
+  sm's. A writer writes through: under the page's latch it
+  makes the new page, puts it in its change's `WriteBatch`,
+  then replaces the page's entry. A page is allocated when it
+  changes or misses, never when it is read.
+- **A read writes nothing shared on the inner pages**, which
+  every probe reads, so their cache lines do not bounce from
+  core to core:
+  - **Each index has a version**, which a change to an inner
+    page moves. A session keeps its own pin on the index's
+    inner pages and, at each probe, only loads the version,
+    pinning them again when it has moved. An old pin goes when
+    its session takes the new one.
+  - **A leaf is pinned by its cache handle**, `Lookup` and
+    `Release`: the count is the leaf's own, so it is contended
+    only as the leaf is popular.
+  - **Inner pages go in at high priority**
+    (`Cache::Priority::HIGH`), so the leaves are evicted first.
+- **Lehman and Yao's B-link tree**: each page has a right link
+  and a high key, so a split never blocks a descent. **A reader
+  takes no latch**: a page is replaced whole, in RocksDB and in
+  the cache, so a reader sees it before or after a change, and
+  the right link covers a split under way. A writer latches the
+  page in a latch table by page id, as sm1 latches a key
   (`sm1/SM1_DESIGN.md` §5.1).
 
 ## 3. Layout
@@ -106,9 +115,9 @@ entry    = leaf:   key bytes (the entry's sm2 key, as today:
   bytewise, as `0x01` and `0x02` do; the GC filter keeps them
   as they are (§7).
 - **The slots let a page be searched where it lies**: a
-  binary search over them reads the value the `Get` pinned in
-  the block cache, with no decode and no copy. The version
-  counts the page's changes.
+  binary search over them reads the page's bytes in its cache
+  entry, with no decode and no copy. The version counts the
+  page's changes.
 - **Page 0 is the index's meta page**: the root's pageid, the
   next pageid to give, the tree's height. A page id is never
   reused.
@@ -118,19 +127,36 @@ entry    = leaf:   key bytes (the entry's sm2 key, as today:
   sit beside the live one (§6). INCLUDE columns are read from
   the row, which is read anyway: an entry newer than the
   reader's snapshot could not give them.
-- **Pages of 8 KB**, PostgreSQL's, to begin with: about 200
-  `c2` entries a leaf, three levels for a million. The size
-  is measured against write amplification (§10).
+- **A page has a size limit, not a size.** It is stored at
+  its length, and split when an insert would take it past the
+  limit, 8 KB to begin with, leaves and inner pages alike.
+  Fixed sizes are for disk blocks and buffer frames: a page
+  here is a RocksDB value, compressed in RocksDB's block, and
+  a cache entry charged its length, so padding would cost
+  writes and memory for nothing; and every change writes the
+  page again, compacted, so it keeps no free space. The limit
+  stays at or under the store's block size, 16 KB
+  (`sm1/SM1_DESIGN.md` §12.2), so a page's `Get` reads one
+  block. A full leaf holds about 200 `c2` entries: three
+  levels for a million.
+- **An entry is at most a third of the limit**, so a split
+  leaves two entries or more on each side, as PostgreSQL
+  limits a btree tuple to a third of a page. A tree's keys are
+  cut there, about 2.7 KB, flagged and rechecked as cut keys
+  are now (`sm2/SM2_DESIGN.md` §3.2); a unique index's, never
+  cut, are refused past it, where today's entries take 4,096
+  bytes (`sm1::max_keylen`).
 
 ## 4. Reads
 
-- **A probe** descends the inner pages in memory, a binary
-  search of each, to a leaf, which it reads with a `Get` and
-  searches in place; it moves right while the key is above a
-  page's high key. An equality's probe then reads entries
+- **A probe** descends from the root, each page from the
+  cache, a miss read with a `Get` and put there, a binary
+  search of each to a leaf; it moves right while the key is
+  above a page's high key. An equality's probe then reads entries
   while they match; a range's, until the upper bound.
 - **An IN list's probes** descend the inner pages first, all
-  of them, and read their distinct leaves in one `MultiGet`.
+  of them, and read the distinct leaves the cache does not
+  hold in one `MultiGet`.
 - **Each entry's row** is read by its key at the scan's
   snapshot, as `sm_tbl_read_keys()` reads them today, in
   batches, and kept only if its columns give the entry's key
@@ -163,10 +189,10 @@ entry    = leaf:   key bytes (the entry's sm2 key, as today:
   links it, then posts the separator to the parent, each step
   a top-level change of its own, as Lehman and Yao order them:
   a crash between them leaves a tree a reader can walk, and
-  the next insert into the parent finishes the post. The
-  post makes the index's inner pages again, a new snapshot,
-  swapped in for the old; a reader on the old one reaches the
-  new page by the right link.
+  the next insert into the parent finishes the post. Each
+  page a step writes replaces its cache entry after its put,
+  and the post moves the index's version; a reader on the old
+  pages reaches the new one by the right link.
 - **Order with the user's transaction**: the entry's change is
   in RocksDB's WAL before the row's write, so a row that
   commits always has its entry, and a crash that loses the
@@ -237,19 +263,20 @@ design deletes them. The GC filter does not touch class
 
 - **sm1**: class `0x04`, its comparison and the GC filter's
   pass-over; a top-level `WriteBatch` of pages; SIREAD and
-  `on_write` on keys that are not stored.
+  `on_write` on keys that are not stored; the environment's
+  block cache, for the page cache's entries.
 - **sm2, `src/tree/`**, beside the index `rel` that uses it
   (`sm2/SM2_DESIGN.md` §5), each part a file of its own with
   unit tests of its own in `sm2/test`:
   - **the page**: its layout, the in-place search of its
     slots, an entry's insert and a split's halves, on bytes,
     with no RocksDB;
-  - **the inner-page cache**: per index, the snapshot of its
-    inner pages, shared and loaded with no lock, made again
-    and swapped at a split, and the size rule of §2. It reads
-    pages through a function it is given, so its tests give
-    it pages from memory and drive splits from many threads,
-    under TSan;
+  - **the page cache**: pages as entries of a `rocksdb::Cache`,
+    write-through, the index's version and a session's pin on
+    its inner pages (§2). It reads a miss through a function
+    it is given, so its tests give it pages from memory and a
+    cache of their own, and drive writers and readers from
+    many threads, under TSan;
   - **the writers' latch table**, by page id;
   - **the tree**: descent, the IN list's batch, scans,
     inserts, splits and vacuum's walk, over the three and
@@ -267,30 +294,31 @@ design deletes them. The GC filter does not touch class
 
 Estimates, to be measured as each part lands:
 
-- **Q10**: the probe's 30k becomes a descent of the inner
-  pages in memory, about 1k, and a leaf's `Get`, about 4k,
-  less in the IN list's one `MultiGet`; Q10 about 1.3M
-  instructions, **1.6 to 1.7 times** PostgreSQL. The rest is
-  the row read by key, Q7's cost. A buffer pool of decoded
-  leaves would save about 2k a probe more, 1.55 times.
+- **Q10**: the probe's 30k becomes a descent of pages in the
+  cache, about 3k; Q10 about 1.25M instructions, **1.55
+  times** PostgreSQL. The rest is the row read by key, Q7's
+  cost.
 - **Q9**: an entry about 200 instructions, not 2,820; but each
   row read by key costs about 8,400. Q9 about 1.1M, **2.9
   times**, until rows of sorted, close keys are read by one
   cursor (`NEXT.md` §1 item 3, step 2): then about 0.5M, 1.3
   times.
-- **Writes**: an indexed insert writes an 8 KB page into
-  RocksDB's WAL and memtable, against an entry of about 40
-  bytes now. A write benchmark measures it before the design
-  is final; the answer may be a smaller page, or logging the
-  entry and writing the page later.
+- **Writes**: an indexed insert writes its page, at its length,
+  up to 8 KB, into RocksDB's WAL and memtable, against an entry
+  of about 40 bytes now. A write benchmark measures it before the
+  design is final; the answer may be a smaller page, or logging
+  the entry and writing the page later.
 - **Index-only scans** get slower (§4).
 
 ## 11. Open questions
 
-1. The size past which the level above the leaves is read
-   from RocksDB, not kept (§2): a machine choice sm makes at a
-   home's first attach, with no setting.
-2. Page size: 8 KB, or smaller for writes (§10).
+1. Whether pages share the block cache's budget with the
+   rows' blocks as they are, or need a share of it set aside:
+   a machine choice sm would make at a home's first attach,
+   with no setting.
+2. The page's limit: 8 KB, or smaller for writes (§10); and
+   whether a unique index's key refused past a third of it
+   (§3) is worth a 16 KB limit.
 3. Whether the row read of Q9's adjacent rows, by one cursor,
    comes first: without it the tree does not bring Q9 under
    1.5.
@@ -321,10 +349,11 @@ index is of one kind, and keeps it for its life.
   | | Today's entries | A tree |
   | --- | --- | --- |
   | an entry of a range | 2,820 | about 200 |
-  | a probe of a non-unique key | about 30k (`Seek`) | about 5k |
-  | a probe of a unique key | a `Get`, near PostgreSQL's | about 5k |
+  | a probe of a non-unique key | about 30k (`Seek`) | about 3k |
+  | a probe of a unique key | a `Get`, near PostgreSQL's | about 3k |
+  | a unique key, at most | 4,096 bytes | about 2.7 KB |
   | an index-only scan | yes: an entry is MVCC | reads the row |
-  | an indexed insert, written | about 40 bytes | the page, about 8 KB |
+  | an indexed insert, written | about 40 bytes | the page, up to 8 KB |
   | dead entries | none, GC drops versions | until vacuum |
 
 - **Built behind the kind, off by default**, so each step is
