@@ -1,4 +1,4 @@
-# wisr
+# Wisr
 
 Wisconsin Storage on the Rocks: a stack of storage levels, each
 one built on the level below it.
