@@ -18,16 +18,14 @@
 #                      digres, against expected output (test/pgregress)
 #   make tsan          build build/digres-tsan, under the thread
 #                      sanitizer, and run the statements in test/ with it
-#   make clean         remove objects and generated files
+#   make clean         remove build/ and the generated files
 #   make format        clang-format every .c and .h
 #
-# Each directory under src/ has a Makefile of three lines or so
-# that includes dg.mk; this one adds the generated sources, which
-# must exist before anything is compiled.
-
-top := .
-SUBDIRS := src
-include $(top)/dg.mk
+# This Makefile builds the tree alone, as each of sm's levels does
+# (../sm/sm3/Makefile): every object lies under build/, in a tree
+# mirroring src/, and the link takes the list the sources give. So a
+# source that goes away takes its object with it, and "make clean" is
+# "rm -rf build" and the generated files.
 
 I := src/include
 B := src/backend
@@ -64,6 +62,92 @@ LINK_AA = $(LIBAA)
 # Where digres is installed, which the server is built knowing.
 PREFIX ?= /usr/local/dg
 
+# FLAVOR is the build: the default one, debug; tsan, under the thread
+# sanitizer; or rel, optimized and without assertions, which the
+# benchmark runs. Each compiles to its own tree under build/ and links
+# its own server, so the three never share an object.
+FLAVOR ?= obj
+OBJDIR := build/$(FLAVOR)
+
+CXX ?= g++
+# Every .c file is compiled as C++ (sm/PART4.md section 2), and as
+# strict C++: src/tools/cxx_keywords.py renamed the identifiers that
+# are C++ keywords, and src/tools/cxx_casts.py wrote the casts C does
+# not ask for. -w hides the warnings, which nobody has gone through yet.
+STD := -x c++ -std=gnu++20 -fno-rtti -w
+# What the build says of assertions: Assert() and assert() on, as a
+# debug build has them, or NDEBUG, which compiles both out.
+ASSERT := -DUSE_ASSERT_CHECKING
+
+ifeq ($(FLAVOR),obj)
+OPT ?= -O0 -g
+SERVER := build/digres
+# A session is to be a thread: no writable global may be left that is
+# not thread_local (PLAN.md section 3). The default build's objects are
+# the ones checked; the others are of the same sources, and the
+# sanitizer's have static initialisers of its own.
+CHECK_GLOBALS := python3 -B src/tools/cxx_thread_local.py --check $(OBJDIR)
+# The server is initdb too, under the name initdb looks for.
+SERVER_LINKS := ln -sf digres build/initdb
+else ifeq ($(FLAVOR),tsan)
+OPT := -O1 -g -fsanitize=thread
+SERVER := build/digres-tsan
+LINK_SM := $(LIBSM_TSAN)
+LINK_AA := $(LIBAA_TSAN)
+LINK_ROCKSDB := $(ROCKSDB_TSAN) -lsnappy -llz4 -lzstd -lz -lbz2
+ROCKSDB_BUILD := static, $(shell cat $(dir $(ROCKSDB_TSAN))flags 2>/dev/null)
+else ifeq ($(FLAVOR),rel)
+OPT := -O2
+ASSERT := -DNDEBUG
+SERVER := build/digres-release
+LIBSQ := $(LIBSQ_REL)
+LINK_SM := $(LIBSM_REL)
+LINK_AA := $(LIBAA_REL)
+LINK_ROCKSDB := $(ROCKSDB_REL) -lsnappy -llz4 -lzstd -lz -lbz2
+ROCKSDB_BUILD := static, $(shell cat $(dir $(ROCKSDB_REL))flags 2>/dev/null)
+else
+$(error FLAVOR is obj, tsan or rel, not "$(FLAVOR)")
+endif
+
+# Every directory may include sm_sys.h: the services dg is built on, in
+# sm's level 0 (../sm/sm0); and aa.h, roles and privileges (../aa),
+# which utils/pg_global.h includes.
+CPPFLAGS := -I$(I) -I$(SM)/sm0/include -I$(AA)/include -D_GNU_SOURCE $(ASSERT)
+
+# The directories that see more: the bridges to the storage manager
+# (sm.h) and to the parser (sq.h).
+$(OBJDIR)/backend/access/sm/%.o:    CPPFLAGS += -I$(SM)/include
+$(OBJDIR)/backend/storage/file/%.o: CPPFLAGS += -I$(SM)/include
+$(OBJDIR)/backend/storage/ipc/%.o:  CPPFLAGS += -I$(SM)/include
+$(OBJDIR)/backend/utils/init/%.o:   CPPFLAGS += -I$(SM)/include
+$(OBJDIR)/backend/parser/%.o:       CPPFLAGS += -I$(SQ)/include
+$(OBJDIR)/backend/main/%.o:         CPPFLAGS += -I$(SM)/include -I$(SQ)/include
+
+# Not compiled, each with the reason: a file that another #includes;
+# a variant for a library digres does not link; one for an
+# architecture, which the build never chooses (CODE.md section 1); or
+# a generator's output that nodes/*.c #includes.
+SKIP := \
+    $(B)/libpq/be-gssapi-common.c $(B)/libpq/be-secure-gssapi.c \
+    $(B)/libpq/be-secure-openssl.c \
+    src/common/cryptohash_openssl.c src/common/hmac_openssl.c \
+    $(B)/regex/regc_color.c $(B)/regex/regc_cvec.c $(B)/regex/regc_lex.c \
+    $(B)/regex/regc_locale.c $(B)/regex/regc_nfa.c \
+    $(B)/regex/regc_pg_locale.c $(B)/regex/rege_dfa.c \
+    $(B)/utils/adt/levenshtein.c $(B)/utils/adt/like_match.c \
+    $(B)/utils/activity/pgstat_wait_event.c \
+    $(B)/utils/activity/wait_event_funcs_data.c \
+    src/port/pg_crc32c_armv8.c src/port/pg_crc32c_armv8_choose.c \
+    src/port/pg_crc32c_sse42.c src/port/pg_crc32c_sse42_choose.c \
+    src/port/pg_popcount_avx512.c \
+    $(wildcard $(B)/nodes/*.funcs.c $(B)/nodes/*.switch.c)
+
+# Every other .c under src/, sorted, so the link is the same twice; the
+# generated ones are there because "all" generates in a make of its own
+# before this list is read.
+SRCS := $(filter-out $(SKIP),$(sort $(shell find src -name '*.c')))
+OBJS := $(SRCS:src/%.c=$(OBJDIR)/%.o)
+
 # The headers gen_node_support.pl reads, in the order it insists on.
 NODE_HEADERS := nodes/nodes.h nodes/primnodes.h nodes/parsenodes.h \
     nodes/pathnodes.h nodes/plannodes.h nodes/execnodes.h access/amapi.h \
@@ -85,53 +169,52 @@ GEN := $(I)/catalog/.stamp $(B)/nodes/.stamp $(B)/utils/.fmgr-stamp \
     $(B)/utils/adt/jsonpath_scan.c $(B)/utils/misc/guc-file.c \
     $(B)/utils/misc/tznames_builtin.c
 
+# A generated source must exist before the source list above is read,
+# so the generators run in a make of their own and the server is built
+# by a second one. Every target below that builds a server does the
+# same.
+.PHONY: all
+all:
+	$(MAKE) gen
+	$(MAKE) server
+
 .PHONY: gen
 gen: $(GEN)
-src: gen
 
-# The server: every object under src/, into one program. It is
-# relinked every time, since the objects are built by the Makefiles
-# below and this one cannot tell which of them changed.
-all: build/digres
-.PHONY: build/digres
-build/digres: src $(LIBSQ) $(LIBSM) $(LIBAA)
+# The server: every object, into one program.
+.PHONY: server
+server: $(SERVER)
+
+$(SERVER): $(OBJS) $(LIBSQ) $(LINK_SM) $(LINK_AA)
 	@mkdir -p build
-	# A session is to be a thread: no writable global may be left
-	# that is not thread_local (PLAN.md section 3).
-	python3 -B src/tools/cxx_thread_local.py --check src
-	$(call link_server,$@,.o,$(OPT))
-	ln -sf digres build/initdb
-
-# Link $(1) from the objects under src/ named *$(2), compiling with
-# $(3), and with what it says of the RocksDB it links, ROCKSDB_BUILD,
-# for "digres --build" (src/backend/main/rocksdb_build.cc).
-define link_server
-	$(CXX) $(3) -DDG_ROCKSDB_BUILD="\"$(ROCKSDB_BUILD)\"" -c \
-	    -o build/rocksdb_build$(2) src/backend/main/rocksdb_build.cc
-	$(CXX) $(3) -o $(1) build/rocksdb_build$(2) \
-	    $$(find src -name '*$(2)' \
-	        $(if $(filter .o,$(2)),! -name '*.tsan.o' ! -name '*.rel.o')) \
+	$(CHECK_GLOBALS)
+	# What it says of the RocksDB it links, for "digres --build"
+	# (src/backend/main/rocksdb_build.cc); compiled at each link, since
+	# the libraries it reports are relinked at each.
+	$(CXX) $(OPT) -DDG_ROCKSDB_BUILD="\"$(ROCKSDB_BUILD)\"" -c \
+	    -o $(OBJDIR)/rocksdb_build.o src/backend/main/rocksdb_build.cc
+	$(CXX) $(OPT) -o $@ $(OBJDIR)/rocksdb_build.o $(OBJS) \
 	    $(LIBSQ) $(LINK_AA) $(LINK_SM) $(LDLIBS)
-endef
+	$(SERVER_LINKS)
 
-# The RocksDB each build links, as "digres --build" names it.
-ROCKSDB_BUILD = shared, the system's (Ubuntu's build, with its assert()s)
+$(OBJDIR)/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	$(CXX) $(STD) $(OPT) $(CPPFLAGS) -MMD -MP -c -o $@ $<
 
-# The server again, each object compiled once more as NAME.tsan.o for
-# the thread sanitizer, and the statements in test/ run with it, alone
-# and in sessions, and test/server.sh run on it. The sanitizer cannot map its memory with the address
-# space randomised, hence setarch -R. Every library that runs threads
-# is instrumented: sm, sm_sys.h's services among it, and RocksDB, built by
-# test/rocksdb.sh. sq, the parser, is not.
+# The RocksDB the default build links, as "digres --build" names it.
+ROCKSDB_BUILD ?= shared, the system's (Ubuntu's build, with its assert()s)
+
+# The server again, every object compiled once more for the thread
+# sanitizer, and the statements in test/ run with it, alone and in
+# sessions, and test/server.sh run on it. The sanitizer cannot map its
+# memory with the address space randomised, hence setarch -R. Every
+# library that runs threads is instrumented: sm, sm_sys.h's services
+# among it, and RocksDB, built by test/rocksdb.sh. sq, the parser, is
+# not.
 .PHONY: tsan
-tsan: LINK_SM = $(LIBSM_TSAN)
-tsan: LINK_AA = $(LIBAA_TSAN)
-tsan: LINK_ROCKSDB = $(ROCKSDB_TSAN) -lsnappy -llz4 -lzstd -lz -lbz2
-tsan: ROCKSDB_BUILD = static, $$(cat $(dir $(ROCKSDB_TSAN))flags)
-tsan: gen $(LIBSQ) $(LIBSM_TSAN) $(LIBAA_TSAN) $(ROCKSDB_TSAN)
-	$(MAKE) -C src OBJ=tsan.o
-	@mkdir -p build
-	$(call link_server,build/digres-tsan,.tsan.o,-O1 -g -fsanitize=thread)
+tsan: $(LIBSQ) $(LIBSM_TSAN) $(LIBAA_TSAN) $(ROCKSDB_TSAN)
+	$(MAKE) gen
+	$(MAKE) server FLAVOR=tsan
 	DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/run.sh
 	$(MAKE) build/numbin
 	DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/server.sh
@@ -140,9 +223,9 @@ tsan: gen $(LIBSQ) $(LIBSM_TSAN) $(LIBAA_TSAN) $(ROCKSDB_TSAN)
 # tests keep what PostgreSQL's parser printed for each of their files;
 # "digres --parse" prints the same for raw_parser(), so they check
 # that digres still parses to PostgreSQL's nodes.
-# The server is built by a make of its own, here and in each target below
-# that runs tests: a goal named here is passed down to every directory,
-# and none of them has a "test", or any of the others.
+# The server is built by a make of its own, here and in each target
+# below that runs tests, so that the generators run before the
+# source list is read.
 .PHONY: test
 test:
 	$(MAKE) all
@@ -214,20 +297,14 @@ slt-corpus:
 	$(MAKE) build/slt
 	test/slt_corpus.sh
 
-# The server again, each object compiled once more as NAME.rel.o,
-# optimized and without Assert() or assert(), on sq, sm and RocksDB built
-# the same way: what bench/ measures (../bench/DESIGN.md section 2).
-# "digres-release --init" makes a data directory.
+# The server again, optimized and without Assert() or assert(), on sq,
+# sm and RocksDB built the same way: what bench/ measures
+# (../bench/DESIGN.md section 2). "digres-release --init" makes a data
+# directory.
 .PHONY: release
-release: LIBSQ = $(LIBSQ_REL)
-release: LINK_SM = $(LIBSM_REL)
-release: LINK_AA = $(LIBAA_REL)
-release: LINK_ROCKSDB = $(ROCKSDB_REL) -lsnappy -llz4 -lzstd -lz -lbz2
-release: ROCKSDB_BUILD = static, $$(cat $(dir $(ROCKSDB_REL))flags)
-release: gen $(LIBSQ_REL) $(LIBSM_REL) $(LIBAA_REL) $(ROCKSDB_REL)
-	$(MAKE) -C src OBJ=rel.o OPT="-O2 -DNDEBUG" ASSERT=
-	@mkdir -p build
-	$(call link_server,build/digres-release,.rel.o,-O2)
+release: $(LIBSQ_REL) $(LIBSM_REL) $(LIBAA_REL) $(ROCKSDB_REL)
+	$(MAKE) gen
+	$(MAKE) server FLAVOR=rel
 
 # sq builds its own library; whether it is up to date is sq's to say.
 .PHONY: $(LIBSQ) $(LIBSQ_REL)
@@ -341,16 +418,16 @@ $(B)/utils/misc/guc-file.c: $(B)/utils/misc/guc-file.l
 $(B)/utils/misc/tznames_builtin.c: src/tools/gen_tznames.py \
         $(wildcard src/timezone/tznames/*)
 	python3 -B src/tools/gen_tznames.py src/timezone/tznames > $@
+# Every .c and .h, src/include's among them; .clang-format-ignore at
+# dg/ keeps the generators' headers as they are.
+.PHONY: format
+format:
+	find src \( -name '*.c' -o -name '*.h' \) -print0 \
+	    | xargs -0 clang-format -i
 
-# Headers are formatted here: src/include has no Makefile.
-format: format-include
-.PHONY: format-include
-format-include:
-	find src/include -name '*.h' | xargs clang-format -i
-
-clean: clean-gen
-.PHONY: clean-gen
-clean-gen:
+# Everything built, which is all under build/, and everything generated.
+.PHONY: clean
+clean:
 	rm -rf build
 	rm -f $(GEN) $(I)/catalog/pg_*_d.h $(I)/catalog/schemapg.h \
 	    $(I)/catalog/syscache_ids.h $(I)/catalog/syscache_info.h \
@@ -366,3 +443,5 @@ clean-gen:
 	    $(I)/utils/wait_event_types.h $(I)/utils/pgstat_wait_event.c \
 	    $(I)/utils/wait_event_funcs_data.c \
 	    $(B)/utils/adt/jsonpath_gram.h
+
+-include $(OBJS:.o=.d)

@@ -108,12 +108,12 @@ The import itself is not built yet (`PLAN.md` §7).
   source. A commit of documents alone needs none.
 - **Save test output to a file** and read the file, rather
   than running the suite again to grep it differently.
-- **The link takes every `*.o` under `src/`.** A `.c` file you
-  delete leaves its `.o`, `.d`, `.tsan.o` and `.tsan.d`
-  behind, and the stale object is still linked. Delete them
-  with the source.
-- **A file that is not compiled is named in its directory's
-  `SKIP`**, with the reason beside it.
+- **The link takes the objects the sources give**, and they
+  all lie under `build/`, in a tree mirroring `src/`: a `.c`
+  file you delete takes its object with it, and nothing stale
+  is left to link.
+- **A file that is not compiled is named in `SKIP`**, in the
+  Makefile, with the reason beside it.
 - **The build is the same on every machine.** No `uname -m`
   branches and no `-march` flags; the development machine is
   aarch64, and the build must also work on x86_64.
@@ -138,7 +138,7 @@ Every `.c` file is compiled as strict C++20 (`g++ -x c++
   PostgreSQL says what a node is with its tag (`nodeTag()`,
   `IsA()`); do the same, or use an enum, a function pointer or
   a virtual call. Catching an exception by its type is not this
-  rule's concern. `dg.mk` compiles with `-fno-rtti`, so the
+  rule's concern. The Makefile compiles with `-fno-rtti`, so the
   compiler refuses the rest.
 - As in PostgreSQL, do not leave a `PG_TRY` block with
   `return`, `break`, `continue` or `goto`.
