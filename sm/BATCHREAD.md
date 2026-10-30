@@ -47,7 +47,15 @@ read. Q9's 100 rows lie in one or two data blocks.
   an older one. Each key's answer in `rc[i]`: 0 with its row in
   `pins[i]`, 1 for none it sees; the call -1 on an error.
   Keys sorted or not: it sorts a copy for `MultiGet`, and
-  answers in the caller's order.
+  answers in the caller's order. Keys in ascending order, as a
+  range of an index names its rows when they are close, are
+  read by one iterator instead, stepping up to four keys from
+  each to the next and seeking past a gap; from the first key
+  the steps miss on, the rest go to `MultiGet`, as keys far
+  apart do not gain from it. Q9, 100 rows of a `c2` range,
+  1,659k to 1,338k user instructions with today's entries,
+  1,548k to 1,142k through a tree (`../dg/WORKNOTE.md` step
+  349).
 - **sm2**, `rel_read_batch()`: each key put under the table's
   relid, as `rel_read()` does one.
 - **sm3**, `tbl_read_keys(table, keys, n, refs, tuples, rc)`:

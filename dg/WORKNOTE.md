@@ -10388,3 +10388,34 @@ and counts every thread):
   row's own entries, nulls, and a second writer waiting for the
   first's commit and abort (failing with the wait taken out);
   rel, `test_tree.rel`; dg, `btree_tree.test`.
+
+## Step 349: rows of an ascending batch read by one iterator
+
+`../sm/NEXT.md` §1 item 3, step 2: rows of sorted, close keys
+read by one cursor, not by `MultiGet`. Inside sm1's
+`chain_read_batch`, so every batch read gains, a tree's scan's
+and digres's read-ahead of today's entries alike.
+
+- **sm1**: keys in ascending order are read by one iterator,
+  stepping up to four keys from each to the next, seeking past
+  a gap; from the first key the steps miss on, the rest go to
+  `MultiGet` as before. Each key is then resolved as before.
+- **Measured** (step 347's method):
+
+  | | Q9 | Q10 |
+  | --- | --- | --- |
+  | PostgreSQL 18 | 395k | 768k |
+  | today's entries, before | 1,659k | 3,565k |
+  | today's entries, after | 1,344k | 3,670k |
+  | a tree, before | 1,548k | 2,255k |
+  | a tree, after | 1,144k | 2,277k |
+
+  Q9 through a tree is 2.9 times PostgreSQL's; Q10 3.0. Today's
+  entries' Q10, whose read-ahead batches rows of several probes,
+  ascending but far apart, pays 3% for an iterator made and let
+  go at its first miss; stepping eight keys before seeking, it
+  paid 14%.
+- **Tests**: sm1, a batch of the keys ascending among the
+  existing cases, at three snapshots; ascending runs over keys
+  with gaps of 1, 3, 9 and 40, half missing or erased, against
+  single reads.

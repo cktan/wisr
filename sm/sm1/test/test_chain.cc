@@ -991,7 +991,8 @@ TEST_CASE("a batch read gives each key's row as a single read does") {
   //    updates, R a snapshot after.
   // 2. Session W updates k3 and inserts k7b, uncommitted.
   // 3. Session O, this one, updates k4 and erases k6, uncommitted.
-  // 4. Over keys out of order, repeated, and missing, each session's
+  // 4. Over keys out of order, repeated, and missing, and over them
+  //    in ascending order, which one iterator reads, each session's
   //    batch gives what its single reads give, row by row.
   chain_fixture_t f;
   uint64_t c = mkchain(f.s);
@@ -1021,9 +1022,12 @@ TEST_CASE("a batch read gives each key's row as a single read does") {
 
   std::vector<std::string> keys = {"k9", "k1", "k2",  "k3", "k1", "k5",
                                    "k4", "k6", "k7b", "zz", "k0", "k2"};
+  std::vector<std::string> sorted = {"a",  "k0", "k1",  "k2", "k3", "k4", "k5",
+                                     "k6", "k7", "k7b", "k8", "k9", "zz"};
   for (sm1::session_t *s : {old, now, f.s}) {
     std::vector<std::string> single = single_reads(s, c, keys);
     CHECK(batch_reads(s, c, keys) == single);
+    CHECK(batch_reads(s, c, sorted) == single_reads(s, c, sorted));
   }
   CHECK(batch_reads(old, c, {"k1", "k2", "k5"}) ==
         std::vector<std::string>{"v1", "v2", "v5"});
@@ -1039,4 +1043,42 @@ TEST_CASE("a batch read gives each key's row as a single read does") {
   sm1::closedb(old);
   sm1::closedb(now);
   sm1::closedb(w);
+}
+
+TEST_CASE("a batch of ascending keys is read by steps and seeks alike") {
+  // Verify chain_read_batch's iterator over ascending keys, stepping
+  // over short gaps and seeking past long ones.
+  // 1. Write r0000..r0999 but every third; erase every tenth written.
+  // 2. Over ascending runs with gaps of 1, 3, 9 and 40 keys between
+  //    them, a batch gives what single reads give.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  begin_xct(f.s);
+  char buf[16];
+  for (int i = 0; i < 1000; i++) {
+    if (i % 3 != 0) {
+      snprintf(buf, sizeof buf, "r%04d", i);
+      REQUIRE(sm1::chain_insert(f.s, c, buf, buf) == 0);
+    }
+  }
+  commit_xct(f.s);
+  begin_xct(f.s);
+  for (int i = 0; i < 1000; i += 10) {
+    if (i % 3 != 0) {
+      snprintf(buf, sizeof buf, "r%04d", i);
+      REQUIRE(sm1::chain_erase(f.s, c, buf) == 0);
+    }
+  }
+  commit_xct(f.s);
+  begin_xct(f.s);
+  for (int gap : {1, 3, 9, 40}) {
+    CAPTURE(gap);
+    std::vector<std::string> keys;
+    for (int i = 5; i < 1000; i += gap) {
+      snprintf(buf, sizeof buf, "r%04d", i);
+      keys.push_back(buf);
+    }
+    CHECK(batch_reads(f.s, c, keys) == single_reads(f.s, c, keys));
+  }
+  commit_xct(f.s);
 }

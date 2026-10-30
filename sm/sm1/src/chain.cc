@@ -788,8 +788,55 @@ int read_chained_batch(sm1::session_t *s, uint64_t storeid,
   }
   std::vector<rocksdb::PinnableSlice> got(n);
   std::vector<rocksdb::Status> status(n);
-  st.rdb->MultiGet(rocksdb::ReadOptions(), st.cf, n, slices.data(), got.data(),
-                   status.data(), false);
+  // Keys in ascending order, as a range of an index names its rows
+  // in its key's order and close: one iterator steps from each to the
+  // next, seeking only past a gap, where MultiGet searches the index
+  // and a block for every key (../../BATCHREAD.md).
+  bool ascending = n > 1;
+  for (size_t i = 1; ascending && i < n; i++) {
+    ascending = slices[i - 1].compare(slices[i]) < 0;
+  }
+  // Keys far apart, which the steps do not reach, go back to
+  // MultiGet from the first the steps miss on.
+  size_t done = 0;
+  if (ascending) {
+    rocksdb::ReadOptions ro;
+    // Across keys, past the CF's prefix extractor.
+    ro.total_order_seek = true;
+    std::unique_ptr<rocksdb::Iterator> it(st.rdb->NewIterator(ro, st.cf));
+    bool placed = false;
+    int seeks = 0;
+    for (; done < n; done++) {
+      size_t i = done;
+      // A few steps forward from the last key, then a seek.
+      for (int step = 0; placed && it->Valid() &&
+                         it->key().compare(slices[i]) < 0 && step < 4;
+           step++) {
+        it->Next();
+      }
+      if (!placed || !it->Valid() || it->key().compare(slices[i]) < 0) {
+        if (placed && ++seeks == 1) {
+          break;
+        }
+        it->Seek(slices[i]);
+        placed = true;
+      }
+      if (it->Valid() && it->key() == slices[i]) {
+        // Copied: the iterator goes with the call, the pin stays.
+        got[i].PinSelf(it->value());
+        status[i] = rocksdb::Status::OK();
+      } else if (!it->status().ok()) {
+        status[i] = it->status();
+      } else {
+        status[i] = rocksdb::Status::NotFound();
+      }
+    }
+  }
+  if (done < n) {
+    st.rdb->MultiGet(rocksdb::ReadOptions(), st.cf, n - done,
+                     slices.data() + done, got.data() + done,
+                     status.data() + done, false);
+  }
   for (size_t i = 0; i < n; i++) {
     sm1::rawpin_t *pin = pins[i];
     chain_version_t v;

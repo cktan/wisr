@@ -102,19 +102,26 @@ and so are the catalog tables psql reads
    PostgreSQL's 695, RocksDB's `Next` alone 1,110 of it.
    In order:
 
-   1. **Secondary indexes as B+trees** (`BTREE.md`): a tree
-      per index, beside today's entries, chosen when the index
-      is made; inner pages kept in memory, leaves read from
-      RocksDB. Built in `sm2/src/tree/` a part at a time, each
-      with its tests: the page, the inner-page cache, the
-      writers' latch table, the tree; then sm1's class
-      `0x04` and SSI on keys not stored, sm3's index kind, and
-      digres's way to ask for one (`BTREE.md` §11, question
-      4). Estimated: Q10 1.6 to 1.7 times.
-   2. **Rows of sorted, close keys read by one cursor**, a
-      seek and then the next, not `MultiGet` (`BATCHREAD.md`):
-      about 6,000 a row of Q9, which a tree alone leaves at
-      2.9 times. A design change; a note first.
+   1. **Secondary indexes as B+trees** (`BTREE.md`): built on
+      the `wip-btree` branch, unique ones and `ON CONFLICT`
+      arbiters among them, asked for by
+      `CREATE INDEX ... WITH (tree = on)`; its decisions in
+      `../MAJORDECISION.md`, its steps in
+      `../dg/WORKNOTE.md` 345 to 349.
+   2. **Rows of sorted, close keys read by one cursor**: built,
+      inside sm1's `chain_read_batch` (`BATCHREAD.md` §2.1).
+      Measured with `perf stat`, user instructions of the whole
+      server a statement, not pinned, on 2026-10-30:
+
+      | | Q9 | Q10 |
+      | --- | --- | --- |
+      | PostgreSQL 18 | 395k | 768k |
+      | today's entries | 1,344k (3.4) | 3,670k (4.8) |
+      | a tree | 1,144k (2.9) | 2,277k (3.0) |
+
+      Neither is under 1.5 yet. What a tree's Q9 spends now:
+      malloc and free a fifth, the executor's own share, each
+      row's recheck; Q10's, a descent a probe and its row.
    3. **Then measure** the grid again, on both kinds of index
       (`BTREE.md` §12): what is left past 1.5 is recorded
       here, and the kind that loses every workload goes.
