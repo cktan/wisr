@@ -102,11 +102,18 @@ make format                 # clang-format sm, sq and aa
 make clean
 ```
 
-| Build | What it makes | For |
+| Part | Debug, `DEBUG=1 make -j4` | Release, `make -j4` |
 | --- | --- | --- |
-| debug | `dg/build/digres`: digres `-O0 -g` with `Assert()`, sm and aa `-O0 -g` with `assert()`, the system's RocksDB | the tests, and running by hand |
-| release | `dg/build/digres-release`: digres `-O2 -DNDEBUG`, sm in `sm/build/release` and aa at `-O3 -DNDEBUG`, sq's `libsq-release.a`, and RocksDB 8.9.1 built `-O3 -DNDEBUG` and linked statically | the benchmark |
-| TSan | `dg/build/digres-tsan` under the thread sanitizer, sm and RocksDB instrumented with it | changes to threads, latches, locks or shared state |
+| dg | `dg/build/digres`, `-O0 -g`, with `Assert()` | `dg/build/digres-release`, `-O2 -DNDEBUG` |
+| sm | `sm/build/libsm.a`, `-O0 -g`, with `assert()` | `sm/build/release/libsm.a`, `-O3 -DNDEBUG` |
+| aa | `aa/build/libaa.a`, `-O0 -g`, with `assert()` | `aa/build/release/libaa.a`, `-O3 -DNDEBUG` |
+| sq | `sq/build/libsq.a`, `-O0 -g`, with `assert()` | `sq/build/libsq-release.a`, `-O2 -DNDEBUG` |
+| RocksDB 8.9.1 | the system's, shared, with its `assert()`s | built from source, `-O3 -DNDEBUG`, static |
+| For | the tests, and running by hand | the benchmark |
+
+The TSan build, `dg/build/digres-tsan`, is digres under the
+thread sanitizer, sm and RocksDB instrumented with it: for
+changes to threads, latches, locks or shared state.
 
 - **The release and TSan builds build RocksDB themselves** the
   first time: `dg/test/rocksdb.sh` clones v8.9.1 into
