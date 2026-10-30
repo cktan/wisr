@@ -2707,6 +2707,9 @@ struct smstore_scan_t {
    * cur_key, the row the scan is on.
    */
   bool ra_rows;
+  /* A tree's (../sm/BTREE.md): its rows come by a cursor, as a primary
+   * key's, each rechecked against its entry by sm. */
+  bool tree;
   bool ra_point;
   bool ra_done;
   int ra_n;
@@ -6381,6 +6384,30 @@ int smstore_set_index_evaluator(sm_env_t *env) {
   return sm_set_index_evaluator(env, smstore_index_eval, NULL);
 }
 
+/*
+ * Whether a CREATE INDEX asks for a tree, WITH (tree = on): a B+tree of
+ * the index's own pages (../sm/BTREE.md).  Any other storage parameter is
+ * refused.
+ */
+static bool tree_option(const IndexStmt *stmt) {
+  ListCell *l;
+  bool tree = false;
+
+  foreach (l, stmt->options) {
+    DefElem *opt = lfirst_node(DefElem, l);
+
+    if (strcmp(opt->defname, "tree") != 0 || opt->defnamespace != NULL)
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("storage parameter \"%s\" is not supported",
+                             opt->defname)));
+    tree = defGetBoolean(opt);
+  }
+  if (tree && (stmt->unique || stmt->primary))
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("a unique index is not a tree yet")));
+  return tree;
+}
+
 /* Refuse what a CREATE INDEX asks that sm's indexes do not have yet. */
 static void check_create_index(const IndexStmt *stmt) {
   ListCell *l;
@@ -6389,8 +6416,8 @@ static void check_create_index(const IndexStmt *stmt) {
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("access method \"%s\" is not supported",
                            stmt->accessMethod)));
-  if (stmt->excludeOpNames != NIL || stmt->options != NIL ||
-      stmt->tableSpace != NULL || stmt->nulls_not_distinct ||
+  if (stmt->excludeOpNames != NIL || stmt->tableSpace != NULL ||
+      stmt->nulls_not_distinct ||
       stmt->deferrable)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("CREATE INDEX supports only columns, expressions, "
@@ -6814,7 +6841,7 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
   if (waiting([&] {
         return sm_cat_create_index(s, relid, name, keys, includes, stmt->unique,
                                    eval, reads, &oid, stmt->primary,
-                                   stmt->isconstraint);
+                                   stmt->isconstraint, tree_option(stmt));
       }) != 0) {
     /* A name taken since it was looked up, or a unique key duplicated. */
     if (sm_errnum() == SM_ERR_DUPKEY && !stmt->unique)
@@ -7199,8 +7226,11 @@ static void open_probe(smstore_scan_t *scan) {
     }
     return;
   }
-  /* The primary key's entries are the rows, keyed by it: read in place. */
-  if (scan->form->indisprimary
+  /*
+   * The primary key's entries are the rows, keyed by it: read in place.
+   * A tree's are its rows too, each read and rechecked by sm.
+   */
+  if (scan->form->indisprimary || scan->tree
           ? sm_tbl_idx_scan_rows(scan->tbl, scan->index,
                                  scan->lo.n > 0 ? &scan->lo : NULL,
                                  scan->hi.n > 0 ? &scan->hi : NULL, NULL,
@@ -7447,6 +7477,7 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   scan->nkeys = nkeys;
   scan->bounded = bounded;
   scan->index = RelationGetRelid(index);
+  scan->tree = sm_tbl_index_tree(tbl, scan->index);
   scan->form = form;
   scan->lo = lo;
   scan->hi = hi;
@@ -7470,7 +7501,7 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
    * entries' rows, and an array's probes of the whole primary key, whose
    * first probe is read with the rest.
    */
-  scan->ra_rows = !form->indisprimary;
+  scan->ra_rows = !form->indisprimary && !scan->tree;
   scan->ra_point = scan->point && scan->narrays > 0;
   scan->ra_batch = 1;
   if (!scan->empty && !scan->ra_point)

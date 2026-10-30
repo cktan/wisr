@@ -153,3 +153,56 @@ take to undo. Nothing here is merged into `main`.
   method (`fillfactor`, `deduplicate_items`).
 - **Undo:** the flag is the catalog's; a second spelling is
   parser work only.
+
+## D8. sm3 hands a tree's scan out as rows, checked against their entries
+
+- **Decided:** `tbl_idx_scan_rows`, a primary key's scan of
+  rows, takes a tree too. For each entry sm3 reads the row at
+  the transaction's snapshot into the cursor's pin, makes the
+  row's entry for that index as a write would (the evaluator
+  asked for an expression or a predicate), and hands the row
+  out only if its key is the entry's. digres scans a tree as it
+  scans a primary key, by that cursor, its index-only scans
+  served from the row as a primary key's are.
+- **Why:** the check needs the index's definition and the
+  host's evaluator, which sm3 has and sm2 has not; digres would
+  otherwise read each row twice, once for the check and once
+  for the executor. A primary key's path in digres already
+  takes rows from a cursor, so digres changes in three lines.
+  An entry's key compared as bytes is exact: it holds the row's
+  key, so a stale entry for another value is told apart even
+  when that value still meets the query's bounds.
+- **Cost:** each row is deformed and its key encoded again;
+  measured in step 8. digres's read-ahead of rows, many a call,
+  is not used for a tree yet.
+- **Undo:** a batch read of the entries' rows in sm3, as
+  `rel_read_batch`.
+
+## D9. A unique index is not a tree yet
+
+- **Decided:** `CREATE UNIQUE INDEX ... WITH (tree = on)`, and a
+  primary key as a tree, are refused (sm3 and digres). `BTREE.md`
+  §6's check is designed, not built.
+- **Why:** the check reads the newest version of every row an
+  equal key names, waits for a running writer and checks again,
+  under the leaf's latch held across leaves; it needs a wait
+  for a writer from sm1 that no call gives yet. The non-unique
+  tree answers Q9 and Q10, the queries this project is for.
+- **Undo:** build §6 next; nothing on disk changes.
+
+## D10. A tree's range is an SIREAD of its own, not narrowed
+
+- **Decided:** sm1 gains `ssi_read_range` and `ssi_write_key`,
+  on keys of a store no version holds. A serializable scan of a
+  tree registers its whole requested range; an insert into a
+  tree reports its entry's key.
+- **Why:** a row read by key registers that key alone, so an
+  insert into a range a serializable transaction scanned would
+  go unseen: a write skew through a tree's range. sm1's
+  tracker compares keys as bytes, and an entry key under the
+  index's relid meets no row's key.
+- **Cost:** the range is the scan's bound, not what it read:
+  a scan stopped early, as by `LIMIT`, keeps the whole range,
+  and may fail a writer it need not.
+- **Undo:** narrow it at the cursor's end, as sm1's own scans
+  do, with a call that takes the last key read.

@@ -1,0 +1,184 @@
+# Verify that an index made a tree, WITH (tree = on) (../sm/BTREE.md),
+# answers as any index does, on digres; PostgreSQL 18, which has no
+# such parameter, makes the same index plain and gives the answers.
+# 1. Make a table of rows, and a tree on its column c2.
+# 2. Confirm a range, an equality and an IN list plan with the tree,
+#    and give the rows PostgreSQL gives.
+# 3. Update rows off, onto and back to a key, delete some, and roll an
+#    insert back: each query gives each row once, under its key now.
+# 4. Confirm an index-only scan's answer, and a TRUNCATE's.
+
+statement ok
+create table t (id int4 primary key, c2 int4, note text)
+
+statement ok
+insert into t select g, g % 100, 'n' || g from generate_series(1, 2000) g
+
+onlyif digres
+statement ok
+create index t_c2 on t (c2) with (tree = on)
+
+skipif digres
+statement ok
+create index t_c2 on t (c2)
+
+statement ok
+set enable_seqscan = off
+
+statement ok
+set enable_bitmapscan = off
+
+query T nosort
+explain (costs off) select id from t where c2 = 7
+----
+Index Scan using t_c2 on t
+  Index Cond: (c2 = 7)
+
+query I rowsort
+select id from t where c2 = 7 and id < 400
+----
+107
+207
+307
+7
+
+query II nosort
+select count(*), sum(id) from t where c2 between 10 and 19
+----
+200	192900
+
+query I rowsort
+select id from t where c2 in (3, 5, 99) and id > 1800
+----
+1803
+1805
+1899
+1903
+1905
+1999
+
+statement ok
+update t set c2 = 1000 where id in (7, 107)
+
+statement ok
+update t set c2 = 2000 where id = 207
+
+statement ok
+update t set c2 = 7 where id = 207
+
+statement ok
+delete from t where id = 307
+
+statement ok
+begin
+
+statement ok
+insert into t values (5000, 7, 'gone')
+
+statement ok
+rollback
+
+query I rowsort
+select id from t where c2 = 7 and id < 400
+----
+207
+
+query I rowsort
+select id from t where c2 >= 1000
+----
+107
+7
+
+query II nosort
+select count(*), sum(id) from t where c2 between 0 and 99
+----
+1997	2000579
+
+query I nosort
+select count(*) from t where c2 = 2000
+----
+0
+
+query I nosort
+select c2 from t where c2 > 98 order by c2 limit 3
+----
+99
+99
+99
+
+statement ok
+truncate t
+
+statement ok
+insert into t values (1, 7, 'again')
+
+query T rowsort
+select note from t where c2 = 7
+----
+again
+
+# Verify an expression index and a partial one made trees recheck
+# their rows as any write would compute their keys.
+# 1. Make trees on lower(note), and on c2 where note like 'p%'.
+# 2. Change rows so their expression, or the predicate, no longer
+#    holds for the entry they had: queries give each row as it is.
+
+statement ok
+insert into t values (2, 8, 'Ann'), (3, 9, 'ann'), (4, 9, 'pat'), (5, 9, 'pete')
+
+onlyif digres
+statement ok
+create index t_lower on t (lower(note)) with (tree = on)
+
+skipif digres
+statement ok
+create index t_lower on t (lower(note))
+
+onlyif digres
+statement ok
+create index t_p on t (c2) with (tree = on) where note like 'p%'
+
+skipif digres
+statement ok
+create index t_p on t (c2) where note like 'p%'
+
+statement ok
+update t set note = 'Bob' where id = 2
+
+statement ok
+update t set note = 'quinn' where id = 4
+
+query I rowsort
+select id from t where lower(note) = 'ann'
+----
+3
+
+query I rowsort
+select id from t where lower(note) = 'bob'
+----
+2
+
+query I rowsort
+select id from t where c2 = 9 and note like 'p%'
+----
+5
+
+# Verify what digres refuses of a tree.
+# 1. A unique index made a tree is refused, as is another parameter.
+# 2. Dropping a tree leaves the table's other indexes answering.
+
+onlyif digres
+statement error a unique index is not a tree yet
+create unique index t_u on t (note) with (tree = on)
+
+onlyif digres
+statement error storage parameter "fillfactor" is not supported
+create index t_f on t (note) with (fillfactor = 50)
+
+statement ok
+drop index t_lower
+
+query I rowsort
+select id from t where c2 = 9 and note like 'p%'
+----
+5

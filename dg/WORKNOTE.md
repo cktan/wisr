@@ -10292,3 +10292,39 @@ to show what a lock table of sm1's own gains a client.
   scanners on one tree.
 - **Left**: the index `rel` over a tree (step 6), sm3's kind
   (step 7), digres's (step 8), and the measurements.
+
+## Step 346: a tree index, end to end
+
+`../sm/BTREE.md` §13 steps 6 to 8, for a non-unique index:
+`CREATE INDEX ... WITH (tree = on)` makes one, and every query
+through it answers as through today's entries.
+
+- **sm1**: `read_settled`, a row's newest version only once
+  every snapshot sees it, for vacuum (D5); `ssi_read_range` and
+  `ssi_write_key`, SSI on keys no version holds (D10).
+- **sm2**: an index `rel` over a tree (`idx_open`'s `tree`): an
+  entry's key always ends with its row's, its value the cut
+  flag and the columns' length, no INCLUDE column; a cut at a
+  third of a page with a page id; `idx_delete` a no-op; scans
+  by the tree's cursor; `idx_vacuum`, a leaf at a time under its
+  latch; `rel_read_settled`.
+- **sm3**: the kind in the catalog (attribute 13 of an index's
+  part); made with the index, in a truncate's new store and a
+  rewrite's; left by a drop (D6). `tbl_idx_scan_rows` on a tree
+  reads each entry's row and keeps it only if the row's entry,
+  made as a write makes it, is the entry (D8). `tbl_compact`
+  removes the dead entries of settled rows.
+- **dg**: `WITH (tree = on)` (D7), a unique one refused (D9); a
+  tree scanned by the rows' cursor, as a primary key is.
+- **Found**: a truncate made the new store in the statement
+  and wrote its trees before its mark moved: "store does not
+  exist". `stmt_advance()` first, as a rewrite does.
+- **Tests**: sm1, `read_settled` in both kinds of store, and a
+  write skew through a range of keys not stored; sm2, a tree's
+  scans against sm1's entries over 3,000 entries and 300
+  bounds, an entry outside the transaction, a prune; sm3, rows
+  moved, deleted and rolled back, an expression and a partial
+  index's recheck, an older snapshot, a build, a truncate,
+  vacuum with and without an older snapshot, a write skew
+  (each failing with its recheck or its SIREAD taken out);
+  dg, `slt/btree_tree.test`, answers from PostgreSQL 18.

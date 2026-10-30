@@ -3,8 +3,10 @@
 Status: being built on the `wip-btree` branch, unattended;
 the decisions taken there are in `../MAJORDECISION.md`, and
 where one changed this design the text below says so. Built:
-§13's steps 1 to 3 and the tree of step 5, with sm1's page
-calls of step 4.
+§13's steps 1 to 8 for a non-unique index: the page, the
+latches, sm1's pages and cache, the tree, the index `rel` over
+it with vacuum's walk, sm3's kind, and digres's
+`WITH (tree = on)` (D7). Not built: a unique tree (§6, D9).
 
 ## 1. Why
 
@@ -248,7 +250,7 @@ design deletes them. The GC filter does not touch class
 | --- | --- |
 | TOAST | an entry is built from the detoasted value, as now; no entry is out of line |
 | non-unique index | §4, §5 |
-| unique index | §6 |
+| unique index | §6; refused as a tree until it is built (D9) |
 | primary key | unchanged: the rows' keys |
 | expression index | the key is the expression's value, as now; the recheck evaluates it on the row |
 | partial index | an entry only where the predicate holds, as now; the recheck needs only the key |
@@ -266,11 +268,11 @@ design deletes them. The GC filter does not touch class
 | two writers, one unique key | §6: the second waits for the first's transaction |
 | old RR snapshot | reads the row at its snapshot; an entry made since names a row it cannot see, or one with another key |
 | RC re-read | the row at the statement's snapshot, as now |
-| SSI | a scan registers the range of entry keys it reads as an SIREAD in sm1's tracker, under the index's relid, and an insert calls `on_write` for its entry's key: the keys need not be sm1's to be tracked (`sm1/SM1_DESIGN.md` §7.1) |
+| SSI | a scan registers the range of entry keys it reads as an SIREAD in sm1's tracker, under the index's relid (`sm1::ssi_read_range`), and an insert reports its entry's key (`sm1::ssi_write_key`): the keys need not be sm1's to be tracked (`sm1/SM1_DESIGN.md` §7.1, D10) |
 | open cursor, Halloween | an update's new entry ahead of the cursor is read, and its row, at the statement's snapshot, has the old key: skipped |
 | GC watermark, CF:txn sweep | §7; the tree holds no xid, so the sweep is unaffected |
 | CREATE INDEX pending | the backfill inserts entries as a writer does, each a top-level change; an entry already there is no change |
-| DROP INDEX | `DeleteRange` of `04 \| relid` |
+| DROP INDEX | the pages stay until the store goes; a relid is never given again (D6) |
 | TRUNCATE, ALTER rewrite | a new store: new trees, built as CREATE INDEX builds |
 | temporary tables | a temporary store's pages, as its rows |
 | keyless tables | the row key is the `_id`, as now |
