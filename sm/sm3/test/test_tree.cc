@@ -584,3 +584,70 @@ TEST_CASE("tree: a unique tree waits for the writer of an equal key") {
     }
   }
 }
+
+TEST_CASE("tree: a unique tree is an ON CONFLICT arbiter") {
+  // Verify tbl_insert_arbiter with a unique tree as its arbiter.
+  // 1. Insert owner x; an arbiter insert of x again says 1, the row
+  //    found with its tuple, and inserts nothing.
+  // 2. One of owner q inserts, 0, and is given by the tree.
+  // 3. Delete x's row: an arbiter insert of x then inserts.
+  trees_t f;
+  std::vector<sm3::index_key_spec_t> owner = {{2, false, false, std::nullopt}};
+  uint64_t u = 0;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::create_index(f.a, f.jobs, "u_owner", owner, {}, true, u, false,
+                            false, true) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+  f.builder(1, 10);
+  REQUIRE(sm3::builder_wait(f.a, f.jobs, u) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  row_t x(1, "s", "x");
+  uint64_t ix;
+  REQUIRE(sm3::tbl_insert(t, x.d(), x.null(), ix) == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  std::vector<uint64_t> arb = {u};
+  row_t x2(2, "s", "x"), q(3, "s", "q");
+  uint64_t id = 0;
+  std::string tuple;
+  CHECK(1 == sm3::tbl_insert_arbiter(t, x2.d(), x2.null(), arb, id, &tuple));
+  CHECK(ix == id);
+  sm2::datum_t d;
+  bool isnull;
+  REQUIRE(sm2::tup_decode(sm3::tbl_def(t).desc, tuple, 0, d, isnull) == 0);
+  CHECK(1 == sm2::datum_to_int32(d));
+  CHECK(0 == sm3::tbl_insert_arbiter(t, q.d(), q.null(), arb, id, &tuple));
+  CHECK(std::vector<int32_t>{3} == ids(t, u, "q", "q"));
+  REQUIRE(sm3::tbl_delete(t, ix) == 0);
+  CHECK(0 == sm3::tbl_insert_arbiter(t, x2.d(), x2.null(), arb, id, &tuple));
+  CHECK(std::vector<int32_t>{2} == ids(t, u, "x", "x"));
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("tree: its size is its pages'") {
+  // Verify tbl_idx_size counts a tree's pages, for the planner.
+  // 1. Insert 2,000 rows: the tree's bytes are more than none.
+  // 2. A tree of a table with no rows has its empty root alone.
+  trees_t f;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  uint64_t disk = 0, mem = 0;
+  REQUIRE(sm3::tbl_idx_size(t, f.by_state, disk, mem) == 0);
+  uint64_t empty = disk + mem;
+  for (int i = 0; i < 2000; i++) {
+    row_t r(i, "state" + std::to_string(i), "O");
+    uint64_t id;
+    REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
+  }
+  REQUIRE(sm3::tbl_idx_size(t, f.by_state, disk, mem) == 0);
+  CHECK(disk + mem > empty);
+  CHECK(disk + mem > 2000u * 10);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}

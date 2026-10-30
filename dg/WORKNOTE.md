@@ -10378,8 +10378,10 @@ and counts every thread):
 - **A unique tree** (D13): an insert judges every other entry
   of its key by its row's newest version, under the latch of the
   leaf that covers the key, waiting for a running writer with
-  every latch let go; sm1's `read_newest` and `wait_writer`. No
-  `ON CONFLICT` arbiter yet.
+  every latch let go; sm1's `read_newest` and `wait_writer`. An
+  `ON CONFLICT` arbiter by the same check, its row locked
+  shared. A tree's size, which ANALYZE records for the planner,
+  is its pages' (`sm1::page_approxsize`); it was 0.
 - **Tests**: sm1, `read_newest` and `wait_writer` in both kinds
   of store; sm2, a unique insert judging entries spread over
   leaves; sm3, a duplicate by insert and by update, a reinsert, a

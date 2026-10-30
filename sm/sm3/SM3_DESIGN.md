@@ -259,8 +259,9 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   the entries whose rows are settled without them. A unique
   tree checks a key against the newest version of each row an
   equal entry names, waiting for a running writer
-  (`../BTREE.md` §6); it is no `ON CONFLICT` arbiter yet, and a
-  primary key is never a tree.
+  (`../BTREE.md` §6), as an `ON CONFLICT` arbiter by the same
+  check; a primary key is never a tree. Its size, for the
+  planner, is its pages' (`sm1::page_approxsize`).
 - **Unique indexes are keyed without the row's key:**
   `encode(sk)` → the same tuple. The KV key
   is then the uniqueness unit, so sm1's insert refuses a

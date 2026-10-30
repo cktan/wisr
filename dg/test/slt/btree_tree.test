@@ -167,7 +167,8 @@ select id from t where c2 = 9 and note like 'p%'
 # refuses of a tree.
 # 1. A unique tree on note refuses a second 'pete', and takes it once
 #    the first is deleted.
-# 2. ON CONFLICT on it is refused on digres, as is another parameter.
+# 2. ON CONFLICT on it finds the row that has the key, or inserts; another
+#    parameter is refused.
 # 3. Dropping a tree leaves the table's other indexes answering.
 
 onlyif digres
@@ -192,9 +193,20 @@ select id from t where note = 'pete'
 ----
 6
 
-onlyif digres
-statement error is a tree, which is no arbiter yet
+statement ok
 insert into t values (7, 1, 'pete') on conflict (note) do nothing
+
+statement ok
+insert into t values (8, 1, 'pete') on conflict (note) do update set c2 = 42
+
+statement ok
+insert into t values (9, 1, 'zed') on conflict (note) do nothing
+
+query II rowsort
+select id, c2 from t where note in ('pete', 'zed')
+----
+6	42
+9	1
 
 onlyif digres
 statement error storage parameter "fillfactor" is not supported

@@ -1084,6 +1084,10 @@ int idx_create(index_t* index);
 int idx_create_tree(sm1::session_t* session, uint64_t storeid,
                     uint16_t relid);
 
+/* The bytes of the tree under relid in storeid, as relid_size gives them. */
+int idx_tree_size(sm1::session_t* session, uint64_t storeid, uint16_t relid,
+                  uint64_t& disk, uint64_t& mem);
+
 /* Remove every page of the tree under relid in storeid. */
 int idx_drop_tree(sm1::session_t* session, uint64_t storeid, uint16_t relid);
 

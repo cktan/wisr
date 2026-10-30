@@ -240,7 +240,7 @@ take to undo. Nothing here is merged into `main`.
 - **Undo:** the constant; a limit per index is a field of the
   meta page away.
 
-## D13. A unique tree is built; it is no ON CONFLICT arbiter yet
+## D13. A unique tree is built, an ON CONFLICT arbiter too
 
 - **Decided:** a unique index may be a tree (D9 is undone).
   An insert latches the leaf that covers its key's prefix,
@@ -251,13 +251,16 @@ take to undo. Nothing here is merged into `main`.
   transaction's, is `SM_ERR_DUPKEY`; one another transaction is
   still writing is waited for (`sm1::wait_writer`, in the
   deadlock check, with every latch let go), and the key checked
-  again. `INSERT ... ON CONFLICT` on a unique tree is refused,
-  and a primary key is never a tree.
+  again. A primary key is never a tree.
+- **An arbiter** (`INSERT ... ON CONFLICT`) looks a key up as
+  `idx_find` and `idx_find_latest` do: each entry of the key,
+  its row at the snapshot, or its newest version, a running
+  writer waited for, then the row locked shared.
 - **Why:** every insert of one prefix takes the same first
   latch, so two take turns; the entries to the right are read
   without a latch, as an insert of the prefix waits for the
-  first and a split only moves them right. An arbiter needs
-  `idx_find_latest`, the newest committed row of a key under a
-  lock on it, which a tree's entries cannot give without the
-  same check made at the snapshot's edge; it is the next piece.
-- **Undo:** none; the arbiter is additive.
+  first and a split only moves them right. The arbiter's lookup
+  locks the row where a unique index of sm1's entries locks the
+  key; an insert of the key waits for the row's writer either
+  way.
+- **Undo:** none.

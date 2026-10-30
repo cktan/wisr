@@ -371,6 +371,9 @@ int keys_equal(const sm3::index_def_t &x, const entry_t &a, const entry_t &b) {
 int unique_tree_insert(sm3::table_t *t, size_t i, const entry_t &e,
                        const picked_t &inc, std::string_view row);
 
+int tree_find(sm3::table_t *t, size_t i, const entry_t &e, bool now,
+              uint64_t &found, std::string &row);
+
 /*
  * Add index i's entry e for the row r with key row. A
  * key the index holds already is SM_ERR_DUPKEY, with the index in
@@ -646,7 +649,10 @@ int find_now(sm3::table_t *t, size_t i, const entry_t &e, uint64_t &found,
     return -1;
   }
   std::string row;
-  int rc = sm2::idx_find_latest(t->indexes[i], e.d(), e.null(), found, &row);
+  int rc =
+      t->def->indexes[i].tree
+          ? tree_find(t, i, e, true, found, row)
+          : sm2::idx_find_latest(t->indexes[i], e.d(), e.null(), found, &row);
   // The row's newest version too, under a lock on it, which the
   // rollback gives back with the entry's; gone since, it is none.
   std::string_view v;
@@ -674,18 +680,7 @@ int tbl_insert_arbiter(table_t *table, std::span<const sm2::datum_t> values,
     return -1;
   }
   const table_def_t &def = *table->def;
-  // Each arbiter must be a unique index of the table, and none a
-  // tree, whose key's row is not looked up yet (../BTREE.md §6).
-  for (const index_def_t &x : def.indexes) {
-    bool arbiter = x.unique && (arbiters.empty() ||
-                                std::find(arbiters.begin(), arbiters.end(),
-                                          x.oid) != arbiters.end());
-    if (arbiter && x.tree) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "insert: unique index " + x.name +
-                             " is a tree, which is no arbiter yet");
-    }
-  }
+  // Each arbiter must be a unique index of the table.
   for (uint64_t oid : arbiters) {
     bool found = false;
     for (const index_def_t &x : def.indexes) {
@@ -737,8 +732,10 @@ look:
   for (size_t i : looked) {
     uint64_t found = 0;
     std::string row;
-    int rc = sm2::idx_find(table->indexes[i], entry[i].d(), entry[i].null(),
-                           found, &row);
+    int rc = def.indexes[i].tree
+                 ? tree_find(table, i, entry[i], false, found, row)
+                 : sm2::idx_find(table->indexes[i], entry[i].d(),
+                                 entry[i].null(), found, &row);
     if (0 == rc && rc_level) {
       rc = find_now(table, i, entry[i], found, tuple);
     } else if (0 == rc && nullptr != tuple) {
@@ -1713,6 +1710,94 @@ int unique_tree_insert(sm3::table_t *t, size_t i, const entry_t &e,
   return rc;
 }
 
+/*
+ * The row a unique tree's key e names (../BTREE.md §6), as idx_find
+ * and idx_find_latest give a unique index's: each entry of the key,
+ * its row as the snapshot shows it; or with now, its newest version,
+ * a running writer waited for and the key looked up again, and the
+ * row then locked shared, as idx_find_latest locks the key. 0 with
+ * its _id and key in row, 1 if no row has the key, -1. A key with a
+ * null column is no row's.
+ */
+int tree_find(sm3::table_t *t, size_t i, const entry_t &e, bool now,
+              uint64_t &found, std::string &row) {
+  for (size_t j = 0; j < e.key.size(); j++) {
+    if (e.key_null[j]) {
+      return 1;
+    }
+  }
+  sm2::bound_t b{e.d(), e.null(), true};
+  sm3::pin_t *p = sm3::pin_take(t->session);
+  if (!p) {
+    return -1;
+  }
+  std::string kb;
+  int rc;
+  for (;;) {
+    sm2::index_scan_t *scan = nullptr;
+    if (sm2::idx_scan(t->indexes[i], &b, &b, scan) != 0) {
+      rc = -1;
+      break;
+    }
+    uint64_t writer = 0;
+    rc = 1;
+    for (;;) {
+      std::string_view r;
+      bool cut;
+      int n = sm2::idx_scan_entry(scan, found, cut, r);
+      if (n != 0) {
+        rc = n < 0 ? -1 : 1;
+        break;
+      }
+      std::string key(sm2::idx_scan_entry_key(scan));
+      std::string_view tuple;
+      n = now ? sm2::rel_read_newest(t->rel, r, p->raw, tuple, writer)
+              : sm2::rel_read(t->rel, r, p->raw, tuple);
+      if (n < 0) {
+        rc = -1;
+        break;
+      }
+      if (n == 2) {
+        rc = 2;
+        break;
+      }
+      if (n == 1) {
+        continue;
+      }
+      int h = sm3::still_has(t, i, tuple, r, key, kb);
+      if (h < 0) {
+        rc = -1;
+        break;
+      }
+      if (h == 1) {
+        row.assign(r);
+        rc = 0;
+        break;
+      }
+    }
+    sm2::idx_scanend(scan);
+    sm1::unpin(p->raw);
+    if (rc == 0 && now) {
+      // The row locked, as idx_find_latest locks the key; a writer
+      // that got in first is waited for by the lock.
+      if (sm2::rel_lock(t->rel, row, sm1::SM_LOCKMODE_SH) != 0) {
+        rc = -1;
+      }
+      break;
+    }
+    if (rc != 2) {
+      break;
+    }
+    // Every latch is let go: wait for the writer, then look again.
+    if (sm1::wait_writer(t->session->sm1, writer) != 0) {
+      rc = -1;
+      break;
+    }
+  }
+  sm3::pin_put(p);
+  return rc;
+}
+
 } // namespace
 
 namespace sm3 {
@@ -1844,6 +1929,11 @@ int tbl_idx_size(table_t *table, uint64_t index, uint64_t &disk,
       if (x.primary) {
         disk = mem = 0;
         return 0;
+      }
+      // A tree's entries are its pages.
+      if (x.tree) {
+        return sm2::idx_tree_size(table->session->sm1, table->def->storeid,
+                                  x.relid, disk, mem);
       }
       return sm2::relid_size(table->session->sm1, table->def->storeid, x.relid,
                              disk, mem);

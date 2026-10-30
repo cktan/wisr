@@ -322,6 +322,14 @@ int idx_create_tree(sm1::session_t *session, uint64_t storeid, uint16_t relid) {
   return rc;
 }
 
+/* The bytes of a tree's pages; see sm2.h. */
+int idx_tree_size(sm1::session_t *session, uint64_t storeid, uint16_t relid,
+                  uint64_t &disk, uint64_t &mem) {
+  std::string prefix;
+  put_be(relid, prefix);
+  return sm1::page_approxsize(session, storeid, prefix, disk, mem);
+}
+
 /* Remove a tree's pages; see sm2.h. */
 int idx_drop_tree(sm1::session_t *session, uint64_t storeid, uint16_t relid) {
   return tree::tree_drop(session, storeid, relid);
