@@ -209,8 +209,8 @@ at `relid | 0`: only its name goes. Run the tree tests under TSan
 
 ## 4. Where it stands
 
-- **Done and pushed**, in `43e15ea9` on `wip-btree`: `page_read` and
-  `page_release` renamed `pin_page` and `unpin_page`;
+- **Done and pushed**, in `43e15ea9` on `wip-btree`: `page_read`
+  and `page_release` renamed `pin_page` and `unpin_page`;
   `sm1::page_cached`, for tests; a leaf a descent misses cached
   as a leaf, not inner; the answers to the SH/EX and `page_drop`
   TODOs. On it, sm's full suite and dg's pass, but for
