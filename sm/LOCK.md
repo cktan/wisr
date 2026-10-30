@@ -58,6 +58,15 @@ whose keys hash alike may conflict needlessly
 (`sm1/SM1_DESIGN.md` §5.1); the name is kept whole in the
 transaction's lock list.
 
+TODO: clarify when calling lock() with LOCKTYPE_ROW, will the key param be hashed?
+
+TODO: clarify when calling lock() with LOCKTYPE_OID, is the OID in the storeid param, and the key param 
+gets ""? 
+
+
+TODO: there are only two types, why not just expose the two different calls?
+
+
 **`lockmode_t` is Gray's five**, defined once in the root's
 `include/sm_lock.h` and shared by sm1 and the C wrapper:
 `SM_LOCKMODE_SH`, `_EX`, `_IS`, `_IX`, `_SIX`. The intention
@@ -86,6 +95,9 @@ of the key after this transaction's snapshot — at REPEATABLE
 READ and SERIALIZABLE. At READ COMMITTED it does not fail
 there; the caller reads with `sm1::read_latest` instead.
 
+TODO: clarify at READ COMMITTED, the caller still gets SM_ERR_CONFLICT, 
+and ignore the error, and then call sm1::read_latest?
+
 `LOCKTYPE_OID` runs no such check, because no version of such a
 name can exist.
 
@@ -95,6 +107,8 @@ sequence `sm3.oid`, so `be64(oid)` is unambiguous across kinds
 and subjects 1, 4 to 6 and 8 of §2 all lock `LOCKTYPE_OID`, with
 no kind byte and no collision. sm1 refuses a key of any other
 length for it.
+
+TODO: clarify above, what are subjects 1, 4 to 6 and 8??
 
 ---
 

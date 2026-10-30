@@ -274,11 +274,12 @@ Low priority:
    files; and batch mode and mini-batch, which matter less
    now that no write keeps a row lock.
 2. **digres's `xact.c`, until it is empty.** sm keeps the
-   transaction; `xact.c` keeps only what a session needs
+   transaction; `xact.c` keeps only what a DG session needs
    around it (`../dg/PLAN.md` §7), and what it no longer needs
    is deleted as it is found. Nothing is moved out of it just
    so the file goes (`../dg/WORKNOTE.md` steps 232 to 236).
    It is 2,893 lines.
+3. **GUC** replace it with something simpler.
 
 ### Feature gaps against PostgreSQL
 

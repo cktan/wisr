@@ -9,7 +9,7 @@ below, but they shape the decisions at every level, because a
 design that could not host the subset would be wasted work at
 this project's scale.
 
-"wisr" is Wisconsin storage on rocks: a stack of storage
+"wisr" is Wisconsin Storage on the Rocks: a stack of storage
 levels, each one built on the level below it, in the
 tradition of the database systems built at Wisconsin.
 `README.md` has the map of the stack and where to read about
