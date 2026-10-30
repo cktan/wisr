@@ -102,13 +102,18 @@ page key = 04 | relid (2B) | pageid (8B, big-endian)
 value    = header | slots | entries
 header   = level (1B, 0 a leaf) | flags (1B) | n (2B)
          | version (8B) | right (8B, 0 none)
-         | high key (variable, none on the rightmost page of
-           a level)
+         | high key's length (2B) | high key (none on the
+           rightmost page of a level)
 slots    = n offsets (2B each), of the entries in key order
-entry    = leaf:   key bytes (the entry's sm2 key, as today:
-                   encode(sk) ‖ row key, cut flag)
-           inner:  separator key | child pageid
+entry    = key's length (2B) | key | value's length (2B) | value
+           leaf:   the entry's sm2 key, as today, encode(sk) ‖
+                   row key; its value, the cut flag
+           inner:  the child's low key; its value, the child's
+                   page id
 ```
+
+Integers are little-endian (`sm2/src/tree/page.cc`). The flags
+are *has a high key* and *incomplete split* (§13).
 
 - **Class `0x04`** sorts after the rows (`0x00`) and a chained
   store's (`0x01`, `0x02`). Keys of the class compare
@@ -365,3 +370,100 @@ index is of one kind, and keeps it for its life.
   in sm2 and sm3 and every test run on each.
 - **Tests run on each kind**: slt and pgregress, the mvcc and
   rel cases each kind needs; a tree's cases are §8's.
+
+## 13. Order of work
+
+A step at a time, each with its tests at every layer it
+reaches, each measured where it changes a cost. Steps 1 to 3
+need nothing decided above them; the rest settle what this
+section proposes, each on review before it is built.
+
+**What the steps settle**, proposed:
+
+- **A page holds a half-open range of keys**, `[low, high)`:
+  its high key is the least key it may not hold, none on the
+  rightmost page of a level. A reader moves right while its
+  key is at or past the high key. Every key of a tree is
+  distinct, as a leaf entry ends with its row's key (§3), so
+  no rule is needed for equal keys.
+- **An inner entry is its child's low key and the child's page
+  id**, the first entry of a level's leftmost page with an
+  empty key, below every key. A descent takes the last entry
+  whose key is at or below the key it looks for.
+- **A split is two top-level changes**: the first writes the
+  new right page, holding the upper half, and the left page
+  with its high key the right page's first key, its right link
+  the new page, and a flag, *incomplete split*; the second
+  writes the parent's new entry and the left page without the
+  flag. A crash between them leaves the flag, and a writer
+  that meets it on its way down finishes the post before its
+  own change, as PostgreSQL's `_bt_finish_split()`. A reader
+  needs no flag: the right link takes it there.
+- **A root split** makes a new root of two entries, and writes
+  the meta page with it, in the second change. The meta page,
+  page 0, holds the root's page id and the tree's height.
+- **Page ids come from an sm1 sequence** of the index's own
+  (`sm1::mkseq`, made with the index, transactionally; its
+  next value is not, as a page's is not): no page id is
+  handed out twice, gaps are harmless, and the meta page is
+  written only when the root changes.
+- **A cached page is keyed by the database, the store, the
+  index's relid and the page id**, as one block cache serves
+  every database of the environment.
+- **sm1 gains, for keys of class `0x04`** (`sm1/API.md`):
+  - a top-level write, a `WriteBatch` of puts and deletes in
+    the store's column family, applied at once, outside every
+    transaction, in RocksDB's WAL; not synced, as a later
+    commit's sync covers it, the WAL being one sequence;
+  - a read of one page, and of many, through the block cache;
+  - a range delete of an index's pages, for DROP INDEX;
+  - an SIREAD range, and an `on_write`, on keys not stored,
+    under the index's relid (§8, SSI);
+  - a wait for the writer of a row's newest version, when it
+    is another transaction still running, cut short as every
+    wait is, for the uniqueness check (§6);
+  - a read of a row's newest version only when no snapshot
+    can still see an older one, at or below the GC watermark,
+    for vacuum (§7).
+
+**The steps:**
+
+1. **The page** (`sm2/src/tree/page.cc`): the layout of §3,
+   the search of its slots, an entry's insert, and a split's
+   halves, on bytes alone. Tests: `sm2/test`, keys at random
+   against a sorted list; a split at every size, its halves'
+   keys the whole's and in order, each under the limit; an
+   entry over a third of the limit refused.
+2. **The writers' latch table** (`sm2/src/tree/latch.cc`), by
+   page id. Tests: `sm2/test`, many threads, one page and
+   many, under TSan.
+3. **The page cache** (`sm2/src/tree/cache.cc`): pages in a
+   `rocksdb::Cache`, write-through, the index's version and a
+   session's pin on its inner pages (§2), a miss read through
+   a function it is given. Tests: `sm2/test`, pages from
+   memory, writers and readers on many threads, under TSan;
+   a reader sees a page before or after a change, never a
+   mix.
+4. **sm1's calls** above. Tests: `sm1/test` for each; an mvcc
+   scenario for the SIREAD on keys not stored, a write into a
+   range a serializable reader holds, and one for the wait
+   for a running writer, with the writer's commit and its
+   abort.
+5. **The tree** (`sm2/src/tree/tree.cc`): descent, scans, the
+   IN list's batch, inserts, splits and their finish, over
+   steps 1 to 4. Tests: `sm2/test`, a million entries against
+   a sorted list; a crash between a split's two changes,
+   finished by the next insert; inserts from many threads
+   with scans running.
+6. **An index `rel` over a tree** (`sm2/src/rel/index.cc`):
+   the entry, the uniqueness check of §6, and vacuum's walk of
+   §7. Tests: `sm2/test`'s index tests on both kinds; `rel`
+   for a unique key's two writers and vacuum.
+7. **The index's kind in sm3**: in its definition, and every
+   index operation and the build branching on it
+   (`sm3/SM3_DESIGN.md` §3). Tests: `rel`'s index tests on
+   both kinds.
+8. **digres's way to ask for one** (§11, question 4), and the
+   index access method's costs. Tests: `dg/test/slt` on both
+   kinds; the grid of index scans measured against today's
+   entries and PostgreSQL (`NEXT.md` §1 item 3).
