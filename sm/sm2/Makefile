@@ -2,6 +2,7 @@
 #
 #   make -j4          libsm2.a and the test binary
 #   make test         build, then run the tests
+#   make tsan         the B+tree's latch tests under the thread sanitizer
 #   make format       clang-format src/ and test/ in place
 #   make clean        remove build/
 #
@@ -58,15 +59,15 @@ TEST_SRCS := $(wildcard test/*.cc)
 TEST_OBJS := $(TEST_SRCS:test/%.cc=$(BUILD)/test/%.o)
 
 LIB      := $(BUILD)/libsm2.a
-SM0_LIB  := $(SM0)/build/libsm0.a
-SM1_LIB  := $(SM1)/build/libsm1.a
+SM0_LIB  := $(SM0)/$(BUILD)/libsm0.a
+SM1_LIB  := $(SM1)/$(BUILD)/libsm1.a
 TEST_BIN := $(BUILD)/test_sm2
 
 # Everything but the generated fixture header and src/ryu/.
 FORMAT_FILES := $(filter-out test/pg_fixtures.h src/ryu/%, \
     $(wildcard src/*/*.cc src/*/*.h test/*.cc test/*.h))
 
-.PHONY: all test format clean $(SM0_LIB) $(SM1_LIB)
+.PHONY: all test tsan format clean $(SM0_LIB) $(SM1_LIB)
 
 all: $(LIB) $(TEST_BIN)
 
@@ -77,11 +78,11 @@ $(LIB): $(LIB_OBJS)
 
 # sm0's Makefile decides whether its library is up to date.
 $(SM0_LIB):
-	$(MAKE) -C $(SM0) build/libsm0.a
+	$(MAKE) -C $(SM0) BUILD=$(BUILD) OPTFLAGS='$(OPTFLAGS)' $(BUILD)/libsm0.a
 
 # sm1's Makefile decides whether its library is up to date.
 $(SM1_LIB):
-	$(MAKE) -C $(SM1) build/libsm1.a
+	$(MAKE) -C $(SM1) BUILD=$(BUILD) OPTFLAGS='$(OPTFLAGS)' $(BUILD)/libsm1.a
 
 $(TEST_BIN): $(TEST_OBJS) $(LIB) $(SM1_LIB) $(SM0_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(TEST_OBJS) $(LIB) $(SM1_LIB) $(SM0_LIB) \
@@ -103,7 +104,15 @@ $(BUILD)/test/%.o: test/%.cc $(FLAGS_FILE)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 test: all
-	$(TEST_BIN)
+	$(RUN) $(TEST_BIN) $(TEST_ARGS)
+
+# The B+tree's latch tests, whose threads share latches,
+# built apart under the thread sanitizer; RocksDB is not instrumented,
+# so the tests that reach it are left out. The sanitizer cannot run
+# with the address space randomised, hence setarch -R.
+tsan:
+	$(MAKE) BUILD=$(BUILD)/tsan OPTFLAGS="-O1 -g -fsanitize=thread" \
+	    RUN="setarch $$(uname -m) -R" TEST_ARGS='-tc="tree latch*"' test
 
 format:
 	clang-format -i $(FORMAT_FILES)
