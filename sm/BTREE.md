@@ -88,7 +88,9 @@ Proposed here:
     page moves. A session keeps its own pin on the index's
     inner pages and, at each probe, only loads the version,
     pinning them again when it has moved. An old pin goes when
-    its session takes the new one.
+    its session takes the new one. *Built otherwise*: an open
+    index holds the inner pages it reads, and lets them go when
+    a descent has to move right (`../MAJORDECISION.md` D11).
   - **A leaf is pinned by its cache handle**, `Lookup` and
     `Release`: the count is the leaf's own, so it is contended
     only as the leaf is popular.
@@ -174,12 +176,17 @@ are *has a high key* and *incomplete split* (§13).
   while they match; a range's, until the upper bound.
 - **An IN list's probes** descend the inner pages first, all
   of them, and read the distinct leaves the cache does not
-  hold in one `MultiGet`.
+  hold in one `MultiGet`. *Not built*: digres opens a probe a
+  scan, each descending through the inner pages its index
+  holds (D11).
 - **Each entry's row** is read by its key at the scan's
   snapshot, as `sm_tbl_read_keys()` reads them today, in
   batches, and kept only if its columns give the entry's key
   again. A cut key is rechecked against the row's columns, as
-  now.
+  now. *Built*: sm3 reads them, many a call, and makes each
+  row's entry as a write would, the evaluator asked for an
+  expression or a predicate, to compare with the entry's key
+  as bytes (D8).
 - **The leaf is not held** while rows are read: the scan
   copies a leaf's matching entries, and its high key, and
   releases it; the next leaf is the right link's.
@@ -189,7 +196,10 @@ are *has a high key* and *incomplete split* (§13).
   be added later; it is no part of this design.
 - **A cursor** keeps its position as the last key it returned
   and its leaf's version, and descends again if the leaf it
-  reads next has another.
+  reads next has another. *Built otherwise*: it reads the leaf
+  it copied from again, past the last key, and moves right
+  from there; no page is ever freed, so a split meanwhile hides
+  nothing.
 
 ## 5. Writes
 
@@ -427,7 +437,8 @@ section proposes, each on review before it is built.
   (`sm1::mkseq`, made with the index, transactionally; its
   next value is not, as a page's is not): no page id is
   handed out twice, gaps are harmless, and the meta page is
-  written only when the root changes.
+  written only when the root changes. *Built otherwise*: from
+  the meta page, in a split's first change (D4).
 - **A cached page is keyed by the database, the store, the
   index's relid and the page id**, as one block cache serves
   every database of the environment.
