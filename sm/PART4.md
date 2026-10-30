@@ -245,12 +245,13 @@ What still has to be solved either way:
 
 - **WAL, replication, PITR, logical decoding.** All three read
   PostgreSQL's WAL. With the data in RocksDB's WAL, physical
-  replication, `pg_basebackup` and PITR stop working. Logical
-  decoding is possible only through a custom WAL resource
-  manager, which means writing full row images into PG's WAL as
-  well, paying for durability twice. Rebuilding replication at
-  the storage tier is a subsystem in its own right; it is what
-  YugabyteDB did, with Raft.
+  replication, `pg_basebackup` and PITR stop working. How the
+  stack replicates is open. RocksDB has no replication of its
+  own, only pieces to build one from: `Checkpoint` for a base
+  copy, `GetUpdatesSince` to tail its WAL. Logical decoding has
+  a design of its own, not on PG's WAL (`LOGICALDECODE.md`,
+  proposed). Replication at the storage tier is a subsystem in
+  its own right; it is what YugabyteDB built, with Raft.
 - **Catalogs move into sm3.** PostgreSQL hardwires catalogs
   and sequences to heap — the relation cache asserts it — so
   the fork rewrites that seam rather than living with a
