@@ -413,3 +413,48 @@ TEST_CASE("tree: inner pages held stale still route every probe") {
   CHECK(r.tree.held.empty());
   REQUIRE_MESSAGE(0 == tree_check(r.tree), std::string(sm1::errmsg()));
 }
+
+TEST_CASE("tree: a unique insert judges every entry of its prefix") {
+  // Verify tree_insert_unique judges each entry of the prefix, on
+  // the leaf that covers it and the ones to its right.
+  // 1. Insert 300 entries of prefix "k|", dead to the check, then one
+  //    whose row is live: with pages of 512 bytes they span leaves.
+  // 2. A key of the prefix is refused, as the live one is judged a
+  //    duplicate; with none live, it goes in, whatever leaf it lands
+  //    on; inserted again it is there already.
+  // 3. A check that answers wait gets 2, and no change is made.
+  db_t d;
+  open_tree_t t(d, 17, 512);
+  REQUIRE(0 == tree_create(t.tree));
+  auto key_of = [](int n) {
+    char buf[32];
+    snprintf(buf, sizeof buf, "k|%06d", n);
+    return std::string(buf);
+  };
+  for (int n = 0; n < 300; n++) {
+    REQUIRE(0 == tree_insert(t.tree, key_of(n * 2), "v"));
+  }
+  REQUIRE(0 == tree_insert(t.tree, key_of(1001), "live"));
+  REQUIRE(0 == tree_insert(t.tree, "a", "v"));
+  REQUIRE(0 == tree_insert(t.tree, "z", "v"));
+  size_t judged = 0;
+  auto dup_if_live = [&](std::string_view, std::string_view v) {
+    judged++;
+    return v == "live" ? sm1::seterr(sm1::SM_ERR_DUPKEY, "dup"), 1 : 0;
+  };
+  CHECK(-1 == tree_insert_unique(t.tree, "k|", key_of(3), "v", dup_if_live));
+  CHECK(sm1::SM_ERR_DUPKEY == sm1::errnum());
+  CHECK(judged >= 300);
+  auto none = [](std::string_view, std::string_view) { return 0; };
+  for (int n : {3, 599, 1500}) {
+    CHECK(0 == tree_insert_unique(t.tree, "k|", key_of(n), "v", none));
+    CHECK(1 == tree_insert_unique(t.tree, "k|", key_of(n), "v", none));
+  }
+  auto wait = [](std::string_view, std::string_view) { return 2; };
+  CHECK(2 == tree_insert_unique(t.tree, "k|", key_of(5), "v", wait));
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+  cursor_t c;
+  std::string lo = "k|", hi = "k}";
+  cursor_open(t.tree, c, &lo, true, &hi, false);
+  CHECK(304u == drain(c).size());
+}

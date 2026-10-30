@@ -56,6 +56,9 @@ struct page_t {
   uint64_t version = 0;
   uint64_t right = 0; /* the right sibling's page id, 0 none */
   std::string high;   /* the least key the page may not hold */
+
+  /* Whether the page has a high key: none on a level's rightmost. */
+  bool has_high_key() const { return 0 != (flags & page_has_high); }
   std::vector<std::pair<std::string, std::string>> entries;
 };
 

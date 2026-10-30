@@ -89,6 +89,23 @@ int tree_drop(sm1::session_t *session, uint64_t storeid, uint16_t relid);
 int tree_insert(tree_t &tree, std::string_view key, std::string_view value);
 
 /*
+ * Insert key, which begins with prefix, with value, unless an entry
+ * beginning with prefix conflicts (../BTREE.md §6): each other one is
+ * judged by check(entry key, entry value), 0 no conflict, 1 a
+ * duplicate, 2 a writer to wait for, -1 an error, under the latch of
+ * the leaf that covers prefix, which every insert of a key beginning
+ * with it takes first and holds until it has inserted; so two inserts
+ * of one prefix take turns. Returns 0 inserted; 1 if key was there
+ * already, unchanged; 2, every latch let go, for the caller to wait
+ * as check found and call again; -1 on an error or a duplicate, its
+ * error check's to set.
+ */
+int tree_insert_unique(
+    tree_t &tree, std::string_view prefix, std::string_view key,
+    std::string_view value,
+    const std::function<int(std::string_view, std::string_view)> &check);
+
+/*
  * Remove key, if the tree has it and keep(key, value) says no, under
  * its leaf's latch, which an insert of the key takes too: 0 removed,
  * 1 not, -1 on error, keep's own included. keep is called with no

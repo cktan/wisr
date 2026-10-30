@@ -712,10 +712,9 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
   x.constraint = constraint;
   x.tree = tree;
   x.eval = std::string(eval);
-  // A primary key's entries are the rows; a unique tree's check is
-  // not built yet (../BTREE.md §6).
-  if (tree && (primary || unique)) {
-    return invalid("create index: a tree that is a primary key, or unique");
+  // A primary key's entries are the rows, which a tree's are not.
+  if (tree && primary) {
+    return invalid("create index: a tree that is a primary key");
   }
   if (constraint && (!unique || !eval.empty())) {
     return invalid("create index: a constraint's index not unique, or not "

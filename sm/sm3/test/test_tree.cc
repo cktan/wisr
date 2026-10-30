@@ -9,9 +9,12 @@
 #include "doctest.h"
 #include "sm3.h"
 
+#include <atomic>
 #include <cctype>
+#include <chrono>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -290,13 +293,13 @@ TEST_CASE("tree: an older snapshot reads the rows it sees") {
   REQUIRE(sm3::commit(f.b) == 0);
 }
 
-TEST_CASE("tree: made on rows, emptied by a truncate, refused as unique") {
+TEST_CASE("tree: made on rows, emptied by a truncate, refused as a pkey") {
   // Verify the trees DDL makes, empties and refuses.
   // 1. A tree made on a table with rows, in a later transaction, is
   //    pending, and filled by the build: a scan gives every row.
   // 2. TRUNCATE gives the table new, empty trees: a scan gives none,
   //    and rows inserted after are given.
-  // 3. A unique tree, and a tree that is a primary key, are refused.
+  // 3. A tree that is a primary key is refused.
   trees_t f;
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   sm3::table_t *t = f.table(f.a);
@@ -337,7 +340,7 @@ TEST_CASE("tree: made on rows, emptied by a truncate, refused as unique") {
 
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   uint64_t u = 0;
-  CHECK(-1 == sm3::create_index(f.a, f.jobs, "u", by_id, {}, true, u, false,
+  CHECK(-1 == sm3::create_index(f.a, f.jobs, "u", by_id, {}, true, u, true,
                                 false, true));
   CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
   REQUIRE(sm3::abort(f.a) == 0);
@@ -450,4 +453,134 @@ TEST_CASE("tree: a write skew through a tree's ranges fails one") {
   CHECK(0 == sm3::commit(f.a));
   CHECK(-1 == sm3::commit(f.b));
   CHECK(sm1::SM_ERR_SERIALIZATION == sm1::errnum());
+}
+
+TEST_CASE("tree: a unique tree refuses a key a live row has") {
+  // Verify a unique tree's check, by the rows its entries name.
+  // 1. Make a unique tree on owner; insert rows of owners x and y.
+  // 2. Another x is refused with SM_ERR_DUPKEY, the tree's index in
+  //    errdup; so is an update of y's row to x.
+  // 3. Delete x's row, then insert x again: taken, its old entry dead.
+  // 4. Move a row from y to z and back to y in one transaction: its
+  //    own entries are no other row's.
+  // 5. Null owners are many.
+  trees_t f;
+  std::vector<sm3::index_key_spec_t> owner = {{2, false, false, std::nullopt}};
+  uint64_t u = 0;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE_MESSAGE(sm3::create_index(f.a, f.jobs, "u_owner", owner, {}, true, u,
+                                    false, false, true) == 0,
+                  sm1::errmsg());
+  REQUIRE(sm3::commit(f.a) == 0);
+  f.builder(1, 10);
+  REQUIRE_MESSAGE(sm3::builder_wait(f.a, f.jobs, u) == 0, sm1::errmsg());
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  row_t x(1, "s", "x"), y(2, "s", "y");
+  uint64_t ix, iy;
+  REQUIRE(sm3::tbl_insert(t, x.d(), x.null(), ix) == 0);
+  REQUIRE(sm3::tbl_insert(t, y.d(), y.null(), iy) == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  row_t x2(3, "s", "x");
+  uint64_t i2;
+  CHECK(-1 == sm3::tbl_insert(t, x2.d(), x2.null(), i2));
+  CHECK(sm1::SM_ERR_DUPKEY == sm1::errnum());
+  CHECK(u == sm1::errdup().index);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::abort(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  row_t y_to_x(2, "s", "x");
+  CHECK(-1 == sm3::tbl_update(t, iy, y_to_x.d(), y_to_x.null()));
+  CHECK(sm1::SM_ERR_DUPKEY == sm1::errnum());
+  sm3::tbl_close(t);
+  REQUIRE(sm3::abort(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  REQUIRE(sm3::tbl_delete(t, ix) == 0);
+  REQUIRE_MESSAGE(sm3::tbl_insert(t, x2.d(), x2.null(), i2) == 0,
+                  sm1::errmsg());
+  row_t y_to_z(2, "s", "z");
+  REQUIRE(sm3::tbl_update(t, iy, y_to_z.d(), y_to_z.null()) == 0);
+  REQUIRE_MESSAGE(sm3::tbl_update(t, iy, y.d(), y.null()) == 0, sm1::errmsg());
+  for (int n = 10; n < 13; n++) {
+    row_t nul(n, "s", "");
+    sm2::datum_t d[3] = {nul.d()[0], nul.d()[1], 0};
+    bool isnull[3] = {false, false, true};
+    uint64_t id;
+    REQUIRE(sm3::tbl_insert(t, d, isnull, id) == 0);
+  }
+  CHECK(std::vector<int32_t>{3} == ids(t, u, "x", "x"));
+  CHECK(std::vector<int32_t>{2} == ids(t, u, "y", "y"));
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("tree: a unique tree waits for the writer of an equal key") {
+  // Verify the check waits for a running writer, then decides by its
+  // end, as sm1's unique keys do.
+  // 1. a inserts owner w and holds its transaction open.
+  // 2. b inserts owner w on another thread: it waits.
+  // 3. a aborts: b's insert is taken. Again with a committing: b's
+  //    fails with SM_ERR_DUPKEY.
+  for (bool commit : {false, true}) {
+    CAPTURE(commit);
+    trees_t f;
+    std::vector<sm3::index_key_spec_t> owner = {
+        {2, false, false, std::nullopt}};
+    uint64_t u = 0;
+    REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+    REQUIRE(sm3::create_index(f.a, f.jobs, "u_owner", owner, {}, true, u, false,
+                              false, true) == 0);
+    REQUIRE(sm3::commit(f.a) == 0);
+    f.builder(1, 10);
+    REQUIRE_MESSAGE(sm3::builder_wait(f.a, f.jobs, u) == 0, sm1::errmsg());
+
+    REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+    sm3::table_t *ta = f.table(f.a);
+    row_t wa(1, "s", "w");
+    uint64_t ia;
+    REQUIRE(sm3::tbl_insert(ta, wa.d(), wa.null(), ia) == 0);
+
+    std::atomic<int> result{99};
+    std::atomic<int> err{0};
+    std::atomic<bool> started{false};
+    std::thread bt([&] {
+      sm3::begin(f.b, sm1::xctlevel_t::read_committed);
+      sm3::table_t *tb = f.table(f.b);
+      row_t wb(2, "s", "w");
+      uint64_t ib;
+      started = true;
+      int rc = sm3::tbl_insert(tb, wb.d(), wb.null(), ib);
+      err = rc == 0 ? 0 : static_cast<int>(sm1::errnum());
+      sm3::tbl_close(tb);
+      result = rc;
+      if (rc == 0) {
+        sm3::commit(f.b);
+      } else {
+        sm3::abort(f.b);
+      }
+    });
+    while (!started) {
+      std::this_thread::yield();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    CHECK(99 == result.load());
+    sm3::tbl_close(ta);
+    REQUIRE((commit ? sm3::commit(f.a) : sm3::abort(f.a)) == 0);
+    bt.join();
+    if (commit) {
+      CHECK(-1 == result.load());
+      CHECK(sm1::SM_ERR_DUPKEY == err.load());
+    } else {
+      CHECK(0 == result.load());
+    }
+  }
 }

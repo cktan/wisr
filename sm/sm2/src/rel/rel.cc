@@ -783,6 +783,13 @@ int rel_read(rel_t *rel, std::string_view key, sm1::rawpin_t *pin,
       tuple, id);
 }
 
+/* Read a row's newest version, past the snapshot; see sm2.h. */
+int rel_read_newest(rel_t *rel, std::string_view key, sm1::rawpin_t *pin,
+                    std::string_view &tuple, uint64_t &writer) {
+  return sm1::read_newest(rel->session, rel->storeid, row_key(rel->relid, key),
+                          pin, tuple, writer);
+}
+
 /* Read a row's newest version, if settled; see sm2.h. */
 int rel_read_settled(rel_t *rel, std::string_view key, sm1::rawpin_t *pin,
                      std::string_view &tuple) {

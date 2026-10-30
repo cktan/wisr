@@ -256,8 +256,11 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   entry's row read at the snapshot and handed out only if the
   entry made of it, as a write would make it, is the entry
   (`../../MAJORDECISION.md` D8). `tbl_compact`, VACUUM, removes
-  the entries whose rows are settled without them. A tree is
-  not yet unique, nor a primary key.
+  the entries whose rows are settled without them. A unique
+  tree checks a key against the newest version of each row an
+  equal entry names, waiting for a running writer
+  (`../BTREE.md` §6); it is no `ON CONFLICT` arbiter yet, and a
+  primary key is never a tree.
 - **Unique indexes are keyed without the row's key:**
   `encode(sk)` → the same tuple. The KV key
   is then the uniqueness unit, so sm1's insert refuses a

@@ -701,6 +701,15 @@ int rel_read(rel_t* rel, std::string_view key, sm1::rawpin_t* pin,
              std::string_view& tuple, uint64_t* id = nullptr);
 
 /*
+ * The row at key at its newest version, past the snapshot
+ * (sm1::read_newest): 0 with its tuple in pin, committed or this
+ * transaction's own; 1 gone; 2 written by another still running,
+ * writer set; or -1. As a unique tree checks a key (../BTREE.md §6).
+ */
+int rel_read_newest(rel_t* rel, std::string_view key, sm1::rawpin_t* pin,
+                    std::string_view& tuple, uint64_t& writer);
+
+/*
  * The row at key at its newest version, if settled (sm1::read_settled):
  * 0 with its tuple in pin, 1 gone, 2 not settled, or -1. As vacuum
  * judges a tree's entry by its row (../BTREE.md §7).
@@ -1051,6 +1060,22 @@ void idx_close(index_t* index);
  *   - idx_find and idx_find_latest refuse it, and a unique tree's
  *     key is inserted by idx_insert_unique.
  */
+
+/*
+ * Add a unique tree's entry for the row with key row, as idx_insert,
+ * unless another entry of its key conflicts (../BTREE.md §6): check
+ * (row, entry key) judges each other entry of the key by its row, 0
+ * none, 1 a duplicate, with SM_ERR_DUPKEY set, 2 a writer to wait
+ * for, -1 an error. Returns 0; 2, every latch let go, for the caller
+ * to wait as check found and call again; -1. A key with a null
+ * column is no other's, and is checked against none.
+ */
+int idx_insert_unique(index_t* index, std::span<const datum_t> key,
+                      std::span<const bool> key_isnull, std::string_view row,
+                      std::span<const datum_t> include,
+                      std::span<const bool> include_isnull,
+                      const std::function<int(std::string_view,
+                                              std::string_view)>& check);
 
 /* Make an index's tree, empty, its relid's pages before it dropped. */
 int idx_create(index_t* index);

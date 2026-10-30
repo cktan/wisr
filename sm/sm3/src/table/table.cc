@@ -368,6 +368,9 @@ int keys_equal(const sm3::index_def_t &x, const entry_t &a, const entry_t &b) {
   return 1;
 }
 
+int unique_tree_insert(sm3::table_t *t, size_t i, const entry_t &e,
+                       const picked_t &inc, std::string_view row);
+
 /*
  * Add index i's entry e for the row r with key row. A
  * key the index holds already is SM_ERR_DUPKEY, with the index in
@@ -376,8 +379,10 @@ int keys_equal(const sm3::index_def_t &x, const entry_t &a, const entry_t &b) {
 int add_entry(sm3::table_t *t, size_t i, const entry_t &e, const vals_t &r,
               std::string_view row) {
   picked_t inc(r, t->def->indexes[i].include_attnums);
-  if (sm2::idx_insert(t->indexes[i], e.d(), e.null(), row, inc.d(),
-                      inc.null()) == 0) {
+  const sm3::index_def_t &x = t->def->indexes[i];
+  if ((x.tree && x.unique ? unique_tree_insert(t, i, e, inc, row)
+                          : sm2::idx_insert(t->indexes[i], e.d(), e.null(), row,
+                                            inc.d(), inc.null())) == 0) {
     return 0;
   }
   // Which index has the key, for the host to say it.
@@ -669,7 +674,18 @@ int tbl_insert_arbiter(table_t *table, std::span<const sm2::datum_t> values,
     return -1;
   }
   const table_def_t &def = *table->def;
-  // Each arbiter must be a unique index of the table.
+  // Each arbiter must be a unique index of the table, and none a
+  // tree, whose key's row is not looked up yet (../BTREE.md §6).
+  for (const index_def_t &x : def.indexes) {
+    bool arbiter = x.unique && (arbiters.empty() ||
+                                std::find(arbiters.begin(), arbiters.end(),
+                                          x.oid) != arbiters.end());
+    if (arbiter && x.tree) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "insert: unique index " + x.name +
+                             " is a tree, which is no arbiter yet");
+    }
+  }
   for (uint64_t oid : arbiters) {
     bool found = false;
     for (const index_def_t &x : def.indexes) {
@@ -1638,6 +1654,68 @@ static int tree_next(scan_t *scan, uint64_t &id, std::string_view &tuple) {
     }
   }
 }
+
+} // namespace sm3
+
+namespace {
+
+/*
+ * Add a unique tree's entry e, of index i, for the row with key row
+ * (../BTREE.md §6): each other entry of its key is judged by its
+ * row's newest version, past the snapshot. A row committed, or this
+ * transaction's own, that still has the entry's key is a duplicate,
+ * SM_ERR_DUPKEY; one another transaction is still writing is waited
+ * for, outside every latch, and the key checked again; any other
+ * entry is dead.
+ */
+int unique_tree_insert(sm3::table_t *t, size_t i, const entry_t &e,
+                       const picked_t &inc, std::string_view row) {
+  sm3::pin_t *p = sm3::pin_take(t->session);
+  if (!p) {
+    return -1;
+  }
+  uint64_t writer = 0;
+  std::string kb;
+  int rc;
+  for (;;) {
+    rc = sm2::idx_insert_unique(
+        t->indexes[i], e.d(), e.null(), row, inc.d(), inc.null(),
+        [&](std::string_view r, std::string_view key) {
+          // Its own row's entry, an earlier key of it gone back to:
+          // no other row's.
+          if (r == row) {
+            return 0;
+          }
+          std::string_view tuple;
+          int n = sm2::rel_read_newest(t->rel, r, p->raw, tuple, writer);
+          if (n != 0) {
+            return n < 0 ? -1 : n == 1 ? 0 : 2;
+          }
+          int h = sm3::still_has(t, i, tuple, r, key, kb);
+          if (h <= 0) {
+            return h;
+          }
+          sm1::seterr(sm1::SM_ERR_DUPKEY, "duplicate key in unique index " +
+                                              t->def->indexes[i].name);
+          return 1;
+        });
+    sm1::unpin(p->raw);
+    if (rc != 2) {
+      break;
+    }
+    // Every latch is let go: wait for the writer, then look again.
+    if (sm1::wait_writer(t->session->sm1, writer) != 0) {
+      rc = -1;
+      break;
+    }
+  }
+  sm3::pin_put(p);
+  return rc;
+}
+
+} // namespace
+
+namespace sm3 {
 
 /* Open a cursor over the primary key's rows, with its pin; see sm3.h. */
 int tbl_idx_scan_rows(table_t *table, uint64_t index, const sm2::bound_t *lo,

@@ -470,7 +470,7 @@ int idx_insert(index_t *index, std::span<const datum_t> key,
   }
   if (index->tree) {
     if (index->unique) {
-      // A unique tree checks its key against its rows' (../BTREE.md
+      // A unique tree checks its key against its rows (../BTREE.md
       // §6), which only idx_insert_unique is given the means to.
       bool has_null = false;
       for (bool n : key_isnull) {
@@ -490,6 +490,54 @@ int idx_insert(index_t *index, std::span<const datum_t> key,
     return sm1::ssi_write_key(index->session, index->storeid, k);
   }
   return sm1::insert(index->session, index->storeid, k, value);
+}
+
+/* The columns' length a tree entry's value holds. */
+static size_t cols_len_of(std::string_view value) {
+  return static_cast<uint8_t>(value[1]) |
+         static_cast<size_t>(static_cast<uint8_t>(value[2])) << 8;
+}
+
+/* Add a unique tree's entry unless its key conflicts; see sm2.h. */
+int idx_insert_unique(
+    index_t *index, std::span<const datum_t> key,
+    std::span<const bool> key_isnull, std::string_view row,
+    std::span<const datum_t> include, std::span<const bool> include_isnull,
+    const std::function<int(std::string_view, std::string_view)> &check) {
+  if (!index->tree || !index->unique) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "index: idx_insert_unique takes a unique tree");
+  }
+  bool has_null = false;
+  for (bool n : key_isnull) {
+    has_null |= n;
+  }
+  std::string k, value;
+  if (entry_of(index, key, key_isnull, row, include, include_isnull, k,
+               value) != 0) {
+    return -1;
+  }
+  int rc;
+  if (has_null) {
+    rc = tree::tree_insert(index->pages, k, value);
+  } else {
+    // The key's prefix, the relid and its columns, uncut in a unique
+    // index; each other entry of it is judged by its row.
+    std::string_view prefix(k.data(), relid_len + cols_len_of(value));
+    rc = tree::tree_insert_unique(
+        index->pages, prefix, k, value,
+        [&](std::string_view ek, std::string_view ev) {
+          if (3 != ev.size() || relid_len + cols_len_of(ev) > ek.size()) {
+            return sm1::seterr(sm1::SM_ERR_CORRUPT,
+                               "index: a tree entry's value");
+          }
+          return check(ek.substr(relid_len + cols_len_of(ev)), ek);
+        });
+  }
+  if (rc < 0 || rc == 2) {
+    return rc;
+  }
+  return sm1::ssi_write_key(index->session, index->storeid, k);
 }
 
 /*

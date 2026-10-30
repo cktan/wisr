@@ -505,18 +505,26 @@ int write_back(tree_t &tree, latched_t &l) {
 
 } // namespace detail
 
-/* Insert a key; see tree.h. */
-int tree_insert(tree_t &tree, std::string_view key, std::string_view value) {
-  // Its key must fit an inner entry too, whose value is a page id.
+namespace {
+
+/* Refuse an entry whose key would not fit an inner entry, a page id its value.
+ */
+int check_entry(const tree_t &tree, std::string_view key,
+                std::string_view value) {
   if (entry_size(key.size(), std::max<size_t>(value.size(), 8)) >
       entry_max(tree.limit)) {
     return sm1::seterr(sm1::SM_ERR_KEYTOOLONG,
                        "tree: an entry over a third of its page");
   }
-  detail::latched_t l;
-  if (0 != detail::latch_leaf(tree, key, l)) {
-    return -1;
-  }
+  return 0;
+}
+
+/*
+ * Insert key with value into the leaf l latches, which covers it,
+ * splitting it if full: 0, 1 if the key is there already, or -1.
+ */
+int insert_into(tree_t &tree, detail::latched_t &l, std::string_view key,
+                std::string_view value) {
   int rc = page_insert(l.page, key, value, tree.limit);
   if (rc < 0) {
     return -1;
@@ -535,6 +543,128 @@ int tree_insert(tree_t &tree, std::string_view key, std::string_view value) {
   }
   std::string sep = right.entries.front().first;
   return post(tree, l.pageid, l.page, l.latch, sep, rightid);
+}
+
+/* Whether key begins with prefix. */
+bool begins(std::string_view key, std::string_view prefix) {
+  return key.size() >= prefix.size() &&
+         0 == key.compare(0, prefix.size(), prefix);
+}
+
+} // namespace
+
+/* Insert a key; see tree.h. */
+int tree_insert(tree_t &tree, std::string_view key, std::string_view value) {
+  if (0 != check_entry(tree, key, value)) {
+    return -1;
+  }
+  detail::latched_t l;
+  if (0 != detail::latch_leaf(tree, key, l)) {
+    return -1;
+  }
+  return insert_into(tree, l, key, value);
+}
+
+/* Insert a key unless an entry of its prefix conflicts; see tree.h. */
+int tree_insert_unique(
+    tree_t &tree, std::string_view prefix, std::string_view key,
+    std::string_view value,
+    const std::function<int(std::string_view, std::string_view)> &check) {
+  if (0 != check_entry(tree, key, value)) {
+    return -1;
+  }
+  for (;;) {
+    // The leaf that covers prefix, latched until the key is in: every
+    // insert of the prefix waits here.
+    detail::latched_t first;
+    if (0 != detail::latch_leaf(tree, prefix, first)) {
+      return -1;
+    }
+    // Judge every entry of the prefix, on this leaf and to its right,
+    // the right ones read without a latch: an insert of the prefix
+    // waits for this one's latch, and a split only moves them right.
+    bool there = false;
+    auto judge = [&](std::string_view k, std::string_view v) {
+      if (k == key) {
+        there = true;
+        return 0;
+      }
+      return check(k, v);
+    };
+    const auto &entries = first.page.entries;
+    size_t i = 0;
+    while (i < entries.size() && std::string_view(entries[i].first) < prefix) {
+      i++;
+    }
+    bool more = true;
+    for (; i < entries.size(); i++) {
+      if (!begins(entries[i].first, prefix)) {
+        more = false;
+        break;
+      }
+      int r = judge(entries[i].first, entries[i].second);
+      if (0 != r) {
+        return r == 2 ? 2 : -1;
+      }
+    }
+    uint64_t next = first.page.right;
+    pinned_t p;
+    while (more && 0 != next) {
+      if (0 != read_page(tree, next, false, p)) {
+        return -1;
+      }
+      const page_view_t &v = p.view;
+      for (size_t j = 0; j < v.count(); j++) {
+        if (!begins(v.key(j), prefix)) {
+          more = false;
+          break;
+        }
+        int r = judge(v.key(j), v.value(j));
+        if (0 != r) {
+          return r == 2 ? 2 : -1;
+        }
+      }
+      next = v.right();
+    }
+    p.release();
+    if (there) {
+      return 1;
+    }
+    // The key goes on the first leaf, or on one to its right, latched
+    // left to right, the first still held.
+    if (!first.page.has_high_key() || key < first.page.high) {
+      return insert_into(tree, first, key, value);
+    }
+    detail::latched_t cur;
+    cur.pageid = first.page.right;
+    bool restart = false;
+    for (;;) {
+      page_latch_t latch(page_latches(), name_of(tree, cur.pageid));
+      cur.latch = std::move(latch);
+      if (0 != read_page(tree, cur.pageid, false, p) || 0 != p.view.check()) {
+        return -1;
+      }
+      p.view.load(cur.page);
+      p.release();
+      if (0 != (cur.page.flags & page_incomplete)) {
+        // A split a crash left half done: finish it, and begin again.
+        if (0 != finish_split(tree, cur.pageid, cur.page, cur.latch)) {
+          return -1;
+        }
+        restart = true;
+        break;
+      }
+      if (cur.page.has_high_key() && key >= cur.page.high) {
+        cur.pageid = cur.page.right;
+        continue;
+      }
+      break;
+    }
+    if (restart) {
+      continue;
+    }
+    return insert_into(tree, cur, key, value);
+  }
 }
 
 /* Open a cursor; see tree.h. */
