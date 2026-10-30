@@ -10255,3 +10255,40 @@ to show what a lock table of sm1's own gains a client.
 - **Left**: profiling `lock100` at 16 clients; the write path's
   two trips through RocksDB's queue (`../sm/NEXT.md` §1, item
   5).
+
+## Step 345: B+tree secondary indexes, the tree
+
+`../sm/BTREE.md`, handed over whole and unattended, on the
+`wip-btree` branch; each decision taken without asking is in
+`../MAJORDECISION.md`, D1 to D5 so far.
+
+- **The page's split** (D1): step 1 split a page without the
+  entry that filled it, and capped an entry at a third of the
+  limit without the left half's new high key. Three entries of
+  2,730 bytes left a fourth that fit no half after any number
+  of splits. The split now takes the entry, at the point
+  nearest half the bytes where both halves fit, and an entry is
+  at most `(limit - header) / 3`.
+- **sm1's pages** (D2, D3): class `0x04` keys, written outside
+  every transaction in one batch, read through the block cache.
+  The cache is sm1's, not sm2's, as sm1 is the only channel into
+  RocksDB. A miss's `Get` and insert hold a fill latch that a
+  write holds too, so a stale page is never put back. The GC
+  filter, a chained store's next old id, a load's emptiness and
+  a load's rollback leave pages alone.
+- **The writers' latch** (D3): one a page, in a sharded map,
+  not a stripe: a split holds a page's and its parent's.
+- **The tree** (`../sm/sm2/src/tree/tree.cc`, D4): a B-link
+  tree; page ids from the meta page, a post's parent found by
+  a descent from the root, a split's post cut short finished by
+  the next writer to latch the page. A cursor copies a leaf's
+  keys and reaches the next from the leaf it copied.
+- **D5**: an entry goes in after its row, not before, so vacuum
+  cannot remove an entry an insert has just found there.
+- **Tests**: sm1, four of pages; sm2, the page, the latch under
+  TSan (`make tsan` in sm2, new), and the tree: 20,000 random
+  keys three levels deep, a cursor across splits, a post cut
+  short and finished after a restart, four writers and two
+  scanners on one tree.
+- **Left**: the index `rel` over a tree (step 6), sm3's kind
+  (step 7), digres's (step 8), and the measurements.

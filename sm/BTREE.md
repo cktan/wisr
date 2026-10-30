@@ -1,6 +1,10 @@
 # BTREE — secondary indexes as B+trees
 
-Status: proposed, for review. Nothing is built.
+Status: being built on the `wip-btree` branch, unattended;
+the decisions taken there are in `../MAJORDECISION.md`, and
+where one changed this design the text below says so. Built:
+§13's steps 1 to 3 and the tree of step 5, with sm1's page
+calls of step 4.
 
 ## 1. Why
 
@@ -144,13 +148,18 @@ are *has a high key* and *incomplete split* (§13).
   (`sm1/SM1_DESIGN.md` §12.2), so a page's `Get` reads one
   block. A full leaf holds about 200 `c2` entries: three
   levels for a million.
-- **An entry is at most a third of the limit**, so a split
-  leaves two entries or more on each side, as PostgreSQL
-  limits a btree tuple to a third of a page. A tree's keys are
-  cut there, about 2.7 KB, flagged and rechecked as cut keys
-  are now (`sm2/SM2_DESIGN.md` §3.2); a unique index's, never
-  cut, are refused past it, where today's entries take 4,096
-  bytes (`sm1::max_keylen`).
+- **An entry is at most a third of what the header leaves**,
+  as PostgreSQL limits a btree tuple to a third of a page: a
+  half of a split holds its high key, no longer than an entry,
+  and two entries, so a split always finds a point where both
+  halves fit with the entry that caused it. The split is made
+  over the page's entries and that one, as
+  `_bt_findsplitloc()` does, at the point nearest half the
+  bytes where both fit. A tree's keys are cut there, about
+  2.7 KB, flagged and rechecked as cut keys are now
+  (`sm2/SM2_DESIGN.md` §3.2); a unique index's, never cut, are
+  refused past it, where today's entries take 4,096 bytes
+  (`sm1::max_keylen`).
 
 ## 4. Reads
 
@@ -198,10 +207,13 @@ are *has a high key* and *incomplete split* (§13).
   page a step writes replaces its cache entry after its put,
   and the post moves the index's version; a reader on the old
   pages reaches the new one by the right link.
-- **Order with the user's transaction**: the entry's change is
-  in RocksDB's WAL before the row's write, so a row that
-  commits always has its entry, and a crash that loses the
-  row leaves only a dead entry.
+- **Order with the user's transaction**: the entry is inserted
+  after the row's version is written, in the same statement,
+  so its change is in RocksDB's WAL before the commit's: a row
+  that commits always has its entry, and a crash before the
+  commit leaves only a dead entry. The entry first, as this
+  section once had it, lets vacuum remove an entry an insert
+  has just found there (`../MAJORDECISION.md` D5).
 
 ## 6. Uniqueness
 
@@ -276,12 +288,13 @@ design deletes them. The GC filter does not touch class
   - **the page**: its layout, the in-place search of its
     slots, an entry's insert and a split's halves, on bytes,
     with no RocksDB;
-  - **the page cache**: pages as entries of a `rocksdb::Cache`,
-    write-through, the index's version and a session's pin on
-    its inner pages (§2). It reads a miss through a function
-    it is given, so its tests give it pages from memory and a
-    cache of their own, and drive writers and readers from
-    many threads, under TSan;
+  - **the page cache**: pages as entries of the block cache,
+    write-through, a miss's fill latched against writes. It is
+    sm1's (`sm1::page_read`, `sm1::page_write`), as sm1 is the
+    only channel into RocksDB (`../MAJORDECISION.md` D2, D3);
+    the index's version and a session's pin on its inner
+    pages (§2) are not built: an open index remembers its root
+    instead (D4);
   - **the writers' latch table**, by page id;
   - **the tree**: descent, the IN list's batch, scans,
     inserts, splits and vacuum's walk, over the three and
@@ -433,17 +446,19 @@ section proposes, each on review before it is built.
    halves, on bytes alone. Tests: `sm2/test`, keys at random
    against a sorted list; a split at every size, its halves'
    keys the whole's and in order, each under the limit; an
-   entry over a third of the limit refused.
+   entry over a third of the limit refused; a page full of the
+   longest entries split with one more at every position.
 2. **The writers' latch table** (`sm2/src/tree/latch.cc`), by
    page id. Tests: `sm2/test`, many threads, one page and
    many, under TSan.
-3. **The page cache** (`sm2/src/tree/cache.cc`): pages in a
-   `rocksdb::Cache`, write-through, the index's version and a
-   session's pin on its inner pages (§2), a miss read through
-   a function it is given. Tests: `sm2/test`, pages from
-   memory, writers and readers on many threads, under TSan;
-   a reader sees a page before or after a change, never a
-   mix.
+3. **The page cache**, sm1's (`sm1/src/page.cc`,
+   `../MAJORDECISION.md` D2, D3): pages in the block cache,
+   write-through, a miss's fill latched against writes. Tests:
+   `sm1/test`, a page written outside the transaction and read
+   back after a restart; a writer and four readers through a
+   cache far smaller than the pages, the writer never reading
+   back an older page than it wrote; a drop by prefix; pages
+   apart from every version, GC and bulk load.
 4. **sm1's calls** above. Tests: `sm1/test` for each; an mvcc
    scenario for the SIREAD on keys not stored, a write into a
    range a serializable reader holds, and one for the wait
