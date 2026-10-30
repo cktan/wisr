@@ -537,6 +537,23 @@ Do not reopen these without the owner:
   `INHERIT` already, so no table in sm has a parent; nothing is
   to be built for inheritance trees, and the planner's and
   executor's code for them is dead for tables in sm.
+- **`CREATE INDEX` on a table with rows waits for its build,
+  after the commit** (decided on review, `WORKNOTE.md` step
+  162). sm3 builds such an index in the background once the
+  transaction that made it commits (`../sm/sm3/SM3_DESIGN.md`
+  §3). digres waits for each build before it reports the
+  command complete, outside any transaction, as PostgreSQL's
+  `CREATE INDEX CONCURRENTLY` waits between its transactions;
+  a build that failed, a unique index over duplicates, is
+  dropped in a transaction of its own and its error reported.
+  In autocommit this is PostgreSQL's behaviour: an error and
+  no index, or an index usable at once. Inside a transaction
+  block the error comes at `COMMIT`, after the block's other
+  work has committed, and the index is not used before the
+  commit. Refusing such a `CREATE INDEX` in a block, as
+  PostgreSQL refuses `CONCURRENTLY` there, was the
+  alternative: it would fail scripts that wrap DDL in `BEGIN
+  ... COMMIT`.
 
 ## 8. Working in this tree
 

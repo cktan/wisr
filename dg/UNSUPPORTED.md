@@ -98,10 +98,10 @@ regression files are taken out for it (`test/pgregress`,
   build after the commit says `could not create index "x":`
   before PostgreSQL's message, with another SQLSTATE.
 - **A unique index or constraint made on a table with rows**
-  — differs: it is built after the commit (`../DECISION.md`,
-  wip-slt1), so in a transaction block a duplicate key is
-  reported at `COMMIT`, after the block's other work has
-  committed, and the index is not there.
+  — differs: it is built after the commit (`PLAN.md` §7),
+  so in a transaction block a duplicate key is reported at
+  `COMMIT`, after the block's other work has committed, and
+  the index is not there.
 - **Bitmap scans** — never. No BitmapAnd or BitmapOr: an OR
   over two indexes is a sequential scan (`../sm/CLUSTER.md` §6,
   step 287).

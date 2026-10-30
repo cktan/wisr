@@ -141,7 +141,7 @@ drop the byte; that saves it on the catalog only.
 - **`sm1::mkstore` makes a store chained** or not. A chained
   store's one column family is named `chain.<storeid>` instead of
   `store.<storeid>`, so the flag is known at open from the CF
-  list, with no read (`../QUESTION.md` Q1); a temporary store's
+  list, with no read; a temporary store's
   lives in its `store_t`. sm3 chains every table's store,
   temporary ones too; sm2's row rel then uses the `chain_` calls
   for its rows. TOAST and index entries, in the same store, stay
