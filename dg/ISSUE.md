@@ -13,7 +13,7 @@ seeing its own transaction's later DELETE, in step 304; issue
 5, a FOR UPDATE cursor returning a row updated after it was
 declared, in step 305; issue 9, ON CONFLICT above READ
 COMMITTED saying sm1's error, in step 306; issue 8, a table
-made in pg_catalog, in step 307; issue 11, a foreign key
+made in pg_catalog, in step 307b; issue 11, a foreign key
 keeping a SET DEFAULT column twice, in step 308; issue 10,
 CREATE TABLE (LIKE a, LIKE a) saying sm's error, in step 309;
 and issue 13, a FOR UPDATE cursor now and then reading no

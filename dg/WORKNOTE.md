@@ -2693,7 +2693,7 @@ those files.
   `check_usermap()` that admits any name fails them.
 
 
-## Step 92: bool, floats and text in tables
+## Step 92b: bool, floats and text in tables
 
 A table in sm took `int2`, `int4` and `int8` alone, though sm2
 has seventeen types. sm2 keeps PostgreSQL's own datums
@@ -8934,7 +8934,7 @@ is digres's own: PostgreSQL refuses it (`UNSUPPORTED.md` §10).
   sq's corpus is unchanged against PostgreSQL 18.6's scripts.
 
 
-## Step 307: nothing is made in pg_catalog
+## Step 307b: nothing is made in pg_catalog
 
 `CREATE TABLE pg_catalog.t ()` made a table (`ISSUE.md` issue
 8), as did CREATE VIEW and CREATE SEQUENCE there. PostgreSQL

@@ -4987,7 +4987,7 @@ local_psql -c 'drop table tp1' > /dev/null 2>&1
 # Verify that no table, view or sequence is made in pg_catalog, as PostgreSQL
 # refuses one: every session's search path looks there first, so it would
 # hide a relation of its name in any schema; and a catalog's own name there,
-# compiled into digres and not in sm, is taken (WORKNOTE.md step 307).
+# compiled into digres and not in sm, is taken (WORKNOTE.md step 307b).
 # 1. Make public.pc1 with a row; CREATE TABLE, VIEW and SEQUENCE named
 #    pc1 in pg_catalog are each refused, permission denied.
 # 2. CREATE TABLE pg_catalog.pg_class says the relation exists.
