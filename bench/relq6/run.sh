@@ -23,12 +23,12 @@ rel=$top/sm/build/release/rel
 
 # rel, optimized, linking the release sm and RocksDB.
 [ -f "$top/sm/build/release/libsm.a" ] &&
-  [ -f "$top/dg/build/rocksdb-release/librocksdb.a" ] || {
+  [ -f "$top/rocksdb/release/librocksdb.a" ] || {
   echo "run.sh: no release sm or RocksDB: make -C dg release first" >&2
   exit 1
 }
 make -s -C "$top/sm/rel" -j4 BUILD=../build/release \
-  LDLIBS="-L/usr/local/lib -ljanet $top/dg/build/rocksdb-release/librocksdb.a \
+  LDLIBS="-L/usr/local/lib -ljanet $top/rocksdb/release/librocksdb.a \
 -lsnappy -llz4 -lzstd -lz -lbz2 -licui18n -licuuc -licudata -lpthread -ldl -lm"
 if ldd "$rel" | grep -q librocksdb; then
   echo "run.sh: $rel links a shared RocksDB, not the release one" >&2

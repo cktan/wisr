@@ -33,8 +33,8 @@ PERL := perl
 # RocksDB, which sm links: the system's, or, for the thread sanitizer, one
 # built for it with its compression libraries (test/rocksdb.sh).
 LINK_ROCKSDB = -lrocksdb
-ROCKSDB_TSAN := build/rocksdb-tsan/librocksdb.a
-ROCKSDB_REL := build/rocksdb-release/librocksdb.a
+ROCKSDB_TSAN := ../rocksdb/tsan/librocksdb.a
+ROCKSDB_REL := ../rocksdb/release/librocksdb.a
 LDLIBS = $(LINK_ROCKSDB) -licui18n -licuuc -licudata -lm -lpthread -ldl -lrt
 # The parser, a library of its own (../sq).
 SQ := ../sq

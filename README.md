@@ -117,9 +117,11 @@ changes to threads, latches, locks or shared state.
 
 - **The release and TSan builds build RocksDB themselves** the
   first time: `dg/test/rocksdb.sh` clones v8.9.1 into
-  `dg/build/rocksdb-src` and builds it with cmake, which takes
-  a while. Ubuntu's `librocksdb` keeps its `assert()`s, and
-  the sanitizer cannot see into it.
+  `rocksdb/src` and builds it with cmake into `rocksdb/release`
+  or `rocksdb/tsan`, which takes a while. Ubuntu's `librocksdb`
+  keeps its `assert()`s, and the sanitizer cannot see into it.
+  `rocksdb/` is outside every `build/`, so `make clean` keeps
+  it; `rm -rf rocksdb` builds it again.
 - **`digres --build` says how a binary was built**: the flags
   of digres, sq and sm, and which RocksDB it links. A release
   build shows `-DNDEBUG` on each, and RocksDB `static`.

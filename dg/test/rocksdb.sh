@@ -1,8 +1,8 @@
 #!/bin/bash
 # rocksdb.sh -- build RocksDB for "make tsan" or "make release".
 #
-#   test/rocksdb.sh tsan       build/rocksdb-tsan/librocksdb.a
-#   test/rocksdb.sh release    build/rocksdb-release/librocksdb.a
+#   test/rocksdb.sh tsan       ../rocksdb/tsan/librocksdb.a
+#   test/rocksdb.sh release    ../rocksdb/release/librocksdb.a
 #
 # The system's RocksDB is not instrumented: the sanitizer cannot see the
 # atomics its threads hand work over with, and reports races in RocksDB's
@@ -10,8 +10,10 @@
 # assert()s. This builds the same version, 8.9.1, from its source, with
 # -fsanitize=thread, or optimized with no assertions, as a static
 # library with the system's compression libraries. It clones the source
-# into build/rocksdb-src the first time, and does nothing once the
-# library is there.
+# into ../rocksdb/src the first time, and does nothing once the library
+# is there. ../rocksdb is the repository's, beside dg/ and bench/, which
+# link it, and outside every build/: "make clean" leaves it, as it
+# changes only with RocksDB's version.
 cd "$(dirname "$0")/.." || exit 1
 kind=$1
 case $kind in
@@ -22,8 +24,8 @@ release) flags="-O3 -DNDEBUG" ;;
   exit 2
   ;;
 esac
-src=$PWD/build/rocksdb-src
-out=$PWD/build/rocksdb-$kind
+src=$PWD/../rocksdb/src
+out=$PWD/../rocksdb/$kind
 # The flags beside the library, for "digres --build" to name.
 mkdir -p "$out"
 echo "$flags" > "$out/flags"

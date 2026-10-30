@@ -1,8 +1,8 @@
 # Build getseek against the static release RocksDB the bench's
-# digres links (../../dg/build/rocksdb-release), and sm1's own
+# digres links (../../rocksdb/release), and sm1's own
 # version codec, so "seek" is sm1's read as it is.
 SM = ../../sm
-RDB = ../../dg/build/rocksdb-release/librocksdb.a
+RDB = ../../rocksdb/release/librocksdb.a
 CXXFLAGS = -O2 -DNDEBUG -std=c++20 -fno-rtti -I$(SM)/sm1/src -I$(SM)/sm0/include
 
 getseek: getseek.cc $(SM)/sm1/src/version.cc
