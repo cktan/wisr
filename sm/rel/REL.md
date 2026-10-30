@@ -522,6 +522,12 @@ Clauses:
   in index tuples.
 - `:where (col value)` -- a partial index: only the rows whose
   `col` prints as `value` are in it. A null equals nothing.
+- `:tree bool` -- a B+tree of the index's own pages
+  (`../BTREE.md`), not sm1's entries. Its entries carry no
+  visibility: a scan of it is `(idx-rows)`, which reads each
+  entry's row and gives it only while the row has the entry's
+  key, and its dead entries stay until `(compact)` removes
+  them (`(idx-entries)` counts them). Not unique, yet.
 
 The storage manager evaluates neither form. It calls `rel`'s
 own evaluator, as it would call PostgreSQL's in the fork.
@@ -725,7 +731,9 @@ Compacts the table's store through GC (`sm_tbl_compact`), as
 `VACUUM`: versions no reader needs are dropped, and a newest
 version an aborted writer left is queued for GC's worker, which
 puts the version before it back within a second or so
-(`../VCHAIN.md` §7). It takes the table's lock as a reader.
+(`../VCHAIN.md` §7). It takes the table's lock as a reader. A
+tree's entries whose rows are settled without them go too
+(`../BTREE.md` §7).
 
 ```janet
 (compact jobs)
@@ -829,6 +837,30 @@ expose them.
 
 ```janet
 (def hits (idx-scan idx_users_email :ge ["alice@"] :le ["alice@~"]))
+```
+
+### `(idx-rows index [:ge lo] [:gt lo] [:le hi] [:lt hi])`
+The rows a scan of the index's rows gives between the bounds,
+as `(idx-scan)` takes them, in the index's order: a tree's,
+each entry's row as the transaction sees it while it still has
+the entry's key (`../sm3/SM3_DESIGN.md` §3), or a primary
+key's, its rows. Returns `[id row]` pairs as `(scan)` does,
+`[key row]` in a table with a primary key.
+
+```janet
+(index-create jobs_state (table jobs) (key (state :asc)) :tree true)
+(idx-rows jobs_state :ge ["b"] :le ["b"])
+# => @[(2 (2 "b" "Bob")) (3 (3 "b" "Cy"))]
+```
+
+### `(idx-entries index [:ge lo] [:gt lo] [:le hi] [:lt hi])`
+How many entries the index holds between the bounds, none read
+nor checked: a tree's dead entries among them, until
+`(compact)` removes the ones no snapshot needs.
+
+```janet
+(idx-entries jobs_state)
+# => 8
 ```
 
 ### `(idx-open index [:ge lo] [:gt lo] [:le hi] [:lt hi])`

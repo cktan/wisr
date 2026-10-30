@@ -10328,3 +10328,37 @@ through it answers as through today's entries.
   vacuum with and without an older snapshot, a write skew
   (each failing with its recheck or its SIREAD taken out);
   dg, `slt/btree_tree.test`, answers from PostgreSQL 18.
+
+## Step 347: a tree measured, and `rel` taught trees
+
+`wide_mixed`, 1,000,000 rows, its `c2` index today's or a tree,
+loaded, vacuumed and analyzed; Q9 and Q10 prepared, user-mode
+instructions of the whole server a statement over 300 of each
+after 60 to warm, `perf stat` on the release builds (the
+benchmark's own method pins the servers; this one does not,
+and counts every thread):
+
+| | load s | Q9 | Q10 |
+| --- | --- | --- | --- |
+| PostgreSQL 18 | 8.4 | 395k | 768k |
+| digres, today's entries | 17.8 | 1,659k | 3,565k |
+| digres, a tree, as first built | 56.4 | 2,102k | 3,429k |
+| digres, a tree, the recheck and reads fixed | 53.7 | 1,737k | 3,371k |
+
+- **Found**: the recheck deformed the whole row, 49 columns,
+  to read one (`tup_deform` 6.7%); a page read allocated twice,
+  its handle and its cache key; a cursor copied each entry as
+  two strings. Now the row is read to the last column the
+  index needs, a page read allocates nothing on a hit, and a
+  cursor copies a leaf once.
+- **What is left**: a tree reads its rows one `Get` each,
+  where today's entries read them many to a `MultiGet`; the row
+  reads are a third of Q9's instructions. An indexed insert
+  costs three times today's: a page of up to 8 KB written for
+  each entry (`../sm/BTREE.md` §10).
+- **rel**: `index-create`'s `:tree`, `(idx-rows)`, a tree's or a
+  primary key's rows as digres reads them, and `(idx-entries)`,
+  its entries dead or not; `test_tree.rel` drives a tree
+  through sm.h: rows moved, deleted and rolled back, compact
+  with an older snapshot open and without, an expression and a
+  partial tree, a build, a truncate, a unique one refused.

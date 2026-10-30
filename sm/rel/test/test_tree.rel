@@ -1,0 +1,146 @@
+# test_tree.rel -- secondary indexes made trees (../BTREE.md), through sm.h:
+# a scan of a tree's rows gives each row while it has its entry's key; its
+# dead entries stay until (compact) removes them.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_tree"))
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+
+(db-create "treedb")
+(db-open "treedb")
+
+# The id column of each row a scan gives, in its order.
+(defn ids [rows] (map (fn [r] ((r 1) 0)) rows))
+
+# Verify a tree's scan of rows against the writes that move them.
+# 1. Make a keyless table and a tree on its state, and insert rows.
+# 2. The tree's struct says :tree; a range and an equality give the rows
+#    with those states, in the tree's order.
+# 3. Move a row off its state and back, move another, delete a third,
+#    and roll an insert back: each scan gives each row once, as it is.
+(begin :rc)
+(table-create jobs
+  (columns
+    (id :int4 :not-null)
+    (state :text)
+    (owner :text)))
+(index-create jobs_state (table jobs) (key (state :asc)) :tree true)
+(insert jobs [1 "a" "Ann"])
+(insert jobs [2 "b" "Bob"])
+(insert jobs [3 "b" "Cy"])
+(insert jobs [4 "b" "Di"])
+(insert jobs [5 "c" "Ed"])
+(commit)
+
+# A snapshot from before the changes below, for (compact) to keep.
+(session-open "old" "treedb")
+(session-use "old")
+(begin :rr)
+(assert-count 5 (scan jobs))
+(session-use "default")
+
+(begin :rc)
+(def desc (describe-table jobs :include-indices))
+(assert-eq ((first (desc :indexes)) :tree) true)
+(assert-eq (ids (idx-rows jobs_state :ge ["b"] :le ["b"])) @[2 3 4])
+(assert-eq (ids (idx-rows jobs_state :gt ["a"])) @[2 3 4 5])
+(update jobs 2 [2 "c" "Bob"])
+(update jobs 3 [3 "a" "Cy"])
+(update jobs 3 [3 "b" "Cy"])
+(delete jobs 4)
+(commit)
+(begin :rc)
+(insert jobs [9 "b" "Gone"])
+(abort)
+
+(begin :rc)
+(assert-eq (ids (idx-rows jobs_state :ge ["b"] :le ["b"])) @[3])
+(assert-eq (ids (idx-rows jobs_state :ge ["c"] :le ["c"])) @[2 5])
+(assert-eq (ids (idx-rows jobs_state)) @[1 3 2 5])
+(assert-eq ((first (idx-rows jobs_state :ge ["a"] :le ["a"])) 1) [1 "a" "Ann"])
+(commit)
+
+# Verify (compact), VACUUM, removes the entries no snapshot needs.
+# 1. The tree holds 8 entries for 4 rows: b's of 2, a's of 3, 4's, 9's.
+# 2. While the older snapshot, taken before the changes, is open, compact
+#    leaves the entries its rows may still be read with; the aborted
+#    insert's goes.
+# 3. Once it ends, compact leaves one entry a row.
+(begin :rc)
+(assert-eq (idx-entries jobs_state) 8)
+(commit)
+(begin :rc)
+(compact jobs)
+(assert-eq (idx-entries jobs_state) 7)
+(commit)
+(session-use "old")
+(commit)
+(session-close "old")
+(session-use "default")
+(begin :rc)
+(compact jobs)
+(assert-eq (idx-entries jobs_state) 4)
+(assert-eq (ids (idx-rows jobs_state)) @[1 3 2 5])
+(commit)
+
+# Verify a tree of an expression, and a partial one, recheck their rows
+# as a write computes their keys.
+# 1. Make a tree on (lower owner), and one on state where state is "free".
+# 2. Rename an owner, and take a row off "free": neither is given under
+#    its old entry.
+(begin :rc)
+(index-create jobs_owner (table jobs) (key ((lower owner) :asc)) :tree true)
+(index-create jobs_free (table jobs) (key (id :asc)) :where (state "free")
+  :tree true)
+(commit)
+(index-wait jobs_owner)
+(index-wait jobs_free)
+(begin :rc)
+(def fay (insert jobs [6 "free" "FAY"]))
+(def gus (insert jobs [7 "free" "gus"]))
+(assert-eq (ids (idx-rows jobs_owner :ge ["fay"] :le ["fay"])) @[6])
+(assert-eq (ids (idx-rows jobs_free)) @[6 7])
+(update jobs fay [6 "free" "Hal"])
+(update jobs gus [7 "busy" "gus"])
+(assert-eq (idx-rows jobs_owner :ge ["fay"] :le ["fay"]) @[])
+(assert-eq (ids (idx-rows jobs_owner :ge ["hal"] :le ["hal"])) @[6])
+(assert-eq (ids (idx-rows jobs_free)) @[6])
+(commit)
+
+# Verify a tree of a table with a primary key, made on its rows, and what
+# a truncate and a unique tree do.
+# 1. Make accounts keyed by id, with rows, then a tree on its owner: the
+#    build fills it, and it gives the rows by their key.
+# 2. TRUNCATE leaves the tree empty, and a row inserted after is given.
+# 3. A unique tree is refused.
+(begin :rc)
+(table-create accounts (columns (id :int4 :not-null) (owner :text))
+  (primary-key id))
+(commit)
+(begin :rc)
+(insert accounts [10 "x"])
+(insert accounts [20 "y"])
+(insert accounts [30 "x"])
+(commit)
+(begin :rc)
+(index-create accounts_owner (table accounts) (key (owner :asc)) :tree true)
+(commit)
+(index-wait accounts_owner)
+(begin :rc)
+(assert-eq (ids (idx-rows accounts_owner :ge ["x"] :le ["x"])) @[10 30])
+(truncate accounts)
+(assert-eq (idx-rows accounts_owner) @[])
+(insert accounts [40 "x"])
+(assert-eq (ids (idx-rows accounts_owner)) @[40])
+(commit)
+(begin :rc)
+(assert-err :err-invalid
+  (index-create accounts_u (table accounts) (key (owner :asc)) :unique true
+    :tree true))
+(abort)
+
+(db-close)
+(env-detach)
+(rm-rf test-dir)
+(print "test_tree.rel passed")

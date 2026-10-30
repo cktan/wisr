@@ -920,7 +920,9 @@ static Janet cfun_nextseq(int32_t argc, Janet *argv) {
   return janet_wrap_number(static_cast<double>(val));
 }
 
-/* (index-create idx_name (table tbl) (key ...) [:unique bool] [:include ...])
+/*
+ * (index-create idx_name (table tbl) (key ...) [:unique bool] [:include ...]
+ *               [:where (col value)] [:tree bool])
  */
 static Janet cfun_index_create(int32_t argc, Janet *argv) {
   janet_arity(argc, 2, -1);
@@ -931,6 +933,8 @@ static Janet cfun_index_create(int32_t argc, Janet *argv) {
   index_def_t idef;
   idef.name = idx_name;
   idef.unique = false;
+  // :tree bool: a B+tree of its own pages (../BTREE.md).
+  bool tree = false;
   // :where (column value): a partial index of the rows whose
   // column prints as value.
   bool has_where = false;
@@ -963,6 +967,9 @@ static Janet cfun_index_create(int32_t argc, Janet *argv) {
       std::string kw = identifier_of(arg);
       if (kw == "unique" && i + 1 < clauses.size()) {
         idef.unique = janet_unwrap_boolean(clauses[i + 1]);
+        i++;
+      } else if (kw == "tree" && i + 1 < clauses.size()) {
+        tree = janet_unwrap_boolean(clauses[i + 1]);
         i++;
       } else if (kw == "where" && i + 1 < clauses.size()) {
         Janet w = clauses[i + 1];
@@ -1184,7 +1191,7 @@ static Janet cfun_index_create(int32_t argc, Janet *argv) {
   uint64_t oid = 0;
   if (sm_cat_create_index(s->session, p_tdef->def->oid, idx_name.c_str(), keys,
                           includes, idef.unique, format_index_eval(ev), reads,
-                          &oid) != 0) {
+                          &oid, false, false, tree) != 0) {
     panic_sm_error("index-create");
   }
   return janet_wrap_nil();
@@ -1304,12 +1311,16 @@ static Janet index_form(const sm_table_def_t &def, const sm_index_def_t &x) {
   for (int32_t att : x.include_attnums) {
     includes.push_back(janet_csymbolv(def.columns[att].name.c_str()));
   }
-  JanetKV *st = janet_struct_begin(4 + ev.has_where + x.primary);
+  JanetKV *st = janet_struct_begin(4 + ev.has_where + x.primary + x.tree);
   janet_struct_put(st, janet_ckeywordv("name"), janet_cstringv(x.name.c_str()));
   janet_struct_put(st, janet_ckeywordv("unique"), janet_wrap_boolean(x.unique));
   // The primary key alone says so: a secondary index's struct is as before.
   if (x.primary) {
     janet_struct_put(st, janet_ckeywordv("primary"), janet_wrap_true());
+  }
+  // A tree alone says so, as a primary key does.
+  if (x.tree) {
+    janet_struct_put(st, janet_ckeywordv("tree"), janet_wrap_true());
   }
   janet_struct_put(st, janet_ckeywordv("key"), tuple_of(keys));
   janet_struct_put(st, janet_ckeywordv("include"), tuple_of(includes));
@@ -2501,11 +2512,14 @@ static Janet cfun_scan_count(int32_t argc, Janet *argv) {
  * Open a cursor over the index argv[0] names, between the bounds the
  * rest of argv gives, as (idx-scan) takes them; op names the command
  * in a panic. Sets p_tdef and p_idef to the index's table and index.
+ * With rows, a cursor over the rows themselves goes there instead, as
+ * sm_tbl_idx_scan_rows opens one, and nullptr is returned.
  */
 static sm_idx_scan_t *open_idx_cursor(session_ctx_t *s, int32_t argc,
                                       Janet *argv, const char *op,
                                       table_def_t *&p_tdef,
-                                      index_def_t *&p_idef) {
+                                      index_def_t *&p_idef,
+                                      sm_rel_scan_t **rows = nullptr) {
   std::string idx_name = identifier_of(argv[0]);
 
   std::tie(p_tdef, p_idef) = need_index(s, idx_name, SM_LOCKMODE_IS, op);
@@ -2544,6 +2558,14 @@ static sm_idx_scan_t *open_idx_cursor(session_ctx_t *s, int32_t argc,
   }
 
   bool widened = false;
+  // The rows themselves, as digres reads a tree or a primary key.
+  if (rows != nullptr) {
+    if (sm_tbl_idx_scan_rows(tbl, index, has_lo ? &lo_b : nullptr,
+                             has_hi ? &hi_b : nullptr, &widened, rows) != 0) {
+      panic_sm_error((std::string(op) + " sm_tbl_idx_scan_rows").c_str());
+    }
+    return nullptr;
+  }
   sm_idx_scan_t *iscan = nullptr;
   if (sm_tbl_idx_scan(tbl, index, has_lo ? &lo_b : nullptr,
                       has_hi ? &hi_b : nullptr, &widened, &iscan) != 0) {
@@ -2653,6 +2675,86 @@ static Janet cfun_idx_scan(int32_t argc, Janet *argv) {
   }
   sm_idx_scanend(iscan);
   return janet_wrap_array(res);
+}
+
+/*
+ * (idx-rows idx_name [:ge lo] [:gt lo] [:le hi] [:lt hi]): [id row], or
+ * [key row] in a table with a primary key, for each row a scan of the
+ * index's rows gives, as digres reads a tree's or a primary key's.
+ */
+static Janet cfun_idx_rows(int32_t argc, Janet *argv) {
+  janet_arity(argc, 1, -1);
+  session_ctx_t *s = require_session();
+  table_def_t *p_tdef = nullptr;
+  index_def_t *p_idef = nullptr;
+  sm_rel_scan_t *rscan = nullptr;
+  open_idx_cursor(s, argc, argv, "idx-rows", p_tdef, p_idef, &rscan);
+  sm_tbl_t *tbl = p_tdef->tbl;
+  const index_def_t *pk = primary_of(p_tdef);
+  JanetArray *rows = janet_array(16);
+  uint64_t rowno = 0;
+  const void *tuple = nullptr;
+  size_t len = 0;
+  size_t ncols = p_tdef->columns.size();
+  int rc;
+  while ((rc = sm_rel_scannxt(rscan, &rowno, &tuple, &len)) == 0) {
+    Janet *vals = janet_tuple_begin(ncols);
+    for (size_t i = 0; i < ncols; i++) {
+      sm_datum_t val = 0;
+      bool isnull = false;
+      if (sm_tbl_decode(tbl, tuple, len, i, &val, &isnull) != 0) {
+        sm_rel_scanend(rscan);
+        panic_sm_error("idx-rows sm_tbl_decode");
+      }
+      vals[i] = value_to_janet(val, isnull, p_tdef->columns[i].type_code,
+                               p_tdef->columns[i].typmod, tbl);
+    }
+    Janet *pair = janet_tuple_begin(2);
+    pair[0] =
+        pk ? key_form(pk, vals) : janet_wrap_number(static_cast<double>(rowno));
+    pair[1] = janet_wrap_tuple(janet_tuple_end(vals));
+    janet_array_push(rows, janet_wrap_tuple(janet_tuple_end(pair)));
+  }
+  // As (scan): a failed cursor's rows are not the scan's.
+  if (rc < 0) {
+    if (!engine_aborted()) {
+      sm_rel_scanend(rscan);
+    }
+    panic_sm_error("idx-rows sm_rel_scannxt");
+  }
+  sm_rel_scanend(rscan);
+  return janet_wrap_array(rows);
+}
+
+/*
+ * (idx-entries idx_name [:ge lo] [:gt lo] [:le hi] [:lt hi]): how many
+ * entries the index holds between the bounds, none read: a tree's
+ * dead entries among them, until vacuum (compact) removes them.
+ */
+static Janet cfun_idx_entries(int32_t argc, Janet *argv) {
+  janet_arity(argc, 1, -1);
+  session_ctx_t *s = require_session();
+  table_def_t *p_tdef = nullptr;
+  index_def_t *p_idef = nullptr;
+  sm_idx_scan_t *iscan =
+      open_idx_cursor(s, argc, argv, "idx-entries", p_tdef, p_idef);
+  uint64_t rowno = 0;
+  bool cut = false;
+  const void *val = nullptr;
+  size_t val_len = 0;
+  int64_t n = 0;
+  int rc;
+  while ((rc = sm_idx_scannxt(iscan, &rowno, &cut, &val, &val_len)) == 0) {
+    n++;
+  }
+  if (rc < 0) {
+    if (!engine_aborted()) {
+      sm_idx_scanend(iscan);
+    }
+    panic_sm_error("idx-entries sm_idx_scannxt");
+  }
+  sm_idx_scanend(iscan);
+  return janet_wrap_number(static_cast<double>(n));
 }
 
 /* (idx-open idx_name [:ge lo] [:gt lo] [:le hi] [:lt hi]) */
@@ -2937,6 +3039,8 @@ static const JanetReg s_rel_cfuns[] = {
     {"_scan", cfun_scan, "internal"},
     {"_scan-count", cfun_scan_count, "internal"},
     {"_idx-scan", cfun_idx_scan, "internal"},
+    {"_idx-rows", cfun_idx_rows, "internal"},
+    {"_idx-entries", cfun_idx_entries, "internal"},
     {"_idx-open", cfun_idx_open, "internal"},
     {"cursor-next", cfun_cursor_next,
      "(cursor-next c) -- the cursor's next index entry, or nil at its end"},
@@ -3064,6 +3168,12 @@ static const char *s_prelude = R"janet(
 
 (defmacro idx-scan [idx & rest]
   ~(_idx-scan (string ',idx) ,;rest))
+
+(defmacro idx-rows [idx & rest]
+  ~(_idx-rows (string ',idx) ,;rest))
+
+(defmacro idx-entries [idx & rest]
+  ~(_idx-entries (string ',idx) ,;rest))
 
 (defmacro idx-open [idx & rest]
   ~(_idx-open (string ',idx) ,;rest))
