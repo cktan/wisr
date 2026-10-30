@@ -230,11 +230,36 @@ and so are the catalog tables psql reads
      baseline, at 8612f68b: a lock adds 3.3 µs of a client's
      time to a statement of 100 at 1 client and 28 at 16, and
      100 rows locked a statement scale 2.4× from 1 client to
-     16, as 100 read scale 8.7×.
+     16, as 100 read scale 8.7×. Its `fk` measures commit
+     batching, not a lock (item 5).
 
    The order: the module with today's table, and its
    benchmark's baseline; `fmix64`; the partitions; the
    hand-written partition; each a step, measured.
+5. **A write transaction's two trips through RocksDB's write
+   queue** (`../dg/WORKNOTE.md` step 344). An insert writes its
+   uncommitted version at once (`sm1/src/access.cc`,
+   unsynced), and the commit its status record
+   (`sm1/src/xct.cc`, synced), each a write of its own through
+   the one queue. RocksDB syncs the WAL once a group of the
+   writers waiting, and an unsynced write may join a group a
+   commit syncs, so the insert waits for a sync it does not
+   need: at 16 clients about 85% of a session's samples wait
+   in the queue, near half under each write. And a group is as
+   large as the writers waiting when it forms, so anything a
+   transaction does outside the queue costs syncs: 100 µs of
+   `pg_sleep` an insert takes `../bench/rowlocks.sh`'s `ins`
+   from about 5,600 tps to 4,100, and its `fk`, a foreign key's
+   check of about 70 µs, to 3,950. A plain insert scales 5.1×
+   from 1 client to 16. To weigh, each measured on `ins` and
+   `fk`:
+
+   - **RocksDB's own**: `enable_pipelined_write`, the WAL
+     written apart from the memtables; `two_write_queues`, for
+     writes that need no memtable order.
+   - **The version writes kept out of a synced group**: a
+     transaction's versions written by a queue, or a batch, of
+     their own, so only the commit waits for a sync.
 
 Low priority:
 

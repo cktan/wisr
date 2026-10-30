@@ -10234,6 +10234,24 @@ to show what a lock table of sm1's own gains a client.
   as much at 16: every lock taken and released under one
   `lock_mu`, an entry allocated and freed for each. The foreign
   key's check adds about a millisecond at 16 clients, on ten
-  rows every client locks shared: not yet explained, an insert
-  bound by its commit's sync.
-- **Left**: profiling `lock100` and `fk` at 16 clients.
+  rows every client locks shared: not the lock, but RocksDB's
+  group commit, below.
+- **fk, profiled** at 16 clients, 200 samples of gdb's each of
+  fk and ins: of every session's samples, about 85% wait in
+  RocksDB's write queue (`WriteThread::BlockingAwaitState`) in
+  both, 45% and 42% under the insert's version write
+  (`access.cc`, unsynced), 40% and 43% under the commit's
+  status record (`xct.cc`, synced); `RI_FKey_check` 0.7%, and
+  no `lock_wait`. Each transaction makes those two writes, and
+  no other. RocksDB syncs the WAL once a group of the writers
+  waiting, and lets an unsynced write join a group a commit
+  syncs, so the insert waits for that sync too. Time a
+  transaction spends outside the queue leaves fewer writers in
+  it as a group forms, so more syncs a transaction: an insert
+  through `(select pg_sleep(0.0001))`, with no foreign key and
+  no lock, runs 4,163 and 4,098 tps at 16 clients, fk 3,936
+  and 3,949, ins 5,540 and 5,715, and the same insert through
+  `(select 1)` 5,660 and 5,365. In either order, the same.
+- **Left**: profiling `lock100` at 16 clients; the write path's
+  two trips through RocksDB's queue (`../sm/NEXT.md` §1, item
+  5).
