@@ -1031,6 +1031,16 @@ columns, and sm3 never encodes a key itself, so sm2 gives it a
 build holds on a row while it adds the row's entry
 (`sm3/SM3_DESIGN.md` §3).
 
+An index `rel` may instead be opened over a **tree**
+(`../BTREE.md`, `src/tree/`): its entries a B-link tree of
+sm1's pages under its relid, written outside every
+transaction, never versioned, ending with the row's key in a
+unique index too, and holding no INCLUDE column. An entry
+inserted again is no change, `idx_delete` removes nothing, and
+a scan hands out every entry in range, dead or not, for the
+caller to check against its row (`idx_entry_key`); vacuum's
+walk (`idx_vacuum`) removes the dead ones.
+
 sm2 prepends and strips the relid for both kinds, and the
 table above is the `rel`'s; an index `rel`'s operations are
 the same shape, keyed by its columns (`idx_open`,

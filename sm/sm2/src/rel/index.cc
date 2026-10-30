@@ -14,11 +14,13 @@
  * that starts with P.
  */
 
+#include "../tree/tree.h"
 #include "native.h"
 #include "rel.h"
 #include "sm2.h"
 
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -40,10 +42,15 @@ struct sm2::index_t {
    */
   sm2::rel_t *rel = nullptr;
   std::span<const int32_t> include_atts;
+  /* A tree's (../BTREE.md): its entries are its own pages'. */
+  bool tree = false;
+  sm2::tree::tree_t pages;
 };
 
 struct sm2::index_scan_t {
   sm1::scan_t *scan = nullptr;
+  /* A tree's cursor, in place of sm1's (../BTREE.md §4). */
+  std::unique_ptr<sm2::tree::cursor_t> cursor;
   const index_t *index = nullptr;
   std::string_view key; /* the last entry's sm1 key, sm1's to keep */
   bool cut = false;     /* the last entry's cut flag */
@@ -85,6 +92,20 @@ size_t row_cap(const sm2::index_t *ix) {
 }
 
 /*
+ * The most bytes ix's key columns take before they are cut, of an
+ * entry whose row key takes suffix bytes: what sm1 takes in a key,
+ * or a tree's entry, a third of a page with a page id for its value
+ * (../BTREE.md §3).
+ */
+size_t budget(const sm2::index_t *ix, size_t suffix) {
+  if (!ix->tree) {
+    return sm2::key_budget(suffix);
+  }
+  return sm2::tree::entry_max(ix->pages.limit) - sm2::tree::entry_size(0, 8) -
+         sm2::relid_len - suffix;
+}
+
+/*
  * The sm1 key of the entry for key and the row at row: the relid,
  * the encoded key columns, and the row's key where the entry
  * carries it; cut is set if the columns were cut to fit. A unique
@@ -93,7 +114,7 @@ size_t row_cap(const sm2::index_t *ix) {
  */
 int entry_key(const sm2::index_t *ix, std::span<const sm2::datum_t> key,
               std::span<const bool> isnull, std::string_view row,
-              std::string &out, bool &cut) {
+              std::string &out, bool &cut, size_t *cols_len = nullptr) {
   if (key.size() != ix->key.size() || isnull.size() != ix->key.size()) {
     return sm1::seterr(
         sm1::SM_ERR_INVALID,
@@ -108,8 +129,11 @@ int entry_key(const sm2::index_t *ix, std::span<const sm2::datum_t> key,
   for (bool n : isnull) {
     has_null |= n;
   }
-  bool suffix = !ix->unique || has_null;
-  cut = cols.size() > sm2::key_budget(suffix ? row_cap(ix) : 0);
+  // A tree's entry always ends with its row's key: the row decides
+  // whether it is live, and equal keys of dead rows sit beside the
+  // live one (../BTREE.md §3).
+  bool suffix = !ix->unique || has_null || ix->tree;
+  cut = cols.size() > budget(ix, suffix ? row_cap(ix) : 0);
   if (cut && ix->unique) {
     return sm1::seterr(sm1::SM_ERR_KEYTOOLONG,
                        "index: a key too long for a unique index");
@@ -119,13 +143,29 @@ int entry_key(const sm2::index_t *ix, std::span<const sm2::datum_t> key,
     // A cut key keeps the row's key, so cut keys that meet stay
     // apart.
     suffix = true;
-    cols.resize(sm2::key_budget(row_cap(ix)));
+    cols.resize(budget(ix, row_cap(ix)));
   }
   out = relid_of(ix) + cols;
+  if (cols_len) {
+    *cols_len = cols.size();
+  }
   if (suffix) {
     out += row;
   }
   return 0;
+}
+
+/*
+ * A tree's entry value (../BTREE.md §3): the cut flag, then the
+ * columns' length, two bytes little-endian, which tells the row's
+ * key, at the entry key's end, from them.
+ */
+std::string tree_value(bool cut, size_t cols_len) {
+  std::string v;
+  v.push_back(cut ? 1 : 0);
+  v.push_back(static_cast<char>(cols_len & 0xFF));
+  v.push_back(static_cast<char>(cols_len >> 8));
+  return v;
 }
 
 /*
@@ -146,9 +186,9 @@ int bound_key(const sm2::index_t *ix, const sm2::bound_t &b, std::string &out,
                       cols) != 0) {
     return -1;
   }
-  cut = cols.size() > sm2::key_budget(row_cap(ix));
+  cut = cols.size() > budget(ix, row_cap(ix));
   if (cut) {
-    cols.resize(sm2::key_budget(row_cap(ix)));
+    cols.resize(budget(ix, row_cap(ix)));
   }
   out = relid_of(ix) + cols;
   return 0;
@@ -195,7 +235,7 @@ static int open_index(sm1::session_t *session, uint64_t storeid, uint16_t relid,
                       std::span<const key_column_t> key, bool unique,
                       const idx_layout_t &layout,
                       std::unique_ptr<idx_layout_t> own, bool keyed,
-                      index_t *&out) {
+                      index_t *&out, bool tree = false) {
   if (session == nullptr || key.empty()) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "index: a session and at least one key column");
@@ -230,6 +270,10 @@ static int open_index(sm1::session_t *session, uint64_t storeid, uint16_t relid,
   ix->keyed = keyed;
   ix->own = std::move(own);
   ix->layout = &layout;
+  if (tree) {
+    ix->tree = true;
+    tree::tree_open(ix->pages, session, storeid, relid);
+  }
   out = ix.release();
   return 0;
 }
@@ -237,20 +281,69 @@ static int open_index(sm1::session_t *session, uint64_t storeid, uint16_t relid,
 /* Open an index, laying its entries' value out; see sm2.h. */
 int idx_open(sm1::session_t *session, uint64_t storeid, uint16_t relid,
              std::span<const key_column_t> key, bool unique,
-             std::span<const attribute_t> include, bool keyed, index_t *&out) {
+             std::span<const attribute_t> include, bool keyed, index_t *&out,
+             bool tree) {
   auto own = std::make_unique<idx_layout_t>(include);
   const idx_layout_t &layout = *own;
   return open_index(session, storeid, relid, key, unique, layout,
-                    std::move(own), keyed, out);
+                    std::move(own), keyed, out, tree);
 }
 
 /* Open an index laid out by a layout it borrows; see sm2.h. */
 int idx_open_layout(sm1::session_t *session, uint64_t storeid, uint16_t relid,
                     std::span<const key_column_t> key, bool unique,
-                    const idx_layout_t &layout, bool keyed, index_t *&out) {
+                    const idx_layout_t &layout, bool keyed, index_t *&out,
+                    bool tree) {
   return open_index(session, storeid, relid, key, unique, layout, nullptr,
-                    keyed, out);
+                    keyed, out, tree);
 }
+
+/* Make an index's tree, empty; see sm2.h. */
+int idx_create(index_t *index) {
+  return index->tree ? tree::tree_create(index->pages) : 0;
+}
+
+/* Make the tree under relid in storeid, empty; see sm2.h. */
+int idx_create_tree(sm1::session_t *session, uint64_t storeid, uint16_t relid) {
+  tree::tree_t t;
+  tree::tree_open(t, session, storeid, relid);
+  return tree::tree_create(t);
+}
+
+/* Remove a tree's pages; see sm2.h. */
+int idx_drop_tree(sm1::session_t *session, uint64_t storeid, uint16_t relid) {
+  return tree::tree_drop(session, storeid, relid);
+}
+
+/* Remove a tree's dead entries; see sm2.h. */
+int idx_vacuum(
+    index_t *index,
+    const std::function<int(std::string_view, std::string_view)> &dead,
+    size_t &removed) {
+  if (!index->tree) {
+    removed = 0;
+    return 0;
+  }
+  return tree::tree_prune(
+      index->pages,
+      [&](std::string_view key, std::string_view value) {
+        if (3 != value.size()) {
+          return sm1::seterr(sm1::SM_ERR_CORRUPT,
+                             "index: a tree entry's value");
+        }
+        size_t cols_len = static_cast<uint8_t>(value[1]) |
+                          static_cast<size_t>(static_cast<uint8_t>(value[2]))
+                              << 8;
+        if (relid_len + cols_len > key.size()) {
+          return sm1::seterr(sm1::SM_ERR_CORRUPT, "index: a tree entry's key");
+        }
+        return dead(key.substr(relid_len + cols_len), key);
+      },
+      removed);
+}
+
+/* Whether an index is a tree; see sm2.h. */
+bool idx_is_tree(const index_t *index) { return index->tree; }
 
 /*
  * Open rel's primary key as an index, its entries laid out by layout,
@@ -318,9 +411,16 @@ static int entry_of(index_t *index, std::span<const datum_t> key,
                     std::span<const bool> include_isnull, std::string &k,
                     std::string &value) {
   bool cut;
+  size_t cols_len = 0;
   if (need_entries(index) != 0 ||
-      entry_key(index, key, key_isnull, row, k, cut) != 0) {
+      entry_key(index, key, key_isnull, row, k, cut, &cols_len) != 0) {
     return -1;
+  }
+  if (index->tree) {
+    // A tree's entry holds no INCLUDE column: they are read from the
+    // row, which a scan reads anyway (../BTREE.md §3).
+    value = tree_value(cut, cols_len);
+    return 0;
   }
   if (include.size() + 2 != index->layout->value.size() ||
       include_isnull.size() != include.size()) {
@@ -350,6 +450,27 @@ int idx_insert(index_t *index, std::span<const datum_t> key,
   if (entry_of(index, key, key_isnull, row, include, include_isnull, k,
                value) != 0) {
     return -1;
+  }
+  if (index->tree) {
+    if (index->unique) {
+      // A unique tree checks its key against its rows' (../BTREE.md
+      // §6), which only idx_insert_unique is given the means to.
+      bool has_null = false;
+      for (bool n : key_isnull) {
+        has_null |= n;
+      }
+      if (!has_null) {
+        return sm1::seterr(sm1::SM_ERR_INVALID,
+                           "index: a unique tree's key is inserted by "
+                           "idx_insert_unique");
+      }
+    }
+    // An entry already there, the same key and row, is no change; a
+    // serializable reader of its range learns of the write either way.
+    if (tree::tree_insert(index->pages, k, value) < 0) {
+      return -1;
+    }
+    return sm1::ssi_write_key(index->session, index->storeid, k);
   }
   return sm1::insert(index->session, index->storeid, k, value);
 }
@@ -413,6 +534,11 @@ static bool chained_rows(const index_t *index) {
 /* The row that has a unique key, as the snapshot shows; see sm2.h. */
 int idx_find(index_t *index, std::span<const datum_t> key,
              std::span<const bool> key_isnull, uint64_t &id, std::string *row) {
+  if (index->tree) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "index: a tree's entries name rows only its table "
+                       "can check");
+  }
   std::string k;
   int rc = unique_key(index, key, key_isnull, k);
   if (rc != 0) {
@@ -440,6 +566,11 @@ int idx_find(index_t *index, std::span<const datum_t> key,
 int idx_find_latest(index_t *index, std::span<const datum_t> key,
                     std::span<const bool> key_isnull, uint64_t &id,
                     std::string *row) {
+  if (index->tree) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "index: a tree's entries name rows only its table "
+                       "can check");
+  }
   std::string k;
   int rc = unique_key(index, key, key_isnull, k);
   if (rc != 0) {
@@ -481,12 +612,22 @@ int idx_load(index_t *index, sm1::loader_t *loader, size_t stream,
                value) != 0) {
     return -1;
   }
+  // A tree's pages are no versions to load: the entry goes in as a
+  // writer's does, and is dead if the load is rolled back.
+  if (index->tree) {
+    return idx_insert(index, key, key_isnull, row, include, include_isnull);
+  }
   return sm1::load_put(loader, stream, k, value);
 }
 
 /* Remove the entry for key and the row with key row. */
 int idx_delete(index_t *index, std::span<const datum_t> key,
                std::span<const bool> key_isnull, std::string_view row) {
+  // A tree's entry stays: its row, without the key now, makes it
+  // dead, and vacuum removes it (../BTREE.md §5).
+  if (index->tree) {
+    return need_entries(index);
+  }
   std::string k;
   bool cut;
   if (need_entries(index) != 0 ||
@@ -548,6 +689,24 @@ int idx_scan(index_t *index, const bound_t *lo, const bound_t *hi,
   std::optional<std::string> end;
   if (scan_range(index, lo, hi, start, end, wide) != 0) {
     return -1;
+  }
+  if (index->tree) {
+    // Under serializable, the range is an SIREAD of its own: no scan
+    // of sm1's reads it (../BTREE.md §8, SSI).
+    if (sm1::ssi_read_range(index->session, index->storeid, start.data(),
+                            start.size(), 1, end ? end->data() : nullptr,
+                            end ? end->size() : 0, 0) != 0) {
+      return -1;
+    }
+    out = new index_scan_t;
+    out->index = index;
+    out->cursor = std::make_unique<tree::cursor_t>();
+    tree::cursor_open(index->pages, *out->cursor, &start, true,
+                      end ? &*end : nullptr, false);
+    if (widened) {
+      *widened = wide;
+    }
+    return 0;
   }
   sm1::scan_t *c;
   const char *e = end ? end->data() : nullptr;
@@ -629,6 +788,31 @@ static int primary_value(index_scan_t *scan, std::string_view row) {
 /* The next entry of a cursor: 0, 1 at the end, or -1. */
 int idx_scannxt(index_scan_t *scan, uint64_t &id, bool &cut,
                 std::string_view &value) {
+  if (scan->cursor) {
+    std::string_view row;
+    int rc = idx_scan_entry(scan, id, cut, row);
+    if (rc != 0) {
+      return rc;
+    }
+    // The value as an entry of sm1's holds it: cut, the INCLUDE
+    // columns, none in a tree, and the row's key.
+    const index_t *ix = scan->index;
+    size_t n = ix->layout->value.size();
+    std::vector<datum_t> datums(n, 0);
+    auto nulls = std::make_unique<bool[]>(n);
+    datums[0] = datum_from_bool(cut);
+    for (size_t i = 1; i + 1 < n; i++) {
+      nulls[i] = true;
+    }
+    std::string row_varlena = make_varlena(row);
+    datums[n - 1] = datum_from_ptr(row_varlena.data());
+    if (tup_encode(ix->layout->desc, datums,
+                   std::span<const bool>(nulls.get(), n), scan->value) != 0) {
+      return -1;
+    }
+    value = scan->value;
+    return 0;
+  }
   std::string_view key;
   int rc = sm1::scannxt(scan->scan, key, value);
   if (rc != 0) {
@@ -664,6 +848,53 @@ int idx_scannxt(index_scan_t *scan, uint64_t &id, bool &cut,
   cut = datum_to_bool(c);
   scan->cut = cut;
   return 0;
+}
+
+/* A tree's next entry, its key and its row's; see sm2.h. */
+int idx_scan_entry(index_scan_t *scan, uint64_t &id, bool &cut,
+                   std::string_view &row) {
+  if (!scan->cursor) {
+    return sm1::seterr(sm1::SM_ERR_INVALID, "index: not a tree's cursor");
+  }
+  std::string_view key, value;
+  int rc = tree::cursor_next(*scan->cursor, key, value);
+  if (rc != 0) {
+    return rc;
+  }
+  if (3 != value.size()) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT, "index: a tree entry's value");
+  }
+  size_t cols_len = static_cast<uint8_t>(value[1]) |
+                    static_cast<size_t>(static_cast<uint8_t>(value[2])) << 8;
+  if (relid_len + cols_len > key.size()) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT, "index: a tree entry's key");
+  }
+  const index_t *ix = scan->index;
+  scan->key = key;
+  scan->cut = 0 != value[0];
+  row = key.substr(relid_len + cols_len);
+  scan->row.assign(row);
+  scan->id = 0;
+  std::string_view r = row;
+  if (!ix->keyed && !get_be(r, scan->id)) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT, "index: a row key without its _id");
+  }
+  id = scan->id;
+  cut = scan->cut;
+  return 0;
+}
+
+/* The key of a cursor's last entry; see sm2.h. */
+std::string_view idx_scan_entry_key(const index_scan_t *scan) {
+  return scan->key;
+}
+
+/* The key a row's entry has in index; see sm2.h. */
+int idx_entry_key(const index_t *index, std::span<const datum_t> key,
+                  std::span<const bool> key_isnull, std::string_view row,
+                  std::string &out) {
+  bool cut;
+  return entry_key(index, key, key_isnull, row, out, cut);
 }
 
 /* The key of the row of a cursor's last entry; see sm2.h. */
@@ -729,7 +960,7 @@ int idx_scan_key(index_scan_t *scan, std::span<datum_t> values,
     has_null |= isnull[i];
     values[i] = isnull[i] ? 0 : key_datum(ix->key[i].type, *scan->datums[i]);
   }
-  bool suffix = !ix->unique || has_null;
+  bool suffix = !ix->unique || has_null || ix->tree;
   if (suffix ? key.empty() || (!ix->keyed && key.size() != id_len)
              : !key.empty()) {
     return sm1::seterr(sm1::SM_ERR_CORRUPT,
@@ -745,6 +976,10 @@ int idx_scan_seek(index_scan_t *scan, const bound_t &lo) {
   if (lower_key(scan->index, lo, start, wide) != 0) {
     return -1;
   }
+  if (scan->cursor) {
+    tree::cursor_seek(*scan->cursor, start, true);
+    return 0;
+  }
   return sm1::scan_seek(scan->scan, start, 1);
 }
 
@@ -753,8 +988,10 @@ void idx_scanend(index_scan_t *scan) {
   if (scan == nullptr) {
     return;
   }
-  // Release sm1's cursor and its snapshot.
-  sm1::scanend(scan->scan);
+  // Release sm1's cursor and its snapshot; a tree's holds neither.
+  if (scan->scan) {
+    sm1::scanend(scan->scan);
+  }
   delete scan;
 }
 

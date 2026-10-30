@@ -335,3 +335,40 @@ TEST_CASE("tree: made again under a relid, it starts empty") {
   CHECK(-1 == tree_height(t.tree, height));
   CHECK(sm1::SM_ERR_CORRUPT == sm1::errnum());
 }
+
+TEST_CASE("tree: prune removes the entries it is told to, leaf by leaf") {
+  // Verify tree_prune walks every leaf and writes what it removes.
+  // 1. Fill a tree of several leaves with 3,000 keys.
+  // 2. Prune every key whose number is odd: 1,500 removed.
+  // 3. The tree checks whole and holds the even keys alone; a prune
+  //    that fails stops with its error.
+  db_t d;
+  open_tree_t t(d, 13, 512);
+  REQUIRE(0 == tree_create(t.tree));
+  for (int n = 0; n < 3000; n++) {
+    REQUIRE(0 == tree_insert(t.tree, std::to_string(100000 + n), "v"));
+  }
+  size_t removed = 0;
+  REQUIRE(0 == tree_prune(
+                   t.tree,
+                   [](std::string_view key, std::string_view) {
+                     return (key.back() - '0') % 2;
+                   },
+                   removed));
+  CHECK(1500u == removed);
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+  cursor_t c;
+  cursor_open(t.tree, c, nullptr, true, nullptr, true);
+  auto all = drain(c);
+  REQUIRE(1500u == all.size());
+  for (size_t i = 0; i < all.size(); i++) {
+    CHECK(std::to_string(100000 + 2 * i) == all[i].first);
+  }
+  CHECK(-1 == tree_prune(
+                  t.tree,
+                  [](std::string_view, std::string_view) {
+                    return sm1::seterr(sm1::SM_ERR_IO, "stop");
+                  },
+                  removed));
+  CHECK(sm1::SM_ERR_IO == sm1::errnum());
+}

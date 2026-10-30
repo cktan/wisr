@@ -24,6 +24,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -109,6 +110,19 @@ int cursor_next(cursor_t &cursor, std::string_view &key,
 
 /* Move cursor forward to lo, in the range or not as inclusive says. */
 void cursor_seek(cursor_t &cursor, const std::string &lo, bool inclusive);
+
+/*
+ * Walk every leaf, left to right, and remove each entry dead says to:
+ * dead(key, value) is 1 to remove it, 0 to keep it, -1 to stop with
+ * its error. Each leaf is latched while its entries are judged, so an
+ * insert of one of them waits, and written once if any went
+ * (../BTREE.md §7). removed counts them. Pages are not merged: an
+ * empty leaf stays linked.
+ */
+int tree_prune(
+    tree_t &tree,
+    const std::function<int(std::string_view, std::string_view)> &dead,
+    size_t &removed);
 
 /* The tree's height, from its meta page: for tests. */
 int tree_height(tree_t &tree, size_t &height);

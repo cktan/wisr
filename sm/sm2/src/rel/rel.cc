@@ -783,6 +783,13 @@ int rel_read(rel_t *rel, std::string_view key, sm1::rawpin_t *pin,
       tuple, id);
 }
 
+/* Read a row's newest version, if settled; see sm2.h. */
+int rel_read_settled(rel_t *rel, std::string_view key, sm1::rawpin_t *pin,
+                     std::string_view &tuple) {
+  return sm1::read_settled(rel->session, rel->storeid, row_key(rel->relid, key),
+                           pin, tuple);
+}
+
 /* Read the rows at keys into raw pins in one call; see sm2.h. */
 int rel_read_batch(rel_t *rel, const std::string_view *keys, size_t n,
                    sm1::rawpin_t **pins, std::string_view *tuples, int *rc) {

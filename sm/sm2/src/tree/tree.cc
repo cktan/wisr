@@ -593,6 +593,54 @@ int cursor_next(cursor_t &cursor, std::string_view &key,
   return 0;
 }
 
+/* Remove the entries dead says to, leaf by leaf; see tree.h. */
+int tree_prune(
+    tree_t &tree,
+    const std::function<int(std::string_view, std::string_view)> &dead,
+    size_t &removed) {
+  removed = 0;
+  uint64_t pageid = 0;
+  if (0 != descend(tree, "", 0, false, pageid)) {
+    return -1;
+  }
+  while (0 != pageid) {
+    detail::latched_t l;
+    l.pageid = pageid;
+    // The leaf's writers wait while its entries are judged.
+    l.latch = page_latch_t(page_latches(), name_of(tree, pageid));
+    pinned_t p;
+    if (0 != read_page(tree, pageid, false, p)) {
+      return -1;
+    }
+    p.view.load(l.page);
+    p.release();
+    size_t before = l.page.entries.size();
+    auto &entries = l.page.entries;
+    size_t kept = 0;
+    for (size_t i = 0; i < entries.size(); i++) {
+      int d = dead(entries[i].first, entries[i].second);
+      if (d < 0) {
+        return -1;
+      }
+      if (0 == d) {
+        if (kept != i) {
+          entries[kept] = std::move(entries[i]);
+        }
+        kept++;
+      }
+    }
+    entries.resize(kept);
+    if (kept != before) {
+      if (0 != detail::write_back(tree, l)) {
+        return -1;
+      }
+      removed += before - kept;
+    }
+    pageid = l.page.right;
+  }
+  return 0;
+}
+
 /* The tree's height; see tree.h. */
 int tree_height(tree_t &tree, size_t &height) {
   meta_t m;

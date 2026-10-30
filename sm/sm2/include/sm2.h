@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -700,6 +701,14 @@ int rel_read(rel_t* rel, std::string_view key, sm1::rawpin_t* pin,
              std::string_view& tuple, uint64_t* id = nullptr);
 
 /*
+ * The row at key at its newest version, if settled (sm1::read_settled):
+ * 0 with its tuple in pin, 1 gone, 2 not settled, or -1. As vacuum
+ * judges a tree's entry by its row (../BTREE.md §7).
+ */
+int rel_read_settled(rel_t* rel, std::string_view key, sm1::rawpin_t* pin,
+                     std::string_view& tuple);
+
+/*
  * rel_read into a raw pin of the rows at n keys, in one call
  * (../BATCHREAD.md): key i's tuple into pins[i] and tuples[i], rc[i]
  * 0, or rc[i] 1 if there is none. A chained store's are read by
@@ -998,7 +1007,7 @@ struct idx_layout_t {
 int idx_open(sm1::session_t* session, uint64_t storeid, uint16_t relid,
              std::span<const key_column_t> key, bool unique,
              std::span<const attribute_t> include, bool keyed,
-             index_t*& out);
+             index_t*& out, bool tree = false);
 
 /*
  * Open rel's primary key as an index: its entries are the rel's
@@ -1018,13 +1027,63 @@ int idx_open_primary(rel_t* rel, std::span<const attribute_t> include,
 int idx_open_layout(sm1::session_t* session, uint64_t storeid,
                     uint16_t relid, std::span<const key_column_t> key,
                     bool unique, const idx_layout_t& layout, bool keyed,
-                    index_t*& out);
+                    index_t*& out, bool tree = false);
 int idx_open_primary_layout(rel_t* rel, const idx_layout_t& layout,
                             std::span<const int32_t> include_attnums,
                             index_t*& out);
 
 /* Close an index from idx_open; nullptr is a no-op. */
 void idx_close(index_t* index);
+
+/*
+ * A tree (../BTREE.md), opened with tree set: its entries are a
+ * B+tree of its own pages under its relid, written outside every
+ * transaction and never versioned. An entry is its key alone,
+ * always ending with its row's key, unique index or not, and holds
+ * no INCLUDE column; the row decides whether it is live. So:
+ *
+ *   - idx_insert of an entry already there is no change, and
+ *     idx_delete removes nothing: the entry stays, dead once its
+ *     row no longer has its key, until vacuum;
+ *   - a scan hands out every entry in its range, dead or not, the
+ *     INCLUDE columns null: the caller reads each row and keeps
+ *     it only if it still has the entry's key (idx_entry_key);
+ *   - idx_find and idx_find_latest refuse it, and a unique tree's
+ *     key is inserted by idx_insert_unique.
+ */
+
+/* Make an index's tree, empty, its relid's pages before it dropped. */
+int idx_create(index_t* index);
+
+/* Make the tree under relid in storeid, empty, as idx_create does. */
+int idx_create_tree(sm1::session_t* session, uint64_t storeid,
+                    uint16_t relid);
+
+/* Remove every page of the tree under relid in storeid. */
+int idx_drop_tree(sm1::session_t* session, uint64_t storeid, uint16_t relid);
+
+/* Whether index is a tree. */
+bool idx_is_tree(const index_t* index);
+
+/*
+ * Remove a tree's dead entries (../BTREE.md §7): dead(row, key), given
+ * an entry's row key and its whole key, is 1 to remove it, 0 to keep
+ * it, -1 to stop with its error. It is asked under the entry's leaf's
+ * latch, which an insert of the entry waits for. removed counts them;
+ * an index not a tree has none.
+ */
+int idx_vacuum(index_t* index,
+               const std::function<int(std::string_view, std::string_view)>& dead,
+               size_t& removed);
+
+/*
+ * The key the entry of the row with key row, whose index key
+ * columns are key, has in index: to tell whether a tree's entry is
+ * still its row's (idx_scan_entry_key).
+ */
+int idx_entry_key(const index_t* index, std::span<const datum_t> key,
+                  std::span<const bool> key_isnull, std::string_view row,
+                  std::string& out);
 
 /*
  * The schema of an entry's value: cut, the INCLUDE columns, then the
@@ -1150,6 +1209,20 @@ int idx_scan_key(index_scan_t* scan, std::span<datum_t> values,
 
 /* Close a cursor from idx_scan; nullptr is a no-op. */
 void idx_scanend(index_scan_t* scan);
+
+/*
+ * A tree's next entry, as idx_scannxt without its value: 0 with its
+ * row's _id, whether its key was cut, and its row's key, valid until
+ * the next call on the cursor; 1 at the end; -1 on error.
+ */
+int idx_scan_entry(index_scan_t* scan, uint64_t& id, bool& cut,
+                   std::string_view& row);
+
+/*
+ * The whole key of the entry a tree's cursor last gave, valid until
+ * the next call on the cursor: as idx_entry_key makes it.
+ */
+std::string_view idx_scan_entry_key(const index_scan_t* scan);
 
 /*
  * Decode a key encode_key made under cols into one datum per
