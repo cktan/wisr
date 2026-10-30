@@ -1325,6 +1325,55 @@ int sm1::read_settled(sm1::session_t *s, uint64_t storeid, std::string_view key,
   return 0;
 }
 
+/* Read a key's newest version, past the snapshot; see sm1.h. */
+int sm1::read_newest(sm1::session_t *s, uint64_t storeid, std::string_view key,
+                     sm1::rawpin_t *pin, std::string_view &data,
+                     uint64_t &writer) {
+  data = std::string_view();
+  writer = 0;
+  sm1::unpin(pin);
+  if (xct_check_active(s) != 0 ||
+      enter(s, xct_view(s), storeid, key.data(), key.size()) != 0) {
+    return -1;
+  }
+  const store_t &st = store_of(s, storeid);
+  if (!st.cf) {
+    return -1;
+  }
+  rocksdb::Slice k(key.data(), key.size());
+  if (st.chained) {
+    return chain_read_newest(s, st, k, pin, data, writer);
+  }
+  bool live;
+  uint64_t commit_ts, inflight;
+  uint32_t own_seq;
+  sm0::scope_guard_t put([&] { sm1::unpin(pin); });
+  if (0 != latest_version(s, st, k, &live, &commit_ts, nullptr, &own_seq,
+                          &inflight, pin)) {
+    return -1;
+  }
+  // Another's write in flight: its writer is to be waited for.
+  if (0 != inflight) {
+    writer = inflight;
+    return 2;
+  }
+  if (!live) {
+    return 1;
+  }
+  put.dismiss();
+  data = std::string_view(pin->row.data(), pin->row.size());
+  return 0;
+}
+
+/* Wait for a writer read_newest named; see sm1.h. */
+int sm1::wait_writer(sm1::session_t *s, uint64_t writer) {
+  if (xct_check_active(s) != 0) {
+    return -1;
+  }
+  int waited = lock_wait_xact(s, writer);
+  return waited != 0 ? lock_wait_error(s, waited) : 0;
+}
+
 /* Read the newest committed version of a key into pin. */
 int sm1::read_latest(sm1::session_t *session, uint64_t storeid,
                      std::string_view key, sm1::rawpin_t *pin,

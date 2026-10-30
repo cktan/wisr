@@ -907,6 +907,26 @@ int chain_visible(wisr::db_t *db, const wisr::chain_version_t &v,
 
 namespace wisr {
 
+/* A chained key's newest version, past the snapshot; see session.h. */
+int chain_read_newest(sm1::session_t *s, const store_t &st, rocksdb::Slice key,
+                      sm1::rawpin_t *pin, std::string_view &data,
+                      uint64_t &writer) {
+  checked_t c;
+  if (0 != chain_latest(s, st, key, &c)) {
+    return -1;
+  }
+  if (0 != c.inflight) {
+    writer = c.inflight;
+    return 2;
+  }
+  if (!c.found || !c.live) {
+    return 1;
+  }
+  pin_checked(c, pin);
+  data = std::string_view(pin->row.data(), pin->row.size());
+  return 0;
+}
+
 /* A chained key's newest version, if settled; see session.h. */
 int chain_read_settled(sm1::session_t *s, const store_t &st, rocksdb::Slice key,
                        sm1::rawpin_t *pin, std::string_view &data) {

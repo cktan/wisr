@@ -1571,6 +1571,32 @@ int read_settled(session_t* session, uint64_t storeid, std::string_view key,
                  rawpin_t* pin, std::string_view& data);
 
 /*
+ * The newest version of key in storeid, past the snapshot, as a
+ * unique tree checks a key against the rows its equal entries name
+ * (../BTREE.md §6): 0 with its row in pin and data, committed or
+ * this transaction's own; 1 if it is gone, deleted or never written;
+ * 2 if another transaction still running wrote it, writer set to
+ * that transaction, for sm1::wait_writer. A chained store's key is
+ * read as sm1::chain_read reads one. Locks nothing.
+ *
+ * Errors: SM_ERR_INVALID, SM_ERR_NOTFOUND, SM_ERR_NOTRANS,
+ * SM_ERR_PREPARED, SM_ERR_CORRUPT, SM_ERR_IO.
+ */
+int read_newest(session_t* session, uint64_t storeid, std::string_view key,
+                rawpin_t* pin, std::string_view& data, uint64_t& writer);
+
+/*
+ * Wait until the transaction writer, which sm1::read_newest named,
+ * ends, or rolls back to a savepoint, as a write waits for a row's
+ * uncommitted version: cut short as every wait is, and in the
+ * deadlock check. The caller reads the key again after.
+ *
+ * Errors: SM_ERR_DEADLOCK, SM_ERR_LOCKTIMEOUT, SM_ERR_INTERRUPTED,
+ * SM_ERR_NOTRANS, SM_ERR_PREPARED.
+ */
+int wait_writer(session_t* session, uint64_t writer);
+
+/*
  * Under serializable, an SIREAD on the keys of storeid from lo to hi,
  * either nullptr for no bound, each inclusive or not, read by no scan
  * of sm1's: a range of a tree's entries, read through its pages

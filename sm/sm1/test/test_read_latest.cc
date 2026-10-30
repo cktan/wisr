@@ -10,7 +10,9 @@
 
 #include "sm1.h"
 
+#include <chrono>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -253,6 +255,67 @@ TEST_CASE("read_settled: a newest version only once every snapshot sees it") {
     REQUIRE(sm1::commit(w) == 0);
     REQUIRE(sm1::begin(r, sm1::xctlevel_t::read_committed) == 0);
     CHECK(1 == settled(r, v));
+    REQUIRE(sm1::commit(r) == 0);
+  }
+  sm1::rawpin_free(pin);
+  REQUIRE(sm1::closedb(w) == 0);
+  REQUIRE(sm1::closedb(r) == 0);
+}
+
+TEST_CASE("read_newest: past the snapshot, naming a running writer") {
+  // Verify sm1::read_newest and sm1::wait_writer, in both kinds of
+  // store.
+  // 1. A key never written is gone; one committed is read, whatever an
+  //    older snapshot of the reader's sees.
+  // 2. Another's uncommitted write names its writer; this
+  //    transaction's own is read.
+  // 3. wait_writer returns once the writer commits, on another thread;
+  //    the key reads as it wrote.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  sm1::session_t *w = opendb(home.env(), "db");
+  sm1::session_t *r = opendb(home.env(), "db");
+  REQUIRE((w && r));
+  REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t plain = mkstore(w);
+  uint64_t chained = 0;
+  REQUIRE(sm1::mkstore(w, chained, false, true) == 0);
+  REQUIRE(sm1::commit(w) == 0);
+  sm1::rawpin_t *pin = sm1::rawpin_new();
+  for (uint64_t store : {plain, chained}) {
+    CAPTURE(store);
+    bool ch = store == chained;
+    auto ins = [&](sm1::session_t *s, const char *k, const char *v) {
+      return ch ? sm1::chain_insert(s, store, k, v)
+                : sm1::insert(s, store, k, v);
+    };
+    std::string_view data;
+    uint64_t writer = 0;
+    REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
+    REQUIRE((ch ? sm1::chain_read(r, store, "x", data)
+                : sm1::read(r, store, "x", data)) == 1);
+    CHECK(1 == sm1::read_newest(r, store, "k", pin, data, writer));
+    REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
+    REQUIRE(ins(w, "k", "v1") == 0);
+    REQUIRE(sm1::commit(w) == 0);
+    REQUIRE(0 == sm1::read_newest(r, store, "k", pin, data, writer));
+    CHECK("v1" == data);
+
+    REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
+    REQUIRE(ins(w, "n", "w's") == 0);
+    CHECK(0 == sm1::read_newest(w, store, "n", pin, data, writer));
+    CHECK("w's" == data);
+    CHECK(2 == sm1::read_newest(r, store, "n", pin, data, writer));
+    CHECK(0 != writer);
+    std::thread committer([&] {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      sm1::commit(w);
+    });
+    CHECK(0 == sm1::wait_writer(r, writer));
+    committer.join();
+    REQUIRE(0 == sm1::read_newest(r, store, "n", pin, data, writer));
+    CHECK("w's" == data);
+    sm1::unpin(pin);
     REQUIRE(sm1::commit(r) == 0);
   }
   sm1::rawpin_free(pin);

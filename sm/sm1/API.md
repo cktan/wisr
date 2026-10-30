@@ -2106,6 +2106,22 @@ running, this one included, or committed past the watermark.
 A chained store's key is read as `sm1::chain_read` reads one.
 It locks nothing and waits for no one.
 
+### int sm1::read_newest(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::rawpin_t* pin, std::string_view& data, uint64_t& writer)
+
+The newest version of `key`, past the snapshot, as a unique
+tree checks a key against the rows its equal entries name
+(`../BTREE.md` §6): 0 with its row in `pin` and `data`,
+committed or this transaction's own; 1 if it is gone; 2 if
+another transaction still running wrote it, `writer` set to
+it. Locks nothing.
+
+### int sm1::wait_writer(sm1::session_t* session, uint64_t writer)
+
+Wait until `writer`, which `sm1::read_newest` named, ends, or
+rolls back to a savepoint, as a write waits for a row's
+uncommitted version: cut short as every wait is, and in the
+deadlock check. The caller reads the key again after.
+
 ### int sm1::ssi_read_range(sm1::session_t* session, uint64_t storeid, const char* lo, size_t lolen, int lo_inclusive, const char* hi, size_t hilen, int hi_inclusive)
 
 Under serializable, an SIREAD on a range of keys no scan of
