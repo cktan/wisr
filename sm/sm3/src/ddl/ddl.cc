@@ -415,6 +415,17 @@ int truncate_table(session_t *session, uint64_t oid) {
       cat_put_table(session, oid, rec) != 0) {
     return -1;
   }
+  // Each tree, empty, in the new store, which the statement's mark,
+  // moved past its making, lets it write (sm1::stmt_advance()).
+  if (sm1::stmt_advance(session->sm1) != 0) {
+    return -1;
+  }
+  for (const index_rec_t &x : rec.indexes) {
+    if (x.tree &&
+        sm2::idx_create_tree(session->sm1, rec.storeid, x.relid) != 0) {
+      return -1;
+    }
+  }
   // The old store goes at commit, taking the rows and index
   // entries with it (../DESIGN.md §5).
   return sm1::rmstore(session->sm1, old_store);
@@ -667,9 +678,9 @@ static int rekey(session_t *session, uint64_t oid, table_rec_t rec) {
 int create_index(session_t *session, uint64_t table, std::string_view name,
                  std::span<const index_key_spec_t> keys,
                  std::span<const int32_t> includes, bool unique, uint64_t &oid,
-                 bool primary, bool constraint) {
+                 bool primary, bool constraint, bool tree) {
   return create_index(session, table, name, keys, includes, unique, {}, {}, oid,
-                      primary, constraint);
+                      primary, constraint, tree);
 }
 
 /* Create an index, plain, partial or of expressions; see sm3.h. */
@@ -677,7 +688,7 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
                  std::span<const index_key_spec_t> keys,
                  std::span<const int32_t> includes, bool unique,
                  std::string_view eval, std::span<const int32_t> reads,
-                 uint64_t &oid, bool primary, bool constraint) {
+                 uint64_t &oid, bool primary, bool constraint, bool tree) {
   if (name.empty() || keys.empty()) {
     return invalid("create index: no name, or no key column");
   }
@@ -699,7 +710,13 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
   x.unique = unique;
   x.primary = primary;
   x.constraint = constraint;
+  x.tree = tree;
   x.eval = std::string(eval);
+  // A primary key's entries are the rows; a unique tree's check is
+  // not built yet (../BTREE.md §6).
+  if (tree && (primary || unique)) {
+    return invalid("create index: a tree that is a primary key, or unique");
+  }
   if (constraint && (!unique || !eval.empty())) {
     return invalid("create index: a constraint's index not unique, or not "
                    "on columns alone");
@@ -784,6 +801,13 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
   if (cat_put_table(session, table, rec) != 0) {
     return -1;
   }
+  // A tree's pages, empty, before any writer or the build adds to
+  // them; written outside the transaction, they are left by a
+  // rollback, under a relid never given again (../BTREE.md §2).
+  if (tree && sm2::idx_create_tree(session->sm1, rec.storeid,
+                                   rec.indexes.back().relid) != 0) {
+    return -1;
+  }
   // No other transaction sees a table this one made, so the build
   // has nothing to wait for: run it here, over the rows this
   // transaction has written, and record the index valid. Any other
@@ -844,6 +868,13 @@ int drop_index(session_t *session, uint64_t table, uint64_t oid) {
   if (it->primary) {
     rec.indexes.erase(it);
     return rekey(session, table, std::move(rec));
+  }
+  // A tree's pages are no transaction's, and a rollback brings the
+  // index back: they stay, under a relid never given again, until
+  // the store goes (../../MAJORDECISION.md D6).
+  if (it->tree) {
+    rec.indexes.erase(it);
+    return cat_put_table(session, table, rec);
   }
   // Its entries are the keys under its relid in the table's store;
   // sm1 has no range delete, so each is erased.

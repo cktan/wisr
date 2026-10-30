@@ -177,6 +177,7 @@ struct index_rec_t {
   std::vector<int32_t> reads;       /* the columns it reads, 0-based */
   bool primary = false;             /* the table's primary key */
   bool constraint = false;          /* a UNIQUE or PRIMARY KEY's */
+  bool tree = false;                /* a B+tree of its own pages */
   bool operator==(const index_rec_t&) const = default;
 };
 
@@ -267,6 +268,8 @@ struct index_def_t {
     std::vector<int32_t>              reads;
     bool                              primary = false; /* the table's primary key */
     bool                              constraint = false; /* a UNIQUE or PRIMARY KEY's */
+    /* A B+tree of its own pages (../BTREE.md), not sm1's entries. */
+    bool                              tree = false;
 };
 
 /*
@@ -889,7 +892,7 @@ int create_index(session_t* session, uint64_t table,
                  std::span<const index_key_spec_t> keys,
                  std::span<const int32_t> includes, bool unique,
                  uint64_t& oid, bool primary = false,
-                 bool constraint = false);
+                 bool constraint = false, bool tree = false);
 
 /*
  * As create_index, for a partial or an expression index
@@ -909,7 +912,7 @@ int create_index(session_t* session, uint64_t table,
                  std::span<const int32_t> includes, bool unique,
                  std::string_view eval, std::span<const int32_t> reads,
                  uint64_t& oid, bool primary = false,
-                 bool constraint = false);
+                 bool constraint = false, bool tree = false);
 
 /*
  * The host's evaluator of partial and expression indexes

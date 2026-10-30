@@ -156,6 +156,7 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
     d.unique = x.unique;
     d.primary = x.primary;
     d.constraint = x.constraint;
+    d.tree = x.tree;
     d.eval = x.eval;
     for (const sm3::index_key_rec_t &k : x.keys) {
       const sm2::collation_t *coll;

@@ -247,6 +247,17 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   entry unique, so a non-unique index needs no further
   disambiguation; it is 8 bytes of `_id` in a table without a
   primary key, the primary key's encoding in one with.
+- **An index may be a tree** (`../BTREE.md`), chosen when it
+  is made (`create_index`'s `tree`) and kept in its definition:
+  a B+tree of its own pages, not sm1's entries, whose entries
+  carry no visibility. A write maintains it as any index; a
+  removed entry stays, dead once its row no longer has its key.
+  Its scan is a scan of rows (`tbl_idx_scan_rows`): each
+  entry's row read at the snapshot and handed out only if the
+  entry made of it, as a write would make it, is the entry
+  (`../../MAJORDECISION.md` D8). `tbl_compact`, VACUUM, removes
+  the entries whose rows are settled without them. A tree is
+  not yet unique, nor a primary key.
 - **Unique indexes are keyed without the row's key:**
   `encode(sk)` → the same tuple. The KV key
   is then the uniqueness unit, so sm1's insert refuses a

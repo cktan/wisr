@@ -28,10 +28,17 @@ struct sm3::pin_t {
   pin_t *next = nullptr;
 };
 
-/* A cursor over a table's rows: its rel scan, and the pin of its row. */
+/*
+ * A cursor over a table's rows: its rel scan, and the pin of its row;
+ * or, over a tree (../BTREE.md §4), the tree's entries, each row read
+ * into the pin and kept if it still has its entry's key.
+ */
 struct sm3::scan_t {
   sm2::rel_scan_t *rel = nullptr;
   pin_t *pin = nullptr;
+  sm2::index_scan_t *entries = nullptr;
+  table_t *table = nullptr;
+  size_t index = 0; /* the tree's place in the table's indexes */
 };
 
 namespace sm3 {

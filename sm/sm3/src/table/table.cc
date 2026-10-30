@@ -469,11 +469,11 @@ int open_rels(table_t *table) {
   }
   for (const index_def_t &x : def.indexes) {
     sm2::index_t *ix = nullptr;
-    if ((x.primary
-             ? sm2::idx_open_primary_layout(table->rel, *x.layout,
-                                            x.include_attnums, ix)
-             : sm2::idx_open_layout(s, def.storeid, x.relid, x.key, x.unique,
-                                    *x.layout, pk != nullptr, ix)) != 0) {
+    if ((x.primary ? sm2::idx_open_primary_layout(table->rel, *x.layout,
+                                                  x.include_attnums, ix)
+                   : sm2::idx_open_layout(s, def.storeid, x.relid, x.key,
+                                          x.unique, *x.layout, pk != nullptr,
+                                          ix, x.tree)) != 0) {
       return -1;
     }
     table->indexes.push_back(ix);
@@ -1500,6 +1500,64 @@ int tbl_scan_rows(table_t *table, scan_t *&out) {
   return -1; /* not reached: pk is one of the table's indexes */
 }
 
+/*
+ * Whether the row tuple, at key row, still has the tree entry key in
+ * the table's index i: its entry, made of the row as a write would
+ * make it, is key, and the row is in the index (../BTREE.md §4).
+ * 1, 0, or -1 on error.
+ */
+static int still_has(table_t *t, size_t i, std::string_view tuple,
+                     std::string_view row, std::string_view key) {
+  const table_def_t &def = *t->def;
+  deformed_t d(def.schema.size());
+  if (sm2::tup_deform(def.desc, tuple, d.d, {d.null.get(), d.n}) != 0) {
+    return -1;
+  }
+  image_t img(d.row());
+  entry_t e;
+  if (fetch_for(t, def.indexes[i], img) != 0 ||
+      make_entry(t, i, img.row(), e) != 0) {
+    return -1;
+  }
+  if (!e.belongs) {
+    return 0;
+  }
+  std::string k;
+  if (sm2::idx_entry_key(t->indexes[i], e.d(), e.null(), row, k) != 0) {
+    return -1;
+  }
+  return k == key ? 1 : 0;
+}
+
+/*
+ * A tree's cursor's next row: the next entry's row, read at the
+ * transaction's snapshot into the cursor's pin, that still has the
+ * entry's key; an entry whose row does not is dead, and skipped.
+ */
+static int tree_next(scan_t *scan, uint64_t &id, std::string_view &tuple) {
+  table_t *t = scan->table;
+  for (;;) {
+    std::string_view row;
+    bool cut;
+    int rc = sm2::idx_scan_entry(scan->entries, id, cut, row);
+    if (rc != 0) {
+      return rc;
+    }
+    rc = sm2::rel_read(t->rel, row, scan->pin->raw, tuple);
+    if (rc < 0) {
+      return -1;
+    }
+    if (rc == 1) {
+      continue;
+    }
+    rc = still_has(t, scan->index, tuple, row,
+                   sm2::idx_scan_entry_key(scan->entries));
+    if (rc != 0) {
+      return rc < 0 ? -1 : 0;
+    }
+  }
+}
+
 /* Open a cursor over the primary key's rows, with its pin; see sm3.h. */
 int tbl_idx_scan_rows(table_t *table, uint64_t index, const sm2::bound_t *lo,
                       const sm2::bound_t *hi, scan_t *&out, bool *widened) {
@@ -1509,10 +1567,25 @@ int tbl_idx_scan_rows(table_t *table, uint64_t index, const sm2::bound_t *lo,
     if (x.oid != index) {
       continue;
     }
-    if (!x.primary || !index_usable(table->session, def, index)) {
+    if (!(x.primary || x.tree) || !index_usable(table->session, def, index)) {
       return sm1::seterr(sm1::SM_ERR_INVALID,
                          "table: index " + x.name +
-                             " is not the primary key, or not usable");
+                             " is not the primary key or a tree, or not "
+                             "usable");
+    }
+    if (x.tree) {
+      pin_t *p = pin_take(table->session);
+      if (!p) {
+        return -1;
+      }
+      sm2::index_scan_t *entries = nullptr;
+      if (sm2::idx_scan(table->indexes[i], lo, hi, entries, widened) != 0) {
+        pin_put(p);
+        return -1;
+      }
+      out = new scan_t{nullptr, p, entries, table, i};
+      pin_scan_hold(p, out, table->def);
+      return 0;
     }
     return open_scan(table, out, [&](sm2::rel_scan_t *&rel) {
       return sm2::idx_scan_rows(table->indexes[i], lo, hi, rel, widened);
@@ -1526,7 +1599,8 @@ int tbl_idx_scan_rows(table_t *table, uint64_t index, const sm2::bound_t *lo,
 int tbl_scannxt(scan_t *scan, uint64_t &id, pin_ref_t &ref,
                 std::string_view &tuple) {
   ref = pin_ref_t{};
-  int rc = sm2::rel_scannxt(scan->rel, id, tuple);
+  int rc = scan->entries ? tree_next(scan, id, tuple)
+                         : sm2::rel_scannxt(scan->rel, id, tuple);
   // Every ref to the row before goes stale, whatever comes next.
   pin_scan_move(scan->pin, rc == 0 ? tuple : std::string_view());
   if (rc == 0) {
@@ -1543,17 +1617,26 @@ int tbl_scannxt(scan_t *scan, uint64_t &id, std::string_view &tuple) {
 
 /* Move the cursor forward to _id id; see sm3.h. */
 int tbl_scan_seek(scan_t *scan, uint64_t id) {
+  if (scan->entries) {
+    return sm1::seterr(sm1::SM_ERR_INVALID, "table: a tree's cursor seeks "
+                                            "no row");
+  }
   return sm2::rel_scan_seek(scan->rel, id);
 }
 
 /* Move a cursor in key order forward to a key; see sm3.h. */
 int tbl_scan_seek_key(scan_t *scan, std::string_view key) {
+  if (scan->entries) {
+    return sm1::seterr(sm1::SM_ERR_INVALID, "table: a tree's cursor seeks "
+                                            "no row");
+  }
   return sm2::rel_scan_seek_key(scan->rel, key);
 }
 
 /* The key of the cursor's last row; see sm3.h. */
 std::string_view tbl_scan_key(const scan_t *scan) {
-  return sm2::rel_scan_key(scan->rel);
+  return scan->entries ? sm2::idx_scan_row(scan->entries)
+                       : sm2::rel_scan_key(scan->rel);
 }
 
 /* Close a cursor, releasing its pin; see sm3.h. */
@@ -1562,6 +1645,7 @@ void tbl_scanend(scan_t *scan) {
     return;
   }
   sm2::rel_scanend(scan->rel);
+  sm2::idx_scanend(scan->entries);
   pin_release(scan->pin);
   delete scan;
 }
@@ -1640,7 +1724,41 @@ int tbl_probes(table_t *table, uint64_t &n) {
 
 /* Compact the table's store into one sorted run. */
 int tbl_compact(table_t *table) {
-  return sm1::compact(table->session->sm1, table->def->storeid);
+  if (sm1::compact(table->session->sm1, table->def->storeid) != 0) {
+    return -1;
+  }
+  // Each tree's dead entries go: an entry whose row, settled, is gone
+  // or has another key (../BTREE.md §7). One whose row a snapshot may
+  // still see otherwise stays, for a later vacuum.
+  const table_def_t &def = *table->def;
+  for (size_t i = 0; i < def.indexes.size(); i++) {
+    if (!def.indexes[i].tree) {
+      continue;
+    }
+    pin_t *p = pin_take(table->session);
+    if (!p) {
+      return -1;
+    }
+    size_t removed = 0;
+    int rc = sm2::idx_vacuum(
+        table->indexes[i],
+        [&](std::string_view row, std::string_view key) {
+          std::string_view tuple;
+          int r = sm2::rel_read_settled(table->rel, row, p->raw, tuple);
+          if (r != 0) {
+            return r < 0 ? -1 : r == 1 ? 1 : 0;
+          }
+          r = still_has(table, i, tuple, row, key);
+          return r < 0 ? -1 : r == 0 ? 1 : 0;
+        },
+        removed);
+    sm1::unpin(p->raw);
+    pin_put(p);
+    if (rc != 0) {
+      return -1;
+    }
+  }
+  return 0;
 }
 
 /* One batch of an index's build; see sm3.h. */
@@ -1850,8 +1968,16 @@ int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec) {
   to->exclusive = true;
   to->fresh = from->fresh;
   load_states(to.get());
-  if (open_rels(to.get()) != 0 || copy_rows(from, to.get()) != 0 ||
-      cat_put_table(session, oid, rec) != 0) {
+  if (open_rels(to.get()) != 0) {
+    return -1;
+  }
+  // Each tree, empty, in the new store, before the rows fill it.
+  for (sm2::index_t *ix : to->indexes) {
+    if (sm2::idx_create(ix) != 0) {
+      return -1;
+    }
+  }
+  if (copy_rows(from, to.get()) != 0 || cat_put_table(session, oid, rec) != 0) {
     return -1;
   }
   // The old store goes at commit, with the rows and entries in it,

@@ -758,6 +758,7 @@ struct sm_index_def_t {
     std::vector<int32_t>         reads;
     bool                         primary = false; /* the primary key */
     bool                         constraint = false; /* of a UNIQUE or PRIMARY KEY constraint */
+    bool                         tree = false; /* a B+tree of its own pages (BTREE.md) */
 };
 
 /*
@@ -1560,8 +1561,11 @@ int sm_tbl_scan_rows(sm_tbl_t* tbl, sm_rel_scan_t** out);
  * Open a cursor over the rows of the table's primary key, index,
  * between lo and hi as sm_tbl_idx_scan takes them, in key order:
  * the rows themselves, as sm_rel_scannxt hands them out, with their
- * _id, one sorted run (../CLUSTER.md section 5). SM_ERR_INVALID if
- * index is not the table's primary key; it seeks no _id.
+ * _id, one sorted run (../CLUSTER.md section 5). Or of a tree
+ * (BTREE.md section 4): each entry's row as the transaction sees
+ * it, while it still has the entry's key, in the tree's order; a
+ * tree's cursor seeks nothing. SM_ERR_INVALID if index is neither;
+ * it seeks no _id.
  */
 int sm_tbl_idx_scan_rows(sm_tbl_t* tbl, uint64_t index, const sm_bound_t* lo,
                          const sm_bound_t* hi, bool* widened,
@@ -1574,6 +1578,12 @@ int sm_tbl_idx_scan_rows(sm_tbl_t* tbl, uint64_t index, const sm_bound_t* lo,
  * sm_tbl_idx_scan fails with SM_ERR_INVALID on one that may not be.
  */
 bool sm_tbl_index_usable(const sm_tbl_t* tbl, uint64_t index);
+
+/*
+ * Whether the table's index is a tree (BTREE.md), whose rows a scan
+ * reads as sm_tbl_idx_scan_rows gives them; false for no such index.
+ */
+bool sm_tbl_index_tree(const sm_tbl_t* tbl, uint64_t index);
 
 /*
  * The number of attributes in an entry's value in that index: the
@@ -1760,7 +1770,8 @@ int sm_cat_create_index(sm_session_t* session, uint64_t table,
                         const std::vector<int32_t>& includes, bool unique,
                         const std::string& eval,
                         const std::vector<int32_t>& reads, uint64_t* oid,
-                        bool primary = false, bool constraint = false);
+                        bool primary = false, bool constraint = false,
+                        bool tree = false);
 
 /* Drop the index oid of the table, and its entries. */
 int sm_cat_drop_index(sm_session_t* session, uint64_t table, uint64_t index);

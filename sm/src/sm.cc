@@ -331,6 +331,7 @@ sm_table_def_t api_def(const sm3::session_t *ss, const sm3::table_def_t &d) {
         {},    state,  st.error, st.reason,     x.eval, x.reads};
     i.primary = x.primary;
     i.constraint = x.constraint;
+    i.tree = x.tree;
     for (const sm2::key_column_t &k : x.key) {
       i.key.push_back({reinterpret_cast<const sm_type_t *>(k.type), k.typmod,
                        reinterpret_cast<const sm_collation_t *>(k.collation),
@@ -2298,6 +2299,16 @@ int sm_tbl_idx_scan_rows(sm_tbl_t *tbl, uint64_t index, const sm_bound_t *lo,
   });
 }
 
+/* Whether one of the table's indexes is a tree. */
+bool sm_tbl_index_tree(const sm_tbl_t *tbl, uint64_t index) {
+  for (const sm3::index_def_t &x : sm3::tbl_def(tbl->table).indexes) {
+    if (x.oid == index) {
+      return x.tree;
+    }
+  }
+  return false;
+}
+
 /* Whether the table's session may scan one of its indexes now. */
 bool sm_tbl_index_usable(const sm_tbl_t *tbl, uint64_t index) {
   return sm3::tbl_index_usable(tbl->table, index);
@@ -2576,7 +2587,7 @@ int sm_cat_create_index(sm_session_t *session, uint64_t table, const char *name,
                         const std::vector<int32_t> &includes, bool unique,
                         const std::string &eval,
                         const std::vector<int32_t> &reads, uint64_t *oid,
-                        bool primary, bool constraint) {
+                        bool primary, bool constraint, bool tree) {
   return guard(session, [&] {
     if (!oid) {
       return null_arg("sm_cat_create_index", "oid");
@@ -2587,7 +2598,8 @@ int sm_cat_create_index(sm_session_t *session, uint64_t table, const char *name,
                    key.type_code, key.typmod});
     }
     return sm3::create_index(session->sm3, table, name_of(name), k, includes,
-                             unique, eval, reads, *oid, primary, constraint);
+                             unique, eval, reads, *oid, primary, constraint,
+                             tree);
   });
 }
 
