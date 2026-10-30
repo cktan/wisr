@@ -70,7 +70,7 @@ time (§5).
 | `SM_ERR_DUPKEY` from sm1's insert | a unique index keyed without its row's key, and the primary key, the rows' own, need no separate existence check (§3) |
 | `SM_ERR_UPDATED` and `rel_read_latest` at READ COMMITTED | a filtered update or delete must re-check its predicate, and recompute its index entries, from the newest version (§3); the error does not abort and is not retryable |
 | transactions at RC / RR / SERIALIZABLE | index maintenance is atomic with the base write for free, because both are in one transaction |
-| `sm1::lock` in Gray's modes (IS, IX, S, SIX, X) | the DDL and online index build protocol (§2, §3): readers and writers of a table coexist on its table-oid lock, DDL waits them out, and an index build stops neither once its index is recorded |
+| `sm1::lock_oid` and `sm1::lock_row` in Gray's modes (IS, IX, S, SIX, X) | the DDL and online index build protocol (§2, §3): readers and writers of a table coexist on its table-oid lock, DDL waits them out, and an index build stops neither once its index is recorded |
 | nested savepoints | a statement can be undone without losing the transaction |
 | forward scans | probe loops cost one cursor, not one per probe |
 | `sm1::max_keylen` 4096 | an index entry's key must fit 4094 bytes after the relid, its row's key included where it carries one; an over-long one is truncated and flagged, and sm3 rechecks it (`sm2/SM2_DESIGN.md` §3.2) |
@@ -110,9 +110,9 @@ the same with an sm1 OID lock on the table's oid, the
 **table-oid lock**, in Gray's modes, as PostgreSQL's table
 locks are:
 
-- every transaction that reads a table takes `sm1::lock` IS on
-  that table's oid, and one that writes it IX, held to
-  the end of the transaction, before it reads the definition —
+- every transaction that reads a table takes `sm1::lock_oid` IS
+  on that table's oid, and one that writes it IX, held to the end
+  of the transaction, before it reads the definition —
   PostgreSQL's AccessShareLock and RowExclusiveLock, which
   coexist;
 - DDL takes it X, which waits out the transactions
@@ -125,7 +125,7 @@ locks are:
   memory must take this lock, or DDL has nothing to wait on.
   The lock is an `sm1::LOCKTYPE_OID` lock on the table's
   oid: a name in no store, which nothing writes, so
-  `sm1::lock` reads no store and checks no version and cannot
+  `sm1::lock_oid` reads no store and checks no version and cannot
   fail on a newer commit at any level. The lock alone is what
   protects the reader, and the in-memory definition, not a
   read of a row, is what it uses. `cat_lock_table` takes it.
@@ -213,10 +213,11 @@ type and so rewrites the table.
 ## 3. Indexes
 
 How indexes are defined, maintained and built. What sm3 needs
-from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
-§5.1), `sm1::stmt_begin` (§6.2), nested savepoints (§6.5),
-`sm1::scan_seek` (§10.2) and the old row a write returns
-(§5.3). What sm1 relies on is already there too:
+from sm1 is in sm1 already: `sm1::lock_oid` and
+`sm1::lock_row` (`sm1/SM1_DESIGN.md` §5.1), `sm1::stmt_begin`
+(§6.2), nested savepoints (§6.5), `sm1::scan_seek` (§10.2) and
+the old row a write returns (§5.3). What sm1 relies on is already
+there too:
 
 - **Unique enforcement.** An insert into the index's store
   fails with `SM_ERR_DUPKEY`, and a concurrent inserter of the
@@ -557,7 +558,7 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   transaction. It is simpler, but it would have been a second
   build to keep beside this one, and its one transaction
   holds a lock and an undo entry in memory for every row
-  (`sm1/SM1_DESIGN.md` §13). `sm1::lock` is used all the same:
+  (`sm1/SM1_DESIGN.md` §13). sm1's locks are used all the same:
   the table-oid lock, and the shared row lock of step 3.
 - **Partial and expression indexes are evaluated by the host,
   through a callback.** Maintaining one means deciding whether

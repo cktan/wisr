@@ -322,7 +322,7 @@ TEST_CASE("above READ COMMITTED a key taken since the snapshot fails the "
 TEST_CASE("a row the statement inserted is found by an insert with "
           "arbiters, and refused to a lock as read") {
   // Verify that the statement's own later change of a row stops
-  // SQL's row lock (tbl_lock, sm1::lock's as_read) and not the
+  // SQL's row lock (tbl_lock, sm1::lock_row's as_read) and not the
   // lock an insert with arbiters takes to read the key's newest
   // version: digres's FOR UPDATE cursor and ON CONFLICT (dg
   // WORKNOTE.md step 305).

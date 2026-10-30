@@ -192,6 +192,11 @@ and so are the catalog tables psql reads
      FOR UPDATE` and `FOR SHARE`, the foreign-key check's FOR
      KEY SHARE of the parent row at every child insert, index
      entries and catalog keys; and the strong table locks.
+   - **The lock id, not the key.** A row lock keeps its whole
+     key in the lock list, the `PREPARED` record and
+     `sm1::lock_status`, and should keep only its `lockid_t`.
+     The plan, its cases, open decision and order of work are
+     in `sm1/LOCKID.md`; it is this item's first step.
 
    **Measured without digres or sm.** The table is a module of
    its own, `sm1/src/locktab.h` and `.cc`, that depends on
@@ -338,7 +343,7 @@ Owed, and blocking nothing above:
   key alone still waits for a child's transaction, which holds
   the row shared.
 - **`lock_timeout`, and the rest of no-wait.** A lock that
-  does not wait is built for a row (`sm1::trylock`,
+  does not wait is built for a row (`sm1::trylock_row`,
   `sm_tbl_trylock`) and for a table's table-oid lock
   (`sm_tbl_tryopen`), and digres's NOWAIT, SKIP LOCKED and
   `LOCK TABLE ... NOWAIT` use them, and `lock_timeout` ends a

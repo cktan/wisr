@@ -117,11 +117,11 @@ int row_scan(sm1::session_t *s, uint64_t store, const char *skey, size_t sklen,
                                eklen, ekey_inclusive, out);
 }
 
-/* sm1::lock of a row, or sm1::chain_lock in chained mode. */
+/* sm1::lock_row, or sm1::chain_lock in chained mode. */
 int row_lock(sm1::session_t *s, uint64_t store, std::string_view key,
              sm1::lockmode_t mode, bool as_read) {
   return g_chained ? sm1::chain_lock(s, store, key, mode, as_read)
-                   : sm1::lock(s, sm1::LOCKTYPE_ROW, store, key, mode, as_read);
+                   : sm1::lock_row(s, store, key, mode, as_read);
 }
 
 /* The symbolic name of the current error (DRIVER.md §4). */
@@ -344,7 +344,7 @@ std::string execute(worker_t *w, const item_t &it) {
   if (it.verb == "lock" || it.verb == "lockread" || it.verb == "lockoid") {
     // lock <row> <is|ix|shared|six|exclusive>: take the row
     // lock in one of Gray's modes without writing the row;
-    // lockread, as a row the statement read (sm1::lock's as_read);
+    // lockread, as a row the statement read (sm1::lock_row's as_read);
     // lockoid <n>, the OID lock on n, as sm3 locks a table.
     static const std::pair<const char *, sm1::lockmode_t> modes[] = {
         {"is", sm1::SM_LOCKMODE_IS},        {"ix", sm1::SM_LOCKMODE_IX},
@@ -356,12 +356,8 @@ std::string execute(worker_t *w, const item_t &it) {
         continue;
       }
       if (it.verb == "lockoid") {
-        // An OID lock's key is the oid, 8 bytes big-endian.
-        std::string oid;
-        sm0::put_be64(oid, strtoull(a[0].c_str(), nullptr, 10));
-        return sm1::lock(w->sess, sm1::LOCKTYPE_OID, 0, oid, mode) == 0
-                   ? "ok"
-                   : error_name();
+        uint64_t oid = strtoull(a[0].c_str(), nullptr, 10);
+        return sm1::lock_oid(w->sess, oid, mode) == 0 ? "ok" : error_name();
       }
       return row_lock(w->sess, w->store, a[0], mode, it.verb == "lockread") == 0
                  ? "ok"

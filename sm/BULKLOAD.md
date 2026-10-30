@@ -1132,7 +1132,7 @@ narrowed, with these differences.
   sm3 looks once before it asks for the lock, so that a load
   into a table with rows keeps no one out.
 - **The lock is taken only if it is free at once**
-  (`sm1::trylock`). A load never waits for it: with another
+  (`sm1::trylock_oid`). A load never waits for it: with another
   transaction using the table, a reader included, the rows are
   inserted. Waiting would hold a load behind any reader, for a
   gain it can do without; and the loader already holds the

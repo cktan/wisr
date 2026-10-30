@@ -128,9 +128,10 @@ TEST_CASE("every session call rejects a NULL session") {
   expect_fail(sm1::savepoint(nullptr), sm1::SM_ERR_INVALID);
   expect_fail(sm1::rollback(nullptr, 1), sm1::SM_ERR_INVALID);
   expect_fail(sm1::forget(nullptr, 1), sm1::SM_ERR_INVALID);
-  expect_fail(
-      sm1::lock(nullptr, sm1::LOCKTYPE_ROW, 1, "k", sm1::SM_LOCKMODE_SH),
-      sm1::SM_ERR_INVALID);
+  expect_fail(sm1::lock_row(nullptr, 1, "k", sm1::SM_LOCKMODE_SH),
+              sm1::SM_ERR_INVALID);
+  expect_fail(sm1::lock_oid(nullptr, 1, sm1::SM_LOCKMODE_SH),
+              sm1::SM_ERR_INVALID);
   expect_fail(sm1::prepare(nullptr, "g"), sm1::SM_ERR_INVALID);
   expect_fail(sm1::list_prepared(nullptr, list), sm1::SM_ERR_INVALID);
   expect_fail(sm1::commit_prepared(nullptr, "g"), sm1::SM_ERR_INVALID);
@@ -291,7 +292,7 @@ TEST_CASE("calls needing a transaction fail with SM_ERR_NOTRANS without one") {
   expect_fail(sm1::savepoint(s), sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::rollback(s, 1), sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::forget(s, 1), sm1::SM_ERR_NOTRANS);
-  expect_fail(sm1::lock(s, sm1::LOCKTYPE_ROW, 1, "k", sm1::SM_LOCKMODE_SH),
+  expect_fail(sm1::lock_row(s, 1, "k", sm1::SM_LOCKMODE_SH),
               sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::prepare(s, "g"), sm1::SM_ERR_NOTRANS);
   uint64_t storeid;
@@ -367,31 +368,22 @@ TEST_CASE("every sequence call validates its name") {
   REQUIRE(sm1::commit(s) == 0);
 }
 
-TEST_CASE("sm1::lock validates its lock type and an oid's length") {
-  // Verify the locktype_t argument and LOCKTYPE_OID's fixed width.
-  // 1. A type past the last one is SM_ERR_INVALID.
-  // 2. A LOCKTYPE_OID key of any length but 8 is SM_ERR_INVALID,
-  //    the empty one included.
-  // 3. An 8-byte one is taken, and needs no store to exist.
-  // 4. LOCKTYPE_ROW is unaffected: it takes a key of any length.
+TEST_CASE("sm1::lock_oid validates its mode and its transaction") {
+  // Verify lock_oid's arguments: a mode, a transaction, any oid.
+  // 1. Outside a transaction it is SM_ERR_NOTRANS.
+  // 2. A mode past Gray's five is SM_ERR_INVALID, waiting or not.
+  // 3. Oids 0 and the largest are taken, with no store behind them.
   args_fixture_t f;
   sm1::session_t *s = f.s();
-  std::string oid(8, '\0');
+  expect_fail(sm1::lock_oid(s, 1, sm1::SM_LOCKMODE_SH), sm1::SM_ERR_NOTRANS);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
 
-  expect_fail(sm1::lock(s, static_cast<sm1::locktype_t>(2), 0, oid,
-                        sm1::SM_LOCKMODE_SH),
+  expect_fail(sm1::lock_oid(s, 1, static_cast<sm1::lockmode_t>(5)),
               sm1::SM_ERR_INVALID);
-  for (size_t n : {size_t{0}, size_t{7}, size_t{9}}) {
-    CAPTURE(n);
-    expect_fail(sm1::lock(s, sm1::LOCKTYPE_OID, 0, std::string(n, '\0'),
-                          sm1::SM_LOCKMODE_SH),
-                sm1::SM_ERR_INVALID);
-  }
+  expect_fail(sm1::trylock_oid(s, 1, static_cast<sm1::lockmode_t>(5)),
+              sm1::SM_ERR_INVALID);
 
-  // Store 999 does not exist, which an oid lock never looks at.
-  CHECK(sm1::lock(s, sm1::LOCKTYPE_OID, 999, oid, sm1::SM_LOCKMODE_EX) == 0);
-  CHECK(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "a longer key",
-                  sm1::SM_LOCKMODE_SH) == 0);
+  CHECK(sm1::lock_oid(s, 0, sm1::SM_LOCKMODE_EX) == 0);
+  CHECK(sm1::lock_oid(s, UINT64_MAX, sm1::SM_LOCKMODE_EX) == 0);
   REQUIRE(sm1::commit(s) == 0);
 }

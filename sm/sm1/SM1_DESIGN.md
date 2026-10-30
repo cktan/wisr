@@ -64,13 +64,12 @@ adds the API a secondary-index layer built on top of it needs
 `sm1::lsstore`, which came with naming stores by storeid (§11);
 `sm1::stmt_begin`, for read-committed statement snapshots
 (§6.2); the savepoint stack with `sm1::forget` (§6.5);
-`sm1::lock`, whose modes carry sm3's table-oid locks and the row
-lock of its index build (§5.1); `sm1::scan_seek`, which
-repositions a cursor instead of reopening it (§10.2); and the
-old row returned by `sm1::update` and `sm1::erase` (§5.3).
-Descending scans will
-not be added at all, and a batched read is left until a
-benchmark asks for it (§10.1).
+`sm1::lock_oid` and `sm1::lock_row`, whose modes carry sm3's
+table-oid locks and the row lock of its index build (§5.1);
+`sm1::scan_seek`, which repositions a cursor instead of reopening
+it (§10.2); and the old row returned by `sm1::update` and
+`sm1::erase` (§5.3). Descending scans will not be added at all,
+and a batched read is left until a benchmark asks for it (§10.1).
 
 **Assumptions.**
 
@@ -275,13 +274,14 @@ meaningful (§3.4).
 
 The `lockset` is carried only in a `PREPARED` record, and only so
 that recovery can re-acquire the locks a prepared transaction
-still holds, each in the mode it is held in: those `sm1::lock`
-took, since a write keeps none (§5.1, §8.4). `created` lists the
-stores the transaction made with `sm1::mkstore`, so that recovery
-keeps their column families (§9.1); `dropped` lists those it
-removed with `sm1::rmstore`, so that a commit after restart still
-queues their column families for removal (§8.3). `prepared_at` is
-the wall-clock time of `sm1::prepare`, reported by
+still holds, each in the mode it is held in: those
+`sm1::lock_row` and `sm1::lock_oid` took, since a write keeps
+none (§5.1, §8.4). `created` lists the stores the transaction
+made with `sm1::mkstore`, so that recovery keeps their column
+families (§9.1); `dropped` lists those it removed with
+`sm1::rmstore`, so that a commit after restart still queues their
+column families for removal (§8.3). `prepared_at` is the
+wall-clock time of `sm1::prepare`, reported by
 `sm1::list_prepared` (§8.5); it must be durable because the
 listing is mostly needed after a restart. All four are dropped
 when the record flips to COMMITTED or ABORTED. The record is one
@@ -678,7 +678,7 @@ object — sm3's table, by an OID lock on its oid — takes an
 intention mode on it to
 announce what it does below, so readers (IS) and writers (IX) of
 a table coexist while a builder that must stop writers but not
-readers takes S. `sm1::lock` takes any mode, and a plain read
+readers takes S. A lock takes any mode, and a plain read
 still takes none. Locks are released at commit/abort — strict,
 so no cascading aborts.
 
@@ -687,18 +687,17 @@ and puts its version under a short **latch**, one of 4,096
 mutexes chosen by hashing the store and key, held only within
 the call and never while waiting. Its uncommitted version
 stands for the lock: a second writer of the key, or an
-`sm1::lock` on it, finds the version still in flight and waits
-for the transaction that wrote it, then looks again. That
+`sm1::lock_row` on it, finds the version still in flight and
+waits for the transaction that wrote it, then looks again. That
 transaction's end wakes it, and so does a rollback to a
-savepoint, which may have deleted the version. A write also
-waits for another transaction's explicit lock on the key, and
-converts its own explicit lock, if it holds one, to X. So a
-write adds no entry to `T.locks`, with one exception: one
-refused with `SM_ERR_UPDATED` keeps the key locked X until
-the re-read (§5.4). A wait on a transaction is an edge in the
-waits-for graph to the session running it, found through a
-map from `xid` to session beside the active table; a prepared
-transaction waits on no one.
+savepoint, which may have deleted the version. A write also waits
+for another transaction's explicit lock on the key, and converts
+its own explicit lock, if it holds one, to X. So a write adds no
+entry to `T.locks`, with one exception: one refused with
+`SM_ERR_UPDATED` keeps the key locked X until the re-read (§5.4).
+A wait on a transaction is an edge in the waits-for graph to the
+session running it, found through a map from `xid` to session
+beside the active table; a prepared transaction waits on no one.
 
 A lock's id in the table is two 64-bit words, `lockid_t`
 (`src/db.h`): the storeid, its top bit flipped for an OID lock
@@ -766,14 +765,15 @@ entry in place, without ever releasing what it holds. A
 conversion is what makes two transactions on ONE key deadlock,
 which exclusive-only locking could not do.
 
-**A read-only transaction can hold locks.** Before `sm1::lock`,
-a transaction with no `xid` held nothing, and the read-only
-commit path skipped lock release for that reason. It no
-longer can.
+**A read-only transaction can hold locks.** Before
+`sm1::lock_row`, a transaction with no `xid` held nothing, and
+the read-only commit path skipped lock release for that reason.
+It no longer can.
 
 **A session can ask not to wait, for QA only.**
-`sm1::set_qa_nowait` turns a wait into a failure: a write or an `sm1::lock` that would
-block returns `SM_ERR_BLOCKED` at once. Like `SM_ERR_UPDATED`
+`sm1::set_qa_nowait` turns a wait into a failure: a write, an
+`sm1::lock_row` or an `sm1::lock_oid` that would block returns
+`SM_ERR_BLOCKED` at once. Like `SM_ERR_UPDATED`
 it is not an abort and not retryable. The transaction stays
 active and holds exactly what it held, and the caller polls by
 repeating the call, which fails the same way or goes through
@@ -872,7 +872,8 @@ its own transaction with `SM_ERR_DOOMED` (§6.5).
 **What a transaction holds in memory.** Row values stream
 to RocksDB, so a transaction is bounded by disk, but
 three structures are not: `T.locks` (one entry per key
-locked with `sm1::lock`; a write keeps none), `T.undo` (one
+locked with `sm1::lock_row` or `sm1::lock_oid`; a write keeps
+none), `T.undo` (one
 `(storeid, userkey,
 wts, seq)` tuple per write made while a savepoint is set,
 §6.5), and the SSI read set. All three
@@ -989,25 +990,25 @@ the caller.
   (§6.5), and their marks with them; a lock taken before the
   savepoint keeps its mark. - **`sm1::read_latest`** requires
   READ COMMITTED and a lock this transaction holds on the key,
-  taken by the refused write or by `sm1::lock`; otherwise
+  taken by the refused write or by `sm1::lock_row`; otherwise
   `SM_ERR_INVALID`. Above READ COMMITTED it reads only a newest
   version that is the transaction's own, which the snapshot
   does not hide and no other writer changes: an insert's
   arbiter finds so a key its own statement took (scenario
   `a19`). Under a shared lock it reads but sets no
   mark, since a shared holder cannot write without upgrading. A
-  caller that waited in `sm1::lock(SHARED)` (sm3's index
+  caller that waited in `sm1::lock_row(SHARED)` (sm3's index
   build reading a row, step 3 of `../sm3/SM3_DESIGN.md` §3)
   uses it to see what committed while it waited. - **An insert**
   has no predicate to re-evaluate, so it is judged against the
   newest committed version (`SM_ERR_DUPKEY` if live) with no
-  check, as PostgreSQL's unique check does. - **`sm1::lock`** at
-  READ COMMITTED no longer fails with `SM_ERR_CONFLICT`. At the
-  higher levels it is unchanged. - REPEATABLE READ, SERIALIZABLE,
-  SSI (READ COMMITTED takes no part, §7.4), 2PC and the GC
-  watermark are unchanged: a read committed transaction already
-  pins its begin snapshot, and the newest committed version is
-  never collected.
+  check, as PostgreSQL's unique check does. - **`sm1::lock_row`**
+  at READ COMMITTED no longer fails with `SM_ERR_CONFLICT`. At
+  the higher levels it is unchanged. - REPEATABLE READ,
+  SERIALIZABLE, SSI (READ COMMITTED takes no part, §7.4), 2PC and
+  the GC watermark are unchanged: a read committed transaction
+  already pins its begin snapshot, and the newest committed
+  version is never collected.
 
 Version order needs no help from any of this: the write that goes
 ahead takes a `wts` after the lock, so it sorts first (§4.1).
@@ -1056,7 +1057,7 @@ the transaction) and `T.stmt_snapshot_ts` once taken.
 
 The snapshot is taken by the statement's first **read**, not
 by the boundary call and not by a write, so a statement may
-block — on another writer of its key, or on an `sm1::lock` — and
+block — on another writer of its key, or on a lock — and
 still read everything committed while
 it waited. `xct_read_view` takes it; `xct_view`, which the
 write path uses to validate a storeid and key, only reads it
@@ -1091,7 +1092,7 @@ Halloween problem.
   An insert is unchanged: a key the statement inserted is
   still a duplicate.
 - **A lock of a row the statement read** is refused the same
-  way: `sm1::lock` and `sm1::chain_lock` with `as_read`, as
+  way: `sm1::lock_row` and `sm1::chain_lock` with `as_read`, as
   SQL's FOR UPDATE and FOR SHARE lock a row, fail with
   `SM_ERR_SELFMODIFIED` on a key whose newest version is the
   transaction's own with `seq` above the mark, and take no
@@ -2002,7 +2003,8 @@ prepared before a crash and one prepared in this process are
 handled alike. The record is a single `CF:txn` value however
 large the write set; the write set is stored as the lock keys the
 transaction holds, each with the mode it is held in, so a shared
-lock taken by `sm1::lock` is restored as shared. Database format
+lock taken by `sm1::lock_row` or `sm1::lock_oid` is restored as
+shared. Database format
 version 4 added that mode byte.
 
 Step 1 closes cursors for the reasons given in §8.2. No data
@@ -2011,10 +2013,11 @@ never be used again, but it would pin `gc_watermark` for as long
 as the transaction stays in doubt. The coordinator's commit
 (§8.2 from step 2) therefore finds none left to close.
 
-A read-only transaction is not necessarily lock-free: `sm1::lock`
-gives one locks without writing, and those go into the record
-and are restored like any other. What makes it read-only is the
-empty set of versions, not an empty lock set.
+A read-only transaction is not necessarily lock-free:
+`sm1::lock_row` and `sm1::lock_oid` give one locks without
+writing, and those go into the record and are restored like any
+other. What makes it read-only is the empty set of versions, not
+an empty lock set.
 
 A read-only transaction still needs a durable `PREPARED` record,
 because `API.md` promises that a prepared transaction survives
@@ -2022,8 +2025,8 @@ a crash and can be resolved by `gid` afterwards. Step 1 gives it
 an xid (entering the active table, §3.4) so that the record has
 a unique key; with `T.xid == 0`, every read-only prepare would
 overwrite the same `CF:txn[0]`. Its `lockset` holds whatever
-`sm1::lock` took and nothing more, so a transaction that only
-read holds nothing after a restart.
+`sm1::lock_row` and `sm1::lock_oid` took and nothing more, so a
+transaction that only read holds nothing after a restart.
 
 After a successful prepare the transaction is in-doubt: its
 versions sit in store CFs, its status record says `PREPARED`,
@@ -3059,19 +3062,18 @@ bullets below cover the rest of the engine.
   once; an exclusive request waits for both. A shared holder
   writing the key upgrades once the others go, and two
   upgraders on one key deadlock with the younger one the
-  victim. At REPEATABLE READ and above `sm1::lock` runs §5.2's
-  check under the lock, so it fails with `SM_ERR_CONFLICT` on a
-  key committed after the caller's snapshot; at read committed
-  it does not fail, and the caller reads the row with
+  victim. At REPEATABLE READ and above `sm1::lock_row` runs
+  §5.2's check under the lock, so it fails with `SM_ERR_CONFLICT`
+  on a key committed after the caller's snapshot; at read
+  committed it does not fail, and the caller reads the row with
   `sm1::read_latest` (§5.4). A savepoint rollback releases an
-  explicit lock first taken after the mark but never downgrades an
-  upgrade. The whole index-build protocol runs end to end, the
+  explicit lock first taken after the mark but never downgrades
+  an upgrade. The whole index-build protocol runs end to end, the
   test modelling a layer's catalog with a schema row: a builder
   taking the schema row exclusive blocks a writer, sees the row
-  an earlier writer committed, and the blocked writer then
-  fails, retries, and reads the new schema (§5.1). sm3 itself
-  orders DDL by table-oid locks (`../sm3/SM3_DESIGN.md` §2,
-  §3).
+  an earlier writer committed, and the blocked writer then fails,
+  retries, and reads the new schema (§5.1). sm3 itself orders DDL
+  by table-oid locks (`../sm3/SM3_DESIGN.md` §2, §3).
 - **Deadlock.** Build a two-transaction cycle in both orders:
   the older waiter finds the cycle and the younger is the
   victim, and the younger finds it and is itself the victim.

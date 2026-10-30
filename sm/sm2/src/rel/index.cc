@@ -450,8 +450,8 @@ int idx_find_latest(index_t *index, std::span<const datum_t> key,
   const bool chained = chained_rows(index);
   if ((chained ? sm1::chain_lock(index->session, index->storeid, k,
                                  sm1::SM_LOCKMODE_SH)
-               : sm1::lock(index->session, sm1::LOCKTYPE_ROW, index->storeid, k,
-                           sm1::SM_LOCKMODE_SH)) != 0) {
+               : sm1::lock_row(index->session, index->storeid, k,
+                               sm1::SM_LOCKMODE_SH)) != 0) {
     return -1;
   }
   std::string_view value;

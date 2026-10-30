@@ -80,8 +80,7 @@ TEST_CASE(
   sm1::session_t *t = f.open();
 
   REQUIRE(sm1::begin(t, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock(t, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_EX) ==
-          0);
+  REQUIRE(sm1::lock_row(t, g_store, "x", sm1::SM_LOCKMODE_EX) == 0);
   CHECK(latest(t, "x") == "<error>");
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   REQUIRE(sm1::abort(t) == 0);
@@ -89,8 +88,7 @@ TEST_CASE(
   REQUIRE(sm1::begin(t, sm1::xctlevel_t::read_committed) == 0);
   CHECK(latest(t, "x") == "<error>");
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  REQUIRE(sm1::lock(t, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_EX) ==
-          0);
+  REQUIRE(sm1::lock_row(t, g_store, "x", sm1::SM_LOCKMODE_EX) == 0);
   CHECK(latest(t, "x") == "0");
   REQUIRE(sm1::commit(t) == 0);
   sm1::closedb(t);
@@ -122,8 +120,7 @@ TEST_CASE("above read committed sm1_read_latest reads the transaction's own "
     CHECK(latest(t, "x") == "2");
     REQUIRE(sm1::abort(t) == 0);
     REQUIRE(sm1::begin(t, level) == 0);
-    REQUIRE(sm1::lock(t, sm1::LOCKTYPE_ROW, g_store, "y",
-                      sm1::SM_LOCKMODE_SH) == 0);
+    REQUIRE(sm1::lock_row(t, g_store, "y", sm1::SM_LOCKMODE_SH) == 0);
     CHECK(latest(t, "y") == "<error>");
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
     REQUIRE(sm1::abort(t) == 0);
@@ -161,8 +158,7 @@ TEST_CASE("a successful write consumes the mark") {
   sm1::session_t *t = f.open();
   REQUIRE(sm1::begin(t, sm1::xctlevel_t::read_committed) == 0);
   commit_from_other(f, "x", "u");
-  REQUIRE(sm1::lock(t, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_EX) ==
-          0);
+  REQUIRE(sm1::lock_row(t, g_store, "x", sm1::SM_LOCKMODE_EX) == 0);
 
   REQUIRE(sm1::savepoint(t) == 1);
   CHECK(latest(t, "x") == "u");
@@ -185,8 +181,7 @@ TEST_CASE("under a shared lock sm1_read_latest reads but sets no mark") {
   REQUIRE(sm1::begin(t, sm1::xctlevel_t::read_committed) == 0);
   commit_from_other(f, "x", "u");
 
-  REQUIRE(sm1::lock(t, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
-          0);
+  REQUIRE(sm1::lock_row(t, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
   CHECK(latest(t, "x") == "u");
   CHECK(set(t, "x", "t") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);

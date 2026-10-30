@@ -320,9 +320,9 @@ them wrong would be invisible in ordinary use:
   commit would hand T1 a first-committer-wins CONFLICT, which
   is b19's point, not b21's.
 - **A lock is a lock, whoever takes it** (b26 to b29):
-  `sm1::lock` meets a write as another write does, so a shared
-  holder stops a writer, a writer stops a shared request, and
-  a lock taken over a row committed since the snapshot fails
+  `sm1::lock_row` meets a write as another write does, so a
+  shared holder stops a writer, a writer stops a shared request,
+  and a lock taken over a row committed since the snapshot fails
   with CONFLICT rather than handing back something stale.
 - **A wait that cannot end** (b16): two writers holding what
   the other wants would wait forever, so the engine picks

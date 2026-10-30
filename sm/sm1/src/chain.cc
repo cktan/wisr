@@ -629,8 +629,10 @@ int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
       return lock_wait_error(s, waited);
     }
   }
-  // Read committed does not fail here: the caller reads the row with
-  // sm1::chain_read_latest instead.
+  // Read committed runs no check: the lock is held and the call
+  // returns 0, never SM_ERR_CONFLICT, however newer the row's last
+  // commit than the snapshot. The caller then reads the row with
+  // sm1::chain_read_latest, which needs this lock (LOCK.md §1.1).
   if (s->level == sm1::xctlevel_t::read_committed) {
     return 0;
   }

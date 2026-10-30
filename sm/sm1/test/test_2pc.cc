@@ -291,8 +291,7 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   CHECK(sm1::forget(s, 1) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
-  CHECK(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "a", sm1::SM_LOCKMODE_SH) ==
-        -1);
+  CHECK(sm1::lock_row(s, g_store, "a", sm1::SM_LOCKMODE_SH) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   uint64_t fresh = 0;
   CHECK(sm1::mkstore(s, fresh) == -1);
@@ -414,7 +413,7 @@ TEST_CASE("a prepared transaction keeps its locks after its session closes") {
 }
 
 TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
-  // Verify sm1::lock's shared locks reach the PREPARED record and
+  // Verify sm1::lock_row's shared locks reach the PREPARED record and
   // come back with it (§8.4, §9.1).
   // 1. S locks "b" shared, writes "a", and prepares "g".
   // 2. Restart the environment, so "g" is rebuilt from its record.
@@ -424,8 +423,7 @@ TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
   tpc_fixture_t f;
   sm1::session_t *s = f.open();
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "b", sm1::SM_LOCKMODE_SH) ==
-          0);
+  REQUIRE(sm1::lock_row(s, g_store, "b", sm1::SM_LOCKMODE_SH) == 0);
   REQUIRE(set(s, "a", "1") == 0);
   REQUIRE(sm1::prepare(s, "g") == 0);
   f.restart();
@@ -433,8 +431,7 @@ TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
   sm1::session_t *u = f.open();
   sm1::session_t *v = f.open();
   REQUIRE(sm1::begin(u, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(sm1::lock(u, sm1::LOCKTYPE_ROW, g_store, "b", sm1::SM_LOCKMODE_SH) ==
-        0);
+  CHECK(sm1::lock_row(u, g_store, "b", sm1::SM_LOCKMODE_SH) == 0);
 
   std::atomic<bool> returned{false};
   int rc = -2;
@@ -469,10 +466,8 @@ TEST_CASE("row locks whose keys hash alike come back exactly after a "
   defer { wisr::lock_test_rows_collide = false; };
   sm1::session_t *s = f.open();
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "a", sm1::SM_LOCKMODE_SH) ==
-          0);
-  REQUIRE(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "b", sm1::SM_LOCKMODE_EX) ==
-          0);
+  REQUIRE(sm1::lock_row(s, g_store, "a", sm1::SM_LOCKMODE_SH) == 0);
+  REQUIRE(sm1::lock_row(s, g_store, "b", sm1::SM_LOCKMODE_EX) == 0);
   REQUIRE(sm1::prepare(s, "g") == 0);
   CHECK(s->lock_keys.empty());
 
@@ -523,13 +518,11 @@ TEST_CASE("a prepared transaction's table locks keep DDL out, across a "
   // 4. Aborting "g" frees both: V's two trylocks succeed, and no
   //    count is left.
   tpc_fixture_t f;
-  std::string oid1(7, '\0'), oid2(7, '\0');
-  oid1.push_back('\x01');
-  oid2.push_back('\x02');
+  uint64_t oid1 = 1, oid2 = 2;
   sm1::session_t *s = f.open();
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock(s, sm1::LOCKTYPE_OID, 0, oid1, sm1::SM_LOCKMODE_IS) == 0);
-  REQUIRE(sm1::lock(s, sm1::LOCKTYPE_OID, 0, oid2, sm1::SM_LOCKMODE_EX) == 0);
+  REQUIRE(sm1::lock_oid(s, oid1, sm1::SM_LOCKMODE_IS) == 0);
+  REQUIRE(sm1::lock_oid(s, oid2, sm1::SM_LOCKMODE_EX) == 0);
   CHECK(s->fp_used == 1);
   REQUIRE(sm1::prepare(s, "g") == 0);
   CHECK(s->fp_used == 0);
@@ -537,10 +530,8 @@ TEST_CASE("a prepared transaction's table locks keep DDL out, across a "
   // V's two tries, each refused while "g" holds its locks.
   auto refused = [&](sm1::session_t *v) {
     REQUIRE(sm1::begin(v, sm1::xctlevel_t::repeatable_read) == 0);
-    CHECK(sm1::trylock(v, sm1::LOCKTYPE_OID, 0, oid1, sm1::SM_LOCKMODE_EX) ==
-          1);
-    CHECK(sm1::trylock(v, sm1::LOCKTYPE_OID, 0, oid2, sm1::SM_LOCKMODE_IS) ==
-          1);
+    CHECK(sm1::trylock_oid(v, oid1, sm1::SM_LOCKMODE_EX) == 1);
+    CHECK(sm1::trylock_oid(v, oid2, sm1::SM_LOCKMODE_IS) == 1);
     REQUIRE(sm1::commit(v) == 0);
   };
   sm1::session_t *v = f.open();
@@ -553,8 +544,8 @@ TEST_CASE("a prepared transaction's table locks keep DDL out, across a "
   refused(v);
   REQUIRE(sm1::abort_prepared(v, "g") == 0);
   REQUIRE(sm1::begin(v, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(sm1::trylock(v, sm1::LOCKTYPE_OID, 0, oid1, sm1::SM_LOCKMODE_EX) == 0);
-  CHECK(sm1::trylock(v, sm1::LOCKTYPE_OID, 0, oid2, sm1::SM_LOCKMODE_IS) == 0);
+  CHECK(sm1::trylock_oid(v, oid1, sm1::SM_LOCKMODE_EX) == 0);
+  CHECK(sm1::trylock_oid(v, oid2, sm1::SM_LOCKMODE_IS) == 0);
   REQUIRE(sm1::commit(v) == 0);
   for (const auto &c : v->db->fp_strong) {
     CHECK(0 == c.load());
@@ -574,22 +565,20 @@ TEST_CASE("a prepared transaction keeps its intention locks across a "
   tpc_fixture_t f;
   sm1::session_t *s = f.open();
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "b", sm1::SM_LOCKMODE_IX) ==
-          0);
+  REQUIRE(sm1::lock_row(s, g_store, "b", sm1::SM_LOCKMODE_IX) == 0);
   REQUIRE(set(s, "a", "1") == 0);
   REQUIRE(sm1::prepare(s, "g") == 0);
   f.restart();
 
   sm1::session_t *u = f.open(), *v = f.open(), *w = f.open();
   REQUIRE(sm1::begin(u, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(sm1::lock(u, sm1::LOCKTYPE_ROW, g_store, "b", sm1::SM_LOCKMODE_IX) ==
-        0);
+  CHECK(sm1::lock_row(u, g_store, "b", sm1::SM_LOCKMODE_IX) == 0);
   REQUIRE(sm1::commit(u) == 0);
   REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
   std::atomic<bool> returned{false};
   int rc = -2;
   std::thread tw([&] {
-    rc = sm1::lock(w, sm1::LOCKTYPE_ROW, g_store, "b", sm1::SM_LOCKMODE_SH);
+    rc = sm1::lock_row(w, g_store, "b", sm1::SM_LOCKMODE_SH);
     returned = true;
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(150));

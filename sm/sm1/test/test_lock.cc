@@ -66,15 +66,6 @@ int set(sm1::session_t *s, const std::string &key, const std::string &val) {
   return sm1::update(s, g_store, key, val);
 }
 
-/* The OID lock name of n: 8 bytes, big-endian. */
-std::string oid_of(uint64_t n) {
-  std::string k;
-  for (int i = 7; i >= 0; i--) {
-    k.push_back(static_cast<char>(n >> (8 * i)));
-  }
-  return k;
-}
-
 /* Whether every strong-lock count of s's database is 0. */
 bool no_strong(sm1::session_t *s) {
   for (const auto &c : s->db->fp_strong) {
@@ -305,10 +296,8 @@ TEST_CASE("two upgraders on one row deadlock, and the younger one loses") {
   sm1::session_t *b = f.open();
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
-          0);
-  REQUIRE(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
-          0);
+  REQUIRE(sm1::lock_row(a, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
+  REQUIRE(sm1::lock_row(b, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
 
   int rc_a = -2, rc_b = -2, err_b = 0;
   std::thread ta([&] { rc_a = set(a, "x", "a"); });
@@ -332,7 +321,7 @@ TEST_CASE(
   // caller reads under it is current.
   // 1. A begins and takes its snapshot.
   // 2. B updates "x" and commits.
-  // 3. A's sm1::lock on "x" fails with SM_ERR_CONFLICT, in either
+  // 3. A's sm1::lock_row on "x" fails with SM_ERR_CONFLICT, in either
   //    mode, and its transaction is aborted.
   for (sm1::lockmode_t mode : {sm1::SM_LOCKMODE_SH, sm1::SM_LOCKMODE_EX}) {
     CAPTURE(mode);
@@ -346,7 +335,7 @@ TEST_CASE(
     REQUIRE(set(b, "x", "b") == 0);
     REQUIRE(sm1::commit(b) == 0);
 
-    CHECK(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", mode) == -1);
+    CHECK(sm1::lock_row(a, g_store, "x", mode) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
     CHECK(sm1::retryable() == 1);
     CHECK(sm1::abort(a) == -1);
@@ -384,7 +373,7 @@ TEST_CASE(
 
   // A writer reads the schema under a shared lock, then writes.
   REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::lock(w, sm1::LOCKTYPE_ROW, cat, "S", sm1::SM_LOCKMODE_SH) == 0);
+  REQUIRE(sm1::lock_row(w, cat, "S", sm1::SM_LOCKMODE_SH) == 0);
   CHECK(get(w, cat, "S") == "noindex");
   put(w, g_store, "w-row", "1");
   REQUIRE(sm1::commit(w) == 0);
@@ -398,7 +387,7 @@ TEST_CASE(
   std::atomic<bool> returned{false};
   int rc = -2, err = 0;
   std::thread tx([&] {
-    rc = sm1::lock(x, sm1::LOCKTYPE_ROW, cat, "S", sm1::SM_LOCKMODE_SH);
+    rc = sm1::lock_row(x, cat, "S", sm1::SM_LOCKMODE_SH);
     err = sm1::errnum();
     returned = true;
   });
@@ -519,12 +508,12 @@ TEST_CASE("Gray's lock modes grant and block as their matrix says") {
       CAPTURE(i);
       CAPTURE(j);
       REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
-      REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", modes[i]) == 0);
+      REQUIRE(sm1::lock_row(a, g_store, "x", modes[i]) == 0);
       REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
       std::atomic<bool> returned{false};
       int rc = -2;
       std::thread tb([&] {
-        rc = sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "x", modes[j]);
+        rc = sm1::lock_row(b, g_store, "x", modes[j]);
         returned = true;
       });
       settle();
@@ -548,18 +537,15 @@ TEST_CASE("a holder asking for more converts to the mode covering both") {
   lock_fixture_t f;
   sm1::session_t *a = f.open(), *b = f.open(), *c = f.open();
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_IX) ==
-          0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
-          0);
+  REQUIRE(sm1::lock_row(a, g_store, "x", sm1::SM_LOCKMODE_IX) == 0);
+  REQUIRE(sm1::lock_row(a, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
-  CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_IS) ==
-        0);
+  CHECK(sm1::lock_row(b, g_store, "x", sm1::SM_LOCKMODE_IS) == 0);
   REQUIRE(sm1::begin(c, sm1::xctlevel_t::read_committed) == 0);
   std::atomic<bool> returned{false};
   int rc = -2;
   std::thread tc([&] {
-    rc = sm1::lock(c, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_IX);
+    rc = sm1::lock_row(c, g_store, "x", sm1::SM_LOCKMODE_IX);
     returned = true;
   });
   settle();
@@ -571,13 +557,12 @@ TEST_CASE("a holder asking for more converts to the mode covering both") {
   REQUIRE(sm1::commit(c) == 0);
 
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "y", sm1::SM_LOCKMODE_IS) ==
-          0);
+  REQUIRE(sm1::lock_row(a, g_store, "y", sm1::SM_LOCKMODE_IS) == 0);
   REQUIRE(set(a, "y", "1") == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
   returned = false;
   std::thread tb([&] {
-    rc = sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "y", sm1::SM_LOCKMODE_IS);
+    rc = sm1::lock_row(b, g_store, "y", sm1::SM_LOCKMODE_IS);
     returned = true;
   });
   settle();
@@ -599,24 +584,19 @@ TEST_CASE("sm1_lock rejects bad arguments and needs a transaction") {
   // 3. A key that does not exist is lockable.
   lock_fixture_t f;
   sm1::session_t *s = f.open();
-  CHECK(sm1::lock(nullptr, sm1::LOCKTYPE_ROW, g_store, "x",
-                  sm1::SM_LOCKMODE_SH) == -1);
+  CHECK(sm1::lock_row(nullptr, g_store, "x", sm1::SM_LOCKMODE_SH) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
-        -1);
+  CHECK(sm1::lock_row(s, g_store, "x", sm1::SM_LOCKMODE_SH) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
 
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "x", (sm1::lockmode_t)7) ==
-        -1);
+  CHECK(sm1::lock_row(s, g_store, "x", (sm1::lockmode_t)7) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::lock(s, sm1::LOCKTYPE_ROW, 0, "x", sm1::SM_LOCKMODE_SH) == -1);
+  CHECK(sm1::lock_row(s, 0, "x", sm1::SM_LOCKMODE_SH) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store + 999, "x",
-                  sm1::SM_LOCKMODE_SH) == -1);
+  CHECK(sm1::lock_row(s, g_store + 999, "x", sm1::SM_LOCKMODE_SH) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  CHECK(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "absent",
-                  sm1::SM_LOCKMODE_EX) == 0);
+  CHECK(sm1::lock_row(s, g_store, "absent", sm1::SM_LOCKMODE_EX) == 0);
   REQUIRE(sm1::commit(s) == 0);
   sm1::closedb(s);
 }
@@ -639,8 +619,7 @@ TEST_CASE("a wait for another transaction can be interrupted") {
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(set(a, "x", "a") == 0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_EX) ==
-          0);
+  REQUIRE(sm1::lock_row(a, g_store, "z", sm1::SM_LOCKMODE_EX) == 0);
 
   std::atomic<bool> returned{false};
   sm_thread_ref_t waiter;
@@ -658,8 +637,7 @@ TEST_CASE("a wait for another transaction can be interrupted") {
     returned = true;
     rc_y = set(b, "y", "b");
     for (int i = 0; i < 2; i++) {
-      rc_z[i] =
-          sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH);
+      rc_z[i] = sm1::lock_row(b, g_store, "z", sm1::SM_LOCKMODE_SH);
       err_z[i] = sm1::errnum();
     }
   });
@@ -747,7 +725,7 @@ TEST_CASE(
 
 TEST_CASE(
     "a qa_nowait session is told sm1_lock would block, and holds nothing") {
-  // Verify sm1::lock under qa_nowait, and that a refusal takes no lock.
+  // Verify sm1::lock_row under qa_nowait, and that a refusal takes no lock.
   // 1. A locks "x" shared.
   // 2. B, set qa_nowait, asks for it exclusive: SM_ERR_BLOCKED. Asking
   //    for it shared is compatible and goes through.
@@ -764,25 +742,19 @@ TEST_CASE(
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm1::begin(c, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
-          0);
-  CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_EX) ==
-        -1);
+  REQUIRE(sm1::lock_row(a, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
+  CHECK(sm1::lock_row(b, g_store, "x", sm1::SM_LOCKMODE_EX) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
-  CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
-        0);
-  CHECK(sm1::lock(c, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_EX) ==
-        -1);
+  CHECK(sm1::lock_row(b, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
+  CHECK(sm1::lock_row(c, g_store, "x", sm1::SM_LOCKMODE_EX) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
   REQUIRE(sm1::commit(a) == 0);
   REQUIRE(sm1::commit(b) == 0);
-  CHECK(sm1::lock(c, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_EX) ==
-        0);
+  CHECK(sm1::lock_row(c, g_store, "x", sm1::SM_LOCKMODE_EX) == 0);
   REQUIRE(sm1::commit(c) == 0);
   REQUIRE(sm1::set_qa_nowait(c, false) == 0);
   REQUIRE(sm1::begin(c, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(sm1::lock(c, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
-        0);
+  CHECK(sm1::lock_row(c, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
   REQUIRE(sm1::commit(c) == 0);
   CHECK(sm1::set_qa_nowait(nullptr, true) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
@@ -871,7 +843,7 @@ TEST_CASE("a write refused with SM_ERR_UPDATED keeps the row locked until "
 }
 
 TEST_CASE("trylock takes an oid's lock only if it is free now") {
-  // Verify sm1::trylock never waits, and takes nothing it cannot.
+  // Verify sm1::trylock_oid never waits, and takes nothing it cannot.
   // 1. Session a takes an oid's lock shared.
   // 2. Session b's trylock of it exclusive returns 1 at once, and
   //    b holds nothing: a's exclusive try still fails only on b's
@@ -879,36 +851,32 @@ TEST_CASE("trylock takes an oid's lock only if it is free now") {
   // 3. b's trylock of it shared returns 0: shared holders agree.
   // 4. a commits; b's trylock exclusive now converts its hold,
   //    returning 0.
-  // 5. An oid named by other than 8 bytes is SM_ERR_INVALID.
   home_t home;
   REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
   sm1::session_t *a = opendb(home.env(), "db", nullptr);
   sm1::session_t *b = opendb(home.env(), "db", nullptr);
   REQUIRE(a);
   REQUIRE(b);
-  std::string oid(8, '\x07');
+  uint64_t oid = 0x0707070707070707;
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_SH) == 0);
-  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_EX) == 1);
-  CHECK(sm1::trylock(a, sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_EX) == 0);
+  REQUIRE(sm1::lock_oid(a, oid, sm1::SM_LOCKMODE_SH) == 0);
+  CHECK(sm1::trylock_oid(b, oid, sm1::SM_LOCKMODE_EX) == 1);
+  CHECK(sm1::trylock_oid(a, oid, sm1::SM_LOCKMODE_EX) == 0);
   REQUIRE(sm1::commit(a) == 0);
 
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_SH) == 0);
-  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_SH) == 0);
-  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_EX) == 1);
+  REQUIRE(sm1::lock_oid(a, oid, sm1::SM_LOCKMODE_SH) == 0);
+  CHECK(sm1::trylock_oid(b, oid, sm1::SM_LOCKMODE_SH) == 0);
+  CHECK(sm1::trylock_oid(b, oid, sm1::SM_LOCKMODE_EX) == 1);
   REQUIRE(sm1::commit(a) == 0);
-  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_EX) == 0);
+  CHECK(sm1::trylock_oid(b, oid, sm1::SM_LOCKMODE_EX) == 0);
 
-  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, "short", sm1::SM_LOCKMODE_EX) ==
-        -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   REQUIRE(sm1::commit(b) == 0);
 }
 
 TEST_CASE("trylock takes a row's lock unless it would wait") {
-  // Verify sm1::trylock on a row: the lock sm1::lock takes, and
+  // Verify sm1::trylock_row: the lock sm1::lock_row takes, and
   // never a wait.
   // 1. A row is committed. Session a locks it exclusive; b's
   //    trylock, shared or exclusive, returns 1, and b's
@@ -919,7 +887,7 @@ TEST_CASE("trylock takes a row's lock unless it would wait") {
   //    uncommitted version is its lock, and b's trylock returns 1.
   // 4. a commits. At REPEATABLE READ, a session that began before
   //    that commit fails its trylock with SM_ERR_CONFLICT, as
-  //    sm1::lock would.
+  //    sm1::lock_row would.
   home_t home;
   REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
   sm1::session_t *a = opendb(home.env(), "db", nullptr);
@@ -935,31 +903,24 @@ TEST_CASE("trylock takes a row's lock unless it would wait") {
 
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, store, "k", sm1::SM_LOCKMODE_EX) ==
-          0);
-  CHECK(sm1::trylock(b, sm1::LOCKTYPE_ROW, store, "k", sm1::SM_LOCKMODE_SH) ==
-        1);
-  CHECK(sm1::trylock(b, sm1::LOCKTYPE_ROW, store, "k", sm1::SM_LOCKMODE_EX) ==
-        1);
+  REQUIRE(sm1::lock_row(a, store, "k", sm1::SM_LOCKMODE_EX) == 0);
+  CHECK(sm1::trylock_row(b, store, "k", sm1::SM_LOCKMODE_SH) == 1);
+  CHECK(sm1::trylock_row(b, store, "k", sm1::SM_LOCKMODE_EX) == 1);
   CHECK(get(b, store, "k") == "v1");
   REQUIRE(sm1::commit(a) == 0);
-  CHECK(sm1::trylock(b, sm1::LOCKTYPE_ROW, store, "k", sm1::SM_LOCKMODE_EX) ==
-        0);
+  CHECK(sm1::trylock_row(b, store, "k", sm1::SM_LOCKMODE_EX) == 0);
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
-  CHECK(sm1::trylock(a, sm1::LOCKTYPE_ROW, store, "k", sm1::SM_LOCKMODE_EX) ==
-        1);
+  CHECK(sm1::trylock_row(a, store, "k", sm1::SM_LOCKMODE_EX) == 1);
   REQUIRE(sm1::commit(b) == 0);
 
   REQUIRE(sm1::begin(c, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(c, store, "k") == "v1");
   REQUIRE(sm1::update(a, store, "k", "v2") == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
-  CHECK(sm1::trylock(b, sm1::LOCKTYPE_ROW, store, "k", sm1::SM_LOCKMODE_SH) ==
-        1);
+  CHECK(sm1::trylock_row(b, store, "k", sm1::SM_LOCKMODE_SH) == 1);
   REQUIRE(sm1::commit(b) == 0);
   REQUIRE(sm1::commit(a) == 0);
-  CHECK(sm1::trylock(c, sm1::LOCKTYPE_ROW, store, "k", sm1::SM_LOCKMODE_EX) ==
-        -1);
+  CHECK(sm1::trylock_row(c, store, "k", sm1::SM_LOCKMODE_EX) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
 }
 
@@ -982,14 +943,12 @@ TEST_CASE("waits_for names the sessions a waiting session waits for") {
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm1::begin(c, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(set(a, "x", "a") == 0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "y", sm1::SM_LOCKMODE_EX) ==
-          0);
+  REQUIRE(sm1::lock_row(a, g_store, "y", sm1::SM_LOCKMODE_EX) == 0);
 
   int rc_b = -2, rc_c = -2;
   std::thread tb([&] { rc_b = set(b, "x", "b"); });
-  std::thread tc([&] {
-    rc_c = sm1::lock(c, sm1::LOCKTYPE_ROW, g_store, "y", sm1::SM_LOCKMODE_SH);
-  });
+  std::thread tc(
+      [&] { rc_c = sm1::lock_row(c, g_store, "y", sm1::SM_LOCKMODE_SH); });
   settle();
   std::vector<uint64_t> out{7};
   REQUIRE(sm1::waits_for(f.env(), 102, &out) == 0);
@@ -1035,19 +994,15 @@ TEST_CASE("lock_status lists each lock held, and each waited for in lock") {
     REQUIRE(sm1::set_tag(s[i], 101 + i) == 0);
     REQUIRE(sm1::begin(s[i], sm1::xctlevel_t::read_committed) == 0);
   }
-  std::string oid(7, '\0');
-  oid.push_back('\x07');
+  uint64_t oid = 7;
   REQUIRE(set(s[0], "x", "a") == 0);
-  REQUIRE(sm1::lock(s[0], sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_IS) == 0);
-  REQUIRE(sm1::lock(s[0], sm1::LOCKTYPE_ROW, g_store, "y",
-                    sm1::SM_LOCKMODE_EX) == 0);
-  REQUIRE(sm1::lock(s[1], sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_IX) == 0);
+  REQUIRE(sm1::lock_oid(s[0], oid, sm1::SM_LOCKMODE_IS) == 0);
+  REQUIRE(sm1::lock_row(s[0], g_store, "y", sm1::SM_LOCKMODE_EX) == 0);
+  REQUIRE(sm1::lock_oid(s[1], oid, sm1::SM_LOCKMODE_IX) == 0);
 
   int rc_c = -2, rc_d = -2;
-  std::thread tc([&] {
-    rc_c =
-        sm1::lock(s[2], sm1::LOCKTYPE_ROW, g_store, "y", sm1::SM_LOCKMODE_SH);
-  });
+  std::thread tc(
+      [&] { rc_c = sm1::lock_row(s[2], g_store, "y", sm1::SM_LOCKMODE_SH); });
   std::thread td([&] { rc_d = set(s[3], "x", "d"); });
   settle();
 
@@ -1121,27 +1076,21 @@ TEST_CASE("a lock list across blocks keeps each lock exact past a savepoint") {
   };
   size_t bytes = 0;
   for (int i = 0; i < 512; i++) {
-    REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, key(i),
-                      sm1::SM_LOCKMODE_SH) == 0);
+    REQUIRE(sm1::lock_row(a, g_store, key(i), sm1::SM_LOCKMODE_SH) == 0);
     bytes += key(i).size();
   }
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, key(0),
-                    sm1::SM_LOCKMODE_EX) == 0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, key(300),
-                    sm1::SM_LOCKMODE_EX) == 0);
+  REQUIRE(sm1::lock_row(a, g_store, key(0), sm1::SM_LOCKMODE_EX) == 0);
+  REQUIRE(sm1::lock_row(a, g_store, key(300), sm1::SM_LOCKMODE_EX) == 0);
   CHECK(a->locks.size() == 512);
 
   REQUIRE(sm1::savepoint(a) == 1);
   for (int i = 512; i < 812; i++) {
-    REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, key(i),
-                      sm1::SM_LOCKMODE_SH) == 0);
+    REQUIRE(sm1::lock_row(a, g_store, key(i), sm1::SM_LOCKMODE_SH) == 0);
   }
   std::string big(sm1::max_keylen, 'b');
   std::string big2(sm1::max_keylen, 'c');
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, big, sm1::SM_LOCKMODE_SH) ==
-          0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, big2, sm1::SM_LOCKMODE_SH) ==
-          0);
+  REQUIRE(sm1::lock_row(a, g_store, big, sm1::SM_LOCKMODE_SH) == 0);
+  REQUIRE(sm1::lock_row(a, g_store, big2, sm1::SM_LOCKMODE_SH) == 0);
   CHECK(held(key(0)) == sm1::SM_LOCKMODE_EX);
   CHECK(held(key(811)) == sm1::SM_LOCKMODE_SH);
   CHECK(held(key(300)) == sm1::SM_LOCKMODE_EX);
@@ -1162,8 +1111,7 @@ TEST_CASE("a lock list across blocks keeps each lock exact past a savepoint") {
   CHECK(held(key(300)) == sm1::SM_LOCKMODE_EX);
   CHECK(a->lock_keys.size() == bytes);
 
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, key(900),
-                    sm1::SM_LOCKMODE_SH) == 0);
+  REQUIRE(sm1::lock_row(a, g_store, key(900), sm1::SM_LOCKMODE_SH) == 0);
   CHECK(held(key(900)) == sm1::SM_LOCKMODE_SH);
   REQUIRE(sm1::commit(a) == 0);
   {
@@ -1196,10 +1144,8 @@ TEST_CASE("row keys that hash alike share an entry and still lock exactly") {
   sm1::session_t *a = f.open(), *b = f.open();
   REQUIRE(sm1::set_tag(a, 101) == 0);
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
-          0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "y", sm1::SM_LOCKMODE_EX) ==
-          0);
+  REQUIRE(sm1::lock_row(a, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
+  REQUIRE(sm1::lock_row(a, g_store, "y", sm1::SM_LOCKMODE_EX) == 0);
   {
     std::lock_guard<std::mutex> guard(a->db->lock_mu);
     CHECK(a->db->lock_table.size() == 1);
@@ -1232,21 +1178,18 @@ TEST_CASE("row keys that hash alike share an entry and still lock exactly") {
 
   REQUIRE(sm1::set_qa_nowait(b, true) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
-  CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
-        -1);
+  CHECK(sm1::lock_row(b, g_store, "z", sm1::SM_LOCKMODE_SH) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
 
   REQUIRE(sm1::savepoint(a) == 1);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
-          0);
+  REQUIRE(sm1::lock_row(a, g_store, "z", sm1::SM_LOCKMODE_SH) == 0);
   CHECK(held("z") == sm1::SM_LOCKMODE_SH);
   REQUIRE(sm1::rollback(a, 1) == 0);
   CHECK(held("z") == -1);
   CHECK(held("x") == sm1::SM_LOCKMODE_SH);
   CHECK(held("y") == sm1::SM_LOCKMODE_EX);
   CHECK(a->lock_keys.size() == 2);
-  CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
-        -1);
+  CHECK(sm1::lock_row(b, g_store, "z", sm1::SM_LOCKMODE_SH) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
 
   REQUIRE(sm1::commit(a) == 0);
@@ -1255,8 +1198,7 @@ TEST_CASE("row keys that hash alike share an entry and still lock exactly") {
     CHECK(a->db->lock_table.empty());
   }
   CHECK(a->lock_keys.empty());
-  CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
-        0);
+  CHECK(sm1::lock_row(b, g_store, "z", sm1::SM_LOCKMODE_SH) == 0);
   REQUIRE(sm1::commit(b) == 0);
   sm1::closedb(a);
   sm1::closedb(b);
@@ -1276,21 +1218,17 @@ TEST_CASE("a weak table lock takes a slot, and a strong one moves it") {
   for (sm1::session_t *s : {a, b, c}) {
     REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
   }
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid_of(1), sm1::SM_LOCKMODE_IS) ==
-          0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid_of(2), sm1::SM_LOCKMODE_IX) ==
-          0);
+  REQUIRE(sm1::lock_oid(a, 1, sm1::SM_LOCKMODE_IS) == 0);
+  REQUIRE(sm1::lock_oid(a, 2, sm1::SM_LOCKMODE_IX) == 0);
   CHECK(a->fp_used == 2);
   CHECK(table_size(a) == 0);
 
-  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(1), sm1::SM_LOCKMODE_EX) ==
-        1);
+  CHECK(sm1::trylock_oid(b, 1, sm1::SM_LOCKMODE_EX) == 1);
   CHECK(a->fp_used == 1);
   CHECK(table_size(a) == 1);
   CHECK(no_strong(a));
 
-  REQUIRE(sm1::lock(c, sm1::LOCKTYPE_OID, 0, oid_of(1), sm1::SM_LOCKMODE_IS) ==
-          0);
+  REQUIRE(sm1::lock_oid(c, 1, sm1::SM_LOCKMODE_IS) == 0);
   CHECK(c->fp_used == 1);
   CHECK(table_size(a) == 1);
 
@@ -1338,17 +1276,13 @@ TEST_CASE("a slot's entry is its own, wherever it is in the list") {
       "oid " + std::to_string(sm1::SM_LOCKMODE_IX),
       "x " + std::to_string(sm1::SM_LOCKMODE_SH),
   };
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
-          0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid_of(7), sm1::SM_LOCKMODE_IS) ==
-          0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid_of(7), sm1::SM_LOCKMODE_IX) ==
-          0);
+  REQUIRE(sm1::lock_row(a, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
+  REQUIRE(sm1::lock_oid(a, 7, sm1::SM_LOCKMODE_IS) == 0);
+  REQUIRE(sm1::lock_oid(a, 7, sm1::SM_LOCKMODE_IX) == 0);
   CHECK(a->fp_used == 1);
   CHECK(rows() == want);
 
-  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(7), sm1::SM_LOCKMODE_SH) ==
-        1);
+  CHECK(sm1::trylock_oid(b, 7, sm1::SM_LOCKMODE_SH) == 1);
   CHECK(a->fp_used == 0);
   CHECK(table_size(a) == 2);
   CHECK(rows() == want);
@@ -1375,8 +1309,7 @@ TEST_CASE("table locks past the slots go to the table, and all are held") {
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
   for (uint64_t n = 1; n <= 40; n++) {
-    REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid_of(n),
-                      sm1::SM_LOCKMODE_IS) == 0);
+    REQUIRE(sm1::lock_oid(a, n, sm1::SM_LOCKMODE_IS) == 0);
   }
   CHECK(a->fp_used == sm1::session_t::fp_slots);
   CHECK(table_size(a) == 40 - sm1::session_t::fp_slots);
@@ -1388,15 +1321,11 @@ TEST_CASE("table locks past the slots go to the table, and all are held") {
     CHECK(r.mode == sm1::SM_LOCKMODE_IS);
   }
 
-  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(1), sm1::SM_LOCKMODE_EX) ==
-        1);
-  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(40),
-                     sm1::SM_LOCKMODE_EX) == 1);
+  CHECK(sm1::trylock_oid(b, 1, sm1::SM_LOCKMODE_EX) == 1);
+  CHECK(sm1::trylock_oid(b, 40, sm1::SM_LOCKMODE_EX) == 1);
   REQUIRE(sm1::commit(a) == 0);
-  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(1), sm1::SM_LOCKMODE_EX) ==
-        0);
-  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid_of(40),
-                     sm1::SM_LOCKMODE_EX) == 0);
+  CHECK(sm1::trylock_oid(b, 1, sm1::SM_LOCKMODE_EX) == 0);
+  CHECK(sm1::trylock_oid(b, 40, sm1::SM_LOCKMODE_EX) == 0);
   REQUIRE(sm1::commit(b) == 0);
   CHECK(a->fp_used == 0);
   CHECK(table_size(a) == 0);
@@ -1421,18 +1350,15 @@ TEST_CASE(
   REQUIRE(sm1::set_deadlock_ms(b, 10000) == 0);
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_EX) ==
-          0);
+  REQUIRE(sm1::lock_row(a, g_store, "x", sm1::SM_LOCKMODE_EX) == 0);
   REQUIRE(sm1::savepoint(a) == 1);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "y", sm1::SM_LOCKMODE_EX) ==
-          0);
+  REQUIRE(sm1::lock_row(a, g_store, "y", sm1::SM_LOCKMODE_EX) == 0);
   // B's lock of key, waiting, granted after A's release: its rc, and
   // the milliseconds from the release to the grant.
   auto granted_after = [&](const char *key, auto release) {
     int rc = -2;
-    std::thread tb([&] {
-      rc = sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, key, sm1::SM_LOCKMODE_SH);
-    });
+    std::thread tb(
+        [&] { rc = sm1::lock_row(b, g_store, key, sm1::SM_LOCKMODE_SH); });
     settle();
     auto start = std::chrono::steady_clock::now();
     release();
@@ -1466,10 +1392,8 @@ TEST_CASE("a cycle a wait closes is found as it begins, whatever deadlock_ms") {
   REQUIRE(sm1::set_deadlock_ms(b, 3000) == 0);
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
-          0);
-  REQUIRE(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
-          0);
+  REQUIRE(sm1::lock_row(a, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
+  REQUIRE(sm1::lock_row(b, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
   int rc_a = -2, rc_b = -2, err_b = 0;
   std::thread ta([&] { rc_a = set(a, "x", "a"); });
   settle();

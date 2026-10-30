@@ -62,7 +62,7 @@ handle of its own and reaches storage only through sm1's
 interface. sm3 is built on sm2 — it never encodes a key or
 decodes a tuple itself — and may also call sm1's interface
 directly, for whatever sm2 has nothing to add to: above all
-`sm1::lock`, which sm3's DDL and index-build protocols are
+`sm1::lock_oid`, which sm3's DDL and index-build protocols are
 built on (`sm3/SM3_DESIGN.md` §2). That boundary is why each
 level's `OBJECTIVE.md` can promise it is "useful and
 testable on its own" — the whole lower stack is one
@@ -465,7 +465,7 @@ design:
 - **sm3 may call sm1 as well as sm2.** sm3 is built on sm2's
   tuple relation and never encodes a key or decodes a tuple
   itself, but it may call sm1's interface directly for
-  anything sm2 has nothing to add to — `sm1::lock` above all,
+  anything sm2 has nothing to add to — `sm1::lock_oid` above all,
   which sm3's DDL and index-build protocols rest on
   (`sm3/SM3_DESIGN.md` §2). sm2 still calls only sm1, and
   nothing calls upward.
@@ -552,7 +552,7 @@ design:
   Those are queries, and the stack runs none. Its share is the
   lock: a row locked without being written, in a mode a
   reader of the key can share and a writer cannot, held to
-  the end of the transaction. sm1 has it, `sm1::lock`; sm2
+  the end of the transaction. sm1 has it, `sm1::lock_row`; sm2
   has it on a table's row, `rel_lock`; sm3 hands it out on an
   open table, `tbl_lock`, and the C API as `sm_tbl_lock`. It
   is what `SELECT … FOR SHARE` and `FOR UPDATE` take too. It

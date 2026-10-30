@@ -224,7 +224,7 @@ for a stronger mode converts to the weakest mode covering both,
 which is how two transactions deadlock on one row (`b28`). Once held, the lock is checked against the
 transaction's snapshot, so `lock` can also answer `conflict`.
 **`lockread`** is `lock` of a row the running statement read,
-as SQL's FOR UPDATE takes it (`sm1::lock`'s `as_read`): a row
+as SQL's FOR UPDATE takes it (`sm1::lock_row`'s `as_read`): a row
 the transaction changed after the statement began answers
 `selfmodified`, and is not locked (`a18`). **`lockoid`** takes
 the OID lock on the number `n`, as sm3 locks a table by its

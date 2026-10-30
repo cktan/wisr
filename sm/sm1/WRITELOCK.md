@@ -28,8 +28,9 @@ unchanged (`CLAUDE.md`).
   the newest version of its key written by another transaction
   still running lets the latch go, waits for that transaction,
   and starts again.
-- **Explicit locks stay as they are.** `sm1::lock`, which sm3
-  uses for table-oid locks and `tbl_lock`, keeps its entries in
+- **Explicit locks stay as they are.** `sm1::lock_oid` and
+  `sm1::lock_row`, which sm3 uses for table-oid locks and
+  `tbl_lock`, keep their entries in
   the lock table. A write still waits for a conflicting one,
   and an explicit lock waits for an uncommitted version.
 - **A write adds nothing to the lock list or the lock table.**
@@ -123,9 +124,9 @@ lock table's mutex for a look-up, not an insert.
 
 ### 3.3 An explicit lock
 
-`sm1::lock` keeps its entry in the lock table to the end of the
-transaction, as now. It gains one check: under the key's latch,
-if the newest version of the key was written by another
+`sm1::lock_row` keeps its entry in the lock table to the end of
+the transaction, as now. It gains one check: under the key's
+latch, if the newest version of the key was written by another
 transaction still running, it waits for that transaction, as
 `FOR UPDATE` in PostgreSQL waits for an uncommitted update.
 
@@ -230,7 +231,7 @@ to commit:
 
 ## 4. What it costs
 
-- **A seek in `sm1::lock`** on a key that may be written, to
+- **A seek in `sm1::lock_row`** on a key that may be written, to
   find an uncommitted version (§3.3).
 - **False waits on a shared latch**, a moment each, when two
   keys hash alike.
@@ -261,7 +262,7 @@ to commit:
 | Where | What |
 | --- | --- |
 | `src/db.h` | the latch array; a map from `xid` to session beside the active table |
-| `src/access.cc` | the write path of §3.2; `sm1::lock`'s check of §3.3 |
+| `src/access.cc` | the write path of §3.2; `sm1::lock_row`'s check of §3.3 |
 | `src/lockmgr.cc` | a wait on a transaction, with its edge in the waits-for graph; a look-up of conflicting explicit holders without taking the lock |
 | `src/xct.cc` | commit, abort and rollback wake the waiters; prepare records explicit locks only |
 | `SM1_DESIGN.md` | §4.1, §5, §5.1, §5.4, §6.5, §8.4, §9.1 and §13; `MVCC.md` §9 and §13 |
@@ -304,7 +305,7 @@ to commit:
    `SM_ERR_UPDATED` path keeping its lock.
    → verify: all of `mvcc/` and `test/`, unchanged; no lock
    entries for writes.
-3. `sm1::lock`'s check.
+3. `sm1::lock_row`'s check.
    → verify: `FOR UPDATE` waits for an uncommitted update; sm3's
    build and foreign-key tests pass unchanged.
 4. Prepare and recovery.

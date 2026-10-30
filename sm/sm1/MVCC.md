@@ -508,7 +508,7 @@ until `idle_close_ms` after the last `sm1::closedb`.
 | `active` | hash set of `xid` | the active table: transactions running or prepared (§5, step 2) | `txn_mu` |
 | `cache` | an array of slots `{ xid, commit_ts }`, in sets of two, an `xid` hashed to its set | the commit cache (§7) | `txn_mu` |
 | `snapshots` | multiset of `snapshot_ts` | the snapshots in use; its smallest is the GC watermark (§8) | `snap_mu` |
-| `lock_table` | hash map from `lockid_t` (the storeid, and an oid or a 64-bit hash of the key) to the list of holders, each with a mode | explicit locks, `sm1::lock`, row and OID (§9); a table's IS or IX sits in a fast-path slot of its session instead, while no S, SIX or X on the oid is held or asked (`SM1_DESIGN.md` §5.1) | `lock_mu`, with one condition variable for every waiter |
+| `lock_table` | hash map from `lockid_t` (the storeid, and an oid or a 64-bit hash of the key) to the list of holders, each with a mode | explicit locks, `sm1::lock_row` and `sm1::lock_oid` (§9); a table's IS or IX sits in a fast-path slot of its session instead, while no S, SIX or X on the oid is held or asked (`SM1_DESIGN.md` §5.1) | `lock_mu`, with one condition variable for every waiter |
 | `write_latch` | 4,096 mutexes, chosen by hashing store and key | a write's check-then-put (§9) | itself |
 | `xid_owner` | hash map `xid → session` | whom a writer waits for, for deadlock detection (§9) | `txn_mu` |
 | the SSI tracker | nodes, SIREAD entries on points and on ranges, a map from `xid` to node | serializable isolation (§11) | one mutex |
