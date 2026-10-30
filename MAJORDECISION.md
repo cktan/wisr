@@ -206,3 +206,36 @@ take to undo. Nothing here is merged into `main`.
   and may fail a writer it need not.
 - **Undo:** narrow it at the cursor's end, as sm1's own scans
   do, with a call that takes the last key read.
+
+## D11. An open tree keeps the inner pages it reads pinned
+
+- **Decided:** a tree, as an index is opened for a statement,
+  keeps the inner pages its descents read pinned in the block
+  cache, up to 64, until it is closed; a descent reads them
+  from there, with no cache `Lookup`. A descent that has to
+  move right lets them go, and forgets the root, so the next
+  reads afresh from the meta page. `BTREE.md` §2's index
+  version and session pin are not built.
+- **Why:** Q10's 100 probes each looked up three pages in the
+  block cache, its shard mutex and hash, 5% of the statement.
+  A held page may go stale as a split changes it, and a
+  descent from it stays right: no page is ever freed, and a
+  key moves only right, where the right links reach it. But a
+  long statement, a million-row insert, routed through stale
+  pages walked right a long way: the load went from 51 s to
+  424 s until a move right let them go.
+- **Measured:** Q10 2,394k to 2,255k, Q9 1,582k to 1,548k.
+- **Undo:** none planned; held_max bounds the memory pinned.
+
+## D12. A page's limit is 4 KB
+
+- **Decided:** `page_limit` is 4 KB, not 8 KB. A static check
+  keeps a keyed table's entries room for 256 bytes of key
+  columns past the longest row key.
+- **Why:** an insert writes its page whole. A million rows into
+  `wide_mixed`: 51 s at 8 KB, 34 s at 4 KB, 27 s at 2 KB, 18 s
+  with today's entries; Q9 and Q10 moved under 2% across the
+  three. 2 KB leaves no room for a primary key of 1,024 bytes,
+  `max_pk_len`, at a third of a page.
+- **Undo:** the constant; a limit per index is a field of the
+  meta page away.

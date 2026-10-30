@@ -32,7 +32,27 @@
 
 namespace sm2::tree {
 
-/* A tree, as a session opens it. */
+/* An inner page an open tree keeps pinned, and its view. */
+struct held_t {
+  uint64_t pageid = 0;
+  sm1::page_t *pin = nullptr;
+  page_view_t view;
+};
+
+/* The most inner pages an open tree keeps pinned. */
+constexpr size_t held_max = 64;
+
+/*
+ * A tree, as a session opens it. The inner pages its descents read
+ * are kept pinned, up to held_max, until tree_close, so a probe reads
+ * none of them from the cache again (../BTREE.md §2). One may go
+ * stale as a split changes it; a descent from it is still right, as
+ * no page is ever freed and a key moves only right, where the right
+ * links reach it (../../MAJORDECISION.md D11). A descent that has to
+ * move right lets them go, and the remembered root, so the next
+ * starts afresh from the meta page. A writer changes only what it
+ * reads anew under its latch.
+ */
 struct tree_t {
   sm1::session_t *session = nullptr;
   uint64_t dbid = 0;
@@ -41,11 +61,15 @@ struct tree_t {
   size_t limit = page_limit;
   /* The root last read, to descend from; 0 until then. */
   uint64_t root = 0;
+  std::vector<held_t> held;
 };
 
 /* Open the tree of relid in storeid through session; reads nothing. */
 void tree_open(tree_t &tree, sm1::session_t *session, uint64_t storeid,
                uint16_t relid, size_t limit = page_limit);
+
+/* Release the inner pages tree keeps pinned; it may be used again. */
+void tree_close(tree_t &tree);
 
 /*
  * Make an empty tree: drop every page under its relid, left by a tree

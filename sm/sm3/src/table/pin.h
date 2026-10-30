@@ -53,6 +53,7 @@ struct sm3::scan_t {
   std::vector<std::string_view> tuples;
   std::vector<int> rcs;
   size_t at = 0, n = 0, batch = 1;
+  std::string key; /* the recheck's entry key, its buffer reused */
   bool entries_done = false;
   /* raws[0] is the cursor's pin's own, the batch's others its. */
   ~scan_t() {

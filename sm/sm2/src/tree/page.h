@@ -16,8 +16,11 @@
 
 namespace sm2::tree {
 
-/* The bytes past which an insert splits a page, to begin with. */
-constexpr size_t page_limit = 8192;
+/*
+ * The bytes past which an insert splits a page: 4 KB, as each insert
+ * writes its page whole (../../MAJORDECISION.md D12).
+ */
+constexpr size_t page_limit = 4096;
 
 /* A high key follows the header: none on a level's rightmost page. */
 constexpr uint8_t page_has_high = 0x01;

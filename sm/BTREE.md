@@ -140,7 +140,8 @@ are *has a high key* and *incomplete split* (§13).
   reader's snapshot could not give them.
 - **A page has a size limit, not a size.** It is stored at
   its length, and split when an insert would take it past the
-  limit, 8 KB to begin with, leaves and inner pages alike.
+  limit, 4 KB, leaves and inner pages alike
+  (`../MAJORDECISION.md` D12).
   Fixed sizes are for disk blocks and buffer frames: a page
   here is a RocksDB value, compressed in RocksDB's block, and
   a cache entry charged its length, so padding would cost
@@ -324,10 +325,13 @@ Estimates, to be measured as each part lands:
   cursor (`NEXT.md` §1 item 3, step 2): then about 0.5M, 1.3
   times.
 - **Writes**: an indexed insert writes its page, at its length,
-  up to 8 KB, into RocksDB's WAL and memtable, against an entry
-  of about 40 bytes now. A write benchmark measures it before the
-  design is final; the answer may be a smaller page, or logging
-  the entry and writing the page later.
+  up to 4 KB, into RocksDB's WAL and memtable, against an entry
+  of about 40 bytes now. Measured, a million rows loaded into
+  `wide_mixed` with its `c2` index: 18 s with today's entries,
+  51 s with a tree of 8 KB pages, 34 s of 4 KB, 27 s of 2 KB;
+  Q9 and Q10 within 2% of each other at all three
+  (`../MAJORDECISION.md` D12). Logging the entry and writing
+  the page later is what would close the rest.
 - **Index-only scans** get slower (§4).
 
 ## 11. Open questions
@@ -336,9 +340,8 @@ Estimates, to be measured as each part lands:
    rows' blocks as they are, or need a share of it set aside:
    a machine choice sm would make at a home's first attach,
    with no setting.
-2. The page's limit: 8 KB, or smaller for writes (§10); and
-   whether a unique index's key refused past a third of it
-   (§3) is worth a 16 KB limit.
+2. Answered: 4 KB (D12). Whether a unique index's key refused
+   past a third of it (§3) is worth a larger limit is open.
 3. Whether the row read of Q9's adjacent rows, by one cursor,
    comes first: without it the tree does not bring Q9 under
    1.5.
@@ -373,7 +376,7 @@ index is of one kind, and keeps it for its life.
   | a probe of a unique key | a `Get`, near PostgreSQL's | about 3k |
   | a unique key, at most | 4,096 bytes | about 2.7 KB |
   | an index-only scan | yes: an entry is MVCC | reads the row |
-  | an indexed insert, written | about 40 bytes | the page, up to 8 KB |
+  | an indexed insert, written | about 40 bytes | the page, up to 4 KB |
   | dead entries | none, GC drops versions | until vacuum |
 
 - **Built behind the kind, off by default**, so each step is

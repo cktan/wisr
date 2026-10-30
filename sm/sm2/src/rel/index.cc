@@ -91,6 +91,13 @@ size_t row_cap(const sm2::index_t *ix) {
   return ix->keyed ? sm2::max_pk_len : sm2::id_len;
 }
 
+// A tree's entry keeps room for a key column past the longest row key
+// a keyed table's entry ends with (../../MAJORDECISION.md D12).
+static_assert(sm2::tree::entry_max(sm2::tree::page_limit) >
+                  sm2::tree::entry_size(0, 8) + sm2::relid_len +
+                      sm2::max_pk_len + 256,
+              "a tree's page limit too small for a keyed table's entries");
+
 /*
  * The most bytes ix's key columns take before they are cut, of an
  * entry whose row key takes suffix bytes: what sm1 takes in a key,
@@ -120,11 +127,14 @@ int entry_key(const sm2::index_t *ix, std::span<const sm2::datum_t> key,
         sm1::SM_ERR_INVALID,
         "index: a datum and null flag for every key column, no more");
   }
-  // Encode the columns whole, then decide how they fit.
-  std::string cols;
-  if (sm2::encode_key(ix->key, key, isnull, cols) != 0) {
+  // The relid, then the columns encoded whole, in out, which a
+  // caller may reuse; then decide how they fit.
+  out.clear();
+  sm2::put_be(ix->relid, out);
+  if (sm2::encode_key(ix->key, key, isnull, out) != 0) {
     return -1;
   }
+  size_t cols = out.size() - sm2::relid_len;
   bool has_null = false;
   for (bool n : isnull) {
     has_null |= n;
@@ -133,7 +143,7 @@ int entry_key(const sm2::index_t *ix, std::span<const sm2::datum_t> key,
   // whether it is live, and equal keys of dead rows sit beside the
   // live one (../BTREE.md §3).
   bool suffix = !ix->unique || has_null || ix->tree;
-  cut = cols.size() > budget(ix, suffix ? row_cap(ix) : 0);
+  cut = cols > budget(ix, suffix ? row_cap(ix) : 0);
   if (cut && ix->unique) {
     return sm1::seterr(sm1::SM_ERR_KEYTOOLONG,
                        "index: a key too long for a unique index");
@@ -143,11 +153,11 @@ int entry_key(const sm2::index_t *ix, std::span<const sm2::datum_t> key,
     // A cut key keeps the row's key, so cut keys that meet stay
     // apart.
     suffix = true;
-    cols.resize(budget(ix, row_cap(ix)));
+    cols = budget(ix, row_cap(ix));
+    out.resize(sm2::relid_len + cols);
   }
-  out = relid_of(ix) + cols;
   if (cols_len) {
-    *cols_len = cols.size();
+    *cols_len = cols;
   }
   if (suffix) {
     out += row;
@@ -307,7 +317,9 @@ int idx_create(index_t *index) {
 int idx_create_tree(sm1::session_t *session, uint64_t storeid, uint16_t relid) {
   tree::tree_t t;
   tree::tree_open(t, session, storeid, relid);
-  return tree::tree_create(t);
+  int rc = tree::tree_create(t);
+  tree::tree_close(t);
+  return rc;
 }
 
 /* Remove a tree's pages; see sm2.h. */
@@ -385,7 +397,12 @@ int idx_open_primary_layout(rel_t *rel, const idx_layout_t &layout,
 }
 
 /* Close an index; nullptr is a no-op. */
-void idx_close(index_t *index) { delete index; }
+void idx_close(index_t *index) {
+  if (index != nullptr && index->tree) {
+    tree::tree_close(index->pages);
+  }
+  delete index;
+}
 
 /* The schema of an entry's value: cut, INCLUDE, a row key. */
 std::span<const attribute_t> idx_value_schema(const index_t *index) {

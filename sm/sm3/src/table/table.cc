@@ -1507,7 +1507,8 @@ int tbl_scan_rows(table_t *table, scan_t *&out) {
  * 1, 0, or -1 on error.
  */
 static int still_has(table_t *t, size_t i, std::string_view tuple,
-                     std::string_view row, std::string_view key) {
+                     std::string_view row, std::string_view key,
+                     std::string &k) {
   const table_def_t &def = *t->def;
   const index_def_t &x = def.indexes[i];
   // The row read only as far as the last column the key and the
@@ -1536,7 +1537,6 @@ static int still_has(table_t *t, size_t i, std::string_view tuple,
   if (!e.belongs) {
     return 0;
   }
-  std::string k;
   if (sm2::idx_entry_key(t->indexes[i], e.d(), e.null(), row, k) != 0) {
     return -1;
   }
@@ -1627,7 +1627,7 @@ static int tree_next(scan_t *scan, uint64_t &id, std::string_view &tuple) {
       continue;
     }
     int rc = still_has(t, scan->index, scan->tuples[i], scan->rows[i],
-                       scan->keys[i]);
+                       scan->keys[i], scan->key);
     if (rc < 0) {
       return -1;
     }
@@ -1829,7 +1829,8 @@ int tbl_compact(table_t *table) {
           if (r != 0) {
             return r < 0 ? -1 : r == 1 ? 1 : 0;
           }
-          r = still_has(table, i, tuple, row, key);
+          std::string k;
+          r = still_has(table, i, tuple, row, key, k);
           return r < 0 ? -1 : r == 0 ? 1 : 0;
         },
         removed);

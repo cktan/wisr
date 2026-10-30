@@ -209,27 +209,57 @@ int descend(tree_t &tree, std::string_view key, uint8_t level, bool from_meta,
     tree.root = pageid = m.root;
   }
   pinned_t p;
-  for (;;) {
-    if (0 != read_page(tree, pageid, true, p)) {
-      return -1;
+  // A descent that moves right went by a page changed since it was
+  // held, or by a root no longer the root: the next starts afresh.
+  bool moved = false;
+  auto forget = [&] {
+    if (moved) {
+      tree_close(tree);
+      tree.root = 0;
     }
-    if (p.view.past_high(key)) {
-      pageid = p.view.right();
+  };
+  for (;;) {
+    // An inner page the tree holds, or the page read now, and held
+    // if it is inner and there is room.
+    const page_view_t *v = nullptr;
+    for (const held_t &h : tree.held) {
+      if (h.pageid == pageid) {
+        v = &h.view;
+        break;
+      }
+    }
+    if (nullptr == v) {
+      if (0 != read_page(tree, pageid, true, p)) {
+        return -1;
+      }
+      v = &p.view;
+      if (0 != p.view.level() && tree.held.size() < held_max) {
+        tree.held.reserve(held_max);
+        tree.held.push_back(held_t{pageid, p.pin, p.view});
+        p.pin = nullptr;
+        v = &tree.held.back().view;
+      }
+    }
+    if (v->past_high(key)) {
+      pageid = v->right();
+      moved = true;
       continue;
     }
-    if (p.view.level() == level) {
+    if (v->level() == level) {
       out = pageid;
+      forget();
       return 0;
     }
-    if (p.view.level() < level || 0 == p.view.count()) {
+    if (v->level() < level || 0 == v->count()) {
       // A root remembered from before a split of the level asked for
       // is below it: only the meta page's root is sure to be above.
       if (!from_meta) {
+        forget();
         return descend(tree, key, level, true, out);
       }
       return corrupt("no page at level " + std::to_string(level));
     }
-    uint64_t child = child_of(p.view.value(p.view.child(key)));
+    uint64_t child = child_of(v->value(v->child(key)));
     if (0 == child) {
       return corrupt("an inner entry names no page");
     }
@@ -406,8 +436,17 @@ void tree_open(tree_t &tree, sm1::session_t *session, uint64_t storeid,
   tree.limit = limit;
 }
 
+/* Release the inner pages a tree holds; see tree.h. */
+void tree_close(tree_t &tree) {
+  for (held_t &h : tree.held) {
+    sm1::page_release(tree.session, h.pin);
+  }
+  tree.held.clear();
+}
+
 /* Make an empty tree; see tree.h. */
 int tree_create(tree_t &tree) {
+  tree_close(tree);
   if (0 != tree_drop(tree.session, tree.storeid, tree.relid)) {
     return -1;
   }

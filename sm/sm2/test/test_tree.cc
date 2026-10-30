@@ -57,6 +57,7 @@ struct open_tree_t {
     tree_open(tree, s, d.store(), relid, limit);
   }
   ~open_tree_t() {
+    tree_close(tree);
     sm1::commit(s);
     sm1::closedb(s);
   }
@@ -372,4 +373,43 @@ TEST_CASE("tree: prune removes the entries it is told to, leaf by leaf") {
                   },
                   removed));
   CHECK(sm1::SM_ERR_IO == sm1::errnum());
+}
+
+TEST_CASE("tree: inner pages held stale still route every probe") {
+  // Verify a tree's held inner pages, gone stale, lead to every key.
+  // 1. A reader's tree reads every key once, so it holds the inner
+  //    pages as they were.
+  // 2. A writer's tree inserts 20,000 keys more, splitting the inner
+  //    pages the reader holds and the root above them.
+  // 3. The reader, its pages unchanged, finds each key by a probe of
+  //    its own; closed and opened again, it holds pages anew.
+  db_t d;
+  open_tree_t r(d, 15, 512);
+  REQUIRE(0 == tree_create(r.tree));
+  auto key_of = [](int n) { return std::to_string(1000000 + n * 7 % 30011); };
+  for (int n = 0; n < 2000; n++) {
+    REQUIRE(0 == tree_insert(r.tree, key_of(n), "v"));
+  }
+  for (int n = 0; n < 2000; n++) {
+    cursor_t c;
+    std::string k = key_of(n);
+    cursor_open(r.tree, c, &k, true, &k, true);
+    REQUIRE(1u == drain(c).size());
+  }
+  CHECK_FALSE(r.tree.held.empty());
+  {
+    open_tree_t w(d, 15, 512);
+    for (int n = 2000; n < 22000; n++) {
+      REQUIRE(0 == tree_insert(w.tree, key_of(n), "v"));
+    }
+  }
+  for (int n = 0; n < 22000; n += 3) {
+    cursor_t c;
+    std::string k = key_of(n);
+    cursor_open(r.tree, c, &k, true, &k, true);
+    CHECK(1u == drain(c).size());
+  }
+  tree_close(r.tree);
+  CHECK(r.tree.held.empty());
+  REQUIRE_MESSAGE(0 == tree_check(r.tree), std::string(sm1::errmsg()));
 }
