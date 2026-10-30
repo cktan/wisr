@@ -13,6 +13,7 @@
 #include "pin.h"
 #include "sm0_defer.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <memory>
