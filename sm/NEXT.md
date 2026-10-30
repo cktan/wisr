@@ -117,7 +117,7 @@ and so are the catalog tables psql reads
       | --- | --- | --- |
       | PostgreSQL 18 | 395k | 768k |
       | today's entries | 1,344k (3.4) | 3,670k (4.8) |
-      | a tree | 1,144k (2.9) | 2,277k (3.0) |
+      | a tree | 955k (2.4) | 1,903k (2.5) |
 
       Neither is under 1.5 yet. What a tree's Q9 spends now:
       malloc and free a fifth, the executor's own share, each

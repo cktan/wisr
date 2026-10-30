@@ -199,7 +199,7 @@ out_t out_of(uint64_t pageid, page_t &page) {
  * each page whose high key key is at or past. Latches nothing.
  */
 int descend(tree_t &tree, std::string_view key, uint8_t level, bool from_meta,
-            uint64_t &out) {
+            uint64_t &out, pinned_t *leaf = nullptr) {
   uint64_t pageid = tree.root;
   if (from_meta || 0 == pageid) {
     meta_t m;
@@ -247,6 +247,15 @@ int descend(tree_t &tree, std::string_view key, uint8_t level, bool from_meta,
     }
     if (v->level() == level) {
       out = pageid;
+      // The page read, handed on still pinned, so it is not read
+      // again; a held page stays the tree's.
+      if (nullptr != leaf && v == &p.view) {
+        leaf->release();
+        leaf->session = p.session;
+        leaf->pin = p.pin;
+        leaf->view = p.view;
+        p.pin = nullptr;
+      }
       forget();
       return 0;
     }
@@ -255,7 +264,7 @@ int descend(tree_t &tree, std::string_view key, uint8_t level, bool from_meta,
       // is below it: only the meta page's root is sure to be above.
       if (!from_meta) {
         forget();
-        return descend(tree, key, level, true, out);
+        return descend(tree, key, level, true, out, leaf);
       }
       return corrupt("no page at level " + std::to_string(level));
     }
@@ -710,15 +719,16 @@ int fill(cursor_t &c) {
   tree_t &tree = *c.tree;
   c.at = c.end = c.pos = 0;
   uint64_t pageid = c.leaf;
+  pinned_t p;
+  // The first leaf, as the descent read it.
   if (!c.started) {
-    if (0 != descend(tree, c.from, 0, false, pageid)) {
+    if (0 != descend(tree, c.from, 0, false, pageid, &p)) {
       return -1;
     }
     c.started = true;
   }
-  pinned_t p;
   for (;;) {
-    if (0 != read_page(tree, pageid, false, p)) {
+    if (nullptr == p.pin && 0 != read_page(tree, pageid, false, p)) {
       return -1;
     }
     const page_view_t &v = p.view;
@@ -756,6 +766,7 @@ int fill(cursor_t &c) {
       return 0;
     }
     pageid = v.right();
+    p.release();
   }
 }
 

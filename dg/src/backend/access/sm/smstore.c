@@ -7300,6 +7300,9 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
     ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
                     errmsg("relation \"%s\" does not exist",
                            RelationGetRelationName(heap))));
+  /* A tree's rows, as a primary key's, each hold its bounds (sm3). */
+  bool tree = sm_tbl_index_tree(tbl, RelationGetRelid(index));
+
   for (int i = 0; i < nkeys; i++)
     if (keys[i].sk_flags & SK_ROW_HEADER)
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -7345,7 +7348,7 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
     };
     bool numeric_col = is_decimal(att->atttypid);
     /* Whether a key bounding this column holds of every row read. */
-    bool exact = form->indisprimary && int_type(coltype);
+    bool exact = (form->indisprimary || tree) && int_type(coltype);
 
     for (int i = 0; i < nkeys; i++) {
       ScanKey key = &keys[i];
@@ -7477,7 +7480,7 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   scan->nkeys = nkeys;
   scan->bounded = bounded;
   scan->index = RelationGetRelid(index);
-  scan->tree = sm_tbl_index_tree(tbl, scan->index);
+  scan->tree = tree;
   scan->form = form;
   scan->lo = lo;
   scan->hi = hi;

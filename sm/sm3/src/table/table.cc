@@ -264,6 +264,7 @@ struct entry_t {
   std::vector<std::string> own;
   std::vector<sm2::datum_t> key;
   std::unique_ptr<bool[]> key_null;
+  size_t key_cap = 0; /* key_null's room */
 
   std::span<const sm2::datum_t> d() const { return key; }
   std::span<const bool> null() const { return {key_null.get(), key.size()}; }
@@ -294,8 +295,15 @@ int make_entry(const sm3::table_t *t, size_t i, const vals_t &r, entry_t &e) {
   for (int32_t att : x.key_attnums) {
     nexpr += att < 0;
   }
+  // An entry made again keeps its arrays: a tree's recheck makes one
+  // a row.
+  e.belongs = true;
   e.key.assign(n, 0);
-  e.key_null.reset(new bool[n]());
+  if (!e.key_null || e.key_cap < n) {
+    e.key_null.reset(new bool[n]());
+    e.key_cap = n;
+  }
+  std::fill(e.key_null.get(), e.key_null.get() + n, false);
   std::unique_ptr<bool[]> own_null(new bool[nexpr]());
   if (!x.eval.empty()) {
     const sm3::index_eval_fn &eval = t->session->cat->eval;
@@ -1534,17 +1542,52 @@ static int still_has(table_t *t, size_t i, std::string_view tuple,
   for (int32_t att : x.reads) {
     n = std::max(n, static_cast<size_t>(att + 1));
   }
-  deformed_t d(def.schema.size());
-  std::fill(d.null.get(), d.null.get() + d.n, true);
+  // The row's values and its entry, in buffers the thread keeps: a
+  // recheck is made a row, and a row is read a few hundred
+  // instructions apart. No call it makes rechecks again.
+  thread_local std::vector<sm2::datum_t> d;
+  thread_local std::unique_ptr<bool[]> nulls;
+  thread_local size_t nulls_cap = 0;
+  thread_local entry_t e;
+  size_t natts = def.schema.size();
+  d.assign(natts, 0);
+  if (nulls_cap < natts) {
+    nulls.reset(new bool[natts]);
+    nulls_cap = natts;
+  }
+  bool *isnull = nulls.get();
+  std::fill(isnull, isnull + natts, true);
   sm2::tup_reader_t reader;
   if (sm2::tup_read_begin(def.desc, tuple, reader) != 0 ||
-      sm2::tup_read(reader, n, d.d, {d.null.get(), d.n}) != 0) {
+      sm2::tup_read(reader, n, d, {isnull, natts}) != 0) {
     return -1;
   }
-  image_t img(d.row());
-  entry_t e;
-  if (fetch_cols(t, img, x.key_attnums) != 0 ||
-      fetch_cols(t, img, x.reads) != 0 || make_entry(t, i, img.row(), e) != 0) {
+  vals_t r{d, {isnull, natts}};
+  // A value out of line is fetched into an image of the row, so a
+  // key or the evaluator reads it whole; most rows have none.
+  bool out_of_line = false;
+  for (const std::vector<int32_t> *atts : {&x.key_attnums, &x.reads}) {
+    for (int32_t att : *atts) {
+      out_of_line |= att >= 0 && is_pointer(def, r, att);
+    }
+  }
+  if (out_of_line) {
+    image_t img(r);
+    if (fetch_cols(t, img, x.key_attnums) != 0 ||
+        fetch_cols(t, img, x.reads) != 0 ||
+        make_entry(t, i, img.row(), e) != 0) {
+      return -1;
+    }
+    if (!e.belongs) {
+      return 0;
+    }
+    // The image goes with this scope; the entry's key points into it.
+    if (sm2::idx_entry_key(t->indexes[i], e.d(), e.null(), row, k) != 0) {
+      return -1;
+    }
+    return k == key ? 1 : 0;
+  }
+  if (make_entry(t, i, r, e) != 0) {
     return -1;
   }
   if (!e.belongs) {

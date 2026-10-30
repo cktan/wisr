@@ -10419,3 +10419,22 @@ and digres's read-ahead of today's entries alike.
   existing cases, at three snapshots; ascending runs over keys
   with gaps of 1, 3, 9 and 40, half missing or erased, against
   single reads.
+
+## Step 350: a tree's recheck and probe, cheaper
+
+- **sm3**: the recheck keeps its buffers, by the thread, and
+  makes an image of the row only when a column it reads is out
+  of line; `make_entry` keeps an entry's arrays. It made six
+  allocations a row.
+- **sm2**: a cursor's first fill takes the leaf its descent read,
+  still pinned, and does not look it up again.
+- **dg**: a tree's integer bounds are exact, as a primary key's
+  are: sm3 hands out a row only if its key is its entry's, so
+  the executor does not check the scan's keys again.
+- **Measured** (step 347's method): Q9 through a tree 1,144k to
+  955k, 2.4 times PostgreSQL's; Q10 2,277k to 1,903k, 2.5.
+- **What is left**: Q9's malloc and free, the row copied out of
+  the iterator into its pin, and the executor's own share; Q10's
+  rows read by key at random, RocksDB's `Get`, its bloom filter
+  and block cache, which an LSM pays where a heap reads a page
+  it has.
