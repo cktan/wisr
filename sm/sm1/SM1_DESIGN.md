@@ -39,13 +39,23 @@ an index whose key bytes are inverted, scanned forward — and
 the stack above keeps no mirror copy of an index for the other
 direction (`../PART4.md` §5).
 
-The engine cost is part of why. A key's versions are stored
-newest first (`key|~wts|~seq`, §3.1), so a backward scan
-would meet the oldest version first and have to walk to the
-start of each key's run before picking the visible one; it
+The engine cost was part of why. A versioned key's versions
+are stored newest first (`key|~wts|~seq`, §3.1), so a backward
+scan would meet the oldest version first and have to walk to
+the start of each key's run before picking the visible one; it
 would need `SeekForPrev` to work with §10.2's prefix-seek
 setup; and for SSI the traversed range would run from the last
 key examined up to `ekey`, inverting §10.2's bookkeeping.
+
+A chained store's rows no longer pay the first two
+(`../VCHAIN.md`): a row's newest version is one CURR key, its
+older ones a chain in OLD, so a backward scan meets one key a
+row and walks the chain as a forward scan does, and a scan of
+CURR keys runs in total order, where `SeekForPrev` works. The
+cost stays on versioned keys — secondary index entries, TOAST,
+the catalog — and the SSI inversion stays on every scan. A
+secondary index built as a B+tree (`../BTREE.md`) holds
+unversioned entries and could step back by a left link.
 
 **Phases.** Phase 1 is a solid MVCC storage manager: the API in
 `sm1.h` and the design in this document, nothing more. Phase 2
