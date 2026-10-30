@@ -336,3 +336,34 @@ TEST_CASE("page: the bytes of a prefix's pages") {
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::closedb(s) == 0);
 }
+
+TEST_CASE("page: dropped outside a transaction, after a commit") {
+  // Verify sm1::page_drop with no transaction active, as an
+  // on_commit function makes it.
+  // 1. Write pages under "t"; commit with a function that drops them.
+  // 2. After the commit they are gone, read in a new transaction.
+  // 3. A store dropped is no error, outside a transaction.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  sm1::session_t *s = opendb(home.env(), "db");
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t store = mkstore(s);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  write_page(s, store, "t1", "a");
+  write_page(s, store, "t2", "b");
+  write_page(s, store, "u1", "c");
+  int rc = -2;
+  REQUIRE(sm1::on_commit(s, [&] { rc = sm1::page_drop(s, store, "t"); }) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  CHECK(0 == rc);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  CHECK("<none>" == read_page(s, store, "t1"));
+  CHECK("<none>" == read_page(s, store, "t2"));
+  CHECK("c" == read_page(s, store, "u1"));
+  REQUIRE(sm1::rmstore(s, store) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  CHECK(0 == sm1::page_drop(s, store, "u"));
+  REQUIRE(sm1::closedb(s) == 0);
+}

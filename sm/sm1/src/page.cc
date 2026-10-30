@@ -294,8 +294,21 @@ int sm1::page_approxsize(sm1::session_t *session, uint64_t storeid,
 /* Remove every page under a prefix; see sm1.h. */
 int sm1::page_drop(sm1::session_t *session, uint64_t storeid,
                    std::string_view prefix) {
+  // Outside a transaction, as sm1::on_commit runs, the store as the
+  // database has it now: none, if it went with the transaction.
+  store_t outside;
   const store_t *st = nullptr;
-  if (enter_pages(session, storeid, st) != 0 || check_page_key(prefix) != 0) {
+  if (session && !session->active) {
+    if (storeid == 0 || check_page_key(prefix) != 0) {
+      return set_error(sm1::SM_ERR_INVALID, "store 0 holds no pages");
+    }
+    outside = db_store(session->db, storeid);
+    if (!outside.cf) {
+      return 0;
+    }
+    st = &outside;
+  } else if (enter_pages(session, storeid, st) != 0 ||
+             check_page_key(prefix) != 0) {
     return -1;
   }
   std::string lo = page_key(prefix);

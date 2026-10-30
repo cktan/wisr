@@ -2194,7 +2194,10 @@ apart: a tree's size, for the planner's statistics.
 ### int sm1::page_drop(sm1::session_t* session, uint64_t storeid, std::string_view prefix)
 
 Remove every page whose key starts with `prefix`, with a
-range delete, and drop each one's cache entry.
+range delete, and drop each one's cache entry. It may be made
+with no transaction active, from an `sm1::on_commit` function:
+the store is then taken as the database has it, and a store
+gone is no error.
 
 ## Build
 

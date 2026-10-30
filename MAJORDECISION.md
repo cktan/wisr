@@ -122,7 +122,15 @@ take to undo. Nothing here is merged into `main`.
 - **Undo:** none planned; it narrows what vacuum removes at
   once, and a later pass removes the rest.
 
-## D6. A dropped tree's pages stay until its relid or store is reused
+## D6. A dropped tree's pages go after its drop commits
+
+*Revised*: `sm1::page_drop` may be made outside a transaction, and
+`DROP INDEX` of a tree drops its pages from an `sm1::on_commit`
+function; a crash between the commit and the function leaves them,
+as this entry first had it for every drop, until the store goes.
+What follows is the first decision.
+
+## D6, first. A dropped tree's pages stay until its relid or store is reused
 
 - **Decided:** `DROP INDEX` of a tree removes it from the
   catalog and leaves its pages. A tree later made under the

@@ -869,11 +869,21 @@ int drop_index(session_t *session, uint64_t table, uint64_t oid) {
     return rekey(session, table, std::move(rec));
   }
   // A tree's pages are no transaction's, and a rollback brings the
-  // index back: they stay, under a relid never given again, until
-  // the store goes (../../MAJORDECISION.md D6).
+  // index back: they go once the drop has committed, under a relid
+  // never given again; a crash first leaves them until the store
+  // goes (../../MAJORDECISION.md D6).
   if (it->tree) {
+    sm1::session_t *s = session->sm1;
+    uint64_t storeid = rec.storeid;
+    uint16_t relid = it->relid;
     rec.indexes.erase(it);
-    return cat_put_table(session, table, rec);
+    if (cat_put_table(session, table, rec) != 0) {
+      return -1;
+    }
+    return sm1::on_commit(s, [s, storeid, relid] {
+      // Its failure leaves the pages, as a crash would.
+      sm2::idx_drop_tree(s, storeid, relid);
+    });
   }
   // Its entries are the keys under its relid in the table's store;
   // sm1 has no range delete, so each is erased.

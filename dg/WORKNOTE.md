@@ -10535,3 +10535,19 @@ on the release builds, unpinned.
 - **Tests**: sm3, a cursor aimed at a, e, b and a state with no
   rows after reading part of c, each probe's rows whole, and a
   cursor not a tree's refused; dg, `btree_tree.test`'s IN list.
+
+## Step 355: a dropped tree's pages go after its drop commits
+
+- **sm1**: `page_drop` may be made with no transaction active,
+  from an `on_commit` function, the store taken as the database
+  has it, a store gone no error.
+- **sm3**: `DROP INDEX` of a tree drops its pages from an
+  `on_commit` function; a rollback keeps them, and a crash before
+  the function runs leaves them until the store goes, as every
+  drop did before (MAJORDECISION D6, revised).
+- **Tests**: sm1, pages dropped by an `on_commit` function, and a
+  dropped store's no error; sm3, a drop rolled back keeps the
+  tree whole, a drop committed leaves no meta page; rel, the
+  2PC case of `test_tree.rel`, a prepared row deciding across a
+  restart; sm3, a tree made anew by a rewrite keyed anew, and a
+  temporary table's.

@@ -1694,7 +1694,10 @@ int page_approxsize(session_t* session, uint64_t storeid,
 
 /*
  * Remove every page of storeid whose key starts with prefix, and its
- * cache entry, outside every transaction, as sm1::page_write.
+ * cache entry, outside every transaction, as sm1::page_write. Unlike
+ * the other page calls, it may be made with no transaction active,
+ * from an sm1::on_commit function: the store is then taken as the
+ * database has it, and a store gone is no error.
  *
  * Errors: as sm1::page_write.
  */

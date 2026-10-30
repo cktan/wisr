@@ -284,7 +284,7 @@ design deletes them. The GC filter does not touch class
 | open cursor, Halloween | an update's new entry ahead of the cursor is read, and its row, at the statement's snapshot, has the old key: skipped |
 | GC watermark, CF:txn sweep | §7; the tree holds no xid, so the sweep is unaffected |
 | CREATE INDEX pending | the backfill inserts entries as a writer does, each a top-level change; an entry already there is no change |
-| DROP INDEX | the pages stay until the store goes; a relid is never given again (D6) |
+| DROP INDEX | the pages go once the drop commits, by an `sm1::on_commit` function; a crash first leaves them until the store goes; a relid is never given again (D6) |
 | TRUNCATE, ALTER rewrite | a new store: new trees, built as CREATE INDEX builds |
 | temporary tables | a temporary store's pages, as its rows |
 | keyless tables | the row key is the `_id`, as now |

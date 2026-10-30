@@ -1092,3 +1092,54 @@ TEST_CASE("tree: a temporary table's tree") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 }
+
+TEST_CASE("tree: a dropped tree's pages go once the drop commits") {
+  // Verify DROP INDEX of a tree drops its pages after the commit, and
+  // a rollback keeps them.
+  // 1. Insert rows; drop by_state and roll back: it still scans.
+  // 2. Drop it and commit: its meta page is gone from the store.
+  trees_t f;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  for (int i = 0; i < 50; i++) {
+    row_t r(i, "s", "O");
+    uint64_t id;
+    REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
+  }
+  uint64_t storeid = sm3::tbl_def(t).storeid;
+  uint16_t relid = 0;
+  for (const sm3::index_def_t &x : sm3::tbl_def(t).indexes) {
+    if (x.oid == f.by_state) {
+      relid = x.relid;
+    }
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  std::string meta{static_cast<char>(relid >> 8),
+                   static_cast<char>(relid & 0xFF)};
+  meta.append(8, '\0');
+  auto has_meta = [&] {
+    sm1::page_t *p = nullptr;
+    std::string_view bytes;
+    int rc =
+        sm1::page_read(sm3::session_sm1(f.a), storeid, meta, true, p, bytes);
+    REQUIRE(rc >= 0);
+    sm1::page_release(sm3::session_sm1(f.a), p);
+    return rc == 0;
+  };
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::drop_index(f.a, f.jobs, f.by_state) == 0);
+  REQUIRE(sm3::abort(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(has_meta());
+  t = f.table(f.a);
+  CHECK(50u == ids(t, f.by_state, "s", "s").size());
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::drop_index(f.a, f.jobs, f.by_state) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  CHECK_FALSE(has_meta());
+  REQUIRE(sm3::commit(f.a) == 0);
+}
