@@ -12,6 +12,7 @@
 
 #define DOCTEST_CONFIG_IMPLEMENT
 #include "doctest.h"
+#include "sm0_doctest_active.h"
 #include "util.h"
 
 #include <string.h>

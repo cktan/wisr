@@ -202,6 +202,11 @@ and so are the catalog tables psql reads
      FOR UPDATE` and `FOR SHARE`, the foreign-key check's FOR
      KEY SHARE of the parent row at every child insert, index
      entries and catalog keys; and the strong table locks.
+   - **The lock id, not the key.** A row lock keeps its whole
+     key in the lock list, the `PREPARED` record and
+     `sm1::lock_status`, and should keep only its `lockid_t`.
+     The plan, its cases, open decision and order of work are
+     in `sm1/LOCKID.md`; it is this item's first step.
 
    **Measured without digres or sm.** The table is a module of
    its own, `sm1/src/locktab.h` and `.cc`, that depends on
@@ -284,11 +289,12 @@ Low priority:
    files; and batch mode and mini-batch, which matter less
    now that no write keeps a row lock.
 2. **digres's `xact.c`, until it is empty.** sm keeps the
-   transaction; `xact.c` keeps only what a session needs
+   transaction; `xact.c` keeps only what a DG session needs
    around it (`../dg/PLAN.md` §7), and what it no longer needs
    is deleted as it is found. Nothing is moved out of it just
    so the file goes (`../dg/WORKNOTE.md` steps 232 to 236).
    It is 2,893 lines.
+3. **GUC** replace it with something simpler.
 
 ### Feature gaps against PostgreSQL
 
@@ -347,7 +353,7 @@ Owed, and blocking nothing above:
   key alone still waits for a child's transaction, which holds
   the row shared.
 - **`lock_timeout`, and the rest of no-wait.** A lock that
-  does not wait is built for a row (`sm1::trylock`,
+  does not wait is built for a row (`sm1::trylock_row`,
   `sm_tbl_trylock`) and for a table's table-oid lock
   (`sm_tbl_tryopen`), and digres's NOWAIT, SKIP LOCKED and
   `LOCK TABLE ... NOWAIT` use them, and `lock_timeout` ends a

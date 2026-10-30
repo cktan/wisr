@@ -245,12 +245,13 @@ What still has to be solved either way:
 
 - **WAL, replication, PITR, logical decoding.** All three read
   PostgreSQL's WAL. With the data in RocksDB's WAL, physical
-  replication, `pg_basebackup` and PITR stop working. Logical
-  decoding is possible only through a custom WAL resource
-  manager, which means writing full row images into PG's WAL as
-  well, paying for durability twice. Rebuilding replication at
-  the storage tier is a subsystem in its own right; it is what
-  YugabyteDB did, with Raft.
+  replication, `pg_basebackup` and PITR stop working. How the
+  stack replicates is open. RocksDB has no replication of its
+  own, only pieces to build one from: `Checkpoint` for a base
+  copy, `GetUpdatesSince` to tail its WAL. Logical decoding has
+  a design of its own, not on PG's WAL (`LOGICALDECODE.md`,
+  proposed). Replication at the storage tier is a subsystem in
+  its own right; it is what YugabyteDB built, with Raft.
 - **Catalogs move into sm3.** PostgreSQL hardwires catalogs
   and sequences to heap — the relation cache asserts it — so
   the fork rewrites that seam rather than living with a
@@ -308,13 +309,35 @@ amplification.
 **Why the decision was made, and whether it can be revisited.**
 The reason is in `sm1/SM1_DESIGN.md` §1, and it is not
 "RocksDB cannot iterate backwards" — it can, with `Prev()`.
-It is that sm1 stores a key's versions newest-first
-(`key | ~wts | ~seq`), so a backward scan meets the *oldest*
-version of each key first and must walk to the start of that
-key's run before it can pick the visible one; it needs
-`SeekForPrev` to cooperate with the prefix-seek setup; and the
-SSI range bookkeeping, which narrows a scan's predicate to the
-last key examined, inverts.
+When it was made, sm1 stored every key's versions
+newest-first (`key | ~wts | ~seq`), so a backward scan would
+meet the *oldest* version of each key first and walk to the
+start of that key's run before it could pick the visible one;
+it would need `SeekForPrev` to cooperate with the prefix-seek
+setup; and the SSI range bookkeeping, which narrows a scan's
+predicate to the last key examined, inverts.
+
+Since `VCHAIN.md`, most of that cost is gone for table rows. A
+row's newest version is one CURR key, `01 ‖ rowkey`, and its
+older versions are a chain in OLD, so a backward scan of rows
+meets one key a row and walks the chain as a forward scan
+does; and a scan of CURR keys runs in total order already,
+where `SeekForPrev` works. Rows are keyed by the primary key,
+so this covers backward primary-key and sequential scans. What
+remains:
+
+- **Secondary index entries, TOAST and the catalog** keep
+  versioned keys (`VCHAIN.md` §9), and a backward scan of them
+  still meets the oldest version first. `ORDER BY x DESC
+  LIMIT n` on a secondary index is the case this section gives
+  up.
+- **The SSI bookkeeping** inverts whatever the key layout.
+
+If secondary indexes move to B+trees (`BTREE.md`), their leaf
+entries are unversioned, the row deciding visibility, and a
+backward scan is a walk of leaves by a left link, as
+PostgreSQL's nbtree does. The SSI inversion would then be the
+cost left.
 
 That is a real cost, but it is an implementation cost in sm1,
 not a property of the storage below it. **If PostgreSQL is

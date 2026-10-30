@@ -1057,7 +1057,7 @@ TEST_CASE("store 0 takes the level above's keys, under its prefix only") {
   std::string_view v;
   REQUIRE(sm1::read(s, 0, "Ua", v) == 0);
   CHECK(v == "1");
-  CHECK(sm1::lock(s, sm1::LOCKTYPE_ROW, 0, "Ua", sm1::SM_LOCKMODE_SH) == 0);
+  CHECK(sm1::lock_row(s, 0, "Ua", sm1::SM_LOCKMODE_SH) == 0);
   sm1::scan_t *c = nullptr;
   REQUIRE(sm1::scan(s, 0, "U", 1, 1, "V", 1, 0, c) == 0);
   CHECK(drain(c) == rows_t{{"Ua", "1"}, {"Ub", "two"}});
@@ -1076,7 +1076,7 @@ TEST_CASE("store 0 takes the level above's keys, under its prefix only") {
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
     CHECK(sm1::insert(s, 0, key, "x") == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-    CHECK(sm1::lock(s, sm1::LOCKTYPE_ROW, 0, key, sm1::SM_LOCKMODE_SH) == -1);
+    CHECK(sm1::lock_row(s, 0, key, sm1::SM_LOCKMODE_SH) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   }
   CHECK(sm1::scan(s, 0, "R", 1, 1, "V", 1, 0, c) == -1);

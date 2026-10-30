@@ -217,6 +217,16 @@ One part's alone is `make -j4 test-sm`, `test-sq`, `test-aa` or
 `test-dg`, on the debug build too. The output is long: save it
 to a file and read that.
 
+**Which test is running**: while a doctest binary runs, a file
+beside it, `BINARY.active` (`sm/sm2/build/test_sm2.active`, for
+one), holds the test case it is in, its name, then its file and
+line. It goes when the run ends; a run that crashed or hangs
+leaves it naming its test (`sm/sm0/include/sm0_doctest_active.h`).
+
+```
+cat sm/*/build/*.active aa/build/*.active sq/build/*.active 2>/dev/null
+```
+
 What each is:
 
 - **sm**: each level's unit tests (`sm/smN/test`), the

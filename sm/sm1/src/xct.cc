@@ -709,7 +709,8 @@ int commit(sm1::session_t *s) {
     // Keep the committed SSI node for its overlaps.
     ssi_end(s);
     // Release its locks: a transaction that never wrote can
-    // still hold them, through sm1::lock (§5.1).
+    // still hold them, through sm1::lock_row or
+    // sm1::lock_oid (§5.1).
     lock_release_all(s);
     // Keep its on_commit functions for the entry point to run.
     committed_fns.swap(s->on_commit);

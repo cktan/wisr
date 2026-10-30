@@ -499,7 +499,7 @@ bool cat_get_index(const session_t* s, uint64_t nspoid,
  * exclusive itself, so it waits for them, and they for it. Once
  * held, the definition cannot change under s. A table dropped
  * while s waited fails with SM_ERR_NOTFOUND; a deadlock as
- * sm1::lock does. With fresh, it is set to whether the shared
+ * sm1::lock_oid does. With fresh, it is set to whether the shared
  * catalog has no definition of it: s's transaction made it, or it
  * is s's temporary table, and no other transaction sees its rows.
  */
@@ -546,7 +546,7 @@ constexpr uint64_t epoch_own = UINT64_MAX;
 uint64_t cat_epoch(const session_t* s);
 
 /*
- * As cat_lock_table, but never waiting (sm1::trylock): 0 with the
+ * As cat_lock_table, but never waiting (sm1::trylock_oid): 0 with the
  * lock held and out set; 1, with nothing taken, if another
  * transaction holds the lock in a mode that conflicts; or -1.
  */
@@ -1497,15 +1497,15 @@ int tbl_read_latest(table_t* table, uint64_t id, pin_ref_t& ref,
  * row need not exist. It waits as a write does. A mode other than
  * shared needs the table opened to write, SM_ERR_INVALID if not.
  * Above read committed, a row committed since the snapshot fails
- * with SM_ERR_CONFLICT, as sm1::lock says. The row is one the
- * running statement read (sm1::lock's as_read): one the
+ * with SM_ERR_CONFLICT, as sm1::lock_row says. The row is one the
+ * running statement read (sm1::lock_row's as_read): one the
  * transaction changed after the statement began is not locked,
  * SM_ERR_SELFMODIFIED, which a FOR UPDATE cursor passes over.
  */
 int tbl_lock(table_t* table, uint64_t id, sm1::lockmode_t mode);
 
 /*
- * As tbl_lock, but never waiting (sm1::trylock): 0 with the row
+ * As tbl_lock, but never waiting (sm1::trylock_row): 0 with the row
  * locked, 1 with nothing taken if another transaction holds it or
  * has written it and not ended, or -1. SQL's NOWAIT and SKIP
  * LOCKED.

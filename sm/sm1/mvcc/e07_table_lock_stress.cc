@@ -65,13 +65,6 @@ int cover(int a, int b) {
   return sup[a][b];
 }
 
-/* The OID lock name of n: 8 bytes, big-endian. */
-std::string oid_of(int n) {
-  std::string k(7, '\0');
-  k.push_back(static_cast<char>(n));
-  return k;
-}
-
 /* The holders beside the engine: a count per oid and mode. */
 struct shadow_t {
   std::atomic<int> held[oids][modes] = {};
@@ -161,7 +154,7 @@ void run(sm1::session_t *sess, shadow_t &sh, int seed, int n, int tag,
         after_mark = o;
       }
       int i = pick_mode();
-      if (sm1::lock(sess, sm1::LOCKTYPE_OID, 0, oid_of(o), mode_of(i)) != 0) {
+      if (sm1::lock_oid(sess, o, mode_of(i)) != 0) {
         fail("lock");
         failed = true;
         break;
@@ -172,8 +165,7 @@ void run(sm1::session_t *sess, shadow_t &sh, int seed, int n, int tag,
       // nothing, and the transaction goes on.
       if (pick(4) == 0) {
         int j = pick_mode();
-        int rc =
-            sm1::trylock(sess, sm1::LOCKTYPE_OID, 0, oid_of(o), mode_of(j));
+        int rc = sm1::trylock_oid(sess, o, mode_of(j));
         if (rc == 0) {
           int c = cover(i, j);
           if (c != i) {

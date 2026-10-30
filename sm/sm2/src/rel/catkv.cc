@@ -89,15 +89,13 @@ int catkv_erase(catkv_t *kv, std::string_view key) {
 /* Lock a catalog key; see sm2.h. */
 int catkv_lock(catkv_t *kv, std::string_view key, sm1::lockmode_t mode) {
   // A real catalog row, so a row lock: it meets a write of it.
-  return sm1::lock(kv->session, sm1::LOCKTYPE_ROW, catalog_store,
-                   upper_key(key), mode);
+  return sm1::lock_row(kv->session, catalog_store, upper_key(key), mode);
 }
 
 /* Lock a catalog key if no one holds it now; see sm2.h. */
 int catkv_trylock(catkv_t *kv, std::string_view key, sm1::lockmode_t mode) {
   // catkv_lock's lock, asked for without waiting.
-  return sm1::trylock(kv->session, sm1::LOCKTYPE_ROW, catalog_store,
-                      upper_key(key), mode);
+  return sm1::trylock_row(kv->session, catalog_store, upper_key(key), mode);
 }
 
 /* Open a cursor over the keys under prefix; see sm2.h. */

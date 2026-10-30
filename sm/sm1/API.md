@@ -24,7 +24,8 @@ interface, and the handles are opaque.
   `sm1::read_latest`, `sm1::chain_read`,
   `sm1::chain_read_latest` and `sm1::scannxt` return 1 to mean
   "no row"; `sm1::lastseq` 1 to mean "no value handed out
-  yet"; `sm1::trylock` and `sm1::chain_trylock` 1 to mean "it
+  yet"; `sm1::trylock_row`, `sm1::trylock_oid` and
+  `sm1::chain_trylock` 1 to mean "it
   would have waited".
 - A call that yields a handle — `sm1::attach`, `sm1::opendb`,
   `sm1::scan` — returns 0 or -1 like any other, and hands the
@@ -762,7 +763,7 @@ the level calls for one.
 SQL's `READ ONLY`. A write, `sm1::mkstore`, `sm1::rmstore`,
 `sm1::mkseq` or `sm1::rmseq` then fails with
 `SM_ERR_READONLY`; it is not an abort, and nothing is
-written. `sm1::lock` and `sm1::nextseq` are not refused:
+written. `sm1::lock_row` and `sm1::nextseq` are not refused:
 refusing `SELECT FOR UPDATE` and `nextval` is the host's.
 At SERIALIZABLE the declaration costs SSI less: the
 read-only rule applies from here on, and the transaction's
@@ -963,7 +964,8 @@ test. `NOWAIT` and `SKIP LOCKED` are to be explicit flags on
 the calls that can wait, not this.
 
 Sets whether the session waits for locks. Off, the default, a
-write or an `sm1::lock` blocks while another transaction holds
+write, `sm1::lock_row` or `sm1::lock_oid` blocks while another
+transaction holds
 the lock in a conflicting mode. On, such a call fails at once
 with `SM_ERR_BLOCKED`. That is not an abort and it is not
 retryable: the transaction stays active and holds exactly what
@@ -1025,9 +1027,10 @@ Errors: `SM_ERR_INVALID`.
 Every lock of `env`'s open databases, into `out`, cleared
 first: one `lock_status_t` for each holder of each lock, in the
 mode it holds, `granted`; and one for each session waiting in
-`sm1::lock`, in the mode it asks, not `granted`. Each names its
-database (`dbname`, `dbid`), the lock as `sm1::lock` took it
-(`type`, `storeid`, `key`), and the session by its number
+`sm1::lock_row` or `sm1::lock_oid`, in the mode it asks, not
+`granted`. Each names its database (`dbname`, `dbid`), the lock
+(`type`, `storeid`, `key`: `LOCKTYPE_OID`, 0 and `be64(oid)`
+for an oid's), and the session by its number
 (`set_tag`; 0 for none, or for a prepared transaction). A
 writer waiting behind an uncommitted version holds and asks no
 lock and is not listed: `waits_for` names whom it waits for.
@@ -1038,16 +1041,7 @@ turn, so a lock taken or let go meanwhile may be in or out.
 
 Errors: `SM_ERR_INVALID`.
 
-### int sm1::lock(sm1::session_t* session, sm1::locktype_t type, uint64_t storeid, std::string_view key, sm1::lockmode_t mode, bool as_read = false)
-
-`type` says what the lock names. `LOCKTYPE_ROW` is a key in a
-store: the lock meets the write path and runs the currency
-check below. `LOCKTYPE_OID` is an object id in no store, which
-nothing writes, so no store is read and no version is checked:
-the key must be exactly 8 bytes, an oid big-endian, and
-`storeid` is part of the name and nothing more. sm3 locks a
-table's definition that way. Locks of different types never
-conflict.
+### int sm1::lock_row(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::lockmode_t mode, bool as_read = false)
 
 `lockmode_t` is the root's `sm_lockmode_t`, as `errnum_t` is
 the root's `sm_errnum_t`: one enum the C wrapper and sm1
@@ -1067,6 +1061,9 @@ typedef enum sm_lockmode_t {
 Lock a row without writing it: SQL's `SELECT ... FOR SHARE`
 and `FOR UPDATE`, and the intention locks of Gray's scheme for
 locking at several granularities. The key need not exist.
+The caller passes the key whole: sm1 hashes it for its lock
+table, and two keys hashing alike may wait for each other
+needlessly, but never share a lock.
 
 The modes are Gray's. An intention mode locks a key that stands
 for something larger — a table's catalog row, say — to announce
@@ -1101,9 +1098,9 @@ younger is the victim.
 Once the lock is held, the call runs the same check a write
 runs: if another transaction committed a version of this key
 after this transaction's snapshot, it fails with
-`SM_ERR_CONFLICT`. A successful `sm1::lock` therefore means what
-the caller reads next under that lock is current, which is
-what makes "lock, then read, then act" safe. At
+`SM_ERR_CONFLICT`. A successful `sm1::lock_row` therefore
+means what the caller reads next under that lock is current,
+which is what makes "lock, then read, then act" safe. At
 `sm1::xctlevel_t::read_committed` the call does not fail on a
 newer commit; the caller reads the row with `sm1::read_latest`,
 which returns the newest committed version.
@@ -1122,10 +1119,11 @@ The lock is held to the end of the transaction, or until an
 never undone by a rollback: the row stays locked in the
 stronger mode until the transaction ends.
 
-A transaction holding locks it took with `sm1::lock` may be
-prepared. They survive in the prepared transaction, each in its
-mode, and are restored after a crash, so nothing conflicting
-may take those rows until a coordinator resolves it.
+A transaction holding locks it took with `sm1::lock_row` or
+`sm1::lock_oid` may be prepared. They survive in the prepared
+transaction, each in its mode, and are restored after a crash,
+so nothing conflicting may take them until a coordinator
+resolves it.
 
 Errors: `SM_ERR_CONFLICT` (not at READ COMMITTED) /
 `SM_ERR_DEADLOCK` (retryable), `SM_ERR_BLOCKED` (under
@@ -1133,20 +1131,48 @@ Errors: `SM_ERR_CONFLICT` (not at READ COMMITTED) /
 `SM_ERR_NOTFOUND` (no such store), `SM_ERR_NOTRANS`,
 `SM_ERR_PREPARED`, `SM_ERR_INVALID`.
 
-### int sm1::trylock(sm1::session_t* session, sm1::locktype_t type, uint64_t storeid, std::string_view key, sm1::lockmode_t mode, bool as_read = false)
+### int sm1::trylock_row(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::lockmode_t mode, bool as_read = false)
 
-Take a lock as `sm1::lock` does, if it can be had at once. It
-never waits. Returns 0 with the lock held to the end of the
-transaction; 1, with nothing taken, if it would have waited:
-another transaction holds the lock in a mode that conflicts,
-or, for a row, has written the row and not yet ended; or -1.
-It is for a caller that would go another way sooner than wait:
-SQL's `NOWAIT` and `SKIP LOCKED` for a row, and a bulk load
-for its table.
+Take a row's lock as `sm1::lock_row` does, if it can be had at
+once. It never waits. Returns 0 with the lock held to the end
+of the transaction; 1, with nothing taken, if it would have
+waited: another transaction holds the lock in a mode that
+conflicts, or has written the row and not yet ended; or -1. It
+is for a caller that would go another way sooner than wait:
+SQL's `NOWAIT` and `SKIP LOCKED`.
 
-A row's lock taken this way is `sm1::lock`'s, with its check:
-above READ COMMITTED a row changed since the snapshot fails
-the call, and the transaction, with `SM_ERR_CONFLICT`.
+The lock taken is `sm1::lock_row`'s, with its check: above
+READ COMMITTED a row changed since the snapshot fails the
+call, and the transaction, with `SM_ERR_CONFLICT`.
+
+Errors: as `sm1::lock_row`, but for `SM_ERR_DEADLOCK`,
+`SM_ERR_BLOCKED` and `SM_ERR_INTERRUPTED`, which come of
+waiting.
+
+### int sm1::lock_oid(sm1::session_t* session, uint64_t oid, sm1::lockmode_t mode)
+
+Lock an object id in no store, which nothing ever writes:
+what a level above locks to stand for an object of its own.
+sm3 locks a table's definition this way. No store is read and
+no version is checked, at any isolation level; taken IS or IX,
+the lock is a slot of the session's own (`SM1_DESIGN.md` §5.1,
+the fast path). It blocks, converts, is held and survives a
+prepare as `sm1::lock_row`'s lock does, in the same modes. An
+oid lock and a row lock never conflict; `sm1::lock_status`
+lists it as `LOCKTYPE_OID`, storeid 0, key `be64(oid)`.
+
+Errors: `SM_ERR_DEADLOCK` (retryable), `SM_ERR_BLOCKED` (under
+`sm1::set_qa_nowait`), `SM_ERR_INTERRUPTED`, `SM_ERR_NOTRANS`,
+`SM_ERR_PREPARED`, `SM_ERR_INVALID`.
+
+### int sm1::trylock_oid(sm1::session_t* session, uint64_t oid, sm1::lockmode_t mode)
+
+Take an oid's lock as `sm1::lock_oid` does, if it can be had at
+once: 0 with the lock held; 1, with nothing taken, if another
+transaction holds it in a mode that conflicts; or -1. A bulk
+load asks for its table so.
+
+Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`.
 
 ### int sm1::savepoint(sm1::session_t* session)
 
@@ -1363,7 +1389,7 @@ closes, and nothing of it survives a restart. Its rows are
 not logged. They commit, abort and roll back with the
 transaction as any row does, but take no lock, meet no
 conflict and are tracked by no SERIALIZABLE check;
-`sm1::lock` on one succeeds and holds nothing, and
+`sm1::lock_row` on one succeeds and holds nothing, and
 `sm1::read_latest` on one needs no lock. A transaction declared
 read-only may make, write and drop one. A transaction that
 has done any of the three cannot `sm1::prepare`.
@@ -1603,7 +1629,7 @@ snapshot.
 
 Each blocks while another active transaction has written the
 same key and not ended, or holds a lock on it taken with
-`sm1::lock`, until that transaction ends. A blocked call can
+`sm1::lock_row`, until that transaction ends. A blocked call can
 return `SM_ERR_DEADLOCK` if it is selected as the victim of a
 deadlock cycle. A write itself keeps no lock: its uncommitted
 version is what the next writer waits for (`WRITELOCK.md`).
@@ -1780,7 +1806,7 @@ the load, and the transaction may go on.
 
 ## Read API
 
-Reads never block and never take locks; `sm1::lock` is how a
+Reads never block and never take locks; `sm1::lock_row` is how a
 caller takes one deliberately. They cannot return
 `SM_ERR_CONFLICT` or `SM_ERR_DEADLOCK`. Under
 `sm1::xctlevel_t::serializable` a read is recorded, and may
@@ -1814,7 +1840,7 @@ which its snapshot cannot hide and no other writer can change,
 as an insert's arbiter reads a key its own statement took. It
 needs a row lock the transaction already holds on the key: the
 one a write that failed with `SM_ERR_UPDATED` left behind, or
-one taken with `sm1::lock`. A write of the key by the
+one taken with `sm1::lock_row`. A write of the key by the
 transaction, still in effect, does as well, since every other
 writer waits for it. That is what keeps the version from
 changing before commit. Above read committed with no version
@@ -2021,7 +2047,8 @@ Each call is the call of its name without `chain_`, with the
 same checks, conflicts, waits and errors (`sm1::insert`,
 `sm1::insert_new`, `sm1::update`, `sm1::erase`,
 `sm1::erase_moved`, `sm1::read`, `sm1::read_latest`, and
-`sm1::lock` or `sm1::trylock` of a `LOCKTYPE_ROW`), and
+`sm1::lock_row` and `sm1::trylock_row` for `sm1::chain_lock`
+and `sm1::chain_trylock`), and
 `SM_ERR_INVALID` besides on a store that is not chained. An
 abort leaves its versions for readers to pass and GC to
 remove; a rollback to a savepoint puts the chain back.

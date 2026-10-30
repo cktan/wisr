@@ -19,15 +19,16 @@ transaction that wrote it, and starts again
 (`sm1/WRITELOCK.md`). A transaction's memory does not grow
 with the keys it writes.
 
-**The lock table is the other.** `sm1::lock` puts an entry in
-a shared table, in one of Gray's modes, held to the end of the
-transaction. This is for ordering access to something the
-caller is **not** writing.
+**The lock table is the other.** `sm1::lock_row` and
+`sm1::lock_oid` put an entry in a shared table, in one of
+Gray's modes, held to the end of the transaction. This is for
+ordering access to something the caller is **not** writing.
 
 **The rule that decides which:**
 
 > Write the key and the version is the lock. Need ordering on
-> something you are not writing, and you need `sm1::lock`.
+> something you are not writing, and you need a lock:
+> `sm1::lock_row` on a key, `sm1::lock_oid` on an object.
 
 Everything in §2 and §3 follows from it. A **latch** is
 neither: a mutex hashed on store and key, held only inside a
@@ -38,25 +39,48 @@ call, so that check-then-write is one step.
 ## 1. The interface
 
 ```cpp
-int sm1::lock(session_t*, locktype_t, uint64_t storeid,
-              std::string_view key, lockmode_t);
+int sm1::lock_row(session_t*, uint64_t storeid,
+                  std::string_view key, lockmode_t,
+                  bool as_read = false);
+int sm1::lock_oid(session_t*, uint64_t oid, lockmode_t);
 ```
 
-**`locktype_t` says what the name means**, and it selects a
-path, not just a prefix:
+`sm1::trylock_row` and `sm1::trylock_oid` take the same lock
+if it can be had at once, and never wait.
 
-| type | what sm1 does |
+**Each call is its own path**, not just its own name:
+
+| call | what sm1 does |
 | --- | --- |
-| `LOCKTYPE_ROW` | validates the store and key, waits for an uncommitted writer of the key, and once held runs the currency check of §1.1 |
-| `LOCKTYPE_OID` | an object id in no store, exactly 8 bytes: no store is read, no version is checked, no latch is taken. A lock-table entry and nothing else, or, taken IS or IX, a slot of the session's own (`sm1/SM1_DESIGN.md` §5.1, the fast path) |
+| `sm1::lock_row` | validates the store and key, waits for an uncommitted writer of the key, and once held runs the currency check of §1.1 |
+| `sm1::lock_oid` | an object id in no store: no store is read, no version is checked, no latch is taken. A lock-table entry and nothing else, or, taken IS or IX, a slot of the session's own (`sm1/SM1_DESIGN.md` §5.1, the fast path) |
 
-A lock is named `type ‖ be64(storeid) ‖ userkey`, so **two
-locks of different types never conflict**, however equal their
-storeid and key. The lock table keys it by two 64-bit words,
-the storeid and the oid, or a hash of a row's key, so two rows
-whose keys hash alike may conflict needlessly
-(`sm1/SM1_DESIGN.md` §5.1); the name is kept whole in the
-transaction's lock list.
+Each lock has a type, `LOCKTYPE_ROW` or `LOCKTYPE_OID`, which
+`sm1::lock_status` reports and the `PREPARED` record keeps. A
+lock is named `type ‖ be64(storeid) ‖ userkey`, an oid's with
+storeid 0 and userkey `be64(oid)`, so **two locks of different
+types never conflict**, however equal their storeid and key.
+The lock table keys it by two 64-bit words, the storeid and the
+oid, or a hash of a row's key, so two rows whose keys hash
+alike may conflict needlessly (`sm1/SM1_DESIGN.md` §5.1); the
+name is kept whole in the transaction's lock list.
+
+**What the caller passes.** The name, whole; sm1 does any
+encoding and hashing.
+
+- **`sm1::lock_row`**: `storeid` is the row's store and `key`
+  its sm1 key, as `sm1::read` takes them. The caller does not
+  hash it. sm1 hashes the key into the lock table's second
+  word (`lockid` in `sm1/src/lockmgr.cc`) and nowhere else: the
+  key is kept whole in the lock list, the `PREPARED` record and
+  `sm1::lock_status`, and two rows hashing alike only wait for
+  each other, never share a lock. `rel_lock` locking a row of
+  table store 12: `sm1::lock_row(s, 12, key, SM_LOCKMODE_EX)`.
+- **`sm1::lock_oid`**: the oid itself. sm1 names it in no
+  store, as `be64(oid)`, and the table's words are `(0, oid)`
+  exactly, with no hash and so no needless conflict.
+  `cat_lock_table` locking table 16384:
+  `sm1::lock_oid(s, 16384, SM_LOCKMODE_IS)`.
 
 **`lockmode_t` is Gray's five**, defined once in the root's
 `include/sm_lock.h` and shared by sm1 and the C wrapper:
@@ -78,7 +102,7 @@ per-process hash seed.
 
 ### 1.1 The currency check
 
-A successful `LOCKTYPE_ROW` lock means **what the caller reads
+A successful `sm1::lock_row` means **what the caller reads
 next under it is current**. That is what makes "lock, then
 read, then act" safe, and it is why the call fails with
 `SM_ERR_CONFLICT` when another transaction committed a version
@@ -86,34 +110,51 @@ of the key after this transaction's snapshot — at REPEATABLE
 READ and SERIALIZABLE. At READ COMMITTED it does not fail
 there; the caller reads with `sm1::read_latest` instead.
 
-`LOCKTYPE_OID` runs no such check, because no version of such a
+At READ COMMITTED there is no `SM_ERR_CONFLICT` to ignore:
+the call returns 0 with the lock held and runs no check
+(`lock_versioned` in `sm1/src/access.cc` returns before
+`access_check_current`). The caller then reads the key with
+`sm1::read_latest`, which requires that lock. T1 commits an
+update of `id = 7` after T2's snapshot, and T2 runs
+`SELECT * FROM t WHERE id = 7 FOR UPDATE`:
+
+```
+T2 at READ COMMITTED:
+  sm1::lock_row(t, key(7), X)  -> 0, no check
+  sm1::read_latest(t, key(7))  -> T1's version
+T2 at REPEATABLE READ:
+  sm1::lock_row(t, key(7), X)  -> SM_ERR_CONFLICT, and T2 fails
+```
+
+`sm1::lock_oid` runs no such check, because no version of such a
 name can exist.
 
 **One type serves every object.** Every sm3 object -- table,
 index, namespace, collation -- draws its oid from the one
 sequence `sm3.oid`, so `be64(oid)` is unambiguous across kinds
-and subjects 1, 4 to 6 and 8 of §2 all lock `LOCKTYPE_OID`, with
-no kind byte and no collision. sm1 refuses a key of any other
-length for it.
+and every subject of §2 that is an object -- a table's
+definition (#1), a namespace (#4), a collation or type (#5),
+an index (#6), a view's definition (#8) -- takes
+`sm1::lock_oid`, with no kind byte and no collision.
 
 ---
 
 ## 2. The lock subjects
 
-Things `sm1::lock` must name, because ordering is needed on
+Things a lock must name, because ordering is needed on
 something the caller is not writing.
 
 | # | Subject | Name | Guards | Today |
 | --- | --- | --- | --- | --- |
-| 1 | a table's definition | `OID`, `be64(oid)` | DDL against readers and writers of the in-memory catalog | built: `cat_lock_table` → `lock_table` → `sm1::lock` |
-| 2 | a row, read intent | `ROW`, `(storeid, relid ‖ row key)` | `FOR SHARE`, `FOR UPDATE`, an index build against a writer | built: `tbl_lock` → `rel_lock` → `sm1::lock` |
+| 1 | a table's definition | `OID`, `be64(oid)` | DDL against readers and writers of the in-memory catalog | built: `cat_lock_table` → `lock_table` → `sm1::lock_oid` |
+| 2 | a row, read intent | `ROW`, `(storeid, relid ‖ row key)` | `FOR SHARE`, `FOR UPDATE`, an index build against a writer | built: `tbl_lock` → `rel_lock` → `sm1::lock_row` |
 | 2a | a row's `_id` entry | `ROW`, `(storeid, 0xFFFE ‖ _id)` | a writer that followed a moved row, against moving it again | gone, with the `_id` index (`ROWKEY.md` §2.1, §2.3) |
-| 3 | a catalog key, lock-then-write | `ROW`, `(store 0, "U" ‖ key)` | DDL takes X on each key it is about to write, reads it current, rewrites it | built: `catkv_lock` → `sm1::lock` |
-| 4 | a namespace | `OID`, `be64(oid)` | `DROP SCHEMA` against `CREATE` in it | built: `cat_put_table`, `cat_put_collation` take S, `cat_del_namespace` X → `lock_table` → `sm1::lock` |
+| 3 | a catalog key, lock-then-write | `ROW`, `(store 0, "U" ‖ key)` | DDL takes X on each key it is about to write, reads it current, rewrites it | built: `catkv_lock` → `sm1::lock_row` |
+| 4 | a namespace | `OID`, `be64(oid)` | `DROP SCHEMA` against `CREATE` in it | built: `cat_put_table`, `cat_put_collation` take S, `cat_del_namespace` X → `lock_table` → `sm1::lock_oid` |
 | 5 | a collation or type in use | `(oid)` | `DROP COLLATION` with a column using it | not built |
 | 6 | an index as an object | `(oid)` | `DROP INDEX` against a scan on it | subsumed by 1 |
 | 7 | a sequence as an object | `(oid)` | `CREATE` / `DROP SEQUENCE` | none: its record is a catalog key (3), read in the transaction; `cat_put_sequence` takes its namespace S (4) (`VIEW.md` §11) |
-| 8 | a view's definition | `OID`, `be64(oid)` | `DROP VIEW`, `CREATE OR REPLACE` against a query expanding it | built: `cat_lock_view` → `lock_table` → `sm1::lock` (`VIEW.md` §7) |
+| 8 | a view's definition | `OID`, `be64(oid)` | `DROP VIEW`, `CREATE OR REPLACE` against a query expanding it | built: `cat_lock_view` → `lock_table` → `sm1::lock_oid` (`VIEW.md` §7) |
 
 A name is **fixed-width** but for a row's: 9 bytes for a
 table-oid lock, the width of its kind for each catalog key DDL
@@ -218,7 +259,7 @@ catalog in memory, not from the store:
 sm3::lock_table(s, 16384, X)
   // Hold table 16384's definition exclusively: no one may read
   // or write the table until this transaction ends.
-  -> sm1::lock(s, LOCKTYPE_OID, 0, be64(16384), SM_LOCKMODE_EX)
+  -> sm1::lock_oid(s, 16384, SM_LOCKMODE_EX)
      // Take the lock named 16384 in the schema namespace;
      // nothing writes that name, so no store is read and no
      // version checked.
@@ -238,15 +279,15 @@ column, one index each have a key (`sm3/CATALOG_ONDISK.md` §2):
 sm2::catkv_lock(kv, part_key(column, 16384, 3), X)
   // Hold the catalog row of column 3 of table 16384, so the
   // write that follows goes over its newest version.
-  -> sm1::lock(s, LOCKTYPE_ROW, 0, "U" | kind(8) | be64(16384)
-               | be64(3), SM_LOCKMODE_EX)
+  -> sm1::lock_row(s, 0, "U" | kind(8) | be64(16384) | be64(3),
+                   SM_LOCKMODE_EX)
      // Take the row lock on that key in store 0, failing if
      // another transaction committed a version of it after our
      // snapshot.
 ```
 
 The pair reads twice over because the wrapper says *which
-object* and `sm1::lock` says *which bytes*. That gap is
+object* and `sm1::lock_row` says *which bytes*. That gap is
 inherent to sm1 not knowing what a table is; the type tag
 narrows it — a table-oid lock no longer pretends to be a row —
 but does not close it.
@@ -269,8 +310,7 @@ T1  sm2::rel_lock(rel, id_key(7), X)
       // Hold the row with _id 7 of a table without a primary
       // key exclusively without writing it: SELECT ... FOR
       // UPDATE.
-      -> sm1::lock(s, LOCKTYPE_ROW, 1001, be16(1)|be64(7),
-                   SM_LOCKMODE_EX)
+      -> sm1::lock_row(s, 1001, be16(1)|be64(7), SM_LOCKMODE_EX)
          // Take the row lock on the row's key in store 1001 --
          // the same name a write of that row would wait on.
 T2  sm2::rel_update(rel, id_key(7), 7, ...)

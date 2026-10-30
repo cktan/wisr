@@ -196,8 +196,7 @@ TEST_CASE("sm1_read_latest reads into a raw pin") {
   pin_fixture_t f;
   sm1::session_t *s = f.open();
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_EX) ==
-          0);
+  REQUIRE(sm1::lock_row(s, g_store, "x", sm1::SM_LOCKMODE_EX) == 0);
 
   pin_ptr_t p;
   std::string_view data;

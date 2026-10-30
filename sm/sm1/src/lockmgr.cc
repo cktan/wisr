@@ -6,11 +6,11 @@
  * lock names a key in a store, an OID lock an object in none -- and
  * is held by the
  * sessions whose transactions took it, each in a mode of its own,
- * every pair of them compatible (sm1.h, lockmode_t). sm1::lock
- * takes any mode, held until the transaction commits or aborts,
- * and a plain read takes none. A write takes no lock: it checks
- * and puts its key under a short latch, and its uncommitted
- * version stands for the lock, a second writer waiting for the
+ * every pair of them compatible (sm1.h, lockmode_t). sm1::lock_row
+ * and sm1::lock_oid take any mode, held until the transaction
+ * commits or aborts, and a plain read takes none. A write takes
+ * no lock: it checks and puts its key under a short latch, and its
+ * uncommitted version stands for the lock, a second writer waiting for the
  * transaction that wrote it (WRITELOCK.md).
  *
  * Deadlocks are found as a transaction begins to wait: it

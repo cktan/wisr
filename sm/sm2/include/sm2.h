@@ -742,18 +742,18 @@ int rel_read_latest(rel_t* rel, std::string_view key, sm1::rawpin_t* pin,
                     std::string_view& tuple, uint64_t* id = nullptr);
 
 /*
- * Lock the row at key in mode without writing it, as sm1::lock
+ * Lock the row at key in mode without writing it, as sm1::lock_row
  * does: SQL's SELECT ... FOR SHARE and FOR UPDATE, and what an
  * index build holds on a row while it adds the row's entry
  * (sm3/SM3_DESIGN.md §3). The row need not exist. as_read, as
- * sm1::lock's: a row the running statement read, which fails
+ * sm1::lock_row's: a row the running statement read, which fails
  * with SM_ERR_SELFMODIFIED if the transaction changed it since.
  */
 int rel_lock(rel_t* rel, std::string_view key, sm1::lockmode_t mode,
              bool as_read = false);
 
 /*
- * As rel_lock, but never waiting, as sm1::trylock does: 0 with the
+ * As rel_lock, but never waiting, as sm1::trylock_row does: 0 with the
  * row locked, 1 with nothing taken if it would have waited, or -1.
  */
 int rel_trylock(rel_t* rel, std::string_view key, sm1::lockmode_t mode,
@@ -1151,7 +1151,7 @@ int idx_find(index_t* index, std::span<const datum_t> key,
  * The row that has key in a unique index now, past the snapshot:
  * its newest committed version, at READ COMMITTED, the one level
  * with such a read (sm1::read_latest). sm1 gives it only under a
- * lock on the key, so this takes one, shared, waiting as sm1::lock
+ * lock on the key, so this takes one, shared, waiting as sm1::lock_row
  * does. The lock is held as any is, to the end of the transaction
  * or a rollback to a savepoint set before it; a caller that only
  * wanted to look sets one first and rolls back, so that it does
@@ -1334,7 +1334,7 @@ int catkv_erase(catkv_t* kv, std::string_view key);
 int catkv_lock(catkv_t* kv, std::string_view key, sm1::lockmode_t mode);
 
 /*
- * As catkv_lock, but never waiting (sm1::trylock): 0 with key
+ * As catkv_lock, but never waiting (sm1::trylock_row): 0 with key
  * locked; 1, with nothing taken, if another transaction holds it in a
  * mode that conflicts or has written it and not yet ended; or -1.
  */

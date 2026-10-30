@@ -9,6 +9,7 @@
 
 #include "error.h"
 #include "session.h"
+#include "sm0_codec.h"
 #include "sm0_defer.h"
 #include "version.h"
 
@@ -344,10 +345,8 @@ int write_row(sm1::session_t *s, write_op_t op, uint64_t storeid,
   return 0;
 }
 
-/* sm1::lock, minus the out-of-memory guard. */
-int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
-             const char *key, size_t klen, sm1::lockmode_t mode,
-             bool nowait = false, bool as_read = false) {
+/* -1 unless s may take a lock in mode: an active transaction. */
+int lock_check(sm1::session_t *s, sm1::lockmode_t mode) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
@@ -356,20 +355,30 @@ int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
   if (static_cast<int>(mode) < 0 || static_cast<int>(mode) > 4) {
     return set_error(sm1::SM_ERR_INVALID, "unknown lock mode {}", (int)mode);
   }
-  // Reject a type that is neither of the two.
-  if (type > sm1::LOCKTYPE_OID) {
-    return set_error(sm1::SM_ERR_INVALID, "unknown lock type {}", (int)type);
+  return 0;
+}
+
+/* sm1::lock_oid and sm1::trylock_oid. */
+int lock_object(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode,
+                bool nowait) {
+  if (lock_check(s, mode) != 0) {
+    return -1;
   }
-  // An oid is 8 bytes, so a name of any other length is a mistake.
-  if (type == sm1::LOCKTYPE_OID && klen != 8) {
-    return set_error(sm1::SM_ERR_INVALID,
-                     "a LOCKTYPE_OID key is 8 bytes, not {}", klen);
-  }
+  // The name is be64(oid), stable across restarts for a prepared
+  // transaction's lock set.
+  std::string key;
+  sm0::put_be64(key, oid);
   // A name outside any store takes the lock and nothing else: no
   // store is read and no version is checked, since none can exist.
-  if (type != sm1::LOCKTYPE_ROW) {
-    return lock_oid(s, storeid, rocksdb::Slice(key ? key : "", klen), mode,
-                    nowait);
+  return wisr::lock_oid(s, 0, key, mode, nowait);
+}
+
+/* sm1::lock_row and sm1::trylock_row, minus the out-of-memory guard. */
+int lock_versioned(sm1::session_t *s, uint64_t storeid, const char *key,
+                   size_t klen, sm1::lockmode_t mode, bool nowait,
+                   bool as_read) {
+  if (lock_check(s, mode) != 0) {
+    return -1;
   }
   // Validate the storeid and key at the current view.
   if (enter(s, xct_view(s), storeid, key, klen) != 0) {
@@ -440,8 +449,10 @@ int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
       return lock_wait_error(s, waited);
     }
   }
-  // Read committed does not fail here: the caller reads the
-  // row with sm1::read_latest instead.
+  // Read committed runs no check: the lock is held and the call
+  // returns 0, never SM_ERR_CONFLICT, however newer the row's
+  // last commit than the snapshot. The caller then reads the row
+  // with sm1::read_latest, which needs this lock (LOCK.md §1.1).
   if (s->level == sm1::xctlevel_t::read_committed) {
     return 0;
   }
@@ -1130,7 +1141,7 @@ int access_enter(sm1::session_t *s, const view_t &view, uint64_t storeid,
 }
 
 /*
- * §5.2's check on its own, for sm1::lock: fail if a version of
+ * §5.2's check on its own, for sm1::lock_row: fail if a version of
  * key committed after this transaction's begin snapshot. The
  * caller holds the lock, so no one can add one behind us.
  */
@@ -1164,19 +1175,29 @@ int sm1::scan_seek(sm1::scan_t *scan, std::string_view key, int inclusive) {
   return ::scan_seek(scan, key.data(), key.size(), inclusive);
 }
 
-/* Take a lock without writing anything; see sm1.h. */
-int sm1::lock(sm1::session_t *session, sm1::locktype_t type, uint64_t storeid,
-              std::string_view key, sm1::lockmode_t mode, bool as_read) {
-  return lock_row(session, type, storeid, key.data(), key.size(), mode, false,
-                  as_read);
+/* Lock a row without writing it; see sm1.h. */
+int sm1::lock_row(sm1::session_t *session, uint64_t storeid,
+                  std::string_view key, sm1::lockmode_t mode, bool as_read) {
+  return lock_versioned(session, storeid, key.data(), key.size(), mode, false,
+                        as_read);
 }
 
-/* Take a lock if it can be had at once; see sm1.h. */
-int sm1::trylock(sm1::session_t *session, sm1::locktype_t type,
-                 uint64_t storeid, std::string_view key, sm1::lockmode_t mode,
-                 bool as_read) {
-  return lock_row(session, type, storeid, key.data(), key.size(), mode, true,
-                  as_read);
+/* Lock a row if it can be had at once; see sm1.h. */
+int sm1::trylock_row(sm1::session_t *session, uint64_t storeid,
+                     std::string_view key, sm1::lockmode_t mode, bool as_read) {
+  return lock_versioned(session, storeid, key.data(), key.size(), mode, true,
+                        as_read);
+}
+
+/* Lock an object id; see sm1.h. */
+int sm1::lock_oid(sm1::session_t *session, uint64_t oid, sm1::lockmode_t mode) {
+  return lock_object(session, oid, mode, false);
+}
+
+/* Lock an object id if it can be had at once; see sm1.h. */
+int sm1::trylock_oid(sm1::session_t *session, uint64_t oid,
+                     sm1::lockmode_t mode) {
+  return lock_object(session, oid, mode, true);
 }
 
 /* Insert a row; the key must not exist. */

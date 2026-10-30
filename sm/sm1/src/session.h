@@ -462,7 +462,7 @@ int lock_wait_xact(sm1::session_t *session, uint64_t xid);
  */
 void lock_wake(db_t *db, bool rollback);
 
-/* §5.2's first-committer-wins check alone, for sm1::lock. */
+/* §5.2's first-committer-wins check alone, for sm1::lock_row. */
 int access_check_current(sm1::session_t *session, uint64_t storeid,
                          rocksdb::Slice key);
 

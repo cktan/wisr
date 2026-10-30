@@ -176,7 +176,7 @@ Everything that makes a transaction a transaction, unchanged:
 One session reaches a temporary store, and it runs one
 transaction at a time. So, for a temporary store:
 
-- **No lock.** `sm1::lock` on a key of it succeeds and enters
+- **No lock.** `sm1::lock_row` on a key of it succeeds and enters
   nothing in the lock table. A write looks for no explicit
   lock held by another.
 - **No wait and no conflict.** The newest version of a key is

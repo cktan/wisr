@@ -52,7 +52,7 @@ full MVCC, for OLTP workloads.
     `sm1::forget`
   - statement boundaries: `sm1::stmt_begin`
   - row locks without writing, in Gray's modes (IS, IX, S,
-    SIX, X): `sm1::lock`
+    SIX, X): `sm1::lock_row`
   - cursor reposition: `sm1::scan_seek`
   - stores: `sm1::mkstore` / `sm1::rmstore` / `sm1::lsstore`
   - sequences: `sm1::mkseq` / `sm1::rmseq` / `sm1::nextseq`

@@ -143,7 +143,7 @@ TEST_CASE("a temporary store is private to its session") {
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   CHECK(scan(r, t, nullptr, 0, 0, nullptr, 0, 0) == nullptr);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  CHECK(sm1::lock(r, sm1::LOCKTYPE_ROW, t, "k", sm1::SM_LOCKMODE_EX) == -1);
+  CHECK(sm1::lock_row(r, t, "k", sm1::SM_LOCKMODE_EX) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   CHECK(sm1::rmstore(r, t) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
@@ -232,7 +232,7 @@ TEST_CASE("a temporary store takes no lock and no SIREAD entry") {
   std::string_view k, d;
   CHECK(sm1::scannxt(c, k, d) == 0);
   sm1::scanend(c);
-  REQUIRE(sm1::lock(f.s, sm1::LOCKTYPE_ROW, t, "k", sm1::SM_LOCKMODE_EX) == 0);
+  REQUIRE(sm1::lock_row(f.s, t, "k", sm1::SM_LOCKMODE_EX) == 0);
   db_t *db = f.s->db;
   {
     std::lock_guard<std::mutex> guard(db->lock_mu);
@@ -246,7 +246,7 @@ TEST_CASE("a temporary store takes no lock and no SIREAD entry") {
   commit_xct(f.s);
 
   begin_xct(f.s);
-  REQUIRE(sm1::lock(f.s, sm1::LOCKTYPE_ROW, t, "k", sm1::SM_LOCKMODE_EX) == 0);
+  REQUIRE(sm1::lock_row(f.s, t, "k", sm1::SM_LOCKMODE_EX) == 0);
   CHECK(sm1::read_latest(f.s, t, "k", d) == 0);
   CHECK(d == "v");
   commit_xct(f.s);

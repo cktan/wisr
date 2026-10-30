@@ -55,8 +55,8 @@ key going in and stripped coming out.
 | `catkv_get_latest` | as `catkv_get`, the newest committed version, under a lock held | `sm1::read_latest` |
 | `catkv_insert` | a new key; `SM_ERR_DUPKEY` if taken | `sm1::insert` |
 | `catkv_update`, `catkv_erase` | replace or remove a key; `SM_ERR_NOTFOUND` if missing | `sm1::update`, `sm1::erase` |
-| `catkv_lock` | a row lock in any of sm1's modes (IS, IX, S, SIX, X) | `sm1::lock` |
-| `catkv_trylock` | as `catkv_lock`, never waiting: 1 if another holds it | `sm1::trylock` |
+| `catkv_lock` | a row lock in any of sm1's modes (IS, IX, S, SIX, X) | `sm1::lock_row` |
+| `catkv_trylock` | as `catkv_lock`, never waiting: 1 if another holds it | `sm1::trylock_row` |
 | `catkv_scan`, `catkv_scannxt`, `catkv_scanend` | the keys under a prefix, in order | `sm1::scan` |
 
 ---

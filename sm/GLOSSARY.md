@@ -66,8 +66,9 @@ changed library is detected.
 **lock.** Three mechanisms, only the first of which is an
 entry in a table.
 
-- a **lock-table entry**, taken by `sm1::lock` in one of
-  Gray's modes and held to the end of the transaction.
+- a **lock-table entry**, taken by `sm1::lock_row` or
+  `sm1::lock_oid` in one of Gray's modes and held to the end of
+  the transaction.
 - an **uncommitted version**, which a write leaves behind and
   the next writer of the key waits on. A write keeps no
   lock-table entry (`sm1/WRITELOCK.md`).
