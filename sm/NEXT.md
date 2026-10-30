@@ -119,7 +119,10 @@ and so are the catalog tables psql reads
       | today's entries | 1,344k (3.4) | 3,670k (4.8) |
       | a tree | 955k (2.4) | 1,903k (2.5) |
 
-      Neither is under 1.5 yet. What a tree's Q9 spends now:
+      Under 16 clients, Q11 and a write moving `c2`'s key one
+      in ten, a tree runs 18,290 and 16,818 tps, today's
+      entries 12,570 and 11,060, PostgreSQL 33,512 and 26,904
+      (`../dg/WORKNOTE.md` step 353). Neither is under 1.5 yet. What a tree's Q9 spends now:
       malloc and free a fifth, the executor's own share, each
       row's recheck; Q10's, a descent a probe and its row.
    3. **Then measure** the grid again, on both kinds of index

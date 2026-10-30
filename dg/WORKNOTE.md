@@ -10490,3 +10490,23 @@ and digres's read-ahead of today's entries alike.
   into its right page; it failed before the fix. sm3, the unique
   stress test inserts half its rows ON CONFLICT DO NOTHING. TSan,
   every tree test: none reported.
+
+## Step 353: a tree under 16 clients
+
+The benchmark's Q11, Q10's reads with one update in ten by `c2`
+leaving the key alone, and a write of its own that moves the key,
+`update wide_mixed set c2 = -c2 where c2 = :k` at random, one in
+ten among Q10's: pgbench, prepared, 16 clients, 4 threads, 20 s,
+on the release builds, unpinned.
+
+| | Q11 tps | key moved tps |
+| --- | --- | --- |
+| PostgreSQL 18 | 33,512 | 26,904 |
+| digres, today's entries | 12,570 | 11,060 |
+| digres, a tree | 18,290 | 16,818 |
+
+- **What it says**: a tree is 45% and 52% ahead of today's
+  entries under 16 clients, its writes among them; no error, and
+  nothing in its latches, the fill latch's stripes or the block
+  cache that shows as contention at this scale. Against
+  PostgreSQL, 0.55 and 0.63.
