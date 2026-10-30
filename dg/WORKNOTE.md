@@ -10203,3 +10203,37 @@ slot kept one.
   at a commit, with its deadlock check 10 s away: the release's
   look for a lock in the table, taken out, was not caught before.
   6 mutations caught.
+
+## Step 344: a benchmark of row locks
+
+`../sm/NEXT.md` §1 item 4 wants a row-lock workload in digres,
+to show what a lock table of sm1's own gains a client.
+
+- **bench** (`../bench/rowlocks.sh`): r of 100,000 rows; 1, 10
+  and 100 rows read, and the same locked FOR UPDATE, each client
+  in a sixteenth of r of its own, so none waits for another; and
+  an insert under a foreign key to 10 parents, every client's
+  check locking them shared, against one with none. Prepared,
+  1 and 16 clients, 10 s a run, the median of 2 rounds; what a
+  lock adds is (lockN - readN) / N of a client's time.
+- **Baseline**, at 8612f68b, x86_64 WSL, 16 threads:
+
+  | stmt | tps c=1 | tps c=16 | 16/1 | µs a lock, c=1 | c=16 |
+  | --- | --- | --- | --- | --- | --- |
+  | read1 | 15,112 | 148,594 | 9.83 | | |
+  | lock1 | 12,746 | 120,801 | 9.48 | 12.3 | 24.8 |
+  | read10 | 10,645 | 94,407 | 8.87 | | |
+  | lock10 | 7,095 | 51,160 | 7.21 | 4.7 | 14.3 |
+  | read100 | 8,276 | 72,331 | 8.74 | | |
+  | lock100 | 2,233 | 5,329 | 2.39 | 3.3 | 27.8 |
+  | ins | 1,144 | 5,839 | 5.10 | | |
+  | fk | 1,061 | 4,320 | 4.07 | 68.5 | 964 |
+
+- **What it says**: with no lock waited for, a hundred locks a
+  statement scale 2.4× from 1 client to 16, and each costs 8×
+  as much at 16: every lock taken and released under one
+  `lock_mu`, an entry allocated and freed for each. The foreign
+  key's check adds about a millisecond at 16 clients, on ten
+  rows every client locks shared: not yet explained, an insert
+  bound by its commit's sync.
+- **Left**: profiling `lock100` and `fk` at 16 clients.

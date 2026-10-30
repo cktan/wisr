@@ -224,7 +224,13 @@ and so are the catalog tables psql reads
    - **Then digres**: a row-lock workload in `../bench/`
      (clients inserting children of a few parent rows; `SELECT
      ... FOR UPDATE` of keys at random), before and after, to
-     show the module's gain reaches a client.
+     show the module's gain reaches a client. Built as
+     `../bench/rowlocks.sh` (`../dg/WORKNOTE.md` step 344),
+     each client locking rows of its own, so none waits. Its
+     baseline, at 8612f68b: a lock adds 3.3 µs of a client's
+     time to a statement of 100 at 1 client and 28 at 16, and
+     100 rows locked a statement scale 2.4× from 1 client to
+     16, as 100 read scale 8.7×.
 
    The order: the module with today's table, and its
    benchmark's baseline; `fmix64`; the partitions; the
