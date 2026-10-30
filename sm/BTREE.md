@@ -445,7 +445,15 @@ section proposes, each on review before it is built.
     can still see an older one, at or below the GC watermark,
     for vacuum (§7).
 
-**The steps:**
+**The steps:** all eight are built on `wip-btree`, with the
+tests each names and more (`../dg/WORKNOTE.md` steps 345 to
+350); where one went otherwise than written here,
+`../MAJORDECISION.md` says how. sm1's calls are
+`page_read`, `page_write`, `page_drop`, `page_approxsize`,
+`read_settled`, `read_newest`, `wait_writer`,
+`ssi_read_range` and `ssi_write_key`; the mvcc scenarios step
+4 names are unit tests of sm1 and sm3 instead, as the
+scenario driver has no verb for a tree.
 
 1. **The page** (`sm2/src/tree/page.cc`): the layout of §3,
    the search of its slots, an entry's insert, and a split's

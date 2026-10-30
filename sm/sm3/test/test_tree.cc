@@ -9,10 +9,13 @@
 #include "doctest.h"
 #include "sm3.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <map>
 #include <optional>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -648,6 +651,277 @@ TEST_CASE("tree: its size is its pages'") {
   REQUIRE(sm3::tbl_idx_size(t, f.by_state, disk, mem) == 0);
   CHECK(disk + mem > empty);
   CHECK(disk + mem > 2000u * 10);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("tree: scans agree with the rows under writers moving them") {
+  // Verify a tree's scan against the table at one snapshot, while
+  // writers move rows between keys, insert and delete them.
+  // 1. Insert 400 rows of states s0..s9.
+  // 2. Three writers, at read committed, each change 20 rows a
+  //    transaction: a new state, a delete, or an insert; they commit,
+  //    or now and then abort.
+  // 3. Two readers, at repeatable read, scan the tree for a state and
+  //    the whole table, at one snapshot: the ids agree, each once.
+  // 4. At the end, and after vacuum, the same at a new snapshot.
+  trees_t f;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  for (int i = 0; i < 400; i++) {
+    row_t r(i, "s" + std::to_string(i % 10), "O");
+    uint64_t id;
+    REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  // The ids of the rows of state s, by a scan of the whole table.
+  auto by_table = [](sm3::table_t *t, const std::string &s) {
+    std::vector<int32_t> out;
+    sm3::scan_t *scan = nullptr;
+    REQUIRE(sm3::tbl_scan(t, 0, UINT64_MAX, scan) == 0);
+    uint64_t id;
+    std::string_view tuple;
+    while (sm3::tbl_scannxt(scan, id, tuple) == 0) {
+      sm2::datum_t d[2];
+      bool n[2];
+      REQUIRE(sm2::tup_decode(sm3::tbl_def(t).desc, tuple, 0, d[0], n[0]) == 0);
+      REQUIRE(sm2::tup_decode(sm3::tbl_def(t).desc, tuple, 1, d[1], n[1]) == 0);
+      std::string_view v;
+      REQUIRE(sm2::datum_bytes(&sm2::type_text, -1, d[1], v) == 0);
+      if (!n[1] && sm2::varlena_payload(v) == s) {
+        out.push_back(sm2::datum_to_int32(d[0]));
+      }
+    }
+    sm3::tbl_scanend(scan);
+    std::sort(out.begin(), out.end());
+    return out;
+  };
+  // The same ids, by a scan of the tree.
+  auto by_tree = [&](sm3::table_t *t, const std::string &s) {
+    std::vector<int32_t> out = ids(t, f.by_state, s, s);
+    std::sort(out.begin(), out.end());
+    return out;
+  };
+
+  std::atomic<bool> stop{false};
+  std::atomic<int> errors{0}, disagree{0}, commits{0}, scans{0};
+  std::vector<std::thread> threads;
+  for (int w = 0; w < 3; w++) {
+    threads.emplace_back([&, w] {
+      sm3::session_t *s = nullptr;
+      if (sm3::session_open(f.cat, f.open(), s) != 0) {
+        errors++;
+        return;
+      }
+      std::mt19937_64 rng(w + 7);
+      int next = 1000 * (w + 1);
+      while (!stop) {
+        if (sm3::begin(s, sm1::xctlevel_t::read_committed) != 0) {
+          errors++;
+          break;
+        }
+        sm3::table_t *tw = nullptr;
+        bool ok = sm3::tbl_open(s, f.jobs, sm1::SM_LOCKMODE_IX, tw) == 0;
+        for (int k = 0; ok && k < 20; k++) {
+          uint64_t rowno = 1 + rng() % 400;
+          int what = rng() % 10;
+          if (what < 7) {
+            row_t r(static_cast<int32_t>(rowno - 1),
+                    "s" + std::to_string(rng() % 10), "O");
+            int rc = sm3::tbl_update(tw, rowno, r.d(), r.null());
+            // A row deleted, or changed by another first: let be.
+            ok = rc == 0 || rc == 1 || sm1::errnum() == sm1::SM_ERR_UPDATED ||
+                 sm1::errnum() == sm1::SM_ERR_NOTFOUND;
+          } else if (what < 8) {
+            int rc = sm3::tbl_delete(tw, rowno);
+            ok = rc == 0 || rc == 1 || sm1::errnum() == sm1::SM_ERR_UPDATED ||
+                 sm1::errnum() == sm1::SM_ERR_NOTFOUND;
+          } else {
+            row_t r(next++, "s" + std::to_string(rng() % 10), "O");
+            uint64_t id;
+            ok = sm3::tbl_insert(tw, r.d(), r.null(), id) == 0;
+          }
+          if (!ok && sm1::errnum() != sm1::SM_ERR_DEADLOCK &&
+              sm1::errnum() != sm1::SM_ERR_UPDATED &&
+              sm1::errnum() != sm1::SM_ERR_NOTFOUND) {
+            errors++;
+          }
+        }
+        sm3::tbl_close(tw);
+        if (ok && rng() % 5 != 0 && sm3::commit(s) == 0) {
+          commits++;
+        } else {
+          sm3::abort(s);
+        }
+      }
+      sm3::session_close(s);
+    });
+  }
+  for (int r = 0; r < 2; r++) {
+    threads.emplace_back([&, r] {
+      sm3::session_t *s = nullptr;
+      if (sm3::session_open(f.cat, f.open(), s) != 0) {
+        errors++;
+        return;
+      }
+      std::mt19937_64 rng(r + 99);
+      for (int round = 0; round < 300; round++) {
+        if (sm3::begin(s, sm1::xctlevel_t::repeatable_read) != 0) {
+          errors++;
+          break;
+        }
+        sm3::table_t *tr = nullptr;
+        if (sm3::tbl_open(s, f.jobs, sm1::SM_LOCKMODE_IS, tr) != 0) {
+          errors++;
+          sm3::abort(s);
+          break;
+        }
+        std::string st = "s" + std::to_string(rng() % 10);
+        if (by_tree(tr, st) != by_table(tr, st)) {
+          disagree++;
+        }
+        scans++;
+        sm3::tbl_close(tr);
+        sm3::commit(s);
+      }
+      sm3::session_close(s);
+    });
+  }
+  for (size_t i = 3; i < threads.size(); i++) {
+    threads[i].join();
+  }
+  stop = true;
+  for (size_t i = 0; i < 3; i++) {
+    threads[i].join();
+  }
+  CHECK(0 == errors.load());
+  CHECK(0 == disagree.load());
+  MESSAGE("writers' commits: " << commits.load());
+  CHECK(commits.load() > 20);
+  CHECK(600 == scans.load());
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::repeatable_read) == 0);
+  t = f.table(f.a);
+  for (int i = 0; i < 10; i++) {
+    std::string st = "s" + std::to_string(i);
+    CHECK(by_tree(t, st) == by_table(t, st));
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  REQUIRE(sm3::tbl_compact(t) == 0);
+  for (int i = 0; i < 10; i++) {
+    std::string st = "s" + std::to_string(i);
+    CHECK(by_tree(t, st) == by_table(t, st));
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("tree: a unique tree keeps one live row a key under writers") {
+  // Verify a unique tree's check under concurrent writers.
+  // 1. Make a unique tree on owner.
+  // 2. Four writers insert rows of 300 owners at random, delete some
+  //    and move some to another owner, committing or aborting; a
+  //    duplicate fails its transaction, a deadlock too.
+  // 3. At the end, at one snapshot, no owner has two rows, and the
+  //    tree gives each owner's row, once.
+  trees_t f;
+  std::vector<sm3::index_key_spec_t> owner = {{2, false, false, std::nullopt}};
+  uint64_t u = 0;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::create_index(f.a, f.jobs, "u_owner", owner, {}, true, u, false,
+                            false, true) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+  f.builder(1, 10);
+  REQUIRE(sm3::builder_wait(f.a, f.jobs, u) == 0);
+
+  std::atomic<int> errors{0}, commits{0}, dups{0};
+  std::vector<std::thread> threads;
+  for (int w = 0; w < 4; w++) {
+    threads.emplace_back([&, w] {
+      sm3::session_t *s = nullptr;
+      if (sm3::session_open(f.cat, f.open(), s) != 0) {
+        errors++;
+        return;
+      }
+      std::mt19937_64 rng(w + 31);
+      std::vector<uint64_t> mine;
+      for (int round = 0; round < 300; round++) {
+        if (sm3::begin(s, sm1::xctlevel_t::read_committed) != 0) {
+          errors++;
+          break;
+        }
+        sm3::table_t *tw = nullptr;
+        bool ok = sm3::tbl_open(s, f.jobs, sm1::SM_LOCKMODE_IX, tw) == 0;
+        std::vector<uint64_t> added;
+        for (int k = 0; ok && k < 3; k++) {
+          std::string o = "o" + std::to_string(rng() % 300);
+          int what = rng() % 6;
+          if (what < 4 || mine.empty()) {
+            row_t r(w * 10000 + round * 10 + k, "s", o);
+            uint64_t id;
+            ok = sm3::tbl_insert(tw, r.d(), r.null(), id) == 0;
+            if (ok) {
+              added.push_back(id);
+            }
+          } else if (what < 5) {
+            ok = sm3::tbl_delete(tw, mine[rng() % mine.size()]) == 0;
+          } else {
+            row_t r(w, "s", o);
+            ok = sm3::tbl_update(tw, mine[rng() % mine.size()], r.d(),
+                                 r.null()) == 0;
+          }
+          if (!ok) {
+            int e = static_cast<int>(sm1::errnum());
+            if (e == sm1::SM_ERR_DUPKEY) {
+              dups++;
+            } else if (e != sm1::SM_ERR_DEADLOCK && e != sm1::SM_ERR_NOTFOUND &&
+                       e != sm1::SM_ERR_UPDATED) {
+              errors++;
+            }
+          }
+        }
+        sm3::tbl_close(tw);
+        if (ok && rng() % 4 != 0 && sm3::commit(s) == 0) {
+          commits++;
+          mine.insert(mine.end(), added.begin(), added.end());
+        } else {
+          sm3::abort(s);
+        }
+      }
+      sm3::session_close(s);
+    });
+  }
+  for (auto &th : threads) {
+    th.join();
+  }
+  CHECK(0 == errors.load());
+  MESSAGE("commits " << commits.load() << ", duplicates " << dups.load());
+  CHECK(dups.load() > 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::repeatable_read) == 0);
+  sm3::table_t *t = f.table(f.a);
+  std::map<std::string, int> seen;
+  sm3::scan_t *scan = nullptr;
+  REQUIRE(sm3::tbl_scan(t, 0, UINT64_MAX, scan) == 0);
+  uint64_t id;
+  std::string_view tuple;
+  while (sm3::tbl_scannxt(scan, id, tuple) == 0) {
+    sm2::datum_t d;
+    bool n;
+    REQUIRE(sm2::tup_decode(sm3::tbl_def(t).desc, tuple, 2, d, n) == 0);
+    std::string_view v;
+    REQUIRE(sm2::datum_bytes(&sm2::type_text, -1, d, v) == 0);
+    seen[std::string(sm2::varlena_payload(v))]++;
+  }
+  sm3::tbl_scanend(scan);
+  for (const auto &[o, count] : seen) {
+    CAPTURE(o);
+    CHECK(1 == count);
+    CHECK(1u == ids(t, u, o, o).size());
+  }
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 }
