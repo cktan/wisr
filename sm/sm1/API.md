@@ -2095,6 +2095,32 @@ key whose newest version the cursor does not see is handed
 out as the version it does, read from the chain as the store
 stood when the cursor opened.
 
+### int sm1::read_settled(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::rawpin_t* pin, std::string_view& data)
+
+The newest version of `key`, whether or not the snapshot sees
+it, as vacuum judges a tree's entry by its row (`../BTREE.md`
+§7): 0 with its row in `pin` and `data`, or 1 if it is gone,
+when the version is settled, committed at or below the GC
+watermark; 2 when it is not: written by a transaction still
+running, this one included, or committed past the watermark.
+A chained store's key is read as `sm1::chain_read` reads one.
+It locks nothing and waits for no one.
+
+### int sm1::ssi_read_range(sm1::session_t* session, uint64_t storeid, const char* lo, size_t lolen, int lo_inclusive, const char* hi, size_t hilen, int hi_inclusive)
+
+Under serializable, an SIREAD on a range of keys no scan of
+sm1's reads: a tree's entries, read through its pages
+(`../BTREE.md` §8). A concurrent write of a key in it, a
+version's or `sm1::ssi_write_key`'s, makes an rw-edge, as a
+scan's range does. It is not narrowed. Below serializable,
+nothing.
+
+### int sm1::ssi_write_key(sm1::session_t* session, uint64_t storeid, std::string_view key)
+
+Under serializable, a write of a key that is no version: a
+tree's entry. An rw-edge from every concurrent reader whose
+SIREAD covers it. Below serializable, nothing.
+
 ## Page API
 
 Pages (`../BTREE.md` §2): keys of a store the level above lays

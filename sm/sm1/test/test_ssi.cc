@@ -365,3 +365,26 @@ TEST_CASE("an unsafe read-only snapshot stays tracked and still fails") {
   CHECK(f.read(f.c, "y") == "0");
   CHECK(finish(f.c) == sm1::SM_ERR_SERIALIZATION);
 }
+
+TEST_CASE("an SIREAD on keys not stored makes edges as a scan's range") {
+  // Verify ssi_read_range and ssi_write_key, a tree's SSI (BTREE.md §8).
+  // 1. A reads the range [e, m) of keys no version holds, and writes x.
+  // 2. B reads x, and writes the key g, in A's range, that is no
+  //    version either: A -> B and B -> A, a write skew.
+  // 3. A commits; B, second, fails. A key outside the range makes no
+  //    edge: run again with B writing z, and both commit.
+  for (const char *key : {"g", "z"}) {
+    CAPTURE(key);
+    ssi_fixture_t f;
+    REQUIRE(sm1::begin(f.a, SER) == 0);
+    REQUIRE(sm1::begin(f.b, SER) == 0);
+    REQUIRE(sm1::ssi_read_range(f.a, f.store, "e", 1, 1, "m", 1, 0) == 0);
+    f.read(f.b, "x");
+    f.write(f.a, "x", "a");
+    f.write(f.b, "y", "b");
+    REQUIRE(sm1::ssi_write_key(f.b, f.store, key) == 0);
+    CHECK(finish(f.a) == 0);
+    CHECK(finish(f.b) ==
+          (std::string(key) == "g" ? sm1::SM_ERR_SERIALIZATION : 0));
+  }
+}

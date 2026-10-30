@@ -1286,6 +1286,45 @@ int sm1::read(sm1::session_t *session, uint64_t storeid, std::string_view key,
   return sm1::read(session, storeid, key, &session->readpin, data);
 }
 
+/* Read a key's newest version, if settled; see sm1.h. */
+int sm1::read_settled(sm1::session_t *s, uint64_t storeid, std::string_view key,
+                      sm1::rawpin_t *pin, std::string_view &data) {
+  data = std::string_view();
+  sm1::unpin(pin);
+  if (xct_check_active(s) != 0 ||
+      enter(s, xct_view(s), storeid, key.data(), key.size()) != 0) {
+    return -1;
+  }
+  const store_t &st = store_of(s, storeid);
+  if (!st.cf) {
+    return -1;
+  }
+  if (st.chained) {
+    return chain_read_settled(s, st, rocksdb::Slice(key.data(), key.size()),
+                              pin, data);
+  }
+  bool live;
+  uint64_t commit_ts, inflight;
+  uint32_t own_seq;
+  sm0::scope_guard_t put([&] { sm1::unpin(pin); });
+  if (0 != latest_version(s, st, rocksdb::Slice(key.data(), key.size()), &live,
+                          &commit_ts, nullptr, &own_seq, &inflight, pin)) {
+    return -1;
+  }
+  // Another's write in flight, this transaction's own, or a commit
+  // some snapshot may not see yet: not settled. A key with no
+  // version at all has commit_ts 0, and is settled gone.
+  if (0 != inflight || 0 != own_seq || commit_ts > db_watermark(s->db)) {
+    return 2;
+  }
+  if (!live) {
+    return 1;
+  }
+  put.dismiss();
+  data = std::string_view(pin->row.data(), pin->row.size());
+  return 0;
+}
+
 /* Read the newest committed version of a key into pin. */
 int sm1::read_latest(sm1::session_t *session, uint64_t storeid,
                      std::string_view key, sm1::rawpin_t *pin,

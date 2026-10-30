@@ -1555,6 +1555,47 @@ int load_put(loader_t* loader, size_t stream, std::string_view key,
 int load_close(loader_t* loader);
 
 /*
+ * The newest version of key in storeid, whether or not the snapshot
+ * sees it, as vacuum judges a tree's entry by its row (../BTREE.md
+ * §7): 0 with its row in pin and data, or 1 if it is gone, deleted or
+ * never written, when the version is settled -- committed at or below
+ * the GC watermark, so every snapshot sees it and no other; 2 when it
+ * is not: written by a transaction still running, this one included,
+ * or committed past the watermark. A chained store's key is read as
+ * sm1::chain_read reads one. Locks nothing and waits for no one.
+ *
+ * Errors: SM_ERR_INVALID, SM_ERR_NOTFOUND, SM_ERR_NOTRANS,
+ * SM_ERR_PREPARED, SM_ERR_CORRUPT, SM_ERR_IO.
+ */
+int read_settled(session_t* session, uint64_t storeid, std::string_view key,
+                 rawpin_t* pin, std::string_view& data);
+
+/*
+ * Under serializable, an SIREAD on the keys of storeid from lo to hi,
+ * either nullptr for no bound, each inclusive or not, read by no scan
+ * of sm1's: a range of a tree's entries, read through its pages
+ * (../BTREE.md §8, SSI). A write of a key in it by a concurrent
+ * transaction makes an rw-edge, as a scan's range does
+ * (SM1_DESIGN.md §7.1); the range is not narrowed. Below
+ * serializable, and in a safe snapshot, nothing.
+ *
+ * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED.
+ */
+int ssi_read_range(session_t* session, uint64_t storeid, const char* lo,
+                   size_t lolen, int lo_inclusive, const char* hi,
+                   size_t hilen, int hi_inclusive);
+
+/*
+ * Under serializable, a write of key in storeid that is no version of
+ * sm1's: a tree's entry, written to its pages. An rw-edge from every
+ * concurrent reader whose SIREAD covers it, as a write of a version
+ * makes (SM1_DESIGN.md §7.2). Below serializable, nothing.
+ *
+ * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED.
+ */
+int ssi_write_key(session_t* session, uint64_t storeid, std::string_view key);
+
+/*
  * Pages (../BTREE.md §2): keys of a store the level above lays out
  * as B+tree pages, apart from its versions, and none of a
  * transaction's. A page is written outside every transaction, in one

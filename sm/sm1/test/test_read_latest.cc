@@ -193,3 +193,69 @@ TEST_CASE("under a shared lock sm1_read_latest reads but sets no mark") {
   REQUIRE(sm1::abort(t) == 0);
   sm1::closedb(t);
 }
+
+TEST_CASE("read_settled: a newest version only once every snapshot sees it") {
+  // Verify sm1::read_settled, in a versioned store and a chained one.
+  // 1. A key never written is settled gone.
+  // 2. A writer's uncommitted insert is not settled, to it or another.
+  // 3. Committed while an older snapshot is open, it is not settled;
+  //    once that snapshot ends, it is, with its value.
+  // 4. Deleted and committed with no snapshot open, it is settled
+  //    gone.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  sm1::session_t *w = opendb(home.env(), "db");
+  sm1::session_t *r = opendb(home.env(), "db");
+  REQUIRE(w);
+  REQUIRE(r);
+  REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t plain = mkstore(w);
+  uint64_t chained = 0;
+  REQUIRE(sm1::mkstore(w, chained, false, true) == 0);
+  REQUIRE(sm1::commit(w) == 0);
+  sm1::rawpin_t *pin = sm1::rawpin_new();
+  for (uint64_t store : {plain, chained}) {
+    CAPTURE(store);
+    bool ch = store == chained;
+    auto settled = [&](sm1::session_t *s, std::string &out) {
+      std::string_view data;
+      int rc = sm1::read_settled(s, store, "k", pin, data);
+      out.assign(data);
+      sm1::unpin(pin);
+      return rc;
+    };
+    std::string v;
+    REQUIRE(sm1::begin(r, sm1::xctlevel_t::read_committed) == 0);
+    CHECK(1 == settled(r, v));
+    REQUIRE(sm1::commit(r) == 0);
+
+    REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
+    REQUIRE((ch ? sm1::chain_insert(w, store, "k", "v1")
+                : sm1::insert(w, store, "k", "v1")) == 0);
+    CHECK(2 == settled(w, v));
+    REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
+    std::string_view seen;
+    REQUIRE((ch ? sm1::chain_read(r, store, "other", seen)
+                : sm1::read(r, store, "other", seen)) == 1);
+    CHECK(2 == settled(r, v));
+    REQUIRE(sm1::commit(w) == 0);
+    CHECK(2 == settled(r, v));
+    REQUIRE(sm1::commit(r) == 0);
+
+    REQUIRE(sm1::begin(r, sm1::xctlevel_t::read_committed) == 0);
+    CHECK(0 == settled(r, v));
+    CHECK("v1" == v);
+    REQUIRE(sm1::commit(r) == 0);
+
+    REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
+    REQUIRE((ch ? sm1::chain_erase(w, store, "k")
+                : sm1::erase(w, store, "k")) == 0);
+    REQUIRE(sm1::commit(w) == 0);
+    REQUIRE(sm1::begin(r, sm1::xctlevel_t::read_committed) == 0);
+    CHECK(1 == settled(r, v));
+    REQUIRE(sm1::commit(r) == 0);
+  }
+  sm1::rawpin_free(pin);
+  REQUIRE(sm1::closedb(w) == 0);
+  REQUIRE(sm1::closedb(r) == 0);
+}

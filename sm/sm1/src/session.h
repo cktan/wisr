@@ -723,6 +723,13 @@ int chain_scan_next(sm1::scan_t *scan, std::string_view &key,
 void chain_scan_seek(sm1::scan_t *scan, rocksdb::Slice target, int inclusive);
 
 /*
+ * sm1::read_settled of a chained store's key: 0 with its row in pin,
+ * 1 gone, 2 not settled, or -1.
+ */
+int chain_read_settled(sm1::session_t *s, const store_t &st, rocksdb::Slice key,
+                       sm1::rawpin_t *pin, std::string_view &data);
+
+/*
  * Put key's chain back as a rollback leaves it, the caller holding
  * the key's latch: its newest version becomes the newest not written
  * by xid above seq seq_above, and the old versions passed are

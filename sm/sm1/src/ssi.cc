@@ -498,6 +498,56 @@ void ssi_range_open(sm1::scan_t *c, uint64_t storeid, const char *skey,
   s->ssi->ranges.emplace_back(storeid, c->ssi_range);
 }
 
+} // namespace wisr
+
+/* An SIREAD on a range of keys not stored; see sm1.h. */
+int sm1::ssi_read_range(sm1::session_t *s, uint64_t storeid, const char *lo,
+                        size_t lolen, int lo_inclusive, const char *hi,
+                        size_t hilen, int hi_inclusive) {
+  if (xct_check_active(s) != 0) {
+    return -1;
+  }
+  // Non-SERIALIZABLE readers leave no range.
+  if (!s->ssi) {
+    return 0;
+  }
+  ssi_range_t r;
+  r.owner = s->ssi;
+  r.has_lo = lo != nullptr;
+  r.lo_incl = lo_inclusive != 0;
+  if (lo) {
+    r.lo.assign(lo, lolen);
+  }
+  r.has_hi = hi != nullptr;
+  r.hi_incl = hi_inclusive != 0;
+  if (hi) {
+    r.hi.assign(hi, hilen);
+  }
+  // Hold ssi_mu while registering the range.
+  std::lock_guard<std::mutex> guard(s->db->ssi_mu);
+  // A safe snapshot leaves no range.
+  if (s->ssi->safe) {
+    return 0;
+  }
+  std::list<ssi_range_t> &list = s->db->ssi_ranges[storeid];
+  auto it = list.insert(list.end(), std::move(r));
+  // Remember the range on the node, for freeing.
+  s->ssi->ranges.emplace_back(storeid, it);
+  return 0;
+}
+
+/* A write of a key not stored, for SSI; see sm1.h. */
+int sm1::ssi_write_key(sm1::session_t *s, uint64_t storeid,
+                       std::string_view key) {
+  if (xct_check_active(s) != 0) {
+    return -1;
+  }
+  ssi_on_write(s, storeid, rocksdb::Slice(key.data(), key.size()));
+  return 0;
+}
+
+namespace wisr {
+
 /*
  * Narrow a closing scan's range to what it actually traversed
  * (§7.1): through the last key it examined, all of it if it
