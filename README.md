@@ -60,14 +60,20 @@ Start with `sm/README.md`. Before changing code, read
 ## Prerequisites
 
 Developed on Ubuntu 24.04, aarch64; the build must also work
-on x86_64. On Ubuntu:
+on x86_64, and has been on Ubuntu 26.10 with GCC 15, which needs
+the steps under "Newer than Ubuntu 24.04" below. On Ubuntu:
 
 ```
 sudo apt install build-essential cmake git flex bison python3 \
     clang-format librocksdb-dev libicu-dev \
     libsnappy-dev liblz4-dev libzstd-dev zlib1g-dev libbz2-dev \
+    libreadline-dev libpq-dev libssl-dev pkg-config bc \
     postgresql-client linux-tools-generic
 ```
+
+`libreadline-dev` is for building PostgreSQL 18, `libpq-dev`,
+`libssl-dev` and `pkg-config` for digres's test clients, `bc`
+for `bench/btree.sh`.
 
 - **RocksDB 8.9.1**: the system's (`librocksdb-dev` on 24.04)
   for the debug build; the release and TSan builds build their
@@ -81,9 +87,14 @@ sudo apt install build-essential cmake git flex bison python3 \
   git clone https://github.com/janet-lang/janet.git
   cd janet && make -j4 && sudo make install && sudo ldconfig
   ```
-- **`psql` and `pgbench`**, from `postgresql-client`: digres
-  serves PostgreSQL's own clients. PostgreSQL 18's `psql`,
-  built below, is the one to use by hand (§Connect).
+- **`psql`**, from `postgresql-client`: digres serves
+  PostgreSQL's own clients. PostgreSQL 18's `psql`, built below,
+  is the one to use by hand (§Connect).
+- **`pgbench`**, for the benchmarks: PostgreSQL 18's, built
+  below. Ubuntu's is in the server package, and
+  `/usr/bin/pgbench` alone only fails without it, so put the
+  build first: `export
+  PATH=$HOME/p/postgres18/install/bin:$PATH`.
 - **PostgreSQL 18 from source**, for the tests that compare
   with it and for the benchmark:
   - `~/p/postgres18`, a clone of PostgreSQL on REL_18_STABLE,
@@ -97,6 +108,30 @@ sudo apt install build-essential cmake git flex bison python3 \
     `724edf9`) built optimized with no `--enable-cassert` or
     `--enable-debug`, for the benchmark
     (`bench/DESIGN.md` §2).
+
+### Newer than Ubuntu 24.04
+
+Ubuntu 26.10's `librocksdb-dev` is 9.11, and its GCC 15 cannot
+compile RocksDB 8.9.1 as it is. The debug build uses 9.11 with
+no change. The release and TSan builds need two things:
+
+- **Build RocksDB first**, each kind once, as `dg/test/rocksdb.sh`
+  does nothing once its library is there. GCC 15 needs
+  `<cstdint>` given to it (remove `rocksdb/release` or
+  `rocksdb/tsan` first, if a build of it has failed):
+
+  ```
+  CXX="g++ -include cstdint" dg/test/rocksdb.sh release
+  CXX="g++ -include cstdint" dg/test/rocksdb.sh tsan
+  ```
+
+- **Compile against that RocksDB's headers**, not the system's,
+  or the release build fails to link at `rocksdb::DB::Open`.
+  Set this for those builds alone, not for a debug build:
+
+  ```
+  export CPATH=$PWD/rocksdb/src/include
+  ```
 
 ## Building
 
@@ -255,6 +290,12 @@ What each is:
   run commented out, against PostgreSQL's output
   (`dg/test/pgregress/README.md`).
 
+**`TMPDIR` must be on a real disk.** `sm/sm1`'s test of a torn
+record in a zero-filled log fails on tmpfs, as sm zero-fills a
+log only where a sync pays for it (`sm/sm1/WALPREALLOC.md`). If
+`/tmp` is tmpfs, as `df -T /tmp` shows, make a directory on disk
+and set `TMPDIR` to it.
+
 Run on their own, outside `make test`:
 
 | Command | What it runs |
@@ -274,7 +315,10 @@ committed (`CLAUDE.md` §5).
 
 `bench/` measures digres against PostgreSQL 18, on optimized
 builds only (`bench/CODE.md`): a debug build's number measures
-the build.
+the build. `perf` must be allowed to count, which a system with
+`kernel.perf_event_paranoid` above 1 refuses: `sudo sysctl
+kernel.perf_event_paranoid=1`. A virtual machine may also offer
+no hardware counters at all.
 
 ```
 make -j4 bench                 # the release build, then bench/run.sh
