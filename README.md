@@ -85,7 +85,8 @@ for `bench/btree.sh`.
 
   ```
   git clone https://github.com/janet-lang/janet.git
-  cd janet && make -j4 && sudo make install && sudo ldconfig
+  cd janet && git checkout 86ca958e
+  make -j4 && sudo make install && sudo ldconfig
   ```
 - **`psql`**, from `postgresql-client`: digres serves
   PostgreSQL's own clients. PostgreSQL 18's `psql`, built below,
@@ -94,20 +95,38 @@ for `bench/btree.sh`.
   below. Ubuntu's is in the server package, and
   `/usr/bin/pgbench` alone only fails without it, so put the
   build first: `export
-  PATH=$HOME/p/postgres18/install/bin:$PATH`.
+  PATH=$HOME/p/postgres18/install/bin:$PATH`, in `~/.profile`
+  to keep it.
 - **PostgreSQL 18 from source**, for the tests that compare
   with it and for the benchmark:
   - `~/p/postgres18`, a clone of PostgreSQL on REL_18_STABLE,
-    built and installed into its own `install/`
-    (`./configure --prefix=$HOME/p/postgres18/install && make
-    && make install`, and `make -C src/test/isolation`):
-    pgregress, the isolation specs and the regression suite
-    run its `psql` and `pg_regress`. Elsewhere, set
-    `PG18_SRC`. Without it those tests say SKIPPED.
+    built and installed into its own `install/`: pgregress,
+    the isolation specs and the regression suite run its
+    `psql` and `pg_regress`. Elsewhere, set `PG18_SRC`. Without
+    it those tests say SKIPPED. Clone it whole, as `724edf9`
+    below is in its history:
+
+    ```
+    git clone --branch REL_18_STABLE --single-branch \
+        https://github.com/postgres/postgres.git ~/p/postgres18
+    cd ~/p/postgres18
+    ./configure --prefix=$HOME/p/postgres18/install
+    make -j4 && make install && make -C src/test/isolation -j4
+    ```
   - `bench/build/pg18`, PostgreSQL 18.6 itself (commit
     `724edf9`) built optimized with no `--enable-cassert` or
     `--enable-debug`, for the benchmark
-    (`bench/DESIGN.md` §2).
+    (`bench/DESIGN.md` §2), from a worktree of that clone, its
+    prefix the absolute path of this repository's
+    `bench/build/pg18`:
+
+    ```
+    git -C ~/p/postgres18 worktree add --detach \
+        ~/p/postgres18-724edf9 724edf9
+    cd ~/p/postgres18-724edf9
+    ./configure --prefix=$HOME/p/wisr/bench/build/pg18
+    make -j4 && make install
+    ```
 
 ### Newer than Ubuntu 24.04
 
@@ -319,8 +338,24 @@ committed (`CLAUDE.md` §5).
 builds only (`bench/CODE.md`): a debug build's number measures
 the build. `perf` must be allowed to count, which a system with
 `kernel.perf_event_paranoid` above 1 refuses: `sudo sysctl
-kernel.perf_event_paranoid=1`. A virtual machine may also offer
-no hardware counters at all.
+kernel.perf_event_paranoid=1`, until the next reboot. To keep it:
+
+```
+echo 'kernel.perf_event_paranoid = 1' |
+    sudo tee /etc/sysctl.d/90-perf.conf
+```
+
+A virtual machine may also offer no hardware counters at all,
+or only some, so see which it has before relying on them:
+
+```
+perf stat -e instructions,cycles -- true
+```
+
+If `instructions` says `<not supported>`, as on a GCP
+`n4a-standard-4`, which has `cycles` alone, `bench/btree.sh`,
+`bench/relq6/run.sh` and the instruction counts below cannot run
+there.
 
 ```
 make -j4 bench                 # the release build, then bench/run.sh
