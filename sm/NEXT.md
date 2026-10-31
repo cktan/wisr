@@ -438,9 +438,10 @@ Owed, and blocking nothing above:
   adds to a write on a table with a partial or an expression
   index.
 - **The index build is unmeasured.** Four workers is a guess:
-  builds contend on sm1's lock table, one mutex, and on
-  RocksDB's write path. Two indexes built on one table walk
-  its rows twice where one pass could fill both.
+  builds lock rows in sm1's lock table, in 16 partitions since
+  §1 item 4, and contend on RocksDB's write path. Two indexes
+  built on one table walk its rows twice where one pass could
+  fill both.
 - **Nothing reads a range at its newest version.** An
   over-long key in a unique index is refused instead
   (`sm3/SM3_DESIGN.md` §7). The primitive is built when a
