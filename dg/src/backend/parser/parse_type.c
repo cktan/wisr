@@ -166,8 +166,8 @@ LookupTypeNameExtended(ParseState *pstate,
 		DeconstructQualifiedName(typeName->names, &schemaname, &typname);
 
 		/*
-		 * numeric is a name for a decimal, not a type (DG_DECIMAL_PLAN.md
-		 * section 3.1): decimal64 up to 17 digits, decimal128 past them, and
+		 * numeric is a name for a decimal, not a type (DECIMAL.md
+		 * section 2.1): decimal64 up to 17 digits, decimal128 past them, and
 		 * a bare numeric decimal64 with no typmod, a value keeping its scale
 		 * (DECIMAL.md section 2.1); a column of it is stored as
 		 * numeric(17, 3) (smstore.c).

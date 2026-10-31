@@ -10192,7 +10192,7 @@
 # GiST stratnum implementations
 
 
-# decimal64 (DG_DECIMAL_PLAN.md)
+# decimal64 (DECIMAL.md section 2.8)
 { oid => '8385', descr => 'I/O',
   proname => 'decimal64_in', prorettype => 'decimal64',
   proargtypes => 'cstring oid int4', prosrc => 'decimal64_in' },

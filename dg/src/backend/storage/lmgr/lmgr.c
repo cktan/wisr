@@ -187,7 +187,7 @@ bool CheckRelationOidLockedByMe(Oid relid, LOCKMODE lockmode, bool orstronger) {
  * Object locks, of a database's objects and of shared ones, are no-ops: no
  * object in digres needs one here.  A built-in is compiled in and never
  * changes, and every other object -- a namespace, a table, the database a
- * session opens -- is sm's, which locks it itself (PLAN.md section 7).
+ * session opens -- is sm's, which locks it itself (DESIGN.md section 4).
  */
 
 /*

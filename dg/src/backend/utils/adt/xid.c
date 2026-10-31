@@ -98,7 +98,7 @@ Datum hashxidextended(PG_FUNCTION_ARGS) {
  *latest stable xid)
  */
 Datum xid_age(PG_FUNCTION_ARGS) {
-  /* Refused: digres assigns no xid to measure from (PLAN.md section 7). */
+  /* Refused: digres assigns no xid to measure from (DESIGN.md section 4). */
   ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                   errmsg("digres assigns no transaction ids")));
   PG_RETURN_NULL(); /* not reached */

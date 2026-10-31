@@ -6,7 +6,7 @@ refused with an error, features removed outright, and features
 that run but behave differently; and, in §10, what digres takes
 that PostgreSQL does not. It is a map, not the record:
 each entry names where the reasons are, a `WORKNOTE.md` step,
-`PLAN.md`'s decisions, or a design document under `../sm/`.
+`DESIGN.md`'s decisions, or a design document under `../sm/`.
 
 Each entry is marked:
 
@@ -27,7 +27,7 @@ regression files are taken out for it (`test/pgregress`,
 ## 1. Tables and storage
 
 - **Table inheritance** — never. `CREATE TABLE ... INHERITS`
-  and `ALTER TABLE ... INHERIT` are refused (`PLAN.md` §7,
+  and `ALTER TABLE ... INHERIT` are refused (`DESIGN.md` §4,
   2026-10-23): rows are named by their key, and the tables of
   a tree would name theirs by different columns.
 - **Partitioning** — refused. `PARTITION BY` and `PARTITION
@@ -98,7 +98,7 @@ regression files are taken out for it (`test/pgregress`,
   build after the commit says `could not create index "x":`
   before PostgreSQL's message, with another SQLSTATE.
 - **A unique index or constraint made on a table with rows**
-  — differs: it is built after the commit (`PLAN.md` §7),
+  — differs: it is built after the commit (`DESIGN.md` §4),
   so in a transaction block a duplicate key is reported at
   `COMMIT`, after the block's other work has committed, and
   the index is not there.
@@ -191,7 +191,7 @@ regression files are taken out for it (`test/pgregress`,
   xid, tid, pg_lsn. A column is bool, int2, int4, int8,
   float4, float8, numeric, text, varchar, char(n), name, bytea,
   date, time, timestamp, timestamptz, interval or uuid.
-- **Geometric types** — never (`PLAN.md` §7).
+- **Geometric types** — never (`DESIGN.md` §4).
 - **Text search** — removed: tsvector, tsquery, their DDL and
   functions (step 2).
 - **numeric** — differs: decimal64 or decimal128, at most 36
@@ -225,7 +225,7 @@ regression files are taken out for it (`test/pgregress`,
   syslogger, csvlog and jsonlog, cumulative statistics and the
   `pg_stat_*` views, background workers, AIO, synchronized
   scans, crash restart (steps 11, 20, 21, 28 and others). A
-  session is a thread (`PLAN.md`).
+  session is a thread (`DESIGN.md` §1).
 - **pg_hba.conf, pg_ident.conf** — removed (step 92): a client
   gets in by `../aa/ROLE.md` §5's checks, peer or a password
   on the socket, a password over TCP (steps 320, 327).

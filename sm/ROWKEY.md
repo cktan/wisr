@@ -210,7 +210,7 @@ Nothing reads many rows of a table with a primary key in
   (`add_row_identity_columns`, `appendinfo.c`) it adds a Var
   for each key column, named for the result relation. A keyless
   table adds `_id`. digres supports no table inheritance
-  (`../dg/PLAN.md` §7), so a plan's rows are of one table's.
+  (`../dg/DESIGN.md` §4), so a plan's rows are of one table's.
 - **Row marks** (`preptlist.c`) do the same in place of
   `ctidN` when they lock, and `ExecAuxRowMark` keeps the
   attribute numbers of the key's columns where it kept

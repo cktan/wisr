@@ -373,7 +373,7 @@ Const *make_const(ParseState *pstate, A_Const *aconst) {
 
       /*
        * A decimal64 if it has at most 17 digits, a decimal128 if at most 36
-       * (DG_DECIMAL_PLAN.md section 3.1); else, as in DuckDB, a float8,
+       * (DECIMAL.md section 2.4); else, as in DuckDB, a float8,
        * which takes 1e300 and loses digits past its own.  A literal with an
        * exponent is a float8 whatever its digits.
        */

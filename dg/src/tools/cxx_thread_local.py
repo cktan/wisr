@@ -3,7 +3,7 @@
 cxx_thread_local.py -- make every writable global thread_local.
 
 digres is to run each session in a thread of one process
-(PLAN.md section 3). Every writable global or static is then
+(DESIGN.md section 3). Every writable global or static is then
 thread_local, one copy a thread, and a comment after the keyword
 tells what it is (c.h): /*SHARED*/ for one every session reads as
 its parent left it, /*LOCAL*/ for one a session keeps for itself.

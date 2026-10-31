@@ -1,8 +1,8 @@
 # Work in progress: step 3, connections as threads
 
-Where step 3 of `PLAN.md` (§5) stood on `wip-dg` when it
-ended. `PLAN.md` §5.1 is the summary; this is the detail, and
-what was left.
+Where step 3, connections as threads, stood on `wip-dg` when
+it ended. `DESIGN.md` §1 is the summary, and §2 the order of
+the steps; this is the detail, and what was left.
 
 **A record, kept as it was written.** Much of it has changed
 since, each change a step of `WORKNOTE.md`: the `/*SHARED*/`
@@ -101,19 +101,14 @@ and a fast shutdown with an idle session open (`SignalProc`).
 
 ## Left
 
-- **Step 3 is done** (`PLAN.md` §5). What follows is step 4
-  and these gaps.
-- **sm and RocksDB are not built for TSan**: a race inside
-  them would not show.
+- **Steps 3 and 4 are done** (`DESIGN.md` §2). What is
+  left are these gaps.
 - **Crash and immediate shutdown.** `SIGQUIT` reaches a thread
   as a flag, and `quickdie()` calls `_exit(2)`: the whole
   server ends. A thread that ends abnormally stops the server
   too: there is no crash restart (`WORKNOTE.md` step 23).
 - **Nothing forks but `popen()`** (`WORKNOTE.md` steps 17 and
   20): `COPY ... PROGRAM` and the like, which exec at once.
-- **Untested**: cancel and terminate from SQL (a function call
-  needs catalog tables), and a reload (`SIGHUP`) reaching a
-  session.
 - **A session thread has no `SIGFPE` handler**: the process's
   disposition, the postmaster's, applies.
 - **RocksDB's files are counted by no one.** The sessions'

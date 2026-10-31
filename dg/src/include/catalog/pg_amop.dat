@@ -1258,7 +1258,7 @@
 # bloom pg_lsn
 # inclusion box
 
-# decimal64 (DG_DECIMAL_PLAN.md)
+# decimal64 (DECIMAL.md section 2.8)
 { amopfamily => 'btree/decimal64_ops', amoplefttype => 'decimal64',
   amoprighttype => 'decimal64', amopstrategy => '1',
   amopopr => '<(decimal64,decimal64)', amopmethod => 'btree' },

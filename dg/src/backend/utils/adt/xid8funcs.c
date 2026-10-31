@@ -240,7 +240,7 @@ bad_format:
 
 /*
  * pg_current_xact_id() returns xid8: refused, as digres assigns no
- * transaction id (PLAN.md section 7).
+ * transaction id (DESIGN.md section 4).
  */
 Datum pg_current_xact_id(PG_FUNCTION_ARGS) {
   ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),

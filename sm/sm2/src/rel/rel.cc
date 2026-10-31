@@ -828,7 +828,7 @@ int rel_lock(rel_t *rel, std::string_view key, sm1::lockmode_t mode,
   // Held to the end of the transaction, as a write's lock is.
   std::string k = row_key(rel->relid, key);
   return rel->chained
-             ? sm1::chain_lock(rel->session, rel->storeid, k, mode, as_read)
+             ? sm1::chain_lock_row(rel->session, rel->storeid, k, mode, as_read)
              : sm1::lock_row(rel->session, rel->storeid, k, mode, as_read);
 }
 
@@ -838,7 +838,8 @@ int rel_trylock(rel_t *rel, std::string_view key, sm1::lockmode_t mode,
   // The same lock, asked for without waiting.
   std::string k = row_key(rel->relid, key);
   return rel->chained
-             ? sm1::chain_trylock(rel->session, rel->storeid, k, mode, as_read)
+             ? sm1::chain_trylock_row(rel->session, rel->storeid, k, mode,
+                                      as_read)
              : sm1::trylock_row(rel->session, rel->storeid, k, mode, as_read);
 }
 

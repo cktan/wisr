@@ -106,7 +106,7 @@ file modes, and modules' own state (`utils/control_block.h`).
   (step 166).
 - **Advisory locks** are in a table of digres's own
   (storage/lmgr `advisory_lock.c`, `WORKNOTE.md` step 153), not
-  sm's: they guard nothing stored (`PLAN.md` §7). A mutex, the
+  sm's: they guard nothing stored (`DESIGN.md` §4). A mutex, the
   holders of each key, and a condition variable its waiters
   sleep on in `sm_wait()`; a deadlock among advisory waits is
   found as a session starts to wait. One through an sm lock as

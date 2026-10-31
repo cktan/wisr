@@ -56,15 +56,12 @@ its catalog is being replaced, not created (`../sm/PART4.md`
 - `ISSUE.md`: the problems known and left unfixed.
 - `UNSUPPORTED.md`: what of PostgreSQL digres refuses, has
   removed, or does otherwise.
-- `PLAN.md`: the handover that took digres to one process
-  with a thread a session; its §7 holds the decisions of
-  record.
-- `DGWORK.md`: the first recommendation, written before
-  anything linked.
+- `DESIGN.md`: digres's design of record: one process with a
+  thread a session, how it got there, and its §4 the decisions
+  of record.
 - `SYSCATALOG.md`: the catalog relations psql's `\d`
   commands read; being built.
-- `DECIMAL.md` and `DG_DECIMAL_PLAN.md`: `numeric` as sm's
-  two decimals; built.
+- `DECIMAL.md`: `numeric` as sm's two decimals; built.
 - `STATISTICS.md`: how ANALYZE and the planner use sm's
   statistics.
 - `SCHEMACACHE.md`: a session's schema kept across

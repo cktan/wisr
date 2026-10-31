@@ -117,10 +117,10 @@ int row_scan(sm1::session_t *s, uint64_t store, const char *skey, size_t sklen,
                                eklen, ekey_inclusive, out);
 }
 
-/* sm1::lock_row, or sm1::chain_lock in chained mode. */
+/* sm1::lock_row, or sm1::chain_lock_row in chained mode. */
 int row_lock(sm1::session_t *s, uint64_t store, std::string_view key,
              sm1::lockmode_t mode, bool as_read) {
-  return g_chained ? sm1::chain_lock(s, store, key, mode, as_read)
+  return g_chained ? sm1::chain_lock_row(s, store, key, mode, as_read)
                    : sm1::lock_row(s, store, key, mode, as_read);
 }
 

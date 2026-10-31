@@ -151,7 +151,7 @@
 { oid => '4225',
   opfmethod => 'hash', opfname => 'multirange_ops' },
 
-# decimal64 (DG_DECIMAL_PLAN.md)
+# decimal64 (DECIMAL.md section 2.8)
 { oid => '8423',
   opfmethod => 'btree', opfname => 'decimal64_ops' },
 { oid => '8424',

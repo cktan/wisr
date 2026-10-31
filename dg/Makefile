@@ -83,7 +83,7 @@ ifeq ($(FLAVOR),obj)
 OPT ?= -O0 -g
 SERVER := build/digres
 # A session is to be a thread: no writable global may be left that is
-# not thread_local (PLAN.md section 3). The default build's objects are
+# not thread_local (DESIGN.md section 3). The default build's objects are
 # the ones checked; the others are of the same sources, and the
 # sanitizer's have static initialisers of its own.
 CHECK_GLOBALS := python3 -B src/tools/cxx_thread_local.py --check $(OBJDIR)

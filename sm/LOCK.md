@@ -60,10 +60,16 @@ Each lock has a type, `LOCKTYPE_ROW` or `LOCKTYPE_OID`, which
 lock is named `type ‖ be64(storeid) ‖ userkey`, an oid's with
 storeid 0 and userkey `be64(oid)`, so **two locks of different
 types never conflict**, however equal their storeid and key.
-The lock table keys it by two 64-bit words, the storeid and the
-oid, or a hash of a row's key, so two rows whose keys hash
-alike may conflict needlessly (`sm1/SM1_DESIGN.md` §5.1); the
-name is kept whole in the transaction's lock list.
+**The shared lock table holds only a hash, never a row's
+key.** It keys an entry by two 64-bit words, the storeid and
+the oid, or a hash of a row's key, and an entry holds those
+words, its holders and their modes, nothing more. So conflicts
+are decided on the hash, and two rows whose keys hash alike may
+conflict needlessly (`sm1/SM1_DESIGN.md` §5.1). The key is kept
+whole only by the transaction that took the lock, in its own
+lock list, and in what that list feeds: the `PREPARED` record
+and `sm1::lock_status` (`sm1/LOCKID.md` plans to drop it there
+too).
 
 **What the caller passes.** The name, whole; sm1 does any
 encoding and hashing.

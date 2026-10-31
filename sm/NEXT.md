@@ -296,7 +296,7 @@ Low priority:
    now that no write keeps a row lock.
 2. **digres's `xact.c`, until it is empty.** sm keeps the
    transaction; `xact.c` keeps only what a DG session needs
-   around it (`../dg/PLAN.md` §7), and what it no longer needs
+   around it (`../dg/DESIGN.md` §4), and what it no longer needs
    is deleted as it is found. Nothing is moved out of it just
    so the file goes (`../dg/WORKNOTE.md` steps 232 to 236).
    It is 2,893 lines.
@@ -446,8 +446,8 @@ Owed, and blocking nothing above:
   PostgreSQL's advisory locks (`pg_advisory_lock()`,
   `pg_advisory_xact_lock()` and the rest) in a table of its
   own, `../dg/src/backend/storage/lmgr/advisory_lock.c`, with
-  a deadlock detector for cycles among them (`../dg/PLAN.md`
-  §7). A cycle through an advisory lock and an sm1 lock is
+  a deadlock detector for cycles among them (`../dg/DESIGN.md`
+  §4). A cycle through an advisory lock and an sm1 lock is
   seen by neither, and waits until `lock_timeout` or a cancel. sm1 could take
   an edge from its caller -- "session A waits for session B",
   set while A waits on the advisory lock and cleared after --

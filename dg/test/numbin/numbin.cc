@@ -1,5 +1,5 @@
 // numbin -- bind numerics as a driver does, in binary and typed 1700, and
-// fetch them in binary (DG_DECIMAL_PLAN.md section 3.5), over libpq.
+// fetch them in binary (DECIMAL.md section 2.1), over libpq.
 //
 //   numbin CONNINFO
 //

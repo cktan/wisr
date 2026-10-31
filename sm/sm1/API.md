@@ -25,7 +25,7 @@ interface, and the handles are opaque.
   `sm1::chain_read_latest` and `sm1::scannxt` return 1 to mean
   "no row"; `sm1::lastseq` 1 to mean "no value handed out
   yet"; `sm1::trylock_row`, `sm1::trylock_oid` and
-  `sm1::chain_trylock` 1 to mean "it
+  `sm1::chain_trylock_row` 1 to mean "it
   would have waited".
 - A call that yields a handle — `sm1::attach`, `sm1::opendb`,
   `sm1::scan` — returns 0 or -1 like any other, and hands the
@@ -2046,9 +2046,8 @@ bytes are two keys.
 Each call is the call of its name without `chain_`, with the
 same checks, conflicts, waits and errors (`sm1::insert`,
 `sm1::insert_new`, `sm1::update`, `sm1::erase`,
-`sm1::erase_moved`, `sm1::read`, `sm1::read_latest`, and
-`sm1::lock_row` and `sm1::trylock_row` for `sm1::chain_lock`
-and `sm1::chain_trylock`), and
+`sm1::erase_moved`, `sm1::read`, `sm1::read_latest`,
+`sm1::lock_row` and `sm1::trylock_row`), and
 `SM_ERR_INVALID` besides on a store that is not chained. An
 abort leaves its versions for readers to pass and GC to
 remove; a rollback to a savepoint puts the chain back.
@@ -2084,12 +2083,12 @@ int chain_read_latest(session_t* session, uint64_t storeid,
 int chain_read_batch(session_t* session, uint64_t storeid,
                      const std::string_view* keys, size_t n,
                      rawpin_t** pins, std::string_view* data, int* rc);
-int chain_lock(session_t* session, uint64_t storeid,
-               std::string_view key, lockmode_t mode,
-               bool as_read = false);
-int chain_trylock(session_t* session, uint64_t storeid,
-                  std::string_view key, lockmode_t mode,
-                  bool as_read = false);
+int chain_lock_row(session_t* session, uint64_t storeid,
+                   std::string_view key, lockmode_t mode,
+                   bool as_read = false);
+int chain_trylock_row(session_t* session, uint64_t storeid,
+                      std::string_view key, lockmode_t mode,
+                      bool as_read = false);
 ```
 
 `sm1::chain_read_batch` is `sm1::chain_read` of `n` keys in one

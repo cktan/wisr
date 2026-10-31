@@ -1,6 +1,6 @@
 -- Verify that a numeric of at most 17 digits is a decimal64, by value, and
 -- that a client sees both decimals as PostgreSQL's numeric
--- (DG_DECIMAL_PLAN.md).
+-- (DECIMAL.md section 2.8).
 -- 1. A literal is a decimal64 to 17 digits, a decimal128 past them, and a
 --    float8 with an exponent; a bare numeric is decimal64(17,3).
 -- 2. numeric and decimal name decimal64 to 17 digits, decimal128 past

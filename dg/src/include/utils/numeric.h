@@ -63,7 +63,7 @@ typedef decimal_t *Numeric;
 
 /*
  * The OID a client knows numeric by, PostgreSQL's: digres's decimals go
- * to a client and come from one under it (DG_DECIMAL_PLAN.md section 3.5).
+ * to a client and come from one under it (DECIMAL.md section 2.1).
  */
 #define NUMERIC_WIRE_OID 1700
 
@@ -84,7 +84,7 @@ static inline Oid numeric_wire_oid(Oid typid) {
 
 /*
  * The type a client's OID typid names: numeric's names decimal128, which
- * holds any value a client sends (DG_DECIMAL_PLAN.md section 3.5).
+ * holds any value a client sends (DECIMAL.md section 2.1).
  */
 static inline Oid numeric_oid_from_wire(Oid typid) {
   return typid == NUMERIC_WIRE_OID ? DECIMAL128OID : typid;
