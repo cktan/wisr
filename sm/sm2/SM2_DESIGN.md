@@ -995,7 +995,7 @@ its key, as `rel_insert` gives it:
 | `rel_reserve`, `rel_insert_at` | draws a keyless row's `_id` early, for a caller that writes something of the row first, then inserts as `rel_insert` under it | `sm1::nextseq`, then as `rel_insert` |
 | `rel_read` | reads a row by its key, and its `_id`, from the key, 0 for a keyed row | `sm1::read`; chained, `sm1::chain_read` |
 | `rel_read_batch` | the rows at n keys, in one call, each into a pin (`../BATCHREAD.md`) | `sm1::read` each; chained, `sm1::chain_read_batch` |
-| `rel_trylock` | as `rel_lock` (below), never waiting: 1 with nothing taken if it would have | `sm1::trylock_row`; chained, `sm1::chain_trylock` |
+| `rel_trylock` | as `rel_lock` (below), never waiting: 1 with nothing taken if it would have | `sm1::trylock_row`; chained, `sm1::chain_trylock_row` |
 | `rel_update`, `rel_delete` | by key; hands back the old image as a **tuple**, not bytes; `rel_update` takes datums or a pre-encoded tuple, checked as `rel_insert`'s is, and moves a row whose primary key changed, its old key erased with a move's tombstone (`../ROWKEY.md` §2.3) | `sm1::update`, `sm1::erase`, `sm1::erase_moved`, `sm1::insert`; chained, `sm1::chain_update`, `sm1::chain_erase`, `sm1::chain_erase_moved`, `sm1::chain_insert` |
 | `rel_read_latest` | the newest committed image, decoded | `sm1::read_latest`; chained, `sm1::chain_read_latest` |
 | `rel_load`, `idx_load` | puts a row, or an index's entry, into a bulk load of the store, as `rel_insert` or `idx_insert` would write it; nothing is in the store until the load is closed | `sm1::load_put` |
@@ -1026,9 +1026,9 @@ columns, and sm3 never encodes a key itself, so sm2 gives it a
   `idx_scan_rows` hands them out in key order as rows.
 
 `rel_lock` takes a row's lock without writing it, as
-`sm1::lock_row` does, or `sm1::chain_lock` over a chained store:
-`SELECT … FOR SHARE` and `FOR UPDATE`, and what sm3's index
-build holds on a row while it adds the row's entry
+`sm1::lock_row` does, or `sm1::chain_lock_row` over a chained
+store: `SELECT … FOR SHARE` and `FOR UPDATE`, and what sm3's
+index build holds on a row while it adds the row's entry
 (`sm3/SM3_DESIGN.md` §3).
 
 sm2 prepends and strips the relid for both kinds, and the

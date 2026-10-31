@@ -448,8 +448,8 @@ int idx_find_latest(index_t *index, std::span<const datum_t> key,
   // sm1 reads a newest version only under a lock that keeps it
   // the newest. Shared is enough: nothing is to be written.
   const bool chained = chained_rows(index);
-  if ((chained ? sm1::chain_lock(index->session, index->storeid, k,
-                                 sm1::SM_LOCKMODE_SH)
+  if ((chained ? sm1::chain_lock_row(index->session, index->storeid, k,
+                                     sm1::SM_LOCKMODE_SH)
                : sm1::lock_row(index->session, index->storeid, k,
                                sm1::SM_LOCKMODE_SH)) != 0) {
     return -1;

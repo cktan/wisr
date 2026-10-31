@@ -501,8 +501,8 @@ outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=seria
 every row verb calls the `chain_` counterpart of its call
 (`sm1::chain_read`, `chain_read_latest`, `chain_insert`,
 `chain_update`, `chain_erase`, `chain_erase_moved`, `chain_scan`,
-`chain_lock`). A store a script makes with `mkstore` is a plain
-one, as it holds no row.
+`chain_lock_row`). A store a script makes with `mkstore` is a
+plain one, as it holds no row.
 
 `make scenarios` runs every script in both modes and diffs both
 transcripts against the one expected transcript in `mvcc/good`:

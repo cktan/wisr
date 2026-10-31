@@ -1396,9 +1396,8 @@ bool scan_rolled_back(const scan_t* scan);
  * Each call is the call of its name without chain_, with the same
  * checks, conflicts, waits and errors (sm1::insert, sm1::insert_new,
  * sm1::update, sm1::erase, sm1::erase_moved, sm1::read,
- * sm1::read_latest, and sm1::lock_row and sm1::trylock_row for
- * chain_lock and chain_trylock), and SM_ERR_INVALID besides on a
- * store that is not chained. An abort leaves its versions for
+ * sm1::read_latest, sm1::lock_row and sm1::trylock_row), and
+ * SM_ERR_INVALID besides on a store that is not chained. An abort leaves its versions for
  * readers to pass and GC to remove; a rollback to a savepoint puts
  * the chain back.
  */
@@ -1446,11 +1445,12 @@ int chain_read_latest(session_t* session, uint64_t storeid,
 int chain_read_batch(session_t* session, uint64_t storeid,
                      const std::string_view* keys, size_t n,
                      rawpin_t** pins, std::string_view* data, int* rc);
-int chain_lock(session_t* session, uint64_t storeid,
-               std::string_view key, lockmode_t mode, bool as_read = false);
-int chain_trylock(session_t* session, uint64_t storeid,
-                  std::string_view key, lockmode_t mode,
-                  bool as_read = false);
+int chain_lock_row(session_t* session, uint64_t storeid,
+                   std::string_view key, lockmode_t mode,
+                   bool as_read = false);
+int chain_trylock_row(session_t* session, uint64_t storeid,
+                      std::string_view key, lockmode_t mode,
+                      bool as_read = false);
 
 /*
  * sm1::approxsize of a chained store's chained keys in [lo, hi):

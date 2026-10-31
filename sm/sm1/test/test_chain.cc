@@ -178,7 +178,7 @@ TEST_CASE("a temporary store may be chained") {
   std::string_view v;
   REQUIRE(sm1::chain_read(f.s, c, "k", v) == 0);
   CHECK(v == "v2");
-  CHECK(sm1::chain_lock(f.s, c, "k", sm1::SM_LOCKMODE_EX) == 0);
+  CHECK(sm1::chain_lock_row(f.s, c, "k", sm1::SM_LOCKMODE_EX) == 0);
   commit_xct(f.s);
 
   REQUIRE(sm1::begin(f.s, sm1::xctlevel_t::read_committed, true) == 0);
@@ -788,16 +788,16 @@ TEST_CASE("the chained calls a row layer needs: insert_new, old images, "
   chain_put(f.s, c, "k", "v2", false);
   CHECK(sm1::chain_update(t, c, "k", "x") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
-  REQUIRE(sm1::chain_lock(t, c, "k", sm1::SM_LOCKMODE_EX) == 0);
+  REQUIRE(sm1::chain_lock_row(t, c, "k", sm1::SM_LOCKMODE_EX) == 0);
   std::string_view v;
   REQUIRE(sm1::chain_read_latest(t, c, "k", v) == 0);
   CHECK(v == "v2");
   REQUIRE(sm1::chain_update(t, c, "k", "v3") == 0);
 
   begin_xct(f.s, sm1::xctlevel_t::repeatable_read);
-  CHECK(sm1::chain_trylock(f.s, c, "k", sm1::SM_LOCKMODE_SH) == 1);
+  CHECK(sm1::chain_trylock_row(f.s, c, "k", sm1::SM_LOCKMODE_SH) == 1);
   commit_xct(t);
-  CHECK(sm1::chain_lock(f.s, c, "k", sm1::SM_LOCKMODE_SH) == -1);
+  CHECK(sm1::chain_lock_row(f.s, c, "k", sm1::SM_LOCKMODE_SH) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
 
   begin_xct(f.s);
