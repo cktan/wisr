@@ -24,7 +24,9 @@
 # PROFILE=1 records Q9's and Q10's instructions with perf record into
 # the work directory instead of counting them. Builds as CODE.md says:
 # ../dg/build/digres-release and build/pg18. PERF names perf, the one
-# for the running kernel when perf alone does not run (WSL).
+# for the running kernel when perf alone does not run (WSL). PERF_EVENT
+# names what is counted, instructions:u by default; a VM with no
+# hardware counters counts task-clock, the server's CPU in ms.
 cd "$(dirname "$0")" || exit 1
 set -u
 sys=${1:?dg or pg} kind=${2:?plain or tree}
@@ -35,6 +37,7 @@ pg18=$here/build/pg18
 psql=${PSQL:-psql}
 pgbench=${PGBENCH:-pgbench}
 perf=${PERF:-perf}
+perf_event=${PERF_EVENT:-instructions:u}
 n=${N:-300}
 warm=${WARM:-60}
 conc_s=${CONC_S:-20}
@@ -111,7 +114,7 @@ measure() {
     "$perf" record -e instructions:u -c 20000 -o "$work/perf.data.$q" \
       -p "$pid" 2> /dev/null &
   else
-    "$perf" stat -e instructions:u -x, -o "$work/perf.$q" -p "$pid" &
+    "$perf" stat -e "$perf_event" -x, -o "$work/perf.$q" -p "$pid" &
   fi
   local counter=$!
   sleep 0.5
@@ -130,9 +133,9 @@ measure() {
   local ins
   # A line for each kind of core the machine has, "<not counted>" for
   # a kind the server did not run on.
-  ins=$(grep instructions "$work/perf.$q" | cut -d, -f1 |
-    grep -E '^[0-9]+$' | paste -sd+ | bc)
-  echo "$sys $kind $q instructions_per_stmt $((ins / n))"
+  ins=$(grep -F "${perf_event%%:*}" "$work/perf.$q" | cut -d, -f1 |
+    grep -E '^[0-9.]+$' | paste -sd+ | bc)
+  echo "$sys $kind $q ${perf_event%%:*}_per_stmt $(echo "scale=3; $ins / $n" | bc)"
 }
 measure q9 "prepare q9(int8) as select sum(c1) from wide_mixed where c2 between \$1 and \$1 + 99;"
 measure q10 "prepare q10(int8[]) as select c1 from wide_mixed where c2 = any(\$1);"
