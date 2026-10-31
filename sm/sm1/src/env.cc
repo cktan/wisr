@@ -103,11 +103,12 @@ bool parse_dbid(const char *name, uint64_t *dbid) {
 
 /*
  * Decide how every database of the home writes its new logs, and make
- * env->wal_env if they are zero-filled (WALPREALLOC.md). The home's
- * first attach times a sync that grows a file against one that does
- * not, in base/, and keeps the answer in the root db; every attach
- * after reads it. A probe that fails zero-fills nothing and keeps
- * nothing, so the next attach probes again.
+ * env->wal_env if they are zero-filled (WALPREALLOC.md). Off WSL they
+ * are not. On it, the home's first attach times a sync that grows a
+ * file against one that does not, in base/. Either way the answer is
+ * kept in the root db, and every attach after reads it. A probe that
+ * fails zero-fills nothing and keeps nothing, so the next attach
+ * probes again.
  */
 int wal_prealloc(sm1::env_t *env) {
   std::string val;
@@ -125,19 +126,23 @@ int wal_prealloc(sm1::env_t *env) {
     bytes = sm0::get_be64(val.data());
   } else {
     double append_us, overwrite_us;
-    // The first attach: time the file system the databases are on.
-    if (wal_probe(base_dir(env->homedir), &append_us, &overwrite_us) != 0) {
-      log_msg(sm1::loglevel_t::warn,
-              "{}: could not time a sync; new logs are not zero-filled",
-              env->homedir.c_str());
-      return 0;
+    // The first attach, on WSL: time the file system the databases are
+    // on. Nowhere else has a sync's cost been worth 64 MB a log.
+    if (wal_on_wsl()) {
+      if (wal_probe(base_dir(env->homedir), &append_us, &overwrite_us) != 0) {
+        log_msg(sm1::loglevel_t::warn,
+                "{}: could not time a sync; new logs are not zero-filled",
+                env->homedir.c_str());
+        return 0;
+      }
+      bytes =
+          wal_prealloc_pays(append_us, overwrite_us) ? wal_prealloc_bytes : 0;
+      log_msg(sm1::loglevel_t::info,
+              "{}: a sync takes {:.0f} us after an append, {:.0f} us after "
+              "an overwrite: new logs are {}",
+              env->homedir.c_str(), append_us, overwrite_us,
+              bytes ? "zero-filled to 64 MB" : "not zero-filled");
     }
-    bytes = wal_prealloc_pays(append_us, overwrite_us) ? wal_prealloc_bytes : 0;
-    log_msg(sm1::loglevel_t::info,
-            "{}: a sync takes {:.0f} us after an append, {:.0f} us after an "
-            "overwrite: new logs are {}",
-            env->homedir.c_str(), append_us, overwrite_us,
-            bytes ? "zero-filled to 64 MB" : "not zero-filled");
     std::string be;
     sm0::put_be64(be, bytes);
     rocksdb::WriteOptions wo;

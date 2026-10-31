@@ -54,16 +54,24 @@ files full size; RocksDB turns it off under
   acknowledged -- reads as a bad checksum where today it
   reads as a short file; under `kPointInTimeRecovery` both
   end the replay there, with every record before it.
-- **The zeroing is on the write path**: RocksDB makes a new
-  log when it switches memtables, in the write that does, so
-  that commit pays for 64 MB written and synced once. It is
-  measured (§4); making the next log ahead, in the
-  background, is left for later (§5).
+- **The zeroing is off the write path**: RocksDB makes a new
+  log when it switches memtables, in the write that does. From
+  a directory's second log, a thread zeroes the next one ahead,
+  `sm_walspare`, one a home, and the new log is that file
+  renamed (`ReuseWritableFile`), so RocksDB writes from offset 0
+  over its zeros. A log with no spare ready waits for it; with
+  none being made, as a directory's first, it is zeroed in
+  place. A crash can leave a spare until its database next
+  opens; RocksDB ignores it.
 - **The temporary instance** writes no log (`../TEMPTABLE.md`
   §2): it is not wrapped.
-- **sm decides, once, for the home directory**: what a sync of
-  a growing file costs is the file system's, and another may
-  charge nothing for it. The home's first attach -- digres's
+- **Only on WSL**: a home off it keeps 0, with nothing timed.
+  Elsewhere a tree's load paid 64 MB a log for a commit sync no
+  one had measured to need it. WSL is known by its kernel's
+  release, `/proc/sys/kernel/osrelease` (`wal_on_wsl()`).
+- **On WSL, sm decides, once, for the home directory**: what a
+  sync of a growing file costs is the file system's, and another
+  may charge nothing for it. The home's first attach -- digres's
   `initdb` -- times 8 syncs after a 100-byte append and 8
   after a 100-byte overwrite, in a scratch file in `base/`
   where the databases are (`wal_probe()`, `src/walfs.cc`), and
@@ -103,15 +111,13 @@ files full size; RocksDB turns it off under
   reopened: every acknowledged commit is there, and nothing
   more; a record torn in the zeros, reopened: the records
   before it are there, and the database opens.
-- The crash tests and the rest of sm, sq and dg's suites, as
-  every log of this machine's homes is now made so.
+- The crash tests and the rest of sm, sq and dg's suites: on
+  WSL every log of a home is made so, off it none is.
 - `mvcc`: no isolation scenario reaches a log file.
 - Measured: one-row updates at 1 and 16 clients, Q8 and Q11,
   before and after; the commit that makes a log, its time.
 
 ## 5. Left out
 
-- **The next log made ahead**, zeroed in the background, so
-  no commit waits for its zeros.
 - **The MANIFEST**: synced on every store made or dropped,
   which DDL alone does.

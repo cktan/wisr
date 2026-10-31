@@ -237,7 +237,7 @@ format is not settled, and nothing here settles it:
 
 §1.2's pauses happen under EX. Three steps, each its own measure:
 
-1. **Zero the next log ahead** (`sm1/WALPREALLOC.md` §5). It
+1. **Zero the next log ahead** (`sm1/WALPREALLOC.md` §2). It
    takes the zeros off the write path, which is also what
    explains a tree's load (below). 794 ms goes to about 333 ms,
    on §1.2.
@@ -317,9 +317,10 @@ full suites before the next (`CLAUDE.md`).
 1. **Baseline.** On a machine with `perf` and `pgbench`, at 16
    threads: `bench/btree.sh`, and §1.1 and §1.2 again. → verify:
    Q9, Q10, Q11, Q12 and a load, recorded here.
-2. **Zero the next log ahead** (§4.1), once the WSL load is
-   understood. → verify: §1.2's longest under 400 ms; commit
-   latency at 1 and 16 clients unchanged.
+2. **Zero the next log ahead** (§4.1), which only WSL needs: off
+   it no log is zeroed (`sm1/WALPREALLOC.md` §2). → verify, on
+   WSL: §1.2's longest under 400 ms; commit latency at 1 and 16
+   clients unchanged.
 3. **`tree_prune()` judges from a copy** (§4.2), still on the
    block cache. → verify: a new test, an entry whose row returns
    between the two judgements stays, and no first judgement holds

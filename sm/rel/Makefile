@@ -44,7 +44,8 @@ $(BIN): $(OBJS) $(BUILD)/libsm.a
 # that fails, for a look.
 test: $(BIN)
 	@mkdir -p test
-	@REL_TMP=$$(mktemp -d /tmp/wisr_rel_test.XXXXXX) && export REL_TMP && \
+	@REL_TMP=$$(mktemp -d "$${TMPDIR:-/tmp}/wisr_rel_test.XXXXXX") && \
+	export REL_TMP && \
 	for t in test/*.rel; do \
 		if [ -f "$$t" ]; then \
 			echo "Running $$t..."; \

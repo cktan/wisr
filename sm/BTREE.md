@@ -650,8 +650,9 @@ Measured again on a VM of 2 cores (2026-10-31, `BUFFERPOOL.md`
 §1): a load is 2.04 times today's entries with the WAL's logs
 zero-filled, 1.38 with that off, and 1.13 on tmpfs. Here the
 extra is zeroing 64 MB a log on the write path, and stalls for
-two immutable memtables. That does not account for 5.6 times on
-the machine above, which is still to be run both ways.
+two immutable memtables, so new logs are now zero-filled only on
+WSL (`sm1/WALPREALLOC.md` §2). That does not account for 5.6 times
+on the machine above, which is still to be run both ways.
 
 ### 10.2 As estimated first
 

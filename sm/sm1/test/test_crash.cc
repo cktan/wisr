@@ -12,10 +12,12 @@
 #include "walfs.h"
 
 #include <rocksdb/db.h>
+#include <rocksdb/file_system.h>
 
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -303,10 +305,140 @@ TEST_CASE("zero-filling pays where a sync that grows a file costs more") {
   CHECK(!wal_prealloc_pays(0, 0));
 }
 
+TEST_CASE("only WSL's kernels zero-fill new logs") {
+  // Verify the first gate of a home's decision (WALPREALLOC.md §2).
+  // 1. WSL's two kernels' releases are known as WSL's.
+  // 2. A cloud's kernel, and a desktop's, are not.
+  // 3. Off WSL, a new home keeps 0 without timing a sync.
+  CHECK(wal_release_is_wsl("5.15.167.4-microsoft-standard-WSL2"));
+  CHECK(wal_release_is_wsl("4.4.0-19041-Microsoft"));
+  CHECK(!wal_release_is_wsl("7.3.0-1003-gcp"));
+  CHECK(!wal_release_is_wsl("6.8.0-45-generic"));
+  if (!wal_on_wsl()) {
+    tmpdir_t tmp;
+    REQUIRE(sm1::init(tmp.path()) == 0);
+    sm1::env_t *env = attach(tmp.path());
+    REQUIRE(env);
+    CHECK(prealloc_kept(env) == 0);
+    REQUIRE(sm1::detach(env, 1) == 0);
+  }
+}
+
+TEST_CASE("a new log is the spare a background thread zeroed") {
+  // Verify the next log made ahead (WALPREALLOC.md §2).
+  // 1. A directory's first log is zeroed in place, and makes no spare:
+  //    a database that never switches logs pays for none.
+  // 2. Its second log starts a spare, zeroed beside it.
+  // 3. Its third log is that spare, the same inode, its size, all
+  //    zeros, and written from offset 0; another spare follows.
+  // 4. With the spare deleted, a new log is still made, its size.
+  // 5. Closing the file system removes the spare.
+  const uint64_t bytes = 1 << 20;
+  tmpdir_t tmp;
+  const std::string dir(tmp.path());
+  const std::string spare = dir + "/" + wal_spare_name;
+  {
+    std::unique_ptr<rocksdb::Env> env = walfs_env(bytes);
+    std::shared_ptr<rocksdb::FileSystem> fs = env->GetFileSystem();
+    rocksdb::FileOptions fo;
+    rocksdb::IOOptions io;
+    std::unique_ptr<rocksdb::FSWritableFile> f;
+    auto make_log = [&](const char *name) {
+      std::string path = dir + "/" + name;
+      REQUIRE(fs->NewWritableFile(path, fo, &f, nullptr).ok());
+      return path;
+    };
+    auto wait_spare = [&]() {
+      for (int i = 0; i < 5000; i++) {
+        if (std::filesystem::exists(spare)) {
+          return;
+        }
+        usleep(1000);
+      }
+      FAIL("no spare was made");
+    };
+
+    CHECK(std::filesystem::file_size(make_log("000001.log")) == bytes);
+    usleep(50000);
+    CHECK(!std::filesystem::exists(spare));
+
+    make_log("000002.log");
+    wait_spare();
+    struct stat before;
+    REQUIRE(stat(spare.c_str(), &before) == 0);
+
+    std::string third = make_log("000003.log");
+    struct stat after;
+    REQUIRE(stat(third.c_str(), &after) == 0);
+    CHECK(after.st_ino == before.st_ino);
+    CHECK(static_cast<uint64_t>(after.st_size) == bytes);
+    REQUIRE(f->Append("record", io, nullptr).ok());
+    REQUIRE(f->Sync(io, nullptr).ok());
+    REQUIRE(f->Close(io, nullptr).ok());
+    {
+      std::ifstream in(third, std::ios::binary);
+      std::string got((std::istreambuf_iterator<char>(in)),
+                      std::istreambuf_iterator<char>());
+      REQUIRE(got.size() == bytes);
+      CHECK(got.compare(0, 6, "record") == 0);
+      CHECK(got.find_first_not_of('\0', 6) == std::string::npos);
+    }
+    wait_spare();
+
+    REQUIRE(std::filesystem::remove(spare));
+    CHECK(std::filesystem::file_size(make_log("000004.log")) == bytes);
+    wait_spare();
+  }
+  CHECK(!std::filesystem::exists(spare));
+}
+
+TEST_CASE("logs made from spares replay after a crash") {
+  // Verify recovery reads a log that was a spare as any other.
+  // 1. Open a RocksDB instance through the file system, writing and
+  //    syncing keys across five logs, each ended by a flush.
+  // 2. Copy its directory while it is open, as a crash would leave it.
+  // 3. Open the copy: every synced key is there, in the newest log's
+  //    too, and the spare it inherited does no harm.
+  tmpdir_t tmp;
+  const std::string dir = std::string(tmp.path()) + "/db";
+  const std::string copy = std::string(tmp.path()) + "/copy";
+  std::unique_ptr<rocksdb::Env> env = walfs_env(1 << 20);
+  rocksdb::Options opts;
+  opts.create_if_missing = true;
+  opts.env = env.get();
+  std::unique_ptr<rocksdb::DB> db;
+  REQUIRE(rocksdb::DB::Open(opts, dir, &db).ok());
+  rocksdb::WriteOptions wo;
+  wo.sync = true;
+  for (int log = 0; log < 5; log++) {
+    for (int k = 0; k < 10; k++) {
+      std::string key = std::to_string(log) + "/" + std::to_string(k);
+      REQUIRE(db->Put(wo, key, "v").ok());
+    }
+    if (log < 4) {
+      REQUIRE(db->Flush(rocksdb::FlushOptions()).ok());
+    }
+  }
+  std::filesystem::copy(dir, copy);
+  db.reset();
+
+  rocksdb::Options plain;
+  std::unique_ptr<rocksdb::DB> again;
+  REQUIRE(rocksdb::DB::Open(plain, copy, &again).ok());
+  for (int log = 0; log < 5; log++) {
+    for (int k = 0; k < 10; k++) {
+      std::string key = std::to_string(log) + "/" + std::to_string(k);
+      std::string v;
+      CHECK(again->Get(rocksdb::ReadOptions(), key, &v).ok());
+    }
+  }
+}
+
 TEST_CASE("a record torn in a zero-filled log's tail is the end of the log") {
   // Verify recovery past a torn record in the zeros (WALPREALLOC.md).
   // 1. Create database "db" with a store; a child commits keys
-  //    until killed, as the test above, its log zero-filled.
+  //    until killed, as the test above, its log zero-filled to 4 MB,
+  //    kept by hand as a home off WSL keeps 0.
   // 2. Write a torn record after the log's last: a header that
   //    claims 100 bytes, a bad checksum, and 20 bytes of it.
   // 3. Reattach: the database opens, and its keys are k0..k(n-1)
@@ -315,6 +447,10 @@ TEST_CASE("a record torn in a zero-filled log's tail is the end of the log") {
   REQUIRE(sm1::init(tmp.path()) == 0);
   {
     sm1::env_t *env = attach(tmp.path());
+    REQUIRE(env);
+    prealloc_keep(env, uint64_t(4) << 20);
+    REQUIRE(sm1::detach(env, 1) == 0);
+    env = attach(tmp.path());
     REQUIRE(env);
     REQUIRE(sm1::mkdb(env, "db", nullptr) == 0);
     sm1::session_t *s = opendb(env, "db", nullptr);
