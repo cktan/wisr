@@ -153,8 +153,8 @@ struct ssi_range_t {
  * A lock's id in the lock table (§5.1): hi is the storeid, its top bit flipped
  * for an OID lock so the two types never meet; lo is the oid of an
  * OID lock, exact, or a hash of a row lock's key. Two rows of a
- * store whose keys hash alike share an entry: a false conflict,
- * never a missed one. The exact key is in the holder's lock list.
+ * store whose keys hash alike are one lock: a false conflict,
+ * never a missed one.
  */
 struct lockid_t {
   uint64_t hi;
@@ -360,14 +360,14 @@ struct db_t {
    */
   struct lock_ent_t {
     /*
-     * A session's hold: refs of its lock list's entries name this
-     * key, the first of them first; more than one only when row
-     * keys hash alike. mode covers all of them.
+     * A session's hold, made with first, its lock list's entry for
+     * the id, and released with it. A second entry is an OID lock's
+     * slot, moved here after the hold was made (fp_move); mode
+     * covers both.
      */
     struct holder_t {
       sm1::session_t *session;
       sm1::lockmode_t mode;
-      uint32_t refs;
       lockref_t *first;
     };
     std::vector<holder_t> holders; /* never empty */

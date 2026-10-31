@@ -702,27 +702,28 @@ beside the active table; a prepared transaction waits on no one.
 A lock's id in the table is two 64-bit words, `lockid_t`
 (`src/db.h`): the storeid, its top bit flipped for an OID lock
 so the two types never meet, and the oid itself or a 64-bit hash
-of a row's key. An OID lock's id is exact. Two rows of a store
-whose keys hash alike share an entry, and so block each other,
-and could deadlock: a false conflict, never a missed one, and
-with 64 bits not one a workload meets. What must be exact is
-kept exact in the transaction's own lock list, `T.locks`, each
-row's key in a buffer of the session's (`lock_keys`), taken as
-the lock is and cut back with the list at a savepoint: whether
-it holds a key and in which mode, the mark §5.4 sets, the
-prepared record's lock set (§8.4) and `sm1::lock_status`. A
-holder counts the entries of its list that share its table
-entry, from the first, so releasing one leaves the others held.
-The list and the buffer are sm0's `blist_t`, blocks whose
-entries never move: a holder keeps a pointer to its first
-entry, a fast-path slot to its own, an entry to its key, and a
-savepoint a mark of each. Keys that hash alike are found by a
-walk of the whole list, from its oldest entry. A cut keeps up to four blocks for the
-locks to come, and `lock_try` makes room before it takes
-`lock_mu`, a key never longer than a key block, so a lock
-allocates nothing under the mutex for the list or its key. The
-id costs no allocation either, as the table needs none to find
-or add an entry.
+of a row's key, `lock_row_hash`, the same in every build. An OID
+lock's id is exact. Two rows of a store whose keys hash alike
+are one lock: they block each other, and could deadlock, and a
+transaction that locks one holds the other in the same mode. It
+is a false conflict, never a missed one, and with 64 bits not
+one a workload meets. A transaction's own lock list, `T.locks`,
+has an entry for each id it holds, and each row's key in a
+buffer of the session's (`lock_keys`), taken as the lock is and
+cut back with the list at a savepoint, for the prepared record's
+lock set (§8.4) and `sm1::lock_status` (`LOCKID.md` drops it).
+A holder points to the entry that made its hold, and the hold
+goes with that entry. An OID lock may have a second entry, a
+fast-path slot moved to the table after the hold was made, which
+a savepoint's rollback releases alone. The list and the buffer
+are sm0's `blist_t`, blocks whose entries never move: a holder
+keeps a pointer to its first entry, a fast-path slot to its own,
+an entry to its key, and a savepoint a mark of each. A cut keeps
+up to four blocks for the locks to come, and `lock_try` makes
+room before it takes `lock_mu`, a key never longer than a key
+block, so a lock allocates nothing under the mutex for the list
+or its key. The id costs no allocation either, as the table
+needs none to find or add an entry.
 One mutex covers the table and every waiter's waits-for list,
 which keeps a deadlock walk consistent.
 

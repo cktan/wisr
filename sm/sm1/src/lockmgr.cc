@@ -2,9 +2,9 @@
  * lockmgr.cc -- the lock table: locks in Gray's modes, the write
  * latches, and deadlock detection (SM1_DESIGN.md §5.1).
  *
- * A lock is keyed exactly by (locktype, storeid, userkey) -- a row
- * lock names a key in a store, an OID lock an object in none -- and
- * is held by the
+ * A lock is keyed by its id, made from (locktype, storeid, userkey)
+ * (lockid_t) -- a row lock names a key in a store, an OID lock an
+ * object in none -- and is held by the
  * sessions whose transactions took it, each in a mode of its own,
  * every pair of them compatible (sm1.h, lockmode_t). sm1::lock_row
  * and sm1::lock_oid take any mode, held until the transaction
@@ -172,50 +172,23 @@ lockref_t make_ref(sm1::session_t *s, const lockid_t &k, sm1::locktype_t type,
   return l;
 }
 
-/* The key of row lock l. */
-rocksdb::Slice row_of(const lockref_t &l) {
-  return rocksdb::Slice(l.row, l.row_len);
-}
-
-/* Whether list entry l is the lock (type, userkey) at k. */
-bool is_ref(const lockref_t &l, const lockid_t &k, sm1::locktype_t type,
-            rocksdb::Slice key) {
-  return l.id == k && l.type == type &&
-         (sm1::LOCKTYPE_OID == type || row_of(l) == key);
-}
-
 /*
- * s's list entry for exactly (type, userkey), whose table entry s
- * holds as h, or nullptr: h's first entry, unless another row key
- * that hashes alike made the hold. The caller holds lock_mu.
+ * Release s's list entry l from the table: s's hold on l.id goes
+ * with the entry that made it, and the table entry with its last
+ * holder. The caller holds lock_mu.
  */
-lockref_t *exact_ref(sm1::session_t *s, const holder_t &h, sm1::locktype_t type,
-                     rocksdb::Slice key) {
-  const lockid_t &k = h.first->id;
-  if (is_ref(*h.first, k, type, key)) {
-    return h.first;
-  }
-  // Keys that hash alike share the hold: look through the list.
-  return s->locks.find(
-      [&](const lockref_t &l) { return is_ref(l, k, type, key); });
-}
-
-/*
- * Remove one of s's references to k, and s from its holders with
- * the last, dropping the entry once the last holder goes. The
- * caller holds lock_mu.
- */
-void lock_drop_holder(db_t *db, const lockid_t &k, sm1::session_t *s) {
-  auto it = db->lock_table.find(k);
+void lock_drop_holder(db_t *db, const lockref_t &l, sm1::session_t *s) {
+  auto it = db->lock_table.find(l.id);
   // Gone already: a rollback may have released it.
   if (it == db->lock_table.end()) {
     return;
   }
   std::vector<holder_t> &holders = it->second.holders;
-  // Drop us from the holder list, with our last reference.
+  // Drop us from the holder list with the hold's first entry; a later
+  // one, a slot moved there, is released alone.
   for (size_t i = 0; i < holders.size(); i++) {
     if (holders[i].session == s) {
-      if (0 == --holders[i].refs) {
+      if (&l == holders[i].first) {
         holders.erase(holders.begin() + i);
       }
       break;
@@ -239,12 +212,12 @@ lockref_t *find_lockref(sm1::session_t *s, sm1::locktype_t type,
   if (nullptr == last) {
     return nullptr;
   }
+  // The id holds the type, so comparing ids is enough.
   lockid_t k = lockid(type, storeid, key);
-  if (is_ref(*last, k, type, key)) {
+  if (last->id == k) {
     return last;
   }
-  return s->locks.find(
-      [&](const lockref_t &l) { return is_ref(l, k, type, key); });
+  return s->locks.find([&](const lockref_t &l) { return l.id == k; });
 }
 
 /*
@@ -426,11 +399,10 @@ void fp_move(db_t *db, sm1::session_t *s, int i) {
     if (no_ref != mine) {
       // A hold of ours already, made before this slot: a slot for k
       // is moved to the table before a hold there is made, so the
-      // hold's first entry stays the first.
-      holders[mine].refs++;
+      // hold's first entry stays the first, and is released last.
       holders[mine].mode = cover(holders[mine].mode, f.mode);
     } else {
-      holders.push_back({s, f.mode, 1, f.ref});
+      holders.push_back({s, f.mode, f.ref});
     }
     // Its list entry is the table's from now on.
     f.ref->slot = -1;
@@ -544,18 +516,12 @@ int lock_try(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
   if (!others.empty()) {
     return 2;
   }
+  // Ours already, a row's key or another hashed alike: one id is
+  // one hold, and its first entry shows the stronger mode from now on.
   if (no_ref != mine) {
-    std::vector<holder_t> &holders = it->second.holders;
-    holders[mine].mode = want;
-    // Ours already: the list shows the stronger mode from now on.
-    lockref_t *l = exact_ref(s, holders[mine], type, key);
-    if (nullptr != l) {
-      l->mode = cover(l->mode, mode);
-      return 0;
-    }
-    // Another row's key hashed alike: this one joins the hold.
-    holders[mine].refs++;
-    s->locks.emplace(make_ref(s, k, type, key, mode));
+    holder_t &h = it->second.holders[mine];
+    h.mode = want;
+    h.first->mode = want;
     return 0;
   }
   // Join the holders, or make the entry: one lookup either way.
@@ -564,7 +530,7 @@ int lock_try(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
                                        : db->lock_table[k].holders;
   // Remember the lock for release at commit or abort.
   holders.push_back(
-      {s, want, 1, s->locks.emplace(make_ref(s, k, type, key, want))});
+      {s, want, s->locks.emplace(make_ref(s, k, type, key, want))});
   return 0;
 }
 
@@ -691,11 +657,7 @@ int lock_write_check(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   if (no_ref != mine) {
     holder_t &h = it->second.holders[mine];
     h.mode = sm1::SM_LOCKMODE_EX;
-    // Our own lock on exactly this key, not one hashed alike.
-    lockref_t *l = exact_ref(s, h, sm1::LOCKTYPE_ROW, key);
-    if (nullptr != l) {
-      l->mode = sm1::SM_LOCKMODE_EX;
-    }
+    h.first->mode = sm1::SM_LOCKMODE_EX;
   }
   return 0;
 }
@@ -918,12 +880,12 @@ void lock_restore(db_t *db, sm1::session_t *g) {
     }
     std::vector<holder_t> &holders = db->lock_table[l.id].holders;
     size_t mine = holder_of(holders, g);
-    // A second row key hashed alike joins the first's hold.
+    // An OID lock's slot, moved to the table before the prepare,
+    // joins the hold its first entry made.
     if (no_ref != mine) {
-      holders[mine].refs++;
       holders[mine].mode = cover(holders[mine].mode, l.mode);
     } else {
-      holders.push_back({g, l.mode, 1, &l});
+      holders.push_back({g, l.mode, &l});
     }
   });
 }
@@ -1041,7 +1003,7 @@ void lock_release_from(sm1::session_t *s, const lock_mark_t &m) {
       s->fp[l.slot].used = false;
       s->fp_used--;
     } else {
-      lock_drop_holder(db, l.id, s);
+      lock_drop_holder(db, l, s);
       // Only once the hold is gone may a weak lock take a slot.
       if (l.strong) {
         strong_count(db, l.id).fetch_sub(1);

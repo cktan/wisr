@@ -1,0 +1,27 @@
+# h07 -- a slot that joins a hold goes back alone at a rollback.
+#
+# T1 takes table 7's IS while T2 holds S on it, so the IS goes
+# to the lock table, a hold of T1's. T2 commits; past a
+# savepoint, T1 asks IX on table 7, which takes a slot: T1's
+# second lock on the table. T3's X sweeps the slot into T1's
+# hold and waits. T1's rollback to the savepoint undoes only the
+# IX: its IS, taken before, still holds, so T3 waits on until T1
+# commits.
+
+
+== pairing RR/RR == T1=RR T2=RR T3=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T2 lockoid 7 shared -> ok
+@3 T1 lockoid 7 is -> ok
+@4 T2 commit -> ok
+@5 T1 savepoint -> 1
+@6 T1 lockoid 7 ix -> ok
+@7 T3 lockoid 7 exclusive blocks -> blocked
+@8 T1 rollback 1 -> ok
+@9 T1 commit -> ok
+@7 T3 lockoid 7 exclusive blocks -> ok (resumed)
+@10 check last T3 ok -> satisfied
+@11 T3 commit -> ok
+@12 check committed T1 T2 T3 -> satisfied

@@ -285,23 +285,11 @@ int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
     };
     for (const auto &[k, ent] : db->lock_table) {
       for (const auto &h : ent.holders) {
-        // Each of the holder's list entries the key stands for: its
-        // first alone, or, when row keys hash alike, every entry of
-        // its list with the key's id.
-        auto put = [&](const sm1::session_t::lockref_t &l) {
-          std::string name;
-          lock_put_name(&name, l);
-          entry(name, l.mode, h.session, true);
-        };
-        if (1 == h.refs) {
-          put(*h.first);
-          continue;
-        }
-        h.session->locks.each([&](const sm1::session_t::lockref_t &l) {
-          if (l.id == k) {
-            put(l);
-          }
-        });
+        // One hold, named by the entry that made it, in the mode that
+        // covers every entry of its id.
+        std::string name;
+        lock_put_name(&name, *h.first);
+        entry(name, h.mode, h.session, true);
       }
     }
     for (const sm1::session_t *s : env->sessions) {

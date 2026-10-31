@@ -53,7 +53,9 @@ and `../LOCK.md` §1 describe the lock table as it stands.
 
 A transaction that already holds a lock and asks again adds no
 entry today: `lock_try` finds its own and raises the mode. A
-second entry, and `refs`, exist only for keys that hash alike.
+second entry, and `refs`, exist for keys that hash alike, and
+for an OID lock's fast-path slot moved to the table after the
+transaction's hold there was made (`fp_move`).
 
 ---
 
@@ -75,10 +77,16 @@ savepoint's mark is the list's mark alone.
 ### 2.3 The lock manager
 
 `lock_try`, `lock_wait` and `lock_oid` take a `lockid_t`, not
-`(type, storeid, key)`. `exact_ref` goes, and `is_ref` and
-`find_lockref` compare ids. `holder_t::refs` goes: one id is
-one hold. `lock_write_check` and `lock_held` make the id from
-the store and key they are given, as `lock_row` does.
+`(type, storeid, key)`, once the keys go (§7 step 5): until then
+they need the key for the list and for `waiting_row`.
+`exact_ref` goes, and `is_ref` and `find_lockref` compare ids.
+`holder_t::refs` goes: one id is one hold, made with a list
+entry and released with it. The one second entry left is an OID
+lock's slot moved into the transaction's hold; it raises the
+hold's mode and is released alone, so a rollback past it keeps
+the hold (`mvcc/in/h07`). `lock_write_check` and `lock_held`
+make the id from the store and key they are given, as
+`lock_row` does.
 
 The id interface is the boundary `../NEXT.md` item 4 draws for
 its module, `src/locktab.h`: a holder is an opaque owner, and
@@ -197,6 +205,8 @@ so it stays inside sm1 unless a caller asks.
    → verify: the fixed-hash test; all of `mvcc/` and `test/`.
 3. The lock manager by id, `refs` and `exact_ref` gone, the
    keys still in the list for the record and `lock_status`.
+   Done: a hold goes with its first entry; the signatures by
+   id wait for step 5 (§2.3).
    → verify: the collision tests expecting one lock; all
    suites.
 4. The record and recovery by id.

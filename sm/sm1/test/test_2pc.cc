@@ -449,17 +449,16 @@ TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
   sm1::closedb(v);
 }
 
-TEST_CASE("row locks whose keys hash alike come back exactly after a "
-          "restart") {
-  // Verify a prepared transaction's record keeps each row lock by its
-  // exact key, though the two share a lock table entry (§8.4, §9.1).
+TEST_CASE("row locks whose keys hash alike are one lock after a restart") {
+  // Verify a prepared transaction's record keeps the one lock two row
+  // keys whose ids are one make, and its mode (§8.4, §9.1).
   // 1. Make every row key hash alike; S locks "a" shared and "b"
-  //    exclusive, writes nothing, and prepares "g": S keeps no row
-  //    key, and lock_status lists g's two locks, "a" shared and "b"
-  //    exclusive, their keys gone to g with them.
+  //    exclusive, one lock, writes nothing, and prepares "g": S keeps
+  //    no row key, and lock_status lists g's one lock, named by "a",
+  //    exclusive, its key gone to g with it.
   // 2. Restart the environment, so "g" is rebuilt from its record.
-  // 3. lock_status lists g's two locks again, and the table holds
-  //    them as one hold of g's, of two.
+  // 3. lock_status lists g's one lock again, and the table holds it
+  //    as one hold of g's.
   // 4. Aborting "g" by gid leaves the lock table empty.
   tpc_fixture_t f;
   wisr::lock_test_rows_collide = true;
@@ -482,22 +481,21 @@ TEST_CASE("row locks whose keys hash alike come back exactly after a "
     std::sort(got.begin(), got.end());
     return got;
   };
-  const std::vector<std::string> both = {
-      "a " + std::to_string(sm1::SM_LOCKMODE_SH),
-      "b " + std::to_string(sm1::SM_LOCKMODE_EX),
+  const std::vector<std::string> one = {
+      "a " + std::to_string(sm1::SM_LOCKMODE_EX),
   };
-  CHECK(listed() == both);
+  CHECK(listed() == one);
   sm1::closedb(s);
   f.restart();
 
   sm1::session_t *v = f.open();
-  CHECK(listed() == both);
+  CHECK(listed() == one);
   {
     std::lock_guard<std::mutex> guard(v->db->lock_mu);
     REQUIRE(v->db->lock_table.size() == 1);
     const auto &holders = v->db->lock_table.begin()->second.holders;
     REQUIRE(holders.size() == 1);
-    CHECK(holders[0].refs == 2);
+    CHECK(holders[0].mode == sm1::SM_LOCKMODE_EX);
   }
   REQUIRE(sm1::abort_prepared(v, "g") == 0);
   {
