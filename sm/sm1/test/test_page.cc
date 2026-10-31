@@ -477,6 +477,57 @@ TEST_CASE("page: dropped outside a transaction, after a commit") {
   REQUIRE(sm1::closedb(s) == 0);
 }
 
+TEST_CASE("page: a store's checks made once, for many pins") {
+  // Verify page_enter checks a call on a store, and a pin by its handle
+  // makes none of its own.
+  // 1. With no transaction, store 0, and a store never made, it fails
+  //    as a pin does.
+  // 2. Its handle pins pages, of either mode, as a pin by the store's
+  //    id does, and a page there is none of is 1.
+  // 3. A store dropped in the transaction is gone to page_enter, and
+  //    stays good to a handle taken before, until the commit.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  sm1::session_t *s = opendb(home.env(), "db");
+  REQUIRE(s);
+  const sm1::page_store_t *h = nullptr;
+  CHECK(sm1::page_enter(s, 1, h) == -1);
+  CHECK(sm1::SM_ERR_NOTRANS == sm1::errnum());
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t store = mkstore(s);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm1::page_enter(s, 0, h) == -1);
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  CHECK(sm1::page_enter(s, store + 1000, h) == -1);
+  CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+
+  write_page(s, store, "a", "one");
+  REQUIRE(sm1::page_enter(s, store, h) == 0);
+  sm1::page_t *pin = nullptr;
+  std::string_view bytes;
+  REQUIRE(sm1::pin_page(s, store, h, "a", sm1::page_mode_t::sh, 0, pin,
+                        bytes) == 0);
+  CHECK("one" == bytes);
+  sm1::unpin_page(s, pin);
+  REQUIRE(sm1::pin_page(s, store, h, "a", sm1::page_mode_t::ex, 0, pin,
+                        bytes) == 0);
+  sm1::unpin_page(s, pin);
+  CHECK(sm1::pin_page(s, store, h, "none", sm1::page_mode_t::sh, 0, pin,
+                      bytes) == 1);
+
+  REQUIRE(sm1::rmstore(s, store) == 0);
+  const sm1::page_store_t *gone = nullptr;
+  CHECK(sm1::page_enter(s, store, gone) == -1);
+  CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+  REQUIRE(sm1::pin_page(s, store, h, "a", sm1::page_mode_t::sh, 0, pin,
+                        bytes) == 0);
+  CHECK("one" == bytes);
+  sm1::unpin_page(s, pin);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::closedb(s) == 0);
+}
+
 TEST_CASE("page: a miss leaves no second copy in the block cache") {
   // Verify a page read into a frame is not cached by RocksDB as well.
   // 1. Write 200 pages that do not compress, into a sorted file.

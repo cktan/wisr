@@ -107,15 +107,38 @@ int load_page(void *arg, char *buf, size_t &len) {
 
 } // namespace
 
-/* Pin a page through the buffer pool; see sm1.h. */
-int sm1::pin_page(sm1::session_t *session, uint64_t storeid,
-                  std::string_view key, sm1::page_mode_t mode, unsigned flags,
-                  sm1::page_t *&out, std::string_view &bytes) {
-  bytes = std::string_view();
+/* Check a store once, for many pins; see sm1.h. */
+int sm1::page_enter(sm1::session_t *session, uint64_t storeid,
+                    const sm1::page_store_t *&out) {
   const store_t *st = nullptr;
   if (enter_pages(session, storeid, st) != 0) {
     return -1;
   }
+  // A store's handle lasts its transaction (session_store), and only
+  // this session's next call could move it.
+  out = reinterpret_cast<const sm1::page_store_t *>(st);
+  return 0;
+}
+
+/* Pin a page of a store by its id; see sm1.h. */
+int sm1::pin_page(sm1::session_t *session, uint64_t storeid,
+                  std::string_view key, sm1::page_mode_t mode, unsigned flags,
+                  sm1::page_t *&out, std::string_view &bytes) {
+  bytes = std::string_view();
+  const sm1::page_store_t *store = nullptr;
+  if (sm1::page_enter(session, storeid, store) != 0) {
+    return -1;
+  }
+  return sm1::pin_page(session, storeid, store, key, mode, flags, out, bytes);
+}
+
+/* Pin a page through the buffer pool; see sm1.h. */
+int sm1::pin_page(sm1::session_t *session, uint64_t storeid,
+                  const sm1::page_store_t *store, std::string_view key,
+                  sm1::page_mode_t mode, unsigned flags, sm1::page_t *&out,
+                  std::string_view &bytes) {
+  bytes = std::string_view();
+  const auto *st = reinterpret_cast<const store_t *>(store);
   bool ex = sm1::page_mode_t::ex == mode;
   unsigned pool_flags =
       (0 != (flags & sm1::page_inner) ? bufpool_inner : 0) |

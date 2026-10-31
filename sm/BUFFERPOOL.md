@@ -4,7 +4,7 @@ The design and plan of the project `BTREE.md` §17 decides. It
 replaces that design's §14, §15, and §16's fill latch and
 writers' latches. §17's decisions are taken as given, §2 here
 restates them, and this file adds what they leave open. Of §5's
-steps, 2 to 7 are built, the pool in `sm1/src/bufpool.h`. Step 1,
+steps, 2 to 8 are built, the pool in `sm1/src/bufpool.h`. Step 1,
 and with it every measure below, has not been run: §5's verifies
 that need a benchmark are open (`../MAJORDECISION.md` D16).
 Paths are relative to `sm/`. A bare §17 below is `BTREE.md`'s.
@@ -198,7 +198,10 @@ happen: a writer of the page waits on the same word.
   split: a child, its parent, the parent's sibling and two new
   pages. The floor is 64 frames, not set by sessions, as sm1 is
   not told how many there will be; while every frame is pinned a
-  miss waits, and can be interrupted.
+  miss waits, and can be interrupted. So 13 sessions splitting at
+  once could all wait for a frame, each holding its own: at the
+  default budget, 8,192 frames, that takes 1,639. **Open**: a
+  floor by `max_connections`, which attach would have to be told.
 - **Purge**: `page_drop`, and `rmstore`, `TRUNCATE`, `rmdb` and a
   temporary store's end, walk the frames. Unpurged frames would
   only age out, as a store's id is never reused, so these may be
@@ -307,10 +310,11 @@ choice at the home's first attach, `BTREE.md` §11's question 1.
 
 With no held pins, Q10's 100 probes make about 300 pins, each
 checking its transaction and store. **Check once a descent**, and
-pin with the store's handle. That needs a store to stay valid for
-a descent, which a transaction's own open of it gives: to be
-shown, not assumed. Without this a pool's pin saves little of
-§1.1, as `enter_pages()` becomes its larger share.
+pin with the store's handle, `sm1::page_enter`. A handle is good
+until the session's transaction ends (`session_store`), and a
+descent makes no call on its session but its pins, so it stays
+valid for one. Without this a pool's pin saves little of §1.1, as
+`enter_pages()` becomes its larger share.
 
 ---
 

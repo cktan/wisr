@@ -2215,6 +2215,14 @@ Errors: `SM_ERR_INVALID` (store 0, a key too long),
 `SM_ERR_IO`, `SM_ERR_CORRUPT` (a page past `sm1::page_size`),
 `SM_ERR_INTERRUPTED`.
 
+### int sm1::page_enter(sm1::session_t* session, uint64_t storeid, const sm1::page_store_t*& out)
+
+Make `sm1::pin_page`'s checks of a transaction and a store once,
+for many pins, as a tree's descent does: 0 with the store's
+handle in `out`, good until the session's next call that is no
+pin of a page. A second `sm1::pin_page` takes `storeid` and that
+handle, and makes no check of its own.
+
 ### void sm1::unpin_page(sm1::session_t* session, sm1::page_t* page)
 
 Release a page `sm1::pin_page` pinned; `nullptr` is a no-op.

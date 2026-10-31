@@ -1715,6 +1715,23 @@ int pin_page(session_t* session, uint64_t storeid, std::string_view key,
              page_mode_t mode, unsigned flags, page_t*& out,
              std::string_view& bytes);
 
+/* A store's pages, as sm1::page_enter hands them out. */
+struct page_store_t;
+
+/*
+ * Make sm1::pin_page's checks of a transaction and a store once, for
+ * many pins: 0 with storeid's handle in out, good until the session's
+ * next call that is no pin of a page, so a descent of a tree makes
+ * these checks once, not once a page. Errors: as sm1::pin_page's.
+ */
+int page_enter(session_t* session, uint64_t storeid,
+               const page_store_t*& out);
+
+/* sm1::pin_page by storeid's handle, with no check of its own. */
+int pin_page(session_t* session, uint64_t storeid, const page_store_t* store,
+             std::string_view key, page_mode_t mode, unsigned flags,
+             page_t*& out, std::string_view& bytes);
+
 /* Release a page sm1::pin_page pinned; nullptr is a no-op. */
 void unpin_page(session_t* session, page_t* page);
 

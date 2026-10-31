@@ -10617,3 +10617,72 @@ measured again: `bench/build/pg18` is not here.
   353 had it 1.5. Its profile is RocksDB's, LZ4 12%. Not explained.
 - **bench**: `btree.sh` sums `perf`'s line for each kind of core.
 
+
+## Step 360: the buffer pool, alone
+
+`../sm/BUFFERPOOL.md` plan step 6, on a machine that may not run
+benchmarks, so with plan step 1 not run (MAJORDECISION D16).
+
+- **sm1**: `src/bufpool.h`, a module of its own that knows tags,
+  bytes and pins, and reads a miss through its caller's loader.
+  Frames of 4 KB; a state word that is the pin, SH count and EX
+  bit; a tag in relaxed atomics, so a lookup compares it with no
+  lock and a pin makes the comparison sure; a clock, inner pages
+  aging from 2, leaves from 1. A miss holds its frame EX through
+  its read. A wait sleeps by `sm_wait()`.
+- **Found reviewing it**: a lock-free lookup can hand back a frame
+  just taken for another page, whose holder may wait for a page
+  this thread has pinned: a cycle no latch order forbids. A pin
+  looks at the tag again before it sleeps (D19).
+- **Tests**: sm1, 11 cases on the pool alone. Eleven mutations,
+  each caught in 3 runs of 3.
+
+## Step 361: a tree on the pool
+
+Plan step 7: `sm1::pin_page` takes SH or EX, and `sm1::page_write`
+copies each page into its pinned frame once RocksDB has it.
+
+- **sm1**: attach gives the pool a quarter of `block_cache_bytes`,
+  64 frames at least (D17). A miss's `Get` has `fill_cache` off.
+  `page_put_t::inner` goes, as the clock's age comes with the pin.
+- **sm2**: a reader pins one page at a time, as one holding a page
+  while it waits for a child could wait on a writer waiting for
+  the page it holds. A writer's pins replace its latches, in the
+  same order. The fill latch, the latch table, held pins and
+  `tree_close` go, and `descend()` loses `afresh` and `moved`
+  (D20).
+- **Found**: `post()`, finding the parent has the entry already,
+  returned with its child still latched, and its caller pinned
+  that page again and waited on itself: a crash's path, from
+  before this.
+- **Tests**: sm2, a post found made, and three writers, two
+  readers and a vacuum through 64 frames. sm1, a miss leaves no
+  second copy in the block cache: 245,936 bytes with `fill_cache`
+  on against
+  under 21,968. A held pin no longer keeps old bytes, which a pin
+  that is a latch forbids, so that test goes; LRU's becomes the
+  clock's. Of six more mutations, one found that gap; an uncoupled
+  move right breaks nothing, as a key only moves right.
+- **Not measured**: every suite and TSan pass. Q9, Q10, Q11 and a
+  load have no number on the pool.
+
+## Step 362: a store's checks once a descent
+
+Plan step 8: `sm1::page_enter` checks a transaction and a store
+once, and `pin_page` takes the handle. A handle is good until the
+session's transaction ends (`session_store`), and a descent makes
+no call on its session but its pins. Q10's 300 pins make 100
+checks now. Not measured.
+
+- **Open**: at the floor, 13 sessions splitting at once could all
+  wait for a frame, each holding its own, until interrupted.
+- **Machine**: on a CPU that enforces BTI, as Neoverse-N3, with
+  Ubuntu 26.10's glibc, every TSan program dies of SIGILL at
+  `__sigsetjmp`, which libtsan's trampoline branches into with a
+  register BTI refuses. Clearing `PROT_BTI` from libc's pages by a
+  preload lets it run, outside the repository for now.
+- **Found, not changed**: one TSan run of two reported a
+  lock-order inversion in `sm1::lock_status`, which holds its
+  sessions' `fp_mu`s in the order of an unordered set. No deadlock:
+  `env->mu` serializes it, and a session takes only its own. It
+  fails `make tsan` now and then until they are taken in one order.

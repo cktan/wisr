@@ -85,13 +85,21 @@ std::string key_of(const tree_t &tree, uint64_t pageid) {
 
 using detail::pinned_t;
 
-/* Pin and view page pageid into out, empty; a missing page is corrupt. */
+/*
+ * Pin and view page pageid into out, empty, by a store's handle if
+ * given; a missing page is corrupt.
+ */
 int pin_into(tree_t &tree, uint64_t pageid, bool inner, sm1::page_mode_t mode,
-             pinned_t &out) {
+             pinned_t &out, const sm1::page_store_t *store = nullptr) {
   out.session = tree.session;
   std::string_view bytes;
-  int rc = sm1::pin_page(tree.session, tree.storeid, key_of(tree, pageid), mode,
-                         inner ? sm1::page_inner : 0, out.pin, bytes);
+  unsigned flags = inner ? sm1::page_inner : 0;
+  int rc =
+      nullptr != store
+          ? sm1::pin_page(tree.session, tree.storeid, store,
+                          key_of(tree, pageid), mode, flags, out.pin, bytes)
+          : sm1::pin_page(tree.session, tree.storeid, key_of(tree, pageid),
+                          mode, flags, out.pin, bytes);
   if (rc < 0) {
     return -1;
   }
@@ -108,9 +116,10 @@ int pin_into(tree_t &tree, uint64_t pageid, bool inner, sm1::page_mode_t mode,
  * holding a page while it waits for a child could wait on a writer
  * that is waiting for the page it holds.
  */
-int read_page(tree_t &tree, uint64_t pageid, bool inner, pinned_t &out) {
+int read_page(tree_t &tree, uint64_t pageid, bool inner, pinned_t &out,
+              const sm1::page_store_t *store = nullptr) {
   out.release();
-  return pin_into(tree, pageid, inner, sm1::page_mode_t::sh, out);
+  return pin_into(tree, pageid, inner, sm1::page_mode_t::sh, out, store);
 }
 
 /*
@@ -189,13 +198,19 @@ out_t out_of(uint64_t pageid, page_t &page, sm1::page_t *pin) {
  */
 int descend(tree_t &tree, std::string_view key, uint8_t level, uint64_t &out,
             pinned_t *leaf = nullptr) {
+  // The store's checks once a descent, not once a page: a probe's
+  // pins are its cost (../../BUFFERPOOL.md §4.6).
+  const sm1::page_store_t *store = nullptr;
+  if (0 != sm1::page_enter(tree.session, tree.storeid, store)) {
+    return -1;
+  }
   uint64_t pageid = root_id;
   pinned_t p;
   // Whether the page to read is inner: the root is taken to be, as
   // every descent reads it; below it, the page above says.
   bool inner = true;
   for (;;) {
-    if (0 != read_page(tree, pageid, inner, p)) {
+    if (0 != read_page(tree, pageid, inner, p, store)) {
       return -1;
     }
     const page_view_t &v = p.view;
