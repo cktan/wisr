@@ -492,6 +492,12 @@ void lock_clear_latest(sm1::session_t *session, uint64_t storeid,
 extern std::atomic<bool> lock_test_rows_collide;
 
 /*
+ * The 64-bit hash of a row lock's key, its lockid_t's lo: fixed,
+ * not std::hash, so it is the same in every build (LOCKID.md §2.4).
+ */
+uint64_t lock_row_hash(rocksdb::Slice key);
+
+/*
  * Append to out the name of lock l: its type byte, be64(storeid),
  * then its key, as lock_status reports it and a prepared
  * transaction's record keeps it (§8.4).

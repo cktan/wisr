@@ -1204,6 +1204,19 @@ TEST_CASE("row keys that hash alike share an entry and still lock exactly") {
   sm1::closedb(b);
 }
 
+TEST_CASE("a row key's lock hash is the same in every build") {
+  // Verify lock_row_hash gives fixed values, as a prepared record
+  // keeps them: a build that changes the hash fails here.
+  // 1. The empty key, a key shorter than a word, and one of two words
+  //    and a tail hash to the values written down.
+  // 2. Two keys that differ only in a trailing zero byte differ.
+  CHECK(wisr::lock_row_hash("") == 0x0ULL);
+  CHECK(wisr::lock_row_hash("x") == 0x34558360b0535c76ULL);
+  CHECK(wisr::lock_row_hash("a key of 20 bytes ok") == 0x8641b660711e5168ULL);
+  CHECK(wisr::lock_row_hash(rocksdb::Slice("x\0", 2)) !=
+        wisr::lock_row_hash("x"));
+}
+
 TEST_CASE("a weak table lock takes a slot, and a strong one moves it") {
   // Verify the fast path (§5.1): IS and IX on an oid are in the
   // session's slots, and a strong lock meets them in the table.

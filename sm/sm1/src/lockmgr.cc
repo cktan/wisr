@@ -47,6 +47,33 @@ namespace wisr {
 
 std::atomic<bool> lock_test_rows_collide{false};
 
+/* MurmurHash3's 64-bit finalizer: each bit of h reaches every bit out. */
+static uint64_t fmix64(uint64_t h) {
+  h ^= h >> 33;
+  h *= 0xff51afd7ed558ccdULL;
+  h ^= h >> 33;
+  h *= 0xc4ceb9fe1a85ec53ULL;
+  h ^= h >> 33;
+  return h;
+}
+
+/* The row hash of key: the same in every build, as a record may keep it. */
+uint64_t lock_row_hash(rocksdb::Slice key) {
+  const char *p = key.data();
+  size_t n = key.size();
+  // The length goes in first, so a key and its zero-padded self differ.
+  uint64_t h = n;
+  // Each 8 bytes are read big-endian, so every host hashes alike.
+  for (; n >= 8; p += 8, n -= 8) {
+    h = fmix64(h ^ sm0::get_be64(p));
+  }
+  uint64_t tail = 0;
+  for (size_t i = 0; i < n; i++) {
+    tail = tail << 8 | static_cast<unsigned char>(p[i]);
+  }
+  return fmix64(h ^ tail);
+}
+
 } // namespace wisr
 
 namespace {
@@ -113,7 +140,8 @@ uint64_t type_bit(sm1::locktype_t type) { return uint64_t(type) << 63; }
 lockid_t lockid(sm1::locktype_t type, uint64_t storeid, rocksdb::Slice key) {
   // The type flips the top bit, so no two namespaces share a lock.
   uint64_t hi = storeid ^ type_bit(type);
-  // An oid is the key exactly; a row's key is hashed into 64 bits.
+  // An oid is the key exactly; a row's key is hashed into 64 bits
+  // by lock_row_hash.
   if (sm1::LOCKTYPE_OID == type) {
     return {hi, sm0::get_be64(key.data())};
   }
@@ -121,8 +149,7 @@ lockid_t lockid(sm1::locktype_t type, uint64_t storeid, rocksdb::Slice key) {
   if (lock_test_rows_collide.load(std::memory_order_relaxed)) {
     return {hi, 0};
   }
-  return {hi, std::hash<std::string_view>{}(
-                  std::string_view(key.data(), key.size()))};
+  return {hi, lock_row_hash(key)};
 }
 
 /*

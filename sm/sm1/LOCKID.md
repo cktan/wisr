@@ -43,7 +43,7 @@ and `../LOCK.md` §1 describe the lock table as it stands.
 
 | Where | What | Why |
 | --- | --- | --- |
-| the lock table, `db->lock_table` | `lockid_t {storeid ^ type bit, std::hash(key)}` and the holders | conflicts, decided on the hash |
+| the lock table, `db->lock_table` | `lockid_t {storeid ^ type bit, lock_row_hash(key)}` and the holders | conflicts, decided on the hash |
 | the session's lock list, `s->locks` | a `lockref_t` per lock: the id, the mode, `row`/`row_len` pointing into `s->lock_keys` | release, savepoint rollback, prepare |
 | `s->lock_keys` | the key's bytes | `is_ref` and `exact_ref` tell apart two keys that hash alike |
 | `holder_t::refs` | how many list entries share one table hold | two keys of one transaction that hash alike |
@@ -192,7 +192,8 @@ so it stays inside sm1 unless a caller asks.
 ## 7. Order of work
 
 1. Decide §4.1. Done: the caller passes a kind.
-2. `fmix64` as the row hash, still keeping the keys.
+2. `fmix64` as the row hash, still keeping the keys. Done:
+   `lock_row_hash` in `src/lockmgr.cc`.
    → verify: the fixed-hash test; all of `mvcc/` and `test/`.
 3. The lock manager by id, `refs` and `exact_ref` gone, the
    keys still in the list for the record and `lock_status`.
