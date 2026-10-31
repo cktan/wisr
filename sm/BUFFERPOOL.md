@@ -195,13 +195,12 @@ happen: a writer of the page waits on the same word.
   leaf promotes nothing. A count at its value is not written, so
   a hit on a hot page writes the state word alone.
 - **Pinned frames are bounded**: a thread pins at most five in a
-  split: a child, its parent, the parent's sibling and two new
-  pages. The floor is 64 frames, not set by sessions, as sm1 is
-  not told how many there will be; while every frame is pinned a
-  miss waits, and can be interrupted. So 13 sessions splitting at
-  once could all wait for a frame, each holding its own: at the
-  default budget, 8,192 frames, that takes 1,639. **Open**: a
-  floor by `max_connections`, which attach would have to be told.
+  split: a child, its parent, the parent's sibling and a new
+  page, and in a unique insert the leaf it began on. So the floor
+  is 64 frames, or six a session if attach is told `max_sessions`,
+  as digres's `max_connections` tells it: sessions each short of a
+  frame leave one over. While every frame is pinned a miss waits,
+  and can be interrupted.
 - **Purge**: `page_drop`, and `rmstore`, `TRUNCATE`, `rmdb` and a
   temporary store's end, walk the frames. Unpurged frames would
   only age out, as a store's id is never reused, so these may be

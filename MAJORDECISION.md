@@ -392,3 +392,13 @@ Decided with the user (2026-10-31).
 - **Why:** `BTREE.md` §17, decided with the user.
 - **Undo:** with D16.
 
+## D21. attach is told max_sessions, for the pool's floor
+
+- **Decided:** `sm_env_options_t` gains `max_sessions`, 0 by
+  default. The pool has at least six frames a session, past the
+  budget if need be, which D17's floor alone did not give.
+- **Why:** a session waiting for a frame holds up to five, so a
+  floor too low can leave every session waiting on the others.
+  `BUFFERPOOL.md` §3.5 called for a floor by sessions.
+- **Undo:** the option goes, and with it the guarantee.
+

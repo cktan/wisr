@@ -83,15 +83,24 @@ static inline void sm_options_init(sm_options_t* opt) {
  * RocksDB instance of the environment reads its sorted files
  * through, every column family of each, as PostgreSQL's
  * shared_buffers is the one pool of a cluster (sm1/SM1_DESIGN.md
- * section 12.2). It must be at least 1.
+ * section 12.2). It must be at least 1. A quarter of it goes to
+ * the buffer pool of a tree's pages (BUFFERPOOL.md).
+ *
+ * max_sessions, if above 0, is the most sessions the environment
+ * will have at once. The pool is made with frames enough that each
+ * can pin all a split asks for, whatever the budget, as a session
+ * short of a frame waits, holding those it has. Below 1, the pool
+ * makes do with its floor of 64 frames.
  */
 typedef struct sm_env_options_t {
     long long   block_cache_bytes;
+    int         max_sessions;
 } sm_env_options_t;
 
 /* Fill opt with the defaults. */
 static inline void sm_env_options_init(sm_env_options_t* opt) {
     opt->block_cache_bytes = 128LL << 20;
+    opt->max_sessions = 0;
 }
 
 #endif /* SM_OPTIONS_H */

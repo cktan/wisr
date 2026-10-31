@@ -363,6 +363,21 @@ TEST_CASE("every column family of the environment shares one block cache") {
   REQUIRE(cache);
   CHECK(cache->GetCapacity() == size_t{6} << 20);
   CHECK(env->bufpool->frames() == (size_t{2} << 20) / 4096);
+  // 4b. A pool's frames: its floor, and enough for max_sessions.
+  {
+    tmpdir_t small;
+    REQUIRE(sm1::init(small.path()) == 0);
+    sm1::env_options_t few;
+    few.block_cache_bytes = 64 << 10;
+    sm1::env_t *e = nullptr;
+    REQUIRE(sm1::attach(small.path(), e, &few) == 0);
+    CHECK(wisr::bufpool_min_frames == e->bufpool->frames());
+    REQUIRE(sm1::detach(e, 0) == 0);
+    few.max_sessions = 100;
+    REQUIRE(sm1::attach(small.path(), e, &few) == 0);
+    CHECK(100 * wisr::bufpool_session_frames == e->bufpool->frames());
+    REQUIRE(sm1::detach(e, 0) == 0);
+  }
 
   CHECK(cache_of(env->root, env->root->DefaultColumnFamily()) == cache);
   CHECK(cache_of(env->tmp, env->tmp->DefaultColumnFamily()) == cache);

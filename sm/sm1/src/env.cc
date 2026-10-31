@@ -347,8 +347,10 @@ sm1::env_t *attach(const char *homedir, const sm1::env_options_t *opt) {
   // rest to the block cache's rows (../../BUFFERPOOL.md §4.5). The pool
   // keeps a floor, as a thread's pins must find frames.
   size_t budget = static_cast<size_t>(opt->block_cache_bytes);
+  size_t sessions = static_cast<size_t>(std::max(opt->max_sessions, 0));
   env->bufpool = std::make_unique<bufpool_t>(
-      std::max(budget / 4 / bufpool_frame_bytes, bufpool_min_frames));
+      std::max({budget / 4 / bufpool_frame_bytes, bufpool_min_frames,
+                sessions * bufpool_session_frames}));
   // The one block cache every instance of the environment reads
   // through, made before the first of them opens.
   env->block_cache = rocksdb::NewLRUCache(budget - budget / 4);

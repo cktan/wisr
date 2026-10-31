@@ -10674,8 +10674,6 @@ session's transaction ends (`session_store`), and a descent makes
 no call on its session but its pins. Q10's 300 pins make 100
 checks now. Not measured.
 
-- **Open**: at the floor, 13 sessions splitting at once could all
-  wait for a frame, each holding its own, until interrupted.
 - **Machine**: on a CPU that enforces BTI, as Neoverse-N3, with
   Ubuntu 26.10's glibc, every TSan program dies of SIGILL at
   `__sigsetjmp`, which libtsan's trampoline branches into with a
@@ -10686,3 +10684,14 @@ checks now. Not measured.
   sessions' `fp_mu`s in the order of an unordered set. No deadlock:
   `env->mu` serializes it, and a session takes only its own. It
   fails `make tsan` now and then until they are taken in one order.
+
+## Step 363: frames enough for every session
+
+A session short of a frame waits, holding those it has, so at the
+floor of 64 frames thirteen splitting at once could all wait until
+interrupted. `max_sessions`, a new option of `sm_attach`, floors
+the pool at six frames a session, as the most an insert pins is
+five. digres gives it `MaxConnections`: `datadir_load()` runs
+before `InitializeMaxBackends()`, so `pcb->MaxBackends` is still 0
+there. Sixteen threads split pages through 108 frames in sm2's test.
+

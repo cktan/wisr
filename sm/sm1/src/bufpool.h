@@ -32,6 +32,15 @@ constexpr size_t bufpool_frame_bytes = 4096;
 /* The fewest frames a pool is made with: pins must find frames. */
 constexpr size_t bufpool_min_frames = 64;
 
+/*
+ * The frames a session may hold at once, and so the pool's floor by
+ * sessions: the most a tree's insert pins is five, its leaf, the leaf
+ * it goes on, their parent, and a split's new page and sibling. A
+ * session waiting for one more holds those, so sessions each short of
+ * a frame must leave one over: one more for each.
+ */
+constexpr size_t bufpool_session_frames = 6;
+
 /* The longest page key a frame's tag holds. */
 constexpr size_t bufpool_key_max = 16;
 

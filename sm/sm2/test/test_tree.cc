@@ -1054,3 +1054,45 @@ TEST_CASE("tree: writers, readers and a vacuum through a small pool") {
   }
   CHECK(5000u + 3 * 750 == live);
 }
+
+TEST_CASE("tree: as many writers splitting as frames can bear") {
+  // Verify a pool with frames for max_sessions never runs its sessions
+  // out of frames, each waiting with all it holds.
+  // 1. Attach with the least budget, and max_sessions for 18.
+  // 2. Sixteen threads insert long keys of their own into one tree, so
+  //    nearly every insert splits a page, parents among them.
+  // 3. It ends: no insert failed, and the tree checks whole.
+  sm1::env_options_t opt;
+  opt.block_cache_bytes = 64 << 10;
+  opt.max_sessions = 18;
+  db_t d(&opt);
+  open_tree_t t(d, 40, 256);
+  REQUIRE(0 == tree_create(t.tree));
+  std::atomic<int> failed{0};
+  std::vector<std::thread> threads;
+  for (int w = 0; w < 16; w++) {
+    threads.emplace_back([&, w] {
+      sm1::session_t *s = d.open();
+      sm1::begin(s, sm1::xctlevel_t::read_committed);
+      tree_t tree;
+      tree_open(tree, s, d.store(), 40, 256);
+      for (int n = 0; n < 150; n++) {
+        std::string key = std::to_string(1000 + (n * 31) % 997) + "-" +
+                          std::to_string(w) + std::string(30, 'x');
+        if (0 != tree_insert(tree, key, "v")) {
+          failed++;
+        }
+      }
+      sm1::commit(s);
+      sm1::closedb(s);
+    });
+  }
+  for (auto &th : threads) {
+    th.join();
+  }
+  CHECK(0 == failed);
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+  cursor_t c;
+  cursor_open(t.tree, c, nullptr, true, nullptr, true);
+  CHECK(16u * 150 == drain(c).size());
+}

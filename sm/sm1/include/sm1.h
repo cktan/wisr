@@ -207,8 +207,9 @@ int init(std::string_view homedir);
  *
  * opt's block_cache_bytes sizes the one block cache every
  * database, every column family and the root and temporary
- * instances read through; NULL means the defaults. A size less
- * than 1 fails with SM_ERR_INVALID.
+ * instances read through, and a quarter of it, or what opt's
+ * max_sessions asks for if more, the buffer pool's frames; NULL
+ * means the defaults. A size less than 1 fails with SM_ERR_INVALID.
  */
 int attach(std::string_view homedir, env_t*& out,
            const env_options_t* opt = nullptr);
