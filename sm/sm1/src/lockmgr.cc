@@ -23,15 +23,16 @@
  * Deadlocks are found as PostgreSQL finds them: a waiter that has
  * slept deadlock_ms, PostgreSQL's deadlock_timeout, searches the
  * waits-for graph from itself, and again each deadlock_ms after.
- * The search holds every partition's mutex, in order, then
- * xact_mu (lock_all_t), so it sees every waiter and holder still.
- * If it can reach itself, the youngest transaction on that cycle
- * is doomed and woken; every member of a cycle is blocked, so the
- * victim is always waiting in lock_wait or lock_wait_xact and
- * fails from there. A waiter for a shared lock waits on every holder at
- * once, so the search walks a graph, not a chain, its edges read
- * from the table as it goes (lock_blockers): a waiter's own list
- * goes stale as its holders release, before it wakes to look.
+ * A wait to upgrade a lock it holds searches once as it begins, as
+ * PostgreSQL's ProcSleep checks a waiter's early: two upgraders of
+ * one lock need no timer to run out. The search holds every partition's mutex,
+ * in order, then xact_mu (lock_all_t), so it sees every waiter and holder
+ * still. If it can reach itself, the youngest transaction on that cycle is
+ * doomed and woken; every member of a cycle is blocked, so the victim is always
+ * waiting in lock_wait or lock_wait_xact and fails from there. A waiter for a
+ * shared lock waits on every holder at once, so the search walks a graph, not a
+ * chain, its edges read from the table as it goes (lock_blockers): a waiter's
+ * own list goes stale as its holders release, before it wakes to look.
  */
 
 #include "error.h"
@@ -555,6 +556,7 @@ int lock_wait(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
   defer { s->waiting_lock = false; };
   // Look for a cycle once we have slept deadlock_ms.
   int64_t deadline = sm_now_us() + int64_t(deadlock_wait_ms(s)) * 1000;
+  bool searched = false;
   for (;;) {
     // A doomed transaction stops waiting and fails.
     if (s->doomed) {
@@ -585,6 +587,16 @@ int lock_wait(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
               ? kind
               : static_cast<lockref_t *>(locktab_t::oldest(e).first)->kind;
       s->waiting_mode = mode;
+    }
+    // An upgrade may close a cycle with another of this lock's holders,
+    // so it searches now, once: every lock mutex, taken in their order,
+    // so ours is let go first. Then it looks again, as a victim or not.
+    if (nullptr != mine && !searched) {
+      searched = true;
+      guard.unlock();
+      check_deadlock(db, s);
+      guard.lock();
+      continue;
     }
     // Interrupted, before the wait or during it: stop waiting.
     if (!wait_once(db, s, guard, &db->lock_cv[pi], &deadline)) {

@@ -10695,3 +10695,21 @@ five. digres gives it `MaxConnections`: `datadir_load()` runs
 before `InitializeMaxBackends()`, so `pcb->MaxBackends` is still 0
 there. Sixteen threads split pages through 108 frames in sm2's test.
 
+## Step 364: an upgrade searches for a cycle as it begins to wait
+
+`deadlock-simple` failed once the lock table was in partitions
+(`42283a71`, on `main`), which searches only after `deadlock_ms`:
+the deadlock was found, the same session its victim, but
+PostgreSQL's expected output has it found without a wait, by
+`ProcSleep`'s early check. The specs are not in `make test`.
+
+- **sm1**: `lock_wait()`, for a lock it holds, searches once before
+  it sleeps. sm1 has no queue to walk as `ProcSleep` does, and
+  another session's wait may be under another partition's mutex, so
+  it is the same search as a timer's, with every mutex. It costs an
+  upgrade that must wait, and no other lock.
+- **Tests**: sm1, two upgraders found at once with 60 s timers, the
+  younger the victim whichever came second, and an upgrade past a
+  reader only waits. `a cycle is found once a waiter has slept` was
+  two upgraders, so it moves to two keys, which is what it tests.
+

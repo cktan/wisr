@@ -1464,13 +1464,13 @@ TEST_CASE(
 
 TEST_CASE("a cycle is found once a waiter has slept its deadlock_ms") {
   // Verify the search waits deadlock_ms, PostgreSQL's
-  // deadlock_timeout, as PostgreSQL's does: a cycle is not found as
-  // a wait begins, but by the first waiter whose time is up, and the
-  // victim is still the youngest.
+  // deadlock_timeout, as PostgreSQL's does: a cycle of waits on two
+  // locks is not found as a wait begins, but by the first waiter
+  // whose time is up, and the victim is still the youngest.
   // 1. A negative deadlock_ms is refused.
-  // 2. A, the older, waits 300 ms; B 10,000 ms. Both hold "x"
-  //    shared. B writes "x" and waits for A.
-  // 3. A writes "x", closing the cycle, and waits: its search, 300
+  // 2. A, the older, waits 300 ms; B 10,000 ms. A holds "x" and B
+  //    "y" shared. B writes "x" and waits for A.
+  // 3. A writes "y", closing the cycle, and waits: its search, 300
   //    ms on, finds it. B, the younger, fails with deadlock, and A's
   //    write goes ahead, no sooner than 250 ms and well inside 10 s.
   lock_fixture_t f;
@@ -1483,7 +1483,7 @@ TEST_CASE("a cycle is found once a waiter has slept its deadlock_ms") {
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm1::lock_row(a, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
-  REQUIRE(sm1::lock_row(b, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
+  REQUIRE(sm1::lock_row(b, g_store, "y", sm1::SM_LOCKMODE_SH) == 0);
   int rc_b = -2, err_b = 0;
   std::thread tb([&] {
     rc_b = set(b, "x", "b");
@@ -1491,7 +1491,7 @@ TEST_CASE("a cycle is found once a waiter has slept its deadlock_ms") {
   });
   settle();
   auto start = std::chrono::steady_clock::now();
-  int rc_a = set(a, "x", "a");
+  int rc_a = set(a, "y", "a");
   auto ms_taken = std::chrono::duration_cast<std::chrono::milliseconds>(
                       std::chrono::steady_clock::now() - start)
                       .count();
@@ -1505,6 +1505,86 @@ TEST_CASE("a cycle is found once a waiter has slept its deadlock_ms") {
   sm1::abort(b);
   sm1::closedb(a);
   sm1::closedb(b);
+}
+
+TEST_CASE("two upgraders' cycle is found as the second begins to wait") {
+  // Verify an upgrade that must wait searches at once, as PostgreSQL's
+  // early check does: such a cycle needs no timer to run out, and a
+  // spec of PostgreSQL's expects it found without a wait.
+  // 1. A, the older, and B both wait 60 s before a search. Both hold
+  //    "x" shared, and B upgrades it, and waits for A.
+  // 2. A upgrades it, closing the cycle: well inside 60 s B, the
+  //    younger, fails with deadlock, and A's upgrade goes ahead.
+  // 3. The same with the younger second: it fails, and the older goes
+  //    ahead, as the victim is still the youngest.
+  // 4. An upgrade that closes no cycle only waits: C upgrades past a
+  //    reader, D, which then commits.
+  for (bool older_second : {true, false}) {
+    CAPTURE(older_second);
+    lock_fixture_t f;
+    sm1::session_t *a = f.open();
+    sm1::session_t *b = f.open();
+    REQUIRE(sm1::set_deadlock_ms(a, 60000) == 0);
+    REQUIRE(sm1::set_deadlock_ms(b, 60000) == 0);
+    REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
+    REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
+    REQUIRE(sm1::lock_row(a, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
+    REQUIRE(sm1::lock_row(b, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
+    int rc_a = -2, rc_b = -2, err_b = 0;
+    auto start = std::chrono::steady_clock::now();
+    std::thread first([&] {
+      if (older_second) {
+        rc_b = set(b, "x", "b");
+        err_b = sm1::errnum();
+      } else {
+        rc_a = set(a, "x", "a");
+      }
+    });
+    settle();
+    if (older_second) {
+      rc_a = set(a, "x", "a");
+    } else {
+      rc_b = set(b, "x", "b");
+      err_b = sm1::errnum();
+    }
+    if (older_second) {
+      // The victim holds its lock until its transaction ends.
+      first.join();
+      CHECK(rc_a == 0);
+    } else {
+      sm1::abort(b);
+      first.join();
+      CHECK(rc_a == 0);
+    }
+    auto ms_taken = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - start)
+                        .count();
+    CHECK(rc_b == -1);
+    CHECK(err_b == sm1::SM_ERR_DEADLOCK);
+    CHECK(ms_taken < 5000);
+    REQUIRE(sm1::commit(a) == 0);
+    sm1::abort(b);
+    sm1::closedb(a);
+    sm1::closedb(b);
+  }
+
+  lock_fixture_t f;
+  sm1::session_t *c = f.open();
+  sm1::session_t *d = f.open();
+  REQUIRE(sm1::begin(c, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(d, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::lock_row(c, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
+  REQUIRE(sm1::lock_row(d, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
+  int rc_c = -2;
+  std::thread upgrader([&] { rc_c = set(c, "x", "c"); });
+  settle();
+  CHECK(-2 == rc_c);
+  REQUIRE(sm1::commit(d) == 0);
+  upgrader.join();
+  CHECK(rc_c == 0);
+  REQUIRE(sm1::commit(c) == 0);
+  sm1::closedb(c);
+  sm1::closedb(d);
 }
 
 TEST_CASE("a cycle across two partitions of the lock table is found") {

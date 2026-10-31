@@ -869,13 +869,17 @@ that has waited `deadlock_ms` (default 50ms, or the session's
 own, `sm1::set_deadlock_ms`: PostgreSQL's `deadlock_timeout`)
 searches the waits-for graph from itself, and again each
 `deadlock_ms` after, so a cycle is found by the first of its
-members whose time is up. If it can reach itself, the
+members whose time is up. A wait to upgrade a lock it holds also
+searches once as it begins, as PostgreSQL's `ProcSleep` checks a
+waiter early, so two upgraders of one lock need no timer to run
+out. If it can reach itself, the
 **youngest** transaction on that cycle — the last to begin —
 fails with `SM_ERR_DEADLOCK`. The search is a walk of the
 waits-for edges holding every partition's mutex and `xact_mu`,
 taken after the waiter lets its own go; it holds up every
-locker while it runs, so a wait makes none until it has slept,
-and a wait that ends within `deadlock_ms`, most do, makes none.
+locker while it runs, so any other wait makes none until it has
+slept, and one that ends within `deadlock_ms`, most do, makes
+none.
 There is no detector thread.
 
 **The edges are read from the lock table as the search walks**
