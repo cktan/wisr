@@ -316,9 +316,16 @@ and so are the catalog tables psql reads
    from 1 client to 16. To weigh, each measured on `ins` and
    `fk`:
 
-   - **RocksDB's own**: `enable_pipelined_write`, the WAL
-     written apart from the memtables; `two_write_queues`, for
-     writes that need no memtable order.
+   - **RocksDB's own**: `enable_pipelined_write`, the WAL written
+     apart from the memtables, measured on 2026-11-01
+     (`../bench/rowlocks.sh`, digres, the hand-written lock
+     partition): at 16 clients `ins` 4,602 tps with it and 4,753
+     without, `fk` 4,551 and 4,293, within a run's swing, against
+     PostgreSQL's 10,073 and 10,523. It does not help: the cost
+     is the trip through the queue, not the order of a group's
+     two stages. `two_write_queues` was not tried: RocksDB's
+     second queue takes only writes that skip the memtable, as
+     `WritePrepared` transactions make, and sm1 makes none.
    - **The version writes kept out of a synced group**: a
      transaction's versions written by a queue, or a batch, of
      their own, so only the commit waits for a sync.
