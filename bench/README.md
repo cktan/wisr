@@ -49,6 +49,7 @@ fair.
 | `relq6/` | a range of 10,000 rows by primary key, the Q6 of before 2026-10-28 (Q6 is 100 rows now), as the calls it makes through sm to RocksDB, run by rel on a wide_mixed of its own, timed per row with no SQL above them |
 | `results/` | one report per run, dated, with the machine and commits |
 | `results/LOG.md` | the log of every report: date, commit, machine |
+| `results-gcp/` | reports from a Google Cloud VM, with their own log: not comparable with `results/` |
 
 ## Status
 
