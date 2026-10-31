@@ -385,6 +385,10 @@ int cat_init(sm1::env_t *env, std::string_view dbname,
     if (sm1::mkseq(session, oid_seq, first_oid, 1) != 0) {
       return -1;
     }
+    // Page ids for every tree, from 1: page 0 is each tree's root.
+    if (sm1::mkseq(session, sm2::tree_page_seq, 1, 1) != 0) {
+      return -1;
+    }
     // The built-in namespaces, at their fixed oids.
     for (auto [oid, name] :
          {std::pair<uint64_t, const char *>{nsp_pg_catalog, "pg_catalog"},

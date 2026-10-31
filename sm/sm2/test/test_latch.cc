@@ -97,24 +97,3 @@ TEST_CASE("tree latch: pages apart are latched apart") {
   CHECK(8 * 3000 * 2 == total);
   CHECK(0u == table.size());
 }
-
-TEST_CASE("tree latch: a thread counts the latches it holds") {
-  // Verify latches_held counts this thread's latches alone.
-  // 1. Hold two latches: two. Another thread holding one sees one.
-  // 2. Release them: none.
-  latch_table_t table;
-  CHECK(0u == latches_held());
-  page_latch_t a(table, page_name_t{1, 1, 1, 1});
-  page_latch_t b(table, page_name_t{1, 1, 1, 2});
-  CHECK(2u == latches_held());
-  size_t other = 99;
-  std::thread t([&] {
-    page_latch_t c(table, page_name_t{1, 1, 1, 3});
-    other = latches_held();
-  });
-  t.join();
-  CHECK(1u == other);
-  a.release();
-  b.release();
-  CHECK(0u == latches_held());
-}

@@ -296,6 +296,59 @@ TEST_CASE("tree: an older snapshot reads the rows it sees") {
   REQUIRE(sm3::commit(f.b) == 0);
 }
 
+TEST_CASE("tree: long keys split its pages under the table's writes") {
+  // Verify a tree of many levels through a table's inserts and updates.
+  // 1. Insert 500 rows with keys of 1,006 bytes, about three a page,
+  //    out of key order, so pages split at every level.
+  // 2. A scan gives every row in key order; a probe gives its row.
+  // 3. Update every tenth row to a key past them all: its old key gives
+  //    no row, its new one the row, and a scan each row once.
+  trees_t f;
+  auto key_of = [](int n) {
+    return std::to_string(100000 + n) + std::string(1000, 'k');
+  };
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  std::vector<uint64_t> rids(500);
+  for (int i = 0; i < 500; i++) {
+    int n = i * 7919 % 500;
+    row_t r(n, key_of(n), "O");
+    REQUIRE_MESSAGE(sm3::tbl_insert(t, r.d(), r.null(), rids[n]) == 0,
+                    sm1::errmsg());
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  std::vector<int32_t> want(500);
+  for (int n = 0; n < 500; n++) {
+    want[n] = n;
+  }
+  CHECK(want == ids(t, f.by_state));
+  for (int n = 0; n < 500; n += 17) {
+    CHECK(std::vector<int32_t>{n} == ids(t, f.by_state, key_of(n), key_of(n)));
+  }
+  for (int n = 0; n < 500; n += 10) {
+    row_t r(n, key_of(1000 + n), "O");
+    REQUIRE_MESSAGE(sm3::tbl_update(t, rids[n], r.d(), r.null()) == 0,
+                    sm1::errmsg());
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  CHECK(ids(t, f.by_state, key_of(0), key_of(0)).empty());
+  CHECK(std::vector<int32_t>{0} ==
+        ids(t, f.by_state, key_of(1000), key_of(1000)));
+  std::vector<int32_t> all = ids(t, f.by_state);
+  std::sort(all.begin(), all.end());
+  CHECK(want == all);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
 TEST_CASE("tree: made on rows, emptied by a truncate, refused as a pkey") {
   // Verify the trees DDL makes, empties and refuses.
   // 1. A tree made on a table with rows, in a later transaction, is
@@ -1097,7 +1150,7 @@ TEST_CASE("tree: a dropped tree's pages go once the drop commits") {
   // Verify DROP INDEX of a tree drops its pages after the commit, and
   // a rollback keeps them.
   // 1. Insert rows; drop by_state and roll back: it still scans.
-  // 2. Drop it and commit: its meta page is gone from the store.
+  // 2. Drop it and commit: its root is gone from the store.
   trees_t f;
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   sm3::table_t *t = f.table(f.a);
@@ -1115,14 +1168,14 @@ TEST_CASE("tree: a dropped tree's pages go once the drop commits") {
   }
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
-  std::string meta{static_cast<char>(relid >> 8),
+  std::string root{static_cast<char>(relid >> 8),
                    static_cast<char>(relid & 0xFF)};
-  meta.append(8, '\0');
-  auto has_meta = [&] {
+  root.append(8, '\0');
+  auto has_root = [&] {
     sm1::page_t *p = nullptr;
     std::string_view bytes;
     int rc =
-        sm1::pin_page(sm3::session_sm1(f.a), storeid, meta, true, p, bytes);
+        sm1::pin_page(sm3::session_sm1(f.a), storeid, root, true, p, bytes);
     REQUIRE(rc >= 0);
     sm1::unpin_page(sm3::session_sm1(f.a), p);
     return rc == 0;
@@ -1131,7 +1184,7 @@ TEST_CASE("tree: a dropped tree's pages go once the drop commits") {
   REQUIRE(sm3::drop_index(f.a, f.jobs, f.by_state) == 0);
   REQUIRE(sm3::abort(f.a) == 0);
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
-  CHECK(has_meta());
+  CHECK(has_root());
   t = f.table(f.a);
   CHECK(50u == ids(t, f.by_state, "s", "s").size());
   sm3::tbl_close(t);
@@ -1140,6 +1193,6 @@ TEST_CASE("tree: a dropped tree's pages go once the drop commits") {
   REQUIRE(sm3::drop_index(f.a, f.jobs, f.by_state) == 0);
   REQUIRE(sm3::commit(f.a) == 0);
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
-  CHECK_FALSE(has_meta());
+  CHECK_FALSE(has_root());
   REQUIRE(sm3::commit(f.a) == 0);
 }

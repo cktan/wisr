@@ -7,6 +7,9 @@
 # 3. Update rows off, onto and back to a key, delete some, and roll an
 #    insert back: each query gives each row once, under its key now.
 # 4. Confirm an index-only scan's answer, and a TRUNCATE's.
+# 5. Make a tree of keys of 960 bytes, about three a page, and insert
+#    rows out of key order, so its pages split at every level; a range,
+#    an order, an equality and rows moved and deleted answer as above.
 
 statement ok
 create table t (id int4 primary key, c2 int4, note text)
@@ -218,3 +221,67 @@ drop index t_lower
 query I rowsort
 select id from t where c2 = 9 and note like 'p%'
 ----
+
+statement ok
+create table lk (id int4 primary key, k text)
+
+onlyif digres
+statement ok
+create index lk_k on lk (k) with (tree = on)
+
+skipif digres
+statement ok
+create index lk_k on lk (k)
+
+statement ok
+insert into lk select g, repeat(md5(g::text), 30) from generate_series(1, 1000) g
+
+query T nosort
+explain (costs off) select id from lk where k = 'x'
+----
+Index Scan using lk_k on lk
+  Index Cond: (k = 'x'::text)
+
+query II nosort
+select count(*), sum(id) from lk where k >= 'e'
+----
+133	65936
+
+query I nosort
+select id from lk order by k limit 5
+----
+363
+168
+610
+381
+236
+
+query I nosort
+select id from lk where k = repeat(md5('777'), 30)
+----
+777
+
+statement ok
+update lk set k = repeat(md5((id + 5000)::text), 30) where id % 10 = 0
+
+statement ok
+delete from lk where id % 7 = 0
+
+query I nosort
+select id from lk where k = repeat(md5('10'), 30)
+----
+
+query I nosort
+select id from lk where k = repeat(md5('5010'), 30)
+----
+10
+
+query II nosort
+select count(*), sum(id) from lk where k >= 'e'
+----
+111	54487
+
+query II nosort
+select count(*), sum(id) from lk
+----
+858	429429

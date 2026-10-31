@@ -3,7 +3,7 @@
  * (../BTREE.md §3), and a decoded page's insert and split.
  *
  *   header = level (1B) | flags (1B) | n (2B) | version (8B)
- *          | right (8B) | high key's length (2B) | high key
+ *          | prev (8B) | next (8B) | high key's length (2B) | high key
  *   slots  = n offsets (2B each), of the entries in key order
  *   entry  = key's length (2B) | key | value's length (2B) | value
  *
@@ -72,7 +72,8 @@ std::string page_bytes(const page_t &page) {
   out.push_back(static_cast<char>(page.flags));
   put_le(out, page.entries.size(), 2);
   put_le(out, page.version, 8);
-  put_le(out, page.right, 8);
+  put_le(out, page.prev, 8);
+  put_le(out, page.next, 8);
   put_le(out, page.high.size(), 2);
   out += page.high;
   // The slots, then the entries they point at, in the same order.
@@ -203,14 +204,14 @@ void page_split(page_t &page, page_t &right, std::string_view key,
   right = page_t{};
   right.level = page.level;
   right.flags = page.flags & page_has_high;
-  right.right = page.right;
+  right.next = page.next;
   right.high = std::move(page.high);
   right.entries.assign(std::make_move_iterator(page.entries.begin() + at),
                        std::make_move_iterator(page.entries.end()));
   page.entries.resize(at);
   page.flags |= page_has_high;
   page.high = right.entries.front().first;
-  page.right = 0;
+  page.next = 0;
 }
 
 /* Check bytes, a page's, and view them; see page.h. */
@@ -222,7 +223,7 @@ int page_view_t::open(std::string_view bytes) {
   const char *p = bytes.data();
   uint8_t flags = static_cast<uint8_t>(p[1]);
   size_t count = get_le(p + 2, 2);
-  size_t high_len = get_le(p + 20, 2);
+  size_t high_len = get_le(p + 28, 2);
   if (0 == (flags & page_has_high) && 0 != high_len) {
     return corrupt("a high key with no flag for it");
   }
@@ -236,7 +237,8 @@ int page_view_t::open(std::string_view bytes) {
   m_flags = flags;
   m_count = count;
   m_version = get_le(p + 4, 8);
-  m_right = get_le(p + 12, 8);
+  m_prev = get_le(p + 12, 8);
+  m_next = get_le(p + 20, 8);
   m_high = bytes.substr(page_header_size, high_len);
   m_slots = slots;
   return 0;
@@ -340,7 +342,8 @@ void page_view_t::load(page_t &out) const {
   out.level = m_level;
   out.flags = m_flags;
   out.version = m_version;
-  out.right = m_right;
+  out.prev = m_prev;
+  out.next = m_next;
   out.high = std::string(m_high);
   out.entries.clear();
   out.entries.reserve(m_count);

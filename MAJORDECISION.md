@@ -12,7 +12,7 @@ take to undo. Nothing here is merged into `main`.
   the page's entries and it together, at the point nearest
   half the bytes where both halves fit, as PostgreSQL's
   `_bt_findsplitloc()`. `entry_max()` is a third of what the
-  page header leaves, `(limit - 22) / 3`, not `limit / 3`.
+  page header leaves, `(limit - 30) / 3`, not `limit / 3`.
 - **Why:** step 1 split without the new entry, and capped an
   entry at a third of the limit without counting the left
   half's new high key. A page of three 2,730-byte entries
@@ -63,6 +63,9 @@ take to undo. Nothing here is merged into `main`.
   a miss costs a `Get` anyway.
 
 ## D4. Page ids from the meta page; descents from a remembered root
+
+*Superseded by D14*: there is no meta page, and the root does not
+move. What follows is the first decision.
 
 - **Decided:**
   - **A tree's next page id is in its meta page**, page 0,
@@ -221,9 +224,9 @@ What follows is the first decision.
   keeps the inner pages its descents read pinned in the block
   cache, up to 64, until it is closed; a descent reads them
   from there, with no cache `Lookup`. A descent that has to
-  move right lets them go, and forgets the root, so the next
-  reads afresh from the meta page. `BTREE.md` §2's index
-  version and session pin are not built.
+  move right lets them go, so the next reads afresh from page 0
+  (D14). `BTREE.md` §2's index version and session pin are not
+  built.
 - **Why:** Q10's 100 probes each looked up three pages in the
   block cache, its shard mutex and hash, 5% of the statement.
   A held page may go stale as a split changes it, and a
@@ -272,3 +275,58 @@ What follows is the first decision.
   key; an insert of the key waits for the row's writer either
   way.
 - **Undo:** none.
+
+## D14. The root is page 0, and there is no meta page
+
+Decided with the user (2026-10-31), revising D4.
+
+- **Decided:**
+  - **Page 0 is the root, for the tree's life.** The meta page's
+    tag, root and height go: its header says what the tag did,
+    its id is known, and its level + 1 is the height.
+  - **A root's split is one write**: both halves to new pages,
+    and page 0 a level up, their parent, as InnoDB's root stays
+    put. It is never flagged incomplete, so `post()` loses the
+    case of a root's split cut short.
+  - **Page ids come from one sequence for the database**,
+    `sm3.tree_page` (`sm2::tree_page_seq`), made by `cat_init()`,
+    from 1. Holes cost nothing.
+  - **Whoever reads a page again by its id checks its level**:
+    `latch_covering()`, a cursor, `tree_prune()`. Only page 0 can
+    differ, and each then descends again.
+- **Why:** RocksDB's `WriteBatch` is atomic and a page has no
+  fixed size, so a root can stay where it is. It saves a
+  transaction's first descent a cache lookup. It ends a split's
+  write of the meta page and the latch every split in a tree
+  took on it, and `post()`'s `stale_root` path. It also answers
+  the TODO of caching the root across transactions, which would
+  now save one lookup, about 470 instructions, against the risk
+  of a stale root when a tree is made again under its relid.
+- **The sequence:** D4 refused one because a sequence made by
+  `CREATE INDEX` is undone by its abort, and the pages are not.
+  One made with the catalog exists before any index. `nextseq`
+  never hands a value out twice, across a restart too, so a
+  crash skips ids and cannot reuse one.
+- **Cost:** page 0's level changes, and its entries move to new
+  pages, the one case of a key moving other than right; a
+  page's level is no longer fixed for life. `0` stays free to
+  mean "none" in a link, as the root is nobody's child or
+  sibling.
+- **Undo:** a meta page again, and a format change.
+
+## D15. Every page has a left link, for a reverse scan later
+
+Decided with the user (2026-10-31).
+
+- **Decided:** a page's header has `prev` beside `next`, which
+  was `right`. A split's first write writes the page's old right
+  sibling too, linked back to the new page, latched left before
+  right. `tree_check()` checks it; nothing else reads it yet.
+- **Why:** a reverse scan could instead descend once a leaf, with
+  no write and no header bytes, at a descent's cost a leaf. The
+  link is the cheaper read, and the user asked for it.
+- **Cost:** 8 bytes of header; a split that has a right sibling
+  reads and writes one more page, and waits for its latch.
+  The rightmost page has none, so ascending loads pay nothing.
+- **Undo:** the field, and that write.
+

@@ -63,7 +63,8 @@ TEST_CASE(
     page_t page;
     page.level = 0;
     page.version = 7 + round;
-    page.right = 1000 + round;
+    page.prev = 2000 + round;
+    page.next = 1000 + round;
     std::map<std::string, std::string> expected;
     for (;;) {
       std::string key = random_key(rng, 40);
@@ -86,7 +87,8 @@ TEST_CASE(
     page_view_t view = view_of(bytes);
     CHECK(0 == view.level());
     CHECK(7u + round == view.version());
-    CHECK(1000u + round == view.right());
+    CHECK(2000u + round == view.prev());
+    CHECK(1000u + round == view.next());
     CHECK_FALSE(view.has_high());
     check_entries(view, expected);
     // Each key is found where it is; the key just past it, its
@@ -123,7 +125,8 @@ TEST_CASE("tree page: a split's halves are the whole, in order, each under the "
     if (0 != (page.flags & page_has_high)) {
       page.high = std::string(50, '\xff');
     }
-    page.right = 99;
+    page.prev = 98;
+    page.next = 99;
     std::map<std::string, std::string> whole;
     size_t want = 2 + round % 150;
     while (whole.size() < want) {
@@ -154,8 +157,10 @@ TEST_CASE("tree page: a split's halves are the whole, in order, each under the "
     CHECK(0 != (page.flags & page_has_high));
     CHECK((old_flags & page_has_high) == (right.flags & page_has_high));
     CHECK(old_high == right.high);
-    CHECK(99u == right.right);
-    CHECK(0u == page.right);
+    CHECK(99u == right.next);
+    CHECK(0u == page.next);
+    CHECK(98u == page.prev);
+    CHECK(0u == right.prev);
     CHECK(page.level == right.level);
     CHECK(page_size(page) <= page_limit);
     CHECK(page_size(right) <= page_limit);
@@ -280,7 +285,7 @@ TEST_CASE("tree page: bytes that are not a page are refused") {
   bad[page_header_size + 1] = '\x7f';
   CHECK((-1 == view.open(bad) || -1 == view.check()));
   std::string flagless = bytes;
-  flagless[20] = 1;
+  flagless[page_header_size - 2] = 1;
   CHECK(-1 == view.open(flagless));
 }
 
@@ -295,7 +300,8 @@ TEST_CASE("tree page: an insert into the bytes lays out what a decode does") {
   for (int round = 0; round < 40; round++) {
     page_t page;
     page.level = 0;
-    page.right = round;
+    page.prev = round + 1;
+    page.next = round;
     if (round % 2) {
       page.flags = page_has_high;
       page.high = std::string(20, '\xff');

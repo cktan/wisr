@@ -8,6 +8,7 @@
 #include "doctest.h"
 
 #include "sm1.h"
+#include "sm2.h"
 
 #include <stdlib.h>
 
@@ -29,9 +30,9 @@ struct rawpin_ptr_t
 };
 
 /*
- * A fresh sm1 home, database and store with a rowno sequence and
- * one for TOAST ids, and sessions on it; all of it is removed at
- * the end.
+ * A fresh sm1 home, database and store with a rowno sequence, one
+ * for TOAST ids and one for trees' page ids, and sessions on it; all
+ * of it is removed at the end.
  */
 class db_t {
 public:
@@ -51,6 +52,7 @@ public:
     REQUIRE(sm1::mkstore(s, m_store) == 0);
     REQUIRE(sm1::mkseq(s, "rowno", 1, 1) == 0);
     REQUIRE(sm1::mkseq(s, "toast", 1, 1) == 0);
+    REQUIRE(sm1::mkseq(s, sm2::tree_page_seq, 1, 1) == 0);
     REQUIRE(sm1::commit(s) == 0);
   }
 

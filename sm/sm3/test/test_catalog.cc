@@ -32,6 +32,20 @@ sm3::catalog_t *load(db_t &db) {
 
 } // namespace
 
+TEST_CASE("cat_init: makes the sequence trees take their page ids from") {
+  // Verify a new database has the sequence, and that it never gives 0.
+  // 1. cat_init a fresh database.
+  // 2. Two draws give 1 and 2: page 0 is every tree's root.
+  db_t db;
+  REQUIRE(sm3::cat_init(db.env(), "db") == 0);
+  sm1::session_t *s = db.open();
+  uint64_t a = 0, b = 0;
+  REQUIRE_MESSAGE(sm1::nextseq(s, sm2::tree_page_seq, a) == 0, sm1::errmsg());
+  REQUIRE(sm1::nextseq(s, sm2::tree_page_seq, b) == 0);
+  CHECK(1 == a);
+  CHECK(2 == b);
+}
+
 TEST_CASE("a catalog is made once, and loaded only once made") {
   // Verify cat_init and cat_open on a new database.
   // 1. Before cat_init, cat_open fails with SM_ERR_NOTFOUND. Neither

@@ -33,7 +33,7 @@ constexpr size_t entry_size(size_t key_len, size_t value_len) {
 }
 
 /* The bytes of a page's header before its high key. */
-constexpr size_t page_header_size = 1 + 1 + 2 + 8 + 8 + 2;
+constexpr size_t page_header_size = 1 + 1 + 2 + 8 + 8 + 8 + 2;
 
 /*
  * The most an entry may take of a page of limit bytes: a third of
@@ -54,8 +54,9 @@ struct page_t {
   uint8_t level = 0; /* 0 a leaf */
   uint8_t flags = 0; /* page_has_high, page_incomplete */
   uint64_t version = 0;
-  uint64_t right = 0; /* the right sibling's page id, 0 none */
-  std::string high;   /* the least key the page may not hold */
+  uint64_t prev = 0; /* the left sibling's page id, 0 none */
+  uint64_t next = 0; /* the right sibling's page id, 0 none */
+  std::string high;  /* the least key the page may not hold */
 
   /* Whether the page has a high key: none on a level's rightmost. */
   bool has_high_key() const { return 0 != (flags & page_has_high); }
@@ -94,9 +95,9 @@ int page_insert_bytes(const page_view_t &v, std::string_view key,
  * Insert key, with value, into page, which page_insert found full,
  * and split it into itself and right, each under limit, their bytes
  * as near half as that allows: right takes the upper entries, page's
- * high key and right link, and page's high key becomes right's first
+ * high key and next link, and page's high key becomes right's first
  * key. key is not on page, and its entry is at most entry_max(limit).
- * The caller gives right its page id, links page to it, and sets the
+ * The caller gives right its page id, links the two, and sets the
  * flags the split is written with.
  */
 void page_split(page_t &page, page_t &right, std::string_view key,
@@ -124,7 +125,8 @@ public:
   uint8_t level() const { return m_level; }
   uint8_t flags() const { return m_flags; }
   uint64_t version() const { return m_version; }
-  uint64_t right() const { return m_right; }
+  uint64_t prev() const { return m_prev; }
+  uint64_t next() const { return m_next; }
   bool has_high() const { return 0 != (m_flags & page_has_high); }
   std::string_view high() const { return m_high; }
   size_t count() const { return m_count; }
@@ -172,7 +174,8 @@ private:
   uint8_t m_level = 0;
   uint8_t m_flags = 0;
   uint64_t m_version = 0;
-  uint64_t m_right = 0;
+  uint64_t m_prev = 0;
+  uint64_t m_next = 0;
   size_t m_count = 0;
   size_t m_slots = 0; /* where the slots start */
 };

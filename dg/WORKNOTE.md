@@ -10551,3 +10551,31 @@ on the release builds, unpinned.
   2PC case of `test_tree.rel`, a prepared row deciding across a
   restart; sm3, a tree made anew by a rewrite keyed anew, and a
   temporary table's.
+
+## Step 356: the root at page 0, and no meta page
+
+- **sm3**: `cat_init()` makes `sm3.tree_page`, the sequence every
+  tree's page ids come from (MAJORDECISION D14).
+- **sm2**: page 0 is the root for a tree's life, a root's split
+  one write, so no half of it is left to finish; whoever reads a
+  page again by its id checks its level. The meta page,
+  `tree_t::root`, `post()`'s `stale_root` path and
+  `latches_held()` go.
+- **Tests**: sm2, the root at every height; a root's split makes
+  no post; a cursor past a root leaf that split; writers racing a
+  root as it grows; a writer holding a stale root; page ids across
+  a restart; sm3, `cat_init()`'s sequence.
+- **Long keys** split pages at every level, at the real page
+  limit, where `rel`'s tree tests had never split one: sm2, the
+  longest keys a tree takes; sm3, through a table's writes;
+  `rel`, `test_tree_split.rel`; dg, `btree_tree.test`.
+
+## Step 357: a left link
+
+- **sm2**: `prev` beside `next`, which was `right`, in a page's
+  header, 30 bytes now. A split's first write links the page's old
+  right sibling back to the new page (MAJORDECISION D15), so a
+  crash leaves the two links agreeing. `tree_check()` checks it.
+- **Tests**: sm2, leaves walked both ways; a split cut short; a
+  page with `prev` wrong does not check. Without the sibling's
+  write, 9 of the tree's tests fail.

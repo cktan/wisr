@@ -1077,6 +1077,12 @@ int idx_insert_unique(index_t* index, std::span<const datum_t> key,
                       const std::function<int(std::string_view,
                                               std::string_view)>& check);
 
+/*
+ * The sequence a database's trees take their page ids from, made with
+ * its catalog. The name is sm3's own, so no user can make or drop it.
+ */
+inline constexpr const char* tree_page_seq = "sm3.tree_page";
+
 /* Make an index's tree, empty, its relid's pages before it dropped. */
 int idx_create(index_t* index);
 

@@ -113,7 +113,7 @@ Proposed here:
 page key = 04 | relid (2B) | pageid (8B, big-endian)
 value    = header | slots | entries
 header   = level (1B, 0 a leaf) | flags (1B) | n (2B)
-         | version (8B) | right (8B, 0 none)
+         | version (8B) | prev (8B, 0 none) | next (8B, 0 none)
          | high key's length (2B) | high key (none on the
            rightmost page of a level)
 slots    = n offsets (2B each), of the entries in key order
@@ -135,9 +135,10 @@ are *has a high key* and *incomplete split* (§13).
   binary search over them reads the page's bytes in its cache
   entry, with no decode and no copy. The version counts the
   page's changes.
-- **Page 0 is the index's meta page**: the root's pageid, the
-  next pageid to give, the tree's height. A page id is never
-  reused.
+- **Page 0 is the root, for the tree's life**
+  (`../MAJORDECISION.md` D14). There is no meta page: its level
+  + 1 is the tree's height, and other page ids come from one
+  sequence for the database. A page id is never reused.
 - **A leaf entry is its key alone.** The row's key ends it in
   a non-unique index, as today, and a unique one's carries it
   too: the row decides visibility, so equal keys of dead rows
@@ -165,7 +166,7 @@ are *has a high key* and *incomplete split* (§13).
   over the page's entries and that one, as
   `_bt_findsplitloc()` does, at the point nearest half the
   bytes where both fit. A tree's keys are cut there, about
-  2.7 KB, flagged and rechecked as cut keys are now
+  1.3 KB, flagged and rechecked as cut keys are now
   (`sm2/SM2_DESIGN.md` §3.2); a unique index's, never cut, are
   refused past it, where today's entries take 4,096 bytes
   (`sm1::max_keylen`).
@@ -310,8 +311,8 @@ design deletes them. The GC filter does not touch class
     sm1's (`sm1::pin_page`, `sm1::page_write`), as sm1 is the
     only channel into RocksDB (`../MAJORDECISION.md` D2, D3);
     the index's version and a session's pin on its inner
-    pages (§2) are not built: an open index remembers its root
-    instead (D4);
+    pages (§2) are not built: an open index holds the inner
+    pages it reads instead (D11);
   - **the writers' latch table**, by page id;
   - **the tree**: descent, the IN list's batch, scans,
     inserts, splits and vacuum's walk, over the three and
@@ -390,7 +391,7 @@ index is of one kind, and keeps it for its life.
   | an entry of a range | 2,820 | about 200 |
   | a probe of a non-unique key | about 30k (`Seek`) | about 3k |
   | a probe of a unique key | a `Get`, near PostgreSQL's | about 3k |
-  | a unique key, at most | 4,096 bytes | about 2.7 KB |
+  | a unique key, at most | 4,096 bytes | about 1.3 KB |
   | an index-only scan | yes: an entry is MVCC | reads the row |
   | an indexed insert, written | about 40 bytes | the page, up to 4 KB |
   | dead entries | none, GC drops versions | until vacuum |
@@ -433,15 +434,12 @@ section proposes, each on review before it is built.
   that meets it on its way down finishes the post before its
   own change, as PostgreSQL's `_bt_finish_split()`. A reader
   needs no flag: the right link takes it there.
-- **A root split** makes a new root of two entries, and writes
-  the meta page with it, in the second change. The meta page,
-  page 0, holds the root's page id and the tree's height.
-- **Page ids come from an sm1 sequence** of the index's own
-  (`sm1::mkseq`, made with the index, transactionally; its
-  next value is not, as a page's is not): no page id is
-  handed out twice, gaps are harmless, and the meta page is
-  written only when the root changes. *Built otherwise*: from
-  the meta page, in a split's first change (D4).
+- **A root split** is one change: both halves to new pages,
+  and page 0 a level up, their parent, so it has no half to
+  finish (`../MAJORDECISION.md` D14).
+- **Page ids come from one sequence for the database**, made
+  with its catalog: never handed out twice, and its gaps are
+  harmless (D14).
 - **A cached page is keyed by the database, the store, the
   index's relid and the page id**, as one block cache serves
   every database of the environment.

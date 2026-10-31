@@ -1676,11 +1676,6 @@ struct page_put_t {
 };
 
 /*
- * TODO: always cache the root page in a btree somewhere, invalidate
- * on updates or on detection of updates.
- */
-
-/*
  * Read the page at key in storeid: 0 with it pinned in out and its
  * bytes in bytes, valid until sm1::unpin_page(session, out), which
  * the session's closing does not do for the caller; 1 if there is

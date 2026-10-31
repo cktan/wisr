@@ -1,0 +1,152 @@
+# test_tree_split.rel -- trees of long keys through sm.h (../BTREE.md), at
+# their real page limit, so pages split at every level, the root among them.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_tree_split"))
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+
+(db-create "splitdb")
+(db-open "splitdb")
+
+# A key of 1,006 bytes, in n's order: about three fit a page, so an insert
+# splits one every few, and a thousand of them are many levels high.
+(defn long-key [n]
+  (string (string/format "%06d" n) (string/repeat "k" 1000)))
+
+# The id column of each row a scan gives, in its order.
+(defn ids [rows] (map (fn [r] ((r 1) 0)) rows))
+
+# The rows from to to, in an order that is not the keys', so splits land
+# all over the tree and not only at its right edge.
+(defn shuffled [from to]
+  (def n (- to from))
+  (map (fn [i] (+ from (% (* i 7919) n))) (range 0 n)))
+
+# Insert the rows from to to, a transaction each hundred.
+(defn insert-rows [from to]
+  (var i 0)
+  (each n (shuffled from to)
+    (when (= 0 (% i 100)) (begin :rc))
+    (insert t [n (long-key n)])
+    (++ i)
+    (when (= 0 (% i 100)) (commit)))
+  (when (not= 0 (% i 100)) (commit)))
+
+# Check the tree gives want, ids in key order, and every entry there is.
+# A macro, as idx-rows and idx-entries take an index by its name.
+(defmacro check-all [index want]
+  ~(do
+     (def rows-wanted ,want)
+     (begin :rc)
+     (assert-eq (idx-entries ,index) (length rows-wanted))
+     (assert-eq (ids (idx-rows ,index)) rows-wanted)
+     (each n (filter (fn [x] (= 0 (% x 37))) rows-wanted)
+       (assert-eq (ids (idx-rows ,index :ge [(long-key n)] :le [(long-key n)]))
+                  @[n]))
+     (commit)))
+
+# Verify a tree of many levels against the rows it was made from.
+# 1. Make a keyless table and a tree on its long keys.
+# 2. Insert a thousand rows out of key order: far more than a page holds,
+#    so its root and its inner pages split too.
+# 3. A whole scan gives each row in key order; a range gives its rows, and
+#    a probe of every 37th key gives that row.
+(begin :rc)
+(table-create t (columns (id :int4 :not-null) (k :text)))
+(index-create t_k (table t) (key (k :asc)) :tree true)
+(commit)
+(insert-rows 0 1000)
+(check-all t_k (range 0 1000))
+(begin :rc)
+(assert-eq (ids (idx-rows t_k :ge [(long-key 400)] :le [(long-key 420)]))
+           (range 400 421))
+(commit)
+
+# Verify splits a rollback leaves behind: a tree's writes outlast it.
+# 1. Insert rows that split pages, and abort.
+# 2. No scan gives them, though their entries stay.
+# 3. (compact), VACUUM, removes those entries, and the rest are whole.
+(begin :rc)
+(each n (shuffled 1000 1100) (insert t [n (long-key n)]))
+(abort)
+(begin :rc)
+(assert-eq (idx-entries t_k) 1100)
+(assert-eq (ids (idx-rows t_k)) (range 0 1000))
+(compact t)
+(commit)
+(check-all t_k (range 0 1000))
+
+# Verify two writers splitting one tree, each holding its inner pages
+# across the other's splits.
+# 1. Two sessions take turns inserting into the same leaves, in one
+#    transaction each, so the pages each holds go stale.
+# 2. Both commit, and the tree gives every row.
+(session-open "b" "splitdb")
+(session-use "b")
+(begin :rc)
+(session-use "default")
+(begin :rc)
+(for i 0 300
+  (insert t [(+ 2000 (* 2 i)) (long-key (+ 2000 (* 2 i)))])
+  (session-use "b")
+  (insert t [(+ 2001 (* 2 i)) (long-key (+ 2001 (* 2 i)))])
+  (session-use "default"))
+(commit)
+(session-use "b")
+(commit)
+(session-use "default")
+(session-close "b")
+(def after-two (array/concat (range 0 1000) (range 2000 2600)))
+(check-all t_k after-two)
+
+# Verify pages made after a restart are new ones: a page id given twice
+# would write over a page, and lose its entries.
+# 1. Restart.
+# 2. Insert 500 rows more, splitting pages.
+# 3. The tree gives every row, from before the restart and after.
+(db-close)
+(env-detach)
+(env-attach test-dir)
+(db-open "splitdb")
+(insert-rows 3000 3500)
+(def after-restart (array/concat @[] after-two (range 3000 3500)))
+(check-all t_k after-restart)
+
+# Verify a tree dropped and built again over its rows, by the workers of an
+# index build, each splitting pages of the one tree.
+# 1. Drop the tree, and make it again on the table's rows.
+# 2. It gives every row, in order.
+(begin :rc)
+(index-drop t_k)
+(commit)
+(begin :rc)
+(index-create t_k2 (table t) (key (k :asc)) :tree true)
+(commit)
+(index-wait t_k2)
+(check-all t_k2 after-restart)
+
+# Verify a unique tree of long keys finds a duplicate wherever splits put it.
+# 1. Make a unique tree over the rows: every key is on one leaf of many.
+# 2. A row with a key already there, at each of a few places, is refused.
+# 3. A row with a new key is taken.
+(begin :rc)
+(index-create t_u (table t) (key (k :asc)) :unique true :tree true)
+(commit)
+(index-wait t_u)
+(each n @[0 500 999 2599 3499]
+  (begin :rc)
+  (assert-err :err-dupkey (insert t [9000 (long-key n)]))
+  (abort))
+(begin :rc)
+(insert t [9000 (long-key 9000)])
+(commit)
+(begin :rc)
+(assert-eq (ids (idx-rows t_u :ge [(long-key 9000)] :le [(long-key 9000)]))
+           @[9000])
+(commit)
+
+(db-close)
+(env-detach)
+(rm-rf test-dir)
+(print "test_tree_split.rel passed")

@@ -49,6 +49,45 @@ std::vector<std::pair<std::string, std::string>> drain(cursor_t &c) {
   return out;
 }
 
+/* The sm1 key of a page of relid's tree. */
+std::string page_name(uint16_t relid, uint64_t pageid) {
+  std::string name{static_cast<char>(relid >> 8),
+                   static_cast<char>(relid & 0xFF)};
+  sm0::put_be64(name, pageid);
+  return name;
+}
+
+/* Page pageid of relid's tree, decoded; REQUIREs it is there. */
+page_t read_decoded(sm1::session_t *s, uint64_t store, uint16_t relid,
+                    uint64_t pageid) {
+  sm1::page_t *pin = nullptr;
+  std::string_view bytes;
+  REQUIRE(0 ==
+          sm1::pin_page(s, store, page_name(relid, pageid), true, pin, bytes));
+  page_view_t v;
+  REQUIRE(0 == v.open(bytes));
+  page_t page;
+  v.load(page);
+  sm1::unpin_page(s, pin);
+  return page;
+}
+
+/* The tree's leftmost leaf's page id: page 0's first child, down. */
+uint64_t first_leaf(sm1::session_t *s, uint64_t store, uint16_t relid) {
+  uint64_t pageid = 0;
+  page_t page = read_decoded(s, store, relid, pageid);
+  while (0 != page.level) {
+    const std::string &child = page.entries.front().second;
+    REQUIRE(8u == child.size());
+    pageid = 0;
+    for (int i = 7; i >= 0; i--) {
+      pageid = pageid << 8 | static_cast<uint8_t>(child[i]);
+    }
+    page = read_decoded(s, store, relid, pageid);
+  }
+  return pageid;
+}
+
 /* A session in a transaction on d, its tree of relid opened. */
 struct open_tree_t {
   sm1::session_t *s;
@@ -181,7 +220,7 @@ TEST_CASE("tree: a split's post cut short is finished by the next insert") {
   //    made to fail, as a crash would cut it short.
   // 2. The tree does not check (the left leaf is flagged
   //    incomplete), but a cursor reads every key, the new one too,
-  //    by the right link.
+  //    by the next link, and each leaf's prev is the leaf before it.
   // 3. Restart; insert a key below every other, into the flagged
   //    leaf: the tree checks whole again, and every key is there.
   db_t d;
@@ -206,6 +245,14 @@ TEST_CASE("tree: a split's post cut short is finished by the next insert") {
     CHECK(-1 == rc);
     CHECK(0 == detail::fail_posts);
     CHECK(-1 == tree_check(t.tree));
+    // The links agree already, the post being all that is unmade.
+    uint64_t before = 0;
+    for (uint64_t id = first_leaf(t.s, d.store(), 9); 0 != id;) {
+      page_t page = read_decoded(t.s, d.store(), 9, id);
+      CHECK(before == page.prev);
+      before = id;
+      id = page.next;
+    }
     cursor_t c;
     cursor_open(t.tree, c, nullptr, true, nullptr, true);
     auto all = drain(c);
@@ -320,7 +367,7 @@ TEST_CASE("tree: made again under a relid, it starts empty") {
   // in the store and in the cache, and tree_drop removes a tree.
   // 1. Fill a tree and read it, so its pages are cached.
   // 2. Make it again: a cursor reads nothing, and it checks whole.
-  // 3. Drop it: its meta page is gone.
+  // 3. Drop it: its root is gone.
   db_t d;
   open_tree_t t(d, 5, 512);
   REQUIRE(0 == tree_create(t.tree));
@@ -422,7 +469,7 @@ TEST_CASE("tree: a leaf a probe reads is evicted before the inner pages") {
   // 2. Write other pages, more than the cache holds, so its leaves go.
   // 3. A tree opened anew probes the first key, missing its leaf.
   // 4. Write as many other pages again.
-  // 5. The leaf is gone; the root and the meta page stayed.
+  // 5. The leaf is gone; the root stayed.
   sm1::env_options_t opt;
   opt.block_cache_bytes = 256 << 10;
   db_t d(&opt);
@@ -431,6 +478,32 @@ TEST_CASE("tree: a leaf a probe reads is evicted before the inner pages") {
   auto key_of = [](int n) { return std::to_string(1000000 + n); };
   for (int n = 0; n < 500; n++) {
     REQUIRE(0 == tree_insert(t.tree, key_of(n), "v"));
+  }
+  // The first key's leaf, found by the inner pages alone, so it stays
+  // unread, and a miss.
+  auto name_of = [](uint64_t pageid) {
+    std::string name{static_cast<char>(0), static_cast<char>(21)};
+    sm0::put_be64(name, pageid);
+    return name;
+  };
+  size_t height = 0;
+  REQUIRE(0 == tree_height(t.tree, height));
+  REQUIRE(height >= 2);
+  uint64_t leaf = 0;
+  for (size_t level = height; level-- > 1;) {
+    sm1::page_t *pin = nullptr;
+    std::string_view bytes;
+    REQUIRE(0 ==
+            sm1::pin_page(t.s, d.store(), name_of(leaf), true, pin, bytes));
+    page_view_t v;
+    REQUIRE(0 == v.open(bytes));
+    std::string_view child = v.value(0);
+    REQUIRE(8u == child.size());
+    leaf = 0;
+    for (int i = 7; i >= 0; i--) {
+      leaf = leaf << 8 | static_cast<uint8_t>(child[i]);
+    }
+    sm1::unpin_page(t.s, pin);
   }
   const std::string pad(4000, 'p');
   auto write_others = [&](int from) {
@@ -447,19 +520,11 @@ TEST_CASE("tree: a leaf a probe reads is evicted before the inner pages") {
   std::string k = key_of(0);
   cursor_open(probe, c, &k, true, &k, true);
   REQUIRE(1u == drain(c).size());
-  uint64_t root = probe.root;
-  REQUIRE(1 != root);
   // Let the pinned inner pages go, so only their priority keeps them.
   tree_close(probe);
   write_others(1000);
-  auto cached = [&](uint64_t pageid) {
-    std::string name{static_cast<char>(0), static_cast<char>(21)};
-    sm0::put_be64(name, pageid);
-    return sm1::page_cached(t.s, d.store(), name);
-  };
-  CHECK_FALSE(cached(1));
-  CHECK(cached(root));
-  CHECK(cached(0));
+  CHECK_FALSE(sm1::page_cached(t.s, d.store(), name_of(leaf)));
+  CHECK(sm1::page_cached(t.s, d.store(), name_of(0)));
 }
 
 TEST_CASE("tree: a unique insert judges every entry of its prefix") {
@@ -507,45 +572,286 @@ TEST_CASE("tree: a unique insert judges every entry of its prefix") {
   CHECK(304u == drain(c).size());
 }
 
-TEST_CASE("tree: a root's split cut short is finished by its right page's") {
-  // Verify a crash between a root's split's two writes, after which
-  // the meta page still names the old root, does not stop a split of
-  // the page to its right from posting.
-  // 1. Fill the root leaf until the next key splits it; make that
-  //    post fail: the root is flagged, its right page unposted.
-  // 2. Insert keys past every other, into the right page, until it
-  //    splits too: its post finds no level above it, so it finishes
-  //    the root's split first, then its own.
+TEST_CASE("tree: the root is page 0, at every height") {
+  // Verify the root never moves, and says the tree's height itself.
+  // 1. Insert until the tree is three levels high.
+  // 2. At each height, page 0 is at the level below it.
   // 3. The tree checks whole, and holds every key.
+  db_t d;
+  open_tree_t t(d, 22, 512);
+  REQUIRE(0 == tree_create(t.tree));
+  size_t height = 1;
+  int n = 0;
+  while (height < 3) {
+    REQUIRE(0 == tree_insert(t.tree, std::to_string(1000000 + n++), "v"));
+    REQUIRE(0 == tree_height(t.tree, height));
+    std::string name{static_cast<char>(0), static_cast<char>(22)};
+    sm0::put_be64(name, 0);
+    sm1::page_t *pin = nullptr;
+    std::string_view bytes;
+    REQUIRE(0 == sm1::pin_page(t.s, d.store(), name, true, pin, bytes));
+    page_view_t v;
+    REQUIRE(0 == v.open(bytes));
+    CHECK(height == v.level() + 1u);
+    CHECK_FALSE(v.has_high());
+    sm1::unpin_page(t.s, pin);
+  }
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+  cursor_t c;
+  cursor_open(t.tree, c, nullptr, true, nullptr, true);
+  CHECK(static_cast<size_t>(n) == drain(c).size());
+}
+
+TEST_CASE("tree: a root's split has no half") {
+  // Verify a root's split is one write, so no post can be cut from it.
+  // 1. Arm a post to fail, and insert until the root leaf splits.
+  // 2. The insert succeeds, the post unmade: no post was asked for.
+  // 3. The tree checks whole.
   db_t d;
   open_tree_t t(d, 19, 512);
   REQUIRE(0 == tree_create(t.tree));
-  std::set<std::string> keys;
-  int n = 0;
-  size_t height = 1;
   detail::fail_posts = 1;
+  size_t height = 1;
+  int n = 0;
   while (1 == height) {
-    std::string key = "k" + std::to_string(10000 + n++);
-    int rc = tree_insert(t.tree, key, "v");
-    keys.insert(key);
-    if (rc < 0) {
-      break;
-    }
+    REQUIRE_MESSAGE(0 ==
+                        tree_insert(t.tree, std::to_string(1000000 + n++), "v"),
+                    std::string(sm1::errmsg()));
     REQUIRE(0 == tree_height(t.tree, height));
   }
-  REQUIRE(0 == detail::fail_posts);
-  REQUIRE(0 == tree_height(t.tree, height));
-  CHECK(1u == height);
-  for (int i = 0; i < 200; i++) {
-    std::string key = "k" + std::to_string(10000 + n++);
-    REQUIRE_MESSAGE(0 == tree_insert(t.tree, key, "v"),
-                    std::string(sm1::errmsg()));
-    keys.insert(key);
-  }
+  CHECK(1 == detail::fail_posts);
+  detail::fail_posts = 0;
   REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
-  REQUIRE(0 == tree_height(t.tree, height));
-  CHECK(height >= 2u);
+}
+
+TEST_CASE("tree: a cursor reads on past a root leaf that split") {
+  // Verify a cursor on page 0 finds its place when page 0 grows.
+  // 1. Fill the root leaf, and read every key of it by a cursor, which
+  //    remembers page 0 as its leaf.
+  // 2. Another tree inserts keys past those, until the root splits.
+  // 3. The cursor reads on: the new keys alone, in order.
+  db_t d;
+  open_tree_t t(d, 23, 512);
+  REQUIRE(0 == tree_create(t.tree));
+  auto key_of = [](int n) { return std::to_string(1000000 + n); };
+  for (int n = 0; n < 5; n++) {
+    REQUIRE(0 == tree_insert(t.tree, key_of(n), "v"));
+  }
   cursor_t c;
   cursor_open(t.tree, c, nullptr, true, nullptr, true);
-  CHECK(keys.size() == drain(c).size());
+  std::string_view k, v;
+  for (int n = 0; n < 5; n++) {
+    REQUIRE(0 == cursor_next(c, k, v));
+    CHECK(key_of(n) == k);
+  }
+  int n = 5;
+  {
+    open_tree_t w(d, 23, 512);
+    size_t height = 1;
+    while (1 == height) {
+      REQUIRE(0 == tree_insert(w.tree, key_of(n++), "v"));
+      REQUIRE(0 == tree_height(w.tree, height));
+    }
+  }
+  auto rest = drain(c);
+  REQUIRE(static_cast<size_t>(n - 5) == rest.size());
+  for (size_t i = 0; i < rest.size(); i++) {
+    CHECK(key_of(5 + static_cast<int>(i)) == rest[i].first);
+  }
+}
+
+TEST_CASE("tree: writers race a root as it grows") {
+  // Verify a writer that found page 0 at one level, and latched it at
+  // another, looks again.
+  // 1. Eight trees, one after another, each from an empty root.
+  // 2. Four threads insert keys of their own into it at once, so they
+  //    meet at page 0 as it splits, and at each level it then grows.
+  // 3. Each tree checks whole, and holds every key.
+  db_t d;
+  for (uint16_t relid = 30; relid < 38; relid++) {
+    {
+      open_tree_t t(d, relid, 256);
+      REQUIRE(0 == tree_create(t.tree));
+    }
+    std::atomic<int> failed{0};
+    std::vector<std::thread> threads;
+    for (int w = 0; w < 4; w++) {
+      threads.emplace_back([&, w] {
+        sm1::session_t *s = d.open();
+        sm1::begin(s, sm1::xctlevel_t::read_committed);
+        tree_t tree;
+        tree_open(tree, s, d.store(), relid, 256);
+        for (int n = 0; n < 300; n++) {
+          std::string key = std::to_string(100 + n) + "-" + std::to_string(w);
+          if (0 != tree_insert(tree, key, "v")) {
+            failed++;
+          }
+        }
+        tree_close(tree);
+        sm1::commit(s);
+        sm1::closedb(s);
+      });
+    }
+    for (auto &th : threads) {
+      th.join();
+    }
+    CHECK(0 == failed);
+    open_tree_t t(d, relid, 256);
+    REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+    cursor_t c;
+    cursor_open(t.tree, c, nullptr, true, nullptr, true);
+    CHECK(1200u == drain(c).size());
+  }
+}
+
+TEST_CASE("tree: a split links a page's old sibling back to the new page") {
+  // Verify prev is kept, and that a tree with it wrong does not check.
+  // 1. Insert keys in the middle of a tree, so the page split has a
+  //    right sibling, and at its right edge, so it has none.
+  // 2. Walking the leaves right, each prev is the leaf before; walking
+  //    them left from the last, by prev, meets every leaf.
+  // 3. Write a leaf with prev wrong: the tree no longer checks.
+  db_t d;
+  open_tree_t t(d, 27, 512);
+  REQUIRE(0 == tree_create(t.tree));
+  for (int n = 0; n < 1499; n++) {
+    REQUIRE(0 ==
+            tree_insert(t.tree, std::to_string(1000000 + n * 7 % 1499), "v"));
+  }
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+  std::vector<uint64_t> leaves;
+  for (uint64_t id = first_leaf(t.s, d.store(), 27); 0 != id;) {
+    leaves.push_back(id);
+    id = read_decoded(t.s, d.store(), 27, id).next;
+  }
+  REQUIRE(leaves.size() > 10);
+  std::vector<uint64_t> back;
+  for (uint64_t id = leaves.back(); 0 != id;) {
+    back.push_back(id);
+    id = read_decoded(t.s, d.store(), 27, id).prev;
+  }
+  std::reverse(back.begin(), back.end());
+  CHECK(leaves == back);
+
+  page_t page = read_decoded(t.s, d.store(), 27, leaves[3]);
+  page.prev = 12345;
+  std::string name = page_name(27, leaves[3]);
+  std::string bytes = page_bytes(page);
+  std::vector<sm1::page_put_t> puts{{name, bytes, false, false}};
+  REQUIRE(0 == sm1::page_write(t.s, d.store(), puts));
+  CHECK(-1 == tree_check(t.tree));
+  CHECK(sm1::SM_ERR_CORRUPT == sm1::errnum());
+}
+
+TEST_CASE("tree: the longest keys, at the real page limit") {
+  // Verify splits at every level with keys as long as a tree takes.
+  // 1. At page_limit, keys of the most an entry may be: three fit a
+  //    page at most, so nearly every insert splits one.
+  // 2. Insert 2,000 out of order, so splits land all over the tree.
+  // 3. The tree is at least five levels high, checks whole, and a
+  //    cursor reads every key, in order.
+  db_t d;
+  open_tree_t t(d, 26, page_limit);
+  REQUIRE(0 == tree_create(t.tree));
+  const size_t key_len = entry_max(page_limit) - entry_size(0, 8);
+  auto key_of = [&](int n) {
+    std::string key = std::to_string(1000000 + n);
+    key.resize(key_len, 'k');
+    return key;
+  };
+  std::vector<int> order(2000);
+  for (int n = 0; n < 2000; n++) {
+    order[n] = n;
+  }
+  std::shuffle(order.begin(), order.end(), std::mt19937(26));
+  for (int n : order) {
+    REQUIRE_MESSAGE(0 == tree_insert(t.tree, key_of(n), "v"),
+                    std::string(sm1::errmsg()));
+  }
+  size_t height = 0;
+  REQUIRE(0 == tree_height(t.tree, height));
+  CHECK(height >= 5);
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+  cursor_t c;
+  cursor_open(t.tree, c, nullptr, true, nullptr, true);
+  auto all = drain(c);
+  REQUIRE(2000u == all.size());
+  for (int n = 0; n < 2000; n++) {
+    CHECK(key_of(n) == all[n].first);
+  }
+}
+
+TEST_CASE("tree: a writer holding a stale root posts above it") {
+  // Verify a held page 0 a split has grown past does not stop a post.
+  // 1. A tree two levels high; a writer's tree reads it, so it holds
+  //    page 0 at level 1.
+  // 2. Another tree inserts until the tree is at least four levels.
+  // 3. The first writer, its pages unchanged, inserts keys below every
+  //    other: its held page 0 leads it to the leftmost leaf with no
+  //    move right, so it keeps it, and the leaf's split asks page 0 to
+  //    be its parent, which it is no longer.
+  // 4. It inserts enough more to split pages at every level.
+  // 5. The tree checks whole, and holds every key.
+  db_t d;
+  open_tree_t r(d, 24, 256);
+  REQUIRE(0 == tree_create(r.tree));
+  auto key_of = [](int n) { return std::to_string(1000000 + n * 7 % 30011); };
+  int n = 0;
+  size_t height = 1;
+  while (2 != height) {
+    REQUIRE(0 == tree_insert(r.tree, key_of(n++), "v"));
+    REQUIRE(0 == tree_height(r.tree, height));
+  }
+  REQUIRE(0 == tree_insert(r.tree, key_of(n++), "v"));
+  CHECK_FALSE(r.tree.held.empty());
+  {
+    open_tree_t w(d, 24, 256);
+    while (height < 4) {
+      REQUIRE(0 == tree_insert(w.tree, key_of(n++), "v"));
+      REQUIRE(0 == tree_height(w.tree, height));
+    }
+  }
+  CHECK_FALSE(r.tree.held.empty());
+  for (int i = 0; i < 100; i++) {
+    REQUIRE_MESSAGE(
+        0 == tree_insert(r.tree, "0" + std::to_string(1000 + i), "v"),
+        std::string(sm1::errmsg()));
+    n++;
+  }
+  for (int i = 0; i < 3000; i++) {
+    REQUIRE_MESSAGE(0 == tree_insert(r.tree, key_of(n - 100), "v"),
+                    std::string(sm1::errmsg()));
+    n++;
+  }
+  tree_close(r.tree);
+  REQUIRE_MESSAGE(0 == tree_check(r.tree), std::string(sm1::errmsg()));
+  cursor_t c;
+  cursor_open(r.tree, c, nullptr, true, nullptr, true);
+  CHECK(static_cast<size_t>(n) == drain(c).size());
+}
+
+TEST_CASE("tree: page ids go on across a restart") {
+  // Verify no page id is given twice, a restart between.
+  // 1. Make a tree of many pages.
+  // 2. Restart, and insert as many keys again, making pages anew.
+  // 3. The tree checks whole, and holds every key: a page written over
+  //    would have lost some.
+  db_t d;
+  auto key_of = [](int n) { return std::to_string(1000000 + n); };
+  {
+    open_tree_t t(d, 25, 512);
+    REQUIRE(0 == tree_create(t.tree));
+    for (int n = 0; n < 2000; n++) {
+      REQUIRE(0 == tree_insert(t.tree, key_of(n), "v"));
+    }
+  }
+  d.restart();
+  open_tree_t t(d, 25, 512);
+  for (int n = 2000; n < 4000; n++) {
+    REQUIRE(0 == tree_insert(t.tree, key_of(n), "v"));
+  }
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+  cursor_t c;
+  cursor_open(t.tree, c, nullptr, true, nullptr, true);
+  CHECK(4000u == drain(c).size());
 }

@@ -1,7 +1,7 @@
 # BTREE-todo — the root at page 0, and no meta page
 
 The planned work on the `wip-btree` branch, from the review of
-the TODOs in `934c5b7e`. Nothing below is built yet. It revises
+the TODOs in `934c5b7e`. §4 says what is built of it. It revises
 `../MAJORDECISION.md` D4 and D11, and `BTREE.md` §2, §3 and §13.
 Paths are relative to `sm/`.
 
@@ -138,10 +138,10 @@ aligned by hand, and `make format` leaves it out.
 
 ## 2. Order of work
 
-Each of the steps 1, 5, 6 and 7 ends with `DEBUG=1 make -C sm -j4
-test` passing. Steps 2, 3 and 4 are one change: page 0 as the
-root does not pass until all three are in, as `tree_check()`
-stops before page 0 until step 4. Split them only to review
+Each of the steps 1, 5, 6, 7 and 8 ends with `DEBUG=1 make -C
+sm -j4 test` passing. Steps 2, 3 and 4 are one change: page 0
+as the root does not pass until all three are in, as
+`tree_check()` stops before page 0 until step 4. Split them only to review
 them.
 
 1. **The sequence.**
@@ -193,7 +193,17 @@ them.
      `prev` against the page before it on the level.
    - The `static_assert` in `sm2/src/rel/index.cc` must still
      hold.
-7. **Documents.**
+   - **`right` is renamed `next`**, the link alone: `page_t`'s
+     field, `page_view_t::right()`, and the documents. A split's
+     right half and right page keep their names.
+7. **Check a tree's store once** (`BTREEDESIGN.md` §5.3):
+   `enter_pages()` on every pin reads the catalog in two cases,
+   a transaction with DDL of its own and a snapshot older than
+   the last DDL.
+   A page has no versions and the table's lock keeps its store,
+   so the tree checks when opened, and pins by the store's
+   handle. A step of its own, measured first.
+8. **Documents.**
    - `../MAJORDECISION.md`: D4 revised, D11's "forgets the root"
      revised, a new entry for §1 above.
    - `../MAJORDECISION.md` D1: the header's size, `limit - 30`.
@@ -206,7 +216,7 @@ them.
      one cache lookup, about 470 instructions (D11's numbers),
      for the risk of a stale root across a relid's reuse.
    - `../dg/WORKNOTE.md`: a step.
-8. **Measure.** `make -C ../dg release -j4`, then
+9. **Measure.** `make -C ../dg release -j4`, then
    `../bench/btree.sh`: Q9, Q10 and the two 16-client mixes,
    recorded in `NEXT.md` §1 item 3.
 
@@ -269,8 +279,17 @@ at `relid | 0`: only its name goes. Run the tree tests under TSan
   TODOs. On it, sm's full suite and dg's pass, but for
   pgregress, which skipped: no PostgreSQL 18 build in
   `~/p/postgres18` (set `PG18_SRC`).
-- **Not started**: everything in §2. The root-caching TODO is
-  still in `sm1/include/sm1.h`, until step 7.
+- **Built, committed and pushed**: §2 steps 1 to 6, the root at
+  page 0, no meta page, the sequence, `prev` and
+  `next`, the long-key split tests at sm2, sm3, `rel` and dg, and
+  step 8's documents. A cursor's and a writer's checks of page
+  0's level are shown to run; `tree_prune()`'s and `descend()`'s
+  `afresh` retry are not.
+- **Not started**: step 7, and step 9's measuring.
+- **After this plan**: sm's own buffer pool, a project of its
+  own, decided by the user (`BTREEDESIGN.md` §14): SH/EX pins,
+  frames changed in place, write-through, a clock with leaves
+  aging twice as fast, slots grown 16 at a time.
 - **A database made before this cannot be read**: its trees have
   a meta page at 0, and it has no sequence. Nothing keeps
   compatibility before production: run initdb again.

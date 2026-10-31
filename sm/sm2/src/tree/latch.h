@@ -65,12 +65,6 @@ private:
 /* The process's latch table, which every session's writers share. */
 latch_table_t &page_latches();
 
-/*
- * How many latches the calling thread holds, of every table: a writer
- * that would take one out of order checks it holds none.
- */
-size_t latches_held();
-
 /* A page's latch, held for a scope. */
 class page_latch_t {
 public:

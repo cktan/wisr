@@ -7,8 +7,9 @@
  *
  *   page key = relid (2B, big-endian) | pageid (8B, big-endian)
  *
- * Page 0 is the meta page: the root's page id, the next page id to
- * give, the tree's height. A tree's keys are distinct byte strings,
+ * Page 0 is the root, for the tree's life; its level + 1 is the tree's
+ * height. Other page ids come from one sequence for the database
+ * (sm2::tree_page_seq). A tree's keys are distinct byte strings,
  * compared bytewise; a key's value is the caller's. Every change is
  * a top-level write of sm1's, made when it is made, whatever the
  * caller's transaction then does. Nothing is removed but by
@@ -49,9 +50,8 @@ constexpr size_t held_max = 64;
  * stale as a split changes it; a descent from it is still right, as
  * no page is ever freed and a key moves only right, where the right
  * links reach it (../../MAJORDECISION.md D11). A descent that has to
- * move right lets them go, and the remembered root, so the next
- * starts afresh from the meta page. A writer changes only what it
- * reads anew under its latch.
+ * move right lets them go, so the next starts afresh. A writer changes
+ * only what it reads anew under its latch.
  */
 struct tree_t {
   sm1::session_t *session = nullptr;
@@ -59,9 +59,10 @@ struct tree_t {
   uint64_t storeid = 0;
   uint16_t relid = 0;
   size_t limit = page_limit;
-  /* The root last read, to descend from; 0 until then. */
-  uint64_t root = 0;
   std::vector<held_t> held;
+  /* The sequence of page ids, looked up at the tree's first split. */
+  sm1::seqref_t seq;
+  bool has_seq = false;
 };
 
 /* Open the tree of relid in storeid through session; reads nothing. */
@@ -73,7 +74,7 @@ void tree_close(tree_t &tree);
 
 /*
  * Make an empty tree: drop every page under its relid, left by a tree
- * before it, then write its meta page and an empty root leaf.
+ * before it, then write an empty leaf at page 0, the root.
  */
 int tree_create(tree_t &tree);
 
@@ -180,7 +181,7 @@ int tree_prune(
     const std::function<int(std::string_view, std::string_view)> &dead,
     size_t &removed);
 
-/* The tree's height, from its meta page: for tests. */
+/* The tree's height, from its root: for tests. */
 int tree_height(tree_t &tree, size_t &height);
 
 /*

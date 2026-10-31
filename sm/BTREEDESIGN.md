@@ -21,15 +21,15 @@ checkpoint, and a reader takes no latch.
 INDEX ... WITH (tree = on)`: pages, cache, latches, the tree,
 unique trees, `ON CONFLICT` arbiters, vacuum, digres's access.
 
-**Planned** (`BTREE-todo.md`), and written below as if done:
+**Since `43e15ea9`** (`BTREE-todo.md`), and written below:
 
-| Below | Today |
+| Below | Before |
 | --- | --- |
 | page 0 is the root, always | page 0 is a meta page; the root moves |
 | no meta page | meta page: tag, root, next page id, height |
 | page ids from one sequence for the database | `next` in the meta page, under its latch |
 | a root split is one atomic batch | two writes, like any split |
-| `prev`, a left link, on every page | `right` only |
+| `prev` and `next`, the links, on every page | `right` only |
 | header 30 bytes | header 22 bytes |
 
 **Not planned yet**: §13.
@@ -90,11 +90,11 @@ value = the page's bytes, at their own length
 +--------------------------------------------------------+
 | header, 30 bytes                                       |
 |   level   1B   0 a leaf                                |
-|   flags   1B   0x01 has a high key, 0x02 incomplete    |
+|   flags   1B   see below                               |
 |   n       2B   entries                                 |
 |   version 8B   this page's changes                     |
-|   right   8B   right sibling's page id, 0 none         |
 |   prev    8B   left sibling's page id, 0 none          |
+|   next    8B   right sibling's page id, 0 none         |
 |   hlen    2B   high key's length                       |
 +--------------------------------------------------------+
 | high key, hlen bytes; none on a level's rightmost page |
@@ -109,6 +109,19 @@ value = the page's bytes, at their own length
 Integers are little-endian. The key above is big-endian so that
 it sorts; these are read, never compared.
 
+`flags` has two bits:
+
+| Bit | Name | Set when |
+| --- | --- | --- |
+| 0x01 | `page_has_high` | the page has a high key: every page but a level's rightmost |
+| 0x02 | `page_incomplete` | the page has split, and its parent has no entry for the new right page yet |
+
+`page_incomplete` is set by a split's first write and cleared by
+its second (§9). A reader ignores it, as `next` reaches the new
+page. A writer that latches a flagged page finishes the split
+before its own change, which is how a crash between the two
+writes is repaired. Page 0 is never flagged.
+
 **A page has a limit, not a size.** `page_limit` is 4 KB (D12):
 past it an insert splits the page. A page is stored at its
 length, with no free space, as every change writes it whole, and
@@ -118,7 +131,8 @@ has neither of.
 **There is no gap between slots and entries.** A slotted page
 keeps free space to insert in place; this one is replaced, so a
 new entry is spliced into a new copy of the bytes
-(`page_insert_bytes()`, with no entry decoded).
+(`page_insert_bytes()`, with no entry decoded). The pool's pages
+will be slotted, and changed in place (§14).
 
 ### 3.3 Entries
 
@@ -136,8 +150,8 @@ new entry is spliced into a new copy of the bytes
   it may not hold: its right sibling's first key, at the split
   that made it.
 - **A descent takes the last inner entry at or below the key.**
-- **No prefix compression, suffix truncation or deduplication.**
-  A separator is a whole key (§13).
+- **No prefix compression, suffix truncation or deduplication
+  yet.** A separator is a whole key. All three are wanted (§13).
 
 ### 3.4 Limits
 
@@ -166,14 +180,14 @@ it changes a page.
 ```
  page 0   [ ""→17 , m→23 ]                  level 2, the root
               |       |
- level 1   [17] <--> [23]                   right / prev links
+ level 1   [17] <--> [23]                   next / prev links
            /  \       /  \
  level 0 [4]<>[9]<>[31]<>[12]               leaves, in key order
 ```
 
 - **Page 0 is the root, for life.** Its key is `relid | 0`, so a
   descent starts with no lookup of where the root is.
-- **Every level is a doubly linked list**, by `right` and
+- **Every level is a doubly linked list**, by `next` and
   `prev`. The links, not the parents, are what a reader relies
   on: B-link's reason for being.
 - **Other page ids mean nothing**: they come from one sequence
@@ -236,8 +250,33 @@ pin_page(key, inner)
     Insert at HIGH if inner, else LOW, and keep the handle
 ```
 
-Each read also checks an active transaction and the store, by a
-catalog lookup cached per session (D2).
+**What a pin checks first** (`enter_pages()`, on every pin and
+page write, and D2's cost):
+
+1. An active transaction, not prepared or doomed.
+2. A store other than 0.
+3. The store is live, at the transaction's view
+   (`catalog_lookup()`): a hash lookup in the session's cache,
+   and a load of the database's `last_ddl_ts`.
+4. The store's handle, `session_store()`, twice over.
+
+Then the page's key and its cache key are made. Commonly that is
+no I/O, but it is not measured. **Two cases read the catalog on
+every pin**, as the session's cache may not answer them:
+
+- **A transaction that has made or dropped a store**: `CREATE
+  TABLE` and its load in one transaction, as a restore does.
+- **A snapshot older than the database's last DDL**, anyone's:
+  a long `REPEATABLE READ` transaction, after any `CREATE`
+  anywhere, pays it for the rest of its life.
+
+So this can be a bottleneck. The fix is planned
+(`BTREE-todo.md` §2): a page has no versions, and the table's
+lock keeps its store, so a tree checks once, when opened, and
+pins by the store's handle.
+
+A pin has no mode today, as pages are immutable. With sm's own
+pool it has two, SH and EX (§14).
 
 ### 5.4 A write
 
@@ -250,24 +289,48 @@ page_write(pages)              the batch is one change
   unlock
 ```
 
-**Write-through, never write-back.** RocksDB has the bytes
-before the cache does, so any entry can be dropped at any time,
-and a miss is a `Get`.
+**Every page in the cache is clean**: it always equals RocksDB's.
 
-**The fill latch** closes one race: a reader misses, reads the
-old page, and a write lands before its insert. The reader would
-put back the old page, and the next writer would lose entries
-(D3). RocksDB's cache has no compare-and-insert. So a miss holds
-a latch across its `Get` and `Insert`, and a write across its
-`Write` and its inserts. 256 stripes, by the cache key's hash,
-for the process. A hit takes none.
+- **To change a page:** take its writer's latch (§7), read it,
+  make a changed copy, write the copy to RocksDB, put the copy in
+  the cache in place of the old entry, release the latch. The
+  old entry is never touched: anyone pinning it keeps reading it.
+- **To add a page:** the same, with nothing to read: a new id,
+  bytes laid out from nothing, written, put in the cache.
+- **So nothing is ever flushed**, and any unpinned page can be
+  dropped at any moment. The next reader's miss is a `Get`.
+
+**The fill latch.** Reads do not take the writer's latch, so
+without this a write could be lost:
+
+1. A reader misses page P, and `Get`s its bytes.
+2. A writer writes a new P to RocksDB and to the cache.
+3. The reader, finishing, inserts the old P over the new one.
+4. The next writer starts from the old P: step 2's change is
+   gone.
+
+RocksDB's cache has no compare-and-insert, so a miss holds a
+latch across its `Get` and `Insert`, and a write across its
+`Write` and its inserts, and steps 1 and 3 cannot straddle step
+2 (D3). 256 stripes, by the cache key's hash, for the process.
+A hit takes none.
 
 ### 5.5 Pages an open tree holds
 
+Every page is in the one cache, shared by every transaction. A
+tree keeps no copy of any. What it keeps is **pins**: having
+pinned an inner page, it does not unpin it, and remembers the
+pointer, so its next probe needs no `Lookup`.
+
+This is here because a `Lookup` is not free: it takes the shard's
+mutex and writes the entry's reference count, a shared cache line
+on the hottest pages there are. A statement's 100 probes would
+make 300 of them (D11). A pool whose pin is one atomic would need
+little of this.
+
 A tree is open as long as its table handle: in digres, to the
-end of the transaction. It keeps up to 64 inner pages pinned
-(`held_max`), so a probe reads none of them from the cache
-again (D11): a statement's 100 probes do not make 300 lookups.
+end of the transaction. It pins up to 64 inner pages
+(`held_max`).
 
 - **A held page may go stale**, and still routes rightly: its
   bytes are as they were, its children still exist, and a key
@@ -290,6 +353,10 @@ again (D11): a statement's 100 probes do not make 300 lookups.
 ---
 
 ## 6. Replacement
+
+This section is how pages are evicted today. sm's own pool
+replaces it with a clock, leaves aging twice as fast as inner
+pages (§14).
 
 RocksDB's LRU cache, `NewLRUCache(capacity)`, its defaults
 untouched: shards by the key's hash, as many as RocksDB chooses
@@ -359,7 +426,7 @@ priority pool of half of each shard; no low-priority pool.
 | none for readers | | | |
 
 **A reader takes no page latch.** It sees a page before a write
-or after it, never between, and right links cover a split under
+or after it, never between, and `next` links cover a split under
 way.
 
 **A writer's latch is by page id, never a stripe.** A split holds
@@ -420,15 +487,15 @@ stays, dead by its row, until vacuum.
 
 ```
 first batch, atomic:
-  R        the upper entries; R.prev = P, R.right = S
-  P        the lower entries; P.right = R; flagged incomplete
+  R        the upper entries; R.prev = P, R.next = S
+  P        the lower entries; P.next = R; flagged incomplete
   S        S.prev = R             (none if P was rightmost)
 second batch, atomic:
   parent   a new entry for R
   P        unflagged
 ```
 
-A reader in between reaches R by P's right link. A crash in
+A reader in between reaches R by P's `next` link. A crash in
 between leaves P flagged, and the next writer to latch it
 finishes the post before its own change. A full parent splits
 the same way, in the second batch.
@@ -438,7 +505,7 @@ the same way, in the second batch.
 ```
 one batch, atomic:
   L, R     two new pages, the entries in halves, linked;
-           L.prev = 0, R.right = 0
+           L.prev = 0, R.next = 0
   page 0   entries for L and R, its level up one
 ```
 
@@ -533,7 +600,7 @@ In the order I would take them. None is needed by §1's work.
 | Reverse scan | `ORDER BY ... DESC` | `prev`, §8's walk right; SSI's range |
 | Fix §6.3's two weaknesses | a fairer cache | measure first; `fill_cache`, a cursor that keeps the leaf's id |
 | Log the entry, write the page later | closes 27.7 s to 18 s, the write gap | **dirty pages**, so write-back: this design's largest step |
-| Suffix truncation of separators | shorter inner pages, a lower tree | §3.3, a split |
+| Prefix compression, suffix truncation of separators | more entries a page, a lower tree, far fewer page writes | §3.3, a split, the search of a page |
 | Deduplicate equal keys | smaller leaves on low-cardinality columns | §3.3, the entry's format |
 | Bottom-up sorted build | `CREATE INDEX` without a write per entry | sm3's build, `BULKLOAD.md` |
 | Many leaves by one `MultiGet` | an IN list's misses in one read | `BTREE.md` §4 |
@@ -544,3 +611,58 @@ In the order I would take them. None is needed by §1's work.
 **Whether today's entries stay** is decided by measuring both
 kinds over the grid (`BTREE.md` §12): a kind that loses every
 workload goes.
+
+---
+
+## 14. sm's own buffer pool
+
+Decided with the user (2026-10-31): sm will own a buffer pool for
+a tree's pages, in place of RocksDB's block cache. It is a
+project of its own, with its own design and plan, after
+`BTREE-todo.md`, and measured first. It will not close the 1.5×
+gap; what it buys is eviction under memory pressure, and cheaper
+pins at high client counts. It replaces §5 and §6, and §7's fill
+latch and writers' latches, where they differ.
+
+What is decided:
+
+- **Pins have modes, SH and EX.** A reader pins SH, a writer EX.
+  This reverses the answer in `sm1.h`, that a pin has no mode,
+  which holds only while pages are immutable.
+- **A frame changes in place, under EX.**
+- **Pages stay clean: write-through.**
+  - To change a page: pin EX, change it, write it to RocksDB,
+    unpin.
+  - To add a page: pin EX with a flag not to read it, lay it out,
+    write it to RocksDB, unpin.
+- **Eviction is a clock.** Leaves age twice as fast as inner
+  pages, as a scan of the leaves would otherwise page the inner
+  pages out. Only dropping a tree purges its pages at once.
+- **A page's slots keep room to grow.** A page's header has
+  `max`, the slots it has, grown 16 at a time, and `top`, the
+  last valid slot, so `top <= max`. These replace `n`. Slots past
+  `top` are zeroed, but zero marks nothing: `top` alone says
+  which are valid, as the first entry's offset is 0. Each slot
+  holds its entry's offset from the end of the slot array, so
+  growing the array moves the entries up with no slot changing.
+  To insert between slots 8 and 9, with 48 slots of which 34 are
+  used: slots 9 and up shift up one, and slot 9 takes the new
+  entry, which goes at the end of the entries. Entries are in no
+  order; only the slots are.
+
+What it must settle:
+
+- **Memory**: one budget becomes two, the pool's and the block
+  cache's for rows. How `shared_buffers` divides is open
+  (`BTREE.md` §11).
+- **RocksDB's copy**: a miss's `Get` should not fill the block
+  cache too (§6.3).
+- **Readers' cost**: SH writes a shared cache line on every page
+  read, the root included. Today's readers write nothing but the
+  cache's reference. Measure it against §12.
+- **What goes**: the fill latch, the writers' latch table, and
+  §5.5's held pins, if a pin is one atomic.
+- **A cursor's copy of a leaf**: `span()` relies on entries being
+  end to end, and slots in no order end that (`fill()`).
+- **`page_write`'s batch**: a split still writes several pages
+  atomically, each under its EX pin.

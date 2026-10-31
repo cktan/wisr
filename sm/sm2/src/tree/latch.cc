@@ -9,13 +9,6 @@
 
 namespace sm2::tree {
 
-namespace {
-
-/* The latches this thread holds. */
-thread_local size_t t_held = 0;
-
-} // namespace
-
 /* Mix a page's name into a hash. */
 size_t latch_table_t::hash_t::operator()(const page_name_t &p) const {
   uint64_t h = p.pageid * 0x9E3779B97F4A7C15ULL;
@@ -45,7 +38,6 @@ void latch_table_t::lock(const page_name_t &page) {
   }
   // Wait for the page's other writer, if there is one.
   e->latch.lock();
-  t_held++;
 }
 
 /* Release page's latch; see latch.h. */
@@ -58,7 +50,6 @@ void latch_table_t::unlock(const page_name_t &page) {
   assert(sh.map.end() != it);
   entry_t *e = it->second.get();
   e->latch.unlock();
-  t_held--;
   if (0 == --e->users) {
     sh.map.erase(it);
   }
@@ -73,9 +64,6 @@ size_t latch_table_t::size() {
   }
   return n;
 }
-
-/* The latches the calling thread holds; see latch.h. */
-size_t latches_held() { return t_held; }
 
 /* The process's latch table; see latch.h. */
 latch_table_t &page_latches() {
