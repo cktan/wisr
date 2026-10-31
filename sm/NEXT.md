@@ -168,9 +168,9 @@ and so are the catalog tables psql reads
      every bit of both words reaches every bit of the hash; an
      OID lock's id stays exact, `lo` one-to-one for a fixed
      `hi`. `operator()` should be `noexcept`, or libstdc++ keeps
-     the hash in each node. Lock ids are never persisted (a
-     prepared transaction's record keeps the names), so the
-     hash can change at any time.
+     the hash in each node. That hash of an id is never
+     persisted (a prepared transaction's record keeps the ids,
+     `sm1/LOCKID.md`), so it can change at any time.
 
    PostgreSQL keeps its own for the same reasons: `dynahash`,
    sized once, entries from a free list, in 16 partitions. What

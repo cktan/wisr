@@ -185,9 +185,8 @@ struct sm1::session_t {
    * and by fp_mu for an entry in a slot. lockref_t is db.h's.
    */
   using lockref_t = wisr::lockref_t;
-  wisr::lock_list_t locks;     /* held, in acquisition order */
-  wisr::lock_keys_t lock_keys; /* the row locks' keys, in locks' order */
-  size_t latest_marks = 0;     /* locks with latest set; 0 skips scans */
+  wisr::lock_list_t locks; /* held, in acquisition order */
+  size_t latest_marks = 0; /* locks with latest set; 0 skips scans */
 
   /*
    * The fast path (§5.1): an OID lock taken IS or IX, while no
@@ -214,16 +213,13 @@ struct sm1::session_t {
   std::vector<sm1::session_t *> waiting_for;
   /*
    * The lock we wait for in lock_wait, for lock_status and the
-   * cycle search: its type, storeid and key, the key the caller's,
-   * alive for the wait; its id and mode. waiting_lock is false when
+   * cycle search: its id, kind and mode. waiting_lock is false when
    * we wait for none, or behind a writer. Under the database's
    * lock_mu.
    */
   bool waiting_lock = false;
-  sm1::locktype_t waiting_type = sm1::LOCKTYPE_ROW;
-  uint64_t waiting_storeid = 0;
-  rocksdb::Slice waiting_row;
   wisr::lockid_t waiting_id{};
+  uint16_t waiting_kind = 0;
   sm1::lockmode_t waiting_mode = sm1::SM_LOCKMODE_SH;
   /*
    * The transaction we wait for in lock_wait_xact, or 0, and the
@@ -404,13 +400,13 @@ void lock_blockers(db_t *db, sm1::session_t *s,
                    std::vector<sm1::session_t *> *out);
 
 /*
- * Take the OID lock (storeid, key) in mode, by the fast path
- * when it can (§5.1): 0 once held; with nowait, 1 if another
- * holder conflicts, taking nothing; else, a wait that failed,
- * -1 with the error set (lock_wait_error).
+ * Take the lock on oid in mode, by the fast path when it can
+ * (§5.1): 0 once held; with nowait, 1 if another holder
+ * conflicts, taking nothing; else, a wait that failed, -1 with
+ * the error set (lock_wait_error).
  */
-int lock_oid(sm1::session_t *session, uint64_t storeid, rocksdb::Slice key,
-             sm1::lockmode_t mode, bool nowait);
+int lock_oid(sm1::session_t *session, uint64_t oid, sm1::lockmode_t mode,
+             bool nowait);
 
 /* Add the session to its database's, for a strong locker's sweep. */
 void lock_register(sm1::session_t *session);
@@ -419,13 +415,13 @@ void lock_register(sm1::session_t *session);
 void lock_unregister(sm1::session_t *session);
 
 /*
- * Take the lock (type, storeid, key) in mode if no other holder
- * conflicts, recording it; a holder already converts to the
- * weakest mode covering both. Returns 0, or 2 if another holder
- * conflicts, taking nothing. Never waits.
+ * Take the lock id in mode if no other holder conflicts, recording
+ * it with kind (sm1::lock_row); a holder already converts to the
+ * weakest mode covering both, keeping its kind. Returns 0, or 2 if
+ * another holder conflicts, taking nothing. Never waits.
  */
-int lock_try(sm1::session_t *session, sm1::locktype_t type, uint64_t storeid,
-             rocksdb::Slice key, sm1::lockmode_t mode);
+int lock_try(sm1::session_t *session, const lockid_t &id, sm1::lockmode_t mode,
+             uint16_t kind = 0);
 
 /*
  * For a write (WRITELOCK.md §3.2): 2 if another transaction holds
@@ -437,17 +433,19 @@ int lock_write_check(sm1::session_t *session, uint64_t storeid,
                      rocksdb::Slice key);
 
 /*
- * Block until no other transaction holds (storeid, key) in a mode
+ * Block until no other transaction holds the lock id in a mode
  * that conflicts with mode, taking nothing, and checking for
- * deadlock (§5.1). Returns 0; -1 without an error set if the
+ * deadlock (§5.1); kind is the lock's, for lock_status of the
+ * wait, 0 for a write's, which reports its holder's. Returns 0; -1
+ * without an error set if the
  * transaction was doomed while waiting, the caller then failing
  * it with s->doomed; 1 at once for a qa_nowait session, the
  * caller reporting SM_ERR_BLOCKED; or 2 if an interrupt to the
  * calling thread ended it (sm_sys.h), the caller reporting SM_ERR_INTERRUPTED
  * (lock_wait_error).
  */
-int lock_wait(sm1::session_t *session, sm1::locktype_t type, uint64_t storeid,
-              rocksdb::Slice key, sm1::lockmode_t mode);
+int lock_wait(sm1::session_t *session, const lockid_t &id, sm1::lockmode_t mode,
+              uint16_t kind = 0);
 
 /*
  * Block until the transaction xid ends, or rolls back to a
@@ -497,22 +495,30 @@ extern std::atomic<bool> lock_test_rows_collide;
  */
 uint64_t lock_row_hash(rocksdb::Slice key);
 
-/*
- * Append to out the name of lock l: its type byte, be64(storeid),
- * then its key, as lock_status reports it and a prepared
- * transaction's record keeps it (§8.4).
- */
-void lock_put_name(std::string *out, const sm1::session_t::lockref_t &l);
+/* The lock id of a row: (storeid, key) by its row hash. */
+lockid_t lock_row_id(uint64_t storeid, rocksdb::Slice key);
 
-/* The length of that name. */
-size_t lock_name_size(const sm1::session_t::lockref_t &l);
+/* The type of the lock id, its top bit. */
+sm1::locktype_t lock_type(const lockid_t &id);
+
+/* The storeid of the lock id: 0 for an OID lock. */
+uint64_t lock_storeid(const lockid_t &id);
+
+/* The size of a lock in a prepared transaction's record. */
+constexpr size_t lock_record_size = 20;
 
 /*
- * The lock list entry of g's a name stands for, its row key added to
- * g's lock_keys: false if it is no name.
+ * Append lock l to a prepared transaction's record (§8.4): its type
+ * byte, be64 of each of its id's words, its mode byte, then be16 of
+ * its kind, lock_record_size bytes in all.
  */
-bool lock_from_name(std::string_view name, sm1::session_t *g,
-                    sm1::session_t::lockref_t *l);
+void lock_put_record(std::string *out, const sm1::session_t::lockref_t &l);
+
+/*
+ * The lock list entry the lock_record_size bytes at p stand for, into
+ * l: false if they are no lock.
+ */
+bool lock_from_record(const char *p, sm1::session_t::lockref_t *l);
 
 /*
  * Move every lock s holds, and its lock list, to g, the prepared

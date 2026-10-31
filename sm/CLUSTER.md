@@ -348,7 +348,8 @@ birth and is never rewritten.
   table's; `sm_errdup` hands out the index and a row's key
   (`ROWKEY.md` §2.5); `sm_lock_status_t`
   names a row of a table with a primary key with no `_id`, 0
-  (§10, question 5).
+  (§10, question 5), and since `sm1/LOCKID.md` §4.1 names no
+  row's `_id` at all.
 - **rel**: the verbs that take or return a `rowno` take or
   return an `_id`, and new ones read by key.
 - **digres**: §6.

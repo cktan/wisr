@@ -9,7 +9,6 @@
 
 #include "sm.h"
 
-#include "sm0_codec.h"
 #include "sm1.h"
 #include "sm2.h"
 #include "sm3.h"
@@ -891,35 +890,23 @@ int sm_lock_status(sm_env_t *env, std::vector<sm_lock_status_t> &out) {
     // Held while reading the catalogs, which a first session adds to.
     std::lock_guard lock(env->mu);
     for (const sm1::lock_status_t &r : raw) {
-      sm_lock_status_t st{
-          r.dbid, SM_LOCKNAME_KEY, 0, 0, static_cast<sm_lockmode_t>(r.mode),
-          r.tag,  r.granted};
-      if (r.type == sm1::LOCKTYPE_OID && r.key.size() == 8) {
-        // An oid's lock: the key is be64(oid) (LOCK.md §1).
+      sm_lock_status_t st{r.dbid, SM_LOCKNAME_KEY,
+                          0,      static_cast<sm_lockmode_t>(r.mode),
+                          r.tag,  r.granted};
+      if (r.type == sm1::LOCKTYPE_OID) {
+        // An oid's lock: its id's word is the oid (LOCK.md §1).
         st.name = SM_LOCKNAME_OBJECT;
-        st.oid = sm0::get_be64(r.key.data());
+        st.oid = r.word;
       } else if (r.type == sm1::LOCKTYPE_ROW && r.storeid != 0 &&
-                 r.key.size() >= 2) {
-        // A row's, in its table's store: be16(relid) then its key,
-        // be64(_id) in a table keyed by _id. A row keyed by its
-        // primary key has no _id (../ROWKEY.md §2.5).
+                 r.kind == sm3::heap_relid) {
+        // A row's, in its table's store: sm2 gives a row's lock its
+        // rel's relid as the kind, an index entry's its index's.
         auto it = env->catalogs.find(r.dbname);
         auto def = it == env->catalogs.end()
                        ? nullptr
                        : sm3::cat_get_table_by_store(it->second, r.storeid);
-        bool keyed = false;
-        for (size_t i = 0; def && i < def->indexes.size(); i++) {
-          keyed |= def->indexes[i].primary;
-        }
-        uint16_t relid =
-            static_cast<uint16_t>(static_cast<uint8_t>(r.key[0]) << 8 |
-                                  static_cast<uint8_t>(r.key[1]));
-        bool by_id = r.key.size() == 10 && relid == sm3::heap_relid && !keyed;
-        if (by_id || (relid == sm3::heap_relid && keyed)) {
-          st.name = SM_LOCKNAME_ROW;
-          st.rowno = by_id ? sm0::get_be64(r.key.data() + 2) : 0;
-          st.oid = def ? def->oid : 0;
-        }
+        st.name = SM_LOCKNAME_ROW;
+        st.oid = def ? def->oid : 0;
       }
       out.push_back(st);
     }

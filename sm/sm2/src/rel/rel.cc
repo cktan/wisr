@@ -811,11 +811,14 @@ int rel_read_batch(rel_t *rel, const std::string_view *keys, size_t n,
 /* Lock the row at key in mode, without writing it. */
 int rel_lock(rel_t *rel, std::string_view key, sm1::lockmode_t mode,
              bool as_read) {
-  // Held to the end of the transaction, as a write's lock is.
+  // Held to the end of the transaction, as a write's lock is; the
+  // relid its kind, for a host to tell a row's lock from an index
+  // entry's.
   std::string k = row_key(rel->relid, key);
-  return rel->chained
-             ? sm1::chain_lock_row(rel->session, rel->storeid, k, mode, as_read)
-             : sm1::lock_row(rel->session, rel->storeid, k, mode, as_read);
+  return rel->chained ? sm1::chain_lock_row(rel->session, rel->storeid, k, mode,
+                                            as_read, rel->relid)
+                      : sm1::lock_row(rel->session, rel->storeid, k, mode,
+                                      as_read, rel->relid);
 }
 
 /* Lock the row at key in mode if it is free now; see sm2.h. */
@@ -823,10 +826,10 @@ int rel_trylock(rel_t *rel, std::string_view key, sm1::lockmode_t mode,
                 bool as_read) {
   // The same lock, asked for without waiting.
   std::string k = row_key(rel->relid, key);
-  return rel->chained
-             ? sm1::chain_trylock_row(rel->session, rel->storeid, k, mode,
-                                      as_read)
-             : sm1::trylock_row(rel->session, rel->storeid, k, mode, as_read);
+  return rel->chained ? sm1::chain_trylock_row(rel->session, rel->storeid, k,
+                                               mode, as_read, rel->relid)
+                      : sm1::trylock_row(rel->session, rel->storeid, k, mode,
+                                         as_read, rel->relid);
 }
 
 /* Read the newest committed version of the row at key. */

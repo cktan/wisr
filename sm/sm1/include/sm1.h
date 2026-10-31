@@ -560,8 +560,8 @@ enum locktype_t : uint8_t {
  * and FOR UPDATE. storeid and key must name a live store and a
  * legal key; the key need not exist. The caller passes the key
  * whole: sm1 hashes it for its lock table, and two keys hashing
- * alike may wait for each other needlessly, but never share a
- * lock.
+ * alike are one lock: they wait for each other needlessly, and a
+ * transaction that locks one holds both, in one mode.
  *
  * The call BLOCKS while another transaction holds the lock in
  * a conflicting mode (lockmode_t's table), or has written the
@@ -598,6 +598,11 @@ enum locktype_t : uint8_t {
  * never undone by a rollback: the row stays locked in the
  * stronger mode until the transaction ends.
  *
+ * kind is the caller's, kept with the lock and never read by sm1:
+ * lock_status reports it, as it does not the key. sm2 passes the
+ * key's relid, so a host tells a row's lock from an index
+ * entry's. A lock already held keeps the kind it was taken with.
+ *
  * A transaction holding locks it took with sm1::lock_row or
  * sm1::lock_oid may be prepared; the locks survive in the
  * prepared transaction, each in its mode, and are restored after
@@ -610,7 +615,7 @@ enum locktype_t : uint8_t {
  * SM_ERR_INVALID.
  */
 int lock_row(session_t* session, uint64_t storeid, std::string_view key,
-             lockmode_t mode, bool as_read = false);
+             lockmode_t mode, bool as_read = false, uint16_t kind = 0);
 
 /*
  * Take a row's lock as sm1::lock_row does, if it can be had at
@@ -629,7 +634,7 @@ int lock_row(session_t* session, uint64_t storeid, std::string_view key,
  */
 int trylock_row(session_t* session, uint64_t storeid,
                 std::string_view key, lockmode_t mode,
-                bool as_read = false);
+                bool as_read = false, uint16_t kind = 0);
 
 /*
  * Lock an object id in no store, which nothing ever writes --
@@ -823,17 +828,20 @@ int waits_for(env_t* env, uint64_t tag, std::vector<uint64_t>* out);
 
 /*
  * A lock of the lock table, held or waited for, as lock_status
- * lists it: its database (name and dbid), its name (type,
- * storeid, key), the mode, the host's number for the session
- * (set_tag; 0 for none, or for a prepared transaction), and
- * whether the session holds it or waits for it.
+ * lists it: its database (name and dbid), its id (type, storeid,
+ * and word: an OID lock's oid, a row lock's key hash, as no key
+ * is reported), the kind sm1::lock_row was given (0 for an OID
+ * lock, or a row's a write took), the mode, the host's number for
+ * the session (set_tag; 0 for none, or for a prepared
+ * transaction), and whether the session holds it or waits for it.
  */
 struct lock_status_t {
   std::string dbname;
   uint64_t    dbid;
   locktype_t  type;
   uint64_t    storeid;
-  std::string key;
+  uint64_t    word;
+  uint16_t    kind;
   lockmode_t  mode;
   uint64_t    tag;
   bool        granted;
@@ -1447,10 +1455,10 @@ int chain_read_batch(session_t* session, uint64_t storeid,
                      rawpin_t** pins, std::string_view* data, int* rc);
 int chain_lock_row(session_t* session, uint64_t storeid,
                    std::string_view key, lockmode_t mode,
-                   bool as_read = false);
+                   bool as_read = false, uint16_t kind = 0);
 int chain_trylock_row(session_t* session, uint64_t storeid,
                       std::string_view key, lockmode_t mode,
-                      bool as_read = false);
+                      bool as_read = false, uint16_t kind = 0);
 
 /*
  * sm1::approxsize of a chained store's chained keys in [lo, hi):

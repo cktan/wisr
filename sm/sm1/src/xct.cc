@@ -390,7 +390,7 @@ int savepoint(sm1::session_t *s) {
     // Hold lock_mu while reading the lock list.
     std::lock_guard<std::mutex> guard(s->db->lock_mu);
     // Mark the lock list.
-    m.locks = {s->locks.mark(), s->lock_keys.mark()};
+    m.locks = s->locks.mark();
   }
   s->savepoints.push_back(m);
   // The new mark's depth.
@@ -901,14 +901,11 @@ std::string encode_prepared(const sm1::session_t *t, const std::string &gid,
   // The gid, length-prefixed.
   sm0::put_be32(v, static_cast<uint32_t>(gid.size()));
   v.append(gid);
-  // The lock set: every lock key, length-prefixed, each
-  // followed by the mode byte it is held in (§8.4).
+  // The lock set: every lock by its id, with its mode and kind,
+  // counted (§8.4).
   sm0::put_be32(v, static_cast<uint32_t>(t->locks.size()));
-  t->locks.each([&](const sm1::session_t::lockref_t &l) {
-    sm0::put_be32(v, static_cast<uint32_t>(lock_name_size(l)));
-    lock_put_name(&v, l);
-    v.push_back(static_cast<char>(l.mode));
-  });
+  t->locks.each(
+      [&](const sm1::session_t::lockref_t &l) { lock_put_record(&v, l); });
   // The storeids created, then those dropped, each counted.
   for (const std::vector<uint64_t> *stores : {&t->created, &t->dropped}) {
     sm0::put_be32(v, static_cast<uint32_t>(stores->size()));
@@ -1494,27 +1491,17 @@ bool xct_decode_prepared(db_t *db, uint64_t xid, rocksdb::Slice val,
   if (!take32(&count)) {
     return false;
   }
-  // Read each lock key.
+  // Read each lock, its id as it was held: no key is hashed again.
   for (uint32_t i = 0; i < count; i++) {
-    // Check each key's length fits.
-    if (!take32(&len) || (size_t)(end - p) < len) {
+    // Check the lock fits.
+    if ((size_t)(end - p) < lock_record_size) {
       return false;
     }
-    // Take the lock's name.
     sm1::session_t::lockref_t l;
-    if (!lock_from_name(std::string_view(p, len), g.get(), &l)) {
+    if (!lock_from_record(p, &l)) {
       return false;
     }
-    p += len;
-    // Take the mode byte that follows it.
-    if (end - p < 1) {
-      return false;
-    }
-    uint8_t m = static_cast<uint8_t>(*p++);
-    if (m > 4) {
-      return false;
-    }
-    l.mode = static_cast<sm1::lockmode_t>(m);
+    p += lock_record_size;
     g->locks.emplace(l);
   }
   // Read the storeids created, then dropped.

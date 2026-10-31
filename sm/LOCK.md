@@ -57,19 +57,19 @@ if it can be had at once, and never wait.
 
 Each lock has a type, `LOCKTYPE_ROW` or `LOCKTYPE_OID`, which
 `sm1::lock_status` reports and the `PREPARED` record keeps. A
-lock is named `type ‖ be64(storeid) ‖ userkey`, an oid's with
-storeid 0 and userkey `be64(oid)`, so **two locks of different
-types never conflict**, however equal their storeid and key.
+lock is named by its type, storeid and key, an oid's by
+storeid 0 and the oid, its type in its id's top bit, so **two
+locks of different types never conflict**, however equal their
+storeid and key.
 **The shared lock table holds only a hash, never a row's
 key.** It keys an entry by two 64-bit words, the storeid and
 the oid, or a hash of a row's key, and an entry holds those
 words, its holders and their modes, nothing more. So conflicts
-are decided on the hash, and two rows whose keys hash alike may
-conflict needlessly (`sm1/SM1_DESIGN.md` §5.1). The key is kept
-whole only by the transaction that took the lock, in its own
-lock list, and in what that list feeds: the `PREPARED` record
-and `sm1::lock_status` (`sm1/LOCKID.md` plans to drop it there
-too).
+are decided on the hash, and two rows whose keys hash alike are
+one lock (`sm1/SM1_DESIGN.md` §5.1). No one keeps the key: the
+transaction's lock list, the `PREPARED` record and
+`sm1::lock_status` hold the id, with the kind its taker gave
+(`sm1/LOCKID.md`).
 
 **What the caller passes.** The name, whole; sm1 does any
 encoding and hashing.
@@ -77,14 +77,15 @@ encoding and hashing.
 - **`sm1::lock_row`**: `storeid` is the row's store and `key`
   its sm1 key, as `sm1::read` takes them. The caller does not
   hash it. sm1 hashes the key into the lock table's second
-  word (`lockid` in `sm1/src/lockmgr.cc`) and nowhere else: the
-  key is kept whole in the lock list, the `PREPARED` record and
-  `sm1::lock_status`, and two rows hashing alike only wait for
-  each other, never share a lock. `rel_lock` locking a row of
-  table store 12: `sm1::lock_row(s, 12, key, SM_LOCKMODE_EX)`.
-- **`sm1::lock_oid`**: the oid itself. sm1 names it in no
-  store, as `be64(oid)`, and the table's words are `(0, oid)`
-  exactly, with no hash and so no needless conflict.
+  word (`lock_row_id` in `sm1/src/lockmgr.cc`) and keeps no
+  key, and two rows hashing alike are one lock. `kind`, which
+  sm1 keeps and never reads, is what `sm1::lock_status`
+  reports in the key's place: sm2 passes the relid. `rel_lock`
+  locking a row of table store 12, relid 1:
+  `sm1::lock_row(s, 12, key, SM_LOCKMODE_EX, false, 1)`.
+- **`sm1::lock_oid`**: the oid itself. sm1 locks it in no
+  store, and the table's second word is the oid exactly, with
+  no hash and so no needless conflict.
   `cat_lock_table` locking table 16384:
   `sm1::lock_oid(s, 16384, SM_LOCKMODE_IS)`.
 
@@ -101,10 +102,11 @@ conflict table on each name.
 locked in the stronger mode until the transaction ends.
 
 **Across a restart.** A prepared transaction's lock set —
-`(key, mode)` per lock — is in its `PREPARED` record, and
-recovery re-acquires each in its mode. So a lock name must be
-stable across restarts and builds: no host byte order, no
-per-process hash seed.
+`(id, mode, kind)` per lock — is in its `PREPARED` record, and
+recovery re-acquires each id in its mode, hashing no key. So a
+lock id must be stable across restarts and builds: no host byte
+order, no per-process hash seed, and a row hash sm1 fixes
+itself (`lock_row_hash`), not `std::hash`.
 
 ### 1.1 The currency check
 

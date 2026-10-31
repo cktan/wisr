@@ -451,38 +451,40 @@ TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
 
 TEST_CASE("row locks whose keys hash alike are one lock after a restart") {
   // Verify a prepared transaction's record keeps the one lock two row
-  // keys whose ids are one make, and its mode (§8.4, §9.1).
-  // 1. Make every row key hash alike; S locks "a" shared and "b"
-  //    exclusive, one lock, writes nothing, and prepares "g": S keeps
-  //    no row key, and lock_status lists g's one lock, named by "a",
-  //    exclusive, its key gone to g with it.
+  // keys whose ids are one make, by its id, with its mode and kind
+  // (§8.4, §9.1).
+  // 1. Make every row key hash alike; S locks "a" shared, of kind 7,
+  //    and "b" exclusive, one lock, writes nothing, and prepares "g":
+  //    S keeps no lock, and lock_status lists g's one lock, its word
+  //    the hash every key has, 0, of kind 7, exclusive.
   // 2. Restart the environment, so "g" is rebuilt from its record.
-  // 3. lock_status lists g's one lock again, and the table holds it
-  //    as one hold of g's.
+  // 3. lock_status lists g's one lock again, its kind kept, and the
+  //    table holds it as one hold of g's.
   // 4. Aborting "g" by gid leaves the lock table empty.
   tpc_fixture_t f;
   wisr::lock_test_rows_collide = true;
   defer { wisr::lock_test_rows_collide = false; };
   sm1::session_t *s = f.open();
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock_row(s, g_store, "a", sm1::SM_LOCKMODE_SH) == 0);
+  REQUIRE(sm1::lock_row(s, g_store, "a", sm1::SM_LOCKMODE_SH, false, 7) == 0);
   REQUIRE(sm1::lock_row(s, g_store, "b", sm1::SM_LOCKMODE_EX) == 0);
   REQUIRE(sm1::prepare(s, "g") == 0);
-  CHECK(s->lock_keys.empty());
+  CHECK(s->locks.empty());
 
-  // The locks lock_status lists, as "key mode", sorted.
+  // The locks lock_status lists, as "word kind mode", sorted.
   auto listed = [&] {
     std::vector<sm1::lock_status_t> out;
     REQUIRE(sm1::lock_status(f.home().env(), out) == 0);
     std::vector<std::string> got;
     for (const auto &r : out) {
-      got.push_back(r.key + " " + std::to_string(r.mode));
+      got.push_back(std::to_string(r.word) + " " + std::to_string(r.kind) +
+                    " " + std::to_string(r.mode));
     }
     std::sort(got.begin(), got.end());
     return got;
   };
   const std::vector<std::string> one = {
-      "a " + std::to_string(sm1::SM_LOCKMODE_EX),
+      "0 7 " + std::to_string(sm1::SM_LOCKMODE_EX),
   };
   CHECK(listed() == one);
   sm1::closedb(s);

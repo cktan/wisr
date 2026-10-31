@@ -708,10 +708,10 @@ are one lock: they block each other, and could deadlock, and a
 transaction that locks one holds the other in the same mode. It
 is a false conflict, never a missed one, and with 64 bits not
 one a workload meets. A transaction's own lock list, `T.locks`,
-has an entry for each id it holds, and each row's key in a
-buffer of the session's (`lock_keys`), taken as the lock is and
-cut back with the list at a savepoint, for the prepared record's
-lock set (§8.4) and `sm1::lock_status` (`LOCKID.md` drops it).
+has an entry for each id it holds, cut back at a savepoint, and
+keeps no row's key: the prepared record's lock set (§8.4) holds
+the ids. An entry keeps the kind `sm1::lock_row` was given,
+which `sm1::lock_status` reports with the id.
 A holder points to the entry that made its hold, and the hold
 goes with that entry. An OID lock may have a second entry, a
 fast-path slot moved to the table after the hold was made, which
@@ -2002,11 +2002,13 @@ leaves it untouched, and recovery (§9.1 step 5) rebuilds exactly
 the same object from the `PREPARED` record, so a transaction
 prepared before a crash and one prepared in this process are
 handled alike. The record is a single `CF:txn` value however
-large the write set; the write set is stored as the lock keys the
-transaction holds, each with the mode it is held in, so a shared
-lock taken by `sm1::lock_row` or `sm1::lock_oid` is restored as
-shared. Database format
-version 4 added that mode byte.
+large the write set; the write set is stored as the locks the
+transaction holds, each by its id, with the mode it is held in
+and the kind `sm1::lock_row` was given, 20 bytes
+(`lock_put_record`): so a shared lock taken by `sm1::lock_row`
+or `sm1::lock_oid` is restored as shared, and its id as it was
+held, no key hashed again, the row hash the same in every build
+(`lock_row_hash`).
 
 Step 1 closes cursors for the reasons given in §8.2. No data
 operation is accepted after prepare, so an open cursor could

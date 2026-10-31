@@ -9,7 +9,6 @@
 
 #include "error.h"
 #include "session.h"
-#include "sm0_codec.h"
 #include "sm0_defer.h"
 #include "version.h"
 
@@ -364,19 +363,15 @@ int lock_object(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode,
   if (lock_check(s, mode) != 0) {
     return -1;
   }
-  // The name is be64(oid), stable across restarts for a prepared
-  // transaction's lock set.
-  std::string key;
-  sm0::put_be64(key, oid);
-  // A name outside any store takes the lock and nothing else: no
+  // An oid outside any store takes the lock and nothing else: no
   // store is read and no version is checked, since none can exist.
-  return wisr::lock_oid(s, 0, key, mode, nowait);
+  return wisr::lock_oid(s, oid, mode, nowait);
 }
 
 /* sm1::lock_row and sm1::trylock_row, minus the out-of-memory guard. */
 int lock_versioned(sm1::session_t *s, uint64_t storeid, const char *key,
-                   size_t klen, sm1::lockmode_t mode, bool nowait,
-                   bool as_read) {
+                   size_t klen, sm1::lockmode_t mode, bool nowait, bool as_read,
+                   uint16_t kind) {
   if (lock_check(s, mode) != 0) {
     return -1;
   }
@@ -432,7 +427,7 @@ int lock_versioned(sm1::session_t *s, uint64_t storeid, const char *key,
       // Free of uncommitted writes: take the lock if no holder
       // conflicts.
       if (inflight == 0 &&
-          lock_try(s, sm1::LOCKTYPE_ROW, storeid, k, mode) == 0) {
+          lock_try(s, lock_row_id(storeid, k), mode, kind) == 0) {
         break;
       }
     }
@@ -444,7 +439,7 @@ int lock_versioned(sm1::session_t *s, uint64_t storeid, const char *key,
     // the holders that conflict.
     int waited = inflight != 0
                      ? lock_wait_xact(s, inflight)
-                     : lock_wait(s, sm1::LOCKTYPE_ROW, storeid, k, mode);
+                     : lock_wait(s, lock_row_id(storeid, k), mode, kind);
     if (waited != 0) {
       return lock_wait_error(s, waited);
     }
@@ -970,8 +965,7 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
     // No one else reaches a temporary store, so it has none.
     if (!st.owner && lock_write_check(s, storeid, key) != 0) {
       latch.unlock();
-      waited =
-          lock_wait(s, sm1::LOCKTYPE_ROW, storeid, key, sm1::SM_LOCKMODE_EX);
+      waited = lock_wait(s, lock_row_id(storeid, key), sm1::SM_LOCKMODE_EX);
     } else if (op == WRITE_INSERT_NEW) {
       // A key no version of was ever written has none to check
       // against, committed or in flight: no read. A debug build
@@ -1027,7 +1021,7 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
         // write, so its newest version cannot change in between
         // (§5.4, WRITELOCK.md §3.5). No other holder conflicts:
         // the check above found none, under the latch.
-        lock_try(s, sm1::LOCKTYPE_ROW, storeid, key, sm1::SM_LOCKMODE_EX);
+        lock_try(s, lock_row_id(storeid, key), sm1::SM_LOCKMODE_EX);
         return set_error(sm1::SM_ERR_UPDATED,
                          "key was changed by a transaction that committed "
                          "after this one began; sm1_read_latest it first");
@@ -1177,16 +1171,18 @@ int sm1::scan_seek(sm1::scan_t *scan, std::string_view key, int inclusive) {
 
 /* Lock a row without writing it; see sm1.h. */
 int sm1::lock_row(sm1::session_t *session, uint64_t storeid,
-                  std::string_view key, sm1::lockmode_t mode, bool as_read) {
+                  std::string_view key, sm1::lockmode_t mode, bool as_read,
+                  uint16_t kind) {
   return lock_versioned(session, storeid, key.data(), key.size(), mode, false,
-                        as_read);
+                        as_read, kind);
 }
 
 /* Lock a row if it can be had at once; see sm1.h. */
 int sm1::trylock_row(sm1::session_t *session, uint64_t storeid,
-                     std::string_view key, sm1::lockmode_t mode, bool as_read) {
+                     std::string_view key, sm1::lockmode_t mode, bool as_read,
+                     uint16_t kind) {
   return lock_versioned(session, storeid, key.data(), key.size(), mode, true,
-                        as_read);
+                        as_read, kind);
 }
 
 /* Lock an object id; see sm1.h. */

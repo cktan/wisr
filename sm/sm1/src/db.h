@@ -171,35 +171,27 @@ struct lockid_hash_t {
 
 /*
  * An entry of a session's lock list (§5.1): a lock it took, row or
- * OID. A row lock's exact key is in the session's lock_keys, at row:
- * taken as the lock is, so a cut at a savepoint cuts both.
+ * OID, by its id alone; no row's key is kept.
  */
 struct lockref_t {
-  lockid_t id{};             /* its lock table entry's id */
-  const char *row = nullptr; /* a row lock's key, in lock_keys */
-  uint32_t row_len = 0;
+  lockid_t id{}; /* its lock table entry's id */
   sm1::locktype_t type = sm1::LOCKTYPE_ROW;
   sm1::lockmode_t mode = sm1::SM_LOCKMODE_SH; /* held now, after
                                                  conversions */
+  uint16_t kind = 0;   /* the caller's (sm1::lock_row), never read */
   bool latest = false; /* read_latest done: the write may go ahead */
   int8_t slot = -1;    /* its fast-path slot, or -1 in the table */
   bool strong = false; /* counted in the db's fp_strong */
 };
 
 /*
- * A session's lock list and its row keys: blocks whose entries
- * never move, so a pointer into them holds until a cut.
+ * A session's lock list: blocks whose entries never move, so a
+ * pointer into them holds until a cut.
  */
 using lock_list_t = sm0::blist_t<lockref_t, 256>;
-using lock_keys_t = sm0::blist_t<char, 8192>;
-// A key fits a block, so the room lock_try reserves always holds it.
-static_assert(8192 >= sm1::max_keylen);
 
-/* A point in both, for a savepoint to cut back to. */
-struct lock_mark_t {
-  lock_list_t::mark_t locks;
-  lock_keys_t::mark_t keys;
-};
+/* A point in the list, for a savepoint to cut back to. */
+using lock_mark_t = lock_list_t::mark_t;
 
 /*
  * One open database, shared by every session on it and held

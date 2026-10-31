@@ -1029,11 +1029,14 @@ first: one `lock_status_t` for each holder of each lock, in the
 mode it holds, `granted`; and one for each session waiting in
 `sm1::lock_row` or `sm1::lock_oid`, in the mode it asks, not
 `granted`. Each names its database (`dbname`, `dbid`), the lock
-(`type`, `storeid`, `key`: `LOCKTYPE_OID`, 0 and `be64(oid)`
-for an oid's), and the session by its number
-(`set_tag`; 0 for none, or for a prepared transaction). A
-writer waiting behind an uncommitted version holds and asks no
-lock and is not listed: `waits_for` names whom it waits for.
+by its id, not its key (`type`, `storeid`, `word`:
+`LOCKTYPE_OID`, 0 and the oid for an oid's; a row's key hash
+for a row's), the `kind` its taker gave (0 for an oid's; a
+write waiting on a row's lock gives none and lists its
+holder's), and the session by its number (`set_tag`; 0 for
+none, or for a prepared transaction). A writer waiting behind
+an uncommitted version holds and asks no lock and is not
+listed: `waits_for` names whom it waits for.
 
 Any thread may ask: it is what PostgreSQL's `pg_locks` lists.
 It takes the env's mutex, then each database's lock mutex in
@@ -1041,7 +1044,7 @@ turn, so a lock taken or let go meanwhile may be in or out.
 
 Errors: `SM_ERR_INVALID`.
 
-### int sm1::lock_row(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::lockmode_t mode, bool as_read = false)
+### int sm1::lock_row(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::lockmode_t mode, bool as_read = false, uint16_t kind = 0)
 
 `lockmode_t` is the root's `sm_lockmode_t`, as `errnum_t` is
 the root's `sm_errnum_t`: one enum the C wrapper and sm1
@@ -1062,8 +1065,9 @@ Lock a row without writing it: SQL's `SELECT ... FOR SHARE`
 and `FOR UPDATE`, and the intention locks of Gray's scheme for
 locking at several granularities. The key need not exist.
 The caller passes the key whole: sm1 hashes it for its lock
-table, and two keys hashing alike may wait for each other
-needlessly, but never share a lock.
+table, and two keys hashing alike are one lock: they wait for
+each other needlessly, and a transaction that locks one holds
+both, in one mode.
 
 The modes are Gray's. An intention mode locks a key that stands
 for something larger — a table's catalog row, say — to announce
@@ -1119,6 +1123,12 @@ The lock is held to the end of the transaction, or until an
 never undone by a rollback: the row stays locked in the
 stronger mode until the transaction ends.
 
+`kind` is the caller's, kept with the lock and never read by
+sm1: `sm1::lock_status` reports it, as it does not the key. sm2
+passes the key's relid, so a host tells a row's lock from an
+index entry's. A lock already held keeps the kind it was taken
+with.
+
 A transaction holding locks it took with `sm1::lock_row` or
 `sm1::lock_oid` may be prepared. They survive in the prepared
 transaction, each in its mode, and are restored after a crash,
@@ -1131,7 +1141,7 @@ Errors: `SM_ERR_CONFLICT` (not at READ COMMITTED) /
 `SM_ERR_NOTFOUND` (no such store), `SM_ERR_NOTRANS`,
 `SM_ERR_PREPARED`, `SM_ERR_INVALID`.
 
-### int sm1::trylock_row(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::lockmode_t mode, bool as_read = false)
+### int sm1::trylock_row(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::lockmode_t mode, bool as_read = false, uint16_t kind = 0)
 
 Take a row's lock as `sm1::lock_row` does, if it can be had at
 once. It never waits. Returns 0 with the lock held to the end
@@ -1159,7 +1169,7 @@ the lock is a slot of the session's own (`SM1_DESIGN.md` §5.1,
 the fast path). It blocks, converts, is held and survives a
 prepare as `sm1::lock_row`'s lock does, in the same modes. An
 oid lock and a row lock never conflict; `sm1::lock_status`
-lists it as `LOCKTYPE_OID`, storeid 0, key `be64(oid)`.
+lists it as `LOCKTYPE_OID`, storeid 0, word the oid.
 
 Errors: `SM_ERR_DEADLOCK` (retryable), `SM_ERR_BLOCKED` (under
 `sm1::set_qa_nowait`), `SM_ERR_INTERRUPTED`, `SM_ERR_NOTRANS`,
@@ -2085,10 +2095,10 @@ int chain_read_batch(session_t* session, uint64_t storeid,
                      rawpin_t** pins, std::string_view* data, int* rc);
 int chain_lock_row(session_t* session, uint64_t storeid,
                    std::string_view key, lockmode_t mode,
-                   bool as_read = false);
+                   bool as_read = false, uint16_t kind = 0);
 int chain_trylock_row(session_t* session, uint64_t storeid,
                       std::string_view key, lockmode_t mode,
-                      bool as_read = false);
+                      bool as_read = false, uint16_t kind = 0);
 ```
 
 `sm1::chain_read_batch` is `sm1::chain_read` of `n` keys in one
