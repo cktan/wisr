@@ -35,10 +35,28 @@ struct lockid_t {
   bool operator==(const lockid_t &o) const { return hi == o.hi && lo == o.lo; }
 };
 
-/* The lock table's hash of a key: lo is an oid or a hash already. */
+/* MurmurHash3's 64-bit finalizer: each bit of h reaches every bit out. */
+inline uint64_t lock_fmix64(uint64_t h) {
+  h ^= h >> 33;
+  h *= 0xff51afd7ed558ccdULL;
+  h ^= h >> 33;
+  h *= 0xc4ceb9fe1a85ec53ULL;
+  h ^= h >> 33;
+  return h;
+}
+
+/*
+ * The lock table's hash of an id: the two words combined, then
+ * finalized, so every bit of both reaches every bit of the hash
+ * and the fast path's count of a table, its hash modulo 1,024,
+ * is not its oid modulo 1,024. Never persisted. Not noexcept,
+ * so the map keeps each node's hash: without it, a lookup
+ * hashes every node of a bucket it walks, 7% more instructions
+ * a lock, measured.
+ */
 struct lockid_hash_t {
   size_t operator()(const lockid_t &k) const {
-    return k.lo ^ (k.hi * 0x9e3779b97f4a7c15ULL);
+    return lock_fmix64(k.lo ^ (k.hi * 0x9e3779b97f4a7c15ULL));
   }
 };
 

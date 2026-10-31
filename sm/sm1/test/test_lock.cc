@@ -1296,6 +1296,36 @@ TEST_CASE("a weak table lock takes a slot, and a strong one moves it") {
   }
 }
 
+TEST_CASE("a strong table lock leaves the fast path of a table 1,024 oids "
+          "away") {
+  // Verify a strong lock sends to the table only the weak locks of
+  // keys that hash with it, not of every oid alike modulo 1,024.
+  // 1. A locks oid 5 X: a count is raised, A's lock in the table.
+  // 2. B locks oid 1029 IS: a slot, and the table holds A's alone.
+  // 3. Both commit: no slot, no entry, no count is left.
+  lock_fixture_t f;
+  sm1::session_t *a = f.open(), *b = f.open();
+  for (sm1::session_t *s : {a, b}) {
+    REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  }
+  REQUIRE(sm1::lock_oid(a, 5, sm1::SM_LOCKMODE_EX) == 0);
+  CHECK(table_size(a) == 1);
+  CHECK(!no_strong(a));
+
+  REQUIRE(sm1::lock_oid(b, 1029, sm1::SM_LOCKMODE_IS) == 0);
+  CHECK(b->fp_used == 1);
+  CHECK(table_size(a) == 1);
+
+  REQUIRE(sm1::commit(a) == 0);
+  REQUIRE(sm1::commit(b) == 0);
+  CHECK(b->fp_used == 0);
+  CHECK(table_size(a) == 0);
+  CHECK(no_strong(a));
+  for (sm1::session_t *s : {a, b}) {
+    sm1::closedb(s);
+  }
+}
+
 TEST_CASE("a slot's entry is its own, wherever it is in the list") {
   // Verify a fast-path slot keeps its own list entry's position:
   // a conversion in the slot, a listing and a sweep reach it, not

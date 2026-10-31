@@ -744,7 +744,8 @@ takes. An OID lock in IS or IX is kept in one of 32 slots of
 its session's own, under the session's `fp_mu`, and not in the
 table, while no strong lock is held or asked on a key that
 hashes with it: one of 1,024 counts in the database,
-`fp_strong`, is 0. A strong locker adds itself to its key's
+`fp_strong`, is 0, chosen by the id's hash, `fmix64` over both
+words, so tables 1,024 oids apart share a count only by chance. A strong locker adds itself to its key's
 count, then sweeps every session of the database (`fp_sessions`,
 under `fp_reg_mu`), moving each slot for its key into the table
 under that session's `fp_mu`; then it locks as any lock does,

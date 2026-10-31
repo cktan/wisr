@@ -153,24 +153,6 @@ and so are the catalog tables psql reads
      node, then the holders' array, a likely miss each; and
      when it grows, how full it runs, and its allocator, which
      we do not choose.
-   - **The hash it is given**: `lockid_hash_t`, `lo ^ (hi *
-     K)`. libstdc++ takes `hash % bucket_count`, the count a
-     prime (`_Mod_range_hashing`, `_Prime_rehash_policy` in
-     `bits/hashtable_policy.h`), which hides weak low bits, at
-     a 64-bit division a lookup. A power of two does not hide
-     them: `fp_strong` takes the hash modulo 1,024, and the low
-     bits of `hi * K` depend only on `hi`'s low bits, so a
-     table lock's count is its `oid % 1024`, the type bit and a
-     storeid's high bits never reaching it. Tables 1,024 oids
-     apart share a count, and one's DDL sends the other's
-     readers to the slow path; correct, only slower. The fix is
-     a finalizer, MurmurHash3's `fmix64`, after the combine, so
-     every bit of both words reaches every bit of the hash; an
-     OID lock's id stays exact, `lo` one-to-one for a fixed
-     `hi`. `operator()` should be `noexcept`, or libstdc++ keeps
-     the hash in each node. That hash of an id is never
-     persisted (a prepared transaction's record keeps the ids,
-     `sm1/LOCKID.md`), so it can change at any time.
 
    PostgreSQL keeps its own for the same reasons: `dynahash`,
    sized once, entries from a free list, in 16 partitions. What
@@ -238,8 +220,10 @@ and so are the catalog tables psql reads
    a statement scale 2.4× from 1 client to 16, as 100 read scale
    8.7×. Its `fk` measures commit batching, not a lock (item 5).
 
-   The order from here: `fmix64`; the partitions; the
-   hand-written partition; each a step, measured against the
+   The id's hash is `fmix64` over the two words
+   (`sm1/src/locktab.h`), so a table's fast-path count is no
+   longer its `oid % 1024`. The order from here: the partitions;
+   the hand-written partition; each a step, measured against the
    baseline above.
 5. **A write transaction's two trips through RocksDB's write
    queue** (`../dg/WORKNOTE.md` step 344). An insert writes its

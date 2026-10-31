@@ -204,3 +204,25 @@ TEST_CASE("locktab: an owner's holds move to another in its place") {
   CHECK(nullptr != locktab_t::held(t.find(one), &b));
   CHECK(2 == t.size());
 }
+
+TEST_CASE("locktab: an id's hash spreads both its words to its low bits") {
+  // Verify the hash's low bits, which the fast path's counts are
+  // taken from (modulo 1,024), depend on every bit of the id.
+  // 1. Hash OID locks 1,024 oids apart: pairs sharing a count are
+  //    as rare as chance makes them, not every pair.
+  // 2. Hash a row lock and an OID lock of the same words, which
+  //    differ only in hi's top bit: the same.
+  wisr::lockid_hash_t h;
+  const uint64_t oid = uint64_t(1) << 63;
+  int apart = 0, typed = 0;
+  for (uint64_t k = 0; k < 1024; k++) {
+    if (h({oid, k}) % 1024 == h({oid, k + 1024}) % 1024) {
+      apart++;
+    }
+    if (h({7, k}) % 1024 == h({7 | oid, k}) % 1024) {
+      typed++;
+    }
+  }
+  CHECK(apart < 16);
+  CHECK(typed < 16);
+}

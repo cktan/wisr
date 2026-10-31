@@ -46,16 +46,6 @@ namespace wisr {
 
 std::atomic<bool> lock_test_rows_collide{false};
 
-/* MurmurHash3's 64-bit finalizer: each bit of h reaches every bit out. */
-static uint64_t fmix64(uint64_t h) {
-  h ^= h >> 33;
-  h *= 0xff51afd7ed558ccdULL;
-  h ^= h >> 33;
-  h *= 0xc4ceb9fe1a85ec53ULL;
-  h ^= h >> 33;
-  return h;
-}
-
 /* The row hash of key: the same in every build, as a record may keep it. */
 uint64_t lock_row_hash(rocksdb::Slice key) {
   const char *p = key.data();
@@ -64,13 +54,13 @@ uint64_t lock_row_hash(rocksdb::Slice key) {
   uint64_t h = n;
   // Each 8 bytes are read big-endian, so every host hashes alike.
   for (; n >= 8; p += 8, n -= 8) {
-    h = fmix64(h ^ sm0::get_be64(p));
+    h = lock_fmix64(h ^ sm0::get_be64(p));
   }
   uint64_t tail = 0;
   for (size_t i = 0; i < n; i++) {
     tail = tail << 8 | static_cast<unsigned char>(p[i]);
   }
-  return fmix64(h ^ tail);
+  return lock_fmix64(h ^ tail);
 }
 
 } // namespace wisr
