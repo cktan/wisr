@@ -13,10 +13,11 @@
  * (§4.2), so a storeid is never reused and never names two
  * stores.
  *
- * A session caches what each lookup found, trusted only while no
- * store was made or dropped since (last_ddl_ts, §11). A
- * committed sm1::rmstore leaves its column family in place until
- * the watermark passes the drop and GC removes it (§8.3).
+ * A session caches what each lookup found, trusted at the snapshot
+ * it was found at, and at another while no store was made or dropped
+ * between the two (last_ddl_ts, §11). A committed sm1::rmstore leaves its
+ * column family in place until the watermark passes the drop and GC removes it
+ * (§8.3).
  */
 
 #include "error.h"
@@ -195,10 +196,12 @@ int catalog_lookup(sm1::session_t *s, const view_t &view, uint64_t storeid) {
     if (it != s->store_cache.end()) {
       const sm1::session_t::store_seen_t &e = it->second;
       uint64_t ddl_ts = s->db->last_ddl_ts.load();
-      // Same answer at both snapshots, and under SERIALIZABLE
-      // only if this transaction's own read took the SIREAD.
-      if (ddl_ts <= e.snapshot_ts && ddl_ts <= view.snapshot_ts &&
-          (!s->ssi || e.begin_seq == s->begin_seq)) {
+      // The one snapshot gives one answer whatever committed since,
+      // or no DDL lies between the two; and under SERIALIZABLE only
+      // if this transaction's own read took the SIREAD.
+      bool same = e.snapshot_ts == view.snapshot_ts ||
+                  (ddl_ts <= e.snapshot_ts && ddl_ts <= view.snapshot_ts);
+      if (same && (!s->ssi || e.begin_seq == s->begin_seq)) {
         return e.live ? 0 : 1;
       }
     }

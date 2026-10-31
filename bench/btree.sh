@@ -128,7 +128,10 @@ measure() {
   grep -i error "$work/out.$q" | head -3
   [ -n "${PROFILE:-}" ] && return
   local ins
-  ins=$(grep instructions "$work/perf.$q" | cut -d, -f1)
+  # A line for each kind of core the machine has, "<not counted>" for
+  # a kind the server did not run on.
+  ins=$(grep instructions "$work/perf.$q" | cut -d, -f1 |
+    grep -E '^[0-9]+$' | paste -sd+ | bc)
   echo "$sys $kind $q instructions_per_stmt $((ins / n))"
 }
 measure q9 "prepare q9(int8) as select sum(c1) from wide_mixed where c2 between \$1 and \$1 + 99;"

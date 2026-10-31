@@ -956,6 +956,46 @@ TEST_CASE("a dropped store stays readable at an older snapshot") {
   sm1::closedb(r);
 }
 
+TEST_CASE("a snapshot's answer about a store outlasts later DDL") {
+  // Verify lookups repeated at one snapshot, past later DDL, answer as
+  // that snapshot does, the cache's answer as the catalog's.
+  // 1. Reader R begins REPEATABLE READ and reads store A.
+  // 2. S drops A and makes B, and commits.
+  // 3. R finds A, and not B, each lookup of several.
+  // 4. A new transaction finds B, and not A.
+  db_fixture_t f;
+  sm1::session_t *s = f.session();
+  uint64_t a = mkstore_committed(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  put(s, a, "k", "old");
+  REQUIRE(sm1::commit(s) == 0);
+
+  sm1::session_t *r = f.open_other();
+  REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(r, a, "k") == "old");
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::rmstore(s, a) == 0);
+  uint64_t b = mkstore(s);
+  put(s, b, "k", "new");
+  REQUIRE(sm1::commit(s) == 0);
+
+  std::string_view d;
+  for (int i = 0; i < 3; i++) {
+    CHECK(get(r, a, "k") == "old");
+    CHECK(sm1::read(r, b, "k", d) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  }
+  REQUIRE(sm1::commit(r) == 0);
+
+  REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(r, b, "k") == "new");
+  CHECK(sm1::read(r, a, "k", d) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm1::commit(r) == 0);
+  sm1::closedb(r);
+}
+
 TEST_CASE("a transaction's own drop hides the store it looked up") {
   // Verify the session's store cache never answers for a
   // transaction's own drop (§11).

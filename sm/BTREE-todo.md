@@ -138,11 +138,10 @@ aligned by hand, and `make format` leaves it out.
 
 ## 2. Order of work
 
-Each of the steps 1, 5, 6, 7 and 8 ends with `DEBUG=1 make -C
-sm -j4 test` passing. Steps 2, 3 and 4 are one change: page 0
-as the root does not pass until all three are in, as
-`tree_check()` stops before page 0 until step 4. Split them only to review
-them.
+Each of the steps 1, 5, 6, 7 and 8 ends with `DEBUG=1 make -C sm
+-j4 test` passing. Steps 2, 3 and 4 are one change: page 0 as the
+root does not pass until all three are in, as `tree_check()`
+stops before page 0 until step 4. Split them only to review them.
 
 1. **The sequence.**
    - sm2's constant, and `mkseq` in `cat_init()`.
@@ -196,13 +195,12 @@ them.
    - **`right` is renamed `next`**, the link alone: `page_t`'s
      field, `page_view_t::right()`, and the documents. A split's
      right half and right page keep their names.
-7. **Check a tree's store once** (`BTREEDESIGN.md` §5.3):
-   `enter_pages()` on every pin reads the catalog in two cases,
-   a transaction with DDL of its own and a snapshot older than
-   the last DDL.
-   A page has no versions and the table's lock keeps its store,
-   so the tree checks when opened, and pins by the store's
-   handle. A step of its own, measured first.
+7. **A pin's check** (`BTREEDESIGN.md` §5.3): measured first. A
+   pin took 70 ns commonly, so the handle once planned here is
+   not wanted. A snapshot older than the last DDL took 650 to
+   850 ns, as `catalog_lookup()`'s cache could not answer it, row
+   reads too; it now answers at its own snapshot, 65 ns. A
+   transaction with DDL of its own, 590 ns, is left as it is.
 8. **Documents.**
    - `../MAJORDECISION.md`: D4 revised, D11's "forgets the root"
      revised, a new entry for §1 above.
@@ -285,10 +283,13 @@ at `relid | 0`: only its name goes. Run the tree tests under TSan
   step 8's documents. A cursor's and a writer's checks of page
   0's level are shown to run; `tree_prune()`'s and `descend()`'s
   `afresh` retry are not.
-- **Not started**: step 7, and step 9's measuring.
+- **Built, uncommitted**: step 7.
+- **Done, uncommitted**: step 9's measuring, `BTREEDESIGN.md`
+  §12: no cost shows. A tree's load, 5.6 times today's entries',
+  is unexplained, and was so before this work.
 - **After this plan**: sm's own buffer pool, a project of its
   own, decided by the user (`BTREEDESIGN.md` §14): SH/EX pins,
-  frames changed in place, write-through, a clock with leaves
+  each change made on a copy, write-through, a clock with leaves
   aging twice as fast, slots grown 16 at a time.
 - **A database made before this cannot be read**: its trees have
   a meta page at 0, and it has no sequence. Nothing keeps

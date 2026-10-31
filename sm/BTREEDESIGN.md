@@ -260,20 +260,20 @@ page write, and D2's cost):
    and a load of the database's `last_ddl_ts`.
 4. The store's handle, `session_store()`, twice over.
 
-Then the page's key and its cache key are made. Commonly that is
-no I/O, but it is not measured. **Two cases read the catalog on
-every pin**, as the session's cache may not answer them:
+Then the page's key and its cache key are made. Measured on the
+optimized build, a pin and unpin of a cached page, one thread:
 
-- **A transaction that has made or dropped a store**: `CREATE
-  TABLE` and its load in one transaction, as a restore does.
-- **A snapshot older than the database's last DDL**, anyone's:
-  a long `REPEATABLE READ` transaction, after any `CREATE`
-  anywhere, pays it for the rest of its life.
+| Transaction | ns |
+| --- | --- |
+| commonly | 65 |
+| older than the database's last DDL | 65 |
+| has made or dropped a store itself | 590 |
 
-So this can be a bottleneck. The fix is planned
-(`BTREE-todo.md` §2): a page has no versions, and the table's
-lock keeps its store, so a tree checks once, when opened, and
-pins by the store's handle.
+The last reads the catalog on every pin, and every row read does
+the same: it must see its own uncommitted DDL, which the
+session's cache does not stand for. `CREATE TABLE` and its load
+in one transaction, as a restore does, pays it. It is left so for
+now.
 
 A pin has no mode today, as pages are immutable. With sm's own
 pool it has two, SH and EX (§14).
@@ -568,7 +568,7 @@ memtable where today's entries write about 40 bytes. See §12.
 
 ## 12. What it costs today
 
-Measured with today's meta page, not yet this design.
+Measured with the meta page, before this design.
 Instructions are `perf stat`'s user instructions of the whole
 server, per statement (`NEXT.md` §1, `../dg/WORKNOTE.md` step
 354).
@@ -584,6 +584,22 @@ server, per statement (`NEXT.md` §1, `../dg/WORKNOTE.md` step
 | --- | --- |
 | today's entries | 18 |
 | a tree of 4 KB pages, spliced (step 351) | 27.7 |
+
+Measured again with this design, against the commit before it,
+on the same machine and build (`../dg/WORKNOTE.md` step 359):
+
+| | before | this design | today's entries |
+| --- | --- | --- | --- |
+| Q9 | 958k | 957k | 1,324k |
+| Q10 | 1,523k | 1,522k | 3,637k |
+| Q11, 16 clients, tps | 20,019 | 22,889 | 11,108 |
+| a write moving a key, 16 clients, tps | 15,356 | 15,184 | 9,835 |
+| a million rows, seconds | 70 | 66 | 12 |
+
+So the design costs nothing measurable. **A load is 5.6 times
+today's entries here**, against the 1.5 above, on both builds,
+and why is not known. Its profile is RocksDB's: LZ4 a tenth, and
+compaction and the memtable.
 
 The goal, 1.5× of PostgreSQL, is not met. What a tree's Q9
 spends: malloc and free a fifth, the executor, each row's
@@ -626,15 +642,29 @@ latch and writers' latches, where they differ.
 
 What is decided:
 
-- **Pins have modes, SH and EX.** A reader pins SH, a writer EX.
-  This reverses the answer in `sm1.h`, that a pin has no mode,
-  which holds only while pages are immutable.
-- **A frame changes in place, under EX.**
-- **Pages stay clean: write-through.**
-  - To change a page: pin EX, change it, write it to RocksDB,
-    unpin.
-  - To add a page: pin EX with a flag not to read it, lay it out,
-    write it to RocksDB, unpin.
+- **A pin is a latch, SH or EX.** There is no third mode. A
+  reader pins SH, a writer EX. So a pin is held only as long as a
+  latch is, never across calls, and §5.5's held pins go. This
+  reverses the answer in `sm1.h`, that a pin has no mode.
+- **To change a page P:**
+  1. Pin P in EX.
+  2. Copy P out, and change the copy.
+  3. Write it to RocksDB.
+  4. Copy it into the buffer pool.
+  5. Unpin P.
+- **To make a new page P:**
+  1. Pin P in EX, with a flag not to read it.
+  2. Make P, in a copy.
+  3. Write it to RocksDB.
+  4. Copy it into the buffer pool.
+  5. Unpin P.
+- **So a frame is never half changed.** Everything that can
+  throw or fail is done on the copy, and the frame changes only
+  by a `memcpy` that cannot. An exception or a failed write
+  unpins a frame that still equals RocksDB's: pages stay clean,
+  and there is no write-back.
+- **A split** pins its pages in EX left to right, and writes them
+  in one batch, then copies each into the pool.
 - **Eviction is a clock.** Leaves age twice as fast as inner
   pages, as a scan of the leaves would otherwise page the inner
   pages out. Only dropping a tree purges its pages at once.
@@ -652,6 +682,9 @@ What is decided:
 
 What it must settle:
 
+- **Who waits under EX**: readers of P wait through the write to
+  RocksDB, and through a unique check's row reads under the
+  leaf's latch (D13), as today's readers do not. Measure it.
 - **Memory**: one budget becomes two, the pool's and the block
   cache's for rows. How `shared_buffers` divides is open
   (`BTREE.md` §11).
@@ -660,8 +693,8 @@ What it must settle:
 - **Readers' cost**: SH writes a shared cache line on every page
   read, the root included. Today's readers write nothing but the
   cache's reference. Measure it against §12.
-- **What goes**: the fill latch, the writers' latch table, and
-  §5.5's held pins, if a pin is one atomic.
+- **What goes**: the fill latch, as a miss loads the frame under
+  its pin, the writers' latch table, and §5.5's held pins.
 - **A cursor's copy of a leaf**: `span()` relies on entries being
   end to end, and slots in no order end that (`fill()`).
 - **`page_write`'s batch**: a split still writes several pages

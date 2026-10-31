@@ -10579,3 +10579,39 @@ on the release builds, unpinned.
 - **Tests**: sm2, leaves walked both ways; a split cut short; a
   page with `prev` wrong does not check. Without the sibling's
   write, 9 of the tree's tests fail.
+
+## Step 358: a store's lookup at its own snapshot
+
+- **Measured**, a pin and unpin of a cached page, one thread,
+  optimized: 70 ns commonly, 650 to 850 ns in a transaction older
+  than the database's last DDL, anyone's, 590 to 900 ns in one
+  with DDL of its own.
+- **sm1**: `catalog_lookup()`'s cache answers at the snapshot it
+  was filled at, whatever committed since. It would read the
+  catalog at every lookup, row reads too, for the rest of such a
+  transaction. That pin is 65 ns now. A transaction with DDL of
+  its own still reads the catalog each time.
+- **Tests**: sm1, lookups repeated at one snapshot past a drop and
+  a create answer as that snapshot does.
+
+## Step 359: the tree measured again
+
+`../bench/btree.sh`, optimized, against the commit before steps
+356 to 358 built in a worktree, in one sitting. PostgreSQL's is not
+measured again: `bench/build/pg18` is not here.
+
+| | before | now | today's entries |
+| --- | --- | --- | --- |
+| Q9 | 957,930 | 956,722 | 1,324,280 |
+| Q10 | 1,522,520 | 1,521,979 | 3,636,930 |
+| Q11, tps | 20,019 | 22,889 | 11,108 |
+| the key-moving write, tps | 15,356 | 15,184 | 9,835 |
+| load, s | 70 | 66 | 12 |
+
+- **What it says**: the root at page 0 and `prev` cost nothing
+  that shows. Q11's gap is within what runs of 20 s spread.
+- **Found**: a load through a tree is 5.6 times one through
+  today's entries, before this change too, where steps 351 and
+  353 had it 1.5. Its profile is RocksDB's, LZ4 12%. Not explained.
+- **bench**: `btree.sh` sums `perf`'s line for each kind of core.
+

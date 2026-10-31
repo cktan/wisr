@@ -2636,11 +2636,14 @@ hide it, so the cache is checked by timestamp instead:
   prepared transaction restored at open has both lists from its
   record (§3.2).
 - Each cache entry records the snapshot it was read at and
-  whether the store was live then. A hit is used only if
+  whether the store was live then. A hit is used if the lookup
+  is at that very snapshot, whatever committed since; or if
   `last_ddl_ts` is at or below both that snapshot and the
-  lookup's; then no DDL committed between the two, and the
+  lookup's, as then no DDL committed between the two, and the
   answer is the same at both. Otherwise the lookup reads
-  `CF:store.0` and replaces the entry.
+  `CF:store.0` and replaces the entry. Without the first case, a
+  transaction older than the last DDL, anyone's, would read
+  `CF:store.0` at each lookup for the rest of its life.
 - A transaction that has made or dropped a store neither uses
   nor fills the cache: its lookups see its own uncommitted
   catalog versions, which no entry stands for. That covers what

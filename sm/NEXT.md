@@ -122,7 +122,13 @@ and so are the catalog tables psql reads
       Under 16 clients, Q11 and a write moving `c2`'s key one
       in ten, a tree runs 19,721 and 18,196 tps, today's
       entries 12,250 and 10,874, PostgreSQL 33,512 and 26,904
-      (`../dg/WORKNOTE.md` step 353). Neither is under 1.5 yet. What a tree's Q9 spends now:
+      (`../dg/WORKNOTE.md` step 353). Neither is under 1.5 yet.
+      Measured again on 2026-10-31, the root at page 0, no meta
+      page, `prev` (step 359): Q9 and Q10 moved under 1%, so
+      neither the sibling's write nor the meta page's absence
+      shows; a load is 5.6 times today's entries' on this machine,
+      the same before the change, where it was 1.5 (BTREE.md §10),
+      and why is not known. What a tree's Q9 spends now:
       malloc and free a fifth, the executor's own share, each
       row's recheck; Q10's, a descent a probe and its row.
    3. **Then measure** the grid again, on both kinds of index
