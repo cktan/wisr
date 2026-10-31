@@ -557,11 +557,11 @@ filter does not touch class `0x04`.
             |
  sm2      src/tree/   page.cc   bytes of one page, no I/O
                       tree.cc   descent, cursor, insert, split
-                      latch.cc  writers' latches
             |  sm1::pin_page, page_write, page_drop, ...
- sm1      src/page.cc  a page's I/O, its cache entry, fill latch
+ sm1      src/page.cc     a page's I/O
+          src/bufpool.cc  frames, a pin that is a latch, the clock
             |
- RocksDB  block cache (pages + row blocks), WAL, memtable, SSTs
+ RocksDB  block cache (row blocks), WAL, memtable, SSTs
 ```
 
 - **sm1 owns a page's I/O**, as it is the only channel into
@@ -693,8 +693,8 @@ on the machine above, which is still to be run both ways.
 4. How a statement asks for a tree (§12): `USING smtree`, or
    `WITH (tree = on)`.
 
-**Not shown to run**: `tree_prune()`'s check of page 0's level,
-and `descend()`'s `afresh` retry, have no test that reaches them.
+**Not shown to run**: `tree_prune()`'s check of page 0's level
+has no test that reaches it.
 
 **Not planned yet**, in the order I would take them. None is
 needed by what is built.
@@ -875,7 +875,11 @@ next project is §17.
 
 ## 14. The page cache
 
-**There is none of our own.** The page cache is RocksDB's block
+**Replaced.** Built otherwise: sm's own pool, `BUFFERPOOL.md`.
+This section, like §15 and §16, says how pages were held before
+it.
+
+**There was none of our own.** The page cache is RocksDB's block
 cache, the one the environment has, shared by every database in
 it, and by the rows' blocks. digres sizes it to `shared_buffers`
 (`NBuffers * BLCKSZ`). One memory budget, one eviction policy.
@@ -1025,6 +1029,9 @@ end of the transaction. It pins up to 64 inner pages
 
 ## 15. Replacement
 
+**Replaced.** Built otherwise: sm's own pool, `BUFFERPOOL.md`.
+This section, like §14, says how pages were held before it.
+
 This section is how pages are evicted today. sm's own pool
 replaces it with a clock, leaves aging twice as fast as inner
 pages (§17).
@@ -1089,6 +1096,9 @@ priority pool of half of each shard; no low-priority pool.
 
 ## 16. Latches
 
+**Replaced.** Built otherwise: sm's own pool, `BUFFERPOOL.md`.
+This section, like §14, says how pages were held before it.
+
 | Latch | Where | Protects | Held across |
 | --- | --- | --- | --- |
 | fill latch | sm1, 256 stripes | a miss's fill against a write | a `Get`, or a `Write` |
@@ -1123,9 +1133,9 @@ Its wait is therefore not one `sm_wait()` cuts short.
 Decided with the user (2026-10-31): sm will own a buffer pool for
 a tree's pages, in place of RocksDB's block cache. It is a
 project of its own, with its own design and plan
-(`BUFFERPOOL.md`), measured first. It will not close the 1.5×
-gap; what it buys is eviction under memory pressure, and cheaper
-pins at high client counts. It replaces §14 and §15, and §16's
+(`BUFFERPOOL.md`), built, and not yet measured. It will not close
+the 1.5× gap; what it buys is eviction under memory pressure, and
+cheaper pins at high client counts. It replaces §14 and §15, and §16's
 fill latch and writers' latches, where they differ.
 
 What is decided:

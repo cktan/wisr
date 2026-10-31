@@ -5,11 +5,13 @@
 #ifndef WISR_ENV_H
 #define WISR_ENV_H
 
+#include "bufpool.h"
 #include "sm1.h"
 
 #include <stdint.h>
 
 #include <condition_variable>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -46,6 +48,11 @@ struct sm1::env_t {
    * reads through (env_options_t), made by attach.
    */
   std::shared_ptr<rocksdb::Cache> block_cache;
+  /*
+   * The pages of every database's trees (../../BUFFERPOOL.md), a
+   * quarter of block_cache_bytes, made by attach.
+   */
+  std::unique_ptr<wisr::bufpool_t> bufpool;
   /*
    * The Env every database's instance writes through, its new logs
    * zero-filled (walfs.h, WALPREALLOC.md); none, RocksDB's own, where

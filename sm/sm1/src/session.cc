@@ -80,6 +80,7 @@ db_t *find_or_open(sm1::env_t *env, const char *dbname,
   if (db) {
     // Its temporary stores go in the environment's instance.
     db->tmp = env->tmp;
+    db->bufpool = env->bufpool.get();
     db->tmp_listener = env->tmp_listener.get();
     db->dbid = dbid;
     env->dbs[dbname] = db;

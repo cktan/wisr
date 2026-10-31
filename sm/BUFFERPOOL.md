@@ -4,8 +4,9 @@ The design and plan of the project `BTREE.md` §17 decides. It
 replaces that design's §14, §15, and §16's fill latch and
 writers' latches. §17's decisions are taken as given, §2 here
 restates them, and this file adds what they leave open. Of §5's
-steps, 2 to 6 are built: the pool is `sm1/src/bufpool.h`, tested
-alone, and nothing reads through it yet. Step 1 has not been run.
+steps, 2 to 7 are built, the pool in `sm1/src/bufpool.h`. Step 1,
+and with it every measure below, has not been run: §5's verifies
+that need a benchmark are open (`../MAJORDECISION.md` D16).
 Paths are relative to `sm/`. A bare §17 below is `BTREE.md`'s.
 
 ---
@@ -167,8 +168,9 @@ page_write(session, store, puts)   every put's page pinned ex
   has it. A failed write touches no frame.
 - **A pin is held in a view into the frame.** It must not outlive
   the pin, which a cursor already does not (§3.6).
-- **`inner` stays a hint**, as sm1 does not read a page's level,
-  and a write's `page_put_t::inner` stays.
+- **`inner` stays a hint**, as sm1 does not read a page's level.
+  It is given at the pin alone: a write's `page_put_t` has none,
+  as its page is already pinned.
 
 ### 3.4 A miss
 
@@ -192,9 +194,11 @@ happen: a writer of the page waits on the same word.
   raised by a second pin of a leaf, so a scan's re-read of each
   leaf promotes nothing. A count at its value is not written, so
   a hit on a hot page writes the state word alone.
-- **Pinned frames are bounded**: a thread pins a few pages in a
-  split, to be counted in step 6, which sets the pool's floor, by
-  sessions, at attach.
+- **Pinned frames are bounded**: a thread pins at most five in a
+  split: a child, its parent, the parent's sibling and two new
+  pages. The floor is 64 frames, not set by sessions, as sm1 is
+  not told how many there will be; while every frame is pinned a
+  miss waits, and can be interrupted.
 - **Purge**: `page_drop`, and `rmstore`, `TRUNCATE`, `rmdb` and a
   temporary store's end, walk the frames. Unpurged frames would
   only age out, as a store's id is never reused, so these may be

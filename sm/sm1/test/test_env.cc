@@ -361,7 +361,8 @@ TEST_CASE("every column family of the environment shares one block cache") {
   REQUIRE_MESSAGE(sm1::attach(tmp.path(), env, &opt) == 0, sm1::errmsg());
   rocksdb::Cache *cache = env->block_cache.get();
   REQUIRE(cache);
-  CHECK(cache->GetCapacity() == size_t{8} << 20);
+  CHECK(cache->GetCapacity() == size_t{6} << 20);
+  CHECK(env->bufpool->frames() == (size_t{2} << 20) / 4096);
 
   CHECK(cache_of(env->root, env->root->DefaultColumnFamily()) == cache);
   CHECK(cache_of(env->tmp, env->tmp->DefaultColumnFamily()) == cache);

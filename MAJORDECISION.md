@@ -330,3 +330,65 @@ Decided with the user (2026-10-31).
   The rightmost page has none, so ascending loads pay nothing.
 - **Undo:** the field, and that write.
 
+## D16. The pool is built before its baseline is measured
+
+- **Decided:** on 2026-10-31 the user asked for work to go on
+  unattended on the buffer pool, page and B-tree, on a machine
+  that may not run benchmarks and offers no instruction counter.
+  So `BUFFERPOOL.md` steps 6 and 7 are built with step 1 not
+  run, though §5 says to stop and ask, if it shows no contention,
+  before the pool. Every verify a test can make is made; those
+  that need a benchmark stay open: step 5's Q9 and Q10, and §10's
+  grid.
+- **Why:** the pool is the next code, and its design was settled.
+  What it risks is measured cost, not correctness, and it is all
+  on a branch.
+- **Undo:** the commits are the branch's last; revert them. The
+  baseline should still decide whether they merge.
+
+## D17. A quarter of the budget goes to the pool, 64 frames at least
+
+- **Decided:** `block_cache_bytes` stays one number: attach gives
+  a quarter to the pool, in frames, and three quarters to the
+  block cache, so `shared_buffers` keeps its meaning.
+  `BUFFERPOOL.md` §4.5 leaves the split to the user, and names
+  this as the start to measure. The floor is 64 frames, even past
+  the budget.
+- **Why:** two numbers would be a setting no one can yet choose.
+- **Undo:** one line of `attach()`, or an option of its own.
+
+## D18. The pool is a module of its own, named bufpool
+
+- **Decided:** `sm1/src/bufpool.h`, `bufpool_t`, knows tags,
+  bytes and pins, and reads a miss through its caller's loader,
+  as the lock table is a module of its own. The user named it. A
+  tag lies in relaxed atomics, not a hash of it, so a lookup
+  compares the whole tag with no lock, and never mistakes one
+  page for another; a pin makes the comparison sure.
+- **Why:** so it is tested alone, every path of a pin reached on
+  purpose, with no RocksDB.
+- **Undo:** none planned.
+
+## D19. A sleeping pin leaves new pins behind it, not a thread's own
+
+- **Decided:** a pin that has not yet slept will not pass a frame
+  with a sleeper, so readers do not starve a writer of a hot
+  page; one that has slept, or a second shared pin that spun out,
+  takes its turn. A pin never sleeps on a frame whose tag has
+  changed: a lookup is lock-free, so it may hold a frame just
+  taken for another page, whose holder may be waiting for a page
+  this thread has pinned, a cycle no latch order forbids.
+- **Why:** both are deadlocks or starvation that no test would
+  reach by chance.
+- **Undo:** none planned.
+
+## D20. D2, D3 and D11 are replaced
+
+- **Decided:** the pool replaces the page cache in the block
+  cache (D2), the fill latch and the writers' latch table (D3),
+  and an open tree's held pages (D11): `tree_close` goes, a tree
+  holds nothing between calls, and `descend()` loses `afresh` and
+  `moved`. `sm1::session_dbid` went with the table's names.
+- **Why:** `BTREE.md` §17, decided with the user.
+- **Undo:** with D16.
+

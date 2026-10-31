@@ -317,9 +317,7 @@ int idx_create(index_t *index) {
 int idx_create_tree(sm1::session_t *session, uint64_t storeid, uint16_t relid) {
   tree::tree_t t;
   tree::tree_open(t, session, storeid, relid);
-  int rc = tree::tree_create(t);
-  tree::tree_close(t);
-  return rc;
+  return tree::tree_create(t);
 }
 
 /* The bytes of a tree's pages; see sm2.h. */
@@ -405,12 +403,7 @@ int idx_open_primary_layout(rel_t *rel, const idx_layout_t &layout,
 }
 
 /* Close an index; nullptr is a no-op. */
-void idx_close(index_t *index) {
-  if (index != nullptr && index->tree) {
-    tree::tree_close(index->pages);
-  }
-  delete index;
-}
+void idx_close(index_t *index) { delete index; }
 
 /* The schema of an entry's value: cut, INCLUDE, a row key. */
 std::span<const attribute_t> idx_value_schema(const index_t *index) {

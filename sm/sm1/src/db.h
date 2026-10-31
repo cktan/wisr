@@ -5,6 +5,7 @@
 #ifndef WISR_DB_H
 #define WISR_DB_H
 
+#include "bufpool.h"
 #include "locktab.h"
 #include "sm0_blist.h"
 #include "sm1.h"
@@ -185,12 +186,14 @@ struct db_t {
   std::shared_ptr<rocksdb::Cache> block_cache;
   /*
    * The environment's temporary instance and this database's dbid,
-   * which names its stores there (TEMPTABLE.md §2). Set once a
+   * which names its stores there (TEMPTABLE.md §2), and the
+   * environment's buffer pool, which holds its pages. Set once a
    * session opens the database; a database opened only to be
-   * recovered has neither.
+   * recovered has none of them.
    */
   rocksdb::DB *tmp = nullptr;
   uint64_t dbid = 0;
+  bufpool_t *bufpool = nullptr;
   /*
    * The listeners of rdb's and tmp's memtables, which keep each
    * store's counts in step with RocksDB's sealing and flushing

@@ -1,6 +1,6 @@
 /*
  * test_page.cc -- pages (../BTREE.md §2): keys of class 0x04, written
- * outside every transaction and read through the block cache, apart
+ * outside every transaction and read through the buffer pool, apart
  * from every version of the store.
  */
 
@@ -8,28 +8,57 @@
 #include "util.h"
 
 #include "db.h"
+#include "env.h"
 #include "session.h"
 #include "sm1.h"
 
 #include <atomic>
+#include <chrono>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include <rocksdb/advanced_cache.h>
+
 namespace {
+
+/* A page to write, by write_pages. */
+struct put_t {
+  std::string_view key;
+  std::string_view bytes;
+  bool erase = false;
+  unsigned flags = 0;
+};
+
+/* Pin pages exclusive, write them at once, and unpin them. */
+void write_pages(sm1::session_t *s, uint64_t store,
+                 const std::vector<put_t> &pages) {
+  std::vector<sm1::page_put_t> puts;
+  for (const put_t &p : pages) {
+    sm1::page_t *pin = nullptr;
+    std::string_view old;
+    int r = sm1::pin_page(s, store, p.key, sm1::page_mode_t::ex,
+                          p.flags | sm1::page_no_read, pin, old);
+    REQUIRE_MESSAGE(r == 0, sm1::errmsg());
+    puts.push_back({pin, p.key, p.bytes, p.erase});
+  }
+  REQUIRE_MESSAGE(sm1::page_write(s, store, puts) == 0, sm1::errmsg());
+  for (const sm1::page_put_t &p : puts) {
+    sm1::unpin_page(s, p.page);
+  }
+}
 
 /* Write one page, failing the test on an error. */
 void write_page(sm1::session_t *s, uint64_t store, std::string_view key,
                 std::string_view bytes) {
-  std::vector<sm1::page_put_t> puts{{key, bytes, false, false}};
-  REQUIRE_MESSAGE(sm1::page_write(s, store, puts) == 0, sm1::errmsg());
+  write_pages(s, store, {{key, bytes}});
 }
 
 /* The page at key as s reads it, or "<none>"; fails on an error. */
 std::string read_page(sm1::session_t *s, uint64_t store, std::string_view key) {
   sm1::page_t *page = nullptr;
   std::string_view bytes;
-  int r = sm1::pin_page(s, store, key, false, page, bytes);
+  int r = sm1::pin_page(s, store, key, sm1::page_mode_t::sh, 0, page, bytes);
   REQUIRE_MESSAGE(r >= 0, sm1::errmsg());
   if (r == 1) {
     return "<none>";
@@ -41,14 +70,13 @@ std::string read_page(sm1::session_t *s, uint64_t store, std::string_view key) {
 
 } // namespace
 
-TEST_CASE("page: written outside the transaction, read through the cache") {
+TEST_CASE("page: written outside the transaction, read through the pool") {
   // Verify a page's write commits when it is made, and is read back.
   // 1. A page never written reads as none.
   // 2. Write two pages in one call, in a transaction, and abort it:
   //    both are still there, from this session and from another.
   // 3. Rewrite one, erase the other in one call: the reads follow.
-  // 4. A pin taken before the rewrite keeps the old bytes.
-  // 5. Reattached, the store holds the page as last written.
+  // 4. Reattached, the store holds the page as last written.
   home_t home;
   REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
   sm1::session_t *s = opendb(home.env(), "db");
@@ -59,9 +87,7 @@ TEST_CASE("page: written outside the transaction, read through the cache") {
 
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
   CHECK("<none>" == read_page(s, store, "a"));
-  std::vector<sm1::page_put_t> puts{{"a", "one", false, true},
-                                    {"b", "two", false, false}};
-  REQUIRE(sm1::page_write(s, store, puts) == 0);
+  write_pages(s, store, {{"a", "one"}, {"b", "two"}});
   REQUIRE(sm1::abort(s) == 0);
 
   sm1::session_t *t = opendb(home.env(), "db");
@@ -70,17 +96,10 @@ TEST_CASE("page: written outside the transaction, read through the cache") {
   CHECK("one" == read_page(t, store, "a"));
   CHECK("two" == read_page(t, store, "b"));
 
-  sm1::page_t *held = nullptr;
-  std::string_view held_bytes;
-  REQUIRE(sm1::pin_page(t, store, "a", true, held, held_bytes) == 0);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
-  std::vector<sm1::page_put_t> change{{"a", "uno", false, true},
-                                      {"b", {}, true, false}};
-  REQUIRE(sm1::page_write(s, store, change) == 0);
+  write_pages(s, store, {{"a", "uno"}, {"b", {}, true}});
   CHECK("uno" == read_page(t, store, "a"));
   CHECK("<none>" == read_page(t, store, "b"));
-  CHECK("one" == held_bytes);
-  sm1::unpin_page(t, held);
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::commit(t) == 0);
   REQUIRE(sm1::closedb(t) == 0);
@@ -96,10 +115,63 @@ TEST_CASE("page: written outside the transaction, read through the cache") {
   REQUIRE(sm1::closedb(s) == 0);
 }
 
+TEST_CASE("page: a pin of one page shuts out a writer of it") {
+  // Verify a pin is a latch, through sm1.h.
+  // 1. A reader pins a page shared.
+  // 2. A writer's exclusive pin of it waits until the reader unpins.
+  // 3. A page's key past a frame's tag, and bytes past a frame, fail.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  sm1::session_t *s = opendb(home.env(), "db");
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t store = mkstore(s);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  write_page(s, store, "a", "one");
+  sm1::page_t *pin = nullptr;
+  std::string_view bytes;
+  REQUIRE(sm1::pin_page(s, store, "a", sm1::page_mode_t::sh, 0, pin, bytes) ==
+          0);
+  std::atomic<bool> pinned{false};
+  std::thread writer([&] {
+    sm1::session_t *w = opendb(home.env(), "db");
+    sm1::begin(w, sm1::xctlevel_t::read_committed);
+    sm1::page_t *p = nullptr;
+    std::string_view b;
+    if (sm1::pin_page(w, store, "a", sm1::page_mode_t::ex, 0, p, b) == 0) {
+      pinned = true;
+      sm1::unpin_page(w, p);
+    }
+    sm1::commit(w);
+    sm1::closedb(w);
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  CHECK_FALSE(pinned);
+  sm1::unpin_page(s, pin);
+  writer.join();
+  CHECK(pinned);
+
+  std::string long_key(sm1::page_key_max + 1, 'k');
+  CHECK(sm1::pin_page(s, store, long_key, sm1::page_mode_t::sh, 0, pin,
+                      bytes) == -1);
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  REQUIRE(sm1::pin_page(s, store, "a", sm1::page_mode_t::ex, 0, pin, bytes) ==
+          0);
+  std::string big(sm1::page_size + 1, 'b');
+  std::vector<sm1::page_put_t> puts{{pin, "a", big}};
+  CHECK(sm1::page_write(s, store, puts) == -1);
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  sm1::unpin_page(s, pin);
+  CHECK("one" == read_page(s, store, "a"));
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::closedb(s) == 0);
+}
+
 TEST_CASE("page: a read that misses never puts back a page replaced") {
-  // Verify the fill latch: a miss's read and its insert are not split
-  // by a write, so the cache never holds a page older than RocksDB's.
-  // 1. Attach with a cache far smaller than the pages, so reads miss.
+  // Verify a miss holds its frame through its read, so a write cannot
+  // land between, and no frame holds a page older than RocksDB's.
+  // 1. Attach so the pages far outnumber the frames: reads miss.
   // 2. Four readers read the pages at random, missing and filling.
   // 3. A writer rewrites each page with a count that only rises, and
   //    reads it back at once: always what it wrote, never older.
@@ -116,7 +188,7 @@ TEST_CASE("page: a read that misses never puts back a page replaced") {
   uint64_t store = mkstore(w);
   REQUIRE(sm1::commit(w) == 0);
 
-  constexpr int pages = 64;
+  constexpr int pages = 256;
   const std::string pad(4000, 'p');
   auto bytes_of = [&](int n) { return std::to_string(n) + "|" + pad; };
   auto count_of = [](std::string_view b) {
@@ -139,7 +211,8 @@ TEST_CASE("page: a read that misses never puts back a page replaced") {
         sm1::page_t *page = nullptr;
         std::string_view b;
         std::string key = "k" + std::to_string((x >> 8) % pages);
-        if (sm1::pin_page(s, store, key, false, page, b) == 0) {
+        if (sm1::pin_page(s, store, key, sm1::page_mode_t::sh, 0, page, b) ==
+            0) {
           sm1::unpin_page(s, page);
         }
       }
@@ -155,7 +228,8 @@ TEST_CASE("page: a read that misses never puts back a page replaced") {
     write_page(w, store, key, bytes_of(++counts[p]));
     sm1::page_t *page = nullptr;
     std::string_view b;
-    REQUIRE(sm1::pin_page(w, store, key, false, page, b) == 0);
+    REQUIRE(sm1::pin_page(w, store, key, sm1::page_mode_t::sh, 0, page, b) ==
+            0);
     if (count_of(b) != counts[p]) {
       stale++;
     }
@@ -171,7 +245,7 @@ TEST_CASE("page: a read that misses never puts back a page replaced") {
   REQUIRE(sm1::detach(env, 1) == 0);
 }
 
-TEST_CASE("page: dropped by prefix, with their cache entries") {
+TEST_CASE("page: dropped by prefix, with their frames") {
   // Verify sm1::page_drop removes the pages under a prefix alone.
   // 1. Write pages under "i1", "i10" and "i2", and read each into
   //    the cache.
@@ -337,14 +411,13 @@ TEST_CASE("page: the bytes of a prefix's pages") {
   REQUIRE(sm1::closedb(s) == 0);
 }
 
-TEST_CASE("page: a page not inner, read once, is the first evicted") {
-  // Verify every page is cached, and which outlast which.
-  // 1. Attach with a cache of 256 KB.
-  // 2. Write a page "once", a page "twice" and an inner page, and read
-  //    "twice" back, a hit.
-  // 3. Write other pages, more than the cache holds.
-  // 4. "once" is gone; "twice" and the inner page stayed, and the last
-  //    page written, not inner, is cached.
+TEST_CASE("page: a page not inner is evicted before an inner page") {
+  // Verify every page written is in the pool, and which outlast which.
+  // 1. Attach with the fewest frames a pool has.
+  // 2. Write a page "once" and an inner page.
+  // 3. Write as many other pages as there are frames, and two more.
+  // 4. "once" is gone; the inner page stayed, and the last page
+  //    written, not inner, is in the pool.
   tmpdir_t tmp;
   REQUIRE(sm1::init(tmp.path()) == 0);
   sm1::env_options_t opt;
@@ -359,18 +432,15 @@ TEST_CASE("page: a page not inner, read once, is the first evicted") {
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
   write_page(s, store, "once", "a");
-  write_page(s, store, "twice", "b");
-  std::vector<sm1::page_put_t> inner{{"inner", "c", false, true}};
-  REQUIRE(sm1::page_write(s, store, inner) == 0);
-  CHECK("b" == read_page(s, store, "twice"));
+  write_pages(s, store, {{"inner", "c", false, sm1::page_inner}});
   const std::string pad(4000, 'p');
-  for (int i = 0; i < 128; i++) {
+  int others = static_cast<int>(wisr::bufpool_min_frames);
+  for (int i = 0; i < others; i++) {
     write_page(s, store, "k" + std::to_string(i), pad);
   }
   CHECK_FALSE(sm1::page_cached(s, store, "once"));
-  CHECK(sm1::page_cached(s, store, "twice"));
   CHECK(sm1::page_cached(s, store, "inner"));
-  CHECK(sm1::page_cached(s, store, "k127"));
+  CHECK(sm1::page_cached(s, store, "k" + std::to_string(others - 1)));
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::closedb(s) == 0);
   REQUIRE(sm1::detach(env, 1) == 0);
@@ -404,5 +474,49 @@ TEST_CASE("page: dropped outside a transaction, after a commit") {
   REQUIRE(sm1::rmstore(s, store) == 0);
   REQUIRE(sm1::commit(s) == 0);
   CHECK(0 == sm1::page_drop(s, store, "u"));
+  REQUIRE(sm1::closedb(s) == 0);
+}
+
+TEST_CASE("page: a miss leaves no second copy in the block cache") {
+  // Verify a page read into a frame is not cached by RocksDB as well.
+  // 1. Write 200 pages that do not compress, into a sorted file.
+  // 2. Reattached, read one, so RocksDB's index blocks are loaded.
+  // 3. Read the rest: the block cache has grown by no page's worth of
+  //    its blocks, though they were all read from it.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  sm1::session_t *s = opendb(home.env(), "db");
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t store = mkstore(s);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  std::string bytes(4000, '\0');
+  uint64_t x = 88172645463325252ULL;
+  auto key_of = [](int i) { return "p" + std::to_string(1000 + i); };
+  for (int i = 0; i < 200; i++) {
+    for (char &c : bytes) {
+      x ^= x << 13;
+      x ^= x >> 7;
+      x ^= x << 17;
+      c = static_cast<char>(x);
+    }
+    write_page(s, store, key_of(i), bytes);
+  }
+  REQUIRE(sm1::compact(s, store) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::closedb(s) == 0);
+
+  home.reattach();
+  s = opendb(home.env(), "db");
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(4000u == read_page(s, store, key_of(0)).size());
+  size_t before = home.env()->block_cache->GetUsage();
+  for (int i = 1; i < 60; i++) {
+    CHECK(4000u == read_page(s, store, key_of(i)).size());
+  }
+  CHECK(home.env()->block_cache->GetUsage() < before + 4000);
+  REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::closedb(s) == 0);
 }

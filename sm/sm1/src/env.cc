@@ -27,6 +27,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <memory>
 #include <new>
@@ -342,10 +343,15 @@ sm1::env_t *attach(const char *homedir, const sm1::env_options_t *opt) {
   // Allocate the environment.
   std::unique_ptr<sm1::env_t> env(new sm1::env_t);
   env->homedir = homedir;
+  // One budget, two users: a quarter to the buffer pool's pages, the
+  // rest to the block cache's rows (../../BUFFERPOOL.md §4.5). The pool
+  // keeps a floor, as a thread's pins must find frames.
+  size_t budget = static_cast<size_t>(opt->block_cache_bytes);
+  env->bufpool = std::make_unique<bufpool_t>(
+      std::max(budget / 4 / bufpool_frame_bytes, bufpool_min_frames));
   // The one block cache every instance of the environment reads
   // through, made before the first of them opens.
-  env->block_cache =
-      rocksdb::NewLRUCache(static_cast<size_t>(opt->block_cache_bytes));
+  env->block_cache = rocksdb::NewLRUCache(budget - budget / 4);
 
   // Open the root db. It must exist: attach creates nothing.
   std::string rootpath = root_path(env->homedir);

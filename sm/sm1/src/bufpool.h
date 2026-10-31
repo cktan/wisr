@@ -29,6 +29,9 @@ namespace wisr {
 /* The bytes a frame holds, and so the most a page may be. */
 constexpr size_t bufpool_frame_bytes = 4096;
 
+/* The fewest frames a pool is made with: pins must find frames. */
+constexpr size_t bufpool_min_frames = 64;
+
 /* The longest page key a frame's tag holds. */
 constexpr size_t bufpool_key_max = 16;
 
@@ -101,6 +104,9 @@ public:
 
   /* Whether page has a frame now: for tests. */
   bool cached(const bufpool_page_t &page) const;
+
+  /* The frames pinned exclusive now: for tests. */
+  size_t exclusive() const;
 
   size_t frames() const { return m_nframes; }
 

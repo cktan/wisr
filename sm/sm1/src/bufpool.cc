@@ -491,6 +491,16 @@ void bufpool_t::purge(uint64_t dbid, uint64_t storeid,
   }
 }
 
+/* The frames pinned exclusive; see bufpool.h. */
+size_t bufpool_t::exclusive() const {
+  size_t n = 0;
+  for (size_t i = 0; i < m_nframes; i++) {
+    uint32_t s = m_frames[i].state.load(std::memory_order_relaxed);
+    n += 0 != (s & state_ex) ? 1 : 0;
+  }
+  return n;
+}
+
 /* Whether a page has a frame; see bufpool.h. */
 bool bufpool_t::cached(const bufpool_page_t &page) const {
   return nullptr != find(tag_t(page));

@@ -1661,64 +1661,79 @@ int ssi_write_key(session_t* session, uint64_t storeid, std::string_view key);
  * Each call needs an active transaction, only to name the store.
  */
 
-/*
- * The dbid of the database session is open on (sm1::dbid): with a
- * storeid, it names a store's pages across the process.
- */
-uint64_t session_dbid(const session_t* session);
+/* The most bytes a page may be: a frame of the buffer pool. */
+constexpr size_t page_size = 4096;
 
-/* A page pinned in the block cache, by sm1::pin_page. */
+/* The longest key a page may have: a frame's tag holds it. */
+constexpr size_t page_key_max = 16;
+
+/* A page pinned in the buffer pool, by sm1::pin_page. */
 struct page_t;
 
+/* How a page is pinned: a pin is a latch (../BUFFERPOOL.md). */
+enum class page_mode_t { sh, ex };
+
+/* An inner page of a tree, which the clock ages after the others. */
+constexpr unsigned page_inner = 1;
+/* A new page: pinned ex with its frame not read. */
+constexpr unsigned page_no_read = 2;
+
 /*
- * A page to write: its key, and its bytes, or erase for none. Every
- * page is cached. inner asks the cache to evict it after the pages
- * without (an inner page of a tree, which every probe reads); one of
- * those read again, a hit, joins the inner pages (a tree's hot leaf).
+ * A page to write: its pin, exclusive, its key, and its bytes, or
+ * erase for none.
  */
 struct page_put_t {
+    page_t*          page;
     std::string_view key;
     std::string_view bytes;
     bool             erase = false;
-    bool             inner = false;
 };
 
 /*
- * Read the page at key in storeid: 0 with it pinned in out and its
+ * Pin the page at key in storeid: 0 with it pinned in out and its
  * bytes in bytes, valid until sm1::unpin_page(session, out), which
  * the session's closing does not do for the caller; 1 if there is
- * none, out untouched. A miss reads it from the store into the
- * cache, at the priority inner asks for (sm1::page_put_t). A read
- * sees a page as one write left it, never a mix of two.
+ * none, out untouched. A miss reads it from the store into the buffer
+ * pool, which may evict another. flags are page_inner and
+ * page_no_read: with that, ex alone, a page not in the pool is not
+ * read and bytes are empty, and unless it is written before it is
+ * unpinned its frame goes back unused.
  *
- * A pin has no mode. Its bytes never change: a write replaces the
- * page's cache entry, and the pin keeps the one it has, so a reader
- * needs no shared mode. A writer's exclusion is by page, not by entry,
- * so it is the level above's (sm2's latches, ../BTREE.md §2).
+ * A pin is a latch, held only as long as one: shared, or exclusive,
+ * which no other pin of the page shares, so its bytes never change
+ * under a pin. A pin that waits may be interrupted. Pages are pinned
+ * exclusive in one order, so no two pins wait on each other: a
+ * level's left before right, a child before its parent
+ * (../BTREE.md §16). A thread may pin a page shared again, but no
+ * other second pin of a page is allowed.
  *
- * Errors: SM_ERR_INVALID (store 0, a key too long), SM_ERR_NOTFOUND,
- * SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_IO.
+ * Errors: SM_ERR_INVALID (store 0, a key over page_key_max),
+ * SM_ERR_NOTFOUND, SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_IO,
+ * SM_ERR_CORRUPT (a page over page_size), SM_ERR_INTERRUPTED.
  */
 int pin_page(session_t* session, uint64_t storeid, std::string_view key,
-             bool inner, page_t*& out, std::string_view& bytes);
+             page_mode_t mode, unsigned flags, page_t*& out,
+             std::string_view& bytes);
 
 /* Release a page sm1::pin_page pinned; nullptr is a no-op. */
 void unpin_page(session_t* session, page_t* page);
 
-/*
- * Whether the page at key in storeid is in the block cache, a look
- * that counts as a hit on it: for tests.
- */
+/* Whether the page at key in storeid is in the pool: for tests. */
 bool page_cached(session_t* session, uint64_t storeid, std::string_view key);
 
+/* The pages pinned exclusive now, by anyone: for tests. */
+size_t pages_exclusive(session_t* session);
+
 /*
- * Write puts to storeid at once, outside every transaction: in
- * RocksDB's WAL, unsynced, as a later commit's sync covers it. Each
- * page's cache entry is replaced, so the next read sees the write.
- * Two writes of one page are ordered by the caller.
+ * Write puts to storeid at once, outside every transaction, each
+ * page pinned exclusive by the caller: in RocksDB's WAL, unsynced, as
+ * a later commit's sync covers it. Once RocksDB has them each page is
+ * copied into its frame, which cannot fail; on an error every frame
+ * is as it was. Bytes may not lie in a frame being written, and what
+ * a view of a page's old bytes held is over.
  *
- * Errors: SM_ERR_INVALID, SM_ERR_NOTFOUND, SM_ERR_NOTRANS,
- * SM_ERR_PREPARED, SM_ERR_IO.
+ * Errors: SM_ERR_INVALID (a page over page_size), SM_ERR_NOTFOUND,
+ * SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_IO.
  */
 int page_write(session_t* session, uint64_t storeid,
                const std::vector<page_put_t>& puts);
@@ -1734,7 +1749,8 @@ int page_approxsize(session_t* session, uint64_t storeid,
 
 /*
  * Remove every page of storeid whose key starts with prefix, and its
- * cache entry, outside every transaction, as sm1::page_write. It is
+ * frame, outside every transaction, as sm1::page_write. It waits out
+ * the frames' pins, so no pin of one may be held. It is
  * how a tree goes: when one is made, whatever a tree before it under
  * its relid left, and when DROP INDEX of one commits. A rollback must
  * keep a dropped tree's pages, so that drop waits for the commit, and

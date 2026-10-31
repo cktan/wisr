@@ -1,6 +1,6 @@
 /*
  * page.h -- a B+tree page of a secondary index (../BTREE.md §3): its
- * bytes as RocksDB and the page cache hold them, read where they lie,
+ * bytes as RocksDB and the buffer pool hold them, read where they lie,
  * and a page decoded to be changed, an entry inserted or the page
  * split. On bytes alone: no RocksDB, no cache, no latch.
  */

@@ -62,14 +62,26 @@ page_t read_decoded(sm1::session_t *s, uint64_t store, uint16_t relid,
                     uint64_t pageid) {
   sm1::page_t *pin = nullptr;
   std::string_view bytes;
-  REQUIRE(0 ==
-          sm1::pin_page(s, store, page_name(relid, pageid), true, pin, bytes));
+  REQUIRE(0 == sm1::pin_page(s, store, page_name(relid, pageid),
+                             sm1::page_mode_t::sh, 0, pin, bytes));
   page_view_t v;
   REQUIRE(0 == v.open(bytes));
   page_t page;
   v.load(page);
   sm1::unpin_page(s, pin);
   return page;
+}
+
+/* Write a page of store directly, as no tree would. */
+void write_raw(sm1::session_t *s, uint64_t store, std::string_view key,
+               std::string_view bytes) {
+  sm1::page_t *pin = nullptr;
+  std::string_view old;
+  REQUIRE(0 == sm1::pin_page(s, store, key, sm1::page_mode_t::ex,
+                             sm1::page_no_read, pin, old));
+  std::vector<sm1::page_put_t> puts{{pin, key, bytes}};
+  REQUIRE(0 == sm1::page_write(s, store, puts));
+  sm1::unpin_page(s, pin);
 }
 
 /* The tree's leftmost leaf's page id: page 0's first child, down. */
@@ -98,7 +110,6 @@ struct open_tree_t {
     tree_open(tree, s, d.store(), relid, limit);
   }
   ~open_tree_t() {
-    tree_close(tree);
     sm1::commit(s);
     sm1::closedb(s);
   }
@@ -448,7 +459,7 @@ TEST_CASE("tree: prune judges with no latch, and again before it removes") {
                    t.tree,
                    [&](std::string_view key, std::string_view) {
                      int n = ++asked[std::string(key)];
-                     size_t held = page_latches().size();
+                     size_t held = sm1::pages_exclusive(t.s);
                      first_latched = first_latched || (1 == n && 0 != held);
                      second_unlatched =
                          second_unlatched || (2 == n && 0 == held);
@@ -474,8 +485,8 @@ TEST_CASE("tree: prune judges with no latch, and again before it removes") {
         }));
 }
 
-TEST_CASE("tree: inner pages held stale still route every probe") {
-  // Verify a tree's held inner pages, gone stale, lead to every key.
+TEST_CASE("tree: a tree open across another's splits finds every key") {
+  // Verify a tree holds nothing that another tree's splits leave stale.
   // 1. A reader's tree reads every key once, so it holds the inner
   //    pages as they were.
   // 2. A writer's tree inserts 20,000 keys more, splitting the inner
@@ -495,7 +506,6 @@ TEST_CASE("tree: inner pages held stale still route every probe") {
     cursor_open(r.tree, c, &k, true, &k, true);
     REQUIRE(1u == drain(c).size());
   }
-  CHECK_FALSE(r.tree.held.empty());
   {
     open_tree_t w(d, 15, 512);
     for (int n = 2000; n < 22000; n++) {
@@ -508,17 +518,16 @@ TEST_CASE("tree: inner pages held stale still route every probe") {
     cursor_open(r.tree, c, &k, true, &k, true);
     CHECK(1u == drain(c).size());
   }
-  tree_close(r.tree);
-  CHECK(r.tree.held.empty());
   REQUIRE_MESSAGE(0 == tree_check(r.tree), std::string(sm1::errmsg()));
 }
 
 TEST_CASE("tree: a leaf a probe reads is evicted before the inner pages") {
-  // Verify a descent's miss of a leaf caches it as a leaf, not inner.
-  // 1. Attach with a cache of 256 KB, and make a tree over many leaves.
-  // 2. Write other pages, more than the cache holds, so its leaves go.
+  // Verify a descent's miss of a leaf ages it as a leaf, not inner.
+  // 1. Attach with the fewest frames a pool has, and make a tree over
+  //    many leaves.
+  // 2. Write other pages, more than the frames, so its leaves go.
   // 3. A tree opened anew probes the first key, missing its leaf.
-  // 4. Write as many other pages again.
+  // 4. Write a turn of the clock's worth of other pages.
   // 5. The leaf is gone; the root stayed.
   sm1::env_options_t opt;
   opt.block_cache_bytes = 256 << 10;
@@ -543,8 +552,8 @@ TEST_CASE("tree: a leaf a probe reads is evicted before the inner pages") {
   for (size_t level = height; level-- > 1;) {
     sm1::page_t *pin = nullptr;
     std::string_view bytes;
-    REQUIRE(0 ==
-            sm1::pin_page(t.s, d.store(), name_of(leaf), true, pin, bytes));
+    REQUIRE(0 == sm1::pin_page(t.s, d.store(), name_of(leaf),
+                               sm1::page_mode_t::sh, 0, pin, bytes));
     page_view_t v;
     REQUIRE(0 == v.open(bytes));
     std::string_view child = v.value(0);
@@ -556,23 +565,19 @@ TEST_CASE("tree: a leaf a probe reads is evicted before the inner pages") {
     sm1::unpin_page(t.s, pin);
   }
   const std::string pad(4000, 'p');
-  auto write_others = [&](int from) {
-    for (int n = from; n < from + 128; n++) {
-      std::string k = "other" + std::to_string(n);
-      std::vector<sm1::page_put_t> puts{{k, pad, false, false}};
-      REQUIRE(0 == sm1::page_write(t.s, d.store(), puts));
+  auto write_others = [&](int from, int count) {
+    for (int n = from; n < from + count; n++) {
+      write_raw(t.s, d.store(), "other" + std::to_string(n), pad);
     }
   };
-  write_others(0);
+  write_others(0, 128);
   tree_t probe;
   tree_open(probe, t.s, d.store(), 21, 512);
   cursor_t c;
   std::string k = key_of(0);
   cursor_open(probe, c, &k, true, &k, true);
   REQUIRE(1u == drain(c).size());
-  // Let the pinned inner pages go, so only their priority keeps them.
-  tree_close(probe);
-  write_others(1000);
+  write_others(1000, 70);
   CHECK_FALSE(sm1::page_cached(t.s, d.store(), name_of(leaf)));
   CHECK(sm1::page_cached(t.s, d.store(), name_of(0)));
 }
@@ -639,7 +644,8 @@ TEST_CASE("tree: the root is page 0, at every height") {
     sm0::put_be64(name, 0);
     sm1::page_t *pin = nullptr;
     std::string_view bytes;
-    REQUIRE(0 == sm1::pin_page(t.s, d.store(), name, true, pin, bytes));
+    REQUIRE(0 == sm1::pin_page(t.s, d.store(), name, sm1::page_mode_t::sh, 0,
+                               pin, bytes));
     page_view_t v;
     REQUIRE(0 == v.open(bytes));
     CHECK(height == v.level() + 1u);
@@ -737,7 +743,6 @@ TEST_CASE("tree: writers race a root as it grows") {
             failed++;
           }
         }
-        tree_close(tree);
         sm1::commit(s);
         sm1::closedb(s);
       });
@@ -787,8 +792,7 @@ TEST_CASE("tree: a split links a page's old sibling back to the new page") {
   page.prev = 12345;
   std::string name = page_name(27, leaves[3]);
   std::string bytes = page_bytes(page);
-  std::vector<sm1::page_put_t> puts{{name, bytes, false, false}};
-  REQUIRE(0 == sm1::page_write(t.s, d.store(), puts));
+  write_raw(t.s, d.store(), name, bytes);
   CHECK(-1 == tree_check(t.tree));
   CHECK(sm1::SM_ERR_CORRUPT == sm1::errnum());
 }
@@ -831,8 +835,8 @@ TEST_CASE("tree: the longest keys, at the real page limit") {
   }
 }
 
-TEST_CASE("tree: a writer holding a stale root posts above it") {
-  // Verify a held page 0 a split has grown past does not stop a post.
+TEST_CASE("tree: a tree open while the root grows posts above it") {
+  // Verify a tree open across the root's splits finds their parents.
   // 1. A tree two levels high; a writer's tree reads it, so it holds
   //    page 0 at level 1.
   // 2. Another tree inserts until the tree is at least four levels.
@@ -853,7 +857,6 @@ TEST_CASE("tree: a writer holding a stale root posts above it") {
     REQUIRE(0 == tree_height(r.tree, height));
   }
   REQUIRE(0 == tree_insert(r.tree, key_of(n++), "v"));
-  CHECK_FALSE(r.tree.held.empty());
   {
     open_tree_t w(d, 24, 256);
     while (height < 4) {
@@ -861,7 +864,6 @@ TEST_CASE("tree: a writer holding a stale root posts above it") {
       REQUIRE(0 == tree_height(w.tree, height));
     }
   }
-  CHECK_FALSE(r.tree.held.empty());
   for (int i = 0; i < 100; i++) {
     REQUIRE_MESSAGE(
         0 == tree_insert(r.tree, "0" + std::to_string(1000 + i), "v"),
@@ -873,7 +875,6 @@ TEST_CASE("tree: a writer holding a stale root posts above it") {
                     std::string(sm1::errmsg()));
     n++;
   }
-  tree_close(r.tree);
   REQUIRE_MESSAGE(0 == tree_check(r.tree), std::string(sm1::errmsg()));
   cursor_t c;
   cursor_open(r.tree, c, nullptr, true, nullptr, true);
@@ -904,4 +905,152 @@ TEST_CASE("tree: page ids go on across a restart") {
   cursor_t c;
   cursor_open(t.tree, c, nullptr, true, nullptr, true);
   CHECK(4000u == drain(c).size());
+}
+
+TEST_CASE("tree: a post a crash left made finds its entry there") {
+  // Verify a split whose parent has its entry, its child still flagged,
+  // is finished by the next writer, and lets the child go.
+  // 1. Arm a post to fail, and insert until a leaf splits: the leaf is
+  //    left flagged.
+  // 2. Write the parent's entry by hand, as if only the child's write
+  //    was lost.
+  // 3. An insert into the leaf finds the entry there, unflags the
+  //    child, and goes on to insert: it does not wait on its own pin.
+  // 4. The tree checks whole.
+  db_t d;
+  open_tree_t t(d, 28, 512);
+  REQUIRE(0 == tree_create(t.tree));
+  size_t height = 1;
+  int n = 0;
+  while (1 == height) {
+    REQUIRE(0 == tree_insert(t.tree, "k" + std::to_string(1000 + n++), "v"));
+    REQUIRE(0 == tree_height(t.tree, height));
+  }
+  detail::fail_posts = 1;
+  int rc = 0;
+  std::string key;
+  while (0 == rc) {
+    key = "k0" + std::to_string(1000 + n++);
+    rc = tree_insert(t.tree, key, "v");
+  }
+  REQUIRE(-1 == rc);
+  page_t leaf;
+  uint64_t id = first_leaf(t.s, d.store(), 28);
+  for (;;) {
+    REQUIRE(0 != id);
+    leaf = read_decoded(t.s, d.store(), 28, id);
+    if (0 != (leaf.flags & page_incomplete)) {
+      break;
+    }
+    id = leaf.next;
+  }
+  page_t root = read_decoded(t.s, d.store(), 28, 0);
+  std::string child;
+  for (int i = 0; i < 8; i++) {
+    child.push_back(static_cast<char>((leaf.next >> (8 * i)) & 0xFF));
+  }
+  REQUIRE(0 == page_insert(root, leaf.high, child, 512));
+  root.version++;
+  write_raw(t.s, d.store(), page_name(28, 0), page_bytes(root));
+  std::string again = leaf.entries.front().first + "x";
+  REQUIRE_MESSAGE(0 == tree_insert(t.tree, again, "v"),
+                  std::string(sm1::errmsg()));
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+}
+
+TEST_CASE("tree: writers, readers and a vacuum through a small pool") {
+  // Verify exclusive and shared pins never wait on each other in a
+  // cycle, and no reader loses a key, with pages evicted all along.
+  // 1. Attach with the fewest frames, and make a tree of 5,000 keys,
+  //    far more pages than frames.
+  // 2. Three writers insert keys of their own, two readers scan ranges
+  //    and probe, and a vacuum prunes keys the writers made to go.
+  // 3. It ends: no thread failed, and no key of the first 5,000 was
+  //    missing from any read.
+  // 4. The tree checks whole, and holds every key not pruned.
+  sm1::env_options_t opt;
+  opt.block_cache_bytes = 256 << 10;
+  db_t d(&opt);
+  open_tree_t t(d, 29, 256);
+  REQUIRE(0 == tree_create(t.tree));
+  auto key_of = [](int n) { return std::to_string(1000000 + n); };
+  for (int n = 0; n < 5000; n++) {
+    REQUIRE(0 == tree_insert(t.tree, key_of(n), "v"));
+  }
+  std::atomic<int> failed{0}, missing{0}, writers{3};
+  std::vector<std::thread> threads;
+  auto in_tree = [&](auto body) {
+    sm1::session_t *s = d.open();
+    sm1::begin(s, sm1::xctlevel_t::read_committed);
+    tree_t tree;
+    tree_open(tree, s, d.store(), 29, 256);
+    body(tree);
+    sm1::commit(s);
+    sm1::closedb(s);
+  };
+  for (int w = 0; w < 3; w++) {
+    threads.emplace_back([&, w] {
+      in_tree([&](tree_t &tree) {
+        for (int n = 0; n < 1500; n++) {
+          std::string key = std::to_string(1000000 + (n * 7 + w) % 5000) + "-" +
+                            std::to_string(w) + (0 == n % 2 ? "dead" : "live");
+          if (0 != tree_insert(tree, key, "v")) {
+            failed++;
+          }
+        }
+      });
+      writers--;
+    });
+  }
+  for (int r = 0; r < 2; r++) {
+    threads.emplace_back([&, r] {
+      in_tree([&](tree_t &tree) {
+        unsigned x = 12345 + r;
+        while (0 != writers) {
+          x = x * 1103515245 + 12345;
+          int from = (x >> 8) % 4900;
+          std::string lo = key_of(from), hi = key_of(from + 50);
+          cursor_t c;
+          cursor_open(tree, c, &lo, true, &hi, false);
+          std::string_view k, v;
+          int found = 0, rc = 0;
+          while (0 == (rc = cursor_next(c, k, v))) {
+            found += std::string::npos == k.find('-') ? 1 : 0;
+          }
+          if (rc < 0) {
+            failed++;
+          }
+          if (50 != found) {
+            missing++;
+          }
+        }
+      });
+    });
+  }
+  threads.emplace_back([&] {
+    in_tree([&](tree_t &tree) {
+      while (0 != writers) {
+        size_t removed = 0;
+        auto dead = [](std::string_view k, std::string_view) {
+          return k.size() > 4 && "dead" == k.substr(k.size() - 4) ? 1 : 0;
+        };
+        if (0 != tree_prune(tree, dead, removed)) {
+          failed++;
+        }
+      }
+    });
+  });
+  for (auto &th : threads) {
+    th.join();
+  }
+  CHECK(0 == failed);
+  CHECK(0 == missing);
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+  cursor_t c;
+  cursor_open(t.tree, c, nullptr, true, nullptr, true);
+  size_t live = 0;
+  for (const auto &[k, v] : drain(c)) {
+    live += std::string::npos == k.find("dead") ? 1 : 0;
+  }
+  CHECK(5000u + 3 * 750 == live);
 }

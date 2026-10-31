@@ -2180,36 +2180,40 @@ out as B+tree pages, apart from its versions and none of a
 transaction's. A page is written outside every transaction, in
 one RocksDB write batch that commits when it is made, whatever
 the caller's transaction then does, and read as it is, through
-the environment's block cache, where its bytes are an entry of
-their own, shared by every session. Its key is the caller's,
-under the class byte `0x04` (`SM1_DESIGN.md` §3.1), so no scan,
-read or write of versions meets it; the GC filter keeps it as
-it is. Each call needs an active transaction, only to name the
-store.
+the environment's buffer pool (`../BUFFERPOOL.md`), which every
+session shares. Its key is the caller's, at most
+`sm1::page_key_max` bytes, under the class byte `0x04`
+(`SM1_DESIGN.md` §3.1), so no scan, read or write of versions
+meets it; the GC filter keeps it as it is. Its bytes are at most
+`sm1::page_size`. Each call needs an active transaction, only to
+name the store.
 
-A read that misses holds a fill latch, a stripe of 256 by the
-page, across its `Get` and its insert into the cache; a write
-holds the stripes of all its pages across its write and its
-inserts. So a read that missed before a write cannot put back
-the page the write replaced. A hit takes no latch.
+A pin is a latch, shared or exclusive, held only as long as a
+latch is. A frame is never dirty: a page's writer pins it
+exclusive, writes to RocksDB, then copies the page in, which
+cannot fail, so an error leaves every frame equal to RocksDB's.
+A miss holds its frame exclusive through its read, so no write
+passes it.
 
-### uint64_t sm1::session_dbid(const sm1::session_t* session)
+### int sm1::pin_page(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::page_mode_t mode, unsigned flags, sm1::page_t*& out, std::string_view& bytes)
 
-The dbid of the database the session is open on; with a
-storeid, it names a store's pages across the process.
+Pin the page at `key`, `sm1::page_mode_t::sh` or `ex`: 0 with it
+in `out` and its bytes in `bytes`, valid until
+`sm1::unpin_page(session, out)`; 1 if there is none. `flags`:
+`sm1::page_inner`, which the clock ages after other pages, and
+`sm1::page_no_read`, with `ex` alone, for a new page: a page not
+in the pool is not read, and its frame goes back unused unless
+it is written before it is unpinned.
 
-### int sm1::pin_page(sm1::session_t* session, uint64_t storeid, std::string_view key, bool inner, sm1::page_t*& out, std::string_view& bytes)
-
-Read the page at `key`: 0 with it pinned in `out` and its bytes
-in `bytes`, valid until `sm1::unpin_page(session, out)`; 1 if
-there is none. A miss reads it into the cache, at high priority
-if `inner`. A read sees a page as one write left it. A pin has
-no mode: a write replaces the page's cache entry, and the pin
-keeps the bytes it has.
+Exclusive pins are taken in one order, a level's left before
+right and a child before its parent, so none wait on each other
+in a cycle. A thread may pin a page shared again, but no other
+second pin of a page is allowed. A wait may be interrupted.
 
 Errors: `SM_ERR_INVALID` (store 0, a key too long),
 `SM_ERR_NOTFOUND`, `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
-`SM_ERR_IO`.
+`SM_ERR_IO`, `SM_ERR_CORRUPT` (a page past `sm1::page_size`),
+`SM_ERR_INTERRUPTED`.
 
 ### void sm1::unpin_page(sm1::session_t* session, sm1::page_t* page)
 
@@ -2217,16 +2221,19 @@ Release a page `sm1::pin_page` pinned; `nullptr` is a no-op.
 
 ### bool sm1::page_cached(sm1::session_t* session, uint64_t storeid, std::string_view key)
 
-Whether the page at `key` is in the block cache, a look that
-counts as a hit on it: for tests.
+Whether the page at `key` is in the pool: for tests.
+
+### size_t sm1::pages_exclusive(sm1::session_t* session)
+
+The pages pinned exclusive now, by anyone: for tests.
 
 ### int sm1::page_write(sm1::session_t* session, uint64_t storeid, const std::vector<sm1::page_put_t>& puts)
 
-Write `puts` at once, each a key and its bytes or `erase`:
-in RocksDB's WAL, unsynced, as a later commit's sync covers it,
-and never logged in the temporary instance. Each page's cache
-entry is replaced. Two writes of one page are ordered by the
-caller.
+Write `puts` at once, each a page pinned exclusive, its key, and
+its bytes or `erase`: in RocksDB's WAL, unsynced, as a later
+commit's sync covers it, and never logged in the temporary
+instance. Once RocksDB has them each page is copied into its
+frame; on an error every frame is as it was.
 
 ### int sm1::page_approxsize(sm1::session_t* session, uint64_t storeid, std::string_view prefix, uint64_t& disk, uint64_t& mem)
 
@@ -2237,10 +2244,10 @@ apart: a tree's size, for the planner's statistics.
 ### int sm1::page_drop(sm1::session_t* session, uint64_t storeid, std::string_view prefix)
 
 Remove every page whose key starts with `prefix`, with a
-range delete, and drop each one's cache entry: how a tree goes,
-when one is made under its relid and when DROP INDEX of one
-commits. It may be made with no transaction active, from an
-`sm1::on_commit` function: the store is then taken as the
+range delete, and empty each one's frame, waiting out its pins:
+how a tree goes, when one is made under its relid and when DROP
+INDEX of one commits. It may be made with no transaction active,
+from an `sm1::on_commit` function: the store is then taken as the
 database has it, and a store gone is no error.
 
 ## Build

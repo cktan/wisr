@@ -1174,8 +1174,8 @@ TEST_CASE("tree: a dropped tree's pages go once the drop commits") {
   auto has_root = [&] {
     sm1::page_t *p = nullptr;
     std::string_view bytes;
-    int rc =
-        sm1::pin_page(sm3::session_sm1(f.a), storeid, root, true, p, bytes);
+    int rc = sm1::pin_page(sm3::session_sm1(f.a), storeid, root,
+                           sm1::page_mode_t::sh, 0, p, bytes);
     REQUIRE(rc >= 0);
     sm1::unpin_page(sm3::session_sm1(f.a), p);
     return rc == 0;

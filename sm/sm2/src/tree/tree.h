@@ -1,9 +1,9 @@
 /*
  * tree.h -- a B+tree of an index's own pages (../BTREE.md), a
  * Lehman and Yao B-link tree: each page has a high key and a right
- * link, so a reader takes no latch, and a split never blocks one.
- * Its pages are sm1's (sm1::pin_page, sm1::page_write), under the
- * index's relid:
+ * link, so a reader pins one page at a time, and a split that moves a
+ * key leaves it reachable. Its pages are sm1's (sm1::pin_page,
+ * sm1::page_write), under the index's relid:
  *
  *   page key = relid (2B, big-endian) | pageid (8B, big-endian)
  *
@@ -18,7 +18,6 @@
 #ifndef SM2_TREE_TREE_H
 #define SM2_TREE_TREE_H
 
-#include "latch.h"
 #include "page.h"
 
 #include "sm1.h"
@@ -33,33 +32,17 @@
 
 namespace sm2::tree {
 
-/* An inner page an open tree keeps pinned, and its view. */
-struct held_t {
-  uint64_t pageid = 0;
-  sm1::page_t *pin = nullptr;
-  page_view_t view;
-};
-
-/* The most inner pages an open tree keeps pinned. */
-constexpr size_t held_max = 64;
+static_assert(page_limit <= sm1::page_size);
 
 /*
- * A tree, as a session opens it. The inner pages its descents read
- * are kept pinned, up to held_max, until tree_close, so a probe reads
- * none of them from the cache again (../BTREE.md §2). One may go
- * stale as a split changes it; a descent from it is still right, as
- * no page is ever freed and a key moves only right, where the right
- * links reach it (../../MAJORDECISION.md D11). A descent that has to
- * move right lets them go, so the next starts afresh. A writer changes
- * only what it reads anew under its latch.
+ * A tree, as a session opens it. It holds no page: a pin lasts as long
+ * as a latch, inside one call.
  */
 struct tree_t {
   sm1::session_t *session = nullptr;
-  uint64_t dbid = 0;
   uint64_t storeid = 0;
   uint16_t relid = 0;
   size_t limit = page_limit;
-  std::vector<held_t> held;
   /* The sequence of page ids, looked up at the tree's first split. */
   sm1::seqref_t seq;
   bool has_seq = false;
@@ -68,9 +51,6 @@ struct tree_t {
 /* Open the tree of relid in storeid through session; reads nothing. */
 void tree_open(tree_t &tree, sm1::session_t *session, uint64_t storeid,
                uint16_t relid, size_t limit = page_limit);
-
-/* Release the inner pages tree keeps pinned; it may be used again. */
-void tree_close(tree_t &tree);
 
 /*
  * Make an empty tree: drop every page under its relid, left by a tree
@@ -196,7 +176,7 @@ int tree_check(tree_t &tree);
 
 namespace detail {
 
-/* A page pinned in the cache and viewed; released at scope's end. */
+/* A page pinned and viewed; released at scope's end. */
 struct pinned_t {
   sm1::session_t *session = nullptr;
   sm1::page_t *pin = nullptr;
@@ -215,13 +195,12 @@ struct pinned_t {
 };
 
 /*
- * A leaf latched for a change: its id, its latch, its bytes pinned
- * and checked whole, and its page decoded, when a split or a removal
- * asks for it (decode()).
+ * A leaf latched for a change: its id, its exclusive pin, its bytes
+ * checked whole, and its page decoded, when a split or a removal asks
+ * for it (decode()).
  */
 struct latched_t {
   uint64_t pageid = 0;
-  page_latch_t latch;
   pinned_t pin;
   page_t page;
 

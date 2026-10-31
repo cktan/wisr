@@ -109,8 +109,8 @@ $(BUILD)/test/%.o: test/%.cc $(FLAGS_FILE)
 test: all
 	$(RUN) $(TEST_BIN) $(TEST_ARGS)
 
-# The B+tree's tests, whose threads share pages, latches and the
-# block cache, built apart under the thread sanitizer, against the
+# The B+tree's tests, whose threads share pages and the buffer
+# pool's frames, built apart under the thread sanitizer, against the
 # RocksDB ../../dg/test/rocksdb.sh builds instrumented: the system's
 # is not, and its handovers would read as races. The sanitizer cannot
 # run with the address space randomised, hence setarch -R.
