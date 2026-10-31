@@ -135,7 +135,7 @@ and so are the catalog tables psql reads
    it went from 38.7 to 72–76 thousand tps at 16 clients; with
    the fast path, a table's IS and IX in slots of the session's
    own (step 338), to 125 thousand, 8.6×, and no time is spent
-   waiting for `lock_mu` in t16. The table is still a
+   waiting for `lock_mu` in t16. The table was a
    `std::unordered_map`, and a table that contended should not
    be the language's:
 
@@ -155,17 +155,9 @@ and so are the catalog tables psql reads
      we do not choose.
 
    PostgreSQL keeps its own for the same reasons: `dynahash`,
-   sized once, entries from a free list, in 16 partitions. What
-   to build:
+   sized once, entries from a free list, in 16 partitions. Ours
+   follows it, below:
 
-   - **In a partition**: a power-of-two bucket array, indexed
-     by `fmix64`, no division; entries from a pool kept by a
-     free list, no allocation under the mutex; a few holders
-     inline, one to four, the rest in an overflow; a count of
-     the holders granted each mode in each entry, so a conflict
-     check is O(1), not a walk of the holders, as PostgreSQL's
-     `LOCK.granted[]`; growth by adding a block to the pool,
-     never a rehash of the whole partition under its mutex.
    - **What it is measured on**: after the fast path, t16 does
      not reach the table. What does: row locks, `SELECT ...
      FOR UPDATE` and `FOR SHARE`, the foreign-key check's FOR
@@ -263,9 +255,40 @@ and so are the catalog tables psql reads
    pass over the whole list for each partition, 76 to 135 more. A
    transaction of sm's mostly locks in few partitions: a table's
    IS and IX are in fast-path slots, and a child's insert locks
-   one parent row. The order from here: the hand-written
-   partition, measured against both the baseline and the
-   partitions.
+   one parent row.
+
+   **The hand-written partition**: built (`sm1/SM1_DESIGN.md`
+   §5.1). A power-of-two bucket array indexed by the hash's low
+   bits; an entry with its id, its hash and three holders inline;
+   dropped entries kept on a free list, up to 1,024 a partition;
+   the array doubled or quartered into a new one a few buckets at
+   each add and drop. Counted in instructions on one thread, a
+   lock and its release cost 383 to 453 in `hot`, `mixed` and
+   `distinct`, against 615 to 970 in the map's partitions and 528
+   to 903 in the baseline; `big`, a million locks, 918, as most
+   of its entries are past the free list and allocated. Timed:
+
+   | Workload | Threads | Baseline | Map partitions | Own partitions | Allocs a lock |
+   | --- | --- | --- | --- | --- | --- |
+   | distinct | 1 | 10.7M | 9.2M | 28.5M | 0.00 |
+   | distinct | 16 | 1.76M | 4.97M | 7.14M | 0.00 |
+   | distinct | 32 | 1.61M | 4.87M | 7.28M | 0.00 |
+   | hot | 1 | 22.1M | 17.5M | 24.9M | 0.00 |
+   | hot | 2 | 11.7M | 9.4M | 9.7M | 0.00 |
+   | hot | 16 | 2.74M | 4.87M | 4.69M | 0.00 |
+   | big | 16 | 1.35M | 2.43M | 5.00M | 0.15 |
+   | mixed | 1 | 12.8M | 10.6M | 23.2M | 0.00 |
+   | mixed | 16 | 2.08M | 5.67M | 7.24M | 0.00 |
+
+   Above the baseline at every thread count but `hot` at 2, 17%
+   under, and at 4, even: its 8 keys are in 8 partitions at most,
+   whose mutexes two threads pass between them, and an entry of
+   many holders is walked twice a lock, for the asker's own hold
+   and for the conflicts. Not built: the count of holders by
+   mode, which would save the second walk only, while the first
+   finds the asker's own hold (`../QUESTION.md` §1). What is left
+   of this item: that count, if `hot` wants it, measured; and the
+   digres row-lock workload above, against PostgreSQL.
 5. **A write transaction's two trips through RocksDB's write
    queue** (`../dg/WORKNOTE.md` step 344). An insert writes its
    uncommitted version at once (`sm1/src/access.cc`,

@@ -22,6 +22,12 @@ Branch `wip-locktab-1`, from `main` at 42283a71.
   still find the asker's own hold among the holders, a walk, so
   the counts would save only the second walk; measured first.
 
+**Measured** (`sm/NEXT.md` §1 item 4): 383 to 453 instructions a
+lock and its release on one thread, against 615 to 970 in the
+map's partitions; no allocation a lock but in `big`, a million
+locks, whose entries outrun the free list; above the one-mutex
+baseline at every thread count but `hot` at 2, 17% under.
+
 **The alternative**, as `NEXT.md` words it: a pool that grows by
 blocks and is never given back, as PostgreSQL's `dynahash` in
 shared memory, sized once. It never frees under the mutex, but a

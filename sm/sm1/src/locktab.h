@@ -23,8 +23,6 @@
 #include <stdint.h>
 
 #include <mutex>
-#include <unordered_map>
-#include <vector>
 
 namespace wisr {
 
@@ -92,19 +90,53 @@ public:
     void *first;
   };
 
-  /* The holders of one id, never none. */
+  /*
+   * One id's entry: its holders, never none, in the order they came,
+   * the first three inline and the rest in an array of its own.
+   * Only the table reads its fields.
+   */
   struct entry_t {
-    std::vector<holder_t> holders;
+    static constexpr uint32_t inline_holders = 3;
+    lockid_t id;
+    size_t hash;    /* lockid_hash_t's of id */
+    entry_t *next;  /* in its bucket, or the free list */
+    uint32_t n;     /* holders */
+    uint32_t cap;   /* room in more */
+    holder_t *more; /* holders past the first three */
+    holder_t first3[inline_holders];
+
+    /* Holder i, the oldest 0. */
+    holder_t &at(uint32_t i) {
+      return i < inline_holders ? first3[i] : more[i - inline_holders];
+    }
+    const holder_t &at(uint32_t i) const {
+      return i < inline_holders ? first3[i] : more[i - inline_holders];
+    }
   };
 
   /*
    * One partition: its mutex, and the entries of its ids, a cache
    * line of its own so lockers of two partitions share none.
+   *
+   * Its own hash table, as PostgreSQL keeps its own: a power-of-two
+   * bucket array, indexed by the low bits of an id's hash (the top
+   * ones choose the partition), no division. It doubles past one
+   * entry a bucket and goes to a quarter under one in eight, into a
+   * new array that each add and drop moves a few buckets to, so no
+   * call rehashes the partition. A dropped entry goes on a free list, up
+   * to free_max, so a steady workload allocates no entry under the
+   * mutex, and a transaction of a million locks leaves no more than
+   * that behind.
    */
   class alignas(64) part_t {
   public:
     /* Held across every call below. */
     std::mutex mu;
+
+    part_t() = default;
+    ~part_t();
+    part_t(const part_t &) = delete;
+    part_t &operator=(const part_t &) = delete;
 
     /* The entry of id, or nullptr if no owner holds it. */
     entry_t *find(const lockid_t &id);
@@ -134,18 +166,59 @@ public:
 
     /* Call fn(id, holder) for every hold in the partition. */
     template <class F> void each(F &&fn) const {
-      for (const auto &[id, e] : m_map) {
-        for (const holder_t &h : e.holders) {
-          fn(id, h);
+      for (entry_t *const *b : {m_buckets, m_old}) {
+        size_t n = b == m_buckets ? m_mask + 1 : m_old_mask + 1;
+        for (size_t i = 0; nullptr != b && i < n; i++) {
+          for (const entry_t *e = b[i]; nullptr != e; e = e->next) {
+            for (uint32_t j = 0; j < e->n; j++) {
+              fn(e->id, e->at(j));
+            }
+          }
         }
       }
     }
 
     /* The ids some owner holds here. */
-    size_t size() const { return m_map.size(); }
+    size_t size() const { return m_size; }
+
+    /* The buckets now, the array a resize moves to; for tests. */
+    size_t buckets() const { return nullptr != m_buckets ? m_mask + 1 : 0; }
+
+    /* Whether a resize is moving buckets; for tests. */
+    bool resizing() const { return nullptr != m_old; }
+
+    /* The entries kept for reuse; for tests. */
+    size_t spares() const { return m_nfree; }
+
+    /*
+     * The fewest buckets, the most spare entries, and the buckets
+     * holding entries a call moves while a resize runs, looking at
+     * eight times as many.
+     */
+    static constexpr size_t min_buckets = 64;
+    static constexpr size_t free_max = 1024;
+    static constexpr size_t move_step = 8;
 
   private:
-    std::unordered_map<lockid_t, entry_t, lockid_hash_t> m_map;
+    /* The link to id's entry, in either array, or nullptr. */
+    entry_t **link_of(const lockid_t &id, size_t h);
+    /* An entry for id, from the free list or new. */
+    entry_t *take_entry(const lockid_t &id, size_t h);
+    /* Give e back: to the free list, or freed. */
+    void give_entry(entry_t *e);
+    /* Begin moving every bucket into an array of n. */
+    void resize(size_t n);
+    /* Grow or shrink if the load says to, then move a few buckets. */
+    void rebalance();
+
+    entry_t **m_buckets = nullptr; /* m_mask + 1 of them */
+    size_t m_mask = 0;
+    entry_t **m_old = nullptr; /* being moved from, or nullptr */
+    size_t m_old_mask = 0;
+    size_t m_moved = 0;        /* m_old's buckets moved so far */
+    entry_t *m_free = nullptr; /* entries kept for reuse */
+    size_t m_nfree = 0;
+    size_t m_size = 0;
   };
 
   /* The partition of id: the top bits of its hash. */
@@ -161,13 +234,14 @@ public:
   static holder_t *held(entry_t *e, const void *owner);
 
   /* The hold e was made with, its oldest. */
-  static const holder_t &oldest(const entry_t *e) { return e->holders[0]; }
+  static const holder_t &oldest(const entry_t *e) { return e->at(0); }
 
   /* Call fn(owner) for each holder of e but owner not compatible with mode. */
   template <class F>
   static void each_conflict(const entry_t *e, const void *owner,
                             sm_lockmode_t mode, F &&fn) {
-    for (const holder_t &h : e->holders) {
+    for (uint32_t i = 0; i < e->n; i++) {
+      const holder_t &h = e->at(i);
       if (h.owner != owner && !lock_compatible(h.mode, mode)) {
         fn(h.owner);
       }

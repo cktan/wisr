@@ -268,3 +268,113 @@ TEST_CASE("locktab: ids spread over the partitions, and the table is all "
   }
   CHECK(t.empty());
 }
+
+TEST_CASE("locktab: a partition grows and shrinks a few buckets at a time, "
+          "every id found throughout") {
+  // Verify the bucket array resizes by moving buckets a call at a
+  // time, and no id is lost to a lookup while it does.
+  // 1. Add 20,000 ids to one partition, checking every id held so
+  //    far each time a resize is under way after a thousand.
+  // 2. The array has grown past the ids, and a resize was seen.
+  // 3. Drop them all, checking those left the same way; the array
+  //    shrinks back towards its least, and the partition is empty.
+  locktab_t::part_t t;
+  int a = 0;
+  const uint64_t n = 20000;
+  bool saw = false;
+  auto all_found = [&](uint64_t from, uint64_t to) {
+    for (uint64_t k = from; k < to; k++) {
+      if (nullptr == t.find({9, k})) {
+        return false;
+      }
+    }
+    return true;
+  };
+  for (uint64_t k = 0; k < n; k++) {
+    t.add(nullptr, {9, k}, &a, SM_LOCKMODE_SH, &a);
+    if (t.resizing() && 0 == k % 1000) {
+      saw = true;
+      REQUIRE(all_found(0, k + 1));
+    }
+  }
+  CHECK(saw);
+  CHECK(t.size() == n);
+  CHECK(t.buckets() >= n / 2);
+  CHECK(all_found(0, n));
+  size_t most = t.buckets();
+  saw = false;
+  for (uint64_t k = 0; k < n; k++) {
+    t.drop({9, k}, &a, &a);
+    if (t.resizing() && 0 == k % 1000) {
+      saw = true;
+      REQUIRE(all_found(k + 1, n));
+    }
+  }
+  CHECK(saw);
+  CHECK(0 == t.size());
+  CHECK(t.buckets() < most / 16);
+}
+
+TEST_CASE("locktab: a partition keeps at most free_max dropped entries") {
+  // Verify a dropped entry is kept for reuse up to free_max, and
+  // the rest are freed, so a large transaction leaves little behind.
+  // 1. Add and drop 3,000 ids: free_max entries are kept.
+  // 2. Add 10 ids: they come from the kept ones.
+  locktab_t::part_t t;
+  int a = 0;
+  for (uint64_t k = 0; k < 3000; k++) {
+    t.add(nullptr, {9, k}, &a, SM_LOCKMODE_SH, &a);
+  }
+  for (uint64_t k = 0; k < 3000; k++) {
+    t.drop({9, k}, &a, &a);
+  }
+  CHECK(t.spares() == locktab_t::part_t::free_max);
+  for (uint64_t k = 0; k < 10; k++) {
+    t.add(nullptr, {9, k}, &a, SM_LOCKMODE_SH, &a);
+  }
+  CHECK(t.spares() == locktab_t::part_t::free_max - 10);
+  CHECK(10 == t.size());
+}
+
+TEST_CASE("locktab: holders past the inline ones keep their order") {
+  // Verify an entry's holders beyond its inline three are kept in
+  // the order they came, through drops and an entry's reuse.
+  // 1. Ten owners hold one id S; the oldest is the first.
+  // 2. X conflicts with all ten, S with none.
+  // 3. Drop the oldest and one past the inline three: the next
+  //    oldest is the oldest, and the rest stay in order.
+  // 4. Drop all; a new entry from the free list has one holder.
+  locktab_t::part_t t;
+  int o[10] = {}, x = 0;
+  const lockid_t id{4, 4};
+  for (int i = 0; i < 10; i++) {
+    t.add(t.find(id), id, &o[i], SM_LOCKMODE_SH, &o[i]);
+  }
+  locktab_t::entry_t *e = t.find(id);
+  REQUIRE(nullptr != e);
+  CHECK(locktab_t::oldest(e).owner == &o[0]);
+  CHECK(conflicts(e, &x, SM_LOCKMODE_EX).size() == 10);
+  CHECK(conflicts(e, &x, SM_LOCKMODE_SH).empty());
+
+  t.drop(id, &o[0], &o[0]);
+  t.drop(id, &o[5], &o[5]);
+  e = t.find(id);
+  REQUIRE(nullptr != e);
+  CHECK(locktab_t::oldest(e).owner == &o[1]);
+  std::vector<void *> order;
+  t.each([&](const lockid_t &, const locktab_t::holder_t &h) {
+    order.push_back(h.owner);
+  });
+  CHECK(order == std::vector<void *>{&o[1], &o[2], &o[3], &o[4], &o[6], &o[7],
+                                     &o[8], &o[9]});
+  CHECK(nullptr == locktab_t::held(e, &o[5]));
+  CHECK(nullptr != locktab_t::held(e, &o[9]));
+
+  for (int i : {1, 2, 3, 4, 6, 7, 8, 9}) {
+    t.drop(id, &o[i], &o[i]);
+  }
+  CHECK(0 == t.size());
+  t.add(nullptr, id, &x, SM_LOCKMODE_EX, &x);
+  CHECK(1 == holds(t));
+  CHECK(locktab_t::oldest(t.find(id)).owner == &x);
+}

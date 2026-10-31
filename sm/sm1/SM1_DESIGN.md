@@ -757,6 +757,19 @@ which holds a partition's mutex across each call to it. So the
 table is measured alone, `bench/locktab_bench.cc` (`../NEXT.md`
 §1 item 4).
 
+A partition's table is its own, as PostgreSQL's `dynahash` is: a
+power-of-two bucket array indexed by the low bits of the id's
+hash, the top ones having chosen the partition, so no division;
+an entry keeps its id, its hash, its first three holders inline
+and the rest in an array of its own, in the order they came; a
+dropped entry goes on the partition's free list, up to 1,024, so
+a lock in a steady workload allocates nothing under the mutex,
+and a transaction of a million locks leaves no more than that
+behind. The array doubles past one entry a bucket and goes to a
+quarter under one in eight, into a new array that each add and
+drop moves a few buckets to, so no call rehashes the partition,
+and a lookup meanwhile looks in both.
+
 **The fast path**, PostgreSQL's for a relation's weak locks (its
 `lock.c`, 9.2). A table's readers and writers take IS and IX on
 its oid, which never conflict with each other, so each needs to
