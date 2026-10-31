@@ -158,9 +158,6 @@ and so are the catalog tables psql reads
    sized once, entries from a free list, in 16 partitions. What
    to build:
 
-   - **Partitions**, by the id's hash, each with its own mutex;
-     the deadlock search takes them all, in order, as
-     PostgreSQL's does.
    - **In a partition**: a power-of-two bucket array, indexed
      by `fmix64`, no division; entries from a pool kept by a
      free list, no allocation under the mutex; a few holders
@@ -222,9 +219,53 @@ and so are the catalog tables psql reads
 
    The id's hash is `fmix64` over the two words
    (`sm1/src/locktab.h`), so a table's fast-path count is no
-   longer its `oid % 1024`. The order from here: the partitions;
-   the hand-written partition; each a step, measured against the
-   baseline above.
+   longer its `oid % 1024`; it costs about 38 instructions a lock
+   in the map, of about 810. The hash stays cached in each node:
+   without it, made by a `noexcept` hash, a lookup hashes every
+   node of a bucket it walks, and a lock costs 12.6% more, not
+   4.7%.
+
+   **Partitions**: built. The table is in 16, as PostgreSQL's,
+   each with a mutex and a condition of its own
+   (`sm1/SM1_DESIGN.md` §5.1). A session keeps a lock list for
+   each partition, as PostgreSQL's `myProcLocks`, and a release
+   walks each under its partition's mutex, taken once, as
+   `LockReleaseAll` does. A wait for a transaction sleeps under
+   `xact_mu`, and the deadlock search runs as PostgreSQL's does,
+   once a waiter has slept `deadlock_ms`, holding every
+   partition's mutex and `xact_mu`. Measured as above, against
+   the baseline:
+
+   | Workload | Threads | Baseline | 16 partitions | Max lock |
+   | --- | --- | --- | --- | --- |
+   | distinct | 1 | 10.7M | 9.2M | 1.8 ms |
+   | distinct | 16 | 1.76M | 4.97M | 5.8 ms |
+   | distinct | 32 | 1.61M | 4.87M | 4.4 ms |
+   | hot | 1 | 22.1M | 17.5M | 0.5 ms |
+   | hot | 2 | 11.7M | 9.4M | 1.4 ms |
+   | hot | 16 | 2.74M | 4.87M | 5.1 ms |
+   | big | 16 | 1.35M | 2.43M | 7.5 ms |
+   | mixed | 1 | 12.8M | 10.6M | 3.9 ms |
+   | mixed | 2 | 8.5M | 6.7M | 3.0 ms |
+   | mixed | 16 | 2.08M | 5.67M | 6.3 ms |
+
+   From 8 threads on, 1.4 to 3 times the baseline, and the rehash
+   a million locks makes stalls a locker 7 to 15 ms, not 63 to
+   72: a partition rehashes its sixteenth. At 1 thread, 14 to 21%
+   less, and `hot` and `mixed` about 20% less at 2. Of that, the
+   partitions are 0 to 3% over `fmix64`'s table with one mutex,
+   timed; the rest is `fmix64`'s, timed, though only 4 to 7% in
+   instructions, so this box's swings are some of it. Counted in
+   instructions on one thread, a lock and its release cost 556 to
+   941 with `fmix64` and one mutex, and 29 to 64 more in
+   partitions, a release taking a mutex for each partition it
+   holds locks in where it took one. A first try released by a
+   pass over the whole list for each partition, 76 to 135 more. A
+   transaction of sm's mostly locks in few partitions: a table's
+   IS and IX are in fast-path slots, and a child's insert locks
+   one parent row. The order from here: the hand-written
+   partition, measured against both the baseline and the
+   partitions.
 5. **A write transaction's two trips through RocksDB's write
    queue** (`../dg/WORKNOTE.md` step 344). An insert writes its
    uncommitted version at once (`sm1/src/access.cc`,

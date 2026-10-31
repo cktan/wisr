@@ -5,9 +5,14 @@
  * It knows ids, Gray's modes and opaque owners; nothing of
  * sessions, waits, the fast path or RocksDB, which stay in
  * lockmgr.cc, its one caller. So it is measured alone
- * (bench/locktab_bench.cc, ../NEXT.md §1 item 4). It takes no
- * mutex: its caller holds lock_mu across every call, and a
- * pointer one returns holds until the table is next changed.
+ * (bench/locktab_bench.cc, ../NEXT.md §1 item 4).
+ *
+ * It is in 16 partitions, as PostgreSQL's lock table is, an id's
+ * by its hash, each with a mutex of its own, so lockers of ids in
+ * different partitions do not meet. The caller holds a
+ * partition's mutex across every call to it, and a pointer one
+ * returns holds until the partition is next changed; what reads
+ * the whole table holds every partition's, in their order.
  */
 #ifndef WISR_LOCKTAB_H
 #define WISR_LOCKTAB_H
@@ -17,6 +22,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -73,6 +79,9 @@ sm_lockmode_t lock_cover(sm_lockmode_t a, sm_lockmode_t b);
 /* The lock table; see the top of the file. */
 class locktab_t {
 public:
+  /* The partitions, and so the mutexes, a table has. */
+  static constexpr size_t parts = 16;
+
   /*
    * An owner's hold on a lock, in mode; first is the caller's, a
    * word for what made the hold, which the table only compares.
@@ -88,8 +97,65 @@ public:
     std::vector<holder_t> holders;
   };
 
-  /* The entry of id, or nullptr if no owner holds it. */
-  entry_t *find(const lockid_t &id);
+  /*
+   * One partition: its mutex, and the entries of its ids, a cache
+   * line of its own so lockers of two partitions share none.
+   */
+  class alignas(64) part_t {
+  public:
+    /* Held across every call below. */
+    std::mutex mu;
+
+    /* The entry of id, or nullptr if no owner holds it. */
+    entry_t *find(const lockid_t &id);
+
+    /*
+     * A new hold of owner's on id, in mode, made with first: in e,
+     * id's entry, or in a new one when e is nullptr. owner holds
+     * none on id.
+     */
+    void add(entry_t *e, const lockid_t &id, void *owner, sm_lockmode_t mode,
+             void *first);
+
+    /*
+     * owner's hold on id covers mode from now on; made with first
+     * if owner has none.
+     */
+    void join(const lockid_t &id, void *owner, sm_lockmode_t mode, void *first);
+
+    /*
+     * Drop owner's hold on id if first made it, and the entry with
+     * its last holder; a hold made with another, or none, is left.
+     */
+    void drop(const lockid_t &id, const void *owner, const void *first);
+
+    /* to holds what from held on id, in its place. */
+    void move_owner(const lockid_t &id, const void *from, void *to);
+
+    /* Call fn(id, holder) for every hold in the partition. */
+    template <class F> void each(F &&fn) const {
+      for (const auto &[id, e] : m_map) {
+        for (const holder_t &h : e.holders) {
+          fn(id, h);
+        }
+      }
+    }
+
+    /* The ids some owner holds here. */
+    size_t size() const { return m_map.size(); }
+
+  private:
+    std::unordered_map<lockid_t, entry_t, lockid_hash_t> m_map;
+  };
+
+  /* The partition of id: the top bits of its hash. */
+  static size_t part_of(const lockid_t &id) {
+    return lockid_hash_t{}(id) >> (8 * sizeof(size_t) - 4);
+  }
+
+  /* Partition i, and the partition of id. */
+  part_t &part(size_t i) { return m_parts[i]; }
+  part_t &part(const lockid_t &id) { return m_parts[part_of(id)]; }
 
   /* owner's hold in e, or nullptr. */
   static holder_t *held(entry_t *e, const void *owner);
@@ -109,45 +175,25 @@ public:
   }
 
   /*
-   * A new hold of owner's on id, in mode, made with first: in e,
-   * id's entry, or in a new one when e is nullptr. owner holds
-   * none on id.
+   * The whole table, with every partition's mutex held: fn(id,
+   * holder) for every hold, the ids held, and whether none is.
    */
-  void add(entry_t *e, const lockid_t &id, void *owner, sm_lockmode_t mode,
-           void *first);
-
-  /*
-   * owner's hold on id covers mode from now on; made with first if
-   * owner has none.
-   */
-  void join(const lockid_t &id, void *owner, sm_lockmode_t mode, void *first);
-
-  /*
-   * Drop owner's hold on id if first made it, and the entry with its
-   * last holder; a hold made with another, or none, is left.
-   */
-  void drop(const lockid_t &id, const void *owner, const void *first);
-
-  /* to holds what from held on id, in its place. */
-  void move_owner(const lockid_t &id, const void *from, void *to);
-
-  /* Call fn(id, holder) for every hold in the table. */
   template <class F> void each(F &&fn) const {
-    for (const auto &[id, e] : m_map) {
-      for (const holder_t &h : e.holders) {
-        fn(id, h);
-      }
+    for (const part_t &p : m_parts) {
+      p.each(fn);
     }
   }
-
-  /* The ids some owner holds. */
-  size_t size() const { return m_map.size(); }
-
-  /* Whether no owner holds any. */
-  bool empty() const { return m_map.empty(); }
+  size_t size() const {
+    size_t n = 0;
+    for (const part_t &p : m_parts) {
+      n += p.size();
+    }
+    return n;
+  }
+  bool empty() const { return 0 == size(); }
 
 private:
-  std::unordered_map<lockid_t, entry_t, lockid_hash_t> m_map;
+  part_t m_parts[parts];
 };
 
 } // namespace wisr

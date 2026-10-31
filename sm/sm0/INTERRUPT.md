@@ -204,9 +204,10 @@ caller decides what the interrupt meant and whether to abort.
 sm never takes a bit, so every later wait the thread makes
 fails the same way until the caller takes it.
 
-sm1's waits share a condition variable per database
-(`lock_cv`). Registering it means an interrupt wakes every
-waiter on that database, not only the target. The others find
+sm1's waits share a condition variable per partition of a
+database's lock table (`lock_cv`), and one for every wait for a
+transaction (`xact_cv`). Registering it means an interrupt wakes
+every waiter on it, not only the target. The others find
 nothing pending and sleep again: correct, and noisy only under
 many waiters. A condition variable per waiter is the later
 optimisation.

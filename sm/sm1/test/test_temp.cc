@@ -235,7 +235,7 @@ TEST_CASE("a temporary store takes no lock and no SIREAD entry") {
   REQUIRE(sm1::lock_row(f.s, t, "k", sm1::SM_LOCKMODE_EX) == 0);
   db_t *db = f.s->db;
   {
-    std::lock_guard<std::mutex> guard(db->lock_mu);
+    wisr::lock_all_t all(db);
     CHECK(db->lock_table.empty());
   }
   {

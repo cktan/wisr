@@ -493,7 +493,7 @@ TEST_CASE("row locks whose keys hash alike are one lock after a restart") {
   sm1::session_t *v = f.open();
   CHECK(listed() == one);
   {
-    std::lock_guard<std::mutex> guard(v->db->lock_mu);
+    wisr::lock_all_t all(v->db);
     REQUIRE(v->db->lock_table.size() == 1);
     std::vector<sm1::lockmode_t> modes;
     v->db->lock_table.each(
@@ -505,7 +505,7 @@ TEST_CASE("row locks whose keys hash alike are one lock after a restart") {
   }
   REQUIRE(sm1::abort_prepared(v, "g") == 0);
   {
-    std::lock_guard<std::mutex> guard(v->db->lock_mu);
+    wisr::lock_all_t all(v->db);
     CHECK(v->db->lock_table.empty());
   }
   sm1::closedb(v);

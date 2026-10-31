@@ -33,7 +33,7 @@ std::vector<void *> conflicts(const locktab_t::entry_t *e, const void *owner,
 }
 
 /* The count of holds in t. */
-size_t holds(const locktab_t &t) {
+size_t holds(const locktab_t::part_t &t) {
   size_t n = 0;
   t.each([&](const lockid_t &, const locktab_t::holder_t &) { n++; });
   return n;
@@ -76,11 +76,11 @@ TEST_CASE("locktab: an entry is made by its first hold and goes with its "
   // 3. Add b's hold to that entry; both are held, one entry.
   // 4. Drop a's hold; b's stays, and the entry with it.
   // 5. Drop b's hold; the entry is gone.
-  locktab_t t;
+  locktab_t::part_t t;
   int a = 0, b = 0, fa = 0, fb = 0;
   const lockid_t id{1, 42};
   CHECK(nullptr == t.find(id));
-  CHECK(t.empty());
+  CHECK(0 == t.size());
 
   t.add(nullptr, id, &a, SM_LOCKMODE_SH, &fa);
   locktab_t::entry_t *e = t.find(id);
@@ -103,7 +103,7 @@ TEST_CASE("locktab: an entry is made by its first hold and goes with its "
 
   t.drop(id, &b, &fb);
   CHECK(nullptr == t.find(id));
-  CHECK(t.empty());
+  CHECK(0 == t.size());
 }
 
 TEST_CASE("locktab: a hold goes only with the entry that made it") {
@@ -114,7 +114,7 @@ TEST_CASE("locktab: a hold goes only with the entry that made it") {
   // 3. Drop with g: the hold stays, in the covering mode.
   // 4. Drop with f: the hold and the entry go.
   // 5. Drop again, and drop an id never held: nothing happens.
-  locktab_t t;
+  locktab_t::part_t t;
   int a = 0, f = 0, g = 0;
   const lockid_t id{1, 7};
   t.add(nullptr, id, &a, SM_LOCKMODE_IS, &f);
@@ -131,10 +131,10 @@ TEST_CASE("locktab: a hold goes only with the entry that made it") {
   CHECK(locktab_t::held(e, &a)->mode == SM_LOCKMODE_SH);
 
   t.drop(id, &a, &f);
-  CHECK(t.empty());
+  CHECK(0 == t.size());
   t.drop(id, &a, &f);
   t.drop({2, 7}, &a, &f);
-  CHECK(t.empty());
+  CHECK(0 == t.size());
 }
 
 TEST_CASE("locktab: join makes the entry, or covers the owner's hold") {
@@ -142,7 +142,7 @@ TEST_CASE("locktab: join makes the entry, or covers the owner's hold") {
   // 1. Join a's IX on a new id: the entry is made, a holds IX.
   // 2. Join b's IS: b holds IS beside a.
   // 3. Join a's S: a's hold covers both, SIX, made with its first.
-  locktab_t t;
+  locktab_t::part_t t;
   int a = 0, b = 0, fa = 0, fb = 0, fa2 = 0;
   const lockid_t id{0x8000000000000000ULL, 9};
   t.join(id, &a, SM_LOCKMODE_IX, &fa);
@@ -163,7 +163,7 @@ TEST_CASE("locktab: the conflicts of a mode are the other owners' holds it "
   // 2. For d asking S: b alone conflicts.
   // 3. For b asking X: a and c conflict, b's own hold not.
   // 4. For d asking IS: none conflicts.
-  locktab_t t;
+  locktab_t::part_t t;
   int a = 0, b = 0, c = 0, d = 0;
   const lockid_t id{3, 3};
   t.add(nullptr, id, &a, SM_LOCKMODE_IS, &a);
@@ -185,7 +185,7 @@ TEST_CASE("locktab: an owner's holds move to another in its place") {
   // 2. Move a's holds to g on both ids.
   // 3. g holds them in a's modes, made with a's firsts; b is kept.
   // 4. Moving on an id never held does nothing.
-  locktab_t t;
+  locktab_t::part_t t;
   int a = 0, b = 0, g = 0, f1 = 0, f2 = 0, fb = 0;
   const lockid_t one{1, 1}, two{1, 2};
   t.add(nullptr, one, &a, SM_LOCKMODE_SH, &f1);
@@ -225,4 +225,46 @@ TEST_CASE("locktab: an id's hash spreads both its words to its low bits") {
   }
   CHECK(apart < 16);
   CHECK(typed < 16);
+}
+
+TEST_CASE("locktab: ids spread over the partitions, and the table is all "
+          "of them") {
+  // Verify an id's partition is fixed by its hash, every partition
+  // gets ids, and the whole table's size and holds sum them.
+  // 1. Place 1,024 row ids and 1,024 OID ids: each partition is in
+  //    range, the same for the same id, and none is left empty.
+  // 2. Hold each id in its partition: the table's size is 2,048,
+  //    each() visits 2,048 holds, and a partition's size is its
+  //    share.
+  // 3. Drop them all: the table is empty.
+  locktab_t t;
+  int a = 0;
+  std::vector<lockid_t> ids;
+  for (uint64_t k = 0; k < 1024; k++) {
+    ids.push_back({5, k});
+    ids.push_back({uint64_t(1) << 63, k});
+  }
+  size_t per[locktab_t::parts] = {};
+  for (const lockid_t &id : ids) {
+    size_t i = locktab_t::part_of(id);
+    REQUIRE(i < locktab_t::parts);
+    CHECK(i == locktab_t::part_of(id));
+    per[i]++;
+    t.part(id).add(nullptr, id, &a, SM_LOCKMODE_SH, &a);
+  }
+  size_t sum = 0;
+  for (size_t i = 0; i < locktab_t::parts; i++) {
+    CHECK(per[i] > 0);
+    CHECK(t.part(i).size() == per[i]);
+    sum += per[i];
+  }
+  CHECK(sum == ids.size());
+  CHECK(t.size() == ids.size());
+  size_t n = 0;
+  t.each([&](const lockid_t &, const locktab_t::holder_t &) { n++; });
+  CHECK(n == ids.size());
+  for (const lockid_t &id : ids) {
+    t.part(id).drop(id, &a, &a);
+  }
+  CHECK(t.empty());
 }

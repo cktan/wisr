@@ -59,7 +59,7 @@ sm_lockmode_t lock_cover(sm_lockmode_t a, sm_lockmode_t b) {
 }
 
 /* The entry of id, or nullptr; see locktab.h. */
-locktab_t::entry_t *locktab_t::find(const lockid_t &id) {
+locktab_t::entry_t *locktab_t::part_t::find(const lockid_t &id) {
   auto it = m_map.find(id);
   return it != m_map.end() ? &it->second : nullptr;
 }
@@ -75,16 +75,16 @@ locktab_t::holder_t *locktab_t::held(entry_t *e, const void *owner) {
 }
 
 /* A new hold of owner's on id; see locktab.h. */
-void locktab_t::add(entry_t *e, const lockid_t &id, void *owner,
-                    sm_lockmode_t mode, void *first) {
+void locktab_t::part_t::add(entry_t *e, const lockid_t &id, void *owner,
+                            sm_lockmode_t mode, void *first) {
   // Join the holders, or make the entry: one lookup either way.
   entry_t &to = nullptr != e ? *e : m_map[id];
   to.holders.push_back({owner, mode, first});
 }
 
 /* owner's hold on id covers mode; see locktab.h. */
-void locktab_t::join(const lockid_t &id, void *owner, sm_lockmode_t mode,
-                     void *first) {
+void locktab_t::part_t::join(const lockid_t &id, void *owner,
+                             sm_lockmode_t mode, void *first) {
   entry_t &e = m_map[id];
   holder_t *h = held(&e, owner);
   if (nullptr != h) {
@@ -95,7 +95,8 @@ void locktab_t::join(const lockid_t &id, void *owner, sm_lockmode_t mode,
 }
 
 /* Drop owner's hold on id if first made it; see locktab.h. */
-void locktab_t::drop(const lockid_t &id, const void *owner, const void *first) {
+void locktab_t::part_t::drop(const lockid_t &id, const void *owner,
+                             const void *first) {
   auto it = m_map.find(id);
   // Gone already: a rollback may have released it.
   if (it == m_map.end()) {
@@ -119,7 +120,8 @@ void locktab_t::drop(const lockid_t &id, const void *owner, const void *first) {
 }
 
 /* to holds what from held on id; see locktab.h. */
-void locktab_t::move_owner(const lockid_t &id, const void *from, void *to) {
+void locktab_t::part_t::move_owner(const lockid_t &id, const void *from,
+                                   void *to) {
   entry_t *e = find(id);
   if (nullptr == e) {
     return;

@@ -163,16 +163,85 @@ struct lockref_t {
   bool latest = false; /* read_latest done: the write may go ahead */
   int8_t slot = -1;    /* its fast-path slot, or -1 in the table */
   bool strong = false; /* counted in the db's fp_strong */
+  uint8_t part = 0;    /* its id's partition (locktab_t::part_of) */
 };
 
 /*
- * A session's lock list: blocks whose entries never move, so a
- * pointer into them holds until a cut.
+ * A session's locks in one partition of the lock table, in the
+ * order it took them: blocks whose entries never move, so a
+ * pointer into them holds until a cut. 32 to a block, as a
+ * session has sixteen.
  */
-using lock_list_t = sm0::blist_t<lockref_t, 256>;
+using lock_list_t = sm0::blist_t<lockref_t, 32>;
 
-/* A point in the list, for a savepoint to cut back to. */
-using lock_mark_t = lock_list_t::mark_t;
+/*
+ * A session's lock list: a list for each partition of the lock
+ * table, as PostgreSQL keeps a backend's locks by partition
+ * (PGPROC's myProcLocks), so a release takes each partition's
+ * mutex once and walks only its own. A lock's entry is in its
+ * id's partition's list from the start, a fast-path slot's too.
+ */
+class lock_lists_t {
+public:
+  /* A point in every list, for a savepoint to cut back to. */
+  struct mark_t {
+    lock_list_t::mark_t at[locktab_t::parts];
+  };
+
+  /* The list of partition i. */
+  lock_list_t &part(size_t i) { return m_parts[i]; }
+
+  /* A mark at the end of every list. */
+  mark_t mark() const {
+    mark_t m;
+    for (size_t i = 0; i < locktab_t::parts; i++) {
+      m.at[i] = m_parts[i].mark();
+    }
+    return m;
+  }
+
+  /* Drop every entry after m, keeping the blocks. */
+  void cut(const mark_t &m) {
+    for (size_t i = 0; i < locktab_t::parts; i++) {
+      m_parts[i].cut(m.at[i]);
+    }
+  }
+
+  /* Call fn on every entry, a partition's in the order taken. */
+  template <class F> void each(F fn) {
+    for (lock_list_t &l : m_parts) {
+      l.each(fn);
+    }
+  }
+  template <class F> void each(F fn) const {
+    for (const lock_list_t &l : m_parts) {
+      l.each(fn);
+    }
+  }
+
+  /* The entries, in every list. */
+  size_t size() const {
+    size_t n = 0;
+    for (const lock_list_t &l : m_parts) {
+      n += l.size();
+    }
+    return n;
+  }
+  bool empty() const { return 0 == size(); }
+
+  /* Exchange two sessions' lists. */
+  void swap(lock_lists_t &o) {
+    for (size_t i = 0; i < locktab_t::parts; i++) {
+      m_parts[i].swap(o.m_parts[i]);
+    }
+  }
+
+private:
+  lock_list_t m_parts[locktab_t::parts];
+};
+
+/* A point in the lists, for a savepoint to cut back to. */
+using lock_mark_t = lock_lists_t::mark_t;
 
 /*
  * One open database, shared by every session on it and held
@@ -325,20 +394,27 @@ struct db_t {
   /*
    * The lock table (§5.1): lock key -> the transactions holding it.
    * Each holder holds it in a mode of its own, and every pair of
-   * holders' modes is compatible (sm1.h, lockmode_t). One mutex
-   * covers the table and every session's
-   * waits-for list, so a deadlock walk sees a consistent
-   * waits-for graph; shard it if a benchmark shows contention.
-   * Every release and every doom notifies lock_cv.
+   * holders' modes is compatible (sm1.h, lockmode_t). It is in
+   * partitions, each with its mutex (locktab.h) and here its
+   * condition, lock_cv[i], which a release in the partition and
+   * every doom notify; a waiter for a lock sleeps on its
+   * partition's. A deadlock walk holds every partition's mutex,
+   * then xact_mu (lock_all_t), so it sees a still waits-for graph.
    *
    * A holder's owner is its session, and its first the session's
    * lock list entry for the id, which made the hold and releases
    * it. A second entry is an OID lock's slot, moved there after the
    * hold was made (fp_move); the hold's mode covers both.
    */
-  std::mutex lock_mu;
-  std::condition_variable lock_cv;
   locktab_t lock_table;
+  std::condition_variable lock_cv[locktab_t::parts];
+  /*
+   * A wait for a transaction (lock_wait_xact) sleeps on xact_cv
+   * under xact_mu, which a transaction's end and every rollback
+   * to a savepoint notify, and every doom.
+   */
+  std::mutex xact_mu;
+  std::condition_variable xact_cv;
   int deadlock_ms = 50;
   /*
    * The fast path (§5.1): the strong OID locks (S, SIX, X) held
@@ -347,14 +423,15 @@ struct db_t {
    * strong locker counts itself, then moves every session's
    * slots for its key into the table: the sessions of the
    * database, in fp_sessions, under fp_reg_mu. Order: the env's
-   * mu, fp_reg_mu, a session's fp_mu, lock_mu.
+   * mu, fp_reg_mu, a session's fp_mu, the partitions' mutexes in
+   * their order, xact_mu.
    */
   static constexpr size_t fp_strong_slots = 1024;
   std::atomic<uint32_t> fp_strong[fp_strong_slots] = {};
   std::mutex fp_reg_mu;
   std::vector<sm1::session_t *> fp_sessions;
   /*
-   * Bumped, under lock_mu, by every rollback to a savepoint: it
+   * Bumped, under xact_mu, by every rollback to a savepoint: it
    * deletes versions, so a writer waiting for the transaction
    * looks again (WRITELOCK.md §3.4).
    */

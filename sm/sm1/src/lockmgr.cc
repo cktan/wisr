@@ -13,16 +13,22 @@
  * uncommitted version stands for the lock, a second writer waiting for the
  * transaction that wrote it (WRITELOCK.md).
  *
- * Deadlocks are found as a transaction begins to wait: it
- * searches the waits-for graph from itself, so a cycle its wait
- * closes is found at once, as PostgreSQL finds one a waiter's
- * place in a queue closes. One that forms while it waits is
- * found when it has slept deadlock_ms, PostgreSQL's
- * deadlock_timeout, and each deadlock_ms after. If it can reach
- * itself, the youngest transaction on that cycle is doomed and
- * woken; every member of a cycle is blocked, so the victim is
- * always waiting in lock_wait or lock_wait_xact and fails from
- * there. A waiter for a shared lock waits on every holder at
+ * The table is in 16 partitions (locktab.h), each with a mutex
+ * and a condition of its own: a lock call takes its partition's
+ * mutex alone, and a release wakes the waiters of the partitions
+ * it released in. A wait for a transaction takes xact_mu and
+ * sleeps on xact_cv, which the transaction's end and every
+ * rollback to a savepoint notify.
+ *
+ * Deadlocks are found as PostgreSQL finds them: a waiter that has
+ * slept deadlock_ms, PostgreSQL's deadlock_timeout, searches the
+ * waits-for graph from itself, and again each deadlock_ms after.
+ * The search holds every partition's mutex, in order, then
+ * xact_mu (lock_all_t), so it sees every waiter and holder still.
+ * If it can reach itself, the youngest transaction on that cycle
+ * is doomed and woken; every member of a cycle is blocked, so the
+ * victim is always waiting in lock_wait or lock_wait_xact and
+ * fails from there. A waiter for a shared lock waits on every holder at
  * once, so the search walks a graph, not a chain, its edges read
  * from the table as it goes (lock_blockers): a waiter's own list
  * goes stale as its holders release, before it wakes to look.
@@ -85,43 +91,46 @@ lockref_t make_ref(const lockid_t &k, lmode_t mode, uint16_t kind) {
   l.type = lock_type(k);
   l.mode = mode;
   l.kind = kind;
+  l.part = static_cast<uint8_t>(locktab_t::part_of(k));
   return l;
 }
 
 /*
  * Release s's list entry l from the table: s's hold on l.id goes
  * with the entry that made it, and the table entry with its last
- * holder. The caller holds lock_mu.
+ * holder. The caller holds l's partition's mutex.
  */
 void lock_drop_holder(db_t *db, const lockref_t &l, sm1::session_t *s) {
-  db->lock_table.drop(l.id, s, &l);
+  db->lock_table.part(l.part).drop(l.id, s, &l);
 }
 
 /*
- * The session's lock list entry for (storeid, key), or nullptr. The
- * list is the session's own, so no lock_mu is taken. The newest
- * first, the lock in question likely just taken, then the rest from
- * the oldest: the list links only forward.
+ * The session's lock list entry for (storeid, key), or nullptr, in
+ * the list of its id's partition. The list is the session's own, so
+ * no mutex is taken. The newest first, the lock in question likely
+ * just taken, then the rest from the oldest: the list links only
+ * forward.
  */
 lockref_t *find_lockref(sm1::session_t *s, uint64_t storeid,
                         rocksdb::Slice key) {
-  lockref_t *last = s->locks.last();
+  // The id holds the type, so comparing ids is enough.
+  lockid_t k = lock_row_id(storeid, key);
+  lock_list_t &list = s->locks.part(locktab_t::part_of(k));
+  lockref_t *last = list.last();
   if (nullptr == last) {
     return nullptr;
   }
-  // The id holds the type, so comparing ids is enough.
-  lockid_t k = lock_row_id(storeid, key);
   if (last->id == k) {
     return last;
   }
-  return s->locks.find([&](const lockref_t &l) { return l.id == k; });
+  return list.find([&](const lockref_t &l) { return l.id == k; });
 }
 
 /*
  * Search the waits-for graph from cur for a path back to s,
- * with lock_mu held. path holds the transactions between s and
- * cur, so a hit has the whole cycle to choose a victim from.
- * Returns true once a cycle through s is found.
+ * with every lock mutex held (lock_all_t). path holds the transactions between
+ * s and cur, so a hit has the whole cycle to choose a victim from. Returns true
+ * once a cycle through s is found.
  */
 bool find_cycle(sm1::session_t *s, sm1::session_t *cur,
                 std::unordered_set<sm1::session_t *> *seen,
@@ -152,13 +161,16 @@ bool find_cycle(sm1::session_t *s, sm1::session_t *cur,
 }
 
 /*
- * Search the waits-for graph from s, with lock_mu held. If s
- * can reach itself, doom the youngest transaction on the cycle
- * and wake everyone so the victim sees it. A path that ends, or
- * a cycle that does not pass through s, is not s's to resolve:
- * the members of that other cycle run their own check.
+ * Search the waits-for graph from s, taking every lock mutex, of
+ * which the caller holds none. If s can reach itself, doom the
+ * youngest transaction on the cycle and wake everyone so the
+ * victim sees it. A path that ends, or a cycle that does not pass
+ * through s, is not s's to resolve: the members of that other
+ * cycle run their own check.
  */
 void check_deadlock(db_t *db, sm1::session_t *s) {
+  // Hold every partition and xact_mu: the graph stays still.
+  lock_all_t all(db);
   std::unordered_set<sm1::session_t *> seen;
   std::vector<sm1::session_t *> path;
   // No cycle through us: nothing to resolve here.
@@ -175,13 +187,16 @@ void check_deadlock(db_t *db, sm1::session_t *s) {
   }
   // Doom it.
   victim->doomed = sm1::SM_ERR_DEADLOCK;
-  // Wake every waiter so the victim sees its doom.
-  db->lock_cv.notify_all();
+  // Wake every waiter so the victim sees its doom, wherever it waits.
+  for (std::condition_variable &cv : db->lock_cv) {
+    cv.notify_all();
+  }
+  db->xact_cv.notify_all();
 }
 
 /*
  * The other holders of e that conflict with mode for s, into out,
- * with lock_mu held; sets *mine to s's own hold among them, or
+ * with e's partition's mutex held; sets *mine to s's own hold among them, or
  * nullptr, and *want to the mode s would hold. Returns false if
  * there is no entry, e being nullptr.
  */
@@ -224,26 +239,28 @@ int deadlock_wait_ms(const sm1::session_t *s) {
 }
 
 /*
- * Sleep on lock_cv, with lock_mu held in guard, until woken, until
- * a bit in the thread's wait mask is raised (sm_sys.h), or until
+ * Sleep on cv, with its mutex held in guard, until woken, until a
+ * bit in the thread's wait mask is raised (sm_sys.h), or until
  * *deadline_us; at the deadline, look for a cycle through s and
  * re-arm it. Returns false if interrupted: the bit stays pending,
  * for the caller's caller to take.
  */
 bool wait_once(db_t *db, sm1::session_t *s, std::unique_lock<std::mutex> &guard,
-               int64_t *deadline_us) {
+               std::condition_variable *cv, int64_t *deadline_us) {
   bool slept = false;
 
   // An interrupt raised before this wait ends it at once.
-  switch (sm_wait(&guard, &db->lock_cv, woke, &slept, sm_wait_mask(),
-                  *deadline_us)) {
+  switch (sm_wait(&guard, cv, woke, &slept, sm_wait_mask(), *deadline_us)) {
   case SM_WAIT_DONE:
     return true;
   case SM_WAIT_INTERRUPTED:
     return false;
   case SM_WAIT_TIMED_OUT:
-    // Timed out: look for a cycle through us.
+    // Timed out: look for a cycle through us, with every lock mutex,
+    // taken in their order, so ours is let go first.
+    guard.unlock();
     check_deadlock(db, s);
+    guard.lock();
     // Re-arm the timer for the next check.
     *deadline_us = sm_now_us() + int64_t(deadlock_wait_ms(s)) * 1000;
     return true;
@@ -263,17 +280,19 @@ std::atomic<uint32_t> &strong_count(db_t *db, const lockid_t &k) {
 
 /*
  * Move s's slot i into the lock table, as a hold of s's, joining
- * one s has there already. The caller holds s->fp_mu, not lock_mu.
+ * one s has there already. The caller holds s->fp_mu, and no
+ * partition's mutex.
  */
 void fp_move(db_t *db, sm1::session_t *s, int i) {
   sm1::session_t::fp_slot_t &f = s->fp[i];
   {
-    // Hold lock_mu while editing the table.
-    std::lock_guard<std::mutex> guard(db->lock_mu);
+    locktab_t::part_t &p = db->lock_table.part(f.ref->part);
+    // Hold the partition's mutex while editing it.
+    std::lock_guard<std::mutex> guard(p.mu);
     // A hold of ours already was made before this slot: a slot for
     // k is moved to the table before a hold there is made, so the
     // hold's first entry stays the first, and is released last.
-    db->lock_table.join(f.id, s, f.mode, f.ref);
+    p.join(f.id, s, f.mode, f.ref);
     // Its list entry is the table's from now on.
     f.ref->slot = -1;
   }
@@ -337,14 +356,14 @@ bool fp_take(db_t *db, sm1::session_t *s, const lockid_t &k, lmode_t mode) {
   }
   lockref_t l = make_ref(k, mode, 0);
   l.slot = static_cast<int8_t>(free);
-  s->fp[free] = {k, mode, s->locks.emplace(l), true};
+  s->fp[free] = {k, mode, s->locks.part(l.part).emplace(l), true};
   s->fp_used++;
   return true;
 }
 
 /* s's first list entry for the OID lock k, or nullptr. */
 lockref_t *first_ref(sm1::session_t *s, const lockid_t &k) {
-  return s->locks.find([&](const lockref_t &l) {
+  return s->locks.part(locktab_t::part_of(k)).find([&](const lockref_t &l) {
     return sm1::LOCKTYPE_OID == l.type && l.id == k;
   });
 }
@@ -367,11 +386,14 @@ std::mutex &lock_latch(db_t *db, uint64_t storeid, rocksdb::Slice key) {
 int lock_try(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
              uint16_t kind) {
   db_t *db = s->db;
-  // Room for the entry now, so none is allocated under lock_mu.
-  s->locks.reserve();
-  // Hold lock_mu for the table.
-  std::lock_guard<std::mutex> guard(db->lock_mu);
-  entry_t *e = db->lock_table.find(k);
+  size_t pi = locktab_t::part_of(k);
+  lock_list_t &list = s->locks.part(pi);
+  // Room for the entry now, so none is allocated under the mutex.
+  list.reserve();
+  locktab_t::part_t &p = db->lock_table.part(pi);
+  // Hold k's partition's mutex for its entry.
+  std::lock_guard<std::mutex> guard(p.mu);
+  entry_t *e = p.find(k);
   holder_t *mine;
   lmode_t want;
   std::vector<sm1::session_t *> others;
@@ -388,7 +410,7 @@ int lock_try(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
     return 0;
   }
   // Remember the lock for release at commit or abort.
-  db->lock_table.add(e, k, s, want, s->locks.emplace(make_ref(k, want, kind)));
+  p.add(e, k, s, want, list.emplace(make_ref(k, want, kind)));
   return 0;
 }
 
@@ -396,7 +418,7 @@ int lock_try(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
  * Take the OID lock (storeid, key) in mode; see session.h.
  *
  * The fast path (SM1_DESIGN.md §5.1) keeps a table's weak locks,
- * IS and IX, out of the lock table and its lock_mu. IS and IX never
+ * IS and IX, out of the lock table and its mutexes. IS and IX never
  * conflict with each other, so only a strong lock, S, SIX or X,
  * must see them. A weak lock goes in a slot of the session's own,
  * under its fp_mu, unless a strong lock is held or asked on a key
@@ -404,23 +426,23 @@ int lock_try(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
  * locker raises that count first, then moves every session's slot
  * for its key into the table (fp_sweep), and locks as any lock does.
  *
- * Skipping lock_mu: a SELECT on t1, with no DDL on t1.
+ * Skipping the table: a SELECT on t1, with no DDL on t1.
  *   1. sm3 asks IS on t1's oid. fp_take takes our fp_mu, finds
  *      t1's count 0 and a slot free, fills it, and adds the entry
  *      to our lock list.
  *   2. The commit clears the slot under fp_mu alone, in
  *      lock_release_from: our locks all in slots, it takes no
- *      lock_mu either.
+ *      partition's mutex either.
  *
  * Not skipping it: an ALTER TABLE t1 while that SELECT runs.
  *   1. The ALTER asks X on t1's oid. It raises t1's count, then
  *      sweeps: under the SELECT session's fp_mu, it moves that
  *      session's IS slot into the table, as a holder.
- *   2. lock_try, under lock_mu, finds the IS, which conflicts with
+ *   2. lock_try, under t1's partition, finds the IS, which conflicts with
  *      X, and lock_wait sleeps until the SELECT commits.
  *   3. A second SELECT asks IS on t1 meanwhile. fp_take sees the
  *      count and declines, and the IS goes through lock_try under
- *      lock_mu: granted, the ALTER not yet a holder, as sm1 keeps
+ *      the partition: granted, the ALTER not yet a holder, as sm1 keeps
  *      no queue.
  *   4. The ALTER commits, its count goes back to 0, and the next
  *      SELECT on t1 takes a slot again.
@@ -497,9 +519,10 @@ int lock_write_check(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   db_t *db = s->db;
   // A write meets row locks and no other lock type.
   lockid_t k = lock_row_id(storeid, key);
-  // Hold lock_mu for the table.
-  std::lock_guard<std::mutex> guard(db->lock_mu);
-  entry_t *e = db->lock_table.find(k);
+  locktab_t::part_t &p = db->lock_table.part(k);
+  // Hold k's partition's mutex for its entry.
+  std::lock_guard<std::mutex> guard(p.mu);
+  entry_t *e = p.find(k);
   holder_t *mine;
   lmode_t want;
   std::vector<sm1::session_t *> others;
@@ -523,13 +546,15 @@ int lock_write_check(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
 int lock_wait(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
               uint16_t kind) {
   db_t *db = s->db;
-  // Hold lock_mu for the table and the waits-for lists.
-  std::unique_lock<std::mutex> guard(db->lock_mu);
-  // However it returns, it no longer waits for k: still under lock_mu.
+  size_t pi = locktab_t::part_of(k);
+  locktab_t::part_t &p = db->lock_table.part(pi);
+  // Hold k's partition's mutex for its entry and our wait.
+  std::unique_lock<std::mutex> guard(p.mu);
+  // However it returns, it no longer waits for k: still under the
+  // partition's mutex.
   defer { s->waiting_lock = false; };
-  // Time the deadlock check after the first, made as the wait begins.
+  // Look for a cycle once we have slept deadlock_ms.
   int64_t deadline = sm_now_us() + int64_t(deadlock_wait_ms(s)) * 1000;
-  bool checked = false;
   for (;;) {
     // A doomed transaction stops waiting and fails.
     if (s->doomed) {
@@ -539,7 +564,7 @@ int lock_wait(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
     holder_t *mine;
     lmode_t want;
     // Wait on exactly the holders that conflict.
-    entry_t *e = db->lock_table.find(k);
+    entry_t *e = p.find(k);
     conflicting(e, s, mode, &mine, &want, &s->waiting_for);
     if (s->waiting_for.empty()) {
       return 0;
@@ -549,10 +574,8 @@ int lock_wait(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
       s->waiting_for.clear();
       return 1;
     }
-    // As the wait begins, a cycle it closes is found at once.
-    if (!checked) {
-      checked = true;
-      // What it waits for, for lock_status and the cycle search.
+    // What it waits for, for lock_status and the cycle search.
+    if (!s->waiting_lock) {
       s->waiting_lock = true;
       s->waiting_id = k;
       // A write waits with no kind of its own: it reports the kind
@@ -562,13 +585,9 @@ int lock_wait(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
               ? kind
               : static_cast<lockref_t *>(locktab_t::oldest(e).first)->kind;
       s->waiting_mode = mode;
-      check_deadlock(db, s);
-      if (s->doomed) {
-        continue;
-      }
     }
     // Interrupted, before the wait or during it: stop waiting.
-    if (!wait_once(db, s, guard, &deadline)) {
+    if (!wait_once(db, s, guard, &db->lock_cv[pi], &deadline)) {
       s->waiting_for.clear();
       return 2;
     }
@@ -584,8 +603,8 @@ void lock_blockers(db_t *db, sm1::session_t *s,
   if (s->waiting_lock) {
     holder_t *mine;
     lmode_t want;
-    conflicting(db->lock_table.find(s->waiting_id), s, s->waiting_mode, &mine,
-                &want, out);
+    conflicting(db->lock_table.part(s->waiting_id).find(s->waiting_id), s,
+                s->waiting_mode, &mine, &want, out);
     return;
   }
   // A transaction, still running and not rolled back since: its owner.
@@ -603,18 +622,17 @@ void lock_blockers(db_t *db, sm1::session_t *s,
 /* Block until xid ends, or rolls back to a savepoint. */
 int lock_wait_xact(sm1::session_t *s, uint64_t xid) {
   db_t *db = s->db;
-  // Hold lock_mu for the waits-for lists; every wake-up takes it.
-  std::unique_lock<std::mutex> guard(db->lock_mu);
+  // Hold xact_mu for our wait; every wake-up takes it.
+  std::unique_lock<std::mutex> guard(db->xact_mu);
   // A rollback from now on may delete what we wait for.
   uint64_t epoch = db->rollback_epoch;
   // What we wait for, for the cycle search; however it returns,
-  // still under lock_mu, we no longer do.
+  // still under xact_mu, we no longer do.
   s->waiting_xid = xid;
   s->waiting_epoch = epoch;
   defer { s->waiting_xid = 0; };
-  // Time the deadlock check after the first, made as the wait begins.
+  // Look for a cycle once we have slept deadlock_ms.
   int64_t deadline = sm_now_us() + int64_t(deadlock_wait_ms(s)) * 1000;
-  bool checked = false;
   for (;;) {
     // A doomed transaction stops waiting and fails.
     if (s->doomed) {
@@ -647,16 +665,8 @@ int lock_wait_xact(sm1::session_t *s, uint64_t xid) {
     if (owner && owner != s) {
       s->waiting_for.push_back(owner);
     }
-    // As the wait begins, a cycle it closes is found at once.
-    if (!checked) {
-      checked = true;
-      check_deadlock(db, s);
-      if (s->doomed) {
-        continue;
-      }
-    }
     // Interrupted, before the wait or during it: stop waiting.
-    if (!wait_once(db, s, guard, &deadline)) {
+    if (!wait_once(db, s, guard, &db->xact_cv, &deadline)) {
       s->waiting_for.clear();
       return 2;
     }
@@ -684,13 +694,14 @@ int lock_wait_error(sm1::session_t *s, int waited) {
                             "chosen as a deadlock victim");
 }
 
-/* Wake every waiter: a transaction ended, or rolled back. */
+/* Wake every waiter for a transaction: one ended, or rolled back. */
 void lock_wake(db_t *db, bool rollback) {
-  std::lock_guard<std::mutex> guard(db->lock_mu);
+  // Hold xact_mu: a waiter reads the epoch and sleeps under it.
+  std::lock_guard<std::mutex> guard(db->xact_mu);
   if (rollback) {
     db->rollback_epoch++;
   }
-  db->lock_cv.notify_all();
+  db->xact_cv.notify_all();
 }
 
 /* Move every lock s holds, and its list, to g, which takes its place. */
@@ -703,23 +714,25 @@ void lock_transfer(db_t *db, sm1::session_t *s, sm1::session_t *g) {
       fp_move(db, s, i);
     }
   }
-  // Hold lock_mu while editing the table.
-  std::lock_guard<std::mutex> guard(db->lock_mu);
+  // Hold every lock mutex while the holders and the list move.
+  lock_all_t all(db);
   // Re-point each entry's holder list at g.
   s->locks.each([&](const lockref_t &l) {
     // Replace s with g among the holders.
-    db->lock_table.move_owner(l.id, s, g);
+    db->lock_table.part(l.part).move_owner(l.id, s, g);
   });
   // Move the list with them: a holder's first points into it.
   g->locks.swap(s->locks);
   // Waiters re-read their holders.
-  db->lock_cv.notify_all();
+  for (std::condition_variable &cv : db->lock_cv) {
+    cv.notify_all();
+  }
 }
 
 /* Put a restored transaction's locks back in the table (§9.1). */
 void lock_restore(db_t *db, sm1::session_t *g) {
-  // Hold lock_mu while editing the table.
-  std::lock_guard<std::mutex> guard(db->lock_mu);
+  // Hold every lock mutex while editing the table.
+  lock_all_t all(db);
   // Re-take each lock in the mode the record carries.
   g->locks.each([&](lockref_t &l) {
     // A strong OID lock keeps the fast path off its key, as when
@@ -730,7 +743,7 @@ void lock_restore(db_t *db, sm1::session_t *g) {
     }
     // An OID lock's slot, moved to the table before the prepare,
     // joins the hold its first entry made.
-    db->lock_table.join(l.id, g, l.mode, &l);
+    db->lock_table.part(l.part).join(l.id, g, l.mode, &l);
   });
 }
 
@@ -833,46 +846,72 @@ void lock_release_all(sm1::session_t *s) {
   lock_release_from(s, lock_mark_t{});
 }
 
-/* Drop the locks taken after m and wake the waiters. */
+/*
+ * Drop the locks taken after m and wake the waiters.
+ *
+ * As PostgreSQL's LockReleaseAll: partition by partition, in their
+ * order, walking our list for each, its mutex taken once, and not
+ * at all for a partition we hold nothing past the mark in.
+ */
 void lock_release_from(sm1::session_t *s, const lock_mark_t &m) {
   db_t *db = s->db;
   // Hold our fp_mu: a sweep may be moving our slots.
   std::lock_guard<std::mutex> fp(s->fp_mu);
-  // The table is ours to edit only for a lock in it, or to stop a
-  // wait; a lock in a slot is released without it.
-  bool table = !s->waiting_for.empty() ||
-               nullptr != s->locks.find_from(
-                              m, [](const lockref_t &l) { return l.slot < 0; });
-  std::unique_lock<std::mutex> guard(db->lock_mu, std::defer_lock);
-  if (table) {
-    // Hold lock_mu while editing the table.
-    guard.lock();
-    // We no longer wait on anyone.
+  // We no longer wait on anyone. Every wait empties the list as it
+  // returns, so this is for one that did not; the driver reads it
+  // under every lock mutex.
+  if (!s->waiting_for.empty()) {
+    lock_all_t all(db);
     s->waiting_for.clear();
   }
-  // Drop our hold on every lock past the mark.
-  s->locks.each_from(m, [&](const lockref_t &l) {
-    if (l.slot >= 0) {
-      s->fp[l.slot].used = false;
-      s->fp_used--;
-    } else {
-      lock_drop_holder(db, l, s);
-      // Only once the hold is gone may a weak lock take a slot.
-      if (l.strong) {
-        strong_count(db, l.id).fetch_sub(1);
+  for (size_t pi = 0; pi < locktab_t::parts; pi++) {
+    lock_list_t &list = s->locks.part(pi);
+    // The partition's mutex, taken at our first lock in its table: a
+    // lock in a slot is released without it.
+    std::unique_lock<std::mutex> guard(db->lock_table.part(pi).mu,
+                                       std::defer_lock);
+    list.each_from(m.at[pi], [&](const lockref_t &l) {
+      if (l.slot >= 0) {
+        s->fp[l.slot].used = false;
+        s->fp_used--;
+      } else {
+        if (!guard.owns_lock()) {
+          // Hold the partition's mutex while editing it.
+          guard.lock();
+        }
+        lock_drop_holder(db, l, s);
+        // Only once the hold is gone may a weak lock take a slot.
+        if (l.strong) {
+          strong_count(db, l.id).fetch_sub(1);
+        }
       }
+      // A mark goes with its lock.
+      if (l.latest) {
+        s->latest_marks--;
+      }
+    });
+    // Wake the partition's waiters to retry: no one waits on a slot.
+    if (guard.owns_lock()) {
+      db->lock_cv[pi].notify_all();
     }
-    // A mark goes with its lock.
-    if (l.latest) {
-      s->latest_marks--;
-    }
-  });
-  // Forget them in the session's list, keeping the blocks for the
-  // locks to come.
-  s->locks.cut(m);
-  // Wake the waiters to retry: no one waits on a slot.
-  if (table) {
-    db->lock_cv.notify_all();
+    // Forget them, keeping the blocks for the locks to come.
+    list.cut(m.at[pi]);
+  }
+}
+
+/* Take every partition's mutex in order, then xact_mu; see session.h. */
+lock_all_t::lock_all_t(db_t *db) : m_db(db) {
+  for (size_t i = 0; i < locktab_t::parts; i++) {
+    m_db->lock_table.part(i).mu.lock();
+  }
+  m_db->xact_mu.lock();
+}
+
+/* Let them go, in the reverse order. */
+lock_all_t::~lock_all_t() {
+  m_db->xact_mu.unlock();
+  for (size_t i = locktab_t::parts; i-- > 0;) {
+    m_db->lock_table.part(i).mu.unlock();
   }
 }
 
