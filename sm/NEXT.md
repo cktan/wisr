@@ -208,6 +208,16 @@ and so are the catalog tables psql reads
    statement of 100 at 1 client and 28 at 16, and 100 rows locked
    a statement scale 2.4× from 1 client to 16, as 100 read scale
    8.7×. Its `fk` measures commit batching, not a lock (item 5).
+   Run against PostgreSQL 18 on 2026-11-01, on the hand-written
+   partition (below), digres's tps over PostgreSQL's at 1 and 16
+   clients: one row FOR UPDATE 12.7 and 12.4, ten 9.8 and 6.5, a
+   hundred 3.3 and 1.8. PostgreSQL's FOR UPDATE writes the row
+   and flushes WAL at its commit, about 800 tps at one client, as
+   an insert does; sm1's lock writes nothing, so its transaction
+   has none to flush. The lock table is not what digres trails
+   PostgreSQL by here: an insert is, 0.96 and 0.47, and an insert
+   under the foreign key 0.95 and 0.41 (item 5); and reads of 1
+   to 100 rows at 16 clients, 0.71 to 0.82.
 
    The id's hash is `fmix64` over the two words
    (`sm1/src/locktab.h`), so a table's fast-path count is no
@@ -287,8 +297,7 @@ and so are the catalog tables psql reads
    and for the conflicts. Not built: the count of holders by
    mode, which would save the second walk only, while the first
    finds the asker's own hold (`../QUESTION.md` §1). What is left
-   of this item: that count, if `hot` wants it, measured; and the
-   digres row-lock workload above, against PostgreSQL.
+   of this item: that count, if `hot` wants it, measured.
 5. **A write transaction's two trips through RocksDB's write
    queue** (`../dg/WORKNOTE.md` step 344). An insert writes its
    uncommitted version at once (`sm1/src/access.cc`,
