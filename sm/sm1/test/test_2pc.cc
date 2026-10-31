@@ -449,55 +449,59 @@ TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
   sm1::closedb(v);
 }
 
-TEST_CASE("row locks whose keys hash alike come back exactly after a "
-          "restart") {
-  // Verify a prepared transaction's record keeps each row lock by its
-  // exact key, though the two share a lock table entry (§8.4, §9.1).
-  // 1. Make every row key hash alike; S locks "a" shared and "b"
-  //    exclusive, writes nothing, and prepares "g": S keeps no row
-  //    key, and lock_status lists g's two locks, "a" shared and "b"
-  //    exclusive, their keys gone to g with them.
+TEST_CASE("row locks whose keys hash alike are one lock after a restart") {
+  // Verify a prepared transaction's record keeps the one lock two row
+  // keys whose ids are one make, by its id, with its mode and kind
+  // (§8.4, §9.1).
+  // 1. Make every row key hash alike; S locks "a" shared, of kind 7,
+  //    and "b" exclusive, one lock, writes nothing, and prepares "g":
+  //    S keeps no lock, and lock_status lists g's one lock, its word
+  //    the hash every key has, 0, of kind 7, exclusive.
   // 2. Restart the environment, so "g" is rebuilt from its record.
-  // 3. lock_status lists g's two locks again, and the table holds
-  //    them as one hold of g's, of two.
+  // 3. lock_status lists g's one lock again, its kind kept, and the
+  //    table holds it as one hold of g's.
   // 4. Aborting "g" by gid leaves the lock table empty.
   tpc_fixture_t f;
   wisr::lock_test_rows_collide = true;
   defer { wisr::lock_test_rows_collide = false; };
   sm1::session_t *s = f.open();
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock_row(s, g_store, "a", sm1::SM_LOCKMODE_SH) == 0);
+  REQUIRE(sm1::lock_row(s, g_store, "a", sm1::SM_LOCKMODE_SH, false, 7) == 0);
   REQUIRE(sm1::lock_row(s, g_store, "b", sm1::SM_LOCKMODE_EX) == 0);
   REQUIRE(sm1::prepare(s, "g") == 0);
-  CHECK(s->lock_keys.empty());
+  CHECK(s->locks.empty());
 
-  // The locks lock_status lists, as "key mode", sorted.
+  // The locks lock_status lists, as "word kind mode", sorted.
   auto listed = [&] {
     std::vector<sm1::lock_status_t> out;
     REQUIRE(sm1::lock_status(f.home().env(), out) == 0);
     std::vector<std::string> got;
     for (const auto &r : out) {
-      got.push_back(r.key + " " + std::to_string(r.mode));
+      got.push_back(std::to_string(r.word) + " " + std::to_string(r.kind) +
+                    " " + std::to_string(r.mode));
     }
     std::sort(got.begin(), got.end());
     return got;
   };
-  const std::vector<std::string> both = {
-      "a " + std::to_string(sm1::SM_LOCKMODE_SH),
-      "b " + std::to_string(sm1::SM_LOCKMODE_EX),
+  const std::vector<std::string> one = {
+      "0 7 " + std::to_string(sm1::SM_LOCKMODE_EX),
   };
-  CHECK(listed() == both);
+  CHECK(listed() == one);
   sm1::closedb(s);
   f.restart();
 
   sm1::session_t *v = f.open();
-  CHECK(listed() == both);
+  CHECK(listed() == one);
   {
     std::lock_guard<std::mutex> guard(v->db->lock_mu);
     REQUIRE(v->db->lock_table.size() == 1);
-    const auto &holders = v->db->lock_table.begin()->second.holders;
-    REQUIRE(holders.size() == 1);
-    CHECK(holders[0].refs == 2);
+    std::vector<sm1::lockmode_t> modes;
+    v->db->lock_table.each(
+        [&](const wisr::lockid_t &, const wisr::locktab_t::holder_t &h) {
+          modes.push_back(h.mode);
+        });
+    REQUIRE(modes.size() == 1);
+    CHECK(modes[0] == sm1::SM_LOCKMODE_EX);
   }
   REQUIRE(sm1::abort_prepared(v, "g") == 0);
   {

@@ -186,7 +186,9 @@ Nothing reads many rows of a table with a primary key in
   and digres's hint that named the two rows goes. Built.
 - **`pg_locks`** shows a row lock of a keyed table as now, its
   relation alone (`CLUSTER.md` §10, question 5); a keyless
-  table's row lock keeps its page and tuple, from its `_id`.
+  table's row lock kept its page and tuple, from its `_id`,
+  until sm1 kept a lock's id and not its key: it shows its
+  relation alone too (`sm1/LOCKID.md` §4.1).
 
 ---
 

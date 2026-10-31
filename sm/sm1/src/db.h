@@ -5,6 +5,7 @@
 #ifndef WISR_DB_H
 #define WISR_DB_H
 
+#include "locktab.h"
 #include "sm0_blist.h"
 #include "sm1.h"
 
@@ -150,56 +151,28 @@ struct ssi_range_t {
 };
 
 /*
- * A lock's id in the lock table (§5.1): hi is the storeid, its top bit flipped
- * for an OID lock so the two types never meet; lo is the oid of an
- * OID lock, exact, or a hash of a row lock's key. Two rows of a
- * store whose keys hash alike share an entry: a false conflict,
- * never a missed one. The exact key is in the holder's lock list.
- */
-struct lockid_t {
-  uint64_t hi;
-  uint64_t lo;
-  bool operator==(const lockid_t &o) const { return hi == o.hi && lo == o.lo; }
-};
-
-/* The lock table's hash of a key: lo is an oid or a hash already. */
-struct lockid_hash_t {
-  size_t operator()(const lockid_t &k) const {
-    return k.lo ^ (k.hi * 0x9e3779b97f4a7c15ULL);
-  }
-};
-
-/*
  * An entry of a session's lock list (§5.1): a lock it took, row or
- * OID. A row lock's exact key is in the session's lock_keys, at row:
- * taken as the lock is, so a cut at a savepoint cuts both.
+ * OID, by its id alone; no row's key is kept.
  */
 struct lockref_t {
-  lockid_t id{};             /* its lock table entry's id */
-  const char *row = nullptr; /* a row lock's key, in lock_keys */
-  uint32_t row_len = 0;
+  lockid_t id{}; /* its lock table entry's id */
   sm1::locktype_t type = sm1::LOCKTYPE_ROW;
   sm1::lockmode_t mode = sm1::SM_LOCKMODE_SH; /* held now, after
                                                  conversions */
+  uint16_t kind = 0;   /* the caller's (sm1::lock_row), never read */
   bool latest = false; /* read_latest done: the write may go ahead */
   int8_t slot = -1;    /* its fast-path slot, or -1 in the table */
   bool strong = false; /* counted in the db's fp_strong */
 };
 
 /*
- * A session's lock list and its row keys: blocks whose entries
- * never move, so a pointer into them holds until a cut.
+ * A session's lock list: blocks whose entries never move, so a
+ * pointer into them holds until a cut.
  */
 using lock_list_t = sm0::blist_t<lockref_t, 256>;
-using lock_keys_t = sm0::blist_t<char, 8192>;
-// A key fits a block, so the room lock_try reserves always holds it.
-static_assert(8192 >= sm1::max_keylen);
 
-/* A point in both, for a savepoint to cut back to. */
-struct lock_mark_t {
-  lock_list_t::mark_t locks;
-  lock_keys_t::mark_t keys;
-};
+/* A point in the list, for a savepoint to cut back to. */
+using lock_mark_t = lock_list_t::mark_t;
 
 /*
  * One open database, shared by every session on it and held
@@ -357,24 +330,15 @@ struct db_t {
    * waits-for list, so a deadlock walk sees a consistent
    * waits-for graph; shard it if a benchmark shows contention.
    * Every release and every doom notifies lock_cv.
+   *
+   * A holder's owner is its session, and its first the session's
+   * lock list entry for the id, which made the hold and releases
+   * it. A second entry is an OID lock's slot, moved there after the
+   * hold was made (fp_move); the hold's mode covers both.
    */
-  struct lock_ent_t {
-    /*
-     * A session's hold: refs of its lock list's entries name this
-     * key, the first of them first; more than one only when row
-     * keys hash alike. mode covers all of them.
-     */
-    struct holder_t {
-      sm1::session_t *session;
-      sm1::lockmode_t mode;
-      uint32_t refs;
-      lockref_t *first;
-    };
-    std::vector<holder_t> holders; /* never empty */
-  };
   std::mutex lock_mu;
   std::condition_variable lock_cv;
-  std::unordered_map<lockid_t, lock_ent_t, lockid_hash_t> lock_table;
+  locktab_t lock_table;
   int deadlock_ms = 50;
   /*
    * The fast path (§5.1): the strong OID locks (S, SIX, X) held

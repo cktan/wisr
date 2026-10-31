@@ -12,7 +12,6 @@
  */
 #include "postgres.h"
 
-#include "access/smstore.h"
 #include "catalog/pg_namespace_d.h"
 #include "funcapi.h"
 #include "miscadmin.h"
@@ -92,19 +91,10 @@ Datum pg_lock_status(PG_FUNCTION_ARGS) {
       }
     } else if (l.name == DATADIR_LOCK_ROW) {
       /*
-       * A keyless table's row's page and tuple, from its rowno, as a sample
-       * scan's blocks are (SMSTORE_ROWS_PER_BLOCK); none for a row of a
-       * table with a primary key, whose lock names its key
-       * (../sm/ROWKEY.md section 2.5).
+       * A row's table, but not its page or tuple: sm keeps a lock's id, not
+       * the row's key (../sm/sm1/LOCKID.md section 4.1).
        */
       locktype = "tuple";
-      if (0 != l.rowno) {
-        values[LOCKFUNCS_PAGE] =
-            Int32GetDatum((int32)(l.rowno / SMSTORE_ROWS_PER_BLOCK));
-        values[LOCKFUNCS_TUPLE] =
-            Int16GetDatum((int16)(l.rowno % SMSTORE_ROWS_PER_BLOCK + 1));
-        nulls[LOCKFUNCS_PAGE] = nulls[LOCKFUNCS_TUPLE] = false;
-      }
       if (l.oid != 0) {
         values[LOCKFUNCS_RELATION] = ObjectIdGetDatum(l.oid);
         nulls[LOCKFUNCS_RELATION] = false;

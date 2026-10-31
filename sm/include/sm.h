@@ -366,10 +366,8 @@ typedef struct sm_lock_status_t {
     sm_lockname_t name;    /* what it names */
     uint64_t      oid;     /* OBJECT: the object's; ROW: its table's,
                               0 if no committed table has the row's
-                              store */
-    uint64_t      rowno;   /* ROW: the row's _id; 0 for a row of a
-                              table with a primary key, whose lock
-                              names its key (../CLUSTER.md §10) */
+                              store. Not which row: sm keeps a
+                              lock's id, not its key */
     sm_lockmode_t mode;    /* held, or asked */
     uint64_t      tag;     /* the session's number (sm_session_tag),
                               0 for none or a prepared transaction */
