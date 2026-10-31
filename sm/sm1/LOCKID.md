@@ -68,9 +68,9 @@ that sm1 fixes itself (§2.4), not `std::hash`.
 ### 2.2 The lock list
 
 `lockref_t` keeps `id`, `type`, `mode`, `latest`, `slot` and
-`strong`, and loses `row` and `row_len`. `lock_keys_t` and the
-`keys` half of `lock_mark_t` go. A savepoint's mark is the
-list's mark alone.
+`strong`, gains `kind` (§4.1), and loses `row` and `row_len`.
+`lock_keys_t` and the `keys` half of `lock_mark_t` go. A
+savepoint's mark is the list's mark alone.
 
 ### 2.3 The lock manager
 
@@ -86,12 +86,12 @@ the module knows no key.
 
 ### 2.4 Prepare and recovery
 
-A lock in the `PREPARED` record is 18 bytes: the type, the two
-words and the mode. `lock_restore` puts the id back as it is,
-with no hash. So the row hash is persisted and must give the
-same id in every build: `fmix64` (MurmurHash3's finalizer)
-over the key's bytes, combined in a fixed order. The test
-hook `lock_test_rows_collide` stays.
+A lock in the `PREPARED` record is 20 bytes: the type, the two
+words, the mode and the kind (§4.1). `lock_restore` puts the id
+back as it is, with no hash. So the row hash is persisted and
+must give the same id in every build: `fmix64` (MurmurHash3's
+finalizer) over the key's bytes, combined in a fixed order. The
+test hook `lock_test_rows_collide` stays.
 
 ### 2.5 `lock_status`
 
@@ -126,16 +126,25 @@ was a row's or an index entry's (§4.1).
 locks with `locktype = 'tuple'`, which `sm_lock_status` decides
 from the relid at the key's start: a table's store holds its
 rows and its indexes' entries. Without the key it cannot.
-Options:
+
+**Decided (2026-10-31): the caller passes a kind.**
+`sm1::lock_row` and `sm1::trylock_row` (and their `chain_`
+forms) take a `uint16_t kind`, 0 by default, which sm1 keeps
+beside the id and never reads: in the list entry, in the
+`PREPARED` record, and in `lock_status_t` as `kind`. sm2
+passes the key's relid. `sm_lock_status` reads the kind where
+it read the key's first two bytes, and reports a row as
+`SM_LOCKNAME_ROW` as now. What is lost is a row's `_id`: a
+tuple is reported by its table, not by which row. Two keys of
+one transaction that hash alike keep the kind of the first.
+
+The options not taken:
 
 - **The id keeps the relid**, in the first word's high bits
   beside the type, storeids being far below 2^47. sm1 then
   knows a relid, which is sm2's, not its own.
-- **The caller passes a small tag** with a row lock, sm2 the
-  relid, kept beside the id and reported by `lock_status`. The
-  public call grows a parameter.
 - **`pg_locks` reports a row lock as its table's, with no
-  tuple**, and the dg test counts by mode alone. The simplest,
+  kind**, and the dg test counts by mode alone. The simplest,
   and `pg_locks` says less.
 
 ### 4.2 `held` above sm1
@@ -151,11 +160,12 @@ so it stays inside sm1 unless a caller asks.
 | Where | What |
 | --- | --- |
 | `src/db.h` | `lockref_t` without `row`/`row_len`; `lock_keys_t` and its mark gone; `holder_t` without `refs` |
-| `src/lockmgr.cc` | `lockid` with `fmix64`; `lock_try`, `lock_wait`, `lock_oid` by id; `exact_ref` gone; `lock_put_name`, `lock_name_size`, `lock_from_name` as 18 bytes |
+| `src/lockmgr.cc` | `lockid` with `fmix64`; `lock_try`, `lock_wait`, `lock_oid` by id; `exact_ref` gone; `lock_put_name`, `lock_name_size`, `lock_from_name` as 20 bytes |
 | `src/access.cc`, `src/chain.cc` | `lock_versioned` and `lock_chained` make the id and call by it |
+| `../sm2/src/rel/rel.cc`, `index.cc`, `catkv.cc` | pass the key's relid as the row lock's `kind` |
 | `src/xct.cc`, `src/recover.cc` | the record's lock set as ids |
 | `src/session.cc`, `src/session.h` | `lock_status` from ids; `waiting_row` gone |
-| `include/sm1.h`, `../src/sm.cc` | `lock_status_t`'s key as the id's words; `sm_lock_status` as §4.1 decides |
+| `include/sm1.h`, `../src/sm.cc` | `lock_row`'s `kind`; `lock_status_t`'s key as the id's words, and its `kind`; `sm_lock_status` reads the kind (§4.1) |
 | `SM1_DESIGN.md`, `API.md`, `../LOCK.md`, `../NEXT.md` | §5.1, §8.4 and §9.1; `lock_status`; §1's "Across a restart"; item 4's "lock ids are never persisted" |
 
 ---
@@ -173,15 +183,15 @@ so it stays inside sm1 unless a caller asks.
   is a fixed value, so a build that changes it fails; a
   prepared lock set restored after a restart blocks the same
   writers it did before.
-- **dg:** `select_for_update_many.sql`, as §4.1 decides, and
+- **dg:** `select_for_update_many.sql` unchanged, its
+  `tuple` counts from the kind (§4.1), and
   the whole suite.
 
 ---
 
 ## 7. Order of work
 
-1. Decide §4.1.
-   → verify: the choice recorded here.
+1. Decide §4.1. Done: the caller passes a kind.
 2. `fmix64` as the row hash, still keeping the keys.
    → verify: the fixed-hash test; all of `mvcc/` and `test/`.
 3. The lock manager by id, `refs` and `exact_ref` gone, the
