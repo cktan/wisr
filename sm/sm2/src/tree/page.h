@@ -33,16 +33,25 @@ constexpr size_t entry_size(size_t key_len, size_t value_len) {
 }
 
 /* The bytes of a page's header before its high key. */
-constexpr size_t page_header_size = 1 + 1 + 2 + 8 + 8 + 8 + 2;
+constexpr size_t page_header_size = 1 + 1 + 2 + 2 + 8 + 8 + 8 + 2;
+
+/* A page's slot array grows by this many slots at a time. */
+constexpr size_t page_slot_step = 16;
+
+/* The slots a page of n entries is laid out with. */
+constexpr size_t page_slots(size_t n) {
+  return (n + page_slot_step - 1) / page_slot_step * page_slot_step;
+}
 
 /*
  * The most an entry may take of a page of limit bytes: a third of
- * what the header leaves, as a half of a split holds its high key,
- * no longer than an entry, and two entries; so a split always finds
- * a point where both halves fit, with the entry that caused it.
+ * what the header and a half's unused slots leave, as a half of a
+ * split holds its high key, no longer than an entry, and two entries;
+ * so a split always finds a point where both halves fit, with the
+ * entry that caused it.
  */
 constexpr size_t entry_max(size_t limit) {
-  return (limit - page_header_size) / 3;
+  return (limit - page_header_size - 2 * (page_slot_step - 1)) / 3;
 }
 
 /*
@@ -116,9 +125,8 @@ public:
   int open(std::string_view bytes);
 
   /*
-   * Check every entry lies within the page, after the slots, in slot
-   * order and end to end, as page_bytes() lays them: 0, or -1 with
-   * SM_ERR_CORRUPT.
+   * Check the entries lie end to end from the slots to the page's end,
+   * each named by one slot: 0, or -1 with SM_ERR_CORRUPT.
    */
   int check() const;
 
@@ -134,7 +142,9 @@ public:
   std::string_view bytes() const { return m_bytes; }
   /* Where its slots begin, past the header and the high key. */
   size_t slots_offset() const { return m_slots; }
-  /* Entry i's offset, from its slot, i below count(). */
+  /* Where its slots end, and its entries begin. */
+  size_t entries_offset() const { return m_entries; }
+  /* Where entry i lies in the page, from its slot, i below count(). */
   size_t offset(size_t i) const;
 
   /* Entry i's key and value, i below count(). */
@@ -142,11 +152,10 @@ public:
   std::string_view value(size_t i) const;
 
   /*
-   * The bytes of entries i to j - 1, end to end as check() finds
-   * them, each a key's length, the key, a value's length, the value;
-   * empty if none, or if they run past the page.
+   * Entry i's bytes, i below count(): a key's length, the key, a
+   * value's length, the value; empty if they run past the page.
    */
-  std::string_view span(size_t i, size_t j) const;
+  std::string_view entry(size_t i) const;
 
   /* The first entry whose key is at or past key: count() if none. */
   size_t lower_bound(std::string_view key) const;
@@ -176,8 +185,9 @@ private:
   uint64_t m_version = 0;
   uint64_t m_prev = 0;
   uint64_t m_next = 0;
-  size_t m_count = 0;
-  size_t m_slots = 0; /* where the slots start */
+  size_t m_count = 0;   /* top: the slots in use */
+  size_t m_slots = 0;   /* where the slots start */
+  size_t m_entries = 0; /* where they end, and the entries start */
 };
 
 } // namespace sm2::tree

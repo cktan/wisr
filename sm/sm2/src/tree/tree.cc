@@ -105,6 +105,19 @@ int read_page(tree_t &tree, uint64_t pageid, bool inner, pinned_t &out) {
   return out.view.open(bytes);
 }
 
+/*
+ * Pin page pageid for writing: latch it, and read it into out. The page
+ * latch held goes only once this one is held, so a move right is
+ * coupled.
+ */
+int pin_ex(tree_t &tree, uint64_t pageid, bool inner, page_latch_t &latch,
+           pinned_t &out) {
+  // Wait for the page's other writer before reading what it may change.
+  page_latch_t next(page_latches(), name_of(tree, pageid));
+  latch = std::move(next);
+  return read_page(tree, pageid, inner, out);
+}
+
 /* A page to write: its id, its bytes, and whether it is inner. */
 struct out_t {
   uint64_t pageid;
@@ -233,9 +246,8 @@ int descend(tree_t &tree, std::string_view key, uint8_t level, uint64_t &out,
  */
 int latch_covering(tree_t &tree, std::string_view key, uint64_t &pageid,
                    page_latch_t &latch, pinned_t &p, uint8_t level) {
-  latch = page_latch_t(page_latches(), name_of(tree, pageid));
   for (;;) {
-    if (0 != read_page(tree, pageid, 0 != level, p)) {
+    if (0 != pin_ex(tree, pageid, 0 != level, latch, p)) {
       return -1;
     }
     if (level != p.view.level()) {
@@ -245,10 +257,8 @@ int latch_covering(tree_t &tree, std::string_view key, uint64_t &pageid,
       // A writer checks every entry of the page it is to change.
       return p.view.check();
     }
+    // The right page is latched before the left's goes: left to right.
     pageid = p.view.next();
-    // Latch the right page before the left's goes: left to right.
-    page_latch_t next(page_latches(), name_of(tree, pageid));
-    latch = std::move(next);
   }
 }
 
@@ -281,9 +291,8 @@ int write_split(tree_t &tree, uint64_t leftid, page_t &left, page_t &right,
   page_latch_t sibling;
   if (0 != right.next) {
     // Left to right: the sibling's writers wait while its link moves.
-    sibling = page_latch_t(page_latches(), name_of(tree, right.next));
     pinned_t p;
-    if (0 != read_page(tree, right.next, 0 != left.level, p) ||
+    if (0 != pin_ex(tree, right.next, 0 != left.level, sibling, p) ||
         0 != p.view.check()) {
       return -1;
     }
@@ -637,9 +646,7 @@ int tree_insert_unique(
     cur.pageid = fv.next();
     bool restart = false;
     for (;;) {
-      page_latch_t latch(page_latches(), name_of(tree, cur.pageid));
-      cur.latch = std::move(latch);
-      if (0 != read_page(tree, cur.pageid, false, cur.pin) ||
+      if (0 != pin_ex(tree, cur.pageid, false, cur.latch, cur.pin) ||
           0 != cur.pin.view.check()) {
         return -1;
       }
@@ -748,14 +755,17 @@ int fill(cursor_t &c) {
     c.leaf = pageid;
     if (j > i) {
       // The leaf is let go before the caller reads rows (../BTREE.md
-      // §4): the entries in range are copied, end to end as the page
-      // holds them, and read from the copy.
-      std::string_view span = v.span(i, j);
-      if (span.empty()) {
-        return sm1::seterr(sm1::SM_ERR_CORRUPT,
-                           "tree: a leaf's entries past its end");
+      // §4): the entries in range are copied end to end, in key order,
+      // and read from the copy.
+      c.bytes.clear();
+      for (size_t k = i; k < j; k++) {
+        std::string_view e = v.entry(k);
+        if (e.empty()) {
+          return sm1::seterr(sm1::SM_ERR_CORRUPT,
+                             "tree: a leaf's entries past its end");
+        }
+        c.bytes.append(e);
       }
-      c.bytes.assign(span);
       c.at = 0;
       c.end = j - i;
       c.pos = 0;
@@ -818,6 +828,62 @@ int cursor_next(cursor_t &cursor, std::string_view &key,
   return 0;
 }
 
+namespace {
+
+/*
+ * Remove from leaf pageid each entry of gone, sorted, that dead says
+ * again is dead, the leaf latched: an insert that found its entry there
+ * changed nothing and moved no version, but it wrote its row first, so
+ * only asking again sees it. next takes the leaf's next link. 0; 1 if
+ * pageid is page 0, a leaf no longer; or -1.
+ */
+int prune_leaf(
+    tree_t &tree, uint64_t pageid, const std::vector<std::string> &gone,
+    const std::function<int(std::string_view, std::string_view)> &dead,
+    size_t &removed, uint64_t &next) {
+  detail::latched_t l;
+  l.pageid = pageid;
+  // The leaf's writers wait while what is to go is judged again.
+  pinned_t p;
+  if (0 != pin_ex(tree, pageid, false, l.latch, p) || 0 != p.view.check()) {
+    return -1;
+  }
+  if (0 != p.view.level()) {
+    return 1;
+  }
+  p.view.load(l.page);
+  p.release();
+  next = l.page.next;
+  auto &entries = l.page.entries;
+  size_t kept = 0;
+  for (size_t i = 0; i < entries.size(); i++) {
+    int d = 0;
+    if (std::binary_search(gone.begin(), gone.end(), entries[i].first)) {
+      d = dead(entries[i].first, entries[i].second);
+    }
+    if (d < 0) {
+      return -1;
+    }
+    if (0 == d) {
+      if (kept != i) {
+        entries[kept] = std::move(entries[i]);
+      }
+      kept++;
+    }
+  }
+  size_t went = entries.size() - kept;
+  entries.resize(kept);
+  if (0 != went) {
+    if (0 != detail::write_back(tree, l)) {
+      return -1;
+    }
+    removed += went;
+  }
+  return 0;
+}
+
+} // namespace
+
 /* Remove the entries dead says to, leaf by leaf; see tree.h. */
 int tree_prune(
     tree_t &tree,
@@ -829,48 +895,49 @@ int tree_prune(
     return -1;
   }
   for (;;) {
-    detail::latched_t l;
-    l.pageid = pageid;
-    // The leaf's writers wait while its entries are judged.
-    l.latch = page_latch_t(page_latches(), name_of(tree, pageid));
-    pinned_t p;
-    if (0 != read_page(tree, pageid, false, p) || 0 != p.view.check()) {
+    page_t copy;
+    bool leaf = false;
+    {
+      pinned_t p;
+      if (0 != read_page(tree, pageid, false, p) || 0 != p.view.check()) {
+        return -1;
+      }
+      leaf = 0 == p.view.level();
+      if (leaf) {
+        p.view.load(copy);
+      }
+    }
+    // Rows are read with no latch held, so a clean leaf's readers and
+    // writers never wait on a vacuum.
+    int rc = leaf ? 0 : 1;
+    uint64_t next = copy.next;
+    if (leaf) {
+      std::vector<std::string> gone;
+      for (const auto &[key, value] : copy.entries) {
+        int d = dead(key, value);
+        if (d < 0) {
+          return -1;
+        }
+        if (0 != d) {
+          gone.push_back(key);
+        }
+      }
+      if (!gone.empty()) {
+        rc = prune_leaf(tree, pageid, gone, dead, removed, next);
+      }
+    }
+    if (rc < 0) {
       return -1;
     }
-    if (0 != p.view.level()) {
+    if (1 == rc) {
       // Page 0, a leaf when the descent read it, has split.
-      l.latch.release();
       tree_close(tree);
       if (0 != descend(tree, "", 0, pageid)) {
         return -1;
       }
       continue;
     }
-    p.view.load(l.page);
-    p.release();
-    size_t before = l.page.entries.size();
-    auto &entries = l.page.entries;
-    size_t kept = 0;
-    for (size_t i = 0; i < entries.size(); i++) {
-      int d = dead(entries[i].first, entries[i].second);
-      if (d < 0) {
-        return -1;
-      }
-      if (0 == d) {
-        if (kept != i) {
-          entries[kept] = std::move(entries[i]);
-        }
-        kept++;
-      }
-    }
-    entries.resize(kept);
-    if (kept != before) {
-      if (0 != detail::write_back(tree, l)) {
-        return -1;
-      }
-      removed += before - kept;
-    }
-    pageid = l.page.next;
+    pageid = next;
     if (0 == pageid) {
       return 0;
     }

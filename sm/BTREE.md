@@ -112,11 +112,11 @@ Proposed here:
 ```
 page key = 04 | relid (2B) | pageid (8B, big-endian)
 value    = header | slots | entries
-header   = level (1B, 0 a leaf) | flags (1B) | n (2B)
+header   = level (1B, 0 a leaf) | flags (1B) | max (2B) | top (2B)
          | version (8B) | prev (8B, 0 none) | next (8B, 0 none)
          | high key's length (2B) | high key (none on the
            rightmost page of a level)
-slots    = n offsets (2B each), of the entries in key order
+slots    = max offsets (2B each), the first top in key order
 entry    = key's length (2B) | key | value's length (2B) | value
            leaf:   the entry's sm2 key, as today, encode(sk) ‖
                    row key; its value, the cut flag

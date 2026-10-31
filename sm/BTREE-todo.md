@@ -283,10 +283,11 @@ at `relid | 0`: only its name goes. Run the tree tests under TSan
   step 8's documents. A cursor's and a writer's checks of page
   0's level are shown to run; `tree_prune()`'s and `descend()`'s
   `afresh` retry are not.
-- **Built, uncommitted**: step 7.
-- **Done, uncommitted**: step 9's measuring, `BTREEDESIGN.md`
-  §12: no cost shows. A tree's load, 5.6 times today's entries',
-  is unexplained, and was so before this work.
+- **Built, committed and pushed**, in `10ba096f`: step 7.
+- **Done, committed and pushed**, in `10ba096f`: step 9's
+  measuring, `BTREEDESIGN.md` §12: no cost shows. A tree's load,
+  5.6 times today's entries', is unexplained, and was so before
+  this work.
 - **After this plan**: sm's own buffer pool, a project of its
   own, decided by the user (`BTREEDESIGN.md` §14): SH/EX pins,
   each change made on a copy, write-through, a clock with leaves

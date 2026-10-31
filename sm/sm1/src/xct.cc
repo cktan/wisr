@@ -1634,7 +1634,9 @@ int sm1::begin(sm1::session_t *session, sm1::xctlevel_t level, bool read_only) {
 /* Commit the active transaction, then run its on_commit functions. */
 int sm1::commit(sm1::session_t *session) {
   int rc;
-  { rc = ::commit(session); }
+  {
+    rc = ::commit(session);
+  }
   run_committed_fns();
   return rc;
 }
@@ -1721,7 +1723,9 @@ static int commit_prepared_gid(sm1::session_t *session,
 /* Commit a prepared transaction by gid, then run its on_commit functions. */
 int sm1::commit_prepared(sm1::session_t *session, std::string_view gid_arg) {
   int rc;
-  { rc = commit_prepared_gid(session, gid_arg); }
+  {
+    rc = commit_prepared_gid(session, gid_arg);
+  }
   run_committed_fns();
   return rc;
 }

@@ -91,7 +91,8 @@ value = the page's bytes, at their own length
 | header, 30 bytes                                       |
 |   level   1B   0 a leaf                                |
 |   flags   1B   see below                               |
-|   n       2B   entries                                 |
+|   max     2B   slots it has, a multiple of 16          |
+|   top     2B   slots in use, the entries; top <= max   |
 |   version 8B   this page's changes                     |
 |   prev    8B   left sibling's page id, 0 none          |
 |   next    8B   right sibling's page id, 0 none         |
@@ -99,9 +100,10 @@ value = the page's bytes, at their own length
 +--------------------------------------------------------+
 | high key, hlen bytes; none on a level's rightmost page |
 +--------------------------------------------------------+
-| slots: n offsets, 2B each, in key order                |
+| slots: max offsets, 2B each, from the array's end;     |
+| the first top are in key order, the rest zero          |
 +--------------------------------------------------------+
-| entries, in the same order, end to end:                |
+| entries, in no order, end to end to the page's end:    |
 |   klen 2B | key | vlen 2B | value                      |
 +--------------------------------------------------------+
 ```
@@ -128,11 +130,14 @@ length, with no free space, as every change writes it whole, and
 a fixed size is for frames and disk blocks, which this design
 has neither of.
 
-**There is no gap between slots and entries.** A slotted page
-keeps free space to insert in place; this one is replaced, so a
-new entry is spliced into a new copy of the bytes
-(`page_insert_bytes()`, with no entry decoded). The pool's pages
-will be slotted, and changed in place (§14).
+**There is no gap between slots and entries, but the slots keep
+room** (§14). A slotted page keeps free space to insert in place;
+this one is replaced, so a new entry is spliced into a new copy of
+the bytes (`page_insert_bytes()`, with no entry decoded): it goes
+last, and its slot in key order. A page is stored at its used
+length, which counts unused slots, so `entry_max` leaves room for
+a half's 30. The pool's frames will hold the gap, and pages will
+change in place (§14).
 
 ### 3.3 Entries
 
@@ -553,10 +558,12 @@ memtable where today's entries write about 40 bytes. See §12.
   finished by the next writer to latch it.
 - **A temporary table's pages** are in the temporary instance,
   with no WAL, as its rows are.
-- **Vacuum** walks the leaves, latching each while its entries
-  are judged, and removes an entry only when its row is settled:
-  its newest version committed at or below the GC watermark, and
-  gone or of another key (D5).
+- **Vacuum** walks the leaves, and removes an entry only when its
+  row is settled: its newest version committed at or below the GC
+  watermark, and gone or of another key (D5). A leaf's entries
+  are judged with no latch, and those to go are judged again with
+  it latched, as an insert that finds its entry there moves no
+  version: only its row, written first, shows it.
 - **Pages are not merged.** An empty leaf stays linked, a tree
   never shrinks, and page ids are not reused.
 - **`DROP INDEX`** drops the pages once it commits, by
@@ -634,8 +641,9 @@ workload goes.
 
 Decided with the user (2026-10-31): sm will own a buffer pool for
 a tree's pages, in place of RocksDB's block cache. It is a
-project of its own, with its own design and plan, after
-`BTREE-todo.md`, and measured first. It will not close the 1.5×
+project of its own, with its own design and plan
+(`BUFFERPOOL.md`), after `BTREE-todo.md`, and measured first. It
+will not close the 1.5×
 gap; what it buys is eviction under memory pressure, and cheaper
 pins at high client counts. It replaces §5 and §6, and §7's fill
 latch and writers' latches, where they differ.
@@ -670,7 +678,7 @@ What is decided:
   pages out. Only dropping a tree purges its pages at once.
 - **A page's slots keep room to grow.** A page's header has
   `max`, the slots it has, grown 16 at a time, and `top`, the
-  last valid slot, so `top <= max`. These replace `n`. Slots past
+  slots in use, so `top <= max`. These replaced `n`. Slots past
   `top` are zeroed, but zero marks nothing: `top` alone says
   which are valid, as the first entry's offset is 0. Each slot
   holds its entry's offset from the end of the slot array, so
@@ -695,7 +703,7 @@ What it must settle:
   cache's reference. Measure it against §12.
 - **What goes**: the fill latch, as a miss loads the frame under
   its pin, the writers' latch table, and §5.5's held pins.
-- **A cursor's copy of a leaf**: `span()` relies on entries being
-  end to end, and slots in no order end that (`fill()`).
+- **A cursor's copy of a leaf**: answered: `fill()` copies the
+  entries in range, one at a time in key order.
 - **`page_write`'s batch**: a split still writes several pages
   atomically, each under its EX pin.

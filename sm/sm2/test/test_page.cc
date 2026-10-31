@@ -293,7 +293,8 @@ TEST_CASE("tree page: an insert into the bytes lays out what a decode does") {
   // Verify page_insert_bytes against page_insert and page_bytes.
   // 1. Insert random keys, with a high key or not, one at a time, into
   //    a page's bytes, and into the page decoded.
-  // 2. Each step's bytes are the same, the version moved by one.
+  // 2. Each step's page reads the same and is the same size, the
+  //    version moved by one: only where the entries lie differs.
   // 3. A key there already is 1, untouched; a full page is 2; an
   //    entry over the limit is refused.
   std::mt19937_64 rng(9);
@@ -323,7 +324,12 @@ TEST_CASE("tree page: an insert into the bytes lays out what a decode does") {
         continue;
       }
       want.version++;
-      CHECK(page_bytes(want) == out);
+      CHECK(page_size(want) == out.size());
+      page_view_t got = view_of(out);
+      REQUIRE(0 == got.check());
+      page_t decoded;
+      got.load(decoded);
+      CHECK(page_bytes(want) == page_bytes(decoded));
       page = want;
       bytes = out;
     }
@@ -334,4 +340,42 @@ TEST_CASE("tree page: an insert into the bytes lays out what a decode does") {
                                   std::string(entry_max(page_limit), 'k'), "",
                                   page_limit, out));
   }
+}
+
+TEST_CASE("page: a splice shifts slots, and lays its entry last") {
+  // Verify the slot array of a page changed by splicing: it grows 16
+  // slots at a time, only slots move, and damage to one is refused.
+  // 1. Splice 33 keys in descending order into an empty page.
+  // 2. After each, the slots are a multiple of 16, and those past top
+  //    are zero.
+  // 3. The slots are in key order while the entries are the reverse:
+  //    each key's entry lies past the next key's.
+  // 4. Two slots pointing at one entry are refused by check().
+  std::string bytes = page_bytes(page_t{});
+  for (int i = 32; i >= 0; i--) {
+    char key[8];
+    snprintf(key, sizeof key, "k%02d", i);
+    std::string out;
+    REQUIRE(0 == page_insert_bytes(view_of(bytes), key, "v", page_limit, out));
+    bytes = out;
+    page_view_t v = view_of(bytes);
+    REQUIRE(0 == v.check());
+    size_t n = 33 - i;
+    size_t max = (v.entries_offset() - v.slots_offset()) / 2;
+    CHECK(page_slots(n) == max);
+    for (size_t at = v.slots_offset() + 2 * n; at < v.entries_offset(); at++) {
+      CHECK(0 == bytes[at]);
+    }
+  }
+  page_view_t v = view_of(bytes);
+  REQUIRE(33u == v.count());
+  for (size_t i = 0; i + 1 < v.count(); i++) {
+    CHECK(v.key(i) < v.key(i + 1));
+    CHECK(v.offset(i) > v.offset(i + 1));
+    CHECK(v.entry(i).size() == 2 + v.key(i).size() + 2 + v.value(i).size());
+  }
+  std::string bad = bytes;
+  bad[v.slots_offset()] = bad[v.slots_offset() + 2];
+  bad[v.slots_offset() + 1] = bad[v.slots_offset() + 3];
+  CHECK(-1 == view_of(bad).check());
 }

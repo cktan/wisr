@@ -171,10 +171,13 @@ void cursor_seek(cursor_t &cursor, const std::string &lo, bool inclusive);
 /*
  * Walk every leaf, left to right, and remove each entry dead says to:
  * dead(key, value) is 1 to remove it, 0 to keep it, -1 to stop with
- * its error. Each leaf is latched while its entries are judged, so an
- * insert of one of them waits, and written once if any went
- * (../BTREE.md §7). removed counts them. Pages are not merged: an
- * empty leaf stays linked.
+ * its error. A leaf's entries are judged with no latch, and those dead
+ * says to remove are judged again with the leaf latched, so dead reads
+ * what a writer wrote meanwhile: it may be called twice for an entry,
+ * and only that second answer removes it. A leaf is written once, if
+ * any went (../BTREE.md §7). A leaf that splits while it is judged
+ * keeps its right half's entries until the next prune. removed counts
+ * them. Pages are not merged: an empty leaf stays linked.
  */
 int tree_prune(
     tree_t &tree,

@@ -424,6 +424,56 @@ TEST_CASE("tree: prune removes the entries it is told to, leaf by leaf") {
   CHECK(sm1::SM_ERR_IO == sm1::errnum());
 }
 
+TEST_CASE("tree: prune judges with no latch, and again before it removes") {
+  // Verify a leaf's entries are judged unlatched, and that what is to
+  // go is judged again under the latch, where a row written meanwhile
+  // shows: an insert that finds its entry there moves no version.
+  // 1. Fill a tree of several leaves with 3,000 keys.
+  // 2. Prune with a judge that says every odd key is dead at first
+  //    asking, and counts the latches held as it is asked.
+  // 3. At second asking, one odd key has its row back: it stays.
+  // 4. No first asking held a latch, and every second one held one;
+  //    even keys were asked once, and clean leaves took no latch.
+  db_t d;
+  open_tree_t t(d, 13, 512);
+  REQUIRE(0 == tree_create(t.tree));
+  for (int n = 0; n < 3000; n++) {
+    REQUIRE(0 == tree_insert(t.tree, std::to_string(100000 + n), "v"));
+  }
+  const std::string back = std::to_string(100000 + 1501);
+  std::map<std::string, int> asked;
+  bool first_latched = false, second_unlatched = false;
+  size_t removed = 0;
+  REQUIRE(0 == tree_prune(
+                   t.tree,
+                   [&](std::string_view key, std::string_view) {
+                     int n = ++asked[std::string(key)];
+                     size_t held = page_latches().size();
+                     first_latched = first_latched || (1 == n && 0 != held);
+                     second_unlatched =
+                         second_unlatched || (2 == n && 0 == held);
+                     if (2 == n && key == back) {
+                       return 0;
+                     }
+                     return (key.back() - '0') % 2;
+                   },
+                   removed));
+  CHECK_FALSE(first_latched);
+  CHECK_FALSE(second_unlatched);
+  CHECK(1499u == removed);
+  for (const auto &[key, n] : asked) {
+    CHECK((key.back() - '0') % 2 + 1 == n);
+  }
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+  cursor_t c;
+  cursor_open(t.tree, c, nullptr, true, nullptr, true);
+  auto all = drain(c);
+  CHECK(1501u == all.size());
+  CHECK(all.end() != std::find_if(all.begin(), all.end(), [&](const auto &e) {
+          return e.first == back;
+        }));
+}
+
 TEST_CASE("tree: inner pages held stale still route every probe") {
   // Verify a tree's held inner pages, gone stale, lead to every key.
   // 1. A reader's tree reads every key once, so it holds the inner
