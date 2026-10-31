@@ -1151,6 +1151,50 @@ held_end lk_a
 held_end lk_b
 held_end lk_c
 
+# Verify that an UPDATE waiting on a row's lock is listed as waiting for that
+# row's tuple lock: sm lists a write, which names no kind of its own, with the
+# kind of the lock it waits on (../sm/sm1/LOCKID.md section 2.5).
+# 1. E, in a transaction, locks lkst's row 2 for update; F updates row 2 and
+#    waits.
+# 2. pg_lock_status() lists E's X on the row, granted, and F's, waited for,
+#    each a tuple of lkst.
+# 3. E commits: F's update goes through.
+held_start lk_e
+held_start lk_f
+held_send lk_e "begin; select 'pid ' || pg_backend_pid();
+select a from lkst where a = 2 for update; select 'e locked';"
+held_wait lk_e "e locked" || fail "lock status: E locks"
+held_send lk_f "select 'pid ' || pg_backend_pid();
+update lkst set b = 21 where a = 2; select 'f updated';"
+for _ in $(seq 50); do
+  lk_f_pid=$(sed -n 's/^pid //p' "$work/lk_f.out" 2> /dev/null)
+  [ -n "$lk_f_pid" ] && break
+  sleep 0.1
+done
+lk_e_pid=$(sed -n 's/^pid //p' "$work/lk_e.out")
+# The two sessions' locks but their tables', as who, what, where and how.
+tuple_rows() {
+  local_psql -c "select case pid when $lk_e_pid then 'e' else 'f' end,
+  locktype, relation::regclass, mode, granted
+  from pg_lock_status() where pid in ($lk_e_pid, $lk_f_pid)
+  and locktype <> 'relation' order by 1"
+}
+for _ in $(seq 50); do
+  [ "$(tuple_rows | grep -c '|f$')" = 1 ] && break
+  sleep 0.1
+done
+tuple_rows > "$work/lock_status3.out" 2>&1
+cat > "$work/lock_status3.want" <<'ROWS'
+e|tuple|lkst|X|t
+f|tuple|lkst|X|f
+ROWS
+cmp -s "$work/lock_status3.out" "$work/lock_status3.want" ||
+  fail "lock status lists a write waiting on a row's lock"
+held_send lk_e "commit;"
+held_wait lk_f "f updated" || fail "lock status: F updates the row"
+held_end lk_e
+held_end lk_f
+
 # Verify that reading the catalogs takes no lock: a catalog's rows are
 # compiled in and never change, so no lock would guard anything of them,
 # and nothing waits on a virtual xid's lock.

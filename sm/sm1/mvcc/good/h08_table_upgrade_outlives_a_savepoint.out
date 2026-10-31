@@ -1,0 +1,23 @@
+# h08 -- a table lock's upgrade past a savepoint is not undone.
+#
+# T1 takes table 1's IX, in a slot, sets a savepoint, and
+# upgrades to X: the slot goes to the lock table and converts
+# there, adding no entry. Rolling back to the savepoint leaves
+# the X held, as b31 says of a row lock. T2's IS on the table
+# is what tells IX and X apart: granted against IX, it waits
+# for T1's commit.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 lockoid 1 ix -> ok
+@3 T1 savepoint -> 1
+@4 T1 lockoid 1 exclusive -> ok
+@5 T1 rollback 1 -> ok
+@6 T2 lockoid 1 is blocks -> blocked
+@7 T1 commit -> ok
+@6 T2 lockoid 1 is blocks -> ok (resumed)
+@8 check last T2 ok -> satisfied
+@9 T2 commit -> ok
+@10 check committed T1 T2 -> satisfied

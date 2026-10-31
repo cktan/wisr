@@ -279,7 +279,7 @@ std::vector<datadir_lock_t> datadir_sm_locks(void) {
      * (datadir_database_oid()); sm knows a session by its pid
      * (datadir_open_session()).
      */
-    out.push_back({FirstNormalObjectId + (Oid)l.dbid, name, (Oid)l.oid, l.rowno,
+    out.push_back({FirstNormalObjectId + (Oid)l.dbid, name, (Oid)l.oid,
                    datadir_mode_name(l.mode), (int)l.tag, l.granted});
   }
   return out;

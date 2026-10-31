@@ -316,8 +316,7 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
     // the session's alone.
     if (!st.owner && lock_write_check(s, storeid, key) != 0) {
       latch.unlock();
-      waited =
-          lock_wait(s, sm1::LOCKTYPE_ROW, storeid, key, sm1::SM_LOCKMODE_EX);
+      waited = lock_wait(s, lock_row_id(storeid, key), sm1::SM_LOCKMODE_EX);
     } else if (op == WRITE_INSERT_NEW) {
       // A key no version of was ever written has none to check: no
       // read. A debug build reads, to catch a caller wrong about it.
@@ -362,7 +361,7 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
       if (!inserting && !lock_has_latest(s, storeid, key)) {
         // Keep the key locked until the re-read and the repeated
         // write (§5.4, WRITELOCK.md §3.5).
-        lock_try(s, sm1::LOCKTYPE_ROW, storeid, key, sm1::SM_LOCKMODE_EX);
+        lock_try(s, lock_row_id(storeid, key), sm1::SM_LOCKMODE_EX);
         return set_error(sm1::SM_ERR_UPDATED,
                          "key was changed by a transaction that committed "
                          "after this one began; sm1_read_latest it first");
@@ -564,7 +563,8 @@ int read_latest_chained(sm1::session_t *s, uint64_t storeid,
 
 /* sm1::chain_lock_row and chain_trylock_row, minus the out-of-memory guard. */
 int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
-                 sm1::lockmode_t mode, bool nowait, bool as_read) {
+                 sm1::lockmode_t mode, bool nowait, bool as_read,
+                 uint16_t kind) {
   if (xct_check_active(s) != 0) {
     return -1;
   }
@@ -613,7 +613,7 @@ int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
       // Free of uncommitted writes: take the lock if no holder
       // conflicts.
       if (inflight == 0 &&
-          lock_try(s, sm1::LOCKTYPE_ROW, storeid, k, mode) == 0) {
+          lock_try(s, lock_row_id(storeid, k), mode, kind) == 0) {
         break;
       }
     }
@@ -624,7 +624,7 @@ int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
     // holders that conflict.
     int waited = inflight != 0
                      ? lock_wait_xact(s, inflight)
-                     : lock_wait(s, sm1::LOCKTYPE_ROW, storeid, k, mode);
+                     : lock_wait(s, lock_row_id(storeid, k), mode, kind);
     if (waited != 0) {
       return lock_wait_error(s, waited);
     }
@@ -1341,15 +1341,15 @@ int sm1::chain_approxsize(sm1::session_t *session, uint64_t storeid,
 /* Lock a chained key without writing it; see sm1.h. */
 int sm1::chain_lock_row(sm1::session_t *session, uint64_t storeid,
                         std::string_view key, sm1::lockmode_t mode,
-                        bool as_read) {
-  return lock_chained(session, storeid, key, mode, false, as_read);
+                        bool as_read, uint16_t kind) {
+  return lock_chained(session, storeid, key, mode, false, as_read, kind);
 }
 
 /* Lock a chained key if it can be had at once; see sm1.h. */
 int sm1::chain_trylock_row(sm1::session_t *session, uint64_t storeid,
                            std::string_view key, sm1::lockmode_t mode,
-                           bool as_read) {
-  return lock_chained(session, storeid, key, mode, true, as_read);
+                           bool as_read, uint16_t kind) {
+  return lock_chained(session, storeid, key, mode, true, as_read, kind);
 }
 
 /* Read a chained key into pin; see sm1.h. */

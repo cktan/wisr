@@ -704,31 +704,41 @@ session running it, found through a map from `xid` to session
 beside the active table; a prepared transaction waits on no one.
 
 A lock's id in the table is two 64-bit words, `lockid_t`
-(`src/db.h`): the storeid, its top bit flipped for an OID lock
+(`src/locktab.h`): the storeid, its top bit flipped for an OID lock
 so the two types never meet, and the oid itself or a 64-bit hash
-of a row's key. An OID lock's id is exact. Two rows of a store
-whose keys hash alike share an entry, and so block each other,
-and could deadlock: a false conflict, never a missed one, and
-with 64 bits not one a workload meets. What must be exact is
-kept exact in the transaction's own lock list, `T.locks`, each
-row's key in a buffer of the session's (`lock_keys`), taken as
-the lock is and cut back with the list at a savepoint: whether
-it holds a key and in which mode, the mark §5.4 sets, the
-prepared record's lock set (§8.4) and `sm1::lock_status`. A
-holder counts the entries of its list that share its table
-entry, from the first, so releasing one leaves the others held.
-The list and the buffer are sm0's `blist_t`, blocks whose
-entries never move: a holder keeps a pointer to its first
-entry, a fast-path slot to its own, an entry to its key, and a
-savepoint a mark of each. Keys that hash alike are found by a
-walk of the whole list, from its oldest entry. A cut keeps up to four blocks for the
-locks to come, and `lock_try` makes room before it takes
-`lock_mu`, a key never longer than a key block, so a lock
-allocates nothing under the mutex for the list or its key. The
-id costs no allocation either, as the table needs none to find
-or add an entry.
+of a row's key, `lock_row_hash`, the same in every build. An OID
+lock's id is exact. Two rows of a store whose keys hash alike
+are one lock: they block each other, and could deadlock, and a
+transaction that locks one holds the other in the same mode. It
+is a false conflict, never a missed one, and with 64 bits not
+one a workload meets. A transaction's own lock list, `T.locks`,
+has an entry for each id it holds, cut back at a savepoint, and
+keeps no row's key: the prepared record's lock set (§8.4) holds
+the ids. An entry keeps the kind `sm1::lock_row` was given,
+which `sm1::lock_status` reports with the id.
+A holder points to the entry that made its hold, and the hold
+goes with that entry. An OID lock may have a second entry, a
+fast-path slot moved to the table after the hold was made, which
+a savepoint's rollback releases alone. The list is sm0's
+`blist_t`, blocks whose entries never move: a holder keeps a
+pointer to its first entry, a fast-path slot to its own, and a
+savepoint a mark. A cut keeps up to four blocks for the locks to
+come, and `lock_try` makes room before it takes `lock_mu`, so a
+lock allocates nothing under the mutex for the list. The id
+costs no allocation either, as the table needs none to find an
+entry.
 One mutex covers the table and every waiter's waits-for list,
 which keeps a deadlock walk consistent.
+
+The table is a module of its own, `src/locktab.h`, which knows
+ids, the modes and opaque owners, and nothing of sessions:
+it finds, adds and drops a lock's holders, and says which
+conflict with a mode. A holder's owner is its session and its
+first the lock list's entry; waiting, the waits-for graph, the
+deadlock search, the fast path and the lock list stay in
+`src/lockmgr.cc`, which holds `lock_mu` across each call. So the
+table is measured alone, `bench/locktab_bench.cc`
+(`../NEXT.md` §1 item 4).
 
 **The fast path**, PostgreSQL's for a relation's weak locks
 (its `lock.c`, 9.2). A table's readers and writers take IS and
@@ -2005,11 +2015,13 @@ leaves it untouched, and recovery (§9.1 step 5) rebuilds exactly
 the same object from the `PREPARED` record, so a transaction
 prepared before a crash and one prepared in this process are
 handled alike. The record is a single `CF:txn` value however
-large the write set; the write set is stored as the lock keys the
-transaction holds, each with the mode it is held in, so a shared
-lock taken by `sm1::lock_row` or `sm1::lock_oid` is restored as
-shared. Database format
-version 4 added that mode byte.
+large the write set; the write set is stored as the locks the
+transaction holds, each by its id, with the mode it is held in
+and the kind `sm1::lock_row` was given, 20 bytes
+(`lock_put_record`): so a shared lock taken by `sm1::lock_row`
+or `sm1::lock_oid` is restored as shared, and its id as it was
+held, no key hashed again, the row hash the same in every build
+(`lock_row_hash`).
 
 Step 1 closes cursors for the reasons given in §8.2. No data
 operation is accepted after prepare, so an open cursor could
@@ -2978,7 +2990,8 @@ src/chain.cc            chained stores: codec, chain_ calls, chain_restore,
                         GC's repair (../VCHAIN.md)
 src/load.cc             bulk load into an empty store (../BULKLOAD.md)
 src/pin.cc              raw pins (../ROW.md §2)
-src/lockmgr.cc          lock table, write latches, waits-for graph, deadlocks
+src/lockmgr.cc          locks, write latches, waits-for graph, deadlocks
+src/locktab.cc          the lock table alone: ids, modes, holders
 src/ssi.cc              SIREAD locks, rw-edges, validation
 src/catalog.cc          store catalog: lookup, mkstore/rmstore, sm1::lsstore
 src/seq.cc              named sequences: sm1::mkseq, sm1::rmseq, sm1::nextseq
@@ -2992,6 +3005,7 @@ src/walfs.cc            file system zero-filling each new WAL before
 test/                   the engine's tests: API, limits, locks, GC,
                         2PC, crash, sequences, logging
 mvcc/                   isolation: MVCC.md and one file per scenario
+bench/                  the lock table's benchmark (locktab_bench.cc)
 example/                small programs against the public API
 ```
 

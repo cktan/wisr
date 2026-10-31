@@ -43,7 +43,7 @@ and `../LOCK.md` §1 describe the lock table as it stands.
 
 | Where | What | Why |
 | --- | --- | --- |
-| the lock table, `db->lock_table` | `lockid_t {storeid ^ type bit, std::hash(key)}` and the holders | conflicts, decided on the hash |
+| the lock table, `db->lock_table` | `lockid_t {storeid ^ type bit, lock_row_hash(key)}` and the holders | conflicts, decided on the hash |
 | the session's lock list, `s->locks` | a `lockref_t` per lock: the id, the mode, `row`/`row_len` pointing into `s->lock_keys` | release, savepoint rollback, prepare |
 | `s->lock_keys` | the key's bytes | `is_ref` and `exact_ref` tell apart two keys that hash alike |
 | `holder_t::refs` | how many list entries share one table hold | two keys of one transaction that hash alike |
@@ -53,7 +53,9 @@ and `../LOCK.md` §1 describe the lock table as it stands.
 
 A transaction that already holds a lock and asks again adds no
 entry today: `lock_try` finds its own and raises the mode. A
-second entry, and `refs`, exist only for keys that hash alike.
+second entry, and `refs`, exist for keys that hash alike, and
+for an OID lock's fast-path slot moved to the table after the
+transaction's hold there was made (`fp_move`).
 
 ---
 
@@ -74,11 +76,17 @@ savepoint's mark is the list's mark alone.
 
 ### 2.3 The lock manager
 
-`lock_try`, `lock_wait` and `lock_oid` take a `lockid_t`, not
-`(type, storeid, key)`. `exact_ref` goes, and `is_ref` and
-`find_lockref` compare ids. `holder_t::refs` goes: one id is
-one hold. `lock_write_check` and `lock_held` make the id from
-the store and key they are given, as `lock_row` does.
+`lock_try` and `lock_wait` take a `lockid_t`, not `(type,
+storeid, key)`, and `lock_oid` the oid; `lock_row_id` makes a
+row's id, the waiter keeps only the id it waits on.
+`exact_ref` goes, and `is_ref` and `find_lockref` compare ids.
+`holder_t::refs` goes: one id is one hold, made with a list
+entry and released with it. The one second entry left is an OID
+lock's slot moved into the transaction's hold; it raises the
+hold's mode and is released alone, so a rollback past it keeps
+the hold (`mvcc/in/h07`). `lock_write_check` and `lock_held`
+make the id from the store and key they are given, as
+`lock_row` does.
 
 The id interface is the boundary `../NEXT.md` item 4 draws for
 its module, `src/locktab.h`: a holder is an opaque owner, and
@@ -95,10 +103,15 @@ test hook `lock_test_rows_collide` stays.
 
 ### 2.5 `lock_status`
 
-`sm1::lock_status_t` reports the id's words in place of the
-key. For a row, `sm_lock_status` finds the table by its
-storeid, as now, but no longer the tuple, nor whether the key
-was a row's or an index entry's (§4.1).
+`sm1::lock_status_t` reports the id's second word, `word`, in
+place of the key, and the kind its taker gave. For a row,
+`sm_lock_status` finds the table by its storeid, as now, and
+tells a row's lock from an index entry's by the kind, but no
+longer finds the tuple (§4.1): `sm_lock_status_t.rowno` and
+the page and tuple dg showed from it are gone. A write gives
+no kind. Waiting on a row's lock, it lists its holder's kind; a
+lock it takes itself, as a READ COMMITTED write keeps a row it
+must re-read, has kind 0 and is listed as a key's.
 
 ---
 
@@ -180,9 +193,10 @@ so it stays inside sm1 unless a caller asks.
   `test/test_2pc.cc`'s check of a prepared transaction's locks,
   which `lock_status` lists by key after a restart.
 - **New in `test/test_lock.cc`:** the row hash of a fixed key
-  is a fixed value, so a build that changes it fails; a
-  prepared lock set restored after a restart blocks the same
-  writers it did before.
+  is a fixed value, so a build that changes it fails; a write
+  waiting on a row's lock lists the lock's kind; a prepared
+  lock set restored after a restart blocks the same writers it
+  did before.
 - **dg:** `select_for_update_many.sql` unchanged, its
   `tuple` counts from the kind (§4.1), and
   the whole suite.
@@ -192,18 +206,29 @@ so it stays inside sm1 unless a caller asks.
 ## 7. Order of work
 
 1. Decide §4.1. Done: the caller passes a kind.
-2. `fmix64` as the row hash, still keeping the keys.
+2. `fmix64` as the row hash, still keeping the keys. Done:
+   `lock_row_hash` in `src/lockmgr.cc`.
    → verify: the fixed-hash test; all of `mvcc/` and `test/`.
 3. The lock manager by id, `refs` and `exact_ref` gone, the
    keys still in the list for the record and `lock_status`.
+   Done: a hold goes with its first entry; the signatures by
+   id wait for step 5 (§2.3).
    → verify: the collision tests expecting one lock; all
    suites.
-4. The record and recovery by id.
-   → verify: `test_2pc.cc` across a restart.
-5. `lock_status` and `sm_lock_status` by id, then `lock_keys`
-   and `waiting_row` dropped.
-   → verify: the full sm, sq and dg suites.
-6. The documents of §5.
+4. `lock_status` and `sm_lock_status` by id, with the kind:
+   `lock_row`'s `kind`, sm2 passing the relid, `waiting_row`
+   dropped, the keys still in the list for the record. Swapped
+   with the record (2026-10-31), so no step lists a restored
+   lock without its key. Done; a restored prepared lock has
+   kind 0 until step 5.
+   → verify: the `lock_status` tests by id and kind; the full
+   sm, sq and dg suites.
+5. The record and recovery by id, 20 bytes with the kind, then
+   `lock_keys` dropped. Done, with the signatures by id of
+   §2.3.
+   → verify: `test_2pc.cc` across a restart; the full sm, sq
+   and dg suites.
+6. The documents of §5. Done with each step.
 
 Then the rest of `../NEXT.md` item 4: the module of its own,
 its benchmark, the partitions.

@@ -276,34 +276,23 @@ int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
       }
     }
     std::lock_guard<std::mutex> lock_guard(db->lock_mu);
-    // A lock's name is the type byte, be64(storeid), then the key.
-    auto entry = [&](const std::string &k, sm1::lockmode_t mode,
+    // A lock by its id, and the kind its taker gave, not its key.
+    auto entry = [&](sm1::locktype_t type, uint64_t storeid, uint64_t word,
+                     uint16_t kind, sm1::lockmode_t mode,
                      const sm1::session_t *s, bool granted) {
-      out.push_back({name, db->dbid, static_cast<sm1::locktype_t>(k[0]),
-                     sm0::get_be64(k.data() + 1), k.substr(9), mode,
+      out.push_back({name, db->dbid, type, storeid, word, kind, mode,
                      s->tag.load(std::memory_order_relaxed), granted});
     };
-    for (const auto &[k, ent] : db->lock_table) {
-      for (const auto &h : ent.holders) {
-        // Each of the holder's list entries the key stands for: its
-        // first alone, or, when row keys hash alike, every entry of
-        // its list with the key's id.
-        auto put = [&](const sm1::session_t::lockref_t &l) {
-          std::string name;
-          lock_put_name(&name, l);
-          entry(name, l.mode, h.session, true);
-        };
-        if (1 == h.refs) {
-          put(*h.first);
-          continue;
-        }
-        h.session->locks.each([&](const sm1::session_t::lockref_t &l) {
-          if (l.id == k) {
-            put(l);
-          }
-        });
-      }
-    }
+    auto held = [&](const sm1::session_t::lockref_t &l, sm1::lockmode_t mode,
+                    const sm1::session_t *s) {
+      entry(l.type, lock_storeid(l.id), l.id.lo, l.kind, mode, s, true);
+    };
+    db->lock_table.each([&](const lockid_t &, const locktab_t::holder_t &h) {
+      // One hold, as the entry that made it, in the mode that
+      // covers every entry of its id.
+      held(*static_cast<const sm1::session_t::lockref_t *>(h.first), h.mode,
+           static_cast<const sm1::session_t *>(h.owner));
+    });
     for (const sm1::session_t *s : env->sessions) {
       if (s->db != db) {
         continue;
@@ -312,16 +301,12 @@ int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
       for (int i = 0; s->fp_used > 0 && i < sm1::session_t::fp_slots; i++) {
         if (s->fp[i].used) {
           const sm1::session_t::lockref_t &l = *s->fp[i].ref;
-          std::string name;
-          lock_put_name(&name, l);
-          entry(name, l.mode, s, true);
+          held(l, l.mode, s);
         }
       }
       if (s->waiting_lock) {
-        std::string name(1, static_cast<char>(s->waiting_type));
-        sm0::put_be64(name, s->waiting_storeid);
-        name.append(s->waiting_row.data(), s->waiting_row.size());
-        entry(name, s->waiting_mode, s, false);
+        entry(lock_type(s->waiting_id), lock_storeid(s->waiting_id),
+              s->waiting_id.lo, s->waiting_kind, s->waiting_mode, s, false);
       }
     }
   }
