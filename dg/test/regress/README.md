@@ -4,7 +4,7 @@
 PostgreSQL 18's `src/test/regress/parallel_schedule` on digres
 and reports which missing features cost the most files. It
 only measures: it exits 0 whatever it finds, and is in no
-`make test`. Most files fail, by design (`../../PLAN.md`,
+`make test`. Most files fail, by design (`../../DESIGN.md`,
 `../../../sm/NEXT.md`); the point is to know why. The same
 files, ported so that what is left must pass, are in
 `../pgregress/`.
@@ -135,7 +135,7 @@ Every file starts with these failures, so 8 of
 
 - `POINT_TBL` and `person` (`point`), `road` (`path`):
   geometric types, not supported by decision
-  (`../../PLAN.md` §7).
+  (`../../DESIGN.md` §4).
 - `emp`, `student`, `stud_emp`, `ihighway`, `shighway`:
   `INHERITS`.
 - `GRANT ALL ON SCHEMA public` (`pg_namespace`), the
@@ -192,6 +192,6 @@ Not worth doing for the suite: the parallel query settings
 (7 files) were removed with their module, and the plans those
 files print would differ anyway; `INHERITS` is outside the
 subset wisr targets (`../../../sm/FEATURELIST.md` §4), and the
-geometric types are refused by design (`../../PLAN.md` §7):
+geometric types are refused by design (`../../DESIGN.md` §4):
 10 files directly, and 5 more through `POINT_TBL`, `person`
 and `road`. Partitions are in that subset, but not built.

@@ -761,7 +761,7 @@ static sm_datum_t numeric_pack(__int128 i, Oid typid, int32 typmod,
   return (sm_datum_t)buf;
 }
 
-/* Whether typid is one of the decimals (DG_DECIMAL_PLAN.md). */
+/* Whether typid is one of the decimals (DECIMAL.md section 2.3). */
 static bool is_decimal(Oid typid) {
   return typid == DECIMAL64OID || typid == DECIMAL128OID;
 }

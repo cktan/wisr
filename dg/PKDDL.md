@@ -97,7 +97,7 @@ Run on PostgreSQL 18.6:
 | Secondary, partial and expression indexes | refilled by the rewrite, through the evaluator on the session's thread (`EXPRINDEX.md`) |
 | A NULL in a key column | `sm_cat_set_not_null` fails first: PostgreSQL's words |
 | A duplicate key | the rewrite fails: PostgreSQL's `could not create unique index`, with the key |
-| ADD UNIQUE on a table with rows | built after the commit, as CREATE UNIQUE INDEX is (`PLAN.md` §7): in a transaction block a duplicate is reported at COMMIT |
+| ADD UNIQUE on a table with rows | built after the commit, as CREATE UNIQUE INDEX is (`DESIGN.md` §4): in a transaction block a duplicate is reported at COMMIT |
 | A second primary key | sm refuses; PostgreSQL's words |
 | Abort, savepoint rollback | the new store is dropped; the catalog as it was |
 | Crash before commit | the new store is unreferenced, as a TRUNCATE's swap leaves one: after a restart the table has its rows, no index, its column nullable (`server.sh`) |

@@ -1504,7 +1504,7 @@ static bool division_by_zero(bool *have_error) {
 
 /*
  * Whether v, a value's integer, has at most 36 digits: a result that does
- * is made as it is, without the wide path (DG_DECIMAL_PLAN.md section 3.3).
+ * is made as it is, without the wide path (DECIMAL.md section 2.5).
  */
 static bool dec_fits(i128 v) {
   constexpr i128 limit = [] {
@@ -3022,7 +3022,7 @@ Datum int2int4_sum(PG_FUNCTION_ARGS) {
 
 /* ----------------------------------------------------------------------
  * decimal64: sm's decimal64 by value, the word (value << 5) | scale, of at
- * most 17 digits (DG_DECIMAL_PLAN.md).  It compares, hashes and sorts on
+ * most 17 digits (DECIMAL.md section 2.8).  It compares, hashes and sorts on
  * its own; what else is done to it is done to it as a decimal128.
  * ----------------------------------------------------------------------
  */
@@ -3433,7 +3433,7 @@ Datum decimal64_accum_inv(PG_FUNCTION_ARGS) {
 
 /*
  * w as a decimal64, exactly: a result of more than 17 digits or places is
- * an error, not rounded to fit (DG_DECIMAL_PLAN.md).
+ * an error, not rounded to fit (DECIMAL.md section 2.8).
  */
 static Datum d64_exact(const wide_t &w) {
   if (w.scale > D64_MAX_DIGITS || mag_digits(w.mag) > D64_MAX_DIGITS)

@@ -1,6 +1,7 @@
 # Work notes: decisions taken without asking
 
-Written while working through `DGWORK.md` unattended. Each entry
+Written while working through the first recommendation
+(`DESIGN.md` §2) unattended. Each entry
 is a guess made in place of a question; any of them can be
 reversed. Newest step last.
 
@@ -147,7 +148,7 @@ code to be run rather than only compiled.
   order to finish it in. `dg/` is therefore no slimmer for this
   step.
 - **The name `sq`** and its place beside `sm/` and `dg/` are as
-  `DGWORK.md` proposed.
+  the first recommendation proposed (`DESIGN.md` §2).
 - **`sq/src/host.c` answers 32 names** that the parser's layers
   ask of the server, as a process with no client and no
   transaction would. They are stand-ins for a test program, and
@@ -162,7 +163,8 @@ code to be run rather than only compiled.
 
 ## Step 4: what was left alone
 
-As `DGWORK.md` says: `src/timezone` and `regex` are not carved
+As the first recommendation says (`DESIGN.md` §2):
+`src/timezone` and `regex` are not carved
 out, the planner is not touched, and the TLS and GSSAPI files
 are still skipped.
 
@@ -1422,7 +1424,7 @@ with `SM_ERR_INTERRUPTED` when a bit in it is raised.
 
 ## Step 41: sm locks its tables, and nothing else does
 
-PLAN.md §7 now records it: sm's lock manager is the only one, in
+DESIGN.md §4 now records it: sm's lock manager is the only one, in
 the end. sm locks a table as it is opened and a record as it is
 read or written; the parser and executor lock nothing of their
 own, and only a special operation asks sm for a lock.
@@ -1447,7 +1449,7 @@ own, and only a special operation asks sm for a lock.
 
 A subtransaction that aborted left its writes in sm: ROLLBACK
 TO SAVEPOINT undid nothing there. Until sm's transactions
-replace `xact.c` (PLAN.md §7), sm's follow PostgreSQL's
+replace `xact.c` (DESIGN.md §4), sm's follow PostgreSQL's
 subtransactions as they follow its transactions.
 
 - **Each subtransaction gets an sm savepoint at its first call
@@ -1469,7 +1471,7 @@ subtransactions as they follow its transactions.
 
 ## Step 43: LISTEN and NOTIFY are gone
 
-PLAN.md §7: sm's transactions are to replace `xact.c`, and
+DESIGN.md §4: sm's transactions are to replace `xact.c`, and
 PostgreSQL's transaction ids go with it. NOTIFY needs one: its
 queue, an SLRU under `pg_notify`, is ordered by the notifying
 transaction's xid, and every listener reads it at commit.
@@ -1492,7 +1494,7 @@ transaction's xid, and every listener reads it at commit.
 
 ## Step 44: xact.c calls sm, and has no callbacks
 
-The first of PLAN.md §7's steps toward sm's transactions
+The first of DESIGN.md §4's steps toward sm's transactions
 replacing `xact.c`: the transaction's ends are sm's, said in
 `xact.c` itself, not through a callback.
 
@@ -1513,7 +1515,7 @@ replacing `xact.c`: the transaction's ends are sm's, said in
 
 ## Step 45: digres assigns no transaction ids
 
-A transaction is sm's (PLAN.md §7), and a table in sm is no
+A transaction is sm's (DESIGN.md §4), and a table in sm is no
 heap: nothing digres runs needs a PostgreSQL xid.
 
 - **Asking for one is refused**: `GetCurrentTransactionId()`,
@@ -1584,7 +1586,7 @@ two-phase commit comes back it is to be sm's (`sm_prepare`).
 
 ## Step 48: object locks are sm's, or not needed
 
-PLAN.md §7: sm's lock manager is to be the only one. Step 41
+DESIGN.md §4: sm's lock manager is to be the only one. Step 41
 moved a table's locks; this moves the rest that are not the
 heap's.
 
@@ -1632,7 +1634,7 @@ heap's.
 
 ## Step 50: CREATE INDEX and DROP INDEX are sm's
 
-The first step to the heap's removal (PLAN.md §7): before
+The first step to the heap's removal (DESIGN.md §4): before
 nbtree goes, an index is to be sm's. Here its DDL; the planner
 and the executor next.
 
@@ -1888,7 +1890,7 @@ could name the GC thread's side.
 
 ## Step 60: large objects are gone
 
-PLAN.md §7: storage and replication features are deleted, not
+DESIGN.md §4: storage and replication features are deleted, not
 ported. Large objects are the first.
 
 - **Gone**: `inv_api.c`, `be-fsstubs.c` and
@@ -1908,7 +1910,7 @@ ported. Large objects are the first.
 
 ## Step 61: publications and subscriptions are gone
 
-PLAN.md §7: storage and replication features are deleted.
+DESIGN.md §4: storage and replication features are deleted.
 Logical replication's workers went with the WAL; its catalogs'
 code goes now.
 
@@ -1934,7 +1936,7 @@ code goes now.
 
 ## Step 62: tablespaces are gone
 
-PLAN.md §7: storage and replication features are deleted.
+DESIGN.md §4: storage and replication features are deleted.
 sm keeps its own files; a tablespace has nothing to place.
 
 - **Gone**: the commands of `tablespace.c`; the settings
@@ -1955,7 +1957,7 @@ sm keeps its own files; a tablespace has nothing to place.
 
 ## Step 63: CREATE and DROP DATABASE are sm's
 
-PLAN.md §7. Connecting already opened a database in sm; now
+DESIGN.md §4. Connecting already opened a database in sm; now
 making and dropping one does too.
 
 - **CREATE DATABASE name** makes it in sm (`sm_mkdb`), at
@@ -1982,7 +1984,7 @@ making and dropping one does too.
 
 ## Step 64: CLUSTER and REINDEX do nothing, and say so
 
-PLAN.md §7. VACUUM already did nothing; CLUSTER and REINDEX
+DESIGN.md §4. VACUUM already did nothing; CLUSTER and REINDEX
 join it, each with a warning, so a tool that runs them goes on.
 
 - **CLUSTER** warns that a table in sm is kept by rowno, not in
@@ -2005,7 +2007,7 @@ join it, each with a warning, so a tool that runs them goes on.
 
 ## Step 65: the buffer manager, smgr and free-space map are gone
 
-PLAN.md §7. With the heap and nbtree gone, nothing kept pages
+DESIGN.md §4. With the heap and nbtree gone, nothing kept pages
 in shared buffers or relation files on disk: every relation
 with storage is sm's.
 
@@ -2056,7 +2058,7 @@ last kind of barrier.
 
 ## Step 67: multixacts are gone
 
-PLAN.md §7: a row in sm names no lockers, so no set of them.
+DESIGN.md §4: a row in sm names no lockers, so no set of them.
 
 - **Gone**: `multixact.c` and its header, its SLRUs and their
   settings (`multixact_offset_buffers`,
@@ -2078,7 +2080,7 @@ PLAN.md §7: a row in sm names no lockers, so no set of them.
 
 ## Step 68: predicate locks and SLRUs are gone
 
-PLAN.md §7: SERIALIZABLE is sm's, which tracks the reads and
+DESIGN.md §4: SERIALIZABLE is sm's, which tracks the reads and
 writes of a serializable transaction itself.
 
 - **Gone**: `predicate.c` and its headers, with every hook into
@@ -4468,7 +4470,7 @@ slot, as a slot and a pid are both reused.
 
 `SHMEM.md` §3, §7 step 4. Advisory locks were the lock
 manager's user lock method. They guard nothing stored, so
-they do not go to sm (`PLAN.md` §7): sm1's locks end with
+they do not go to sm (`DESIGN.md` §4): sm1's locks end with
 their transaction, and session scope, explicit unlock and
 counted holds are PostgreSQL's to keep.
 
@@ -6438,7 +6440,7 @@ standalone backend starts, and sessions read, are `pcb_t`'s
 - **Left SHARED, on purpose**: `progname`, whose address is
   the copy table's anchor (`session_thread.c`'s `tls_block()`),
   until the table goes; `data_directory_mode`, a setting, and
-  settings are each thread's (`PLAN.md` §7).
+  settings are each thread's (`DESIGN.md` §4).
 - 56 `/*SHARED*/` globals are left.
 
 ## Step 220: the modules' own state in pcb_t
@@ -6596,7 +6598,7 @@ switched among masks that were the same.
   already, and `pg_cancel_backend()` of a session waiting for
   an advisory lock now is too, which leaves the session. A
   reload in the test's data directory applies nothing: it has
-  no `postgresql.conf` (`PLAN.md` §9).
+  no `postgresql.conf` (`DESIGN.md` §5).
 - 6 `/*SHARED*/` globals are left.
 
 ## Step 225: PgReloadTime is the main thread's, in pcb_t
@@ -7157,7 +7159,7 @@ A pass over what PostgreSQL's heap left in `storage/page`,
   and `get_toast_snapshot()`, with `SnapshotToastData`, 219 lines
   to 88. `toast_compress_datum()` stays, for index tuples.
 - Left: `toasting.c`, which makes a TOAST table, with the
-  catalog DDL kept to be ported (`PLAN.md` §7).
+  catalog DDL kept to be ported (`DESIGN.md` §4).
 
 ## Step 244: TABLESAMPLE on a table in sm
 
@@ -7271,7 +7273,7 @@ purpose: an extension's API (custom settings, scan methods,
 label providers, resource owner callbacks, `regexport.c`), SPI
 (a scripting language is to use it), general utilities
 (`list.c`, `pg_prng.c`, the multibyte and Unicode helpers), and
-the catalog DDL kept to be ported (`PLAN.md` section 7). What
+the catalog DDL kept to be ported (`DESIGN.md` section 4). What
 belonged to modules digres removed is gone:
 
 - **`src/common`**: `blkreftable.c`, the block reference tables
@@ -7474,7 +7476,7 @@ step 254's were, cleanly.
 ## Step 256: a bare numeric keeps its value's scale
 
 A bare `numeric` was `decimal64(17, 3)` everywhere, a cast
-included (`DG_DECIMAL_PLAN.md` §3.1), so `-2.5::numeric` was
+included (`DECIMAL.md` §2.1), so `-2.5::numeric` was
 `-2.500` and `'1.23456'::numeric` `1.235`, where PostgreSQL
 keeps the scale written: its `int2`, `int4` and `int8` failed
 on it. A value carries its scale (`DECIMAL.md` §2.2), so a
@@ -8404,7 +8406,7 @@ columns, or a keyless table's rowno alone (`access/rowkey.h`'s
   (`add_row_identity_columns()`), "rowno" in a keyless table and
   `rowkey<relid>_<n>` in one with a key; and as a locking row
   mark's junk, `key<rowmark>_<n>` (`add_row_key_junk()`).
-  digres has no table inheritance (`PLAN.md` §7), so no row
+  digres has no table inheritance (`DESIGN.md` §4), so no row
   mark reaches a child through its parent.
 - **A row mark that locks nothing copies the row**
   (`select_rowmark_type()`): PostgreSQL's re-fetch by reference

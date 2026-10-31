@@ -1522,7 +1522,7 @@ int32 select_common_typmod(ParseState *pstate, List *exprs, Oid common_type) {
  * Whether an element of type elem is one of a range whose subtype is
  * range_typelem: the same type, or a decimal64 of a numrange, whose
  * subtype is decimal128, as PostgreSQL's numeric is of its numrange
- * (DG_DECIMAL_PLAN.md). The element is then cast to the subtype.
+ * (DECIMAL.md section 2.1). The element is then cast to the subtype.
  */
 static bool elem_fits_range(Oid elem, Oid range_typelem) {
   return elem == range_typelem ||

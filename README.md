@@ -301,6 +301,6 @@ bench/run.sh dg                # one system, for a look; no report
 | --- | --- |
 | `sm/README.md` | the stack's levels, and each one's design document |
 | `sm/NEXT.md` | what is to be built next, in order |
-| `dg/README.md`, `dg/PLAN.md` | what digres is, and its decisions of record |
+| `dg/README.md`, `dg/DESIGN.md` | what digres is, and its decisions of record |
 | `dg/WORKNOTE.md` | every step taken in digres, and why |
 | `sm/BTREE.md` and the other notes in `sm/` | designs of a feature each, built or proposed |

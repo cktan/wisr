@@ -5,8 +5,8 @@ decimals, the ones sm stores (`../sm/sm2/TYPE.md` §3.4):
 `decimal64`, of at most 17 digits, passed by value, and
 `decimal128`, of at most 36; `numeric` is a name for them.
 Reviewed; §4 records the answers. All of §3 is built
-(`WORKNOTE.md` steps 95 to 97), and §5 by
-`DG_DECIMAL_PLAN.md`, which holds its decisions in full.
+(`WORKNOTE.md` steps 95 to 97), and so is §5, `decimal64` by
+value, which made §2 what it is.
 
 ## 1. Where digres stands
 
@@ -33,22 +33,58 @@ Where it stood before §3 was built.
 
 ### 2.1 Two types, and numeric a name for them
 
-- **`decimal64` and `decimal128` are the types**, sm's two
-  (`DG_DECIMAL_PLAN.md` §3.1): `decimal64` takes PostgreSQL's
-  oid for numeric, 1700, `decimal128` 8383.
-- **`numeric` and `decimal` are names only**, resolved where a
-  type name is (`parse_type.c`): a bare one is `decimal64`
-  with no typmod, so a cast to it keeps a value's scale, as
-  PostgreSQL's does: `-2.5::numeric` is `-2.5`. A column of it
-  is `numeric(17, 3)` (§2.3). `numeric(p, s)` is `decimal64`
-  up to 17 digits, `decimal128` up to 36, and refused past
-  them.
-- **A client sees `numeric`**: oid 1700 for either type, 1231
-  for an array of either, and `numeric(p, s)` as its name, so a
-  client, a driver or a query that says `numeric` is unchanged
-  but for a bare `numeric` column's scale and a bare
-  `numeric`'s 17 digits. A parameter a client types 1700 is a
-  `decimal128`.
+- **`decimal64` and `decimal128` are the types**, sm's two:
+  `decimal64` takes PostgreSQL's oid for numeric, 1700, so
+  what names the type by oid, a client's driver first, finds
+  it there; `decimal128` takes 8383.
+- **Two widths are two types because PostgreSQL makes them
+  so.** By value is the type's, not the typmod's (`typbyval`
+  in `pg_type`), and a by-value datum is copied as bits: one
+  type cannot be by value when small and by reference when
+  large.
+
+  | Type | OID | Datum | Digits | Scale bits | sm |
+  | --- | --- | --- | --- | --- | --- |
+  | `decimal64` | 1700 | 8 bytes, by value: `(value << 5) \| s` | 1 to 17 | 5 | `decimal64` |
+  | `decimal128` | 8383 | 16 bytes, by reference: `(value << 6) \| s` | 1 to 36 | 6 | `decimal128` |
+
+- **`numeric` and `decimal` are names only**, with no
+  `pg_type` row of their own, as `int` is a name for `int4`.
+  `typenameTypeIdAndMod()` (`parse_type.c`) resolves them
+  wherever a type name is: a column, a cast, a function's
+  declared argument or result, `'numeric'::regtype` and
+  `to_regtype()`. A bare one is `decimal64` with no typmod, so
+  a cast to it keeps a value's scale, as PostgreSQL's does:
+  `-2.5::numeric` is `-2.5`. A column of it is `numeric(17, 3)`
+  (§2.3). `decimal64(p, s)` and `decimal128(p, s)` may be
+  written too.
+
+  | Written | Type | typmod |
+  | --- | --- | --- |
+  | `numeric`, `decimal` | `decimal64` | none; a column's `(17, 3)` |
+  | `numeric(p)`, `decimal(p)` | as `(p, 0)` | |
+  | `numeric(p, s)`, `p <= 17` | `decimal64` | `(p, s)` |
+  | `numeric(p, s)`, `18 <= p <= 36` | `decimal128` | `(p, s)` |
+  | `numeric(p, s)`, `p > 36` | refused | |
+
+- **A bare `numeric` refuses past 17 digits**, where
+  PostgreSQL's would keep them; a user who wants more says so,
+  as `x::numeric(30, 0)`.
+- **A typmod applies where PostgreSQL applies one**: to a
+  column and to a cast. A function's argument and result
+  ignore it, so `f(numeric)` takes a `decimal64` at any
+  scale, unrounded.
+- **A client sees `numeric`**: oid 1700 for either type in the
+  row and parameter descriptions (`printtup.c`, `postgres.c`),
+  1231 for an array of either, and `numeric(p, s)`, or
+  `numeric` with no typmod, as its name wherever a type is
+  named to a user (`format_type()`: `\d`, `pg_typeof()`,
+  `pg_get_viewdef()`, error messages). So a client, a driver
+  or a query that says `numeric` is unchanged but for a bare
+  `numeric` column's scale and a bare `numeric`'s 17 digits.
+  The names `decimal64` and `decimal128` are seen only in
+  `pg_type`. A parameter a client types 1700 is a
+  `decimal128`, which holds whatever it sends.
 - **Their text is PostgreSQL's**, and so is their binary wire
   format (`numeric_send`, `numeric_recv`), which drivers
   decode: the value is converted to PostgreSQL's base-10000
@@ -125,14 +161,31 @@ typedef struct decimal_t {  /* decimal128's, in two halves */
   is refused (§4.2).
 - **Casts**: from and to the integers, `float4`, `float8`,
   `text`, `money`; `numeric(p, s)` rescales and checks, as
-  PostgreSQL's typmod coercion does. `decimal64` widens to
-  `decimal128` implicitly, `int2` and `int4` to either, `int8`
-  only to `decimal128`: `int8` and `decimal64` have no common
-  type, and a user casts (`DG_DECIMAL_PLAN.md` §3.4).
+  PostgreSQL's typmod coercion does.
+
+  | From | To | Context |
+  | --- | --- | --- |
+  | `decimal64` | `decimal128` | implicit |
+  | `decimal128` | `decimal64` | assignment |
+  | `decimal64`, `decimal128` | itself | length coercion, rounding to the typmod |
+  | `int2`, `int4` | `decimal64` | implicit |
+  | `int8` | `decimal64` | assignment: 19 digits do not fit 17 |
+  | `int2`, `int4`, `int8` | `decimal128` | implicit |
+  | `float4`, `float8` | `decimal64`, `decimal128` | assignment |
+  | `decimal64`, `decimal128` | `int2`, `int4`, `int8`, `float4`, `float8` | as PostgreSQL's numeric's |
+  | `decimal64` | `money` | assignment |
+  | `jsonb` | `decimal64` | explicit |
+
+  PostgreSQL does not chain casts, so each is an entry of its
+  own in `pg_cast`, and `int8` and `decimal64` have no common
+  type: `coalesce(int8_col, 1.5)` is an error, and a user
+  casts one of them.
 - **A `decimal64` finds `decimal128`'s functions**, where it
   has none of its own, before `float8`'s, the numeric
-  category's preferred type (`parse_func.c`,
-  `DG_DECIMAL_PLAN.md` §3.2).
+  category's preferred type: `func_select_candidate()`
+  (`parse_func.c`) counts a `decimal64` taken as a
+  `decimal128` as half an exact match, and an exact
+  `decimal64` one beats either.
 
 ### 2.5 Arithmetic
 
@@ -199,6 +252,14 @@ first (§2.4). Each is in `decimal.c`, and
 `test/select_decimal64.sql` lists them with the types they
 give.
 
+Its btree and hash opclasses are in families of their own
+(`decimal64_ops`), with no cross-type operators: with them,
+`a = 1` on a `decimal64` column would find `(decimal64,
+decimal64)` and `(decimal64, decimal128)` equally good. A
+`decimal128` key on a `decimal64` column compares as
+`decimal128`s, by the implicit cast, and uses no index on the
+column, which holds no value of more than 17 digits anyway.
+
 | Operator or function | Gives | How |
 | --- | --- | --- |
 | `=`, `<>`, `<`, `<=`, `>`, `>=`, btree and hash opclasses, sort support | `bool`, `int4` | the words at one scale, else rescaled in 128 bits |
@@ -258,15 +319,72 @@ path.
    the first answer, to keep each number's text as written.
 5. **`sum(int8)` past 36 digits** is an error.
 
+The answers of `decimal64` by value's review (§5), each with
+the alternative it turned down:
+
+6. **The types and their names**: `decimal64` and
+   `decimal128`, `numeric` and `decimal` names only (§2.1).
+   Earlier drafts kept `numeric` a type: first the 16-byte one
+   beside a new `decimal64`, then the 8-byte one beside a new
+   `decimal128`.
+7. **Arithmetic**: a `decimal128` result, by native
+   `__int128` paths (§2.5). A `decimal64` result, fully by
+   value, fails past 17 digits where PostgreSQL would not, and
+   most of its speed comes from native integer arithmetic,
+   which the 128-bit paths have anyway.
+8. **A bare `numeric`**: a `decimal64` with no typmod, its
+   value keeping its scale (§2.1). It was first `decimal64(17,
+   3)` everywhere, a cast included, until `x::numeric` rounding
+   to three places failed PostgreSQL's `int2`, `int4` and
+   `int8` (`WORKNOTE.md` step 256). Making it a `decimal128`
+   outside a column, as PostgreSQL's unbounded numeric, was
+   the alternative.
+9. **The name a user sees**: `numeric(p, s)` for both types,
+   so tools that look for `numeric` keep working.
+   `decimal64(p, s)` and `decimal128(p, s)`, true to the types
+   but unknown to tools, was the alternative.
+10. **Overload resolution**: a `decimal64` taken as a
+    `decimal128` counts as a match (§2.4); else a `decimal64`
+    would find `float8`'s functions.
+11. **`int8` with `decimal64`**: no common type, and a user
+    casts (§2.4). Widening to `decimal128`, or an implicit
+    `int8` to `decimal64` that fails past 17 digits, were the
+    alternatives.
+
 ## 5. decimal64 by value: built
 
 Most numerics fit in 17 digits, so a `numeric(p <= 17)` is a
 by-value `decimal64`: no palloc and no conversion at the sm
 border, sorts compare `datum1` itself, and spill files and
-hash tables shrink. It was built by this section's option 2,
-the scale kept in the datum, as sm keeps it
+hash tables shrink. Before it, every numeric read from sm was
+converted and palloc'd, 32 bytes behind a pointer, and every
+sort, hash, join key and group key on it chased that pointer.
+A `decimal128` laid out as sm's makes the wide case a pointer
+into sm's tuple, with no conversion either.
+
+It keeps the scale in the datum, as sm keeps it
 (`../sm/SM_DECIMAL_PLAN.md`), which costs a digit of
 `decimal64` and two of `decimal128`. Carrying `(p, s)` through
 every expression, as DuckDB does, and an abbreviated sort key
-were the other options. `DG_DECIMAL_PLAN.md` holds the design
-and its answers; §2 here is what it made.
+were the other options. §2 is what it made, and §4's answers 6
+to 11 its review.
+
+Where it lives:
+
+- `src/include/utils/numeric.h`: both layouts,
+  `NUMERIC_MAX_PRECISION` 36, an accessor for each.
+- `src/backend/utils/adt/decimal.c`: both types' in, out,
+  recv, send, typmod, comparison, hash, sort support and
+  casts; `decimal64`'s native `+`, `-`, `*`, `/`, `sum` and
+  `avg`; `decimal128`'s 128-bit fast path before the 512-bit
+  wide one.
+- `src/include/catalog/`: the types, functions, operators,
+  casts, opclasses and aggregates; what was `numeric` there is
+  `decimal128`'s, but for what §2.8 runs on `decimal64`.
+- `src/backend/parser/parse_type.c` and `parse_node.c`: the
+  names and literals of §2.1 and §2.4; `parse_func.c`, the
+  overload rule.
+- `src/backend/access/sm/smstore.c`: sm's code 17 is
+  `decimal64`, code 18 `decimal128`; the border copies.
+- `src/backend/access/common/printtup.c` and
+  `src/backend/utils/adt/format_type.c`: what a client sees.

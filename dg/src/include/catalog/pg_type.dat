@@ -670,7 +670,7 @@
   typalign => 'd', typstorage => 'x' },
 
 # decimal64: sm's decimal64, a numeric of up to 17 digits by value
-# (DG_DECIMAL_PLAN.md); numeric(p <= 17) names it.
+# (DECIMAL.md section 2.1); numeric(p <= 17) names it.
 { oid => '1700', array_type_oid => '8384',
   descr => 'decimal of up to 17 digits, sm\'s decimal64; numeric(p, s) names it',
   typname => 'decimal64', typlen => '8', typbyval => 'FLOAT8PASSBYVAL',

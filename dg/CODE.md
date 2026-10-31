@@ -2,7 +2,8 @@
 
 The rules and practices for changing `dg/`, written for coding
 agents. `README.md` says what digres is and how it builds,
-`PLAN.md` the decisions of record, and `WORKNOTE.md` each step
+`DESIGN.md` the design and decisions of record, and
+`WORKNOTE.md` each step
 taken and why. The repository's `CLAUDE.md` holds the rules
 for the whole repository; this file adds what is particular to
 `dg/`. Where the two differ, `CLAUDE.md` wins.
@@ -47,7 +48,7 @@ wins over convenience and over what PostgreSQL did.
 - **Before adding state, ask where it lives.** If a copied
   `base/X` would miss it, it is in the wrong place.
 
-The import itself is not built yet (`PLAN.md` §7).
+The import itself is not built yet (`DESIGN.md` §4).
 
 ## 1. Building and testing
 
@@ -117,6 +118,8 @@ The import itself is not built yet (`PLAN.md` §7).
 - **The build is the same on every machine.** No `uname -m`
   branches and no `-march` flags; the development machine is
   aarch64, and the build must also work on x86_64.
+- **Debugging**: `gdb -p` is refused on the development
+  machine (`ptrace_scope`); run the server under `gdb` instead.
 
 ## 2. C compiled as C++
 
@@ -284,6 +287,10 @@ Much of the work is removing what digres does not need.
   no caller left, a variable never set, an include, a
   comment that now describes nothing. Leave unused code you
   did not orphan alone, and mention it.
+- **To find the functions a cut left unused**, compile the old
+  and the new file with `-Wunused-function` and without `-w`,
+  using `-c -o /dev/null` (`-fsyntax-only` reports none), and
+  compare the two lists.
 - **Generated files regenerate.** Edit the sources
   (`pg_proc.dat`, `wait_event_names.txt`) and
   let the build write `fmgrtab.c`, `cat_builtin.c`,
@@ -333,7 +340,7 @@ Much of the work is removing what digres does not need.
 - **Each change that removes or reshapes something gets a
   step in `WORKNOTE.md`**: what it was, why it goes, what
   went with it, and what was left on purpose.
-- **A decision of record goes in `PLAN.md`.**
+- **A decision of record goes in `DESIGN.md`** §4.
 - **Wrap prose at 65 columns** in every `.md` file; code
   blocks, tables and headings are not wrapped.
 

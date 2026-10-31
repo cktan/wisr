@@ -206,7 +206,7 @@ On a call:
    it again.
 2. Put sm's row in a virtual slot as it is: sm's datums are
    PostgreSQL's, the decimals among them, bit for bit
-   (`DG_DECIMAL_PLAN.md`). The slot's descriptor has the type
+   (`DECIMAL.md` §2.3). The slot's descriptor has the type
    of each column a Var reads, taken from the Var, as the
    executor checks a Var against its slot; the table's own
    descriptor would need the relcache.

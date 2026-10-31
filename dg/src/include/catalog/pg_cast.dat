@@ -561,7 +561,7 @@
   castfunc => 'tstzmultirange(tstzrange)', castcontext => 'e',
   castmethod => 'f' },
 
-# decimal64 (DG_DECIMAL_PLAN.md)
+# decimal64 (DECIMAL.md section 2.4)
 { castsource => 'decimal64', casttarget => 'decimal64',
   castfunc => 'decimal64(decimal64,int4)', castcontext => 'i', castmethod => 'f' },
 { castsource => 'decimal64', casttarget => 'decimal128',

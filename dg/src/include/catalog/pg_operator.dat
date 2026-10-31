@@ -3347,7 +3347,7 @@
   oprjoin => 'scalargtjoinsel' },
 
 
-# decimal64 (DG_DECIMAL_PLAN.md)
+# decimal64 (DECIMAL.md section 2.8)
 { oid => '8417', descr => 'equal',
   oprname => '=', oprcanmerge => 't', oprcanhash => 't', oprleft => 'decimal64', oprright => 'decimal64',
   oprresult => 'bool', oprcom => '=(decimal64,decimal64)',

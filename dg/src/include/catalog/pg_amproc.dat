@@ -554,7 +554,7 @@
 # bloom pg_lsn
 # inclusion box
 
-# decimal64 (DG_DECIMAL_PLAN.md)
+# decimal64 (DECIMAL.md section 2.8)
 { amprocfamily => 'btree/decimal64_ops', amproclefttype => 'decimal64',
   amprocrighttype => 'decimal64', amprocnum => '1', amproc => 'decimal64_cmp' },
 { amprocfamily => 'btree/decimal64_ops', amproclefttype => 'decimal64',
