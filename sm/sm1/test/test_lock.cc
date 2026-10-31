@@ -78,7 +78,7 @@ bool no_strong(sm1::session_t *s) {
 
 /* The number of entries in s's database's lock table. */
 size_t table_size(sm1::session_t *s) {
-  std::lock_guard<std::mutex> guard(s->db->lock_mu);
+  wisr::lock_all_t all(s->db);
   return s->db->lock_table.size();
 }
 
@@ -783,7 +783,7 @@ TEST_CASE("a transaction's writes leave no lock entries") {
   REQUIRE(sm1::erase(w, g_store, "y") == 0);
   CHECK(w->locks.empty());
   {
-    std::lock_guard<std::mutex> guard(w->db->lock_mu);
+    wisr::lock_all_t all(w->db);
     CHECK(w->db->lock_table.empty());
   }
 
@@ -1154,7 +1154,7 @@ TEST_CASE("a lock list across blocks keeps each lock exact past a savepoint") {
   CHECK(held(key(900)) == sm1::SM_LOCKMODE_SH);
   REQUIRE(sm1::commit(a) == 0);
   {
-    std::lock_guard<std::mutex> guard(a->db->lock_mu);
+    wisr::lock_all_t all(a->db);
     CHECK(a->db->lock_table.empty());
   }
   CHECK(a->locks.empty());
@@ -1185,7 +1185,7 @@ TEST_CASE("row keys that hash alike are one lock") {
   REQUIRE(sm1::lock_row(a, g_store, "x", sm1::SM_LOCKMODE_SH, false, 1) == 0);
   REQUIRE(sm1::lock_row(a, g_store, "y", sm1::SM_LOCKMODE_EX, false, 2) == 0);
   {
-    std::lock_guard<std::mutex> guard(a->db->lock_mu);
+    wisr::lock_all_t all(a->db);
     CHECK(a->db->lock_table.size() == 1);
   }
   CHECK(a->locks.size() == 1);
@@ -1233,7 +1233,7 @@ TEST_CASE("row keys that hash alike are one lock") {
 
   REQUIRE(sm1::commit(a) == 0);
   {
-    std::lock_guard<std::mutex> guard(a->db->lock_mu);
+    wisr::lock_all_t all(a->db);
     CHECK(a->db->lock_table.empty());
   }
   CHECK(a->locks.empty());
@@ -1292,6 +1292,36 @@ TEST_CASE("a weak table lock takes a slot, and a strong one moves it") {
   CHECK(no_strong(a));
   REQUIRE(sm1::commit(b) == 0);
   for (sm1::session_t *s : {a, b, c}) {
+    sm1::closedb(s);
+  }
+}
+
+TEST_CASE("a strong table lock leaves the fast path of a table 1,024 oids "
+          "away") {
+  // Verify a strong lock sends to the table only the weak locks of
+  // keys that hash with it, not of every oid alike modulo 1,024.
+  // 1. A locks oid 5 X: a count is raised, A's lock in the table.
+  // 2. B locks oid 1029 IS: a slot, and the table holds A's alone.
+  // 3. Both commit: no slot, no entry, no count is left.
+  lock_fixture_t f;
+  sm1::session_t *a = f.open(), *b = f.open();
+  for (sm1::session_t *s : {a, b}) {
+    REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  }
+  REQUIRE(sm1::lock_oid(a, 5, sm1::SM_LOCKMODE_EX) == 0);
+  CHECK(table_size(a) == 1);
+  CHECK(!no_strong(a));
+
+  REQUIRE(sm1::lock_oid(b, 1029, sm1::SM_LOCKMODE_IS) == 0);
+  CHECK(b->fp_used == 1);
+  CHECK(table_size(a) == 1);
+
+  REQUIRE(sm1::commit(a) == 0);
+  REQUIRE(sm1::commit(b) == 0);
+  CHECK(b->fp_used == 0);
+  CHECK(table_size(a) == 0);
+  CHECK(no_strong(a));
+  for (sm1::session_t *s : {a, b}) {
     sm1::closedb(s);
   }
 }
@@ -1432,43 +1462,115 @@ TEST_CASE(
   sm1::closedb(b);
 }
 
-TEST_CASE("a cycle a wait closes is found as it begins, whatever deadlock_ms") {
-  // Verify that a waiter looks for a cycle as it begins to wait (§5.1), and
-  // that set_deadlock_ms, PostgreSQL's deadlock_timeout, does not delay it.
+TEST_CASE("a cycle is found once a waiter has slept its deadlock_ms") {
+  // Verify the search waits deadlock_ms, PostgreSQL's
+  // deadlock_timeout, as PostgreSQL's does: a cycle is not found as
+  // a wait begins, but by the first waiter whose time is up, and the
+  // victim is still the youngest.
   // 1. A negative deadlock_ms is refused.
-  // 2. A and B, with 3000 ms each, hold "x" shared and both write it: B's
-  //    wait closes the cycle, which is found well inside 3 seconds, and the
-  //    younger, B, loses.
+  // 2. A, the older, waits 300 ms; B 10,000 ms. Both hold "x"
+  //    shared. B writes "x" and waits for A.
+  // 3. A writes "x", closing the cycle, and waits: its search, 300
+  //    ms on, finds it. B, the younger, fails with deadlock, and A's
+  //    write goes ahead, no sooner than 250 ms and well inside 10 s.
   lock_fixture_t f;
   sm1::session_t *a = f.open();
   sm1::session_t *b = f.open();
   CHECK(sm1::set_deadlock_ms(a, -1) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  REQUIRE(sm1::set_deadlock_ms(a, 3000) == 0);
-  REQUIRE(sm1::set_deadlock_ms(b, 3000) == 0);
+  REQUIRE(sm1::set_deadlock_ms(a, 300) == 0);
+  REQUIRE(sm1::set_deadlock_ms(b, 10000) == 0);
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm1::lock_row(a, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
   REQUIRE(sm1::lock_row(b, g_store, "x", sm1::SM_LOCKMODE_SH) == 0);
-  int rc_a = -2, rc_b = -2, err_b = 0;
-  std::thread ta([&] { rc_a = set(a, "x", "a"); });
-  settle();
-  auto start = std::chrono::steady_clock::now();
+  int rc_b = -2, err_b = 0;
   std::thread tb([&] {
     rc_b = set(b, "x", "b");
     err_b = sm1::errnum();
   });
-  tb.join();
+  settle();
+  auto start = std::chrono::steady_clock::now();
+  int rc_a = set(a, "x", "a");
   auto ms_taken = std::chrono::duration_cast<std::chrono::milliseconds>(
                       std::chrono::steady_clock::now() - start)
                       .count();
-  ta.join();
+  tb.join();
   CHECK(rc_a == 0);
   CHECK(rc_b == -1);
   CHECK(err_b == sm1::SM_ERR_DEADLOCK);
-  CHECK(ms_taken < 1000);
+  CHECK(ms_taken >= 250);
+  CHECK(ms_taken < 5000);
   REQUIRE(sm1::commit(a) == 0);
   sm1::abort(b);
+  sm1::closedb(a);
+  sm1::closedb(b);
+}
+
+TEST_CASE("a cycle across two partitions of the lock table is found") {
+  // Verify the search sees waits in different partitions at once,
+  // holding every partition's mutex.
+  // 1. Find two row keys whose locks are in different partitions.
+  // 2. A locks the first X, B the second X.
+  // 3. A asks the second and waits; B asks the first, closing the
+  //    cycle. B, the younger, fails with deadlock; A is granted.
+  lock_fixture_t f;
+  std::string k1 = "k0", k2;
+  size_t p1 = wisr::locktab_t::part_of(wisr::lock_row_id(g_store, k1));
+  for (int i = 1; k2.empty(); i++) {
+    std::string k = "k" + std::to_string(i);
+    if (wisr::locktab_t::part_of(wisr::lock_row_id(g_store, k)) != p1) {
+      k2 = k;
+    }
+  }
+  sm1::session_t *a = f.open();
+  sm1::session_t *b = f.open();
+  REQUIRE(sm1::set_deadlock_ms(a, 100) == 0);
+  REQUIRE(sm1::set_deadlock_ms(b, 100) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::lock_row(a, g_store, k1, sm1::SM_LOCKMODE_EX) == 0);
+  REQUIRE(sm1::lock_row(b, g_store, k2, sm1::SM_LOCKMODE_EX) == 0);
+  int rc_a = -2;
+  std::thread ta(
+      [&] { rc_a = sm1::lock_row(a, g_store, k2, sm1::SM_LOCKMODE_EX); });
+  settle();
+  CHECK(sm1::lock_row(b, g_store, k1, sm1::SM_LOCKMODE_EX) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DEADLOCK);
+  sm1::abort(b);
+  ta.join();
+  CHECK(rc_a == 0);
+  REQUIRE(sm1::commit(a) == 0);
+  sm1::closedb(a);
+  sm1::closedb(b);
+}
+
+TEST_CASE("a cycle through a wait for a transaction is found") {
+  // Verify the search follows a lock's wait in a partition and a
+  // writer's wait for a transaction, under xact_mu, in one cycle.
+  // 1. A updates "x", its version in flight; B locks "y" X.
+  // 2. A asks "y" and waits on B's lock.
+  // 3. B updates "x" and waits for A's transaction, closing the
+  //    cycle. B, the younger, fails with deadlock; A is granted.
+  lock_fixture_t f;
+  sm1::session_t *a = f.open();
+  sm1::session_t *b = f.open();
+  REQUIRE(sm1::set_deadlock_ms(a, 100) == 0);
+  REQUIRE(sm1::set_deadlock_ms(b, 100) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(set(a, "x", "a") == 0);
+  REQUIRE(sm1::lock_row(b, g_store, "y", sm1::SM_LOCKMODE_EX) == 0);
+  int rc_a = -2;
+  std::thread ta(
+      [&] { rc_a = sm1::lock_row(a, g_store, "y", sm1::SM_LOCKMODE_EX); });
+  settle();
+  CHECK(set(b, "x", "b") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DEADLOCK);
+  sm1::abort(b);
+  ta.join();
+  CHECK(rc_a == 0);
+  REQUIRE(sm1::commit(a) == 0);
   sm1::closedb(a);
   sm1::closedb(b);
 }

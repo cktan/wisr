@@ -483,7 +483,9 @@ void worker_main(worker_t *w) {
 
 /* Whether the session's transaction waits on a lock or a writer. */
 bool waiting(sm1::session_t *s) {
-  std::lock_guard<std::mutex> guard(s->db->lock_mu);
+  // Hold every lock mutex: a waiter's list is written under its
+  // partition's, or xact_mu.
+  wisr::lock_all_t all(s->db);
   return !s->waiting_for.empty();
 }
 

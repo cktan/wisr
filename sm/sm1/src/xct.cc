@@ -386,12 +386,8 @@ int savepoint(sm1::session_t *s) {
   m.scan_id = s->next_scan_id;
   m.on_commit = s->on_commit.size();
   m.loaded_stores = s->loaded_stores.size();
-  {
-    // Hold lock_mu while reading the lock list.
-    std::lock_guard<std::mutex> guard(s->db->lock_mu);
-    // Mark the lock list.
-    m.locks = s->locks.mark();
-  }
+  // Mark the lock list: only this session's thread changes it.
+  m.locks = s->locks.mark();
   s->savepoints.push_back(m);
   // The new mark's depth.
   return static_cast<int>(s->savepoints.size());
@@ -1506,7 +1502,7 @@ bool xct_decode_prepared(db_t *db, uint64_t xid, rocksdb::Slice val,
       return false;
     }
     p += lock_record_size;
-    g->locks.emplace(l);
+    g->locks.part(l.part).emplace(l);
   }
   // Read the storeids created, then dropped.
   for (std::vector<uint64_t> *stores : {&g->created, &g->dropped}) {

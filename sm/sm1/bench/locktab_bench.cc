@@ -4,11 +4,12 @@
  * database (../NEXT.md §1 item 4).
  *
  * Each thread runs transactions: it takes a transaction's locks
- * one at a time, each under the one mutex as lockmgr.cc's
+ * one at a time, each under its partition's mutex as lockmgr.cc's
  * lock_try does (find, its own hold, the conflicts, then add or
- * convert), then releases them all under one hold of the mutex,
- * as commit does. A lock that conflicts is refused, not waited
- * for, and counted.
+ * convert), then releases them all as commit does: a list of its
+ * holds for each partition, as a session keeps, each walked under
+ * its partition's mutex, taken once. A lock that conflicts is refused, not
+ * waited for, and counted.
  *
  * The workloads:
  *
@@ -211,31 +212,50 @@ uint64_t next_rand(uint64_t *s) {
   return *s * 0x2545f4914f6cdd1dULL;
 }
 
-/* The shared table and its mutex, lockmgr.cc's lock_mu. */
+/* The shared table, its partitions' mutexes its own. */
 struct shared_t {
-  std::mutex mu;
   locktab_t table;
   std::atomic<bool> stop{false};
   std::atomic<int> ready{0};
   std::atomic<bool> go{false};
 };
 
+/* No hold: the end of a partition's list of a thread's holds. */
+constexpr uint32_t none = UINT32_MAX;
+
 /*
- * Take id in mode for owner, as lock_try does, with the mutex held
- * for the call: false if another holder conflicts.
+ * A thread's holds, a list for each partition as a session's lock
+ * lists are: the firsts, never moved, as a holder's first points
+ * into them, and each partition's chained through next.
+ */
+struct holds_t {
+  std::vector<lockid_t> first;
+  std::vector<uint32_t> next;
+  uint32_t head[locktab_t::parts];
+  size_t n = 0;
+
+  /* Room for cap holds, made before the clock starts. */
+  explicit holds_t(size_t cap) : first(cap), next(cap) {
+    std::fill(head, head + locktab_t::parts, none);
+  }
+};
+
+/*
+ * Take id in mode for owner, as lock_try does, with its partition's
+ * mutex held for the call: false if another holder conflicts.
  */
 bool take(shared_t *sh, const lockid_t &id, sm_lockmode_t mode, void *owner,
-          lockid_t *first, size_t *held) {
-  // Hold the table's mutex, as lockmgr.cc holds lock_mu.
-  std::lock_guard<std::mutex> guard(sh->mu);
-  locktab_t::entry_t *e = sh->table.find(id);
+          holds_t *h) {
+  size_t pi = locktab_t::part_of(id);
+  locktab_t::part_t &p = sh->table.part(pi);
+  // Hold the partition's mutex, as lockmgr.cc does.
+  std::lock_guard<std::mutex> guard(p.mu);
+  locktab_t::entry_t *e = p.find(id);
   locktab_t::holder_t *mine = nullptr;
   sm_lockmode_t want = mode;
   bool conflict = false;
   if (nullptr != e) {
-    mine = locktab_t::held(e, owner);
-    want = nullptr != mine ? wisr::lock_cover(mine->mode, mode) : mode;
-    locktab_t::each_conflict(e, owner, want, [&](void *) { conflict = true; });
+    conflict = locktab_t::probe(e, owner, mode, &mine, &want);
   }
   if (conflict) {
     return false;
@@ -244,19 +264,34 @@ bool take(shared_t *sh, const lockid_t &id, sm_lockmode_t mode, void *owner,
     mine->mode = want;
     return true;
   }
-  *first = id;
-  sh->table.add(e, id, owner, want, first);
-  (*held)++;
+  // Into the partition's list, as a lock list entry goes.
+  uint32_t i = static_cast<uint32_t>(h->n++);
+  h->first[i] = id;
+  h->next[i] = h->head[pi];
+  h->head[pi] = i;
+  p.add(e, id, owner, want, &h->first[i]);
   return true;
 }
 
-/* Release the n holds owner made, with firsts in held, as commit does. */
-void release(shared_t *sh, void *owner, const lockid_t *held, size_t n) {
-  // Hold the table's mutex once for all of them.
-  std::lock_guard<std::mutex> guard(sh->mu);
-  for (size_t i = 0; i < n; i++) {
-    sh->table.drop(held[i], owner, &held[i]);
+/*
+ * Release owner's holds, as commit does: each partition's list
+ * walked under its mutex, taken once, and not taken for a list
+ * that is empty.
+ */
+void release(shared_t *sh, void *owner, holds_t *h) {
+  for (size_t pi = 0; pi < locktab_t::parts; pi++) {
+    if (none == h->head[pi]) {
+      continue;
+    }
+    locktab_t::part_t &p = sh->table.part(pi);
+    // Hold the partition's mutex once for all of its holds.
+    std::lock_guard<std::mutex> guard(p.mu);
+    for (uint32_t i = h->head[pi]; none != i; i = h->next[i]) {
+      p.drop(h->first[i], owner, &h->first[i]);
+    }
+    h->head[pi] = none;
   }
+  h->n = 0;
 }
 
 /*
@@ -267,9 +302,8 @@ void run_thread(shared_t *sh, const workload_t &w, int me, bool timed,
                 result_t *r) {
   bool big = w.big && 0 == me;
   size_t cap = big ? big_locks : w.locks;
-  // A first for each hold, made before the clock starts and never
-  // moved: a holder's first points into it.
-  std::vector<lockid_t> held(cap);
+  // Room for every hold, made before the clock starts.
+  holds_t holds(cap);
   uint64_t seed = 0x9e3779b97f4a7c15ULL * uint64_t(me + 1);
   int owner = 0;
   sh->ready.fetch_add(1);
@@ -279,7 +313,6 @@ void run_thread(shared_t *sh, const workload_t &w, int me, bool timed,
   uint64_t allocs0 = t_allocs;
   bool did_big = false;
   while (!sh->stop.load(std::memory_order_relaxed) || (big && !did_big)) {
-    size_t n = 0;
     // The big transaction is timed in both runs: three reads in a
     // million locks.
     uint64_t t0 = big ? now_ns() : 0;
@@ -299,10 +332,10 @@ void run_thread(shared_t *sh, const workload_t &w, int me, bool timed,
       bool ok;
       if (timed) {
         uint64_t a = now_ns();
-        ok = take(sh, id, mode, &owner, &held[n], &n);
+        ok = take(sh, id, mode, &owner, &holds);
         r->lock.add(span(a, now_ns()));
       } else {
-        ok = take(sh, id, mode, &owner, &held[n], &n);
+        ok = take(sh, id, mode, &owner, &holds);
       }
       r->calls++;
       if (!ok) {
@@ -310,7 +343,7 @@ void run_thread(shared_t *sh, const workload_t &w, int me, bool timed,
       }
     }
     uint64_t t1 = timed || big ? now_ns() : 0;
-    release(sh, &owner, held.data(), n);
+    release(sh, &owner, &holds);
     uint64_t t2 = timed || big ? now_ns() : 0;
     if (timed) {
       r->release.add(span(t1, t2));

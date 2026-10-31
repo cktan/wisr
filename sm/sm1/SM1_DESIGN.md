@@ -719,56 +719,95 @@ which `sm1::lock_status` reports with the id.
 A holder points to the entry that made its hold, and the hold
 goes with that entry. An OID lock may have a second entry, a
 fast-path slot moved to the table after the hold was made, which
-a savepoint's rollback releases alone. The list is sm0's
-`blist_t`, blocks whose entries never move: a holder keeps a
-pointer to its first entry, a fast-path slot to its own, and a
-savepoint a mark. A cut keeps up to four blocks for the locks to
-come, and `lock_try` makes room before it takes `lock_mu`, so a
-lock allocates nothing under the mutex for the list. The id
-costs no allocation either, as the table needs none to find an
-entry.
-One mutex covers the table and every waiter's waits-for list,
-which keeps a deadlock walk consistent.
+a savepoint's rollback releases alone. The list is a list for
+each partition of the table (below), each sm0's `blist_t`, blocks
+of 32 whose entries never move: a holder keeps a pointer to its
+first entry, a fast-path slot to its own, and a savepoint a mark
+in each. A cut keeps up to four blocks for the locks to come, and
+`lock_try` makes room before it takes its partition's mutex, so a
+lock allocates nothing under the mutex for the list.
+The id costs no allocation either, as the table needs none to
+find an entry.
+
+**The table is in 16 partitions**, as PostgreSQL's is, an id's
+chosen by the top bits of its hash, each with a mutex and a
+condition variable of its own: a lock, a conversion, a write's
+check and a fast-path slot's move each take their partition's
+mutex alone, so lockers of ids in different partitions never
+meet. A session keeps its locks in a list for each partition, as
+PostgreSQL keeps a backend's (`PGPROC`'s `myProcLocks`), an entry
+in its id's partition's list from the start, a fast-path slot's
+too, so a strong locker's sweep that moves a slot to the table
+changes no list. A release walks the lists in the partitions'
+order, as PostgreSQL's `LockReleaseAll` does, taking a
+partition's mutex once, at its first lock in the table, and not
+at all for a list of none, and wakes that partition's waiters;
+finding a lock of the session's own searches one list. A wait for
+a transaction sleeps under `xact_mu` instead, on `xact_cv`, which
+the transaction's end and every rollback to a savepoint notify,
+and `rollback_epoch` is under it. What reads the whole table or
+every waiter, the deadlock search, `lock_status`,
+`sm1::waits_for` and the moves of a prepared transaction's locks,
+takes every partition's mutex in their order, then `xact_mu`
+(`lock_all_t`).
 
 The table is a module of its own, `src/locktab.h`, which knows
-ids, the modes and opaque owners, and nothing of sessions:
-it finds, adds and drops a lock's holders, and says which
-conflict with a mode. A holder's owner is its session and its
-first the lock list's entry; waiting, the waits-for graph, the
-deadlock search, the fast path and the lock list stay in
-`src/lockmgr.cc`, which holds `lock_mu` across each call. So the
-table is measured alone, `bench/locktab_bench.cc`
-(`../NEXT.md` §1 item 4).
+ids, the modes and opaque owners, and nothing of sessions: it
+finds, adds and drops a lock's holders, and says which conflict
+with a mode. A holder's owner is its session and its first the
+lock list's entry; waiting, the waits-for graph, the deadlock
+search, the fast path and the lock list stay in `src/lockmgr.cc`,
+which holds a partition's mutex across each call to it. So the
+table is measured alone, `bench/locktab_bench.cc` (`../NEXT.md`
+§1 item 4).
 
-**The fast path**, PostgreSQL's for a relation's weak locks
-(its `lock.c`, 9.2). A table's readers and writers take IS and
-IX on its oid, which never conflict with each other, so each
-needs to be seen only by a strong lock, S, SIX or X, which DDL
-takes. An OID lock in IS or IX is kept in one of 32 slots of
-its session's own, under the session's `fp_mu`, and not in the
-table, while no strong lock is held or asked on a key that
-hashes with it: one of 1,024 counts in the database,
-`fp_strong`, is 0. A strong locker adds itself to its key's
-count, then sweeps every session of the database (`fp_sessions`,
-under `fp_reg_mu`), moving each slot for its key into the table
-under that session's `fp_mu`; then it locks as any lock does,
-meeting the weak holders there, in the waits-for graph too. Its
-count goes when the lock is released, or at once if none is
-taken. The two orders meet at the session's `fp_mu`: a weak
+A partition's table is its own, as PostgreSQL's `dynahash` is: a
+power-of-two bucket array indexed by the low bits of the id's
+hash, the top ones having chosen the partition, so no division;
+an entry keeps its id, its hash, its first three holders inline
+and the rest in an array of its own, in the order they came; a
+dropped entry goes on the partition's free list, up to 1,024, so
+a lock in a steady workload allocates nothing under the mutex,
+and a transaction of a million locks leaves no more than that
+behind. The array doubles past one entry a bucket and goes to a
+quarter under one in eight, into a new array that each add and
+drop moves a few buckets to, so no call rehashes the partition,
+and a lookup meanwhile looks in both. A lock walks its entry's
+holders once (`locktab_t::probe`): the asker's own hold, and the
+others' modes as bits, checked against the asked mode's
+conflicts in one AND; the holders in conflict are named only when
+there are some.
+
+**The fast path**, PostgreSQL's for a relation's weak locks (its
+`lock.c`, 9.2). A table's readers and writers take IS and IX on
+its oid, which never conflict with each other, so each needs to
+be seen only by a strong lock, S, SIX or X, which DDL takes. An
+OID lock in IS or IX is kept in one of 32 slots of its session's
+own, under the session's `fp_mu`, and not in the table, while no
+strong lock is held or asked on a key that hashes with it: one of
+1,024 counts in the database, `fp_strong`, is 0, chosen by the
+id's hash, `fmix64` over both words, so tables 1,024 oids apart
+share a count only by chance. A strong locker adds itself to its
+key's count, then sweeps every session of the database
+(`fp_sessions`, under `fp_reg_mu`), moving each slot for its key
+into the table under that session's `fp_mu`; then it locks as any
+lock does, meeting the weak holders there, in the waits-for graph
+too. Its count goes when the lock is released, or at once if none
+is taken. The two orders meet at the session's `fp_mu`: a weak
 locker reads the count under it, and a sweep takes it after the
 count is raised, so either the sweep finds the slot or the weak
-locker sees the count and goes to the table. A strong lock of
-the session's own on the key is counted already and sweeps
-nothing; a weak lock asked while the count is not 0 moves the
-session's own slot for the key to the table first. A slot is
-released at commit, abort or a rollback past it, under `fp_mu`
-alone: a transaction whose locks are all in slots takes no
-`lock_mu` at all. A prepare moves the slots into the table,
-the prepared transaction being in no sweep's list, and a
-restored one counts its strong OID locks again. `lock_status`
-lists the slots with the table. The mutexes are taken in one
-order: the environment's, `fp_reg_mu`, a session's `fp_mu`,
-`lock_mu`. Row locks take no fast path.
+locker sees the count and goes to the table. A strong lock of the
+session's own on the key is counted already and sweeps nothing; a
+weak lock asked while the count is not 0 moves the session's own
+slot for the key to the table first. A slot is released at
+commit, abort or a rollback past it, under `fp_mu` alone: a
+transaction whose locks are all in slots takes no partition's
+mutex at all. A prepare moves the slots into the table, the
+prepared transaction being in no sweep's list, and a restored one
+counts its strong OID locks again. `lock_status` lists the slots
+with the table. The mutexes are taken in one order: the
+environment's, `fp_reg_mu`, a session's `fp_mu`, the partitions'
+in their order, `xact_mu`. Row locks take no fast path.
 
 **Conversions.** A transaction holding a key in one mode and
 asking for one it does not cover — including by writing it —
@@ -806,38 +845,38 @@ on the calls that can wait. `SM_ERR_BLOCKED` is the code those
 flags will return too.
 
 **Every wait can be cut short.** sm1 waits through `sm_sys.h`
-(`../sm0/INTERRUPT.md`): an interrupt to the waiting thread,
-a bit in its wait mask (`sm_wait_mask()`), makes the wait
-fail with `SM_ERR_INTERRUPTED`: not an abort, the transaction
-left active, as after `SM_ERR_BLOCKED`. A session waits in one
-place only, on the lock table's condition, for a lock and for
-an uncommitted writer alike, and that wait is a `sm_wait()`
-on `lock_cv` under `lock_mu`, so every wait there is can be
-ended. The interrupt goes to a thread, not a session: it is
-the thread that blocks. sm1 takes no bit: **the bit stays
-pending until the host takes it**, so every later wait fails
-at once too. An interrupt is then never lost to a wait that
-began a moment late, nor to a caller that goes on after the
-error; when it is done with it is the host's to say.
-This is what a host builds query cancel, statement timeout
-and lock timeout from: the bits and the timers are
-`sm_sys.h`'s, and their meaning the host's. The alternative was for the host to
-poll, with every wait a refused call it repeats; that loses
-the waits-for graph, and with it deadlock detection, which
-`set_qa_nowait` already shows.
+(`../sm0/INTERRUPT.md`): an interrupt to the waiting thread, a
+bit in its wait mask (`sm_wait_mask()`), makes the wait fail with
+`SM_ERR_INTERRUPTED`: not an abort, the transaction left active,
+as after `SM_ERR_BLOCKED`. A session waits in one place only, on
+a condition of the lock manager's, its lock's partition's
+`lock_cv` for a lock and `xact_cv` for an uncommitted writer, and
+that wait is a `sm_wait()`, so every wait there is can be ended.
+The interrupt goes to a thread, not a session: it is the thread
+that blocks. sm1 takes no bit: **the bit stays pending until the
+host takes it**, so every later wait fails at once too. An
+interrupt is then never lost to a wait that began a moment late,
+nor to a caller that goes on after the error; when it is done
+with it is the host's to say. This is what a host builds query
+cancel, statement timeout and lock timeout from: the bits and the
+timers are `sm_sys.h`'s, and their meaning the host's. The
+alternative was for the host to poll, with every wait a refused
+call it repeats; that loses the waits-for graph, and with it
+deadlock detection, which `set_qa_nowait` already shows.
 
-Deadlocks are found as a transaction begins to wait: it
-searches the waits-for graph from itself, so a cycle its wait
-closes is found at once, as PostgreSQL finds one that a
-waiter's place in a lock's queue closes. A cycle that forms
-while it waits, its holders changing under it, is found when
-it has slept `deadlock_ms` (default 50ms, or the session's
-own, `sm1::set_deadlock_ms`: PostgreSQL's `deadlock_timeout`),
-and each `deadlock_ms` after. If it can reach itself, the
+Deadlocks are found as PostgreSQL finds them: a transaction
+that has waited `deadlock_ms` (default 50ms, or the session's
+own, `sm1::set_deadlock_ms`: PostgreSQL's `deadlock_timeout`)
+searches the waits-for graph from itself, and again each
+`deadlock_ms` after, so a cycle is found by the first of its
+members whose time is up. If it can reach itself, the
 **youngest** transaction on that cycle — the last to begin —
 fails with `SM_ERR_DEADLOCK`. The search is a walk of the
-waits-for edges under `lock_mu`, so a wait pays for one as it
-begins; there is no detector thread.
+waits-for edges holding every partition's mutex and `xact_mu`,
+taken after the waiter lets its own go; it holds up every
+locker while it runs, so a wait makes none until it has slept,
+and a wait that ends within `deadlock_ms`, most do, makes none.
+There is no detector thread.
 
 **The edges are read from the lock table as the search walks**
 (`lock_blockers`), as PostgreSQL's detector reads its lock
@@ -994,7 +1033,7 @@ the caller.
 
 - **The mark** is one bit on the session's own lock list
   (`sm1::session_t::lockref_t`), not on the shared lock table, so
-  neither call takes `lock_mu`: only the exclusive holder reads
+  neither call takes a mutex: only the exclusive holder reads
   or sets it. The lock is held from the refused write on, so the
   newest committed version cannot change between the read and the
   write. - **A successful write clears the mark.** Left set, a

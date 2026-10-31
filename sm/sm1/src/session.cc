@@ -208,9 +208,9 @@ int sm1::set_tag(sm1::session_t *session, uint64_t tag) {
 /*
  * The numbers of the sessions the session numbered tag waits for.
  * env->mu keeps every registered session, and its database, from
- * being freed; its database's lock_mu keeps its waits-for edges
- * still. An edge may name a session that has since closed, whose
- * holds are gone: only one still registered is dereferenced.
+ * being freed; its database's lock mutexes, every one (lock_all_t),
+ * keep its waits-for edges still. An edge may name a session that has since
+ * closed, whose holds are gone: only one still registered is dereferenced.
  */
 int sm1::waits_for(sm1::env_t *env, uint64_t tag, std::vector<uint64_t> *out) {
   if (!env) {
@@ -235,9 +235,10 @@ int sm1::waits_for(sm1::env_t *env, uint64_t tag, std::vector<uint64_t> *out) {
   if (!waiter) {
     return 0;
   }
-  // Hold the database's lock_mu while reading the waiter's edges,
-  // from the table: those its wait recorded may be gone.
-  std::lock_guard<std::mutex> lock_guard(waiter->db->lock_mu);
+  // Hold every lock mutex of the database while reading the
+  // waiter's edges, from the table: those its wait recorded may be
+  // gone.
+  lock_all_t all(waiter->db);
   std::vector<sm1::session_t *> blockers;
   lock_blockers(waiter->db, waiter, &blockers);
   for (sm1::session_t *holder : blockers) {
@@ -255,9 +256,10 @@ int sm1::waits_for(sm1::env_t *env, uint64_t tag, std::vector<uint64_t> *out) {
 /*
  * Every lock of env's open databases, held or waited for. env->mu
  * keeps the databases and the registered sessions from being freed;
- * each database's lock_mu keeps its table and its sessions' waits
- * still. A holder is dereferenced only under its database's lock_mu,
- * which a session's release takes before it closes.
+ * each database's lock mutexes, every one (lock_all_t), keep its
+ * table and its sessions' waits still. A holder is dereferenced
+ * only under its partition's mutex, which a session's release
+ * takes before it closes.
  */
 int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
   if (!env) {
@@ -267,7 +269,7 @@ int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
   // Hold the env mutex while reading the databases and the registry.
   std::lock_guard<std::mutex> guard(env->mu);
   for (const auto &[name, db] : env->dbs) {
-    // Hold each of its sessions' fp_mu, then lock_mu, while reading
+    // Hold each of its sessions' fp_mu, then every lock mutex, while reading
     // the slots, the table, the lock lists and the waits: a session
     // adds to its list under fp_mu alone, for a slot.
     std::vector<std::unique_lock<std::mutex>> fps;
@@ -276,7 +278,7 @@ int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
         fps.emplace_back(s->fp_mu);
       }
     }
-    std::lock_guard<std::mutex> lock_guard(db->lock_mu);
+    lock_all_t all(db);
     // A lock by its id, and the kind its taker gave, not its key.
     auto entry = [&](sm1::locktype_t type, uint64_t storeid, uint64_t word,
                      uint16_t kind, sm1::lockmode_t mode,

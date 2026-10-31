@@ -151,7 +151,7 @@ and so are the catalog tables psql reads
    it went from 38.7 to 72–76 thousand tps at 16 clients; with
    the fast path, a table's IS and IX in slots of the session's
    own (step 338), to 125 thousand, 8.6×, and no time is spent
-   waiting for `lock_mu` in t16. The table is still a
+   waiting for `lock_mu` in t16. The table was a
    `std::unordered_map`, and a table that contended should not
    be the language's:
 
@@ -169,40 +169,11 @@ and so are the catalog tables psql reads
      node, then the holders' array, a likely miss each; and
      when it grows, how full it runs, and its allocator, which
      we do not choose.
-   - **The hash it is given**: `lockid_hash_t`, `lo ^ (hi *
-     K)`. libstdc++ takes `hash % bucket_count`, the count a
-     prime (`_Mod_range_hashing`, `_Prime_rehash_policy` in
-     `bits/hashtable_policy.h`), which hides weak low bits, at
-     a 64-bit division a lookup. A power of two does not hide
-     them: `fp_strong` takes the hash modulo 1,024, and the low
-     bits of `hi * K` depend only on `hi`'s low bits, so a
-     table lock's count is its `oid % 1024`, the type bit and a
-     storeid's high bits never reaching it. Tables 1,024 oids
-     apart share a count, and one's DDL sends the other's
-     readers to the slow path; correct, only slower. The fix is
-     a finalizer, MurmurHash3's `fmix64`, after the combine, so
-     every bit of both words reaches every bit of the hash; an
-     OID lock's id stays exact, `lo` one-to-one for a fixed
-     `hi`. `operator()` should be `noexcept`, or libstdc++ keeps
-     the hash in each node. That hash of an id is never
-     persisted (a prepared transaction's record keeps the ids,
-     `sm1/LOCKID.md`), so it can change at any time.
 
    PostgreSQL keeps its own for the same reasons: `dynahash`,
-   sized once, entries from a free list, in 16 partitions. What
-   to build:
+   sized once, entries from a free list, in 16 partitions. Ours
+   follows it, below:
 
-   - **Partitions**, by the id's hash, each with its own mutex;
-     the deadlock search takes them all, in order, as
-     PostgreSQL's does.
-   - **In a partition**: a power-of-two bucket array, indexed
-     by `fmix64`, no division; entries from a pool kept by a
-     free list, no allocation under the mutex; a few holders
-     inline, one to four, the rest in an overflow; a count of
-     the holders granted each mode in each entry, so a conflict
-     check is O(1), not a walk of the holders, as PostgreSQL's
-     `LOCK.granted[]`; growth by adding a block to the pool,
-     never a rehash of the whole partition under its mutex.
    - **What it is measured on**: after the fast path, t16 does
      not reach the table. What does: row locks, `SELECT ...
      FOR UPDATE` and `FOR SHARE`, the foreign-key check's FOR
@@ -253,10 +224,104 @@ and so are the catalog tables psql reads
    statement of 100 at 1 client and 28 at 16, and 100 rows locked
    a statement scale 2.4× from 1 client to 16, as 100 read scale
    8.7×. Its `fk` measures commit batching, not a lock (item 5).
+   Run against PostgreSQL 18 on 2026-11-01, on the hand-written
+   partition (below), digres's tps over PostgreSQL's at 1 and 16
+   clients: one row FOR UPDATE 12.7 and 12.4, ten 9.8 and 6.5, a
+   hundred 3.3 and 1.8. PostgreSQL's FOR UPDATE writes the row
+   and flushes WAL at its commit, about 800 tps at one client, as
+   an insert does; sm1's lock writes nothing, so its transaction
+   has none to flush. The lock table is not what digres trails
+   PostgreSQL by here: an insert is, 0.96 and 0.47, and an insert
+   under the foreign key 0.95 and 0.41 (item 5); and reads of 1
+   to 100 rows at 16 clients, 0.71 to 0.82.
 
-   The order from here: `fmix64`; the partitions; the
-   hand-written partition; each a step, measured against the
-   baseline above.
+   The id's hash is `fmix64` over the two words
+   (`sm1/src/locktab.h`), so a table's fast-path count is no
+   longer its `oid % 1024`; it costs about 38 instructions a lock
+   in the map, of about 810. The hash stays cached in each node:
+   without it, made by a `noexcept` hash, a lookup hashes every
+   node of a bucket it walks, and a lock costs 12.6% more, not
+   4.7%.
+
+   **Partitions**: built. The table is in 16, as PostgreSQL's,
+   each with a mutex and a condition of its own
+   (`sm1/SM1_DESIGN.md` §5.1). A session keeps a lock list for
+   each partition, as PostgreSQL's `myProcLocks`, and a release
+   walks each under its partition's mutex, taken once, as
+   `LockReleaseAll` does. A wait for a transaction sleeps under
+   `xact_mu`, and the deadlock search runs as PostgreSQL's does,
+   once a waiter has slept `deadlock_ms`, holding every
+   partition's mutex and `xact_mu`. Measured as above, against
+   the baseline:
+
+   | Workload | Threads | Baseline | 16 partitions | Max lock |
+   | --- | --- | --- | --- | --- |
+   | distinct | 1 | 10.7M | 9.2M | 1.8 ms |
+   | distinct | 16 | 1.76M | 4.97M | 5.8 ms |
+   | distinct | 32 | 1.61M | 4.87M | 4.4 ms |
+   | hot | 1 | 22.1M | 17.5M | 0.5 ms |
+   | hot | 2 | 11.7M | 9.4M | 1.4 ms |
+   | hot | 16 | 2.74M | 4.87M | 5.1 ms |
+   | big | 16 | 1.35M | 2.43M | 7.5 ms |
+   | mixed | 1 | 12.8M | 10.6M | 3.9 ms |
+   | mixed | 2 | 8.5M | 6.7M | 3.0 ms |
+   | mixed | 16 | 2.08M | 5.67M | 6.3 ms |
+
+   From 8 threads on, 1.4 to 3 times the baseline, and the rehash
+   a million locks makes stalls a locker 7 to 15 ms, not 63 to
+   72: a partition rehashes its sixteenth. At 1 thread, 14 to 21%
+   less, and `hot` and `mixed` about 20% less at 2. Of that, the
+   partitions are 0 to 3% over `fmix64`'s table with one mutex,
+   timed; the rest is `fmix64`'s, timed, though only 4 to 7% in
+   instructions, so this box's swings are some of it. Counted in
+   instructions on one thread, a lock and its release cost 556 to
+   941 with `fmix64` and one mutex, and 29 to 64 more in
+   partitions, a release taking a mutex for each partition it
+   holds locks in where it took one. A first try released by a
+   pass over the whole list for each partition, 76 to 135 more. A
+   transaction of sm's mostly locks in few partitions: a table's
+   IS and IX are in fast-path slots, and a child's insert locks
+   one parent row.
+
+   **The hand-written partition**: built (`sm1/SM1_DESIGN.md`
+   §5.1). A power-of-two bucket array indexed by the hash's low
+   bits; an entry with its id, its hash and three holders inline;
+   dropped entries kept on a free list, up to 1,024 a partition;
+   the array doubled or quartered into a new one a few buckets at
+   each add and drop. Counted in instructions on one thread, a
+   lock and its release cost 383 to 453 in `hot`, `mixed` and
+   `distinct`, against 615 to 970 in the map's partitions and 528
+   to 903 in the baseline; `big`, a million locks, 918, as most
+   of its entries are past the free list and allocated. Timed:
+
+   | Workload | Threads | Baseline | Map partitions | Own partitions | Allocs a lock |
+   | --- | --- | --- | --- | --- | --- |
+   | distinct | 1 | 10.7M | 9.2M | 28.5M | 0.00 |
+   | distinct | 16 | 1.76M | 4.97M | 7.14M | 0.00 |
+   | distinct | 32 | 1.61M | 4.87M | 7.28M | 0.00 |
+   | hot | 1 | 22.1M | 17.5M | 24.9M | 0.00 |
+   | hot | 2 | 11.7M | 9.4M | 9.7M | 0.00 |
+   | hot | 16 | 2.74M | 4.87M | 4.69M | 0.00 |
+   | big | 16 | 1.35M | 2.43M | 5.00M | 0.15 |
+   | mixed | 1 | 12.8M | 10.6M | 23.2M | 0.00 |
+   | mixed | 16 | 2.08M | 5.67M | 7.24M | 0.00 |
+
+   Above the baseline at every thread count but `hot` at 2, 17%
+   under, and at 4, even: its 8 keys are in 8 partitions at most,
+   whose mutexes and entries two threads pass between them, an
+   entry of two holders at most. An entry of many holders, as a
+   foreign-key parent under many child inserts, was walked twice
+   a lock, for the asker's own hold and for the conflicts;
+   `locktab_t::probe` walks it once, gathering the others' modes
+   as bits and checking them against the asked mode's conflicts
+   in one AND, and names the holders in conflict only when there
+   are some. On entries of about 16 holders a lock and its
+   release cost 502 instructions, not 903, and `hot` at 16 and 32
+   threads ran 7 and 16% faster; with one holder, 286 against
+   289. The count of holders by mode that PostgreSQL keeps
+   (`LOCK.granted[]`) is not needed for that, and would have to
+   follow every conversion `lockmgr.cc` makes in place; it is not
+   built (`../QUESTION.md` §1). This item is done.
 5. **A write transaction's two trips through RocksDB's write
    queue** (`../dg/WORKNOTE.md` step 344). An insert writes its
    uncommitted version at once (`sm1/src/access.cc`,
@@ -275,12 +340,29 @@ and so are the catalog tables psql reads
    from 1 client to 16. To weigh, each measured on `ins` and
    `fk`:
 
-   - **RocksDB's own**: `enable_pipelined_write`, the WAL
-     written apart from the memtables; `two_write_queues`, for
-     writes that need no memtable order.
+   - **RocksDB's own**: `enable_pipelined_write`, the WAL written
+     apart from the memtables, measured on 2026-11-01
+     (`../bench/rowlocks.sh`, digres, the hand-written lock
+     partition): at 16 clients `ins` 4,602 tps with it and 4,753
+     without, `fk` 4,551 and 4,293, within a run's swing, against
+     PostgreSQL's 10,073 and 10,523. It does not help: the cost
+     is the trip through the queue, not the order of a group's
+     two stages. `two_write_queues` was not tried: RocksDB's
+     second queue takes only writes that skip the memtable, as
+     `WritePrepared` transactions make, and sm1 makes none.
    - **The version writes kept out of a synced group**: a
      transaction's versions written by a queue, or a batch, of
-     their own, so only the commit waits for a sync.
+     their own, so only the commit waits for a sync. No option of
+     RocksDB's does it: a group led by a synced write takes in
+     the unsynced writes queued behind it, while one led by an
+     unsynced write leaves the synced ones out
+     (`WriteThread::EnterAsBatchGroupLeader`,
+     `db/write_thread.cc`, 8.9.1), and `manual_wal_flush` keeps
+     that grouping, putting off only the writes to the file. A
+     version may not skip the WAL either: a commit's synced
+     record makes durable what the log holds before it, the
+     transaction's versions with it. A design change; a note
+     first.
 
 Low priority:
 
@@ -372,9 +454,10 @@ Owed, and blocking nothing above:
   adds to a write on a table with a partial or an expression
   index.
 - **The index build is unmeasured.** Four workers is a guess:
-  builds contend on sm1's lock table, one mutex, and on
-  RocksDB's write path. Two indexes built on one table walk
-  its rows twice where one pass could fill both.
+  builds lock rows in sm1's lock table, in 16 partitions since
+  §1 item 4, and contend on RocksDB's write path. Two indexes
+  built on one table walk its rows twice where one pass could
+  fill both.
 - **Nothing reads a range at its newest version.** An
   over-long key in a unique index is refused instead
   (`sm3/SM3_DESIGN.md` §7). The primitive is built when a

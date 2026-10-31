@@ -181,12 +181,13 @@ struct sm1::session_t {
   std::string doom_msg;
 
   /*
-   * Locks, row and OID (§5.1); guarded by the database's lock_mu,
-   * and by fp_mu for an entry in a slot. lockref_t is db.h's.
+   * Locks, row and OID (§5.1); changed only by the session's own
+   * thread, an entry's fields under its partition's mutex, or by
+   * fp_mu for an entry in a slot. lockref_t is db.h's.
    */
   using lockref_t = wisr::lockref_t;
-  wisr::lock_list_t locks; /* held, in acquisition order */
-  size_t latest_marks = 0; /* locks with latest set; 0 skips scans */
+  wisr::lock_lists_t locks; /* held, by partition */
+  size_t latest_marks = 0;  /* locks with latest set; 0 skips scans */
 
   /*
    * The fast path (§5.1): an OID lock taken IS or IX, while no
@@ -207,15 +208,18 @@ struct sm1::session_t {
   int fp_used = 0; /* slots in use */
   /*
    * The holders blocking us when our wait last looked, empty when
-   * we are not waiting. Ours alone: it goes stale as they release,
-   * so the cycle search reads the table instead (lock_blockers).
+   * we are not waiting. Written under the mutex our wait holds, its
+   * lock's partition's or xact_mu, and read by another thread only
+   * under every lock mutex (the scenario driver). It goes stale as
+   * they release, so the cycle search reads the table instead
+   * (lock_blockers).
    */
   std::vector<sm1::session_t *> waiting_for;
   /*
    * The lock we wait for in lock_wait, for lock_status and the
    * cycle search: its id, kind and mode. waiting_lock is false when
-   * we wait for none, or behind a writer. Under the database's
-   * lock_mu.
+   * we wait for none, or behind a writer. Under the mutex of the
+   * lock's partition.
    */
   bool waiting_lock = false;
   wisr::lockid_t waiting_id{};
@@ -223,7 +227,7 @@ struct sm1::session_t {
   sm1::lockmode_t waiting_mode = sm1::SM_LOCKMODE_SH;
   /*
    * The transaction we wait for in lock_wait_xact, or 0, and the
-   * database's rollback_epoch as the wait began. Under lock_mu.
+   * database's rollback_epoch as the wait began. Under xact_mu.
    */
   uint64_t waiting_xid = 0;
   uint64_t waiting_epoch = 0;
@@ -392,12 +396,31 @@ std::mutex &lock_latch(db_t *db, uint64_t storeid, rocksdb::Slice key);
 
 /*
  * The sessions s waits for now, into out, read from the table under
- * lock_mu, which the caller holds: the holders whose modes conflict
- * with the lock s waits for, or the transaction it waits for, while
- * it runs. Empty if s waits for nothing, or no longer has to.
+ * every lock mutex, which the caller holds (lock_all_t): the
+ * holders whose modes conflict with the lock s waits for, or the
+ * transaction it waits for, while it runs. Empty if s waits for
+ * nothing, or no longer has to.
  */
 void lock_blockers(db_t *db, sm1::session_t *s,
                    std::vector<sm1::session_t *> *out);
+
+/*
+ * Every lock mutex of a database held, for as long as it lives:
+ * each partition's in order, then xact_mu. What reads the whole
+ * table or every waiter takes it: the deadlock search,
+ * sm1::lock_status, sm1::waits_for, a prepare's and a restore's
+ * moves of a transaction's locks.
+ */
+class lock_all_t {
+public:
+  explicit lock_all_t(db_t *db);
+  ~lock_all_t();
+  lock_all_t(const lock_all_t &) = delete;
+  lock_all_t &operator=(const lock_all_t &) = delete;
+
+private:
+  db_t *m_db;
+};
 
 /*
  * Take the lock on oid in mode, by the fast path when it can
