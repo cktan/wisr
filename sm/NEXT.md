@@ -328,7 +328,17 @@ and so are the catalog tables psql reads
      `WritePrepared` transactions make, and sm1 makes none.
    - **The version writes kept out of a synced group**: a
      transaction's versions written by a queue, or a batch, of
-     their own, so only the commit waits for a sync.
+     their own, so only the commit waits for a sync. No option of
+     RocksDB's does it: a group led by a synced write takes in
+     the unsynced writes queued behind it, while one led by an
+     unsynced write leaves the synced ones out
+     (`WriteThread::EnterAsBatchGroupLeader`,
+     `db/write_thread.cc`, 8.9.1), and `manual_wal_flush` keeps
+     that grouping, putting off only the writes to the file. A
+     version may not skip the WAL either: a commit's synced
+     record makes durable what the log holds before it, the
+     transaction's versions with it. A design change; a note
+     first.
 
 Low priority:
 
