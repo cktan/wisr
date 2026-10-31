@@ -1,10 +1,11 @@
 # BUFFERPOOL — sm's own buffer pool for a tree's pages
 
-The design and plan of the project `BTREEDESIGN.md` §14 decides.
-It replaces that design's §5, §6, and §7's fill latch and
-writers' latches. §14's decisions are taken as given, §2 here
-restates them, and this file adds what they leave open. Nothing
-of it is built. Paths are relative to `sm/`.
+The design and plan of the project `BTREE.md` §17 decides. It
+replaces that design's §14, §15, and §16's fill latch and
+writers' latches. §17's decisions are taken as given, §2 here
+restates them, and this file adds what they leave open. Of §5's
+steps, 3, 4 and 5 are built, none of them the pool itself. Paths
+are relative to `sm/`. A bare §17 below is `BTREE.md`'s.
 
 ---
 
@@ -42,7 +43,7 @@ it is a floor: no eviction, no real page name.
   cache's alone: the least on a root at 4 threads, the most on a
   root at 2.
 - **SH still contends**: a root's 5 ns is 215 at 4 threads. It
-  writes a shared line, which §14 expected.
+  writes a shared line, which §17 expected.
 - **`enter_pages()` and the key stay.** The difference between
   today's pin and the cache's is 40 to 230 ns, and a pool removes
   none of it. It is the larger share of a pin once the cache's
@@ -71,7 +72,7 @@ page each 150, as an ascending load:
 
 40,000 pages of 3 KB, each missed once in an empty cache: 7.9 µs
 a miss, and the cache grew 248.8 MB for 120 MB of pages, **2.07
-times**. `BTREEDESIGN.md` §6.3's weakness is real.
+times**. `BTREE.md` §15.3's weakness is real.
 
 ### 1.4 Eviction
 
@@ -103,13 +104,13 @@ clock.
 | a clock, in a tight cache | a new page format |
 
 The project stands on its concurrency and its memory, if §4.1 is
-solved. It will not close the 1.5× gap, as §14 said.
+solved. It will not close the 1.5× gap, as §17 said.
 
 ---
 
 ## 2. Decided
 
-From `BTREEDESIGN.md` §14:
+From `BTREE.md` §17:
 
 - A pin is a latch, SH or EX, with no third mode, held only as
   long as a latch is.
@@ -123,7 +124,7 @@ From `BTREEDESIGN.md` §14:
 - Slots: a header's `max` and `top`, `top <= max`, grown 16 at a
   time; offsets from the end of the slot array; zero marks
   nothing.
-- §5.5's held pins go.
+- `BTREE.md` §14.5's held pins go.
 
 ---
 
@@ -177,7 +178,7 @@ page_write(session, store, puts)   every put's page pinned ex
 5. A failed `Get`, or a page that is not there: take the frame
    out of the hash, and fail. It was never valid.
 
-So the fill latch's lost update (`BTREEDESIGN.md` §5.4) cannot
+So the fill latch's lost update (`BTREE.md` §14.4) cannot
 happen: a writer of the page waits on the same word.
 
 `no_read` is a miss without step 3.
@@ -226,11 +227,11 @@ format is not settled, and nothing here settles it:
 - `src/page.cc`'s fill latches and cache entries.
 - `sm2/src/tree/latch.cc`, `latch.h`, and `page_latch_t`.
 - `held_t`, `held_max`, `tree_close()`'s work.
-- `BTREEDESIGN.md` §5, §6; `sm1.h`'s "a pin has no mode".
+- `BTREE.md` §14, §15; `sm1.h`'s "a pin has no mode".
 
 ---
 
-## 4. What §14 left open
+## 4. What §17 left open
 
 ### 4.1 Readers through a write: the largest risk
 
@@ -243,7 +244,7 @@ format is not settled, and nothing here settles it:
 2. **`WriteOptions::no_slowdown` under EX.** A write that would
    stall returns `Incomplete`: unpin, wait with no pin held, and
    start the change again from pin EX. It keeps two modes, and
-   §14's protocol already leaves the frame clean. Not tried: it
+   §17's protocol already leaves the frame clean. Not tried: it
    does not cover a memtable switch itself, and whether a retried
    change costs less than the stall needs measuring.
 3. **A larger `max_write_buffer_number`**, if the stalls remain.
@@ -256,12 +257,12 @@ or without a pool. On WSL, 5.6 times is not yet accounted for.
 
 - **`tree_insert_unique()`**: `judge` reads rows under the first
   leaf's latch, and a miss is a disk read. Readers of the leaf
-  wait, as §14 says. Left so at first: a unique check's entries
+  wait, as §17 says. Left so at first: a unique check's entries
   of one prefix are few. Measure it.
-- **`tree_prune()`, which §14 does not name**: `dead()` read a
+- **`tree_prune()`, which §17 does not name**: `dead()` read a
   whole leaf's rows under the latch, up to about 150. It now
-  judges with no latch, from a copy, then latches and judges again
-  only what is to go. A page's `version` could not do this: an
+  judges with no latch, from a copy, then latches and judges
+  again only what is to go. A page's `version` could not do this: an
   insert meeting its key already there changes nothing and moves
   no version, so an entry judged dead, then removed after a row
   wrote that key again, would be lost. Its row is written first,
@@ -282,7 +283,7 @@ it; those holders only ever go up or right, so no cycle forms.
 
 ### 4.4 A pin's wait
 
-`BTREEDESIGN.md` §7 holds that a latch's wait is short, so it is
+`BTREE.md` §16 holds that a latch's wait is short, so it is
 not one `sm_wait()` cuts short. §1.2 ends that: a pin's wait can
 be most of a second. **A pin waits by `sm_wait()`**, after a
 short spin, and fails `SM_ERR_INTERRUPTED` (`CODE.md` §7). So a
@@ -340,7 +341,7 @@ full suites before the next (`CLAUDE.md`).
    worse than step 1.
 9. **`no_slowdown`** (§4.1), if readers' waits still show. →
    verify: a reader's longest wait during a load.
-10. **Measure and decide**: step 1's grid, `BTREEDESIGN.md` §14's
+10. **Measure and decide**: step 1's grid, `BTREE.md` §17's
     questions, §4.5's split. The documents follow.
 
 **Layers for tests** (`CLAUDE.md` §5): sm1 and sm2 for all of it;

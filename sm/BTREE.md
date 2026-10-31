@@ -1,13 +1,28 @@
 # BTREE — secondary indexes as B+trees
 
-Status: being built on the `wip-btree` branch, unattended;
-the decisions taken there are in `../MAJORDECISION.md`, and
-where one changed this design the text below says so. Built:
-§13's steps 1 to 8 for a non-unique index: the page, the
-latches, sm1's pages and cache, the tree, the index `rel` over
-it with vacuum's walk, sm3's kind, and digres's
-`WITH (tree = on)` (D7), and a unique tree's check of §6,
-an `ON CONFLICT` arbiter too (D13).
+The design of record for a tree: why it exists, what it is on
+disk, in memory and under concurrency, and what is left. This is
+the tree as built on `wip-btree`, off by default and asked for by
+`CREATE INDEX ... WITH (tree = on)`: pages, cache, latches, the
+tree, unique trees, `ON CONFLICT` arbiters, vacuum, and digres's
+access. `../MAJORDECISION.md` (D1 to D14) says why each choice
+was made; where one changed the first proposal, the text says so.
+Paths are relative to `sm/`.
+
+In short: a Lehman and Yao B-link tree whose pages are values in
+RocksDB and entries in RocksDB's block cache. Pages are
+immutable once written, and replaced whole. So there is no
+buffer pool of our own, no dirty page, no page-level WAL, no
+checkpoint, and a reader takes no latch. sm's own buffer pool
+will change the first of those (§17, `BUFFERPOOL.md`).
+
+**Nothing keeps compatibility before production**: a database
+made before a change of a page's format is made again with
+initdb.
+
+---
+
+---
 
 ## 1. Why
 
@@ -40,6 +55,8 @@ of its own pages, beside the entries of today (§12); the
 primary key stays the rows' RocksDB keys.** A read by key is
 at PostgreSQL's cost already, and the rows' MVCC, locks and GC
 stay sm1's.
+
+---
 
 ## 2. The decisions
 
@@ -107,137 +124,346 @@ Proposed here:
   page in a latch table by page id, as sm1 latches a key
   (`sm1/SM1_DESIGN.md` §5.1).
 
+### 2.1 Transactions
+
+- **A change to a tree is its own transaction**: it commits when
+  made, whatever the user's transaction then does. An abort
+  does not take an entry out; the row, which the abort does take
+  out, makes it dead.
+- **The entry follows the row**, in the same statement, so it is
+  in the WAL before the commit, and a committed row always has
+  its entry; a crash before the commit leaves only a dead one.
+  The WAL being one sequence, a commit's sync covers the entry
+  (D5).
+- **A unique insert** latches the leaf covering the key's prefix,
+  judges every other entry of the prefix by its row's newest
+  version (`sm1::read_newest`), and inserts holding that latch.
+  A live row is `SM_ERR_DUPKEY`; a running writer is waited for
+  with every latch let go, and the key checked again (D13).
+- **Serializable**: a scan registers its whole requested range
+  as an SIREAD of its own, and an insert reports its entry's key
+  (D10). A scan stopped by `LIMIT` keeps the whole range, and may
+  fail a writer it need not.
+
+---
+
 ## 3. Layout
 
-```
-page key = 04 | relid (2B) | pageid (8B, big-endian)
-value    = header | slots | entries
-header   = level (1B, 0 a leaf) | flags (1B) | max (2B) | top (2B)
-         | version (8B) | prev (8B, 0 none) | next (8B, 0 none)
-         | high key's length (2B) | high key (none on the
-           rightmost page of a level)
-slots    = max offsets (2B each), the first top in key order
-entry    = key's length (2B) | key | value's length (2B) | value
-           leaf:   the entry's sm2 key, as today, encode(sk) ‖
-                   row key; its value, the cut flag
-           inner:  the child's low key; its value, the child's
-                   page id
-```
+### 3.1 In RocksDB
 
-Integers are little-endian (`sm2/src/tree/page.cc`). The flags
-are *has a high key* and *incomplete split* (§13).
+A page is one key and one value in the table's column family,
+so a store stays one column family (`sm1/SM1_DESIGN.md` §3.1).
+
+```
+key   = 0x04 | relid (2B) | pageid (8B)     big-endian
+value = the page's bytes, at their own length
+```
 
 - **Class `0x04`** sorts after the rows (`0x00`) and a chained
-  store's (`0x01`, `0x02`). Keys of the class compare
-  bytewise, as `0x01` and `0x02` do; the GC filter keeps them
-  as they are (§7).
-- **The slots let a page be searched where it lies**: a
-  binary search over them reads the page's bytes in its cache
-  entry, with no decode and no copy. The version counts the
-  page's changes.
-- **Page 0 is the root, for the tree's life**
-  (`../MAJORDECISION.md` D14). There is no meta page: its level
-  + 1 is the tree's height, and other page ids come from one
-  sequence for the database. A page id is never reused.
-- **A leaf entry is its key alone.** The row's key ends it in
-  a non-unique index, as today, and a unique one's carries it
-  too: the row decides visibility, so equal keys of dead rows
-  sit beside the live one (§6). INCLUDE columns are read from
-  the row, which is read anyway: an entry newer than the
-  reader's snapshot could not give them.
-- **A page has a size limit, not a size.** It is stored at
-  its length, and split when an insert would take it past the
-  limit, 4 KB, leaves and inner pages alike
-  (`../MAJORDECISION.md` D12).
-  Fixed sizes are for disk blocks and buffer frames: a page
-  here is a RocksDB value, compressed in RocksDB's block, and
-  a cache entry charged its length, so padding would cost
-  writes and memory for nothing; and every change writes the
-  page again, compacted, so it keeps no free space. The limit
-  stays at or under the store's block size, 16 KB
-  (`sm1/SM1_DESIGN.md` §12.2), so a page's `Get` reads one
-  block. A full leaf holds about 200 `c2` entries: three
-  levels for a million.
-- **An entry is at most a third of what the header leaves**,
-  as PostgreSQL limits a btree tuple to a third of a page: a
-  half of a split holds its high key, no longer than an entry,
-  and two entries, so a split always finds a point where both
-  halves fit with the entry that caused it. The split is made
-  over the page's entries and that one, as
-  `_bt_findsplitloc()` does, at the point nearest half the
-  bytes where both fit. A tree's keys are cut there, about
-  1.3 KB, flagged and rechecked as cut keys are now
-  (`sm2/SM2_DESIGN.md` §3.2); a unique index's, never cut, are
-  refused past it, where today's entries take 4,096 bytes
-  (`sm1::max_keylen`).
+  store's (`0x01`, `0x02`), compares bytewise, and is passed
+  over by the GC filter and by every scan of versions.
+- **Pages of a tree sort together**, by id. An id says nothing
+  of key order: a split's right page gets the next id, wherever
+  its keys fall.
+- **Not versioned**: one key, the newest bytes. Older versions
+  of a page are RocksDB's to drop at compaction.
+- **Compressed by RocksDB**, LZ4 in its blocks of 16 KB
+  (`store_block_size`), and cached uncompressed.
+
+### 3.2 A page's bytes
+
+```
++--------------------------------------------------------+
+| header, 32 bytes                                       |
+|   level   1B   0 a leaf                                |
+|   flags   1B   see below                               |
+|   max     2B   slots it has, a multiple of 16          |
+|   top     2B   slots in use, the entries; top <= max   |
+|   version 8B   this page's changes                     |
+|   prev    8B   left sibling's page id, 0 none          |
+|   next    8B   right sibling's page id, 0 none         |
+|   hlen    2B   high key's length                       |
++--------------------------------------------------------+
+| high key, hlen bytes; none on a level's rightmost page |
++--------------------------------------------------------+
+| slots: max offsets, 2B each, from the array's end;     |
+| the first top are in key order, the rest zero          |
++--------------------------------------------------------+
+| entries, in no order, end to end to the page's end:    |
+|   klen 2B | key | vlen 2B | value                      |
++--------------------------------------------------------+
+```
+
+Integers are little-endian. The key above is big-endian so that
+it sorts; these are read, never compared.
+
+`flags` has two bits:
+
+| Bit | Name | Set when |
+| --- | --- | --- |
+| 0x01 | `page_has_high` | the page has a high key: every page but a level's rightmost |
+| 0x02 | `page_incomplete` | the page has split, and its parent has no entry for the new right page yet |
+
+`page_incomplete` is set by a split's first write and cleared by
+its second (§5). A reader ignores it, as `next` reaches the new
+page. A writer that latches a flagged page finishes the split
+before its own change, which is how a crash between the two
+writes is repaired. Page 0 is never flagged.
+
+**A page has a limit, not a size.** `page_limit` is 4 KB (D12):
+past it an insert splits the page. A page is stored at its
+length, with no free space, as every change writes it whole, and
+a fixed size is for frames and disk blocks, which this design
+has neither of.
+
+**There is no gap between slots and entries, but the slots keep
+room** (§17). A slotted page keeps free space to insert in place;
+this one is replaced, so a new entry is spliced into a new copy
+of the bytes (`page_insert_bytes()`, with no entry decoded): it
+goes last, and its slot in key order. A page is stored at its
+used length, which counts unused slots, so `entry_max` leaves
+room for a half's 30. The pool's frames will hold the gap, and pages will
+change in place (§17).
+
+The slots let a page be searched where it lies: a binary search
+over them reads the page's bytes in its cache entry, with no
+decode and no copy.
+
+The limit stays at or under the store's block size, 16 KB
+(`sm1/SM1_DESIGN.md` §12.2), so a page's `Get` reads one block.
+A page here is a RocksDB value, compressed in RocksDB's block,
+and a cache entry charged its length, so padding would cost
+writes and memory for nothing. A full leaf holds about 200 `c2`
+entries: three levels for a million.
+
+### 3.3 Entries
+
+| Page | Key | Value |
+| --- | --- | --- |
+| leaf, level 0 | the entry's sm2 key: `encode(key columns)` then the row's key | its cut flag |
+| inner, level 1 and up | its child's low key; empty on a level's leftmost page | the child's page id, 8B |
+
+- **Keys are distinct byte strings, compared bytewise.** A leaf
+  entry ends with its row's key, so equal column values do not
+  need a tiebreak.
+- **A leaf holds no MVCC.** No xid, no timestamp, no INCLUDE
+  columns: the row decides what is visible (§2.1).
+- **A page holds `[low, high)`.** Its high key is the least key
+  it may not hold: its right sibling's first key, at the split
+  that made it.
+- **A descent takes the last inner entry at or below the key.**
+- **No prefix compression, suffix truncation or deduplication
+  yet.** A separator is a whole key. All three are wanted (§11).
+- **INCLUDE columns are read from the row**, which is read
+  anyway: an entry newer than the reader's snapshot could not
+  give them. A unique index's entry carries the row's key too, as
+  equal keys of dead rows sit beside the live one (§6).
+
+### 3.4 Limits
+
+| | Value |
+| --- | --- |
+| page limit | 4,096 bytes |
+| header | 32 bytes |
+| unused slots a half may carry | 30 bytes |
+| largest entry, `entry_max()` | (4,096 - 32 - 30) / 3 = 1,344 bytes |
+| longest key, as it must fit an inner entry too | 1,330 bytes |
+| levels | 256 |
+| page ids | 2^64, and never reused |
+
+An entry is at most a third of what the header and a half's
+unused slots leave, as PostgreSQL limits a btree tuple to a third
+of a page: a half of a split holds a high key and two entries, so
+a split always finds a point where both halves fit, with the
+entry that caused it (D1). The split is made over the page's
+entries and that one, as `_bt_findsplitloc()` does, at the point
+nearest half the bytes where both fit. A longer key is cut and
+flagged, and rechecked on the row (`sm2/SM2_DESIGN.md` §3.2); a
+unique index's, never cut, is refused, where today's entries take
+4,096 bytes (`sm1::max_keylen`).
+
+**An open and a check.** Every read opens a page, checking its
+header and slots alone. A writer also checks every entry before
+it changes a page: they lie end to end from the slots to the
+page's end, and each is named by one slot.
+
+### 3.5 The shape of a tree
+
+```
+ page 0   [ ""→17 , m→23 ]                  level 2, the root
+              |       |
+ level 1   [17] <--> [23]                   next / prev links
+           /  \       /  \
+ level 0 [4]<>[9]<>[31]<>[12]               leaves, in key order
+```
+
+- **Page 0 is the root, for life.** Its key is `relid | 0`, so a
+  descent starts with no lookup of where the root is.
+- **Every level is a doubly linked list**, by `next` and
+  `prev`. The links, not the parents, are what a reader relies
+  on: B-link's reason for being.
+- **Other page ids mean nothing**: they come from one sequence
+  for the database, so a tree's are sparse. Holes cost nothing,
+  as RocksDB stores only the keys that exist.
+- **0 means "none" in a link.** The root is nobody's child or
+  sibling, so no link names page 0.
+- **Height is the root's level + 1.**
+- **Only page 0 ever changes level.** Any other page keeps its
+  level for life. No page is merged or freed, and no id reused.
+  A tree made again under a relid first drops every page there.
+
+### 3.6 Page ids
+
+- **One sequence for the database**, not one a store or an index,
+  starting at 1, so page 0 is never handed out. Holes are
+  harmless, as ids need only be unique within a tree, and one a
+  database has no table's lifetime to follow (D14).
+- **Made in `cat_init()`** (`sm3/src/catalog/ddl.cc`), beside
+  `sm3.oid`. Its name starts `sm3.`, so `reserved_seq()` keeps it
+  from users. sm2 names it, a constant in `tree.h`, as sm2 is
+  what draws from it.
+- **Drawn by a `seqref_t`**, looked up at an open tree's first
+  split. A root split draws two.
+- **Why it is safe:** `sm1::nextseq` never hands a value out
+  twice, across restarts too; a crash only skips values, and an
+  abort gives none back. D4's objection was to a sequence made by
+  `CREATE INDEX`, which an abort undoes; this one exists before
+  any index.
+
+### 3.7 A page holds a range
+
+- **A page holds a half-open range of keys**, `[low, high)`: a
+  reader moves right while its key is at or past the high key.
+  Every key of a tree is distinct, as a leaf entry ends with its
+  row's key, so no rule is needed for equal keys.
+- **An inner entry is its child's low key and the child's page
+  id**, the first entry of a level's leftmost page with an empty
+  key, below every key.
+- **`prev` exists for a reverse scan later**: nothing reads it
+  yet but `tree_check()`. A split keeps it in its first batch, S
+  latched under P's latch, left before right, and read anew.
+
+---
 
 ## 4. Reads
 
-- **A probe** descends from the root, each page from the
-  cache, a miss read with a `Get` and put there, a binary
-  search of each to a leaf; it moves right while the key is
-  above a page's high key. An equality's probe then reads entries
-  while they match; a range's, until the upper bound.
-- **An IN list's probes** descend the inner pages first, all
-  of them, and read the distinct leaves the cache does not
-  hold in one `MultiGet`. *Not built*: digres opens a probe a
-  scan, each descending through the inner pages its index
-  holds (D11).
-- **Each entry's row** is read by its key at the scan's
-  snapshot, as `sm_tbl_read_keys()` reads them today, in
-  batches, and kept only if its columns give the entry's key
-  again. A cut key is rechecked against the row's columns, as
-  now. *Built*: sm3 reads them, many a call, and makes each
-  row's entry as a write would, the evaluator asked for an
-  expression or a predicate, to compare with the entry's key
-  as bytes (D8).
-- **The leaf is not held** while rows are read: the scan
-  copies a leaf's matching entries, and its high key, and
-  releases it; the next leaf is the right link's.
-- **Index-only scans read the row.** None is answered from
-  the tree alone; `count(*)` by an index gets slower. A
-  visibility map, or InnoDB's page-level newest writer, can
-  be added later; it is no part of this design.
-- **A cursor** keeps its position as the last key it returned
-  and its leaf's version, and descends again if the leaf it
-  reads next has another. *Built otherwise*: it reads the leaf
-  it copied from again, past the last key, and moves right
-  from there; no page is ever freed, so a split meanwhile hides
-  nothing.
+**A descent** starts at page 0, binary-searches each page's slots
+where it lies, moves right past a page whose high key its key is
+at or past, and follows the child down. It latches nothing.
+
+**A probe's page** comes from the cache, a miss read with a `Get`
+and put there. An equality's probe then reads entries while they
+match; a range's, until the upper bound.
+
+**A range** copies the leaf's entries in range, releases the
+leaf, and hands them out from the copy. The next batch starts by
+reading that leaf again, past the last key, and moving right, so
+a split meanwhile hides nothing. If that page is page 0 grown, a
+leaf no longer, it descends again from the last key.
+
+- **The leaf is not held** while rows are read: the scan copies a
+  leaf's entries in range, one at a time in key order, and
+  releases it.
+- **A cursor** keeps its place as the last key it returned, and
+  the leaf it copied from: no page is ever freed, so a split
+  meanwhile hides nothing. The first proposal's check of the
+  leaf's version was not built.
+
+**An IN list** aims one cursor from probe to probe, keeping its
+buffers (`cursor_rebound()`).
+
+**Each entry's row** is read by its key at the transaction's
+snapshot, into the cursor's pin, and handed out only if the row
+still gives this entry's key, compared as bytes (D8). Rows of
+sorted, close keys are read by one cursor (`BATCHREAD.md` §2.1).
+*Built*: sm3 reads them, many a call, and makes each row's entry
+as a write would, the evaluator asked for an expression or a
+predicate. A cut key is rechecked against the row's columns.
+
+**An IN list's misses** by one `MultiGet` are *not built*: digres
+opens a probe a scan, each descending through the inner pages its
+index holds (D11).
+
+**Index-only scans read the row.** None is answered from the tree
+alone; `count(*)` by an index gets slower. A visibility map, or
+InnoDB's page-level newest writer, can be added later; it is no
+part of this design.
+
+**Backward** (planned, after `prev`): a step left can land on a
+page that has since split, so it must walk right until it meets
+the page it came from, as nbtree's `_bt_walk_left()`.
+
+---
 
 ## 5. Writes
 
-- **Insert**: when a row is inserted, or an update changes an
-  index's key, the new entry is inserted, in a top-level
-  change, before the row write returns. An entry already
-  there, the same key and row key, is no change: an update
-  from A to B and back to A finds A's entry still there.
-- **Nothing is removed by an update or a delete.** The old
-  entry stays, and its row, at the old key no longer, makes
-  it dead. A primary key's change moves the row
-  (`CLUSTER.md` §4): its new entries name the new key, and
-  the old ones name a key that holds no row.
-- **A split** latches the leaf, makes the new right page,
-  links it, then posts the separator to the parent, each step
-  a top-level change of its own, as Lehman and Yao order them:
-  a crash between them leaves a tree a reader can walk, and
-  the next insert into the parent finishes the post. Each
-  page a step writes replaces its cache entry after its put,
-  and the post moves the index's version; a reader on the old
-  pages reaches the new one by the right link.
-- **Order with the user's transaction**: the entry is inserted
-  after the row's version is written, in the same statement,
-  so its change is in RocksDB's WAL before the commit's: a row
-  that commits always has its entry, and a crash before the
-  commit leaves only a dead entry. The entry first, as this
-  section once had it, lets vacuum remove an entry an insert
-  has just found there (`../MAJORDECISION.md` D5).
+**An insert** descends, latches the leaf, moving right with the
+latch coupled, reads the page anew under it, and writes the page
+whole: its new bytes in a batch. Finding the key already there
+is no change, which an update A to B and back relies on.
+
+**When**: when a row is inserted, or an update changes an index's
+key, the new entry is inserted, in a top-level change, before the
+row write returns. An update from A to B and back to A finds A's
+entry still there.
+
+**Nothing is removed by an update or a delete.** The old entry
+stays, and its row, at the old key no longer, makes it dead until
+vacuum. A primary key's change moves the row (`CLUSTER.md` §4):
+its new entries name the new key, and the old ones name a key
+that holds no row.
+
+**Order with the user's transaction**: the entry is inserted
+after the row's version is written, in the same statement, so
+its change is in RocksDB's WAL before the commit's: a row that
+commits always has its entry, and a crash before the commit
+leaves only a dead entry. The entry first, as a first draft had
+it, lets vacuum remove an entry an insert has just found there
+(D5).
+
+**A split of page P**, S being its old right sibling, R new:
+
+```
+first batch, atomic:
+  R        the upper entries; R.prev = P, R.next = S
+  P        the lower entries; P.next = R; flagged incomplete
+  S        S.prev = R             (none if P was rightmost)
+second batch, atomic:
+  parent   a new entry for R
+  P        unflagged
+```
+
+A reader in between reaches R by P's `next` link. A crash in
+between leaves P flagged, and the next writer to latch it
+finishes the post before its own change. A full parent splits
+the same way, in the second batch.
+
+**A split of page 0** has no in-between:
+
+```
+one batch, atomic:
+  L, R     two new pages, the entries in halves, linked;
+           L.prev = 0, R.next = 0
+  page 0   entries for L and R, its level up one
+```
+
+So it is never flagged. This is what the fixed root costs and
+buys: page 0's entries move to new pages, the one case of a key
+moving other than right; and page 0's level changes, so a writer
+who latches it, or a cursor who reads it again, checks the level
+and descends again if it is not what it wanted. A reader
+holding page 0's old bytes is still routed rightly.
+
+**The cost of writing a page whole**: 4 KB through the WAL and
+memtable where today's entries write about 40 bytes. See §10.
+
+---
 
 ## 6. Uniqueness
 
 As PostgreSQL's `_bt_check_unique()`: under the leaf's latch,
 each entry with an equal key, its key columns not null, has
-its row read at its newest version (`sm1::read_latest`):
+its row read at its newest version (`sm1::read_newest`):
 
 - a row committed and live with that key: `SM_ERR_DUPKEY`;
 - a row whose writer is still running, with that key: the
@@ -248,17 +474,43 @@ its row read at its newest version (`sm1::read_latest`):
 Then the new entry goes in, under the same latch. A key with
 a null column is not checked, as now.
 
-## 7. Vacuum
+The check latches the leaf covering the key's prefix, and inserts
+holding that latch (D13).
+
+---
+
+## 7. Vacuum, durability and space
 
 An entry is removed when its row, at the GC watermark
 (`sm1/SM1_DESIGN.md` §8.3), is gone or has another key, so no
 snapshot can still read the row with it: `VACUUM` walks each
 index's leaves, reads the rows of a leaf's entries, and
 removes the dead ones in a top-level change, as PostgreSQL's
-`btbulkdelete()`. Pages are not merged; an empty leaf stays
-linked, as PostgreSQL's half-dead pages are, until a later
-design deletes them. The GC filter does not touch class
-`0x04`.
+`btbulkdelete()`. An empty leaf stays linked, as PostgreSQL's
+half-dead pages are, until a later design deletes them. The GC
+filter does not touch class `0x04`.
+
+- **Recovery has nothing of ours.** A batch is in RocksDB's WAL,
+  unsynced, whole or not at all; replay restores it. A commit's
+  sync makes it durable. The cache starts empty.
+- **Half-done work is one state**: a page flagged incomplete,
+  finished by the next writer to latch it.
+- **A temporary table's pages** are in the temporary instance,
+  with no WAL, as its rows are.
+- **Vacuum** walks the leaves, and removes an entry only when its
+  row is settled: its newest version committed at or below the GC
+  watermark, and gone or of another key (D5). A leaf's entries
+  are judged with no latch, and those to go are judged again with
+  it latched, as an insert that finds its entry there moves no
+  version: only its row, written first, shows it.
+- **Pages are not merged.** An empty leaf stays linked, a tree
+  never shrinks, and page ids are not reused.
+- **`DROP INDEX`** drops the pages once it commits, by
+  `sm1::page_drop` from an `on_commit` function, as a rollback
+  must keep them. A crash first leaves them until the store goes
+  (D6). `TRUNCATE` and a rewrite make a new store.
+
+---
 
 ## 8. Cases
 
@@ -294,7 +546,32 @@ design deletes them. The GC filter does not touch class
 | keyless tables | the row key is the `_id`, as now |
 | bulk load, its rollback | entries inserted as rows are; a rollback leaves them dead. A sorted build bottom-up is left for later |
 
-## 9. What changes where
+---
+
+## 9. Where it sits
+
+```
+ digres   btree access method, WITH (tree = on)
+            |  scans rows through sm3's cursor (D8)
+ sm3      index's kind, row check, unique check, DROP, vacuum
+            |
+ sm2      src/tree/   page.cc   bytes of one page, no I/O
+                      tree.cc   descent, cursor, insert, split
+                      latch.cc  writers' latches
+            |  sm1::pin_page, page_write, page_drop, ...
+ sm1      src/page.cc  a page's I/O, its cache entry, fill latch
+            |
+ RocksDB  block cache (pages + row blocks), WAL, memtable, SSTs
+```
+
+- **sm1 owns a page's I/O**, as it is the only channel into
+  RocksDB, and knows nothing of trees (D2).
+- **sm2 owns the tree**, and holds no RocksDB handle.
+- **A primary key is never a tree.** Its entries are the rows'
+  RocksDB keys. A row stays in sm1's MVCC store; a tree holds
+  only keys that lead to rows.
+
+What each level holds:
 
 - **sm1**: class `0x04`, its comparison and the GC filter's
   pass-over; a top-level `WriteBatch` of pages; SIREAD and
@@ -326,9 +603,57 @@ design deletes them. The GC filter does not touch class
   costs, as btree's, and `amcanreturn` false until §4's
   visibility map.
 
-## 10. What it buys, and what it does not
+---
 
-Estimates, to be measured as each part lands:
+## 10. What it costs
+
+### 10.1 Measured
+
+Measured with the meta page, before this design.
+Instructions are `perf stat`'s user instructions of the whole
+server, per statement (`NEXT.md` §1, `../dg/WORKNOTE.md` step
+354).
+
+| | PostgreSQL 18 | today's entries | a tree |
+| --- | --- | --- | --- |
+| Q9, a range, 100 rows | 395k | 1,344k (3.4×) | 955k (2.4×) |
+| Q10, 100 probes | 768k | 3,670k (4.8×) | 1,562k (2.0×) |
+| Q11, 16 clients, tps | 33,512 | 12,250 | 19,721 |
+| a write moving a key, 16 clients, tps | 26,904 | 10,874 | 18,196 |
+
+| A million rows into `wide_mixed` | seconds |
+| --- | --- |
+| today's entries | 18 |
+| a tree of 4 KB pages, spliced (step 351) | 27.7 |
+
+Measured again with this design, against the commit before it,
+on the same machine and build (`../dg/WORKNOTE.md` step 359):
+
+| | before | this design | today's entries |
+| --- | --- | --- | --- |
+| Q9 | 958k | 957k | 1,324k |
+| Q10 | 1,523k | 1,522k | 3,637k |
+| Q11, 16 clients, tps | 20,019 | 22,889 | 11,108 |
+| a write moving a key, 16 clients, tps | 15,356 | 15,184 | 9,835 |
+| a million rows, seconds | 70 | 66 | 12 |
+
+So the design costs nothing measurable. **A load is 5.6 times
+today's entries here**, against the 1.5 above, on both builds,
+and why is not known. Its profile is RocksDB's: LZ4 a tenth, and
+compaction and the memtable.
+
+The goal, 1.5× of PostgreSQL, is not met. What a tree's Q9
+spends: malloc and free a fifth, the executor, each row's
+recheck. Q10's: a descent a probe, and its row.
+
+Measured again on a VM of 2 cores (2026-10-31, `BUFFERPOOL.md`
+§1): a load is 2.04 times today's entries with the WAL's logs
+zero-filled, 1.38 with that off, and 1.13 on tmpfs. Here the
+extra is zeroing 64 MB a log on the write path, and stalls for
+two immutable memtables. That does not account for 5.6 times on
+the machine above, which is still to be run both ways.
+
+### 10.2 As estimated first
 
 - **Q10**: the probe's 30k becomes a descent of pages in the
   cache, about 3k; Q10 about 1.25M instructions, **1.55
@@ -351,7 +676,9 @@ Estimates, to be measured as each part lands:
   writing the page later is what would close the rest.
 - **Index-only scans** get slower (§4).
 
-## 11. Open questions
+---
+
+## 11. Open questions, and what is not planned
 
 1. Whether pages share the block cache's budget with the
    rows' blocks as they are, or need a share of it set aside:
@@ -364,6 +691,27 @@ Estimates, to be measured as each part lands:
    1.5.
 4. How a statement asks for a tree (§12): `USING smtree`, or
    `WITH (tree = on)`.
+
+**Not shown to run**: `tree_prune()`'s check of page 0's level,
+and `descend()`'s `afresh` retry, have no test that reaches them.
+
+**Not planned yet**, in the order I would take them. None is
+needed by what is built.
+
+| Work | What it buys | What it touches |
+| --- | --- | --- |
+| Reverse scan | `ORDER BY ... DESC` | `prev`, §4's walk right; SSI's range |
+| Fix §15.3's two weaknesses | a fairer cache | measure first; `fill_cache`, a cursor that keeps the leaf's id |
+| Log the entry, write the page later | closes 27.7 s to 18 s, the write gap | **dirty pages**, so write-back: this design's largest step |
+| Prefix compression, suffix truncation of separators | more entries a page, a lower tree, far fewer page writes | §3.3, a split, the search of a page |
+| Deduplicate equal keys | smaller leaves on low-cardinality columns | §3.3, the entry's format |
+| Bottom-up sorted build | `CREATE INDEX` without a write per entry | sm3's build, `BULKLOAD.md` |
+| Many leaves by one `MultiGet` | an IN list's misses in one read | §3.5 |
+| Narrow an SIREAD at a cursor's end | fewer false failures | D10, a call with the last key read |
+| Page deletion and merge | a tree that shrinks | **every "no page is freed" above**: held pages, cursors, links |
+| Visibility data on a page | index-only scans from the tree | §2.1, a new write to every page |
+
+---
 
 ## 12. Beside today's entries
 
@@ -405,6 +753,11 @@ index is of one kind, and keeps it for its life.
   in sm2 and sm3 and every test run on each.
 - **Tests run on each kind**: slt and pgregress, the mvcc and
   rel cases each kind needs; a tree's cases are §8's.
+
+**Whether today's entries stay** is decided by measuring both
+kinds over that grid: a kind that loses every workload goes.
+
+---
 
 ## 13. Order of work
 
@@ -510,3 +863,343 @@ scenario driver has no verb for a tree.
    index access method's costs. Tests: `dg/test/slt` on both
    kinds; the grid of index scans measured against today's
    entries and PostgreSQL (`NEXT.md` §1 item 3).
+
+**After the eight steps**: the root moved to page 0 for life, the
+meta page went for the sequence of §3.6, and every page gained
+`prev` (D14). A pin's check was measured, and a snapshot older
+than the last DDL now answers at its own snapshot (§14.3). The
+next project is §17.
+
+---
+
+## 14. The page cache
+
+**There is none of our own.** The page cache is RocksDB's block
+cache, the one the environment has, shared by every database in
+it, and by the rows' blocks. digres sizes it to `shared_buffers`
+(`NBuffers * BLCKSZ`). One memory budget, one eviction policy.
+
+### 14.1 Against PostgreSQL's
+
+| | PostgreSQL | a tree |
+| --- | --- | --- |
+| frame | fixed 8 KB, an array | a `std::string`, the page's length |
+| page table | shared hash, 128 partitions | the cache's shards |
+| pin | an atomic in the buffer's descriptor | a handle's count, under its shard's mutex |
+| content lock | LWLock, SH or EX, on every read | none to read; a writer's latch by page id |
+| change | in place, in the frame | a new copy replaces the entry |
+| dirty pages | yes | **never** |
+| write-back | bgwriter, checkpointer | none |
+| WAL | a record for the change | the whole page, in a write batch |
+| recovery | redo into pages | RocksDB's WAL replay, nothing of ours |
+| replacement | clock sweep | LRU with a high-priority pool (§15) |
+| scan protection | ring buffers | none (§15.3) |
+
+### 14.2 A cache entry
+
+- **Key**: `'P' | dbid (8B) | storeid (8B) | page key`. The tag
+  keeps it from any key RocksDB makes for a block.
+- **Value**: a `std::string` of the page's bytes, uncompressed,
+  charged its capacity, its object and its key.
+- **A pin is the cache handle.** `sm1::pin_page` returns it, cast
+  to an opaque `page_t`, so a hit allocates nothing. It holds
+  the entry against eviction until `sm1::unpin_page`.
+- **An entry's bytes never change.** A write replaces the entry;
+  a pin on the old one keeps the old bytes, valid, until
+  released. This is what lets a reader run without a latch, and
+  why a pin has no SH or EX mode.
+
+### 14.3 A read
+
+```
+pin_page(key, inner)
+  Lookup                       a hit: take a reference, done
+  miss: lock fill latch of key
+    Lookup again               another reader filled it
+    Get from RocksDB           memtable, then SSTs
+    Insert at HIGH if inner, else LOW, and keep the handle
+```
+
+**What a pin checks first** (`enter_pages()`, on every pin and
+page write, and D2's cost):
+
+1. An active transaction, not prepared or doomed.
+2. A store other than 0.
+3. The store is live, at the transaction's view
+   (`catalog_lookup()`): a hash lookup in the session's cache,
+   and a load of the database's `last_ddl_ts`.
+4. The store's handle, `session_store()`, twice over.
+
+Then the page's key and its cache key are made. Measured on the
+optimized build, a pin and unpin of a cached page, one thread:
+
+| Transaction | ns |
+| --- | --- |
+| commonly | 65 |
+| older than the database's last DDL | 65 |
+| has made or dropped a store itself | 590 |
+
+The last reads the catalog on every pin, and every row read does
+the same: it must see its own uncommitted DDL, which the
+session's cache does not stand for. `CREATE TABLE` and its load
+in one transaction, as a restore does, pays it. It is left so for
+now.
+
+A pin has no mode today, as pages are immutable. With sm's own
+pool it has two, SH and EX (§17).
+
+### 14.4 A write
+
+```
+page_write(pages)              the batch is one change
+  batch of Puts
+  lock every page's fill latch, in stripe order
+  RocksDB Write                WAL unsynced, then memtable
+  each page: Insert, replacing its entry
+  unlock
+```
+
+**Every page in the cache is clean**: it always equals RocksDB's.
+
+- **To change a page:** take its writer's latch (§16), read it,
+  make a changed copy, write the copy to RocksDB, put the copy in
+  the cache in place of the old entry, release the latch. The
+  old entry is never touched: anyone pinning it keeps reading it.
+- **To add a page:** the same, with nothing to read: a new id,
+  bytes laid out from nothing, written, put in the cache.
+- **So nothing is ever flushed**, and any unpinned page can be
+  dropped at any moment. The next reader's miss is a `Get`.
+
+**The fill latch.** Reads do not take the writer's latch, so
+without this a write could be lost:
+
+1. A reader misses page P, and `Get`s its bytes.
+2. A writer writes a new P to RocksDB and to the cache.
+3. The reader, finishing, inserts the old P over the new one.
+4. The next writer starts from the old P: step 2's change is
+   gone.
+
+RocksDB's cache has no compare-and-insert, so a miss holds a
+latch across its `Get` and `Insert`, and a write across its
+`Write` and its inserts, and steps 1 and 3 cannot straddle step
+2 (D3). 256 stripes, by the cache key's hash, for the process.
+A hit takes none.
+
+### 14.5 Pages an open tree holds
+
+Every page is in the one cache, shared by every transaction. A
+tree keeps no copy of any. What it keeps is **pins**: having
+pinned an inner page, it does not unpin it, and remembers the
+pointer, so its next probe needs no `Lookup`.
+
+This is here because a `Lookup` is not free: it takes the shard's
+mutex and writes the entry's reference count, a shared cache line
+on the hottest pages there are. A statement's 100 probes would
+make 300 of them (D11). A pool whose pin is one atomic would need
+little of this.
+
+A tree is open as long as its table handle: in digres, to the
+end of the transaction. It pins up to 64 inner pages
+(`held_max`).
+
+- **A held page may go stale**, and still routes rightly: its
+  bytes are as they were, its children still exist, and a key
+  moves only right, where the links reach it.
+- **A descent that has to move right drops them all**, so a long
+  statement does not keep routing through old pages. A million
+  rows loaded took 424 s without this, 51 s with it (D11).
+- **A held page 0 is not always safe to stop at**: a split can
+  grow the tree past it, so a descent asking for a level above
+  it drops the held pages and reads page 0 anew.
+
+### 14.6 Memory
+
+- **Pins outrun the budget, rather than fail.** The cache is not
+  strict about its capacity, so a read never fails for want of
+  room. What is pinned is at most `held_max` pages an open tree.
+- **A cursor holds no page between calls.** A leaf's entries in
+  range are copied, the page released, before any row is read.
+
+---
+
+## 15. Replacement
+
+This section is how pages are evicted today. sm's own pool
+replaces it with a clock, leaves aging twice as fast as inner
+pages (§17).
+
+RocksDB's LRU cache, `NewLRUCache(capacity)`, its defaults
+untouched: shards by the key's hash, as many as RocksDB chooses
+for the capacity, each with its own mutex and lists; a high-
+priority pool of half of each shard; no low-priority pool.
+
+### 15.1 The rule
+
+| Entry | Goes in at | Evicted |
+| --- | --- | --- |
+| inner page | high-priority list | last |
+| leaf, read or written | low list | first |
+| any entry with a hit | high-priority list, on release | last |
+| pinned, any | on no list | never |
+
+- **Eviction takes the low list's tail.** The high pool, when
+  over half the shard, spills its oldest into the low list.
+- **A hit promotes.** RocksDB's own rule: an entry with a hit
+  goes to the highest list there is, whatever its priority. So a
+  leaf read once goes first, and a leaf read twice stays with
+  the inner pages. Midpoint insertion, as InnoDB's.
+- **`inner` is a hint at a miss**, and a write's page carries its
+  own, from its level. A root that is still a leaf is read as
+  inner until its first write, as a descent cannot know before
+  it reads: one page a tree.
+- **There is no third score.** The cache has HIGH, LOW and
+  BOTTOM, and a hit outranks all of them. Leaves are cached, and
+  are not given a score of their own.
+
+### 15.2 Rows' blocks share it
+
+- **Row blocks go in at LOW**, as RocksDB's data blocks do, so a
+  leaf and a row block are equals until a hit.
+- **A hit on a row block promotes it too**, so hot row blocks
+  and inner pages share the high pool.
+- **Index and filter blocks are not in the cache**
+  (`cache_index_and_filter_blocks` is off): they stay with the
+  table readers.
+
+### 15.3 Known weaknesses
+
+- **Scans are not resisted.** A cursor reads a leaf again to step
+  to the next (`fill()`), which is a hit, so each leaf of a long
+  scan is promoted, and may push inner pages out of the high
+  pool. Not measured.
+- **A miss caches a page's bytes twice.** `pin_page`'s `Get` uses
+  default `ReadOptions`, so `fill_cache` is on: the 16 KB block
+  holding the page enters the cache, as well as the page's own
+  entry. Not measured. `fill_cache = false` would stop it, at
+  the cost of a block read for each neighbouring page's miss.
+- **The share of the budget is unset.** Whether pages need a part
+  set aside from rows' blocks is open (§7).
+- **A hit writes shared memory**: a reference, under the shard's
+  mutex. Every session's first descent of a transaction takes
+  page 0's shard mutex. It is about 470 instructions a lookup,
+  by D11's numbers; held pages spare the rest of a transaction.
+
+---
+
+## 16. Latches
+
+| Latch | Where | Protects | Held across |
+| --- | --- | --- | --- |
+| fill latch | sm1, 256 stripes | a miss's fill against a write | a `Get`, or a `Write` |
+| cache shard mutex | RocksDB | the shard's lists and table | a lookup |
+| writer's latch | sm2, one a page | one writer of a page | that page's change |
+| none for readers | | | |
+
+**A reader takes no page latch.** It sees a page before a write
+or after it, never between, and `next` links cover a split under
+way.
+
+**A writer's latch is by page id, never a stripe.** A split holds
+a page's and its parent's, and two pages sharing a stripe would
+deadlock. It is a `std::mutex` in a table of 64 shards, made
+when wanted and dropped when the last holder or waiter goes, so
+a page can be latched though it is not cached.
+
+**Order, so no two writers wait on each other:**
+
+1. child before parent;
+2. left before right, on a level.
+
+A split's latch on its right sibling, for `prev`, is rule 2. A
+latch is held for a page's change alone, never across a wait for
+a transaction: a unique check lets every latch go first (D13).
+Its wait is therefore not one `sm_wait()` cuts short.
+
+---
+
+## 17. sm's own buffer pool
+
+Decided with the user (2026-10-31): sm will own a buffer pool for
+a tree's pages, in place of RocksDB's block cache. It is a
+project of its own, with its own design and plan
+(`BUFFERPOOL.md`), measured first. It will not close the 1.5×
+gap; what it buys is eviction under memory pressure, and cheaper
+pins at high client counts. It replaces §14 and §15, and §16's
+fill latch and writers' latches, where they differ.
+
+What is decided:
+
+- **A pin is a latch, SH or EX.** There is no third mode. A
+  reader pins SH, a writer EX. So a pin is held only as long as a
+  latch is, never across calls, and §14.5's held pins go. This
+  reverses the answer in `sm1.h`, that a pin has no mode.
+- **To change a page P:**
+  1. Pin P in EX.
+  2. Copy P out, and change the copy.
+  3. Write it to RocksDB.
+  4. Copy it into the buffer pool.
+  5. Unpin P.
+- **To make a new page P:**
+  1. Pin P in EX, with a flag not to read it.
+  2. Make P, in a copy.
+  3. Write it to RocksDB.
+  4. Copy it into the buffer pool.
+  5. Unpin P.
+- **So a frame is never half changed.** Everything that can
+  throw or fail is done on the copy, and the frame changes only
+  by a `memcpy` that cannot. An exception or a failed write
+  unpins a frame that still equals RocksDB's: pages stay clean,
+  and there is no write-back.
+- **A split** pins its pages in EX left to right, and writes them
+  in one batch, then copies each into the pool.
+- **Eviction is a clock.** Leaves age twice as fast as inner
+  pages, as a scan of the leaves would otherwise page the inner
+  pages out. Only dropping a tree purges its pages at once.
+- **A page's slots keep room to grow.** A page's header has
+  `max`, the slots it has, grown 16 at a time, and `top`, the
+  slots in use, so `top <= max`. These replaced `n`. Slots past
+  `top` are zeroed, but zero marks nothing: `top` alone says
+  which are valid, as the first entry's offset is 0. Each slot
+  holds its entry's offset from the end of the slot array, so
+  growing the array moves the entries up with no slot changing.
+  To insert between slots 8 and 9, with 48 slots of which 34 are
+  used: slots 9 and up shift up one, and slot 9 takes the new
+  entry, which goes at the end of the entries. Entries are in no
+  order; only the slots are.
+
+What it must settle:
+
+- **Who waits under EX**: readers of P wait through the write to
+  RocksDB, and through a unique check's row reads under the
+  leaf's latch (D13), as today's readers do not. Measure it.
+- **Memory**: one budget becomes two, the pool's and the block
+  cache's for rows. How `shared_buffers` divides is open
+  (§7).
+- **RocksDB's copy**: a miss's `Get` should not fill the block
+  cache too (§15.3).
+- **Readers' cost**: SH writes a shared cache line on every page
+  read, the root included. Today's readers write nothing but the
+  cache's reference. Measure it against §10.
+- **What goes**: the fill latch, as a miss loads the frame under
+  its pin, the writers' latch table, and §14.5's held pins.
+- **A cursor's copy of a leaf**: answered: `fill()` copies the
+  entries in range, one at a time in key order.
+- **`page_write`'s batch**: a split still writes several pages
+  atomically, each under its EX pin.
+
+---
+
+## 18. Running its tests
+
+- Build sm first, as a debug build: `DEBUG=1 make -C sm -j4`.
+- One level's tree tests: `DEBUG=1 make -C sm/sm2 -j4
+  build/test_sm2`, then, in `sm/sm2`, `./build/test_sm2
+  -tc='tree:*'`. sm1's are `build/test_sm1`, the same way.
+- `make tsan` in `sm/sm2` runs the tree's tests under TSan.
+- The full suite, `DEBUG=1 make -C sm -j4 test`, takes over ten
+  minutes: run it in the background, to a log. dg's takes longer.
+  It passes when every doctest line reads `0 failed`, sm1's reads
+  `scenarios: 122 scripts match, versioned and chained`, and the
+  last is `All rel tests passed.`
+- Do not edit `sm/` while dg's suite builds: it links sm as
+  built.
