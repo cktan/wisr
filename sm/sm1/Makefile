@@ -1,9 +1,10 @@
 # wisr -- build the storage manager library and its tests.
 #
-#   make -j4          libsm1.a, the test binaries, and the examples
+#   make -j4          libsm1.a, the test binaries, the examples, and
+#                     the lock table's benchmark
 #   make test         build, then run every test, script, and example
 #   make accept       take the scenario transcripts as expected
-#   make format       clang-format src/, test/, and example/ in place
+#   make format       clang-format src/, test/, example/ and bench/ in place
 #   make clean        remove build/
 #
 # Setting DEBUG=1 in the environment builds -O0 -g instead of
@@ -57,6 +58,10 @@ DRV_OBJS  := $(DRV_SRCS:mvcc/driver/%.cc=$(BUILD)/drvobj/%.o)
 EX_SRCS   := $(wildcard example/*.cc)
 EX_OBJS   := $(EX_SRCS:example/%.cc=$(BUILD)/example/%.o)
 EX_BINS   := $(EX_SRCS:example/%.cc=$(BUILD)/example/%)
+# The lock table's benchmark, linked with the table alone: it
+# needs nothing else of sm1 (src/locktab.h).
+BENCH_BIN := $(BUILD)/bench/locktab_bench
+BENCH_OBJ := $(BUILD)/bench/locktab_bench.o
 
 LIB       := $(BUILD)/libsm1.a
 TEST_BIN  := $(BUILD)/test_sm1
@@ -73,14 +78,14 @@ SCRIPT_GOOD := mvcc/good
 
 FORMAT_FILES := $(wildcard src/*.cc src/*.h test/*.cc test/*.h mvcc/*.cc \
                           mvcc/*.h mvcc/driver/*.cc mvcc/driver/*.h \
-                          example/*.cc include/sm1_*.h)
+                          example/*.cc bench/*.cc include/sm1_*.h)
 
 .PHONY: all test scenarios accept format clean $(SM0_LIB)
 
 # Keep the example objects: make deletes chained intermediates.
 .SECONDARY: $(EX_OBJS)
 
-all: $(LIB) $(TEST_BIN) $(MVCC_BIN) $(DRIVER) $(EX_BINS)
+all: $(LIB) $(TEST_BIN) $(MVCC_BIN) $(DRIVER) $(EX_BINS) $(BENCH_BIN)
 
 # Rebuilt from scratch, so an object whose source is gone leaves it.
 $(LIB): $(LIB_OBJS)
@@ -112,6 +117,13 @@ $(BUILD)/example/%: $(BUILD)/example/%.o $(LIB) $(SM0_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LIB) $(LDLIBS)
 
 $(BUILD)/example/%.o: example/%.cc $(FLAGS_FILE)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+$(BENCH_BIN): $(BENCH_OBJ) $(BUILD)/src/locktab.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
+
+$(BUILD)/bench/%.o: bench/%.cc $(FLAGS_FILE)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
@@ -182,4 +194,4 @@ clean:
 	rm -rf $(BUILD)
 
 -include $(LIB_OBJS:.o=.d) $(TEST_OBJS:.o=.d) $(MVCC_OBJS:.o=.d) \
-        $(DRV_OBJS:.o=.d) $(EX_OBJS:.o=.d)
+        $(DRV_OBJS:.o=.d) $(EX_OBJS:.o=.d) $(BENCH_OBJ:.o=.d)

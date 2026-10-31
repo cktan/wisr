@@ -193,49 +193,54 @@ and so are the catalog tables psql reads
      KEY SHARE of the parent row at every child insert, index
      entries and catalog keys; and the strong table locks.
 
-   **Measured without digres or sm.** The table is a module of
-   its own, `sm1/src/locktab.h` and `.cc`, that depends on
-   nothing but sm0: no RocksDB, no `db_t`, no `session_t`. A
-   holder is an opaque owner; the module finds, adds and drops
-   entries and their holders, and answers whether a mode
-   conflicts and with whom. Waiting, the waits-for graph, the
-   deadlock search, the fast path and the session's lock list
-   stay in `lockmgr.cc`, which calls it. Then:
+   **Measured without digres or sm**: built. The table is a
+   module of its own, `sm1/src/locktab.h` and `.cc`, holding
+   today's `std::unordered_map` unchanged, with its own unit
+   tests (`sm1/test/test_locktab.cc`); `lockmgr.cc` calls it
+   (`sm1/SM1_DESIGN.md` §5.1). Its benchmark,
+   `sm1/bench/locktab_bench.cc`, runs threads calling it
+   directly, a transaction taking N locks, then releasing them
+   all as commit does: `distinct`, 100 row keys at random, X;
+   `hot`, 10 of 8 keys, S; `big`, one thread's million locks
+   beside `distinct`; `mixed`, 16 table locks of 64, one in 50
+   strong. Locks a second and allocations are counted in a run
+   that reads no clock; latencies in a second run, as a clock
+   read on this box costs 500 to 700 ns, a system call, so a
+   lock's p50 is under the clock's noise. The baseline, on
+   2026-10-31, `-O3`, one run of a second:
 
-   - **A benchmark of the module alone**, `sm1/bench/
-     locktab_bench`, threads calling it directly: a
-     transaction takes N locks, then releases them all, as
-     commit does. Its workloads: distinct row keys at random
-     (`FOR UPDATE`); a few hot keys, shared (foreign-key
-     parents); one transaction of a million locks, then its
-     release, beside others (a rehash's pause); strong and weak
-     locks mixed. Each at 1 to 32 threads, reporting locks a
-     second, the latency of a lock and of a release at p50,
-     p99 and the maximum, and the allocations a lock makes
-     (counted by `operator new`).
-   - **Both tables behind the one interface**: today's
-     `std::unordered_map`, moved there first unchanged, as the
-     baseline the benchmark records; then the hand-written one,
-     the first's numbers to beat.
-   - **Its own unit tests** in `sm1/test`, the module's alone,
-     beside `test_lock.cc`, which keeps testing the lock
-     manager through `sm1.h`; and the isolation scenarios,
-     unchanged, the claim that nothing above it moved.
-   - **Then digres**: a row-lock workload in `../bench/`
-     (clients inserting children of a few parent rows; `SELECT
-     ... FOR UPDATE` of keys at random), before and after, to
-     show the module's gain reaches a client. Built as
-     `../bench/rowlocks.sh` (`../dg/WORKNOTE.md` step 344),
-     each client locking rows of its own, so none waits. Its
-     baseline, at 8612f68b: a lock adds 3.3 µs of a client's
-     time to a statement of 100 at 1 client and 28 at 16, and
-     100 rows locked a statement scale 2.4× from 1 client to
-     16, as 100 read scale 8.7×. Its `fk` measures commit
-     batching, not a lock (item 5).
+   | Workload | Threads | Locks/s | p99 lock | Max lock | Allocs a lock |
+   | --- | --- | --- | --- | --- | --- |
+   | distinct | 1 | 10.7M | 0.8 µs | 3.2 ms | 2.00 |
+   | distinct | 16 | 1.76M | 254 µs | 16.8 ms | 2.00 |
+   | distinct | 32 | 1.61M | 410 µs | 16.7 ms | 2.00 |
+   | hot | 1 | 22.1M | 0.8 µs | 3.7 ms | 1.18 |
+   | hot | 16 | 2.74M | 115 µs | 9.8 ms | 0.00 |
+   | big | 16 | 1.35M | 193 µs | 62.8 ms | 2.00 |
+   | mixed | 1 | 12.8M | 0.7 µs | 2.2 ms | 1.78 |
+   | mixed | 16 | 2.08M | 131 µs | 6.2 ms | 0.45 |
 
-   The order: the module with today's table, and its
-   benchmark's baseline; `fmix64`; the partitions; the
-   hand-written partition; each a step, measured.
+   One mutex: `distinct` falls from 10.7 million locks a second
+   at 1 thread to 1.6 at 32. A row lock of a key held by none
+   makes two allocations, the node and its holders' vector,
+   under the mutex. And `big`'s rehash shows: a lock call of
+   63 to 72 ms at every thread count, every other locker waiting
+   behind it.
+
+   **Then digres**: a row-lock workload in `../bench/` (clients
+   inserting children of a few parent rows; `SELECT ... FOR
+   UPDATE` of keys at random), before and after, to show the
+   module's gain reaches a client. Built as
+   `../bench/rowlocks.sh` (`../dg/WORKNOTE.md` step 344), each
+   client locking rows of its own, so none waits. Its baseline,
+   at 8612f68b: a lock adds 3.3 µs of a client's time to a
+   statement of 100 at 1 client and 28 at 16, and 100 rows locked
+   a statement scale 2.4× from 1 client to 16, as 100 read scale
+   8.7×. Its `fk` measures commit batching, not a lock (item 5).
+
+   The order from here: `fmix64`; the partitions; the
+   hand-written partition; each a step, measured against the
+   baseline above.
 5. **A write transaction's two trips through RocksDB's write
    queue** (`../dg/WORKNOTE.md` step 344). An insert writes its
    uncommitted version at once (`sm1/src/access.cc`,

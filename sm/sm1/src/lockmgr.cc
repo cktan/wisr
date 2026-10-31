@@ -79,58 +79,8 @@ namespace {
 
 using lmode_t = sm1::lockmode_t;
 
-/* A mode as an index into the tables below: IS, IX, S, SIX, X. */
-int rank(lmode_t m) {
-  switch (m) {
-  case sm1::SM_LOCKMODE_IS:
-    return 0;
-  case sm1::SM_LOCKMODE_IX:
-    return 1;
-  case sm1::SM_LOCKMODE_SH:
-    return 2;
-  case sm1::SM_LOCKMODE_SIX:
-    return 3;
-  case sm1::SM_LOCKMODE_EX:
-    return 4;
-  }
-  return 4;
-}
-
-/* Gray's compatibility of two modes held by different sessions. */
-bool compatible(lmode_t a, lmode_t b) {
-  static const bool ok[5][5] = {
-      /*        IS     IX     S      SIX    X    */
-      /* IS  */ {true, true, true, true, false},
-      /* IX  */ {true, true, false, false, false},
-      /* S   */ {true, false, true, false, false},
-      /* SIX */ {true, false, false, false, false},
-      /* X   */ {false, false, false, false, false},
-  };
-  return ok[rank(a)][rank(b)];
-}
-
-/*
- * The weakest mode covering both a and b, which a holder of a that
- * asks for b converts to: IS < IX, S < SIX < X, and IX and S meet
- * at SIX.
- */
-lmode_t cover(lmode_t a, lmode_t b) {
-  static const lmode_t sup[5][5] = {
-      {sm1::SM_LOCKMODE_IS, sm1::SM_LOCKMODE_IX, sm1::SM_LOCKMODE_SH,
-       sm1::SM_LOCKMODE_SIX, sm1::SM_LOCKMODE_EX},
-      {sm1::SM_LOCKMODE_IX, sm1::SM_LOCKMODE_IX, sm1::SM_LOCKMODE_SIX,
-       sm1::SM_LOCKMODE_SIX, sm1::SM_LOCKMODE_EX},
-      {sm1::SM_LOCKMODE_SH, sm1::SM_LOCKMODE_SIX, sm1::SM_LOCKMODE_SH,
-       sm1::SM_LOCKMODE_SIX, sm1::SM_LOCKMODE_EX},
-      {sm1::SM_LOCKMODE_SIX, sm1::SM_LOCKMODE_SIX, sm1::SM_LOCKMODE_SIX,
-       sm1::SM_LOCKMODE_SIX, sm1::SM_LOCKMODE_EX},
-      {sm1::SM_LOCKMODE_EX, sm1::SM_LOCKMODE_EX, sm1::SM_LOCKMODE_EX,
-       sm1::SM_LOCKMODE_EX, sm1::SM_LOCKMODE_EX},
-  };
-  return sup[rank(a)][rank(b)];
-}
-
-using holder_t = db_t::lock_ent_t::holder_t;
+using holder_t = locktab_t::holder_t;
+using entry_t = locktab_t::entry_t;
 
 /* The top bit of a lock key's hi: set for an OID lock. */
 uint64_t type_bit(sm1::locktype_t type) { return uint64_t(type) << 63; }
@@ -154,26 +104,7 @@ lockref_t make_ref(const lockid_t &k, lmode_t mode, uint16_t kind) {
  * holder. The caller holds lock_mu.
  */
 void lock_drop_holder(db_t *db, const lockref_t &l, sm1::session_t *s) {
-  auto it = db->lock_table.find(l.id);
-  // Gone already: a rollback may have released it.
-  if (it == db->lock_table.end()) {
-    return;
-  }
-  std::vector<holder_t> &holders = it->second.holders;
-  // Drop us from the holder list with the hold's first entry; a later
-  // one, a slot moved there, is released alone.
-  for (size_t i = 0; i < holders.size(); i++) {
-    if (holders[i].session == s) {
-      if (&l == holders[i].first) {
-        holders.erase(holders.begin() + i);
-      }
-      break;
-    }
-  }
-  // The last holder out removes the entry.
-  if (holders.empty()) {
-    db->lock_table.erase(it);
-  }
+  db->lock_table.drop(l.id, s, &l);
 }
 
 /*
@@ -258,48 +189,27 @@ void check_deadlock(db_t *db, sm1::session_t *s) {
   db->lock_cv.notify_all();
 }
 
-/* No holder of a lock: what a search finds of none. */
-constexpr size_t no_ref = SIZE_MAX;
-
-/* The index of s among holders, or no_ref. */
-size_t holder_of(const std::vector<holder_t> &holders,
-                 const sm1::session_t *s) {
-  for (size_t i = 0; i < holders.size(); i++) {
-    if (holders[i].session == s) {
-      return i;
-    }
-  }
-  return no_ref;
-}
-
-/* An entry of the lock table, as a lookup finds it, or its end. */
-using entry_it = decltype(db_t::lock_table)::iterator;
-
 /*
- * The other holders of the entry at it that conflict with mode for
- * s, into out, with lock_mu held; sets *mine to the index of s's own
- * hold among its holders, or no_ref, and *want to the mode s would
- * hold. Returns false if there is no entry, it being the table's end.
+ * The other holders of e that conflict with mode for s, into out,
+ * with lock_mu held; sets *mine to s's own hold among them, or
+ * nullptr, and *want to the mode s would hold. Returns false if
+ * there is no entry, e being nullptr.
  */
-bool conflicting(db_t *db, entry_it it, sm1::session_t *s, lmode_t mode,
-                 size_t *mine, lmode_t *want,
-                 std::vector<sm1::session_t *> *out) {
+bool conflicting(entry_t *e, sm1::session_t *s, lmode_t mode, holder_t **mine,
+                 lmode_t *want, std::vector<sm1::session_t *> *out) {
   out->clear();
-  *mine = no_ref;
+  *mine = nullptr;
   *want = mode;
-  if (it == db->lock_table.end()) {
+  if (nullptr == e) {
     return false;
   }
-  const std::vector<holder_t> &holders = it->second.holders;
   // Our own hold, if any, and the mode we would hold after.
-  *mine = holder_of(holders, s);
-  *want = no_ref != *mine ? cover(holders[*mine].mode, mode) : mode;
+  *mine = locktab_t::held(e, s);
+  *want = nullptr != *mine ? lock_cover((*mine)->mode, mode) : mode;
   // The other holders whose modes conflict with that.
-  for (const holder_t &h : holders) {
-    if (h.session != s && !compatible(h.mode, *want)) {
-      out->push_back(h.session);
-    }
-  }
+  locktab_t::each_conflict(e, s, *want, [&](void *owner) {
+    out->push_back(static_cast<sm1::session_t *>(owner));
+  });
   return true;
 }
 
@@ -370,16 +280,10 @@ void fp_move(db_t *db, sm1::session_t *s, int i) {
   {
     // Hold lock_mu while editing the table.
     std::lock_guard<std::mutex> guard(db->lock_mu);
-    std::vector<holder_t> &holders = db->lock_table[f.id].holders;
-    size_t mine = holder_of(holders, s);
-    if (no_ref != mine) {
-      // A hold of ours already, made before this slot: a slot for k
-      // is moved to the table before a hold there is made, so the
-      // hold's first entry stays the first, and is released last.
-      holders[mine].mode = cover(holders[mine].mode, f.mode);
-    } else {
-      holders.push_back({s, f.mode, f.ref});
-    }
+    // A hold of ours already was made before this slot: a slot for
+    // k is moved to the table before a hold there is made, so the
+    // hold's first entry stays the first, and is released last.
+    db->lock_table.join(f.id, s, f.mode, f.ref);
     // Its list entry is the table's from now on.
     f.ref->slot = -1;
   }
@@ -433,7 +337,7 @@ bool fp_take(db_t *db, sm1::session_t *s, const lockid_t &k, lmode_t mode) {
   if (mine >= 0) {
     // Ours already: IS and IX cover each other as IX, still weak.
     sm1::session_t::fp_slot_t &f = s->fp[mine];
-    f.mode = cover(f.mode, mode);
+    f.mode = lock_cover(f.mode, mode);
     f.ref->mode = f.mode;
     return true;
   }
@@ -477,29 +381,24 @@ int lock_try(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
   s->locks.reserve();
   // Hold lock_mu for the table.
   std::lock_guard<std::mutex> guard(db->lock_mu);
-  entry_it it = db->lock_table.find(k);
-  size_t mine;
+  entry_t *e = db->lock_table.find(k);
+  holder_t *mine;
   lmode_t want;
   std::vector<sm1::session_t *> others;
-  conflicting(db, it, s, mode, &mine, &want, &others);
+  conflicting(e, s, mode, &mine, &want, &others);
   // Another holder conflicts: take nothing.
   if (!others.empty()) {
     return 2;
   }
   // Ours already, a row's key or another hashed alike: one id is
   // one hold, and its first entry shows the stronger mode from now on.
-  if (no_ref != mine) {
-    holder_t &h = it->second.holders[mine];
-    h.mode = want;
-    h.first->mode = want;
+  if (nullptr != mine) {
+    mine->mode = want;
+    static_cast<lockref_t *>(mine->first)->mode = want;
     return 0;
   }
-  // Join the holders, or make the entry: one lookup either way.
-  std::vector<holder_t> &holders = db->lock_table.end() != it
-                                       ? it->second.holders
-                                       : db->lock_table[k].holders;
   // Remember the lock for release at commit or abort.
-  holders.push_back({s, want, s->locks.emplace(make_ref(k, want, kind))});
+  db->lock_table.add(e, k, s, want, s->locks.emplace(make_ref(k, want, kind)));
   return 0;
 }
 
@@ -610,12 +509,12 @@ int lock_write_check(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   lockid_t k = lock_row_id(storeid, key);
   // Hold lock_mu for the table.
   std::lock_guard<std::mutex> guard(db->lock_mu);
-  entry_it it = db->lock_table.find(k);
-  size_t mine;
+  entry_t *e = db->lock_table.find(k);
+  holder_t *mine;
   lmode_t want;
   std::vector<sm1::session_t *> others;
   // No entry: the common write, which takes no lock.
-  if (!conflicting(db, it, s, sm1::SM_LOCKMODE_EX, &mine, &want, &others)) {
+  if (!conflicting(e, s, sm1::SM_LOCKMODE_EX, &mine, &want, &others)) {
     return 0;
   }
   if (!others.empty()) {
@@ -623,10 +522,9 @@ int lock_write_check(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   }
   // A lock of our own on the key is held exclusive from now on,
   // as a write converts it (SM1_DESIGN.md §5.1).
-  if (no_ref != mine) {
-    holder_t &h = it->second.holders[mine];
-    h.mode = sm1::SM_LOCKMODE_EX;
-    h.first->mode = sm1::SM_LOCKMODE_EX;
+  if (nullptr != mine) {
+    mine->mode = sm1::SM_LOCKMODE_EX;
+    static_cast<lockref_t *>(mine->first)->mode = sm1::SM_LOCKMODE_EX;
   }
   return 0;
 }
@@ -648,11 +546,11 @@ int lock_wait(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
       s->waiting_for.clear();
       return -1;
     }
-    size_t mine;
+    holder_t *mine;
     lmode_t want;
     // Wait on exactly the holders that conflict.
-    entry_it it = db->lock_table.find(k);
-    conflicting(db, it, s, mode, &mine, &want, &s->waiting_for);
+    entry_t *e = db->lock_table.find(k);
+    conflicting(e, s, mode, &mine, &want, &s->waiting_for);
     if (s->waiting_for.empty()) {
       return 0;
     }
@@ -669,7 +567,10 @@ int lock_wait(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
       s->waiting_id = k;
       // A write waits with no kind of its own: it reports the kind
       // of the lock it waits on, its first holder's.
-      s->waiting_kind = 0 != kind ? kind : it->second.holders[0].first->kind;
+      s->waiting_kind =
+          0 != kind
+              ? kind
+              : static_cast<lockref_t *>(locktab_t::oldest(e).first)->kind;
       s->waiting_mode = mode;
       check_deadlock(db, s);
       if (s->doomed) {
@@ -691,10 +592,10 @@ void lock_blockers(db_t *db, sm1::session_t *s,
   // A lock: the holders now in the table whose modes conflict, the
   // weak ones in slots moved there by the strong lock it waits for.
   if (s->waiting_lock) {
-    size_t mine;
+    holder_t *mine;
     lmode_t want;
-    conflicting(db, db->lock_table.find(s->waiting_id), s, s->waiting_mode,
-                &mine, &want, out);
+    conflicting(db->lock_table.find(s->waiting_id), s, s->waiting_mode, &mine,
+                &want, out);
     return;
   }
   // A transaction, still running and not rolled back since: its owner.
@@ -816,15 +717,8 @@ void lock_transfer(db_t *db, sm1::session_t *s, sm1::session_t *g) {
   std::lock_guard<std::mutex> guard(db->lock_mu);
   // Re-point each entry's holder list at g.
   s->locks.each([&](const lockref_t &l) {
-    auto it = db->lock_table.find(l.id);
     // Replace s with g among the holders.
-    if (it != db->lock_table.end()) {
-      for (holder_t &h : it->second.holders) {
-        if (h.session == s) {
-          h.session = g;
-        }
-      }
-    }
+    db->lock_table.move_owner(l.id, s, g);
   });
   // Move the list with them: a holder's first points into it.
   g->locks.swap(s->locks);
@@ -844,15 +738,9 @@ void lock_restore(db_t *db, sm1::session_t *g) {
       strong_count(db, l.id).fetch_add(1);
       l.strong = true;
     }
-    std::vector<holder_t> &holders = db->lock_table[l.id].holders;
-    size_t mine = holder_of(holders, g);
     // An OID lock's slot, moved to the table before the prepare,
     // joins the hold its first entry made.
-    if (no_ref != mine) {
-      holders[mine].mode = cover(holders[mine].mode, l.mode);
-    } else {
-      holders.push_back({g, l.mode, &l});
-    }
+    db->lock_table.join(l.id, g, l.mode, &l);
   });
 }
 

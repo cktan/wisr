@@ -700,7 +700,7 @@ session running it, found through a map from `xid` to session
 beside the active table; a prepared transaction waits on no one.
 
 A lock's id in the table is two 64-bit words, `lockid_t`
-(`src/db.h`): the storeid, its top bit flipped for an OID lock
+(`src/locktab.h`): the storeid, its top bit flipped for an OID lock
 so the two types never meet, and the oid itself or a 64-bit hash
 of a row's key, `lock_row_hash`, the same in every build. An OID
 lock's id is exact. Two rows of a store whose keys hash alike
@@ -715,17 +715,26 @@ which `sm1::lock_status` reports with the id.
 A holder points to the entry that made its hold, and the hold
 goes with that entry. An OID lock may have a second entry, a
 fast-path slot moved to the table after the hold was made, which
-a savepoint's rollback releases alone. The list and the buffer
-are sm0's `blist_t`, blocks whose entries never move: a holder
-keeps a pointer to its first entry, a fast-path slot to its own,
-an entry to its key, and a savepoint a mark of each. A cut keeps
-up to four blocks for the locks to come, and `lock_try` makes
-room before it takes `lock_mu`, a key never longer than a key
-block, so a lock allocates nothing under the mutex for the list
-or its key. The id costs no allocation either, as the table
-needs none to find or add an entry.
+a savepoint's rollback releases alone. The list is sm0's
+`blist_t`, blocks whose entries never move: a holder keeps a
+pointer to its first entry, a fast-path slot to its own, and a
+savepoint a mark. A cut keeps up to four blocks for the locks to
+come, and `lock_try` makes room before it takes `lock_mu`, so a
+lock allocates nothing under the mutex for the list. The id
+costs no allocation either, as the table needs none to find an
+entry.
 One mutex covers the table and every waiter's waits-for list,
 which keeps a deadlock walk consistent.
+
+The table is a module of its own, `src/locktab.h`, which knows
+ids, the modes and opaque owners, and nothing of sessions:
+it finds, adds and drops a lock's holders, and says which
+conflict with a mode. A holder's owner is its session and its
+first the lock list's entry; waiting, the waits-for graph, the
+deadlock search, the fast path and the lock list stay in
+`src/lockmgr.cc`, which holds `lock_mu` across each call. So the
+table is measured alone, `bench/locktab_bench.cc`
+(`../NEXT.md` §1 item 4).
 
 **The fast path**, PostgreSQL's for a relation's weak locks
 (its `lock.c`, 9.2). A table's readers and writers take IS and
@@ -2974,7 +2983,8 @@ src/chain.cc            chained stores: codec, chain_ calls, chain_restore,
                         GC's repair (../VCHAIN.md)
 src/load.cc             bulk load into an empty store (../BULKLOAD.md)
 src/pin.cc              raw pins (../ROW.md §2)
-src/lockmgr.cc          lock table, write latches, waits-for graph, deadlocks
+src/lockmgr.cc          locks, write latches, waits-for graph, deadlocks
+src/locktab.cc          the lock table alone: ids, modes, holders
 src/ssi.cc              SIREAD locks, rw-edges, validation
 src/catalog.cc          store catalog: lookup, mkstore/rmstore, sm1::lsstore
 src/seq.cc              named sequences: sm1::mkseq, sm1::rmseq, sm1::nextseq
@@ -2988,6 +2998,7 @@ src/walfs.cc            file system zero-filling each new WAL before
 test/                   the engine's tests: API, limits, locks, GC,
                         2PC, crash, sequences, logging
 mvcc/                   isolation: MVCC.md and one file per scenario
+bench/                  the lock table's benchmark (locktab_bench.cc)
 example/                small programs against the public API
 ```
 

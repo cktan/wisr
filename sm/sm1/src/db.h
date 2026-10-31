@@ -5,6 +5,7 @@
 #ifndef WISR_DB_H
 #define WISR_DB_H
 
+#include "locktab.h"
 #include "sm0_blist.h"
 #include "sm1.h"
 
@@ -147,26 +148,6 @@ struct ssi_range_t {
   std::string lo;
   bool has_hi, hi_incl;
   std::string hi;
-};
-
-/*
- * A lock's id in the lock table (§5.1): hi is the storeid, its top bit flipped
- * for an OID lock so the two types never meet; lo is the oid of an
- * OID lock, exact, or a hash of a row lock's key. Two rows of a
- * store whose keys hash alike are one lock: a false conflict,
- * never a missed one.
- */
-struct lockid_t {
-  uint64_t hi;
-  uint64_t lo;
-  bool operator==(const lockid_t &o) const { return hi == o.hi && lo == o.lo; }
-};
-
-/* The lock table's hash of a key: lo is an oid or a hash already. */
-struct lockid_hash_t {
-  size_t operator()(const lockid_t &k) const {
-    return k.lo ^ (k.hi * 0x9e3779b97f4a7c15ULL);
-  }
 };
 
 /*
@@ -349,24 +330,15 @@ struct db_t {
    * waits-for list, so a deadlock walk sees a consistent
    * waits-for graph; shard it if a benchmark shows contention.
    * Every release and every doom notifies lock_cv.
+   *
+   * A holder's owner is its session, and its first the session's
+   * lock list entry for the id, which made the hold and releases
+   * it. A second entry is an OID lock's slot, moved there after the
+   * hold was made (fp_move); the hold's mode covers both.
    */
-  struct lock_ent_t {
-    /*
-     * A session's hold, made with first, its lock list's entry for
-     * the id, and released with it. A second entry is an OID lock's
-     * slot, moved here after the hold was made (fp_move); mode
-     * covers both.
-     */
-    struct holder_t {
-      sm1::session_t *session;
-      sm1::lockmode_t mode;
-      lockref_t *first;
-    };
-    std::vector<holder_t> holders; /* never empty */
-  };
   std::mutex lock_mu;
   std::condition_variable lock_cv;
-  std::unordered_map<lockid_t, lock_ent_t, lockid_hash_t> lock_table;
+  locktab_t lock_table;
   int deadlock_ms = 50;
   /*
    * The fast path (§5.1): the strong OID locks (S, SIX, X) held

@@ -495,9 +495,13 @@ TEST_CASE("row locks whose keys hash alike are one lock after a restart") {
   {
     std::lock_guard<std::mutex> guard(v->db->lock_mu);
     REQUIRE(v->db->lock_table.size() == 1);
-    const auto &holders = v->db->lock_table.begin()->second.holders;
-    REQUIRE(holders.size() == 1);
-    CHECK(holders[0].mode == sm1::SM_LOCKMODE_EX);
+    std::vector<sm1::lockmode_t> modes;
+    v->db->lock_table.each(
+        [&](const wisr::lockid_t &, const wisr::locktab_t::holder_t &h) {
+          modes.push_back(h.mode);
+        });
+    REQUIRE(modes.size() == 1);
+    CHECK(modes[0] == sm1::SM_LOCKMODE_EX);
   }
   REQUIRE(sm1::abort_prepared(v, "g") == 0);
   {

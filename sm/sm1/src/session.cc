@@ -287,13 +287,12 @@ int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
                     const sm1::session_t *s) {
       entry(l.type, lock_storeid(l.id), l.id.lo, l.kind, mode, s, true);
     };
-    for (const auto &[k, ent] : db->lock_table) {
-      for (const auto &h : ent.holders) {
-        // One hold, as the entry that made it, in the mode that
-        // covers every entry of its id.
-        held(*h.first, h.mode, h.session);
-      }
-    }
+    db->lock_table.each([&](const lockid_t &, const locktab_t::holder_t &h) {
+      // One hold, as the entry that made it, in the mode that
+      // covers every entry of its id.
+      held(*static_cast<const sm1::session_t::lockref_t *>(h.first), h.mode,
+           static_cast<const sm1::session_t *>(h.owner));
+    });
     for (const sm1::session_t *s : env->sessions) {
       if (s->db != db) {
         continue;
