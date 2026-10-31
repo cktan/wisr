@@ -18,9 +18,13 @@ Branch `wip-locktab-1`, from `main` at 42283a71.
 - **A power-of-two bucket array**, indexed by the id's `fmix64`
   hash, that grows and shrinks by moving a few buckets at each
   add and drop into a new array, never all at once.
-- **No count of holders by mode yet.** A conflict check must
-  still find the asker's own hold among the holders, a walk, so
-  the counts would save only the second walk; measured first.
+- **No count of holders by mode.** A conflict check must still
+  find the asker's own hold among the holders, a walk; that walk
+  now gathers the other holders' modes as bits too
+  (`locktab_t::probe`), so the conflict check is one AND and no
+  second walk is made, with nothing to keep in step with a
+  conversion. On entries of about 16 holders: 502 instructions a
+  lock, not 903.
 
 **Measured** (`sm/NEXT.md` §1 item 4): 383 to 453 instructions a
 lock and its release on one thread, against 615 to 970 in the

@@ -255,9 +255,7 @@ bool take(shared_t *sh, const lockid_t &id, sm_lockmode_t mode, void *owner,
   sm_lockmode_t want = mode;
   bool conflict = false;
   if (nullptr != e) {
-    mine = locktab_t::held(e, owner);
-    want = nullptr != mine ? wisr::lock_cover(mine->mode, mode) : mode;
-    locktab_t::each_conflict(e, owner, want, [&](void *) { conflict = true; });
+    conflict = locktab_t::probe(e, owner, mode, &mine, &want);
   }
   if (conflict) {
     return false;

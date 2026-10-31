@@ -292,12 +292,20 @@ and so are the catalog tables psql reads
 
    Above the baseline at every thread count but `hot` at 2, 17%
    under, and at 4, even: its 8 keys are in 8 partitions at most,
-   whose mutexes two threads pass between them, and an entry of
-   many holders is walked twice a lock, for the asker's own hold
-   and for the conflicts. Not built: the count of holders by
-   mode, which would save the second walk only, while the first
-   finds the asker's own hold (`../QUESTION.md` §1). What is left
-   of this item: that count, if `hot` wants it, measured.
+   whose mutexes and entries two threads pass between them, an
+   entry of two holders at most. An entry of many holders, as a
+   foreign-key parent under many child inserts, was walked twice
+   a lock, for the asker's own hold and for the conflicts;
+   `locktab_t::probe` walks it once, gathering the others' modes
+   as bits and checking them against the asked mode's conflicts
+   in one AND, and names the holders in conflict only when there
+   are some. On entries of about 16 holders a lock and its
+   release cost 502 instructions, not 903, and `hot` at 16 and 32
+   threads ran 7 and 16% faster; with one holder, 286 against
+   289. The count of holders by mode that PostgreSQL keeps
+   (`LOCK.granted[]`) is not needed for that, and would have to
+   follow every conversion `lockmgr.cc` makes in place; it is not
+   built (`../QUESTION.md` §1). This item is done.
 5. **A write transaction's two trips through RocksDB's write
    queue** (`../dg/WORKNOTE.md` step 344). An insert writes its
    uncommitted version at once (`sm1/src/access.cc`,

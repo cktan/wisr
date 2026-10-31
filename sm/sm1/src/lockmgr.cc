@@ -208,13 +208,13 @@ bool conflicting(entry_t *e, sm1::session_t *s, lmode_t mode, holder_t **mine,
   if (nullptr == e) {
     return false;
   }
-  // Our own hold, if any, and the mode we would hold after.
-  *mine = locktab_t::held(e, s);
-  *want = nullptr != *mine ? lock_cover((*mine)->mode, mode) : mode;
-  // The other holders whose modes conflict with that.
-  locktab_t::each_conflict(e, s, *want, [&](void *owner) {
-    out->push_back(static_cast<sm1::session_t *>(owner));
-  });
+  // Our own hold, if any, the mode we would hold after, and whether
+  // another's conflicts, in one walk; the others are named only then.
+  if (locktab_t::probe(e, s, mode, mine, want)) {
+    locktab_t::each_conflict(e, s, *want, [&](void *owner) {
+      out->push_back(static_cast<sm1::session_t *>(owner));
+    });
+  }
   return true;
 }
 

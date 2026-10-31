@@ -768,7 +768,11 @@ and a transaction of a million locks leaves no more than that
 behind. The array doubles past one entry a bucket and goes to a
 quarter under one in eight, into a new array that each add and
 drop moves a few buckets to, so no call rehashes the partition,
-and a lookup meanwhile looks in both.
+and a lookup meanwhile looks in both. A lock walks its entry's
+holders once (`locktab_t::probe`): the asker's own hold, and the
+others' modes as bits, checked against the asked mode's
+conflicts in one AND; the holders in conflict are named only when
+there are some.
 
 **The fast path**, PostgreSQL's for a relation's weak locks (its
 `lock.c`, 9.2). A table's readers and writers take IS and IX on

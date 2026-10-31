@@ -236,6 +236,15 @@ public:
   /* The hold e was made with, its oldest. */
   static const holder_t &oldest(const entry_t *e) { return e->at(0); }
 
+  /*
+   * One walk of e's holders for owner asking mode: *mine is owner's
+   * hold, or nullptr, and *want the mode owner would hold; true if
+   * another holder's mode conflicts with *want. The others' modes
+   * are gathered as they pass, so the check after is one AND.
+   */
+  static bool probe(entry_t *e, const void *owner, sm_lockmode_t mode,
+                    holder_t **mine, sm_lockmode_t *want);
+
   /* Call fn(owner) for each holder of e but owner not compatible with mode. */
   template <class F>
   static void each_conflict(const entry_t *e, const void *owner,

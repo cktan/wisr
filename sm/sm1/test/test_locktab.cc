@@ -378,3 +378,46 @@ TEST_CASE("locktab: holders past the inline ones keep their order") {
   CHECK(1 == holds(t));
   CHECK(locktab_t::oldest(t.find(id)).owner == &x);
 }
+
+TEST_CASE("locktab: probe answers as finding the hold, then the conflicts") {
+  // Verify the one walk agrees with held() and each_conflict() on
+  // every entry of up to five holders of any modes, the asker among
+  // them or not, asking any mode.
+  // 1. For each count of holders, 1 to 5, and each choice of their
+  //    modes, build the entry, the asker the second holder or none.
+  // 2. For each mode asked: probe's hold, mode and verdict are those
+  //    held() and lock_cover() give, and each_conflict() finds one
+  //    holder or more just when probe says so.
+  int owner[5] = {}, stranger = 0;
+  int cases = 0;
+  for (int n = 1; n <= 5; n++) {
+    int combos = 1;
+    for (int i = 0; i < n; i++) {
+      combos *= 5;
+    }
+    for (int c = 0; c < combos; c++) {
+      for (int asker = 0; asker < 2; asker++) {
+        locktab_t::part_t t;
+        const lockid_t id{8, 8};
+        int code = c;
+        for (int i = 0; i < n; i++) {
+          t.add(t.find(id), id, &owner[i], g_modes[code % 5], &owner[i]);
+          code /= 5;
+        }
+        locktab_t::entry_t *e = t.find(id);
+        const void *who = 1 == asker && n > 1 ? &owner[1] : &stranger;
+        for (sm_lockmode_t m : g_modes) {
+          locktab_t::holder_t *mine;
+          sm_lockmode_t want;
+          bool conflict = locktab_t::probe(e, who, m, &mine, &want);
+          locktab_t::holder_t *h = locktab_t::held(e, who);
+          CHECK(mine == h);
+          CHECK(want == (nullptr != h ? lock_cover(h->mode, m) : m));
+          CHECK(conflict == !conflicts(e, who, want).empty());
+          cases++;
+        }
+      }
+    }
+  }
+  CHECK(cases > 30000);
+}

@@ -117,6 +117,29 @@ locktab_t::holder_t *locktab_t::held(entry_t *e, const void *owner) {
 
 namespace {
 
+/* The modes that conflict with each mode, as bits by their values. */
+struct conflict_masks_t {
+  uint32_t of[5] = {};
+
+  /* Read them off Gray's table, once. */
+  conflict_masks_t() {
+    for (int want = 0; want < 5; want++) {
+      for (int held = 0; held < 5; held++) {
+        if (!wisr::lock_compatible(static_cast<sm_lockmode_t>(held),
+                                   static_cast<sm_lockmode_t>(want))) {
+          of[want] |= uint32_t(1) << held;
+        }
+      }
+    }
+  }
+};
+
+/* The modes, as bits by their values, that conflict with mode m. */
+uint32_t conflict_mask(sm_lockmode_t m) {
+  static const conflict_masks_t masks;
+  return masks.of[m];
+}
+
 /* Append h to e's holders, growing its array past the inline ones. */
 void push_holder(locktab_t::entry_t *e, const locktab_t::holder_t &h) {
   using entry_t = locktab_t::entry_t;
@@ -144,6 +167,24 @@ void erase_holder(locktab_t::entry_t *e, uint32_t i) {
 }
 
 } // namespace
+
+/* One walk of e's holders for owner asking mode; see locktab.h. */
+bool locktab_t::probe(entry_t *e, const void *owner, sm_lockmode_t mode,
+                      holder_t **mine, sm_lockmode_t *want) {
+  *mine = nullptr;
+  // Our own hold, and the others' modes as bits by their values.
+  uint32_t others = 0;
+  for (uint32_t i = 0; i < e->n; i++) {
+    holder_t &h = e->at(i);
+    if (h.owner == owner) {
+      *mine = &h;
+    } else {
+      others |= uint32_t(1) << h.mode;
+    }
+  }
+  *want = nullptr != *mine ? lock_cover((*mine)->mode, mode) : mode;
+  return 0 != (others & conflict_mask(*want));
+}
 
 /* An entry for id, from the free list or new. */
 locktab_t::entry_t *locktab_t::part_t::take_entry(const lockid_t &id,
