@@ -90,6 +90,14 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
   its expected output, needs the user's explicit approval,
   with the reason stated before any edit.
 
+- **No `/tmp` for data or instances:** on every machine, WSL
+  included, data directories, server instances, test homes and
+  their logs go on a real disk: under `bench/build/`, and with
+  `TMPDIR` set to a directory there for tests. `/tmp` may be in
+  memory, which hides what disks cost, and its size is not the
+  disk's. A socket's directory holds no data, and may stay in
+  `/tmp` for its short path.
+
 - **Inspect tests via a saved log:** When running tests for
   inspection, save output to a file rather than repeatedly piping to
   grep. 
