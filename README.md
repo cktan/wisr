@@ -72,6 +72,15 @@ sudo apt install build-essential cmake git flex bison python3 \
 - **RocksDB 8.9.1**: the system's (`librocksdb-dev` on 24.04)
   for the debug build; the release and TSan builds build their
   own from source (below).
+- **Janet**, for `sm/rel`, which embeds its interpreter: built
+  from source and installed into `/usr/local`, where
+  `sm/rel/Makefile` looks for `janet.h` and `libjanet`. The
+  tests run on 1.43.0-dev, commit `86ca958e`.
+
+  ```
+  git clone https://github.com/janet-lang/janet.git
+  cd janet && make -j4 && sudo make install && sudo ldconfig
+  ```
 - **`psql` and `pgbench`**, from `postgresql-client`: digres
   serves PostgreSQL's own clients. PostgreSQL 18's `psql`,
   built below, is the one to use by hand (§Connect).
