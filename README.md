@@ -290,11 +290,13 @@ What each is:
   run commented out, against PostgreSQL's output
   (`dg/test/pgregress/README.md`).
 
-**`TMPDIR` must be on a real disk.** `sm/sm1`'s test of a torn
-record in a zero-filled log fails on tmpfs, as sm zero-fills a
-log only where a sync pays for it (`sm/sm1/WALPREALLOC.md`). If
-`/tmp` is tmpfs, as `df -T /tmp` shows, make a directory on disk
-and set `TMPDIR` to it.
+**Keep test data off `/tmp`.** Set `TMPDIR` to a directory on a
+real disk, on every machine, as `/tmp` may be in memory:
+
+```bash
+mkdir -p bench/build/tmp
+export TMPDIR=$PWD/bench/build/tmp
+```
 
 Run on their own, outside `make test`:
 
