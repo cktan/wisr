@@ -4,8 +4,9 @@ The design and plan of the project `BTREE.md` §17 decides. It
 replaces that design's §14, §15, and §16's fill latch and
 writers' latches. §17's decisions are taken as given, §2 here
 restates them, and this file adds what they leave open. Of §5's
-steps, 3, 4 and 5 are built, none of them the pool itself. Paths
-are relative to `sm/`. A bare §17 below is `BTREE.md`'s.
+steps, 2 to 6 are built: the pool is `sm1/src/bufpool.h`, tested
+alone, and nothing reads through it yet. Step 1 has not been run.
+Paths are relative to `sm/`. A bare §17 below is `BTREE.md`'s.
 
 ---
 

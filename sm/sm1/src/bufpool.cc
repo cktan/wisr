@@ -1,0 +1,497 @@
+/*
+ * bufpool.cc -- the buffer pool of a tree's pages (bufpool.h,
+ * ../../BUFFERPOOL.md §3).
+ *
+ * A frame's state word is its pin: a count of shared pins, an
+ * exclusive bit, and a bit saying a thread sleeps on it. Its tag lies
+ * in relaxed atomics, so a lookup reads it with no lock; only a pin
+ * makes it sure, as a tag changes only under an exclusive pin. So a
+ * lookup finds a frame, pins it, and compares the tag again.
+ *
+ * Buckets are chains of frame indexes. A chain changes under its
+ * bucket's lock and is read with none: a reader on a frame that moves
+ * walks on into another chain, and misses. A miss looks again under
+ * the lock before it takes the page a frame, so a page has one frame.
+ */
+
+#include "bufpool.h"
+
+#include "error.h"
+
+#include "sm_sys.h"
+
+#include <assert.h>
+#include <string.h>
+#include <unistd.h>
+
+using namespace wisr;
+
+namespace {
+
+/* The state word's bits; below them, the count of shared pins. */
+constexpr uint32_t state_ex = 1u << 31;
+constexpr uint32_t state_wait = 1u << 30;
+
+/* A tag's len while a frame holds no page. */
+constexpr uint32_t no_page = UINT32_MAX;
+
+/* How often a pin looks at a frame before it sleeps. */
+constexpr int spins = 32;
+
+/* How long a pin sleeps while every frame is pinned. */
+constexpr useconds_t victim_sleep_us = 200;
+
+/* A word of the bucket hash: Murmur3's finalizer. */
+uint64_t mix(uint64_t h) {
+  h ^= h >> 33;
+  h *= 0xff51afd7ed558ccdULL;
+  h ^= h >> 33;
+  h *= 0xc4ceb9fe1a85ec53ULL;
+  return h ^ (h >> 33);
+}
+
+/* The condition of one sleep: false before it, true once woken. */
+bool woke(void *arg) {
+  bool *slept = static_cast<bool *>(arg);
+  bool was = *slept;
+  *slept = true;
+  return was;
+}
+
+/* Fail as a wait a bit in the thread's mask ended. */
+int interrupted() {
+  return set_error(sm1::SM_ERR_INTERRUPTED, "a wait for a page interrupted");
+}
+
+} // namespace
+
+/* A page's tag, its key in two words. */
+struct bufpool_t::tag_t {
+  uint64_t dbid = 0;
+  uint64_t storeid = 0;
+  uint64_t k0 = 0;
+  uint64_t k1 = 0;
+  uint32_t len = no_page;
+
+  tag_t() = default;
+  /* The tag of page, whose key fits. */
+  explicit tag_t(const bufpool_page_t &page)
+      : dbid(page.dbid), storeid(page.storeid),
+        len(static_cast<uint32_t>(page.key.size())) {
+    char k[bufpool_key_max] = {};
+    memcpy(k, page.key.data(), page.key.size());
+    memcpy(&k0, k, 8);
+    memcpy(&k1, k + 8, 8);
+  }
+  bool operator==(const tag_t &) const = default;
+};
+
+/* A frame's descriptor, in a cache line of its own. */
+struct alignas(64) bufpool_t::frame_t {
+  std::atomic<uint32_t> state{0};
+  std::atomic<int32_t> next{-1}; /* the next in its chain */
+  std::atomic<uint8_t> count{0}; /* the clock's */
+  /* The tag, written under an exclusive pin. */
+  std::atomic<uint64_t> dbid{0};
+  std::atomic<uint64_t> storeid{0};
+  std::atomic<uint64_t> k0{0};
+  std::atomic<uint64_t> k1{0};
+  std::atomic<uint32_t> len{no_page};
+  /* Under the pin. */
+  bool valid = false; /* bytes hold the page */
+  uint16_t size = 0;
+  char *bytes = nullptr;
+
+  /* The tag as it is now: sure only under a pin. */
+  tag_t tag() const {
+    tag_t t;
+    t.dbid = dbid.load(std::memory_order_relaxed);
+    t.storeid = storeid.load(std::memory_order_relaxed);
+    t.k0 = k0.load(std::memory_order_relaxed);
+    t.k1 = k1.load(std::memory_order_relaxed);
+    t.len = len.load(std::memory_order_relaxed);
+    return t;
+  }
+  /* Set the tag, under an exclusive pin. */
+  void set_tag(const tag_t &t) {
+    dbid.store(t.dbid, std::memory_order_relaxed);
+    storeid.store(t.storeid, std::memory_order_relaxed);
+    k0.store(t.k0, std::memory_order_relaxed);
+    k1.store(t.k1, std::memory_order_relaxed);
+    len.store(t.len, std::memory_order_relaxed);
+  }
+};
+
+/* Where threads sleep on frames: one a few frames, frames sharing it. */
+struct bufpool_t::waitq_t {
+  std::mutex mu;
+  std::condition_variable cv;
+};
+
+/* Make the frames, each empty, and the buckets, twice as many. */
+bufpool_t::bufpool_t(size_t frames)
+    : m_nframes(frames), m_frames(new frame_t[frames]),
+      m_mem(new char[frames * bufpool_frame_bytes]),
+      m_waitqs(new waitq_t[waitqs]) {
+  assert(frames > 0);
+  size_t buckets = 16;
+  while (buckets < 2 * frames) {
+    buckets *= 2;
+  }
+  m_mask = buckets - 1;
+  m_buckets.reset(new std::atomic<int32_t>[buckets]);
+  for (size_t i = 0; i < buckets; i++) {
+    m_buckets[i].store(-1, std::memory_order_relaxed);
+  }
+  m_locks.reset(new std::mutex[bucket_locks]);
+  for (size_t i = 0; i < frames; i++) {
+    m_frames[i].bytes = m_mem.get() + i * bufpool_frame_bytes;
+  }
+}
+
+/* Free the frames; no pin may be held. */
+bufpool_t::~bufpool_t() = default;
+
+/* The chain a tag lies in. */
+size_t bufpool_t::bucket_of(const tag_t &t) const {
+  uint64_t h = mix(t.dbid ^ mix(t.storeid ^ mix(t.k0 ^ mix(t.k1 + t.len))));
+  return h & m_mask;
+}
+
+/* The queue threads sleep on for f. */
+bufpool_t::waitq_t &bufpool_t::waitq_of(const frame_t *f) const {
+  return m_waitqs[static_cast<size_t>(f - m_frames.get()) % waitqs];
+}
+
+/*
+ * The frame whose tag is tag now, with no lock: it may change before
+ * it is pinned, and a chain walked as it changes may miss one that is
+ * there. nullptr if none was seen.
+ */
+bufpool_t::frame_t *bufpool_t::find(const tag_t &tag) const {
+  int32_t i = m_buckets[bucket_of(tag)].load(std::memory_order_acquire);
+  // A frame moving between chains could lead a walk round: a miss.
+  for (size_t steps = 0; i >= 0 && steps < m_nframes; steps++) {
+    frame_t *f = &m_frames[static_cast<size_t>(i)];
+    if (f->tag() == tag) {
+      return f;
+    }
+    i = f->next.load(std::memory_order_acquire);
+  }
+  return nullptr;
+}
+
+namespace {
+
+/*
+ * Pin state's frame if it can be, now. A pin that is yet to wait
+ * leaves way for a thread asleep, past_wait false, so a writer is not
+ * starved by readers; one that has slept takes its turn.
+ */
+bool try_pin(std::atomic<uint32_t> &state, bool ex, bool past_wait) {
+  uint32_t s = state.load(std::memory_order_relaxed);
+  for (;;) {
+    if (!past_wait && 0 != (s & state_wait)) {
+      return false;
+    }
+    uint32_t held = s & ~state_wait;
+    if (ex ? 0 != held : 0 != (s & state_ex)) {
+      return false;
+    }
+    if (state.compare_exchange_weak(s, ex ? s | state_ex : s + 1,
+                                    std::memory_order_acquire,
+                                    std::memory_order_relaxed)) {
+      return true;
+    }
+  }
+}
+
+} // namespace
+
+/*
+ * Pin f, found for tag, waiting by sm_wait: 0; 1 if f holds another
+ * page by now, nothing pinned; -1 if a wait was interrupted.
+ */
+int bufpool_t::acquire(frame_t *f, bool ex, const tag_t &tag) {
+  for (int i = 0; i < spins; i++) {
+    if (try_pin(f->state, ex, false)) {
+      return 0;
+    }
+  }
+  // A pin's wait may last through a write that stalls (BUFFERPOOL.md
+  // §4.4), so it sleeps, and can be cut short.
+  waitq_t &q = waitq_of(f);
+  std::unique_lock<std::mutex> guard(q.mu);
+  for (;;) {
+    // The bit first: a release after it sees it, and wakes this.
+    f->state.fetch_or(state_wait, std::memory_order_relaxed);
+    if (try_pin(f->state, ex, true)) {
+      return 0;
+    }
+    // Never sleep on another page's frame: its holder may wait for a
+    // page this thread holds, out of the order pages are latched in.
+    if (!(f->tag() == tag)) {
+      return 1;
+    }
+    bool slept = false;
+    if (SM_WAIT_INTERRUPTED ==
+        sm_wait(&guard, &q.cv, woke, &slept, sm_wait_mask(), SM_FOREVER)) {
+      return interrupted();
+    }
+  }
+}
+
+/* Wake the threads asleep on f, whose wait bit the caller saw. */
+void bufpool_t::wake(frame_t *f) {
+  f->state.fetch_and(~state_wait, std::memory_order_relaxed);
+  waitq_t &q = waitq_of(f);
+  // Through the mutex, so a sleeper that set the bit is in its wait.
+  {
+    std::lock_guard<std::mutex> guard(q.mu);
+  }
+  q.cv.notify_all();
+}
+
+/* Drop held, state_ex or 1, of f's pin; the last wakes its sleepers. */
+void bufpool_t::release(frame_t *f, uint32_t held) {
+  uint32_t s = f->state.fetch_sub(held, std::memory_order_release) - held;
+  if (state_wait == s) {
+    wake(f);
+  }
+}
+
+/* Unlink f from its chain, by its tag. f is pinned exclusive. */
+void bufpool_t::unlink(frame_t *f) {
+  size_t b = bucket_of(f->tag());
+  int32_t me = static_cast<int32_t>(f - m_frames.get());
+  std::lock_guard<std::mutex> guard(m_locks[b % bucket_locks]);
+  std::atomic<int32_t> *at = &m_buckets[b];
+  for (;;) {
+    int32_t i = at->load(std::memory_order_relaxed);
+    assert(i >= 0);
+    if (i == me) {
+      // f keeps its next, so a reader on f walks on.
+      at->store(f->next.load(std::memory_order_relaxed),
+                std::memory_order_release);
+      return;
+    }
+    at = &m_frames[static_cast<size_t>(i)].next;
+  }
+}
+
+/*
+ * Take a frame by the clock, emptied and pinned exclusive: skip a
+ * pinned one, age one with a count, take one with none. While every
+ * frame is pinned it waits, as a pin is short and their number
+ * bounded. 0, or -1 if interrupted.
+ */
+int bufpool_t::victim(frame_t *&out) {
+  for (;;) {
+    // Three turns of the hand age an inner page to nothing.
+    for (size_t i = 0; i < 3 * m_nframes; i++) {
+      uint64_t at = m_hand.fetch_add(1, std::memory_order_relaxed);
+      frame_t *f = &m_frames[at % m_nframes];
+      if (0 != f->state.load(std::memory_order_relaxed)) {
+        continue;
+      }
+      uint8_t c = f->count.load(std::memory_order_relaxed);
+      if (0 != c) {
+        f->count.store(c - 1, std::memory_order_relaxed);
+        continue;
+      }
+      uint32_t idle = 0;
+      if (!f->state.compare_exchange_strong(idle, state_ex,
+                                            std::memory_order_acquire,
+                                            std::memory_order_relaxed)) {
+        continue;
+      }
+      if (no_page != f->len.load(std::memory_order_relaxed)) {
+        unlink(f);
+        f->set_tag(tag_t{});
+      }
+      f->valid = false;
+      out = f;
+      return 0;
+    }
+    if (0 != (sm_pending() & sm_wait_mask())) {
+      return interrupted();
+    }
+    // Every frame pinned or aged: give their holders the processor.
+    usleep(victim_sleep_us);
+  }
+}
+
+/*
+ * A frame for tag, pinned exclusive, tagged and in its chain, its
+ * bytes not valid: 0; 1 if tag has a frame by now, so the caller looks
+ * again; -1 if interrupted.
+ */
+int bufpool_t::take(const tag_t &tag, frame_t *&out) {
+  frame_t *f = nullptr;
+  if (0 != victim(f)) {
+    return -1;
+  }
+  size_t b = bucket_of(tag);
+  {
+    // The look under the lock is the one that is sure: no two frames
+    // of one page.
+    std::lock_guard<std::mutex> guard(m_locks[b % bucket_locks]);
+    int32_t i = m_buckets[b].load(std::memory_order_relaxed);
+    for (; i >= 0; i = m_frames[static_cast<size_t>(i)].next.load(
+                       std::memory_order_relaxed)) {
+      if (m_frames[static_cast<size_t>(i)].tag() == tag) {
+        break;
+      }
+    }
+    if (i < 0) {
+      f->set_tag(tag);
+      f->next.store(m_buckets[b].load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+      m_buckets[b].store(static_cast<int32_t>(f - m_frames.get()),
+                         std::memory_order_release);
+      out = f;
+      return 0;
+    }
+  }
+  release(f, state_ex);
+  return 1;
+}
+
+/* Pin a page; see bufpool.h. */
+int bufpool_t::pin(const bufpool_page_t &page, bool ex, unsigned flags,
+                   bufpool_load_t load, void *arg, frame_t *&out,
+                   std::string_view &bytes) {
+  bytes = std::string_view();
+  if (page.key.size() > bufpool_key_max) {
+    return set_error(sm1::SM_ERR_INVALID, "a page's key is too long");
+  }
+  assert(ex || 0 == (flags & bufpool_no_read));
+  tag_t tag(page);
+  // A leaf's count is not raised by its second pin, so a scan's
+  // re-read of each leaf promotes nothing; at its value it is not
+  // written, so a hot page's line stays clean of it.
+  uint8_t age = 0 != (flags & bufpool_inner) ? 2 : 1;
+  for (;;) {
+    frame_t *f = find(tag);
+    if (nullptr != f) {
+      int rc = acquire(f, ex, tag);
+      if (rc < 0) {
+        return -1;
+      }
+      if (1 == rc) {
+        continue;
+      }
+      if (!(f->tag() == tag)) {
+        // Taken for another page before the pin.
+        release(f, ex ? state_ex : 1);
+        continue;
+      }
+    } else {
+      int rc = take(tag, f);
+      if (rc < 0) {
+        return -1;
+      }
+      if (1 == rc) {
+        continue;
+      }
+      if (0 == (flags & bufpool_no_read)) {
+        // Exclusive through the read: the page's other pins, a writer's
+        // among them, wait on the frame, so no write passes this read.
+        size_t size = 0;
+        rc = load(arg, f->bytes, size);
+        if (0 != rc) {
+          discard(f);
+          release(f, state_ex);
+          return rc;
+        }
+        f->size = static_cast<uint16_t>(size);
+        f->valid = true;
+        if (!ex) {
+          // Drop to shared, and let the page's readers in.
+          uint32_t s = f->state.load(std::memory_order_relaxed);
+          while (!f->state.compare_exchange_weak(s, (s & ~state_ex) + 1,
+                                                 std::memory_order_release,
+                                                 std::memory_order_relaxed)) {
+          }
+          if (0 != (s & state_wait)) {
+            wake(f);
+          }
+        }
+      }
+    }
+    if (f->count.load(std::memory_order_relaxed) < age) {
+      f->count.store(age, std::memory_order_relaxed);
+    }
+    out = f;
+    if (f->valid) {
+      bytes = std::string_view(f->bytes, f->size);
+    }
+    return 0;
+  }
+}
+
+/* Unpin a frame; see bufpool.h. */
+void bufpool_t::unpin(frame_t *frame) {
+  if (nullptr == frame) {
+    return;
+  }
+  // A holder of the bit is its only pin, so this reads its own.
+  bool ex = 0 != (frame->state.load(std::memory_order_relaxed) & state_ex);
+  if (ex && !frame->valid &&
+      no_page != frame->len.load(std::memory_order_relaxed)) {
+    // A new page never installed: its write failed.
+    discard(frame);
+  }
+  release(frame, ex ? state_ex : 1);
+}
+
+/* Copy a page's bytes in; see bufpool.h. */
+void bufpool_t::install(frame_t *frame, std::string_view bytes) {
+  assert(bytes.size() <= bufpool_frame_bytes);
+  memcpy(frame->bytes, bytes.data(), bytes.size());
+  frame->size = static_cast<uint16_t>(bytes.size());
+  frame->valid = true;
+}
+
+/* Take a frame out; see bufpool.h. */
+void bufpool_t::discard(frame_t *frame) {
+  unlink(frame);
+  frame->set_tag(tag_t{});
+  frame->valid = false;
+  frame->count.store(0, std::memory_order_relaxed);
+}
+
+/* Empty a prefix's frames; see bufpool.h. */
+void bufpool_t::purge(uint64_t dbid, uint64_t storeid,
+                      std::string_view prefix) {
+  auto mine = [&](const tag_t &t) {
+    if (no_page == t.len || t.dbid != dbid || t.storeid != storeid ||
+        t.len < prefix.size()) {
+      return false;
+    }
+    char k[bufpool_key_max];
+    memcpy(k, &t.k0, 8);
+    memcpy(k + 8, &t.k1, 8);
+    return 0 == memcmp(k, prefix.data(), prefix.size());
+  };
+  for (size_t i = 0; i < m_nframes; i++) {
+    frame_t *f = &m_frames[i];
+    if (!mine(f->tag())) {
+      continue;
+    }
+    // This wait must not fail, or a dropped page would stay: a pin is
+    // short, so it spins with the processor given up.
+    while (!try_pin(f->state, true, true)) {
+      usleep(victim_sleep_us);
+    }
+    if (mine(f->tag())) {
+      discard(f);
+    }
+    release(f, state_ex);
+  }
+}
+
+/* Whether a page has a frame; see bufpool.h. */
+bool bufpool_t::cached(const bufpool_page_t &page) const {
+  return nullptr != find(tag_t(page));
+}

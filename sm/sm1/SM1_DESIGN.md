@@ -2992,6 +2992,7 @@ src/load.cc             bulk load into an empty store (../BULKLOAD.md)
 src/pin.cc              raw pins (../ROW.md §2)
 src/lockmgr.cc          locks, write latches, waits-for graph, deadlocks
 src/locktab.cc          the lock table alone: ids, modes, holders
+src/bufpool.cc          the buffer pool alone: frames, pins, the clock
 src/ssi.cc              SIREAD locks, rw-edges, validation
 src/catalog.cc          store catalog: lookup, mkstore/rmstore, sm1::lsstore
 src/seq.cc              named sequences: sm1::mkseq, sm1::rmseq, sm1::nextseq
