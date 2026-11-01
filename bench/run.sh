@@ -6,7 +6,7 @@
 #   bench/run.sh pg|dg       one, for a look; no report is written
 #
 # RUNS (10) timed runs of each query after WARM (2), and Q7_SECONDS (30)
-# of pgbench for each of Q7, Q8, Q10 and Q11. PostgreSQL is
+# of pgbench for each of Q7, Q8, Q10, Q10b and Q11. PostgreSQL is
 # bench/build/pg18 (DESIGN.md section 2) and digres
 # ../dg/build/digres-release ("make -C dg release"). Each system's data
 # directory and log are under bench/build/run; the report goes to
@@ -82,6 +82,53 @@ tps() {
 # A plan's scan node, as a report shows it: its kind, index and table.
 scan_node='[A-Z][A-Za-z ]*Scan\( using [a-z0-9_]*\)\? on [a-z0-9_]*'
 
+# Time query $4, named $1 on table $2, with the plan $3 asks for, seq or
+# index, as DESIGN.md section 5.1 says: its NAME|TABLE|SUMMARY|PLAN line.
+timed() {
+  local name=$1 table=$2 scan=$3 query=$4 set a r t plan times=()
+  # The plan the query is to have: only sequential scans, or only index.
+  if [ "$scan" = seq ]; then
+    set="set enable_indexscan = off; set enable_indexonlyscan = off;
+      set enable_bitmapscan = off;"
+  else
+    set="set enable_seqscan = off; set enable_bitmapscan = off;"
+  fi
+  # The plan's scan node, for the report to show it is the one meant.
+  plan=$(sql -c "$set explain (costs off) ${query//:a/1}" |
+    grep -m1 -o "$scan_node")
+  for r in $(seq $((warm + runs))); do
+    a=$(((r * 90001) % 990000 + 1))
+    t=$(sql -c "$set explain (analyze, timing off) ${query//:a/$a}" |
+      sed -n 's/^Execution Time: \([0-9.]*\) ms$/\1/p')
+    [ "$r" -gt "$warm" ] && times+=("$t")
+  done
+  echo "$name|$table|$(printf '%s\n' "${times[@]}" | summary)|$plan"
+}
+
+# Run pgbench script $2, Q7's or Q10's, one client, as query $1: its
+# NAME|TABLE|TPS|PLAN line, the plan from its statement with keys 1 to 100.
+fetched() {
+  local plan
+  plan=$(sql -c "explain (costs off) $(grep -v '^[-\\]' "$2" |
+    sed "s/:k\([0-9]*\)/\1/g")" | grep -m1 -o "$scan_node")
+  echo "$1|wide_mixed|$(tps -c 1 -f "$2") tps|$plan"
+}
+
+# Make wide_mixed's c2 index again on system $1, of kind $2 (DESIGN.md
+# section 5): plain, as schema.sql makes it, or tree, which on digres is
+# WITH (tree = on) (../sm/BTREE.md), and on PostgreSQL, which has no
+# other, its B-tree again. Then settle the table, as after the load.
+c2_index() {
+  local name=wide_mixed_c2 with=""
+  if [ "$2" = tree ] && [ "$1" = dg ]; then
+    name=wide_mixed_c2_tree with="with (tree = on)"
+  fi
+  sql -c "drop index if exists wide_mixed_c2" \
+    -c "drop index if exists wide_mixed_c2_tree" \
+    -c "create index $name on wide_mixed (c2) $with" \
+    -c "vacuum (analyze) wide_mixed" || exit 1
+}
+
 # The median, least and greatest of the numbers on stdin, as "M (L-G)": to
 # a tenth of a millisecond, or a thousandth below 10 ms, where a tenth
 # would hide a difference (Q6's 0.2 against 0.2).
@@ -123,26 +170,7 @@ measure() {
   sql -c 'vacuum (freeze, analyze)' || exit 1
   : > "$out"
   grep -v '^#' sql/queries.txt | while IFS='|' read -r name table scan query; do
-    local set a=1 times=()
-    # The plan the query is to have: only sequential scans, or only index.
-    if [ "$scan" = seq ]; then
-      set="set enable_indexscan = off; set enable_indexonlyscan = off;
-        set enable_bitmapscan = off;"
-    else
-      set="set enable_seqscan = off; set enable_bitmapscan = off;"
-    fi
-    # The plan's scan node, for the report to show it is the one meant.
-    local plan
-    plan=$(sql -c "$set explain (costs off) ${query//:a/1}" |
-      grep -m1 -o "$scan_node")
-    for r in $(seq $((warm + runs))); do
-      a=$(((r * 90001) % 990000 + 1))
-      local t
-      t=$(sql -c "$set explain (analyze, timing off) ${query//:a/$a}" |
-        sed -n 's/^Execution Time: \([0-9.]*\) ms$/\1/p')
-      [ "$r" -gt "$warm" ] && times+=("$t")
-    done
-    echo "$name|$table|$(printf '%s\n' "${times[@]}" | summary)|$plan" >> "$out"
+    timed "$name" "$table" "$scan" "$query" >> "$out"
     echo "run: $sys: $name on $table"
   done
   # Each table's size as its system reports it.
@@ -151,15 +179,23 @@ measure() {
       2> /dev/null || echo '?')" >> "$out"
   done
   echo "size|datadir|$(du -sh "$work/$sys" | cut -f1)" >> "$out"
-  # Q7 by the primary key and Q10 by c2's index, one client each, with
-  # each one's plan, from its statement with keys 1 to 100.
-  local q plan
+  # Q7 by the primary key and Q10 by c2's index, one client each.
+  local q
   for q in q7 q10; do
-    plan=$(sql -c "explain (costs off) $(grep -v '^[-\\]' sql/$q.sql |
-      sed "s/:k\([0-9]*\)/\1/g")" | grep -m1 -o "$scan_node")
     echo "run: $sys: $q, $q7_seconds seconds"
-    echo "$q|wide_mixed|$(tps -c 1 -f sql/$q.sql) tps|$plan" >> "$out"
+    fetched "$q" "sql/$q.sql" >> "$out"
   done
+  # Q9b and Q10b: Q9 and Q10 again, c2's index made again a tree, then
+  # plain again for Q11.
+  echo "run: $sys: c2's index, a tree"
+  c2_index "$sys" tree
+  timed q9b wide_mixed index \
+    "$(grep '^q9|' sql/queries.txt | cut -d'|' -f4-)" >> "$out"
+  echo "run: $sys: q9b on wide_mixed"
+  echo "run: $sys: q10b, $q7_seconds seconds"
+  fetched q10b sql/q10.sql >> "$out"
+  echo "run: $sys: c2's index, plain"
+  c2_index "$sys" plain
   # Last, Q8 and Q11, whose updates change c1: 16 clients, the reads of
   # Q7 and of Q10 9 times in 10.
   echo "run: $sys: q8, $q7_seconds seconds"
@@ -198,11 +234,11 @@ report() {
     "$digres" --build | sed 's/^/      /'
     echo
     echo "- PostgreSQL: $("$pg18/bin/postgres" --version), at 724edf9"
-    echo "- $runs runs a query after $warm; Q7, Q8, Q10 and Q11 for" \
+    echo "- $runs runs a query after $warm; Q7, Q8, Q10, Q10b and Q11 for" \
       "$q7_seconds seconds each"
     echo
-    echo "Execution time in ms, median (least-greatest); Q7, Q8, Q10 and" \
-      "Q11 in transactions a second."
+    echo "Execution time in ms, median (least-greatest); Q7, Q8, Q10," \
+      "Q10b and Q11 in transactions a second."
     echo
     echo "| Query | Table | PostgreSQL | digres | digres / PostgreSQL |" \
       "Plan, PostgreSQL | Plan, digres |"

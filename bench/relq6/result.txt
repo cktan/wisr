@@ -1,0 +1,81 @@
+Query: q1 count(*)
+Table: narrow
+PostgreSQL access: seq scan of heap, no column read
+digres access: full range scan on pk, no column read
+PostgreSQL: 49.3
+digres: 133.4
+ratio: 2.71
+────────────────────────────────────────
+Query: q2 sum(c1)
+Table: narrow
+PostgreSQL access: seq scan of heap, read through c1
+digres access: full range scan on pk, read through c1
+PostgreSQL: 62.3
+digres: 189.8
+ratio: 3.05
+────────────────────────────────────────
+Query: q3 sum(c4)
+Table: narrow
+PostgreSQL access: seq scan of heap, read through c4 (last)
+digres access: full range scan on pk, read through c4
+PostgreSQL: 68.2
+digres: 205.4
+ratio: 3.01
+────────────────────────────────────────
+Query: q1 count(*)
+Table: wide_fixed
+PostgreSQL access: seq scan of heap
+digres access: full range scan on pk
+PostgreSQL: 85.8
+digres: 167.6
+ratio: 1.95
+────────────────────────────────────────
+Query: q2 sum(c1)
+Table: wide_fixed
+PostgreSQL access: seq scan of heap, read through c1
+digres access: full range scan on pk, read through c1
+PostgreSQL: 195.1
+digres: 222.2
+ratio: 1.14
+────────────────────────────────────────
+Query: q3 sum(c49)
+Table: wide_fixed
+PostgreSQL access: seq scan of heap, read through c49 (all 50)
+digres access: full range scan on pk, read through c49
+PostgreSQL: 258.0
+digres: 479.3
+ratio: 1.86
+────────────────────────────────────────
+Query: q4 sum(length(body))
+Table: toasted
+PostgreSQL access: seq scan of heap, plus each body fetched from its TOAST table through
+the TOAST index
+digres access: full range scan on pk, plus each body's chunks read from the same store
+under the TOAST relid
+PostgreSQL: 1749.5
+digres: 1656.3
+ratio: 0.95
+────────────────────────────────────────
+Query: q5 count(*)
+Table: toasted
+PostgreSQL access: seq scan of heap, bodies not fetched
+digres access: full range scan on pk, bodies not fetched
+PostgreSQL: 8.8
+digres: 16.8
+ratio: 1.91
+────────────────────────────────────────
+Query: q6 id between a and a+9999
+Table: wide_mixed
+PostgreSQL access: pk index range scan: B-tree descent, then 10,000 heap fetches
+digres access: range scan on pk over 10,000 rows, no second lookup
+PostgreSQL: 3.4
+digres: 4.7
+ratio: 1.38
+────────────────────────────────────────
+Query: q7 id = k
+Table: wide_mixed
+PostgreSQL access: pk index point lookup: B-tree descent, then one heap fetch
+digres access: pk point read: one RocksDB Get
+PostgreSQL: 7,098 tps
+digres: 6,754 tps
+ratio: 0.95 (of PG's tps)
