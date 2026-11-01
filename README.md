@@ -61,7 +61,25 @@ Start with `sm/README.md`. Before changing code, read
 
 Developed on Ubuntu 24.04, aarch64; the build must also work
 on x86_64, and has been on Ubuntu 26.10 with GCC 15, which needs
-the steps under "Newer than Ubuntu 24.04" below. On Ubuntu:
+the steps under "Newer than Ubuntu 24.04" below.
+
+**`./SETUP_UBUNTU_DEV.sh`** does all of this section on a
+minimal Ubuntu machine. Each step is skipped once its result is
+there, so it can be run again after a failure; `SRC=` sets where
+it clones, `~/p` by default. It does:
+
+- **apt packages**: the list below, and `ca-certificates`.
+- **Janet**: commit `86ca958e`, installed into `/usr/local`.
+- **PostgreSQL 18**: `REL_18_STABLE` in `~/p/postgres18`,
+  installed into its `install/`, with its isolation tester.
+- **`PATH`**: that `install/bin` first, in `~/.profile`.
+- **`bench/build/pg18`**: PostgreSQL 18.6 (`724edf9`),
+  optimized, for the benchmark.
+- **Newer than Ubuntu 24.04**: the release build's RocksDB,
+  with `<cstdint>` given to GCC 15. The TSan build's RocksDB
+  and `CPATH` are left to you; it prints how.
+
+By hand, on Ubuntu:
 
 ```
 sudo apt install build-essential cmake git flex bison python3 \
