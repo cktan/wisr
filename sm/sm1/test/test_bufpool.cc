@@ -310,6 +310,56 @@ TEST_CASE("bufpool: an inner page outlasts a scan of leaves") {
   CHECK(cached(pool, 0));
 }
 
+TEST_CASE("bufpool: the hand shifts an inner page's age by one, a leaf's by "
+          "two") {
+  // Verify a pin ORs 128 into a page's age, the hand halves an inner
+  // page's age and quarters a leaf's, and takes a page at 0.
+  // 1. In a pool of 2, pin inner page 0 and leaf 1: each is 128.
+  // 2. Miss leaf 2: the hand alternates, shifting page 0 five times,
+  //    to 4, and leaf 1 four times, to 0, taking its frame.
+  // 3. Pin page 0 again: 4 | 128, 132.
+  // 4. Miss leaf 3: page 0's lower bits shift out with the rest, to 4
+  //    again, and leaf 2 is taken.
+  // 5. Miss leaf 4: page 0 reaches 0 in three more turns and is taken,
+  //    eight shifts after its last pin.
+  bufpool_t pool(2);
+  store_t st;
+  fill(st, 8);
+  bufpool_t::frame_t *f = nullptr;
+  std::string_view b;
+  auto age = [&](size_t n) {
+    std::string key = key_of(n);
+    return pool.age(bufpool_page_t{1, 2, key});
+  };
+  REQUIRE(0 == pin(pool, st, 0, false, bufpool_inner, f, b));
+  pool.unpin(f);
+  REQUIRE(0 == pin(pool, st, 1, false, 0, f, b));
+  pool.unpin(f);
+  CHECK(128 == age(0));
+  CHECK(128 == age(1));
+
+  REQUIRE(0 == pin(pool, st, 2, false, 0, f, b));
+  pool.unpin(f);
+  CHECK(4 == age(0));
+  CHECK_FALSE(cached(pool, 1));
+  CHECK(128 == age(2));
+
+  REQUIRE(0 == pin(pool, st, 0, false, bufpool_inner, f, b));
+  pool.unpin(f);
+  CHECK(132 == age(0));
+
+  REQUIRE(0 == pin(pool, st, 3, false, 0, f, b));
+  pool.unpin(f);
+  CHECK(4 == age(0));
+  CHECK_FALSE(cached(pool, 2));
+
+  REQUIRE(0 == pin(pool, st, 4, false, 0, f, b));
+  pool.unpin(f);
+  CHECK_FALSE(cached(pool, 0));
+  CHECK(2 == age(3));
+  CHECK(128 == age(4));
+}
+
 TEST_CASE("bufpool: a pin waits for a frame while every one is pinned") {
   // Verify a miss with no frame free waits for one.
   // 1. In a pool of 2, pin 2 pages.

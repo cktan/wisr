@@ -35,6 +35,9 @@ constexpr uint32_t state_wait = 1u << 30;
 /* A tag's len while a frame holds no page. */
 constexpr uint32_t no_page = UINT32_MAX;
 
+/* The bit a pin sets in a frame's age. */
+constexpr uint8_t age_pinned = 128;
+
 /* How often a pin looks at a frame before it sleeps. */
 constexpr int spins = 32;
 
@@ -89,8 +92,9 @@ struct bufpool_t::tag_t {
 /* A frame's descriptor, in a cache line of its own. */
 struct alignas(64) bufpool_t::frame_t {
   std::atomic<uint32_t> state{0};
-  std::atomic<int32_t> next{-1}; /* the next in its chain */
-  std::atomic<uint8_t> count{0}; /* the clock's */
+  std::atomic<int32_t> next{-1};  /* the next in its chain */
+  std::atomic<uint8_t> age{0};    /* the clock's: a pin sets its top bit */
+  std::atomic<bool> inner{false}; /* its last pin's bufpool_inner */
   /* The tag, written under an exclusive pin. */
   std::atomic<uint64_t> dbid{0};
   std::atomic<uint64_t> storeid{0};
@@ -281,22 +285,26 @@ void bufpool_t::unlink(frame_t *f) {
 
 /*
  * Take a frame by the clock, emptied and pinned exclusive: skip a
- * pinned one, age one with a count, take one with none. While every
- * frame is pinned it waits, as a pin is short and their number
- * bounded. 0, or -1 if interrupted.
+ * pinned one, age one with an age, shifting it right by one if inner
+ * and by two if a leaf, take one with none. While every frame is
+ * pinned it waits, as a pin is short and their number bounded. 0, or
+ * -1 if interrupted.
  */
 int bufpool_t::victim(frame_t *&out) {
   for (;;) {
-    // Three turns of the hand age an inner page to nothing.
-    for (size_t i = 0; i < 3 * m_nframes; i++) {
+    // Eight turns of the hand age an inner page to nothing, the ninth
+    // takes it.
+    for (size_t i = 0; i < 9 * m_nframes; i++) {
       uint64_t at = m_hand.fetch_add(1, std::memory_order_relaxed);
       frame_t *f = &m_frames[at % m_nframes];
       if (0 != f->state.load(std::memory_order_relaxed)) {
         continue;
       }
-      uint8_t c = f->count.load(std::memory_order_relaxed);
-      if (0 != c) {
-        f->count.store(c - 1, std::memory_order_relaxed);
+      uint8_t a = f->age.load(std::memory_order_relaxed);
+      if (0 != a) {
+        int shift = f->inner.load(std::memory_order_relaxed) ? 1 : 2;
+        f->age.store(static_cast<uint8_t>(a >> shift),
+                     std::memory_order_relaxed);
         continue;
       }
       uint32_t idle = 0;
@@ -367,10 +375,7 @@ int bufpool_t::pin(const bufpool_page_t &page, bool ex, unsigned flags,
   }
   assert(ex || 0 == (flags & bufpool_no_read));
   tag_t tag(page);
-  // A leaf's count is not raised by its second pin, so a scan's
-  // re-read of each leaf promotes nothing; at its value it is not
-  // written, so a hot page's line stays clean of it.
-  uint8_t age = 0 != (flags & bufpool_inner) ? 2 : 1;
+  bool inner = 0 != (flags & bufpool_inner);
   for (;;) {
     frame_t *f = find(tag);
     if (nullptr != f) {
@@ -419,8 +424,18 @@ int bufpool_t::pin(const bufpool_page_t &page, bool ex, unsigned flags,
         }
       }
     }
-    if (f->count.load(std::memory_order_relaxed) < age) {
-      f->count.store(age, std::memory_order_relaxed);
+    // Any pin leaves an age of 128 to 255, eight sweeps for an inner
+    // page and four for a leaf, as the lower bits shift out first: no
+    // pin promotes a page further, so a scan's re-read of a leaf
+    // promotes nothing. What is already so is not written, so a hot
+    // page's line stays clean of it.
+    uint8_t a = f->age.load(std::memory_order_relaxed);
+    if (0 == (a & age_pinned)) {
+      f->age.store(static_cast<uint8_t>(a | age_pinned),
+                   std::memory_order_relaxed);
+    }
+    if (f->inner.load(std::memory_order_relaxed) != inner) {
+      f->inner.store(inner, std::memory_order_relaxed);
     }
     out = f;
     if (f->valid) {
@@ -458,7 +473,7 @@ void bufpool_t::discard(frame_t *frame) {
   unlink(frame);
   frame->set_tag(tag_t{});
   frame->valid = false;
-  frame->count.store(0, std::memory_order_relaxed);
+  frame->age.store(0, std::memory_order_relaxed);
 }
 
 /* Empty a prefix's frames; see bufpool.h. */
@@ -499,6 +514,12 @@ size_t bufpool_t::exclusive() const {
     n += 0 != (s & state_ex) ? 1 : 0;
   }
   return n;
+}
+
+/* A page's age; see bufpool.h. */
+uint8_t bufpool_t::age(const bufpool_page_t &page) const {
+  const frame_t *f = find(tag_t(page));
+  return nullptr == f ? 0 : f->age.load(std::memory_order_relaxed);
 }
 
 /* Whether a page has a frame; see bufpool.h. */

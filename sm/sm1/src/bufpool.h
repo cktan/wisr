@@ -114,6 +114,9 @@ public:
   /* Whether page has a frame now: for tests. */
   bool cached(const bufpool_page_t &page) const;
 
+  /* A page's clock age, 0 if it has no frame: for tests. */
+  uint8_t age(const bufpool_page_t &page) const;
+
   /* The frames pinned exclusive now: for tests. */
   size_t exclusive() const;
 

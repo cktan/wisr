@@ -143,7 +143,7 @@ cache, shared by every database and the temporary instance.
 - **4 KB each**, an array made at attach, `sm1::page_size`. sm2's
   `page_limit` must not exceed it: a `static_assert`.
 - **A descriptor, in its own cache line**: the state word, the
-  clock's count, the tag.
+  clock's age and whether its page is inner, the tag.
 - **The state word**: SH count, and an EX bit. One word, as the
   prototype's.
 - **The tag**: database, store, and the page's key, at most 16
@@ -188,12 +188,20 @@ happen: a writer of the page waits on the same word.
 
 ### 3.5 Eviction
 
-- **The hand** sweeps frames, skipping any pinned, taking a count
-  of 0.
-- **The count**: 2 for an inner page, 1 for a leaf at a pin, not
-  raised by a second pin of a leaf, so a scan's re-read of each
-  leaf promotes nothing. A count at its value is not written, so
-  a hit on a hot page writes the state word alone.
+- **The hand** sweeps frames, skipping any pinned, taking an age
+  of 0, and shifting any other right: by one for an inner page,
+  by two for a leaf. A frame keeps whether its page is inner from
+  its last pin.
+- **The age**: a pin ORs in its top bit, 128, so after any pin
+  an age is 128 to 255. The hand empties it in eight sweeps of
+  an inner page and four of a leaf, whatever its lower bits:
+  they shift out before the top bit does. So a pin restarts a
+  page's life and promotes it no further: a scan's re-read of a
+  leaf promotes nothing. A bit already set is not written, nor
+  an unchanged inner flag, so a hit on a hot page writes the
+  state word alone.
+- **The hand turns at most nine times** before it sleeps: eight
+  sweeps age an inner page to 0, the ninth takes it.
 - **Pinned frames are bounded**: a thread pins at most five in a
   split: a child, its parent, the parent's sibling and a new
   page, and in a unique insert the leaf it began on. So the floor
