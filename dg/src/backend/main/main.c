@@ -375,7 +375,7 @@ extern "C" const char dg_rocksdb_build[];
 /*
  * Print how the program was built: the compiler flags of its own objects,
  * of sq's and of sm's, and the RocksDB it links.  A benchmark is run only
- * on a build optimized and without assertions (../bench/CODE.md).
+ * on a build optimized and without assertions (../bench.old/CODE.md).
  */
 static void print_build(void) {
   printf("digres   %s\n", DG_BUILD_FLAGS);

@@ -101,7 +101,7 @@ build/test/%.o: test/%.cc | build/gen/gram.hh
 	$(CXX) $(LIB_CXXFLAGS) -c -o $@ $<
 
 # The library again, optimized, its objects apart in build/rel: what
-# digres's release build links (../bench/DESIGN.md section 2).
+# digres's release build links (../bench.old/DESIGN.md section 2).
 REL_OBJS := $(LIB_OBJS:build/%=build/rel/%)
 REL_OPT := -O2 -DNDEBUG
 REL_LIB_CXXFLAGS := $(filter-out -O0 -g,$(LIB_CXXFLAGS)) $(REL_OPT)

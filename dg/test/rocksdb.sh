@@ -11,7 +11,7 @@
 # -fsanitize=thread, or optimized with no assertions, as a static
 # library with the system's compression libraries. It clones the source
 # into ../rocksdb/src the first time, and does nothing once the library
-# is there. ../rocksdb is the repository's, beside dg/ and bench/, which
+# is there. ../rocksdb is the repository's, beside dg/ and bench.old/, which
 # link it, and outside every build/: "make clean" leaves it, as it
 # changes only with RocksDB's version.
 cd "$(dirname "$0")/.." || exit 1

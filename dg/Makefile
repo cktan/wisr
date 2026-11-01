@@ -302,8 +302,8 @@ slt-corpus:
 	test/slt_corpus.sh
 
 # The server again, optimized and without Assert() or assert(), on sq,
-# sm and RocksDB built the same way: what bench/ measures
-# (../bench/DESIGN.md section 2). "digres-release --init" makes a data
+# sm and RocksDB built the same way: what bench.old/ measures
+# (../bench.old/DESIGN.md section 2). "digres-release --init" makes a data
 # directory.
 .PHONY: release
 release: $(LIBSQ_REL) $(LIBSM_REL) $(LIBAA_REL) $(ROCKSDB_REL)
