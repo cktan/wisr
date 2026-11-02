@@ -688,8 +688,11 @@ TEST_CASE("tree: a unique tree is an ON CONFLICT arbiter") {
 
 TEST_CASE("tree: its size is its pages'") {
   // Verify tbl_idx_size counts a tree's pages, for the planner.
-  // 1. Insert 2,000 rows: the tree's bytes are more than none.
-  // 2. A tree of a table with no rows has its empty root alone.
+  // 1. A tree of a table with no rows has its empty root alone.
+  // 2. Insert 2,000 rows, and compact the store: its pages are in
+  //    files, whose sizes are counted, not sampled as a memtable's
+  //    are. The tree's bytes are more than none, and than 2,000
+  //    entries' worth.
   trees_t f;
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   sm3::table_t *t = f.table(f.a);
@@ -701,9 +704,10 @@ TEST_CASE("tree: its size is its pages'") {
     uint64_t id;
     REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
   }
+  REQUIRE(sm3::tbl_compact(t) == 0);
   REQUIRE(sm3::tbl_idx_size(t, f.by_state, disk, mem) == 0);
   CHECK(disk + mem > empty);
-  CHECK(disk + mem > 2000u * 10);
+  CHECK(disk > 2000u * 10);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 }
