@@ -1196,3 +1196,238 @@ TEST_CASE("tree: a dropped tree's pages go once the drop commits") {
   CHECK_FALSE(has_root());
   REQUIRE(sm3::commit(f.a) == 0);
 }
+
+namespace {
+
+/* What an index-only scan of a tree gave: each entry's state, and how many came
+ * with no row read. */
+struct only_t {
+  std::vector<std::string> states;
+  size_t unread = 0;
+};
+
+/*
+ * An index-only scan of index from text lo to hi, both inclusive
+ * (tbl_scan_entries_only): each entry's key column, decoded from its
+ * key, and the count handed out with the row unread.
+ */
+only_t entries_only(sm3::table_t *t, uint64_t index, std::string lo,
+                    std::string hi) {
+  std::string lv = sm2::make_varlena(lo), hv = sm2::make_varlena(hi);
+  sm2::datum_t ld[1] = {sm2::datum_from_ptr(lv.data())};
+  sm2::datum_t hd[1] = {sm2::datum_from_ptr(hv.data())};
+  bool nn[1] = {false};
+  sm2::bound_t l{ld, nn, true}, h{hd, nn, true};
+  sm3::scan_t *scan = nullptr;
+  REQUIRE_MESSAGE(sm3::tbl_idx_scan_rows(t, index, &l, &h, scan) == 0,
+                  sm1::errmsg());
+  REQUIRE(sm3::tbl_scan_entries_only(scan) == 0);
+  only_t out;
+  uint64_t id;
+  sm3::pin_ref_t ref;
+  std::string_view tuple;
+  int rc;
+  while ((rc = sm3::tbl_scannxt(scan, id, ref, tuple)) == 0) {
+    sm2::datum_t d[1];
+    bool isnull[1];
+    REQUIRE(sm3::tbl_scan_cols(scan, d, isnull) == 0);
+    REQUIRE_FALSE(isnull[0]);
+    std::string_view v;
+    sm2::datum_bytes(&sm2::type_text, -1, d[0], v);
+    out.states.emplace_back(sm2::varlena_payload(v));
+    if (nullptr == ref.pin) {
+      CHECK(tuple.empty());
+      out.unread++;
+    }
+  }
+  CHECK(1 == rc);
+  sm3::tbl_scanend(scan);
+  return out;
+}
+
+} // namespace
+
+TEST_CASE("tree: an index-only scan reads no row on a leaf vacuum set") {
+  // Verify an index-only scan of a tree skips the rows of entries on
+  // leaves vacuum set all visible, and still gives what the snapshot
+  // sees (../BTREE.md §4.1).
+  // 1. Insert 2,000 rows of state "old", over many leaves; before a
+  //    vacuum, every row is read.
+  // 2. Vacuum: the scan of "old" gives 2,000 entries, none read.
+  // 3. b takes a repeatable read snapshot; a moves rows 0 to 9 to
+  //    "new" and deletes 10 to 14, and commits.
+  // 4. a's scan gives 1,985 "old" and 10 "new", as a scan of rows
+  //    does; some rows read, of the leaves the writes cleared, most
+  //    not.
+  // 5. b's scan still gives 2,000 "old": the leaves its rows' entries
+  //    are on were cleared, so their rows were read at its snapshot.
+  // 6. b ends; a vacuum removes the 15 dead entries and sets every
+  //    leaf again: 1,985 "old", none read.
+  trees_t f;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  std::vector<uint64_t> id(2000);
+  for (int i = 0; i < 2000; i++) {
+    row_t r(i, "old", "O");
+    REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id[i]) == 0);
+  }
+  only_t o = entries_only(t, f.by_state, "old", "old");
+  CHECK(2000u == o.states.size());
+  CHECK(0u == o.unread);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  REQUIRE_MESSAGE(sm3::tbl_compact(t) == 0, sm1::errmsg());
+  o = entries_only(t, f.by_state, "old", "old");
+  CHECK(2000u == o.states.size());
+  CHECK(2000u == o.unread);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::repeatable_read) == 0);
+  sm3::table_t *tb = f.table(f.b);
+  CHECK(2000u == entries_only(tb, f.by_state, "old", "old").states.size());
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  for (int i = 0; i < 10; i++) {
+    row_t r(i, "new", "O");
+    REQUIRE(sm3::tbl_update(t, id[i], r.d(), r.null()) == 0);
+  }
+  for (int i = 10; i < 15; i++) {
+    REQUIRE(sm3::tbl_delete(t, id[i]) == 0);
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  o = entries_only(t, f.by_state, "old", "old");
+  CHECK(1985u == o.states.size());
+  CHECK(1985u == ids(t, f.by_state, "old", "old").size());
+  CHECK(o.unread > 0);
+  CHECK(o.unread < 1985);
+  for (const std::string &s : o.states) {
+    CHECK("old" == s);
+  }
+  only_t fresh = entries_only(t, f.by_state, "new", "new");
+  CHECK(10u == fresh.states.size());
+  CHECK(0u == fresh.unread);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  CHECK(2000u == entries_only(tb, f.by_state, "old", "old").states.size());
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  REQUIRE(sm3::tbl_compact(t) == 0);
+  CHECK(1995u == entries_of(t, f.by_state));
+  o = entries_only(t, f.by_state, "old", "old");
+  CHECK(1985u == o.states.size());
+  CHECK(1985u == o.unread);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("tree: an uncommitted write's leaf is read, not skipped") {
+  // Verify a writer clears its leaves before it commits, so another
+  // transaction's index-only scan reads the rows there and sees only
+  // what its snapshot does; and that an abort leaves them read until
+  // vacuum.
+  // 1. Insert 500 rows of "old" and vacuum: every leaf set.
+  // 2. a deletes row 0 and inserts a row of "old", uncommitted.
+  // 3. b's scan gives 500 "old", with some rows read.
+  // 4. a aborts; b's scan gives 500 again; a vacuum sets every leaf,
+  //    and b's next scan reads no row.
+  trees_t f;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  std::vector<uint64_t> id(500);
+  for (int i = 0; i < 500; i++) {
+    row_t r(i, "old", "O");
+    REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id[i]) == 0);
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  REQUIRE(sm3::tbl_compact(t) == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  REQUIRE(sm3::tbl_delete(t, id[0]) == 0);
+  row_t extra(900, "old", "O");
+  uint64_t xid;
+  REQUIRE(sm3::tbl_insert(t, extra.d(), extra.null(), xid) == 0);
+
+  REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *tb = f.table(f.b);
+  only_t o = entries_only(tb, f.by_state, "old", "old");
+  CHECK(500u == o.states.size());
+  CHECK(o.unread < 500);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+
+  sm3::tbl_close(t);
+  REQUIRE(sm3::abort(f.a) == 0);
+  REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
+  tb = f.table(f.b);
+  CHECK(500u == entries_only(tb, f.by_state, "old", "old").states.size());
+  REQUIRE(sm3::tbl_compact(tb) == 0);
+  o = entries_only(tb, f.by_state, "old", "old");
+  CHECK(500u == o.states.size());
+  CHECK(500u == o.unread);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+}
+
+TEST_CASE("tree: a delete fails a reader whose index-only scan read no row") {
+  // Verify a delete reports its tree entry's key to SSI, so a
+  // serializable index-only scan that skipped the row, its leaf all
+  // visible, still sees the delete as a write in its range.
+  // 1. Insert 100 rows of "old" and vacuum: every leaf set.
+  // 2. a and b, serializable: a counts "old" by an index-only scan,
+  //    no row read; b counts "new", none.
+  // 3. a inserts a row of "new", into b's range; b deletes a row of
+  //    "old", in a's: a write skew only the entries show.
+  // 4. a commits; b fails with SM_ERR_SERIALIZATION.
+  trees_t f;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  std::vector<uint64_t> id(100);
+  for (int i = 0; i < 100; i++) {
+    row_t r(i, "old", "O");
+    REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id[i]) == 0);
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  REQUIRE(sm3::tbl_compact(t) == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::serializable) == 0);
+  REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::serializable) == 0);
+  sm3::table_t *ta = f.table(f.a);
+  sm3::table_t *tb = f.table(f.b);
+  only_t o = entries_only(ta, f.by_state, "old", "old");
+  CHECK(100u == o.states.size());
+  CHECK(100u == o.unread);
+  CHECK(entries_only(tb, f.by_state, "new", "new").states.empty());
+  row_t ra(500, "new", "A");
+  uint64_t ia;
+  REQUIRE(sm3::tbl_insert(ta, ra.d(), ra.null(), ia) == 0);
+  REQUIRE(sm3::tbl_delete(tb, id[50]) == 0);
+  sm3::tbl_close(ta);
+  sm3::tbl_close(tb);
+  CHECK(0 == sm3::commit(f.a));
+  CHECK(-1 == sm3::commit(f.b));
+  CHECK(sm1::SM_ERR_SERIALIZATION == sm1::errnum());
+}

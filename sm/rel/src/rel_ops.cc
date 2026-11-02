@@ -2727,6 +2727,59 @@ static Janet cfun_idx_rows(int32_t argc, Janet *argv) {
 }
 
 /*
+ * (idx-only idx_name [:ge lo] [:gt lo] [:le hi] [:lt hi]): a tree's
+ * index-only scan, as digres's (sm_rel_scan_entries): {:keys, each
+ * entry's key columns, decoded from its key, :unread, how many came
+ * with no row read, their leaves all visible (../BTREE.md §4.1)}.
+ */
+static Janet cfun_idx_only(int32_t argc, Janet *argv) {
+  janet_arity(argc, 1, -1);
+  session_ctx_t *s = require_session();
+  table_def_t *p_tdef = nullptr;
+  index_def_t *p_idef = nullptr;
+  sm_rel_scan_t *rscan = nullptr;
+  open_idx_cursor(s, argc, argv, "idx-only", p_tdef, p_idef, &rscan);
+  if (0 != sm_rel_scan_entries(rscan)) {
+    sm_rel_scanend(rscan);
+    panic_sm_error("idx-only sm_rel_scan_entries");
+  }
+  size_t nkeys = p_idef->keys.size();
+  std::vector<sm_datum_t> vals(nkeys);
+  std::unique_ptr<bool[]> nulls(new bool[nkeys]);
+  JanetArray *keys = janet_array(16);
+  int64_t unread = 0;
+  uint64_t rowno = 0;
+  sm_pin_ref_t ref;
+  int rc;
+  while ((rc = sm_rel_scannxt(rscan, &rowno, &ref)) == 0) {
+    if (0 != sm_rel_scan_cols(rscan, vals.data(), nulls.get(), nkeys)) {
+      sm_rel_scanend(rscan);
+      panic_sm_error("idx-only sm_rel_scan_cols");
+    }
+    Janet *key = janet_tuple_begin(static_cast<int32_t>(nkeys));
+    for (size_t i = 0; i < nkeys; i++) {
+      const key_col_def_t &k = p_idef->keys[i];
+      key[i] =
+          value_to_janet(vals[i], nulls[i], k.type_code, k.typmod, p_tdef->tbl);
+    }
+    janet_array_push(keys, janet_wrap_tuple(janet_tuple_end(key)));
+    unread += nullptr == ref.pin ? 1 : 0;
+  }
+  if (rc < 0) {
+    if (!engine_aborted()) {
+      sm_rel_scanend(rscan);
+    }
+    panic_sm_error("idx-only sm_rel_scannxt");
+  }
+  sm_rel_scanend(rscan);
+  JanetKV *out = janet_struct_begin(2);
+  janet_struct_put(out, janet_ckeywordv("keys"), janet_wrap_array(keys));
+  janet_struct_put(out, janet_ckeywordv("unread"),
+                   janet_wrap_number(static_cast<double>(unread)));
+  return janet_wrap_struct(janet_struct_end(out));
+}
+
+/*
  * (idx-entries idx_name [:ge lo] [:gt lo] [:le hi] [:lt hi]): how many
  * entries the index holds between the bounds, none read: a tree's
  * dead entries among them, until vacuum (compact) removes them.
@@ -3041,6 +3094,7 @@ static const JanetReg s_rel_cfuns[] = {
     {"_idx-scan", cfun_idx_scan, "internal"},
     {"_idx-rows", cfun_idx_rows, "internal"},
     {"_idx-entries", cfun_idx_entries, "internal"},
+    {"_idx-only", cfun_idx_only, "internal"},
     {"_idx-open", cfun_idx_open, "internal"},
     {"cursor-next", cfun_cursor_next,
      "(cursor-next c) -- the cursor's next index entry, or nil at its end"},
@@ -3171,6 +3225,8 @@ static const char *s_prelude = R"janet(
 
 (defmacro idx-rows [idx & rest]
   ~(_idx-rows (string ',idx) ,;rest))
+(defmacro idx-only [idx & rest]
+  ~(_idx-only (string ',idx) ,;rest))
 
 (defmacro idx-entries [idx & rest]
   ~(_idx-entries (string ',idx) ,;rest))

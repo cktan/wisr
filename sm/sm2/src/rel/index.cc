@@ -355,7 +355,10 @@ int idx_vacuum(
         if (relid_len + cols_len > key.size()) {
           return sm1::seterr(sm1::SM_ERR_CORRUPT, "index: a tree entry's key");
         }
-        return dead(key.substr(relid_len + cols_len), key);
+        int d = dead(key.substr(relid_len + cols_len), key);
+        // A cut key is rechecked on its row by every scan: its leaf is
+        // never all visible (../BTREE.md §4.1).
+        return 2 == d && 0 != value[0] ? 0 : d;
       },
       removed);
 }
@@ -691,16 +694,22 @@ int idx_load(index_t *index, sm1::loader_t *loader, size_t stream,
 /* Remove the entry for key and the row with key row. */
 int idx_delete(index_t *index, std::span<const datum_t> key,
                std::span<const bool> key_isnull, std::string_view row) {
-  // A tree's entry stays: its row, without the key now, makes it
-  // dead, and vacuum removes it (../BTREE.md §5).
-  if (index->tree) {
-    return need_entries(index);
-  }
   std::string k;
   bool cut;
   if (need_entries(index) != 0 ||
       entry_key(index, key, key_isnull, row, k, cut) != 0) {
     return -1;
+  }
+  // A tree's entry stays: its row, without the key now, makes it
+  // dead, and vacuum removes it (../BTREE.md §5). Its leaf is no
+  // longer all visible, the row written already (§4.1); and the key
+  // is a write for SSI, as an insert's is, since a serializable
+  // reader whose index-only scan read no row holds only its range.
+  if (index->tree) {
+    if (0 != tree::tree_unset_visible(index->pages, k)) {
+      return -1;
+    }
+    return sm1::ssi_write_key(index->session, index->storeid, k);
   }
   int rc = sm1::erase(index->session, index->storeid, k);
   if (rc != 0 && sm1::errnum() == sm1::SM_ERR_UPDATED) {
@@ -1029,28 +1038,42 @@ static datum_t key_datum(const type_t *type, std::string &bytes) {
 /* The key columns of the cursor's last entry, if the key gives them. */
 int idx_scan_key(index_scan_t *scan, std::span<datum_t> values,
                  std::span<bool> isnull) {
-  const index_t *ix = scan->index;
+  return idx_entry_cols(scan->index, scan->key, scan->cut, scan->datums, values,
+                        isnull);
+}
+
+/* Whether a tree's cursor's last entry's leaf is all visible; see sm2.h. */
+bool idx_scan_visible(const index_scan_t *scan) {
+  return scan->cursor && scan->cursor->visible;
+}
+
+/* Whether an index's key columns decode from its keys; see sm2.h. */
+bool idx_decodable(const index_t *index) { return key_decodable(index->key); }
+
+/* An entry's key columns, decoded from its key; see sm2.h. */
+int idx_entry_cols(const index_t *ix, std::string_view key, bool cut,
+                   std::vector<std::optional<std::string>> &datums,
+                   std::span<datum_t> values, std::span<bool> isnull) {
   if (values.size() != ix->key.size() || isnull.size() != ix->key.size()) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "index: a datum and null flag for every key column");
   }
-  if (scan->cut || !key_decodable(ix->key)) {
+  if (cut || !key_decodable(ix->key)) {
     return 1;
   }
   // The relid, the columns, then the row's key if the entry has it.
-  std::string_view key = scan->key;
   if (key.size() < sizeof(ix->relid)) {
     return sm1::seterr(sm1::SM_ERR_CORRUPT, "index: an entry key too short");
   }
   key.remove_prefix(sizeof(ix->relid));
-  if (0 != decode_key_front(ix->key, key, scan->datums, true)) {
+  if (0 != decode_key_front(ix->key, key, datums, true)) {
     return -1;
   }
   bool has_null = false;
   for (size_t i = 0; i < ix->key.size(); i++) {
-    isnull[i] = !scan->datums[i].has_value();
+    isnull[i] = !datums[i].has_value();
     has_null |= isnull[i];
-    values[i] = isnull[i] ? 0 : key_datum(ix->key[i].type, *scan->datums[i]);
+    values[i] = isnull[i] ? 0 : key_datum(ix->key[i].type, *datums[i]);
   }
   bool suffix = !ix->unique || has_null || ix->tree;
   if (suffix ? key.empty() || (!ix->keyed && key.size() != id_len)

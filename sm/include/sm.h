@@ -607,6 +607,25 @@ int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* id, sm_pin_ref_t* ref);
 int sm_rel_scan_seek(sm_rel_scan_t* scan, uint64_t id);
 
 /*
+ * Make a cursor of a tree's rows (sm_tbl_idx_scan_rows) an index-only
+ * scan's: an entry on a leaf vacuum found all visible, whose key gives
+ * its columns back, comes with its row unread (../BTREE.md section 4.1).
+ * sm_rel_scannxt's *ref then names no row; sm_rel_scan_cols gives the
+ * entry's columns. 0, or -1 with SM_ERR_INVALID on any other cursor.
+ */
+int sm_rel_scan_entries(sm_rel_scan_t* scan);
+
+/*
+ * The key columns of the entry of a tree's rows that sm_rel_scannxt
+ * last gave, n of them, as sm_idx_scan_key gives an entry's: 0; 1 if
+ * its key does not give them back, and its row, read, has them; -1 on
+ * error. A by-reference datum is valid until the next call on the
+ * cursor.
+ */
+int sm_rel_scan_cols(sm_rel_scan_t* scan, sm_datum_t* values, bool* isnull,
+                     size_t n);
+
+/*
  * Aim a cursor of a tree's rows (sm_tbl_idx_scan_rows) at the rows
  * between lo and hi, as if opened anew: an IN list's next probe, with
  * no cursor made for it. SM_ERR_INVALID on any other cursor.

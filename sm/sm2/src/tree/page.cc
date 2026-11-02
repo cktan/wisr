@@ -121,6 +121,7 @@ int page_insert(page_t &page, std::string_view key, std::string_view value,
     return 2;
   }
   page.entries.emplace(at, std::string(key), std::string(value));
+  page.flags &= static_cast<uint8_t>(~page_all_visible);
   return 0;
 }
 
@@ -157,7 +158,9 @@ int page_insert_bytes(const page_view_t &v, std::string_view key,
     }
   };
   memcpy(p, old.data(), slots);
-  // The header: the slots' count, one more in use, the version moved.
+  // The header: no longer all visible, as the new entry is not
+  // settled; the slots' count, one more in use, the version moved.
+  p[1] = static_cast<char>(v.flags() & ~page_all_visible);
   put(2, grown_max, 2);
   put(4, n + 1, 2);
   put(6, v.version() + 1, 8);
@@ -220,6 +223,7 @@ void page_split(page_t &page, page_t &right, std::string_view key,
                        std::make_move_iterator(page.entries.end()));
   page.entries.resize(at);
   page.flags |= page_has_high;
+  page.flags &= static_cast<uint8_t>(~page_all_visible);
   page.high = right.entries.front().first;
   page.next = 0;
 }

@@ -22,4 +22,7 @@ create index usertable_lastname_tree on usertable (lastname);
 create index usertable_state_tree on usertable (state);
 \endif
 
-analyze usertable;
+-- Vacuumed, as a server's autovacuum would have: PostgreSQL's
+-- visibility map, and digres's trees' all-visible leaves
+-- (../sm/BTREE.md section 4.1), let an index-only scan skip the rows.
+vacuum analyze usertable;

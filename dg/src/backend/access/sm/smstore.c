@@ -2710,6 +2710,12 @@ struct smstore_scan_t {
   /* A tree's (../sm/BTREE.md): its rows come by a cursor, as a primary
    * key's, each rechecked against its entry by sm. */
   bool tree;
+  /*
+   * An index-only scan's tree of key columns alone: its cursor hands out
+   * an entry with its row unread where vacuum found its leaf all visible
+   * (../sm/BTREE.md section 4.1, sm_rel_scan_entries()).
+   */
+  bool entries_only;
   bool ra_point;
   bool ra_done;
   int ra_n;
@@ -7247,6 +7253,8 @@ static void open_probe(smstore_scan_t *scan) {
                             scan->hi.n > 0 ? &scan->hi : NULL, NULL,
                             &scan->icursor) != 0)
     sm_error("scan an index");
+  if (scan->entries_only && 0 != sm_rel_scan_entries(scan->cursor))
+    sm_error("scan an index");
 }
 
 /*
@@ -7862,12 +7870,29 @@ static bool entry_from_row(smstore_scan_t *scan, TupleTableSlot *slot) {
  */
 bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
   slot->tts_tableOid = scan->relid;
+  /*
+   * A tree of key columns alone gives them from its entries, its rows
+   * unread on a leaf all visible; one with INCLUDE columns reads them from
+   * the row, which it holds no copy of.
+   */
+  if (scan->tree && !scan->entries_only &&
+      scan->form->indnatts == scan->form->indnkeyatts) {
+    scan->entries_only = true;
+    if (NULL != scan->cursor && 0 != sm_rel_scan_entries(scan->cursor))
+      sm_error("scan an index");
+  }
   while (smstore_index_getrowno(scan)) {
     uint64 rowno = scan->cur_rowno;
 
     ExecClearTuple(slot);
-    switch (scan->cursor != NULL || scan->point
-                ? 1
+    switch (scan->point ? 1
+            : scan->cursor != NULL
+                ? (scan->entries_only
+                       ? sm_rel_scan_cols(scan->cursor,
+                                          (sm_datum_t *)slot->tts_values,
+                                          slot->tts_isnull,
+                                          scan->form->indnkeyatts)
+                       : 1)
                 : sm_idx_scan_key(scan->icursor, (sm_datum_t *)slot->tts_values,
                                   slot->tts_isnull, scan->form->indnkeyatts)) {
     case 0:

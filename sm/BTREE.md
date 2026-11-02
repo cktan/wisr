@@ -197,12 +197,13 @@ value = the page's bytes, at their own length
 Integers are little-endian. The key above is big-endian so that
 it sorts; these are read, never compared.
 
-`flags` has two bits:
+`flags` has three bits:
 
 | Bit | Name | Set when |
 | --- | --- | --- |
 | 0x01 | `page_has_high` | the page has a high key: every page but a level's rightmost |
 | 0x02 | `page_incomplete` | the page has split, and its parent has no entry for the new right page yet |
+| 0x04 | `page_all_visible` | a leaf vacuum found every entry of settled and live; an insert into it, or a delete or key change of an entry on it, clears it (§4.1) |
 
 `page_incomplete` is set by a split's first write and cleared by
 its second (§5). A reader ignores it, as `next` reaches the new
@@ -392,11 +393,33 @@ bit, proposed in §4.1, would answer it.
 page that has since split, so it must walk right until it meets
 the page it came from, as nbtree's `_bt_walk_left()`.
 
-### 4.1 Proposed: an all-visible leaf
+### 4.1 An all-visible leaf
 
-*Proposed 2026-11-02, for review; nothing here is built.* It
-changes §2's "the row decides visibility" for one case: a leaf
-vacuum has found settled answers an index-only scan alone.
+*Proposed 2026-11-02, and built the same day
+(`../dg/WORKNOTE.md` step 365, `../MAJORDECISION.md` D22 to
+D26).* It changes §2's "the row decides visibility" for one
+case: a leaf vacuum has found settled answers an index-only
+scan alone.
+
+**As built**, where it differs from what follows:
+
+- **Vacuum judges a leaf first without its latch**, as §7
+  does, and latches it to judge whole only if every entry
+  looked dead or settled: a leaf that cannot be set keeps
+  its readers and writers from waiting on its rows (D22).
+- **The planner is unchanged**: `allvisfrac` stays 1 (D23).
+- **An index-only scan skips a row** only for a tree of key
+  columns alone, whose keys give their columns back, and an
+  entry not cut: one with INCLUDE columns reads them from
+  the row (D24). sm3's tree cursor does it, asked by digres
+  (`tbl_scan_entries_only`, `sm_rel_scan_entries`).
+- **A unique insert that finds its key** clears its leaf, as
+  any insert that finds its key does (D25).
+- **A delete, or a key's change, reports its old entry's key
+  to SSI** (`ssi_write_key`), as an insert reports its new
+  one: a serializable index-only scan that read no row holds
+  only its range's SIREAD, which a row's write alone does not
+  meet (D27).
 
 **Why.** `bench/` q2, `select count(*) from usertable where
 state = 'CA'`, 183 rows of 10,000: a regular index counts its
@@ -540,7 +563,7 @@ vacuum.
 | 2PC across restart | a prepared row is not settled: vacuum leaves its leaf unset |
 | two writers, vacuum | the leaf's latch: vacuum judges a leaf with it held, and a writer reads the bit with it held |
 | old RR snapshot, RC re-read | every snapshot is at or past the GC watermark: a set leaf's entries are its |
-| SSI | the range's SIREAD, as today (D10) |
+| SSI | the range's SIREAD, as today (D10); a delete or a key's change reports its old entry's key into it (D27) |
 | open cursor, Halloween | an update's leaves are cleared before it returns: their rows are read |
 | GC watermark, `CF:txn` sweep | a set bit needs neither again |
 | CREATE INDEX pending, bulk load and its rollback | entries come in as inserts: leaves unset until vacuum |

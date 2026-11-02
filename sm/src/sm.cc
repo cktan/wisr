@@ -1137,6 +1137,31 @@ int sm_rel_scan_seek(sm_rel_scan_t *scan, uint64_t id) {
                [&] { return sm3::tbl_scan_seek(rel_scan_of(scan), id); });
 }
 
+/* Make a tree's cursor of rows an index-only scan's. */
+int sm_rel_scan_entries(sm_rel_scan_t *scan) {
+  return guard(nullptr, [&] {
+    if (!scan) {
+      return null_arg("sm_rel_scan_entries", "scan");
+    }
+    return sm3::tbl_scan_entries_only(rel_scan_of(scan));
+  });
+}
+
+/* The key columns of a tree's cursor's last entry. */
+int sm_rel_scan_cols(sm_rel_scan_t *scan, sm_datum_t *values, bool *isnull,
+                     size_t n) {
+  return guard(nullptr, [&] {
+    if (!scan || (n && (!values || !isnull))) {
+      return null_arg("sm_rel_scan_cols", !scan     ? "scan"
+                                          : !values ? "values"
+                                                    : "isnull");
+    }
+    return sm3::tbl_scan_cols(rel_scan_of(scan),
+                              std::span<sm2::datum_t>(values, n),
+                              std::span<bool>(isnull, n));
+  });
+}
+
 /* Aim a tree's cursor of rows at new bounds. */
 int sm_rel_scan_rebound(sm_rel_scan_t *scan, const sm_bound_t *lo,
                         const sm_bound_t *hi) {

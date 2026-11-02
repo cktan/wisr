@@ -1668,6 +1668,8 @@ static int tree_fill(scan_t *scan) {
     scan->ids.resize(want);
     scan->tuples.resize(want);
     scan->rcs.resize(want);
+    scan->cuts.resize(want);
+    scan->unread.resize(want);
     // The first row is read into the cursor's own pin, so a probe of
     // one row, an IN list's, makes none.
     if (scan->raws.empty()) {
@@ -1690,21 +1692,51 @@ static int tree_fill(scan_t *scan) {
     }
     scan->keys[scan->n].assign(sm2::idx_scan_entry_key(scan->entries));
     scan->rows[scan->n].assign(row);
+    scan->cuts[scan->n] = cut;
+    // An index-only scan's entry on a leaf all visible is every
+    // snapshot's: its row goes unread where the key gives its
+    // columns back (../BTREE.md §4.1).
+    scan->unread[scan->n] = scan->entries_only && !cut &&
+                            sm2::idx_scan_visible(scan->entries) &&
+                            sm2::idx_decodable(t->indexes[scan->index]);
+    scan->tuples[scan->n] = {};
+    scan->rcs[scan->n] = 0;
     scan->n++;
   }
-  if (scan->n == 0) {
+  // The rows to read: each entry's but an unread one's.
+  std::vector<size_t> want_rows;
+  for (size_t i = 0; i < scan->n; i++) {
+    if (!scan->unread[i]) {
+      want_rows.push_back(i);
+    }
+  }
+  if (want_rows.empty()) {
     return 0;
   }
-  if (scan->n == 1) {
+  if (1 == want_rows.size()) {
+    size_t i = want_rows[0];
     int rc =
-        sm2::rel_read(t->rel, scan->rows[0], scan->raws[0], scan->tuples[0]);
-    scan->rcs[0] = rc;
+        sm2::rel_read(t->rel, scan->rows[i], scan->raws[i], scan->tuples[i]);
+    scan->rcs[i] = rc;
     return rc < 0 ? -1 : 0;
   }
-  std::vector<std::string_view> keys(scan->rows.begin(),
-                                     scan->rows.begin() + scan->n);
-  return sm2::rel_read_batch(t->rel, keys.data(), scan->n, scan->raws.data(),
-                             scan->tuples.data(), scan->rcs.data());
+  size_t m = want_rows.size();
+  std::vector<std::string_view> keys(m), tuples(m);
+  std::vector<sm1::rawpin_t *> raws(m);
+  std::vector<int> rcs(m);
+  for (size_t j = 0; j < m; j++) {
+    keys[j] = scan->rows[want_rows[j]];
+    raws[j] = scan->raws[want_rows[j]];
+  }
+  if (0 != sm2::rel_read_batch(t->rel, keys.data(), m, raws.data(),
+                               tuples.data(), rcs.data())) {
+    return -1;
+  }
+  for (size_t j = 0; j < m; j++) {
+    scan->tuples[want_rows[j]] = tuples[j];
+    scan->rcs[want_rows[j]] = rcs[j];
+  }
+  return 0;
 }
 
 /*
@@ -1729,6 +1761,12 @@ static int tree_next(scan_t *scan, uint64_t &id, std::string_view &tuple) {
       }
     }
     size_t i = scan->at++;
+    scan->last = i;
+    if (scan->unread[i]) {
+      id = scan->ids[i];
+      tuple = {};
+      return 0;
+    }
     if (scan->rcs[i] != 0) {
       continue;
     }
@@ -1940,10 +1978,33 @@ int tbl_scannxt(scan_t *scan, uint64_t &id, pin_ref_t &ref,
                          : sm2::rel_scannxt(scan->rel, id, tuple);
   // Every ref to the row before goes stale, whatever comes next.
   pin_scan_move(scan->pin, rc == 0 ? tuple : std::string_view());
-  if (rc == 0) {
+  // An entry handed out with its row unread names no row.
+  if (rc == 0 && !(scan->entries && scan->unread[scan->last])) {
     ref = pin_ref_t{scan->pin, scan->pin->gen};
   }
   return rc;
+}
+
+/* Hand out a tree's entries with their rows unread; see sm3.h. */
+int tbl_scan_entries_only(scan_t *scan) {
+  if (!scan->entries) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "table: only a tree's cursor hands out entries");
+  }
+  scan->entries_only = true;
+  return 0;
+}
+
+/* The key columns of a tree's cursor's last entry; see sm3.h. */
+int tbl_scan_cols(scan_t *scan, std::span<sm2::datum_t> values,
+                  std::span<bool> isnull) {
+  if (!scan->entries || 0 == scan->n) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "table: no tree entry to give the columns of");
+  }
+  size_t i = scan->last;
+  return sm2::idx_entry_cols(scan->table->indexes[scan->index], scan->keys[i],
+                             scan->cuts[i], scan->datums, values, isnull);
 }
 
 /* The next row's bytes; see sm3.h. */
@@ -2089,7 +2150,8 @@ int tbl_compact(table_t *table) {
   }
   // Each tree's dead entries go: an entry whose row, settled, is gone
   // or has another key (../BTREE.md §7). One whose row a snapshot may
-  // still see otherwise stays, for a later vacuum.
+  // still see otherwise stays, for a later vacuum. A leaf whose every
+  // entry left is settled is set all visible (§4.1).
   const table_def_t &def = *table->def;
   for (size_t i = 0; i < def.indexes.size(); i++) {
     if (!def.indexes[i].tree) {
@@ -2110,7 +2172,9 @@ int tbl_compact(table_t *table) {
           }
           std::string k;
           r = still_has(table, i, tuple, row, key, k);
-          return r < 0 ? -1 : r == 0 ? 1 : 0;
+          // Settled, and still the row's: one the leaf may be set all
+          // visible for (../BTREE.md §4.1).
+          return r < 0 ? -1 : r == 0 ? 1 : 2;
         },
         removed);
     sm1::unpin(p->raw);

@@ -1103,9 +1103,13 @@ bool idx_is_tree(const index_t* index);
 /*
  * Remove a tree's dead entries (../BTREE.md §7): dead(row, key), given
  * an entry's row key and its whole key, is 1 to remove it, 0 to keep
- * it, -1 to stop with its error. It is asked under the entry's leaf's
- * latch, which an insert of the entry waits for. removed counts them;
- * an index not a tree has none.
+ * it, 2 to keep it as settled and live -- its row's newest version
+ * committed at or below the GC watermark with the entry's key -- or -1
+ * to stop with its error. It is asked under the entry's leaf's latch,
+ * which an insert of the entry waits for. A leaf whose every entry is
+ * dead or settled, none of them cut, is set all visible (§4.1), and
+ * skipped by the next. removed counts them; an index not a tree has
+ * none.
  */
 int idx_vacuum(index_t* index,
                const std::function<int(std::string_view, std::string_view)>& dead,
@@ -1241,6 +1245,27 @@ int idx_scan_seek(index_scan_t* scan, const bound_t& lo);
  */
 int idx_scan_key(index_scan_t* scan, std::span<datum_t> values,
                  std::span<bool> isnull);
+
+/*
+ * The key columns of an entry of index whose whole key is key, cut or
+ * not, as idx_scan_key gives them: 0; 1 if the key does not give them
+ * back; -1 on error. A by-reference datum points into datums, valid
+ * until it is used again.
+ */
+int idx_entry_cols(const index_t* index, std::string_view key, bool cut,
+                   std::vector<std::optional<std::string>>& datums,
+                   std::span<datum_t> values, std::span<bool> isnull);
+
+/* Whether index's key columns decode from its entries' keys. */
+bool idx_decodable(const index_t* index);
+
+/*
+ * Whether the leaf of the entry a tree's cursor last gave
+ * (idx_scan_entry) was all visible as the cursor read it: every entry
+ * on it seen by every snapshot, so its row need not be read
+ * (../BTREE.md §4.1). false for a cursor not a tree's.
+ */
+bool idx_scan_visible(const index_scan_t* scan);
 
 /* Close a cursor from idx_scan; nullptr is a no-op. */
 void idx_scanend(index_scan_t* scan);

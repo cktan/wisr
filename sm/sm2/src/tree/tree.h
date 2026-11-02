@@ -63,9 +63,11 @@ int tree_drop(sm1::session_t *session, uint64_t storeid, uint16_t relid);
 
 /*
  * Insert key with value: 0; 1 if the tree has the key already, and
- * nothing is changed; -1 with SM_ERR_KEYTOOLONG if its entry, or the
- * key's as an inner entry, with a page id, is over entry_max of the
- * tree's limit, or another error.
+ * nothing but its leaf's all-visible bit is changed; -1 with
+ * SM_ERR_KEYTOOLONG if its entry, or the key's as an inner entry, with
+ * a page id, is over entry_max of the tree's limit, or another error.
+ * Either way the key's leaf is no longer all visible (page_all_visible):
+ * a key found there is a write's too, its row just changed.
  */
 int tree_insert(tree_t &tree, std::string_view key, std::string_view value);
 
@@ -79,12 +81,22 @@ int tree_insert(tree_t &tree, std::string_view key, std::string_view value);
  * of one prefix take turns. Returns 0 inserted; 1 if key was there
  * already, unchanged; 2, every latch let go, for the caller to wait
  * as check found and call again; -1 on an error or a duplicate, its
- * error check's to set.
+ * error check's to set. The key's leaf is left not all visible, as by
+ * tree_insert.
  */
 int tree_insert_unique(
     tree_t &tree, std::string_view prefix, std::string_view key,
     std::string_view value,
     const std::function<int(std::string_view, std::string_view)> &check);
+
+/*
+ * Clear the all-visible bit of the leaf that covers key, under its
+ * latch, writing the leaf only if the bit was set: 0, or -1. A delete's
+ * at its old key, and an update's that changes a key, after the row's
+ * write (../BTREE.md §4.1): the latch orders it against vacuum, which
+ * judges a leaf latched before it sets the bit.
+ */
+int tree_unset_visible(tree_t &tree, std::string_view key);
 
 /*
  * Remove key, if the tree has it and keep(key, value) says no, under
@@ -113,6 +125,8 @@ struct cursor_t {
    * many have been handed out, at, of end; the last one's key.
    */
   uint64_t leaf = 0;
+  /* Whether that leaf was all visible as the batch was copied. */
+  bool visible = false;
   std::string bytes;
   size_t pos = 0;
   size_t at = 0;
@@ -150,14 +164,22 @@ void cursor_seek(cursor_t &cursor, const std::string &lo, bool inclusive);
 
 /*
  * Walk every leaf, left to right, and remove each entry dead says to:
- * dead(key, value) is 1 to remove it, 0 to keep it, -1 to stop with
- * its error. A leaf's entries are judged with no latch, and those dead
- * says to remove are judged again with the leaf latched, so dead reads
- * what a writer wrote meanwhile: it may be called twice for an entry,
- * and only that second answer removes it. A leaf is written once, if
- * any went (../BTREE.md §7). A leaf that splits while it is judged
- * keeps its right half's entries until the next prune. removed counts
- * them. Pages are not merged: an empty leaf stays linked.
+ * dead(key, value) is 1 to remove it, 0 to keep it, 2 to keep it as
+ * settled and live, -1 to stop with its error. A leaf's entries are
+ * judged with no latch, and those dead says to remove are judged again
+ * with the leaf latched, so dead reads what a writer wrote meanwhile:
+ * it may be called twice for an entry, and only that second answer
+ * removes it. A leaf is written once, if any went (../BTREE.md §7).
+ *
+ * A leaf whose every entry is dead or settled at the first judging is
+ * judged again whole, latched, and set all visible (page_all_visible)
+ * if each entry left is settled still: so a writer's row, written
+ * before its latch is taken, is seen (../BTREE.md §4.1). A leaf set
+ * already is skipped, and its entries not asked of.
+ *
+ * A leaf that splits while it is judged keeps its right half's entries
+ * until the next prune. removed counts them. Pages are not merged: an
+ * empty leaf stays linked.
  */
 int tree_prune(
     tree_t &tree,

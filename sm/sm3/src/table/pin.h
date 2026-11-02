@@ -9,6 +9,7 @@
 #include "../catalog/internal.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -52,9 +53,19 @@ struct sm3::scan_t {
   std::vector<sm1::rawpin_t *> raws;
   std::vector<std::string_view> tuples;
   std::vector<int> rcs;
+  /*
+   * Each entry's cut flag, and whether its row goes unread: an
+   * index-only scan's (entries_only) entry, on a leaf all visible,
+   * whose key gives its columns back (../BTREE.md §4.1).
+   */
+  std::vector<uint8_t> cuts, unread;
   size_t at = 0, n = 0, batch = 1;
+  size_t last = 0; /* the entry handed out last, of the batch */
   std::string key; /* the recheck's entry key, its buffer reused */
   bool entries_done = false;
+  bool entries_only = false;
+  /* tbl_scan_cols's by-reference datums. */
+  std::vector<std::optional<std::string>> datums;
   /* raws[0] is the cursor's pin's own, the batch's others its. */
   ~scan_t() {
     for (size_t i = 1; i < raws.size(); i++) {

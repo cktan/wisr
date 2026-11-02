@@ -1096,3 +1096,215 @@ TEST_CASE("tree: as many writers splitting as frames can bear") {
   cursor_open(t.tree, c, nullptr, true, nullptr, true);
   CHECK(16u * 150 == drain(c).size());
 }
+
+namespace {
+
+/* Each leaf of relid's tree, left to right: its page id and its page. */
+std::vector<std::pair<uint64_t, page_t>>
+leaves(sm1::session_t *s, uint64_t store, uint16_t relid) {
+  std::vector<std::pair<uint64_t, page_t>> out;
+  uint64_t pageid = first_leaf(s, store, relid);
+  for (;;) {
+    page_t page = read_decoded(s, store, relid, pageid);
+    uint64_t next = page.next;
+    out.emplace_back(pageid, std::move(page));
+    if (0 == next) {
+      return out;
+    }
+    pageid = next;
+  }
+}
+
+/* Whether page is all visible. */
+bool all_visible(const page_t &page) {
+  return 0 != (page.flags & page_all_visible);
+}
+
+/* The page id of the leaf of relid's tree whose range holds key. */
+uint64_t leaf_of(sm1::session_t *s, uint64_t store, uint16_t relid,
+                 std::string_view key) {
+  for (const auto &[id, page] : leaves(s, store, relid)) {
+    if (!page.has_high_key() || key < page.high) {
+      return id;
+    }
+  }
+  FAIL("no leaf holds the key");
+  return 0;
+}
+
+} // namespace
+
+TEST_CASE(
+    "tree: vacuum sets leaves all visible, and each write clears its own") {
+  // Verify the all-visible bit (../BTREE.md §4.1): vacuum sets it on a
+  // leaf of settled entries, a cursor reports it, a set leaf is not
+  // judged again, and an insert, a key found there, or a delete's
+  // clear unsets only its own leaf.
+  // 1. Fill a tree of several leaves with 3,000 keys; none is set.
+  // 2. Prune, every entry settled: every leaf is set, nothing removed,
+  //    and a cursor reads every batch as visible.
+  // 3. Prune again: no entry is asked of.
+  // 4. Insert a new key: its leaf alone is unset.
+  // 5. Insert a key there already: its leaf is unset, no entry added.
+  // 6. tree_unset_visible on a third leaf unsets it; again, on the
+  //    same leaf, writes nothing: its version stays.
+  // 7. The tree checks whole.
+  db_t d;
+  open_tree_t t(d, 13, 512);
+  REQUIRE(0 == tree_create(t.tree));
+  for (int n = 0; n < 3000; n++) {
+    REQUIRE(0 == tree_insert(t.tree, std::to_string(100000 + n), "v"));
+  }
+  auto before = leaves(t.s, d.store(), 13);
+  REQUIRE(before.size() > 4);
+  for (const auto &[id, page] : before) {
+    CHECK_FALSE(all_visible(page));
+  }
+
+  size_t removed = 0;
+  REQUIRE(0 == tree_prune(
+                   t.tree, [](std::string_view, std::string_view) { return 2; },
+                   removed));
+  CHECK(0u == removed);
+  auto set = leaves(t.s, d.store(), 13);
+  for (const auto &[id, page] : set) {
+    CHECK(all_visible(page));
+  }
+  cursor_t c;
+  cursor_open(t.tree, c, nullptr, true, nullptr, true);
+  std::string_view k, v;
+  size_t n = 0;
+  while (0 == cursor_next(c, k, v)) {
+    CHECK(c.visible);
+    n++;
+  }
+  CHECK(3000u == n);
+
+  size_t asked = 0;
+  REQUIRE(0 == tree_prune(
+                   t.tree,
+                   [&](std::string_view, std::string_view) {
+                     asked++;
+                     return 2;
+                   },
+                   removed));
+  CHECK(0u == asked);
+
+  auto unset_only = [&](uint64_t leaf) {
+    for (const auto &[id, page] : leaves(t.s, d.store(), 13)) {
+      CHECK(all_visible(page) == (id != leaf));
+    }
+  };
+  // A new key between two others, so it lands on a leaf that does not
+  // split: its leaf alone goes unset.
+  const std::string fresh = std::to_string(100000 + 7) + "5";
+  uint64_t fresh_leaf = leaf_of(t.s, d.store(), 13, fresh);
+  REQUIRE(0 == tree_insert(t.tree, fresh, "v"));
+  unset_only(fresh_leaf);
+
+  REQUIRE(0 == tree_prune(
+                   t.tree, [](std::string_view, std::string_view) { return 2; },
+                   removed));
+  const std::string there = std::to_string(100000 + 1500);
+  uint64_t there_leaf = leaf_of(t.s, d.store(), 13, there);
+  REQUIRE(1 == tree_insert(t.tree, there, "v"));
+  unset_only(there_leaf);
+
+  REQUIRE(0 == tree_prune(
+                   t.tree, [](std::string_view, std::string_view) { return 2; },
+                   removed));
+  const std::string gone = std::to_string(100000 + 2900);
+  uint64_t gone_leaf = leaf_of(t.s, d.store(), 13, gone);
+  REQUIRE(0 == tree_unset_visible(t.tree, gone));
+  unset_only(gone_leaf);
+  uint64_t version = read_decoded(t.s, d.store(), 13, gone_leaf).version;
+  REQUIRE(0 == tree_unset_visible(t.tree, gone));
+  CHECK(version == read_decoded(t.s, d.store(), 13, gone_leaf).version);
+
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+}
+
+TEST_CASE(
+    "tree: a leaf is set only if every entry is settled, judged latched") {
+  // Verify vacuum sets a leaf only from a judging held under its
+  // latch, of every entry, so a writer's row seen then keeps it unset;
+  // and that a dead entry goes on a leaf that is set.
+  // 1. Fill a tree of several leaves with 3,000 keys.
+  // 2. Prune: every entry settled at first asking; at second asking,
+  //    one key, waiting, is not settled; another is dead both times.
+  // 3. Every entry was asked twice, the second time latched, the
+  //    first time not.
+  // 4. The waiting key's leaf is unset, every other set; the dead key
+  //    is gone.
+  db_t d;
+  open_tree_t t(d, 13, 512);
+  REQUIRE(0 == tree_create(t.tree));
+  for (int n = 0; n < 3000; n++) {
+    REQUIRE(0 == tree_insert(t.tree, std::to_string(100000 + n), "v"));
+  }
+  const std::string waiting = std::to_string(100000 + 1000);
+  const std::string dead = std::to_string(100000 + 2000);
+  std::map<std::string, int> asked;
+  bool first_latched = false, second_unlatched = false;
+  size_t removed = 0;
+  REQUIRE(0 == tree_prune(
+                   t.tree,
+                   [&](std::string_view key, std::string_view) {
+                     int n = ++asked[std::string(key)];
+                     size_t held = sm1::pages_exclusive(t.s);
+                     first_latched = first_latched || (1 == n && 0 != held);
+                     second_unlatched =
+                         second_unlatched || (2 == n && 0 == held);
+                     if (key == dead) {
+                       return 1;
+                     }
+                     return 2 == n && key == waiting ? 0 : 2;
+                   },
+                   removed));
+  CHECK_FALSE(first_latched);
+  CHECK_FALSE(second_unlatched);
+  CHECK(1u == removed);
+  CHECK(3000u == asked.size());
+  for (const auto &[key, n] : asked) {
+    CHECK(2 == n);
+  }
+  uint64_t waiting_leaf = leaf_of(t.s, d.store(), 13, waiting);
+  for (const auto &[id, page] : leaves(t.s, d.store(), 13)) {
+    CHECK(all_visible(page) == (id != waiting_leaf));
+    for (const auto &[key, value] : page.entries) {
+      CHECK(key != dead);
+    }
+  }
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+}
+
+TEST_CASE("tree: a unique insert that finds its key unsets its leaf") {
+  // Verify a unique insert of a key the tree has, as an update A to B
+  // and back to A makes, clears its leaf's bit, the row having
+  // changed, and adds nothing.
+  // 1. Fill a tree with keys of one prefix each, and set every leaf.
+  // 2. Insert, unique, a key that is there: 1, and its leaf alone is
+  //    unset, the tree's entries the same.
+  db_t d;
+  open_tree_t t(d, 13, 512);
+  REQUIRE(0 == tree_create(t.tree));
+  for (int n = 0; n < 1000; n++) {
+    REQUIRE(0 == tree_insert(t.tree, std::to_string(100000 + n) + "r", "v"));
+  }
+  size_t removed = 0;
+  REQUIRE(0 == tree_prune(
+                   t.tree, [](std::string_view, std::string_view) { return 2; },
+                   removed));
+  const std::string prefix = std::to_string(100000 + 500);
+  const std::string key = prefix + "r";
+  uint64_t leaf = leaf_of(t.s, d.store(), 13, key);
+  CHECK(1 == tree_insert_unique(
+                 t.tree, prefix, key, "v",
+                 [](std::string_view, std::string_view) { return 0; }));
+  size_t entries = 0;
+  for (const auto &[id, page] : leaves(t.s, d.store(), 13)) {
+    CHECK(all_visible(page) == (id != leaf));
+    entries += page.entries.size();
+  }
+  CHECK(1000u == entries);
+}

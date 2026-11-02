@@ -402,3 +402,96 @@ Decided with the user (2026-10-31).
   `BUFFERPOOL.md` §3.5 called for a floor by sessions.
 - **Undo:** the option goes, and with it the guarantee.
 
+
+## D22. Vacuum latches a leaf to judge it whole only if it may be set
+
+- **Decided:** `tree_prune()` judges a leaf's entries without
+  its latch, as before. A leaf where every entry looked dead
+  or settled is then judged again whole, latched from the
+  first row read to the write, its dead entries removed and
+  the bit set if every one left is settled still. Any other
+  leaf is pruned as before, only its dead judged again. The
+  judge answers 1 dead, 0 keep, 2 keep as settled and live; a
+  judge that never says 2, as every one before this did, sets
+  nothing. `BTREE.md` §4.1's algorithm latched every leaf not
+  set before judging it.
+- **Why:** the bit needs the whole judging under the latch, so
+  a delete whose row was written first is seen. A leaf with an
+  entry not yet settled cannot be set, and latching it only
+  keeps its readers and writers waiting on vacuum's row reads.
+- **Undo:** latch every leaf not set, as §4.1 wrote it.
+
+## D23. The planner's allvisfrac is left at 1
+
+- **Decided:** `estimate_rel_size()` still gives an sm table
+  `allvisfrac` 1, which a tree's index-only scan is costed by.
+  §4.1 proposed a tree's fraction of set leaves.
+- **Why:** PostgreSQL keeps `allvisfrac` per table and applies
+  it to every index in `cost_index()`, a path dg shares; a
+  tree's fraction is per index. A tree's index-only scan was
+  costed as reading no row before this change; it is now more
+  often true. Changing the cost is its own step, measured.
+- **Undo:** vacuum counts a tree's set leaves into its
+  statistics, and dg's index cost hook scales a tree's
+  index-only scan's row reads by the rest.
+
+## D24. Only a tree of key columns alone skips rows, asked by digres
+
+- **Decided:** sm3's tree cursor has an index-only mode
+  (`tbl_scan_entries_only`, `sm_rel_scan_entries`): an entry
+  on a leaf set, not cut, of an index whose keys give their
+  columns back, is handed out with its row unread and no ref,
+  `tbl_scan_cols` (`sm_rel_scan_cols`) giving its columns.
+  digres turns it on in `smstore_index_getentry()`, for a tree
+  with no INCLUDE columns.
+- **Why:** a tree's entry holds no INCLUDE column (§3.3), so
+  one with them must read the row anyway; a cut key, or a type
+  whose key keeps no datum, gives no column back. The mode is
+  the caller's to ask, as an index scan, not index-only, needs
+  every row.
+- **Undo:** none wanted; INCLUDE columns in a tree's entry
+  would widen what skips.
+
+## D25. A unique insert that finds its key clears its leaf
+
+- **Decided:** `tree_insert_unique()` no longer returns at
+  once when the key is there: it latches the key's leaf, as
+  for an insert, and `insert_into()` finds the key and clears
+  the leaf's bit, as `tree_insert()` does.
+- **Why:** an update A to B and back to A finds A's entry
+  there; the row changed, and the leaf set before it would
+  hand out A's entry unread at a snapshot that should read
+  the row.
+- **Undo:** none wanted; it is the rule of §4.1's INSERT.
+
+## D26. The bench vacuums after making its indexes
+
+- **Decided:** `bench/mkregidx.sql` and `bench/mkbtidx.sql`
+  end with `vacuum analyze usertable`, not `analyze`, on both
+  systems.
+- **Why:** the bit is set by vacuum alone, and digres has no
+  autovacuum; PostgreSQL's visibility map is set by vacuum
+  too, and a server running long would have had autovacuum.
+  Without it q2 measured neither.
+- **Undo:** `analyze` again, to measure an index never
+  vacuumed.
+
+## D27. A tree's delete reports its entry's key to SSI
+
+- **Decided:** `idx_delete()` on a tree, after clearing the old
+  key's leaf, calls `ssi_write_key` on that entry's key, as
+  `idx_insert()` does on a new one. A delete, an update that
+  changes the key, and a primary key's change all reach it.
+- **Why:** a serializable reader registers a tree's range
+  (D10), and the rows it reads; an index-only scan that skips
+  a row on a set leaf registers no row. A delete of that row
+  wrote only the row, so no rw-edge met the reader: two
+  transactions could each count what the other changed and
+  both commit. PostgreSQL's index-only scan predicate-locks
+  the heap page it skips for the same reason. sm3's test
+  "a delete fails a reader whose index-only scan read no row"
+  showed both committing before this.
+- **Cost:** a serializable delete or key change adds an
+  SIREAD lookup per tree; below serializable, nothing.
+- **Undo:** register each skipped row's key as an SIREAD at
+  the reader instead, one a row, as PostgreSQL's page lock.

@@ -187,6 +187,99 @@
 (assert-eq (ids (idx-rows accounts_u :ge ["p2"] :le ["p2"])) @[103])
 (commit)
 
+# Verify a tree's index-only scan reads no row on a leaf (compact) set all
+# visible, and reads the rows of a leaf a write cleared (../BTREE.md §4.1).
+# 1. Make a keyless table of 300 rows of state "s", a tree on state, and
+#    compact: an index-only scan of "s" gives 300 keys, no row read.
+# 2. Take a repeatable read snapshot in "snap"; delete a row and move
+#    another to "t", and commit: "s" gives 298 keys, some rows read, and
+#    "t" one.
+# 3. "snap"'s index-only scan still gives 300 "s".
+# 4. Once snap ends, compact: 298 "s", no row read.
+# 5. Roll an insert of "s" back: its leaf's rows are read, 298 given.
+(begin :rc)
+(table-create pool (columns (id :int4 :not-null) (state :text)))
+(index-create pool_state (table pool) (key (state :asc)) :tree true)
+(commit)
+(begin :rc)
+(def first-row (insert pool [0 "s"]))
+(def second-row (insert pool [1 "s"]))
+(def third-row (insert pool [2 "s"]))
+(for i 3 300 (insert pool [i "s"]))
+(commit)
+(begin :rc)
+(compact pool)
+(def all-s (idx-only pool_state :ge ["s"] :le ["s"]))
+(assert-eq (length (all-s :keys)) 300)
+(assert-eq (all-s :unread) 300)
+(assert-eq ((all-s :keys) 0) ["s"])
+(commit)
+
+(session-open "snap" "treedb")
+(session-use "snap")
+(begin :rr)
+(assert-eq (length ((idx-only pool_state :ge ["s"] :le ["s"]) :keys)) 300)
+(session-use "default")
+(begin :rc)
+(delete pool first-row)
+(update pool second-row [1 "t"])
+(commit)
+(begin :rc)
+(def after (idx-only pool_state :ge ["s"] :le ["s"]))
+(assert-eq (length (after :keys)) 298)
+(assert (< (after :unread) 298) "a cleared leaf's rows are read")
+(assert (> (after :unread) 0) "an untouched leaf's rows are not")
+(assert-eq ((idx-only pool_state :ge ["t"] :le ["t"]) :keys) @[["t"]])
+(commit)
+(session-use "snap")
+(assert-eq (length ((idx-only pool_state :ge ["s"] :le ["s"]) :keys)) 300)
+(commit)
+(session-close "snap")
+(session-use "default")
+(begin :rc)
+(compact pool)
+(def settled (idx-only pool_state :ge ["s"] :le ["s"]))
+(assert-eq (length (settled :keys)) 298)
+(assert-eq (settled :unread) 298)
+(commit)
+(begin :rc)
+(insert pool [900 "s"])
+(abort)
+(begin :rc)
+(def rolled (idx-only pool_state :ge ["s"] :le ["s"]))
+(assert-eq (length (rolled :keys)) 298)
+(assert (< (rolled :unread) 298) "the rolled-back insert's leaf is read")
+(commit)
+
+# Verify a delete fails a serializable reader whose index-only scan read
+# no row: the delete reports its entry's key, in the reader's range.
+# 1. Compact: every leaf set again.
+# 2. ser1 counts "s", no row read; ser2 counts "u", none.
+# 3. ser1 inserts a "u", in ser2's range; ser2 deletes an "s", in ser1's.
+# 4. ser1 commits; ser2's commit fails, a serialization failure.
+(begin :rc)
+(compact pool)
+(commit)
+(session-open "ser1" "treedb")
+(session-open "ser2" "treedb")
+(session-use "ser1")
+(begin :ser)
+(assert-eq ((idx-only pool_state :ge ["s"] :le ["s"]) :unread) 298)
+(session-use "ser2")
+(begin :ser)
+(assert-eq ((idx-only pool_state :ge ["u"] :le ["u"]) :keys) @[])
+(session-use "ser1")
+(insert pool [901 "u"])
+(session-use "ser2")
+(delete pool third-row)
+(session-use "ser1")
+(commit)
+(session-use "ser2")
+(assert-err :err-serialization (commit))
+(session-close "ser1")
+(session-close "ser2")
+(session-use "default")
+
 (db-close)
 (env-detach)
 (rm-rf test-dir)

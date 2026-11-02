@@ -26,6 +26,13 @@ constexpr size_t page_limit = 4096;
 constexpr uint8_t page_has_high = 0x01;
 /* Split, and its parent's entry for the new page not yet written. */
 constexpr uint8_t page_incomplete = 0x02;
+/*
+ * A leaf whose every entry vacuum found settled and live: its row's
+ * newest version committed at or below the GC watermark with the
+ * entry's key, so every snapshot sees it (../BTREE.md §4.1). Set by
+ * vacuum alone; an insert into the page clears it.
+ */
+constexpr uint8_t page_all_visible = 0x04;
 
 /* The bytes an entry adds to a page: its key, its value, its slot. */
 constexpr size_t entry_size(size_t key_len, size_t value_len) {
@@ -61,7 +68,7 @@ constexpr size_t entry_max(size_t limit) {
  */
 struct page_t {
   uint8_t level = 0; /* 0 a leaf */
-  uint8_t flags = 0; /* page_has_high, page_incomplete */
+  uint8_t flags = 0; /* page_has_high, page_incomplete, page_all_visible */
   uint64_t version = 0;
   uint64_t prev = 0; /* the left sibling's page id, 0 none */
   uint64_t next = 0; /* the right sibling's page id, 0 none */
@@ -79,9 +86,10 @@ size_t page_size(const page_t &page);
 std::string page_bytes(const page_t &page);
 
 /*
- * Insert key, with value, in key order, if page has room under limit:
- * 0; 1 if an entry has the key already, and nothing is changed; 2 if
- * there is no room, so the page is to be split first; -1 with
+ * Insert key, with value, in key order, if page has room under limit,
+ * and clear page_all_visible, as the new entry is not settled: 0; 1 if
+ * an entry has the key already, and nothing is changed; 2 if there is
+ * no room, so the page is to be split first; -1 with
  * SM_ERR_KEYTOOLONG if the entry is over a third of limit.
  */
 int page_insert(page_t &page, std::string_view key, std::string_view value,
@@ -91,7 +99,8 @@ class page_view_t;
 
 /*
  * Insert key, with value, into the page v views, which check() has
- * passed, laid out anew in out with its version moved: 0; 1 if an
+ * passed, laid out anew in out with its version moved and
+ * page_all_visible cleared, as page_insert: 0; 1 if an
  * entry has the key already, out untouched; 2 if there is no room
  * under limit, so the page is to be decoded and split; -1 with
  * SM_ERR_KEYTOOLONG as page_insert. No entry is decoded: the bytes
@@ -107,7 +116,7 @@ int page_insert_bytes(const page_view_t &v, std::string_view key,
  * high key and next link, and page's high key becomes right's first
  * key. key is not on page, and its entry is at most entry_max(limit).
  * The caller gives right its page id, links the two, and sets the
- * flags the split is written with.
+ * flags the split is written with. Neither half is all visible.
  */
 void page_split(page_t &page, page_t &right, std::string_view key,
                 std::string_view value, size_t limit = page_limit);

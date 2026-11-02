@@ -10713,3 +10713,71 @@ PostgreSQL's expected output has it found without a wait, by
   reader only waits. `a cycle is found once a waiter has slept` was
   two upgraders, so it moves to two keys, which is what it tests.
 
+
+## Step 365: a tree's leaf all visible
+
+`bench/` q2, `count(*)` of one state's 183 rows of 10,000, took a
+tree 0.39 to 0.43 ms against a regular index's 0.18 ms: a tree's
+entry carries no visibility, so an index-only scan read each row.
+`../sm/BTREE.md` §4.1, built: a leaf vacuum found every entry of
+settled and live is set all visible, and an index-only scan hands
+its entries out with their rows unread. Decisions D22 to D26 in
+`../MAJORDECISION.md`.
+
+- **sm2**: `page_all_visible`, `0x04` in a leaf's flags. An
+  insert into a page clears it, in the same write; one that finds
+  its key there clears it too, unique or not.
+  `tree_unset_visible()`, which `idx_delete()` now calls for a
+  tree, latches the old key's leaf and writes it only if the bit
+  is set: once a leaf between two vacuums. `tree_prune()`'s judge
+  answers 2 for settled and live; a leaf that looked all dead or
+  settled is judged again whole, latched, and set. A set leaf is
+  skipped. A cut entry is never settled. A cursor reports its
+  batch's leaf's bit.
+- **sm3**: vacuum's judge answers 2 for a settled row that still
+  has its entry's key. A tree's cursor, made an index-only scan's
+  (`tbl_scan_entries_only`), reads no row for an entry on a set
+  leaf whose key gives its columns back, and `tbl_scan_cols`
+  decodes them. `sm.h`: `sm_rel_scan_entries`,
+  `sm_rel_scan_cols`.
+- **SSI**: a tree's delete, or a key's change, now reports its
+  old entry's key (`ssi_write_key`), as an insert reports its
+  new one (D27): an index-only scan that skips a row holds no
+  SIREAD on it, and a write skew through a count went unseen,
+  both committing, until it did.
+- **dg**: `smstore_index_getentry()` turns the mode on for a tree
+  of key columns alone, and takes its columns from the entry.
+- **bench**: `mkregidx.sql` and `mkbtidx.sql` vacuum, on both
+  systems, as autovacuum would have.
+- **Tests**: sm2, the bit set and cleared by each write, set only
+  from a latched judging, and by a unique insert; sm3, an
+  index-only scan against a repeatable read snapshot, a write
+  uncommitted and an abort; rel, `(idx-only)`, a new op, through
+  `sm.h`; dg, `test/slt/btree_tree_visible.test`. Each new test
+  fails with the code it covers broken. sm1's isolation scenarios
+  cannot express a tree, which is sm2's.
+
+Measured, release builds, 5 s a query, this WSL machine
+(`bench/run.sh`):
+
+| query | index | dg ms | pg ms | dg/pg |
+| --- | --- | --: | --: | --: |
+| q1 | regular | 0.137 | 0.143 | 0.96 |
+| q1 | btree | 0.143 | 0.140 | 1.02 |
+| q2 | regular | 0.200 | 0.136 | 1.47 |
+| q2 | btree | 0.186 | 0.148 | 1.26 |
+| q3 | regular | 0.181 | 0.155 | 1.17 |
+| q3 | btree | 0.196 | 0.138 | 1.42 |
+
+q2 by the tree is 0.186 ms, from 0.39 to 0.43. PostgreSQL's q2 is
+an index-only scan now, its visibility map set by the vacuum.
+These are latencies on a machine whose clock swings; instructions
+would compare them better.
+
+- **Found, not changed**: sm3's "tree: its size is its pages'"
+  failed once in four runs, its approximate size under 20,000
+  bytes; it does not touch what this step changed.
+- **Found, not changed**: `make format` with clang-format 18.1.3
+  reformats two blocks in `sm1/src/bufpool.cc` and
+  `sm1/src/xct.cc` that are in another version's form at `main`;
+  left as they are.

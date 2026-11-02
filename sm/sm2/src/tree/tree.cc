@@ -543,7 +543,14 @@ int insert_into(tree_t &tree, detail::latched_t &l, std::string_view key,
     return -1;
   }
   if (1 == rc) {
-    return 1;
+    // Found there, as an update A to B and back finds A's: the row has
+    // just changed, so its leaf is not all visible (../BTREE.md §4.1).
+    if (0 == (l.pin.view.flags() & page_all_visible)) {
+      return 1;
+    }
+    l.decode();
+    l.page.flags &= static_cast<uint8_t>(~page_all_visible);
+    return 0 == detail::write_back(tree, l) ? 1 : -1;
   }
   if (0 == rc) {
     outs[0].pageid = l.pageid;
@@ -585,6 +592,24 @@ int tree_insert(tree_t &tree, std::string_view key, std::string_view value) {
   return insert_into(tree, l, key, value);
 }
 
+/* Clear the all-visible bit of key's leaf; see tree.h. */
+int tree_unset_visible(tree_t &tree, std::string_view key) {
+  detail::latched_t l;
+  // Latched even to read the bit: a vacuum judging the leaf holds the
+  // latch from its first row read to its write, so this writer, whose
+  // row is written already, either sees the bit vacuum set or had its
+  // row seen by vacuum, unsettled (../BTREE.md §4.1).
+  if (0 != detail::latch_leaf(tree, key, l)) {
+    return -1;
+  }
+  if (0 == (l.pin.view.flags() & page_all_visible)) {
+    return 0;
+  }
+  l.decode();
+  l.page.flags &= static_cast<uint8_t>(~page_all_visible);
+  return detail::write_back(tree, l);
+}
+
 /* Insert a key unless an entry of its prefix conflicts; see tree.h. */
 int tree_insert_unique(
     tree_t &tree, std::string_view prefix, std::string_view key,
@@ -603,10 +628,9 @@ int tree_insert_unique(
     // Judge every entry of the prefix, on this leaf and to its right,
     // the right ones read without a latch: an insert of the prefix
     // waits for this one's latch, and a split only moves them right.
-    bool there = false;
     auto judge = [&](std::string_view k, std::string_view v) {
+      // The key's own entry, there already, is no conflict.
       if (k == key) {
-        there = true;
         return 0;
       }
       return check(k, v);
@@ -643,11 +667,10 @@ int tree_insert_unique(
       next = v.next();
     }
     p.release();
-    if (there) {
-      return 1;
-    }
     // The key goes on the first leaf, or on one to its right, latched
-    // left to right, the first still held.
+    // left to right, the first still held; a key there already is
+    // found there by insert_into, which clears its leaf's all-visible
+    // bit.
     if (!fv.has_high() || key < fv.high()) {
       return insert_into(tree, first, key, value);
     }
@@ -765,6 +788,7 @@ int fill(cursor_t &c) {
     }
     c.done = j < v.count();
     c.leaf = pageid;
+    c.visible = 0 != (v.flags() & page_all_visible);
     if (j > i) {
       // The leaf is let go before the caller reads rows (../BTREE.md
       // §4): the entries in range are copied end to end, in key order,
@@ -874,7 +898,8 @@ int prune_leaf(
     if (d < 0) {
       return -1;
     }
-    if (0 == d) {
+    // Kept unless dead: 0 or 2, settled or not.
+    if (1 != d) {
       if (kept != i) {
         entries[kept] = std::move(entries[i]);
       }
@@ -884,6 +909,63 @@ int prune_leaf(
   size_t went = entries.size() - kept;
   entries.resize(kept);
   if (0 != went) {
+    if (0 != detail::write_back(tree, l)) {
+      return -1;
+    }
+    removed += went;
+  }
+  return 0;
+}
+
+/*
+ * Judge every entry of leaf pageid again, the leaf latched from the
+ * first row read to the write: remove those dead says are dead, and set
+ * the leaf all visible if every one left is settled (2). A writer whose
+ * row changed takes this latch before it clears the bit, so it either
+ * waits for the write and clears what it set, or wrote its row before
+ * the judging, which then finds it unsettled (../BTREE.md §4.1). next
+ * takes the leaf's next link. 0; 1 if pageid is page 0, a leaf no
+ * longer; or -1.
+ */
+int settle_leaf(
+    tree_t &tree, uint64_t pageid,
+    const std::function<int(std::string_view, std::string_view)> &dead,
+    size_t &removed, uint64_t &next) {
+  detail::latched_t l;
+  l.pageid = pageid;
+  // The leaf's readers and writers wait while it is judged whole.
+  if (0 != pin_ex(tree, pageid, false, l.pin) || 0 != l.pin.view.check()) {
+    return -1;
+  }
+  if (0 != l.pin.view.level()) {
+    return 1;
+  }
+  l.decode();
+  next = l.page.next;
+  auto &entries = l.page.entries;
+  size_t kept = 0;
+  bool settled = true;
+  for (size_t i = 0; i < entries.size(); i++) {
+    int d = dead(entries[i].first, entries[i].second);
+    if (d < 0) {
+      return -1;
+    }
+    if (1 == d) {
+      continue;
+    }
+    settled = settled && 2 == d;
+    if (kept != i) {
+      entries[kept] = std::move(entries[i]);
+    }
+    kept++;
+  }
+  size_t went = entries.size() - kept;
+  entries.resize(kept);
+  bool set = settled && 0 == (l.page.flags & page_all_visible);
+  if (set) {
+    l.page.flags |= page_all_visible;
+  }
+  if (0 != went || set) {
     if (0 != detail::write_back(tree, l)) {
       return -1;
     }
@@ -921,18 +1003,27 @@ int tree_prune(
     // writers never wait on a vacuum.
     int rc = leaf ? 0 : 1;
     uint64_t next = copy.next;
-    if (leaf) {
+    // A leaf all visible holds no dead entry: every write since the
+    // bit was set would have cleared it.
+    if (leaf && 0 == (copy.flags & page_all_visible)) {
       std::vector<std::string> gone;
+      bool settled = true;
       for (const auto &[key, value] : copy.entries) {
         int d = dead(key, value);
         if (d < 0) {
           return -1;
         }
-        if (0 != d) {
+        if (1 == d) {
           gone.push_back(key);
+        } else {
+          settled = settled && 2 == d;
         }
       }
-      if (!gone.empty()) {
+      // Only a leaf that may be set is judged whole under its latch:
+      // the others' readers and writers do not wait on its rows.
+      if (settled) {
+        rc = settle_leaf(tree, pageid, dead, removed, next);
+      } else if (!gone.empty()) {
         rc = prune_leaf(tree, pageid, gone, dead, removed, next);
       }
     }

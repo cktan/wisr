@@ -1,0 +1,116 @@
+# Verify an index-only scan of a tree, its rows unread on a leaf VACUUM
+# set all visible (../sm/BTREE.md section 4.1), counts as PostgreSQL's
+# does, before and after writes clear some of its leaves.
+# 1. Make a table of 3,000 rows, a tree on c2, and VACUUM it.
+# 2. Confirm count(*) by c2 plans an index-only scan, and its counts.
+# 3. Delete rows, move rows off a key and onto another, and roll an
+#    insert back: the counts follow the rows.
+# 4. In a transaction that deletes rows, its own count shows them gone.
+# 5. VACUUM again: the same counts.
+
+statement ok
+create table t (id int4 primary key, c2 int4, note text)
+
+statement ok
+insert into t select g, g % 30, 'n' || g from generate_series(1, 3000) g
+
+onlyif digres
+statement ok
+create index t_c2 on t (c2) with (tree = on)
+
+skipif digres
+statement ok
+create index t_c2 on t (c2)
+
+statement ok
+vacuum t
+
+statement ok
+set enable_seqscan = off
+
+statement ok
+set enable_bitmapscan = off
+
+query T nosort
+explain (costs off) select count(*) from t where c2 = 7
+----
+Aggregate
+  ->  Index Only Scan using t_c2 on t
+        Index Cond: (c2 = 7)
+
+query I nosort
+select count(*) from t where c2 = 7
+----
+100
+
+query II nosort
+select count(*), sum(c2) from t where c2 between 10 and 19
+----
+1000	14500
+
+statement ok
+delete from t where c2 = 7 and id < 1000
+
+statement ok
+update t set c2 = 8 where c2 = 9 and id < 500
+
+statement ok
+begin
+
+statement ok
+insert into t select g, 7, 'x' from generate_series(5001, 5050) g
+
+statement ok
+rollback
+
+query I nosort
+select count(*) from t where c2 = 7
+----
+66
+
+query I nosort
+select count(*) from t where c2 = 8
+----
+117
+
+query I nosort
+select count(*) from t where c2 = 9
+----
+83
+
+query II nosort
+select count(*), sum(c2) from t where c2 between 0 and 29
+----
+2966	43245
+
+statement ok
+begin
+
+statement ok
+delete from t where c2 = 8 and id > 2000
+
+query I nosort
+select count(*) from t where c2 = 8
+----
+84
+
+statement ok
+rollback
+
+statement ok
+vacuum t
+
+query I nosort
+select count(*) from t where c2 = 7
+----
+66
+
+query I nosort
+select count(*) from t where c2 = 8
+----
+117
+
+query II nosort
+select count(*), sum(c2) from t where c2 between 0 and 29
+----
+2966	43245

@@ -1618,6 +1618,24 @@ int tbl_idx_scan_rows(table_t* table, uint64_t index, const sm2::bound_t* lo,
 int tbl_scan_rebound(scan_t* scan, const sm2::bound_t* lo,
                      const sm2::bound_t* hi, bool* widened = nullptr);
 
+/*
+ * Make a tree's cursor of rows (tbl_idx_scan_rows) an index-only
+ * scan's: an entry on a leaf all visible, whose key gives its columns
+ * back, is handed out with its row unread (../BTREE.md §4.1), its
+ * tuple empty and ref naming no row, tbl_scan_cols to give its
+ * columns. SM_ERR_INVALID on any other cursor.
+ */
+int tbl_scan_entries_only(scan_t* scan);
+
+/*
+ * The key columns of the entry a tree's cursor's tbl_scannxt last
+ * gave, as sm2::idx_scan_key gives them: 0; 1 if its key does not
+ * give them back, and its row, read, has them; -1 on error. A
+ * by-reference datum is valid until the next call on the cursor.
+ */
+int tbl_scan_cols(scan_t* scan, std::span<sm2::datum_t> values,
+                  std::span<bool> isnull);
+
 /* Move the cursor forward to _id id, as sm2::rel_scan_seek does. */
 int tbl_scan_seek(scan_t* scan, uint64_t id);
 
