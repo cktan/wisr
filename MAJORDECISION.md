@@ -495,3 +495,22 @@ Decided with the user (2026-10-31).
   SIREAD lookup per tree; below serializable, nothing.
 - **Undo:** register each skipped row's key as an SIREAD at
   the reader instead, one a row, as PostgreSQL's page lock.
+
+## D28. A session reads a tree's root from its own copy
+
+- **Decided:** each buffer pool frame has a version, moved by
+  every change of its page or bytes. A session keeps a copy of a
+  tree's page 0, its frame and that version
+  (`sm1::keep_page_copy`), and `descend()` reads the copy, with
+  no pin, while the version is unchanged and page 0 is above the
+  level it descends to. Page 0 alone; at most 32 copies a
+  session, in the sm1 session.
+- **Why:** every probe pinned page 0, a write of its frame's
+  state word from every core. A stale copy is safe in a B-link
+  tree whose pages are never freed (`sm/BTREE.md` §4.2). The
+  user asked for it, the root alone.
+- **Cost:** a 4 KB copy a session for each tree it probes, made
+  again when page 0 changes; a version check a descent. The
+  frame's bytes pointer went, to keep the descriptor 64 bytes.
+- **Undo:** `descend()` pins page 0 again; the version, the
+  copies and their calls go.

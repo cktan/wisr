@@ -80,6 +80,19 @@ struct sm1::session_t {
    */
   std::unordered_set<uint64_t> temp_stores;
   bool temp_touched = false;
+  /*
+   * Its own copies of pages, by sm1::keep_page_copy (page.cc): each
+   * page's store and key, the frame it was copied from and the
+   * frame's version then, and its bytes. At most page_copies_max.
+   */
+  struct page_copy_t {
+    uint64_t storeid = 0;
+    std::string key;
+    const sm1::page_t *frame = nullptr;
+    uint64_t version = 0;
+    std::string bytes;
+  };
+  std::vector<page_copy_t> page_copies;
   /* The bulk load open in the transaction, if any (load.cc). */
   sm1::loader_t *loader = nullptr;
   /* The transaction bulk loaded: it keeps no write set to prepare. */

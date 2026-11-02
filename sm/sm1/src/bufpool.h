@@ -101,6 +101,15 @@ public:
    */
   void install(frame_t *frame, std::string_view bytes);
 
+  /*
+   * A count frame moves at each change of its page or its bytes: an
+   * install, a discard, a purge, an eviction. Read under a pin, it
+   * says, read again later with none, whether the frame still holds
+   * the page, as it was: so a copy of a page is checked with no pin.
+   * Frames last the pool's life, so it may be read at any time.
+   */
+  uint64_t version(const frame_t *frame) const;
+
   /* Take a page's frame, pinned exclusive, out: its page erased. */
   void discard(frame_t *frame);
 
@@ -137,6 +146,7 @@ private:
   int take(const tag_t &tag, frame_t *&out);
   size_t bucket_of(const tag_t &tag) const;
   waitq_t &waitq_of(const frame_t *f) const;
+  char *bytes_of(const frame_t *f) const;
 
   size_t m_nframes;
   std::unique_ptr<frame_t[]> m_frames;

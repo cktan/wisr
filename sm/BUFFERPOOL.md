@@ -152,6 +152,12 @@ cache, shared by every database and the temporary instance.
 - **Lookup**: a lock-free read of a chained hash, as prototyped;
   pin, then compare the tag again, as a frame may have been taken
   for another page between. A changed tag unpins and looks again.
+- **The version**, in the descriptor: a count each change of the
+  frame's tag or bytes moves, under its exclusive pin. Read with
+  no pin, it says whether the frame still holds a page as it was
+  when pinned: a session's copy of a tree's root is read so
+  (`BTREE.md` §4.2). The frame's bytes are found by its index, so
+  the descriptor still fits its line.
 
 ### 3.3 The interface
 

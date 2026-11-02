@@ -1,0 +1,69 @@
+# Verify a session's probes of a tree, which read its root from the
+# session's own copy (../sm/BTREE.md section 4.2), find every key while
+# another session's inserts split the pages under the root and the
+# root itself.
+# 1. Insert 400 rows of long keys, and make a tree on them: its root
+#    is an inner page.
+# 2. Session r probes one key, keeping a copy of the root.
+# 3. Session w inserts 5,600 rows more.
+# 4. Session r finds old and new keys by probes, and counts them all.
+
+connection w
+statement ok
+create table g (id int4 primary key, k text)
+
+connection w
+statement ok
+insert into g select i, (100000 + i)::text || repeat('g', 60) from generate_series(0, 399) i
+
+onlyif digres
+connection w
+statement ok
+create index g_k on g (k) with (tree = on)
+
+skipif digres
+connection w
+statement ok
+create index g_k on g (k)
+
+connection r
+statement ok
+set enable_seqscan = off
+
+connection r
+statement ok
+set enable_bitmapscan = off
+
+connection r
+query I nosort
+select id from g where k = '100007' || repeat('g', 60)
+----
+7
+
+connection w
+statement ok
+insert into g select i, (100000 + i)::text || repeat('g', 60) from generate_series(400, 5999) i
+
+connection r
+query I nosort
+select id from g where k = '100007' || repeat('g', 60)
+----
+7
+
+connection r
+query I nosort
+select id from g where k = '105999' || repeat('g', 60)
+----
+5999
+
+connection r
+query I nosort
+select count(*) from g where k >= '100000' and k < '200000'
+----
+6000
+
+connection r
+query I nosort
+select count(*) from g where k = any(array(select (100000 + i)::text || repeat('g', 60) from generate_series(0, 5999, 7) i))
+----
+858

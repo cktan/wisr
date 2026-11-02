@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <map>
 #include <random>
 #include <set>
@@ -625,6 +626,184 @@ TEST_CASE("tree: a unique insert judges every entry of its prefix") {
   std::string lo = "k|", hi = "k}";
   cursor_open(t.tree, c, &lo, true, &hi, false);
   CHECK(304u == drain(c).size());
+}
+
+TEST_CASE("tree: a probe reads an inner root from its copy, with no pin") {
+  // Verify a descent takes no pin of page 0 while its session's copy
+  // of it is good, and pins it again once the page has changed.
+  // 1. A writer inserts until page 0 is an inner page.
+  // 2. A reader probes once, keeping a copy of page 0.
+  // 3. The writer holds page 0 exclusive; the reader's probe, on a
+  //    thread, ends while it does.
+  // 4. The writer writes page 0 again and holds it exclusive: the
+  //    reader's probe now waits for it, and ends once it is let go.
+  db_t d;
+  open_tree_t w(d, 31, 512);
+  open_tree_t r(d, 31, 512);
+  REQUIRE(0 == tree_create(w.tree));
+  auto key_of = [](int n) { return std::to_string(1000000 + n); };
+  for (int n = 0; n < 2000; n++) {
+    REQUIRE(0 == tree_insert(w.tree, key_of(n), "v"));
+  }
+  size_t height = 0;
+  REQUIRE(0 == tree_height(w.tree, height));
+  REQUIRE(height >= 2);
+
+  // A probe of key n by the reader, on a thread: done once it ends,
+  // found if it found the key.
+  std::atomic<bool> done{false};
+  std::atomic<bool> found{false};
+  auto probe = [&](int n) {
+    cursor_t c;
+    std::string k = key_of(n);
+    cursor_open(r.tree, c, &k, true, &k, true);
+    std::string_view key, value;
+    found = 0 == cursor_next(c, key, value);
+    done = true;
+  };
+  auto waited = [&](bool want) {
+    for (int i = 0; i < 2000 && done != want; i++) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return done == want;
+  };
+  probe(5);
+  REQUIRE(found);
+
+  std::string root = page_name(31, 0);
+  sm1::page_t *pin = nullptr;
+  std::string_view bytes;
+  REQUIRE(0 == sm1::pin_page(w.s, d.store(), root, sm1::page_mode_t::ex, 0, pin,
+                             bytes));
+  done = found = false;
+  std::thread t1([&] { probe(7); });
+  CHECK(waited(true));
+  sm1::unpin_page(w.s, pin);
+  t1.join();
+  CHECK(found);
+
+  REQUIRE(0 == sm1::pin_page(w.s, d.store(), root, sm1::page_mode_t::ex, 0, pin,
+                             bytes));
+  std::string same(bytes);
+  std::vector<sm1::page_put_t> puts{{pin, root, same}};
+  REQUIRE(0 == sm1::page_write(w.s, d.store(), puts));
+  done = found = false;
+  std::thread t2([&] { probe(9); });
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  CHECK_FALSE(done);
+  sm1::unpin_page(w.s, pin);
+  t2.join();
+  CHECK(found);
+  REQUIRE_MESSAGE(0 == tree_check(r.tree), std::string(sm1::errmsg()));
+}
+
+TEST_CASE("tree: a copy of the root follows a root that splits and grows") {
+  // Verify a reader whose copy of page 0 goes stale, by splits and by
+  // the tree growing a level, still finds every key.
+  // 1. A reader probes a two-level tree, keeping a copy of page 0.
+  // 2. A writer inserts until the tree is three levels high, page 0
+  //    split under the copy.
+  // 3. The reader finds every key, before and after.
+  // 4. The tree made again under the relid, one leaf: the reader finds
+  //    a key inserted and none of the old.
+  db_t d;
+  open_tree_t w(d, 32, 512);
+  open_tree_t r(d, 32, 512);
+  REQUIRE(0 == tree_create(w.tree));
+  auto key_of = [](int n) { return std::to_string(1000000 + n * 7 % 30011); };
+  auto finds = [&](int n) {
+    cursor_t c;
+    std::string k = key_of(n);
+    cursor_open(r.tree, c, &k, true, &k, true);
+    return drain(c).size();
+  };
+  int n = 0;
+  size_t height = 1;
+  while (height < 2) {
+    REQUIRE(0 == tree_insert(w.tree, key_of(n++), "v"));
+    REQUIRE(0 == tree_height(w.tree, height));
+  }
+  int first = n;
+  for (int i = 0; i < first; i++) {
+    CHECK(1u == finds(i));
+  }
+  while (height < 3) {
+    REQUIRE(0 == tree_insert(w.tree, key_of(n++), "v"));
+    REQUIRE(0 == tree_height(w.tree, height));
+  }
+  for (int i = 0; i < n; i++) {
+    CHECK(1u == finds(i));
+  }
+  REQUIRE(0 == tree_create(w.tree));
+  REQUIRE(0 == tree_insert(w.tree, key_of(0), "v"));
+  CHECK(1u == finds(0));
+  CHECK(0u == finds(1));
+}
+
+TEST_CASE("tree: a descent from a copy of the root stale by splits finds every "
+          "key") {
+  // Verify a descent from a copy of page 0 taken before splits under
+  // it, and before the root's own split, finds every key: the window
+  // between a check of the copy and the pin of the child it names.
+  // 1. Insert until the tree is two levels high; save page 0's bytes.
+  // 2. Insert until it is three levels high: every child page 0 named
+  //    has split, and page 0 has split into two pages below it.
+  // 3. Make the reader's copy of page 0 the saved bytes, with the
+  //    frame's version as it is now, so the reader trusts them.
+  // 4. The reader finds every key, the copy still the saved bytes: no
+  //    descent pinned page 0 to replace it.
+  // 5. The reader inserts keys through the stale copy; the tree
+  //    checks whole, and holds every key.
+  db_t d;
+  open_tree_t w(d, 33, 512);
+  open_tree_t r(d, 33, 512);
+  REQUIRE(0 == tree_create(w.tree));
+  auto key_of = [](int n) { return std::to_string(1000000 + n * 7 % 30011); };
+  int n = 0;
+  size_t height = 1;
+  while (height < 2) {
+    REQUIRE(0 == tree_insert(w.tree, key_of(n++), "v"));
+    REQUIRE(0 == tree_height(w.tree, height));
+  }
+  std::string root = page_name(33, 0);
+  sm1::page_t *pin = nullptr;
+  std::string_view bytes;
+  REQUIRE(0 == sm1::pin_page(w.s, d.store(), root, sm1::page_mode_t::sh, 0,
+                             pin, bytes));
+  std::string old(bytes);
+  sm1::unpin_page(w.s, pin);
+  page_view_t ov;
+  REQUIRE(0 == ov.open(old));
+  REQUIRE(1u == ov.level());
+
+  while (height < 3) {
+    REQUIRE(0 == tree_insert(w.tree, key_of(n++), "v"));
+    REQUIRE(0 == tree_height(w.tree, height));
+  }
+
+  REQUIRE(0 == sm1::pin_page(r.s, d.store(), root, sm1::page_mode_t::sh, 0,
+                             pin, bytes));
+  sm1::keep_page_copy(r.s, d.store(), root, pin, old);
+  sm1::unpin_page(r.s, pin);
+
+  for (int i = 0; i < n; i++) {
+    cursor_t c;
+    std::string k = key_of(i);
+    cursor_open(r.tree, c, &k, true, &k, true);
+    CHECK(1u == drain(c).size());
+  }
+  std::string_view copy;
+  REQUIRE(sm1::page_copy(r.s, d.store(), root, copy));
+  CHECK(old == copy);
+
+  int more = n + 500;
+  for (int i = n; i < more; i++) {
+    REQUIRE(0 == tree_insert(r.tree, key_of(i), "v"));
+  }
+  REQUIRE_MESSAGE(0 == tree_check(r.tree), std::string(sm1::errmsg()));
+  cursor_t c;
+  cursor_open(r.tree, c, nullptr, true, nullptr, true);
+  CHECK(static_cast<size_t>(more) == drain(c).size());
 }
 
 TEST_CASE("tree: the root is page 0, at every height") {

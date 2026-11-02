@@ -274,6 +274,72 @@ TEST_CASE("page: dropped by prefix, with their frames") {
   REQUIRE(sm1::closedb(s) == 0);
 }
 
+TEST_CASE("page: a session's copy is good until its page changes") {
+  // Verify a copy of a page reads as it was until the page is changed
+  // or dropped, and is the session's own.
+  // 1. Pin a page, keep a copy, unpin: the copy reads as the page.
+  // 2. A read of the page by another session leaves the copy good.
+  // 3. The page written again: the copy is no longer good; a new
+  //    copy is.
+  // 4. Another key, or another store, has no copy.
+  // 5. The page dropped: the copy is no longer good.
+  // 6. One copy past the most a session keeps drops the others.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  sm1::session_t *s = opendb(home.env(), "db");
+  sm1::session_t *s2 = opendb(home.env(), "db");
+  REQUIRE(s);
+  REQUIRE(s2);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t store = mkstore(s);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(s2, sm1::xctlevel_t::read_committed) == 0);
+  write_page(s, store, "r/0", "one");
+  auto keep = [&](std::string_view key) {
+    sm1::page_t *page = nullptr;
+    std::string_view bytes;
+    REQUIRE(0 ==
+            sm1::pin_page(s, store, key, sm1::page_mode_t::sh, 0, page, bytes));
+    sm1::keep_page_copy(s, store, key, page, bytes);
+    sm1::unpin_page(s, page);
+  };
+  auto copy = [&](uint64_t st, std::string_view key) {
+    std::string_view bytes;
+    return sm1::page_copy(s, st, key, bytes) ? std::string(bytes)
+                                             : std::string("<none>");
+  };
+  keep("r/0");
+  CHECK("one" == copy(store, "r/0"));
+
+  CHECK("one" == read_page(s2, store, "r/0"));
+  CHECK("one" == copy(store, "r/0"));
+
+  write_page(s2, store, "r/0", "two");
+  CHECK("<none>" == copy(store, "r/0"));
+  keep("r/0");
+  CHECK("two" == copy(store, "r/0"));
+
+  CHECK("<none>" == copy(store, "r/1"));
+  CHECK("<none>" == copy(store + 1, "r/0"));
+
+  REQUIRE(0 == sm1::page_drop(s2, store, "r"));
+  CHECK("<none>" == copy(store, "r/0"));
+
+  for (size_t i = 0; i <= sm1::page_copies_max; i++) {
+    std::string key = "c/" + std::to_string(i);
+    write_page(s, store, key, key);
+    keep(key);
+  }
+  CHECK("<none>" == copy(store, "c/0"));
+  std::string last = "c/" + std::to_string(sm1::page_copies_max);
+  CHECK(last == copy(store, last));
+  REQUIRE(sm1::commit(s2) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::closedb(s2) == 0);
+  REQUIRE(sm1::closedb(s) == 0);
+}
+
 TEST_CASE("page: no version meets a page") {
   // Verify pages and versions of one store keep apart.
   // 1. In a chained store, write a version and pages under the same

@@ -193,7 +193,9 @@ out_t out_of(uint64_t pageid, page_t &page, sm1::page_t *pin) {
 /*
  * Descend to the page at level that covers key, from page 0, moving
  * right past each page whose high key key is at or past, one page
- * pinned at a time. leaf, if given, takes the page found, still
+ * pinned at a time. Page 0, when it is above level, is read from the
+ * session's own copy of it, with no pin, while the copy is the page
+ * (../../BTREE.md §4.2). leaf, if given, takes the page found, still
  * pinned, so it is not read again.
  */
 int descend(tree_t &tree, std::string_view key, uint8_t level, uint64_t &out,
@@ -206,20 +208,45 @@ int descend(tree_t &tree, std::string_view key, uint8_t level, uint64_t &out,
   }
   uint64_t pageid = root_id;
   pinned_t p;
+  // The page to read next; nullptr until it is pinned. A copy of page
+  // 0 stale by a split since is as good as the page read just before
+  // the split: the pages it names are still there, and their right
+  // links lead on.
+  const std::string root_key = key_of(tree, root_id);
+  page_view_t copy;
+  const page_view_t *v = nullptr;
+  std::string_view bytes;
+  if (sm1::page_copy(tree.session, tree.storeid, root_key, bytes)) {
+    if (0 != copy.open(bytes)) {
+      return -1;
+    }
+    if (copy.level() > level) {
+      v = &copy;
+    }
+  }
   // Whether the page to read is inner: the root is taken to be, as
   // every descent reads it; below it, the page above says.
   bool inner = true;
   for (;;) {
-    if (0 != read_page(tree, pageid, inner, p, store)) {
-      return -1;
+    if (nullptr == v) {
+      if (0 != read_page(tree, pageid, inner, p, store)) {
+        return -1;
+      }
+      v = &p.view;
+      // A copy only of a page 0 a descent passes through, so it moves
+      // only with an inner page's split.
+      if (root_id == pageid && v->level() > level) {
+        sm1::keep_page_copy(tree.session, tree.storeid, root_key, p.pin,
+                            v->bytes());
+      }
     }
-    const page_view_t &v = p.view;
-    if (v.past_high(key)) {
-      pageid = v.next();
-      inner = 0 != v.level();
+    if (v->past_high(key)) {
+      pageid = v->next();
+      inner = 0 != v->level();
+      v = nullptr;
       continue;
     }
-    if (v.level() == level) {
+    if (v->level() == level) {
       out = pageid;
       if (nullptr != leaf) {
         leaf->release();
@@ -230,15 +257,16 @@ int descend(tree_t &tree, std::string_view key, uint8_t level, uint64_t &out,
       }
       return 0;
     }
-    if (v.level() < level || 0 == v.count()) {
+    if (v->level() < level || 0 == v->count()) {
       return corrupt("no page at level " + std::to_string(level));
     }
-    uint64_t child = child_of(v.value(v.child(key)));
+    uint64_t child = child_of(v->value(v->child(key)));
     if (0 == child) {
       return corrupt("an inner entry names no page");
     }
-    inner = v.level() > 1;
+    inner = v->level() > 1;
     pageid = child;
+    v = nullptr;
   }
 }
 

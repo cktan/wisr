@@ -494,6 +494,58 @@ TEST_CASE("bufpool: a page's frame is discarded, and a prefix's purged") {
   CHECK_FALSE(pool.cached({1, 2, b1}));
 }
 
+TEST_CASE("bufpool: a frame's version moves with each change of its page") {
+  // Verify the version says, read with no pin, whether a frame still
+  // holds its page as it was.
+  // 1. A shared pin and its unpin, again, leave the version as it was.
+  // 2. An exclusive pin that installs no bytes leaves it too.
+  // 3. An install moves it.
+  // 4. Eviction moves it: the frame's page goes for another.
+  // 5. A discard and a purge move it.
+  bufpool_t pool(2);
+  store_t st;
+  fill(st, 8);
+  bufpool_t::frame_t *f = nullptr;
+  std::string_view b;
+  REQUIRE(0 == pin(pool, st, 0, false, 0, f, b));
+  bufpool_t::frame_t *f0 = f;
+  uint64_t v = pool.version(f0);
+  pool.unpin(f);
+  REQUIRE(0 == pin(pool, st, 0, false, 0, f, b));
+  CHECK(f0 == f);
+  CHECK(v == pool.version(f0));
+  pool.unpin(f);
+
+  REQUIRE(0 == pin(pool, st, 0, true, 0, f, b));
+  pool.unpin(f);
+  CHECK(v == pool.version(f0));
+
+  REQUIRE(0 == pin(pool, st, 0, true, 0, f, b));
+  pool.install(f, "new bytes");
+  pool.unpin(f);
+  CHECK(v != pool.version(f0));
+  v = pool.version(f0);
+
+  for (size_t i = 1; i < 8 && cached(pool, 0); i++) {
+    REQUIRE(0 == pin(pool, st, i, false, 0, f, b));
+    pool.unpin(f);
+  }
+  REQUIRE_FALSE(cached(pool, 0));
+  CHECK(v != pool.version(f0));
+
+  REQUIRE(0 == pin(pool, st, 0, true, 0, f, b));
+  v = pool.version(f);
+  pool.discard(f);
+  CHECK(v != pool.version(f));
+  pool.unpin(f);
+
+  REQUIRE(0 == pin(pool, st, 1, false, 0, f, b));
+  v = pool.version(f);
+  pool.unpin(f);
+  pool.purge(1, 2, "k");
+  CHECK(v != pool.version(f));
+}
+
 TEST_CASE("bufpool: a pin's waits can be interrupted") {
   // Verify a wait on a frame and a wait for a frame end on an interrupt.
   // 1. Pin a page exclusive; a thread's pin of it waits.

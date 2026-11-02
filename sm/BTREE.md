@@ -108,6 +108,8 @@ Proposed here:
     its session takes the new one. *Built otherwise*: an open
     index holds the inner pages it reads, and lets them go when
     a descent has to move right (`../MAJORDECISION.md` D11).
+    Page 0 alone is now read from a session's copy, checked by
+    its frame's version (§4.2).
   - **A leaf is pinned by its cache handle**, `Lookup` and
     `Release`: the count is the leaf's own, so it is contended
     only as the leaf is popular.
@@ -577,6 +579,52 @@ vacuum.
    both systems.
 2. Whether a delete's extra descent shows on the old bench's
    write-heavy Q11.
+
+### 4.2 A session's copy of the root
+
+*Built 2026-11-02 (`../dg/WORKNOTE.md` step 366,
+`../MAJORDECISION.md` D28).* Every descent reads page 0, so its
+pin, a count in its frame's state word, was a word every probe on
+every core wrote. A session now keeps its own copy of page 0 and
+descends from it with no pin while the page is as it was.
+
+- **A frame's version** (`sm1/src/bufpool.cc`), a count moved by
+  each change of the frame's page or bytes: an install, a
+  discard, a purge, an eviction. All are under an exclusive pin.
+  It sits in the descriptor's line, which still fits 64 bytes:
+  the frame's bytes are found by its index, no longer a pointer.
+- **The copy**: `sm1::keep_page_copy()`, with the page pinned,
+  keeps its bytes, its frame and the frame's version, in the
+  session; `sm1::page_copy()` hands the bytes back while the
+  frame's version is unchanged, read with no pin: frames last the
+  pool's life. A session keeps at most 32, by store and key, and
+  drops them all for the 33rd. It lives in the sm1 session, not
+  the tree: digres opens a table, and its trees, once a
+  transaction.
+- **`descend()`** uses the copy when page 0 is above the level it
+  descends to. Otherwise, or with no good copy, it pins page 0 as
+  before, and keeps a copy if the page is above that level. So a
+  root that is a leaf, and a writer posting into the root's
+  level, pin it as before, and an insert into a root leaf makes
+  no copy.
+- **Stale is safe**: the version is read, then the copy used; a
+  write between is as a write just after a pinned read. A copy
+  stale by any split is as good as page 0 read just before it:
+  no page is ever freed, the children it names are still there at
+  their level, and their right links lead on. Page 0's own split
+  moves the version, so the next probe copies it again.
+- **Writes** pin page 0 as before: only a descent reads the copy.
+
+| Case | What happens |
+| --- | --- |
+| page 0 changed (a post, a root split) | install moves the version: the next descent pins and copies |
+| DROP INDEX, TRUNCATE, `tree_create` again | `page_drop()`'s purge moves it; a store dropped fails `page_enter()` first |
+| page 0 evicted | the copy is not good; the next descent misses and reads it |
+| crash, restart | the pool and the copies start empty |
+| a root that is a leaf | pinned, as the leaf a descent wants |
+| another database, temp tables | the copy is by store and key in one session, of one database |
+
+Not done: copies of the inner pages below page 0.
 
 ---
 

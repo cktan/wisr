@@ -160,6 +160,51 @@ void sm1::unpin_page(sm1::session_t *session, sm1::page_t *page) {
   }
 }
 
+/* The session's copy of a page, if it is still the page; see sm1.h. */
+bool sm1::page_copy(sm1::session_t *session, uint64_t storeid,
+                    std::string_view key, std::string_view &bytes) {
+  for (const sm1::session_t::page_copy_t &c : session->page_copies) {
+    if (storeid != c.storeid || key != c.key) {
+      continue;
+    }
+    // The frame's version is read with no pin: frames last the
+    // pool's life, and a change of the page moves it.
+    const auto *f = reinterpret_cast<const bufpool_t::frame_t *>(c.frame);
+    if (c.version != session->db->bufpool->version(f)) {
+      return false;
+    }
+    bytes = c.bytes;
+    return true;
+  }
+  return false;
+}
+
+/* Keep a copy of a page pinned; see sm1.h. */
+void sm1::keep_page_copy(sm1::session_t *session, uint64_t storeid,
+                         std::string_view key, const sm1::page_t *page,
+                         std::string_view bytes) {
+  const auto *f = reinterpret_cast<const bufpool_t::frame_t *>(page);
+  sm1::session_t::page_copy_t *c = nullptr;
+  for (sm1::session_t::page_copy_t &e : session->page_copies) {
+    if (storeid == e.storeid && key == e.key) {
+      c = &e;
+      break;
+    }
+  }
+  if (nullptr == c) {
+    if (sm1::page_copies_max == session->page_copies.size()) {
+      session->page_copies.clear();
+    }
+    c = &session->page_copies.emplace_back();
+    c->storeid = storeid;
+    c->key = key;
+  }
+  // Under the caller's pin: no change of the page moves it meanwhile.
+  c->frame = page;
+  c->version = session->db->bufpool->version(f);
+  c->bytes = bytes;
+}
+
 /* Whether a page is in the buffer pool; see sm1.h. */
 bool sm1::page_cached(sm1::session_t *session, uint64_t storeid,
                       std::string_view key) {

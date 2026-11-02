@@ -280,6 +280,42 @@
 (session-close "ser2")
 (session-use "default")
 
+# Verify a session's copy of a tree's root, which its probes read with
+# no pin, follows the root as another session's inserts split it.
+# 1. Insert 400 rows of long keys: the root is an inner page.
+# 2. "rdr" probes one key, keeping a copy of the root.
+# 3. The default session inserts 5,600 more, splitting the pages under
+#    the root, and the root itself.
+# 4. "rdr" finds every key, old and new, by a probe of its own each.
+(def grow-pad (string/repeat "g" 60))
+(defn grow-key [i] (string (+ 100000 i) grow-pad))
+(begin :rc)
+(table-create grow
+  (columns
+    (id :int4 :not-null)
+    (k :text)))
+(index-create grow_k (table grow) (key (k :asc)) :tree true)
+(each i (range 400) (insert grow [i (grow-key i)]))
+(commit)
+(session-open "rdr" "treedb")
+(session-use "rdr")
+(begin :rc)
+(assert-eq (ids (idx-rows grow_k :ge [(grow-key 7)] :le [(grow-key 7)])) @[7])
+(commit)
+(session-use "default")
+(begin :rc)
+(each i (range 400 6000) (insert grow [i (grow-key i)]))
+(commit)
+(session-use "rdr")
+(begin :rc)
+(each i (range 0 6000 7)
+  (assert-eq (ids (idx-rows grow_k :ge [(grow-key i)] :le [(grow-key i)]))
+             @[i]))
+(assert-count 6000 (idx-rows grow_k))
+(commit)
+(session-close "rdr")
+(session-use "default")
+
 (db-close)
 (env-detach)
 (rm-rf test-dir)

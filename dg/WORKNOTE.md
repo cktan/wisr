@@ -10781,3 +10781,46 @@ would compare them better.
   reformats two blocks in `sm1/src/bufpool.cc` and
   `sm1/src/xct.cc` that are in another version's form at `main`;
   left as they are.
+
+## Step 366: a session reads a tree's root from its own copy
+
+Every descent of a tree pinned page 0, so every probe on every
+core wrote its frame's state word, twice. `../sm/BTREE.md` §4.2,
+built: a session keeps its own copy of page 0 and descends from
+it with no pin while the page is as it was. Decision D28 in
+`../MAJORDECISION.md`.
+
+- **sm1**: each frame of the buffer pool has a version, moved by
+  an install and by every change of its tag: a discard, a purge,
+  an eviction. `sm1::keep_page_copy()` keeps a pinned page's
+  bytes, frame and version in the session, at most 32 copies;
+  `sm1::page_copy()` hands them back while the version, read
+  with no pin, is unchanged. The frame's bytes are found by its
+  index, so the descriptor still fits 64 bytes.
+- **sm2**: `descend()` reads page 0 from the copy when page 0 is
+  above the level it wants; otherwise it pins page 0, and keeps
+  a copy if it is. A stale copy is safe: no page is freed, and
+  right links lead past a split.
+- **Tests**: sm1, a frame's version against each change, and a
+  copy good until its page is written or dropped; sm2, a probe
+  that ends while another session holds page 0 exclusive, and
+  waits once page 0 is written, a reader whose copy goes stale
+  as the root splits and the tree is made again, and a descent
+  from a copy made to trust page 0's bytes from before the root
+  split and every split under it, the window between a check of
+  the copy and the pin of its child; rel and
+  dg (`test/slt/btree_tree_root.test`), a session's probes
+  across another's root splits. Each sm1 and sm2 test fails with
+  the code it covers broken; rel and dg see only results, which
+  a stale copy leaves right, so they cannot tell a pin from none.
+  The stale descent's test passes with `descend()`'s move right
+  cut for pages reached from the copy: a cursor's `fill()` and a
+  writer's `latch_covering()` move right along the leaves too,
+  and a page left of the key's leaf, at its level, always leads
+  to it. sm1's isolation scenarios cannot express a tree.
+- **Suites**: sm (sm1 320, sm2 137, sm3 214, 124 scenarios
+  match, rel), sq 152 files, aa, dg (run 124 files, 12 in 8
+  sessions, initdb, server, slt 52 files, pgregress 231 ok).
+- **Not measured**: `bench/run.sh` runs one client, where a pin
+  of page 0 costs a few nanoseconds of q1's 140 µs; the gain is
+  in contention, under many clients.

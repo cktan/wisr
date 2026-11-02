@@ -95,16 +95,20 @@ struct alignas(64) bufpool_t::frame_t {
   std::atomic<int32_t> next{-1};  /* the next in its chain */
   std::atomic<uint8_t> age{0};    /* the clock's: a pin sets its top bit */
   std::atomic<bool> inner{false}; /* its last pin's bufpool_inner */
+  /* Under the pin; its bytes are bufpool_t::bytes_of's. */
+  bool valid = false; /* bytes hold the page */
+  uint16_t size = 0;
   /* The tag, written under an exclusive pin. */
   std::atomic<uint64_t> dbid{0};
   std::atomic<uint64_t> storeid{0};
   std::atomic<uint64_t> k0{0};
   std::atomic<uint64_t> k1{0};
   std::atomic<uint32_t> len{no_page};
-  /* Under the pin. */
-  bool valid = false; /* bytes hold the page */
-  uint16_t size = 0;
-  char *bytes = nullptr;
+  /*
+   * Moved by each change of the tag or the bytes, under an exclusive
+   * pin, so a copy of a page knows the frame since (bufpool.h).
+   */
+  std::atomic<uint64_t> version{0};
 
   /* The tag as it is now: sure only under a pin. */
   tag_t tag() const {
@@ -118,6 +122,7 @@ struct alignas(64) bufpool_t::frame_t {
   }
   /* Set the tag, under an exclusive pin. */
   void set_tag(const tag_t &t) {
+    version.fetch_add(1, std::memory_order_release);
     dbid.store(t.dbid, std::memory_order_relaxed);
     storeid.store(t.storeid, std::memory_order_relaxed);
     k0.store(t.k0, std::memory_order_relaxed);
@@ -137,6 +142,7 @@ bufpool_t::bufpool_t(size_t frames)
     : m_nframes(frames), m_frames(new frame_t[frames]),
       m_mem(new char[frames * bufpool_frame_bytes]),
       m_waitqs(new waitq_t[waitqs]) {
+  static_assert(64 == sizeof(frame_t), "a frame's descriptor is one line");
   assert(frames > 0);
   size_t buckets = 16;
   while (buckets < 2 * frames) {
@@ -148,9 +154,6 @@ bufpool_t::bufpool_t(size_t frames)
     m_buckets[i].store(-1, std::memory_order_relaxed);
   }
   m_locks.reset(new std::mutex[bucket_locks]);
-  for (size_t i = 0; i < frames; i++) {
-    m_frames[i].bytes = m_mem.get() + i * bufpool_frame_bytes;
-  }
 }
 
 /* Free the frames; no pin may be held. */
@@ -160,6 +163,12 @@ bufpool_t::~bufpool_t() = default;
 size_t bufpool_t::bucket_of(const tag_t &t) const {
   uint64_t h = mix(t.dbid ^ mix(t.storeid ^ mix(t.k0 ^ mix(t.k1 + t.len))));
   return h & m_mask;
+}
+
+/* The bytes of f, its page's when valid. */
+char *bufpool_t::bytes_of(const frame_t *f) const {
+  return m_mem.get() +
+         static_cast<size_t>(f - m_frames.get()) * bufpool_frame_bytes;
 }
 
 /* The queue threads sleep on for f. */
@@ -403,7 +412,7 @@ int bufpool_t::pin(const bufpool_page_t &page, bool ex, unsigned flags,
         // Exclusive through the read: the page's other pins, a writer's
         // among them, wait on the frame, so no write passes this read.
         size_t size = 0;
-        rc = load(arg, f->bytes, size);
+        rc = load(arg, bytes_of(f), size);
         if (0 != rc) {
           discard(f);
           release(f, state_ex);
@@ -439,7 +448,7 @@ int bufpool_t::pin(const bufpool_page_t &page, bool ex, unsigned flags,
     }
     out = f;
     if (f->valid) {
-      bytes = std::string_view(f->bytes, f->size);
+      bytes = std::string_view(bytes_of(f), f->size);
     }
     return 0;
   }
@@ -463,9 +472,15 @@ void bufpool_t::unpin(frame_t *frame) {
 /* Copy a page's bytes in; see bufpool.h. */
 void bufpool_t::install(frame_t *frame, std::string_view bytes) {
   assert(bytes.size() <= bufpool_frame_bytes);
-  memcpy(frame->bytes, bytes.data(), bytes.size());
+  memcpy(bytes_of(frame), bytes.data(), bytes.size());
   frame->size = static_cast<uint16_t>(bytes.size());
   frame->valid = true;
+  frame->version.fetch_add(1, std::memory_order_release);
+}
+
+/* A frame's version; see bufpool.h. */
+uint64_t bufpool_t::version(const frame_t *frame) const {
+  return frame->version.load(std::memory_order_acquire);
 }
 
 /* Take a frame out; see bufpool.h. */
