@@ -1,5 +1,5 @@
 #!/bin/bash
-# run.sh -- time q1 and q2 on digres and PostgreSQL, with regular
+# run.sh -- time q1 to q3 on digres and PostgreSQL, with regular
 # indexes and then btree ones, and print a table of the results.
 #
 #   DG_PORT=5432 PG_PORT=5433 bench/run.sh
@@ -7,7 +7,7 @@
 # Both servers must be running on this machine: digres, a release
 # build, and PostgreSQL 18, each with its socket in PGHOST (/tmp by
 # default). On each, load.sql makes the database bench again, then
-# mkregidx.sql, q1, q2, mkbtidx.sql, q1, q2. Each query is pgbench,
+# mkregidx.sql, q1 to q3, mkbtidx.sql, q1 to q3. Each query is pgbench,
 # prepared, one client, for Q_SECONDS (10). PGBIN is PostgreSQL 18's
 # bin, for psql and pgbench (~/p/postgres18/install/bin). The logs go
 # to build/run.
@@ -50,7 +50,7 @@ check() {
   fi
 }
 
-# Run query $3 (q1 or q2) on system $1, port $2, with index kind $4,
+# Run query $3 (q1, q2 or q3) on system $1, port $2, with index kind $4,
 # and append "SYS KIND QUERY TPS MS" to $work/results.
 measure() {
   local sys=$1 port=$2 q=$3 kind=$4 log=$work/$1-$4-$3.log
@@ -81,8 +81,9 @@ for sys in dg pg; do
       echo "run: $mk failed; see $work/$sys-$kind.log" >&2
       exit 1
     }
-    measure $sys "$port" q1 $kind
-    measure $sys "$port" q2 $kind
+    for q in q1 q2 q3; do
+      measure $sys "$port" $q $kind
+    done
   done
 done
 
@@ -94,9 +95,9 @@ echo "| --- | --- | --: | --: | --: | --: | --: |"
 awk '
   { tps[$1, $2, $3] = $4; ms[$1, $2, $3] = $5 }
   END {
-    split("q1 q2", qs, " ")
+    n = split("q1 q2 q3", qs, " ")
     split("regular btree", ks, " ")
-    for (i = 1; i <= 2; i++)
+    for (i = 1; i <= n; i++)
       for (j = 1; j <= 2; j++) {
         q = qs[i]; k = ks[j]
         printf "| %s | %s | %.0f | %.3f | %.0f | %.3f | %.2f |\n", q, k,
