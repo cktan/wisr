@@ -768,8 +768,8 @@ TEST_CASE("tree: a descent from a copy of the root stale by splits finds every "
   std::string root = page_name(33, 0);
   sm1::page_t *pin = nullptr;
   std::string_view bytes;
-  REQUIRE(0 == sm1::pin_page(w.s, d.store(), root, sm1::page_mode_t::sh, 0,
-                             pin, bytes));
+  REQUIRE(0 == sm1::pin_page(w.s, d.store(), root, sm1::page_mode_t::sh, 0, pin,
+                             bytes));
   std::string old(bytes);
   sm1::unpin_page(w.s, pin);
   page_view_t ov;
@@ -781,8 +781,8 @@ TEST_CASE("tree: a descent from a copy of the root stale by splits finds every "
     REQUIRE(0 == tree_height(w.tree, height));
   }
 
-  REQUIRE(0 == sm1::pin_page(r.s, d.store(), root, sm1::page_mode_t::sh, 0,
-                             pin, bytes));
+  REQUIRE(0 == sm1::pin_page(r.s, d.store(), root, sm1::page_mode_t::sh, 0, pin,
+                             bytes));
   sm1::keep_page_copy(r.s, d.store(), root, pin, old);
   sm1::unpin_page(r.s, pin);
 

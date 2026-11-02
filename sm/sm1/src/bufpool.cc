@@ -433,16 +433,7 @@ int bufpool_t::pin(const bufpool_page_t &page, bool ex, unsigned flags,
         }
       }
     }
-    // Any pin leaves an age of 128 to 255, eight sweeps for an inner
-    // page and four for a leaf, as the lower bits shift out first: no
-    // pin promotes a page further, so a scan's re-read of a leaf
-    // promotes nothing. What is already so is not written, so a hot
-    // page's line stays clean of it.
-    uint8_t a = f->age.load(std::memory_order_relaxed);
-    if (0 == (a & age_pinned)) {
-      f->age.store(static_cast<uint8_t>(a | age_pinned),
-                   std::memory_order_relaxed);
-    }
+    touch(f);
     if (f->inner.load(std::memory_order_relaxed) != inner) {
       f->inner.store(inner, std::memory_order_relaxed);
     }
@@ -476,6 +467,20 @@ void bufpool_t::install(frame_t *frame, std::string_view bytes) {
   frame->size = static_cast<uint16_t>(bytes.size());
   frame->valid = true;
   frame->version.fetch_add(1, std::memory_order_release);
+}
+
+/* Age a frame as used; see bufpool.h. */
+void bufpool_t::touch(frame_t *frame) {
+  // Any use leaves an age of 128 to 255, eight sweeps for an inner
+  // page and four for a leaf, as the lower bits shift out first: no
+  // use promotes a page further, so a scan's re-read of a leaf
+  // promotes nothing. What is already so is not written, so a hot
+  // page's line stays clean of it.
+  uint8_t a = frame->age.load(std::memory_order_relaxed);
+  if (0 == (a & age_pinned)) {
+    frame->age.store(static_cast<uint8_t>(a | age_pinned),
+                     std::memory_order_relaxed);
+  }
 }
 
 /* A frame's version; see bufpool.h. */

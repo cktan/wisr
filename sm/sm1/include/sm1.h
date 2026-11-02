@@ -1750,7 +1750,8 @@ constexpr size_t page_copies_max = 32;
  * The session's copy of the page at key in storeid: true with its
  * bytes in bytes, good until the session's next sm1::keep_page_copy,
  * if the page has not changed, been dropped or left the pool since
- * the copy; false if not, or if there is no copy.
+ * the copy, and the page's frame aged as a pin would age it; false
+ * if not, or if there is no copy.
  */
 bool page_copy(session_t* session, uint64_t storeid, std::string_view key,
                std::string_view& bytes);
@@ -1760,7 +1761,7 @@ bool page_copy(session_t* session, uint64_t storeid, std::string_view key,
  * pinned, as page, with bytes, for sm1::page_copy.
  */
 void keep_page_copy(session_t* session, uint64_t storeid, std::string_view key,
-                    const page_t* page, std::string_view bytes);
+                    page_t* page, std::string_view bytes);
 
 /* Whether the page at key in storeid is in the pool: for tests. */
 bool page_cached(session_t* session, uint64_t storeid, std::string_view key);

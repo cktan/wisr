@@ -88,7 +88,7 @@ struct sm1::session_t {
   struct page_copy_t {
     uint64_t storeid = 0;
     std::string key;
-    const sm1::page_t *frame = nullptr;
+    sm1::page_t *frame = nullptr;
     uint64_t version = 0;
     std::string bytes;
   };

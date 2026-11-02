@@ -10824,3 +10824,18 @@ it with no pin while the page is as it was. Decision D28 in
 - **Not measured**: `bench/run.sh` runs one client, where a pin
   of page 0 costs a few nanoseconds of q1's 140 µs; the gain is
   in contention, under many clients.
+
+## Step 367: a good copy ages its page as a pin does
+
+Step 366's copy of page 0 left the page pinned by no one, so the
+clock aged it out of the pool while every probe read it; each
+eviction failed every session's copy, and each session read page
+0 again. The user pointed it out. `sm1::page_copy()`, on a good
+copy, now sets the frame's age's top bit, as a pin does
+(`bufpool_t::touch()`, which `pin()` now calls too); written only
+if not set already. D28 amended.
+
+- **Tests**: sm1, a touched page outlasts 64 leaves read through
+  a pool of 8, and goes once no longer touched; a copy read after
+  each of three pools' worth of page writes stays good, its page
+  cached. Both fail with the touch removed: the copy went bad.

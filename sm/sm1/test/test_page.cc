@@ -512,6 +512,49 @@ TEST_CASE("page: a page not inner is evicted before an inner page") {
   REQUIRE(sm1::detach(env, 1) == 0);
 }
 
+TEST_CASE("page: a good copy keeps its page in the pool") {
+  // Verify a page read from a session's copy, never pinned again, is
+  // not evicted while the copy is read, so the copy stays good.
+  // 1. Attach with the fewest frames a pool has.
+  // 2. Write an inner page, and keep a copy of it.
+  // 3. Write three times as many other pages as there are frames,
+  //    reading the copy after each: it is good every time.
+  // 4. The page is still in the pool.
+  tmpdir_t tmp;
+  REQUIRE(sm1::init(tmp.path()) == 0);
+  sm1::env_options_t opt;
+  opt.block_cache_bytes = 256 << 10;
+  sm1::env_t *env = nullptr;
+  REQUIRE_MESSAGE(sm1::attach(tmp.path(), env, &opt) == 0, sm1::errmsg());
+  REQUIRE(sm1::mkdb(env, "db", nullptr) == 0);
+  sm1::session_t *s = opendb(env, "db");
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t store = mkstore(s);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  write_pages(s, store, {{"root", "r", false, sm1::page_inner}});
+  sm1::page_t *page = nullptr;
+  std::string_view bytes;
+  REQUIRE(0 == sm1::pin_page(s, store, "root", sm1::page_mode_t::sh,
+                             sm1::page_inner, page, bytes));
+  sm1::keep_page_copy(s, store, "root", page, bytes);
+  sm1::unpin_page(s, page);
+  const std::string pad(4000, 'p');
+  int others = 3 * static_cast<int>(wisr::bufpool_min_frames);
+  int good = 0;
+  for (int i = 0; i < others; i++) {
+    write_page(s, store, "k" + std::to_string(i), pad);
+    std::string_view copy;
+    good += sm1::page_copy(s, store, "root", copy) && "r" == copy ? 1 : 0;
+  }
+  CHECK(others == good);
+  CHECK(sm1::page_cached(s, store, "root"));
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::closedb(s) == 0);
+  REQUIRE(sm1::detach(env, 1) == 0);
+}
+
 TEST_CASE("page: dropped outside a transaction, after a commit") {
   // Verify sm1::page_drop with no transaction active, as an
   // on_commit function makes it.

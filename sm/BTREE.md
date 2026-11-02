@@ -597,7 +597,10 @@ descends from it with no pin while the page is as it was.
   keeps its bytes, its frame and the frame's version, in the
   session; `sm1::page_copy()` hands the bytes back while the
   frame's version is unchanged, read with no pin: frames last the
-  pool's life. A session keeps at most 32, by store and key, and
+  pool's life. A good copy ages its frame as a pin does, its
+  age's top bit set (`bufpool_t::touch()`); without it, page 0,
+  pinned by no one, ages out of the pool while it is read most,
+  and every session's copy goes with it. A session keeps at most 32, by store and key, and
   drops them all for the 33rd. It lives in the sm1 session, not
   the tree: digres opens a table, and its trees, once a
   transaction.
@@ -619,7 +622,7 @@ descends from it with no pin while the page is as it was.
 | --- | --- |
 | page 0 changed (a post, a root split) | install moves the version: the next descent pins and copies |
 | DROP INDEX, TRUNCATE, `tree_create` again | `page_drop()`'s purge moves it; a store dropped fails `page_enter()` first |
-| page 0 evicted | the copy is not good; the next descent misses and reads it |
+| page 0 evicted | a good copy's check ages page 0 as a pin, so it is not while it is read; if it is, the copy is not good, and the next descent misses and reads it |
 | crash, restart | the pool and the copies start empty |
 | a root that is a leaf | pinned, as the leaf a descent wants |
 | another database, temp tables | the copy is by store and key in one session, of one database |

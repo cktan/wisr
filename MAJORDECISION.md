@@ -512,5 +512,9 @@ Decided with the user (2026-10-31).
 - **Cost:** a 4 KB copy a session for each tree it probes, made
   again when page 0 changes; a version check a descent. The
   frame's bytes pointer went, to keep the descriptor 64 bytes.
+- **Amended:** a good copy's check ages its frame as a pin
+  does (`bufpool_t::touch()`). The user pointed out that page
+  0, pinned by no one, would age out of the pool while read
+  most, every session's copy failing with it.
 - **Undo:** `descend()` pins page 0 again; the version, the
-  copies and their calls go.
+  copies, the touch and their calls go.

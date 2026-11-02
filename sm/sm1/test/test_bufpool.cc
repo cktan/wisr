@@ -546,6 +546,35 @@ TEST_CASE("bufpool: a frame's version moves with each change of its page") {
   CHECK(v != pool.version(f));
 }
 
+TEST_CASE("bufpool: a touch ages a frame as a pin does, with no pin") {
+  // Verify a page touched, not pinned, is kept as a page pinned is.
+  // 1. In a pool of 8, pin an inner page once, and unpin it.
+  // 2. Read 64 leaves, each once, touching the inner page's frame
+  //    after each: the page stays, its age's top bit set.
+  // 3. Read 64 more with no touch: the page goes.
+  bufpool_t pool(8);
+  store_t st;
+  fill(st, 140);
+  bufpool_t::frame_t *f0 = nullptr;
+  bufpool_t::frame_t *f = nullptr;
+  std::string_view b;
+  REQUIRE(0 == pin(pool, st, 0, false, bufpool_inner, f0, b));
+  pool.unpin(f0);
+  for (size_t i = 1; i <= 64; i++) {
+    REQUIRE(0 == pin(pool, st, i, false, 0, f, b));
+    pool.unpin(f);
+    pool.touch(f0);
+  }
+  CHECK(cached(pool, 0));
+  std::string k0 = key_of(0);
+  CHECK(128 <= pool.age(bufpool_page_t{1, 2, k0}));
+  for (size_t i = 65; i <= 128; i++) {
+    REQUIRE(0 == pin(pool, st, i, false, 0, f, b));
+    pool.unpin(f);
+  }
+  CHECK_FALSE(cached(pool, 0));
+}
+
 TEST_CASE("bufpool: a pin's waits can be interrupted") {
   // Verify a wait on a frame and a wait for a frame end on an interrupt.
   // 1. Pin a page exclusive; a thread's pin of it waits.

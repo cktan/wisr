@@ -110,6 +110,14 @@ public:
    */
   uint64_t version(const frame_t *frame) const;
 
+  /*
+   * Age frame as a pin does, its age's top bit set, with no pin: for a
+   * page read from a copy (version), which would otherwise age out of
+   * the pool while it is read most. Unpinned, it is a hint: the hand
+   * may age the frame over it, or the frame hold another page by now.
+   */
+  void touch(frame_t *frame);
+
   /* Take a page's frame, pinned exclusive, out: its page erased. */
   void discard(frame_t *frame);
 

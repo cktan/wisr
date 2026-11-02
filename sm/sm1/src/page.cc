@@ -169,10 +169,13 @@ bool sm1::page_copy(sm1::session_t *session, uint64_t storeid,
     }
     // The frame's version is read with no pin: frames last the
     // pool's life, and a change of the page moves it.
-    const auto *f = reinterpret_cast<const bufpool_t::frame_t *>(c.frame);
+    auto *f = reinterpret_cast<bufpool_t::frame_t *>(c.frame);
     if (c.version != session->db->bufpool->version(f)) {
       return false;
     }
+    // Used as a pin would use it, so the page read most is not the one
+    // the hand takes, and every session's copy with it.
+    session->db->bufpool->touch(f);
     bytes = c.bytes;
     return true;
   }
@@ -181,7 +184,7 @@ bool sm1::page_copy(sm1::session_t *session, uint64_t storeid,
 
 /* Keep a copy of a page pinned; see sm1.h. */
 void sm1::keep_page_copy(sm1::session_t *session, uint64_t storeid,
-                         std::string_view key, const sm1::page_t *page,
+                         std::string_view key, sm1::page_t *page,
                          std::string_view bytes) {
   const auto *f = reinterpret_cast<const bufpool_t::frame_t *>(page);
   sm1::session_t::page_copy_t *c = nullptr;
