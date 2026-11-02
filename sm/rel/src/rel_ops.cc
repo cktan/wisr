@@ -67,12 +67,16 @@ static sm_env_t *require_env() {
  * After a write on s failed: abort the transaction, as PostgreSQL
  * does on an error, keeping the error for the panic that follows.
  * The write sets no savepoint, so one that failed partway has left
- * its earlier steps done, and only an abort undoes them. Two
- * outcomes are not errors and leave the transaction alone:
- * SM_ERR_UPDATED, which a read-latest answers, SM_ERR_BLOCKED,
- * which repeating the step answers, and SM_ERR_SELFMODIFIED, a row
- * the statement already changed, which the caller skips. After a
- * retryable error the engine has aborted already.
+ * its earlier steps done, and only an abort undoes them.
+ * 1. Leave the transaction alone on an outcome that is not an
+ *    error: SM_ERR_UPDATED, which a read-latest answers;
+ *    SM_ERR_BLOCKED, which repeating the step answers; and
+ *    SM_ERR_SELFMODIFIED, a row the statement already changed, which
+ *    the caller skips.
+ * 2. Leave it alone after a retryable error: the engine has aborted
+ *    it already.
+ * 3. End the cursors, which the abort would close under them.
+ * 4. Abort.
  */
 static void abort_failed_write(session_ctx_t *s) {
   if (sm_errnum() == SM_ERR_UPDATED || sm_errnum() == SM_ERR_BLOCKED ||

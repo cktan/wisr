@@ -162,12 +162,15 @@ bool find_cycle(sm1::session_t *s, sm1::session_t *cur,
 }
 
 /*
- * Search the waits-for graph from s, taking every lock mutex, of
- * which the caller holds none. If s can reach itself, doom the
- * youngest transaction on the cycle and wake everyone so the
- * victim sees it. A path that ends, or a cycle that does not pass
- * through s, is not s's to resolve: the members of that other
- * cycle run their own check.
+ * Search the waits-for graph from s for a deadlock. The caller holds
+ * no lock mutex.
+ * 1. Take every lock mutex (lock_all_t).
+ * 2. Search for a path from s back to s. Return if there is none. A
+ *    path that ends, or a cycle that does not pass through s, is not
+ *    s's to resolve: the members of that other cycle run their own
+ *    check.
+ * 3. Doom the youngest transaction on the cycle.
+ * 4. Wake everyone, so the victim sees it.
  */
 void check_deadlock(db_t *db, sm1::session_t *s) {
   // Hold every partition and xact_mu: the graph stays still.
@@ -240,11 +243,12 @@ int deadlock_wait_ms(const sm1::session_t *s) {
 }
 
 /*
- * Sleep on cv, with its mutex held in guard, until woken, until a
- * bit in the thread's wait mask is raised (sm_sys.h), or until
- * *deadline_us; at the deadline, look for a cycle through s and
- * re-arm it. Returns false if interrupted: the bit stays pending,
- * for the caller's caller to take.
+ * Sleep once on cv, with its mutex held in guard. Returns false if
+ * interrupted: the bit stays pending, for the caller's caller to take.
+ * 1. Sleep until woken, until a bit in the thread's wait mask is
+ *    raised (sm_sys.h), or until *deadline_us.
+ * 2. At the deadline, look for a cycle through s.
+ * 3. Re-arm *deadline_us.
  */
 bool wait_once(db_t *db, sm1::session_t *s, std::unique_lock<std::mutex> &guard,
                std::condition_variable *cv, int64_t *deadline_us) {
@@ -859,11 +863,14 @@ void lock_release_all(sm1::session_t *s) {
 }
 
 /*
- * Drop the locks taken after m and wake the waiters.
- *
- * As PostgreSQL's LockReleaseAll: partition by partition, in their
- * order, walking our list for each, its mutex taken once, and not
- * at all for a partition we hold nothing past the mark in.
+ * Drop the locks taken after m and wake the waiters, as PostgreSQL's
+ * LockReleaseAll does. For each partition, in their order:
+ * 1. Walk our list for the partition, past the mark.
+ * 2. Free each lock's slot, or drop its hold from the table. The
+ *    partition's mutex is taken once, at the first hold, and not at
+ *    all for a partition we hold nothing past the mark in.
+ * 3. Wake the partition's waiters, if its mutex was taken.
+ * 4. Cut the list back to the mark.
  */
 void lock_release_from(sm1::session_t *s, const lock_mark_t &m) {
   db_t *db = s->db;

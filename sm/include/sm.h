@@ -1323,10 +1323,12 @@ int sm_tbl_insert_arbiter(sm_tbl_t* tbl, const sm_datum_t* values,
  * A BULK LOAD (BULKLOAD.md section 5, section 13): many rows into
  * one table, for COPY, a restore, CREATE TABLE AS.
  *
- * sm_tbl_load_begin, then sm_tbl_load_add for each row, then
- * sm_tbl_load_end; the table is one opened to write. The rows are
- * the transaction's own, as inserted ones are: no one else sees
- * them before it commits, and an abort leaves none.
+ * A load, on a table opened to write:
+ * 1. Call sm_tbl_load_begin.
+ * 2. Call sm_tbl_load_add for each row.
+ * 3. Call sm_tbl_load_end.
+ * The rows are the transaction's own, as inserted ones are: no one
+ * else sees them before it commits, and an abort leaves none.
  *
  * Into an EMPTY table -- a new one, a truncated one, any whose
  * store holds no version of a row -- the rows are written to

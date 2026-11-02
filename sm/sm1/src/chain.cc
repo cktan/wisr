@@ -735,9 +735,16 @@ int read_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
 
 /*
  * sm1::chain_read_batch, minus the argument checks' details
- * (../BATCHREAD.md): each key's checks and SIREAD entry as a single
- * read makes them, every key's newest version by one MultiGet, then
- * each resolved as chain_get() resolves one.
+ * (../BATCHREAD.md §2.1).
+ * 1. Make each key's checks and SIREAD entry, as a single read makes
+ *    them.
+ * 2. Enter a read epoch, held until every key is resolved.
+ * 3. If the keys ascend, read their newest versions by one iterator:
+ *    bi's, refreshed, or one made and kept in bi. Seek the first key,
+ *    then step at most four times to each next one; stop at the first
+ *    key the steps miss.
+ * 4. Read the newest versions of the keys left by one MultiGet.
+ * 5. Resolve each key as chain_get() resolves one.
  */
 int read_chained_batch(sm1::session_t *s, uint64_t storeid,
                        const std::string_view *keys, size_t n,
@@ -782,7 +789,7 @@ int read_chained_batch(sm1::session_t *s, uint64_t storeid,
   // Hold a read epoch until the statuses are resolved.
   uint64_t epoch = db_read_enter(s->db);
   defer { db_read_leave(s->db, epoch); };
-  // Every key's newest version in one call, RocksDB sorting them.
+  // The keys' current-version keys, for steps 3 and 4.
   std::vector<std::string> ckeys(n);
   std::vector<rocksdb::Slice> slices(n);
   for (size_t i = 0; i < n; i++) {

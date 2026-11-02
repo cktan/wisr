@@ -357,12 +357,19 @@ void purge_one(db_t *db, const db_t::purge_t &p) {
 }
 
 /*
- * The CF:txn sweep (§8.3), with gc_run_mu held. Phase one, from
- * start: record W0, then run every store CF through a forced,
- * exclusive, bottommost compaction, so every committed version
- * with commit_ts <= W0 is dropped or stamped; then flip the read
- * epoch. Phase two, on a later call: once the old epoch has no
- * readers, delete the COMMITTED records at or below W0.
+ * The CF:txn sweep (§8.3), with gc_run_mu held: the records deleted
+ * when the sweep completes, 0 if it is pending, -1 if the pass failed
+ * or could not be trusted.
+ * 1. With no sweep pending: return 0 unless start is set.
+ * 2. Record W0, the watermark.
+ * 3. Run every store CF through a forced, exclusive, bottommost
+ *    compaction, so every committed version with commit_ts <= W0 is
+ *    dropped or stamped. Return -1 if a compaction fails, or if the
+ *    filter met a version it could not stamp.
+ * 4. Flip the read epoch, and mark the sweep pending.
+ * 5. If the old epoch still has readers, return 0: a later call
+ *    goes on from here. Else, in this call or a later one, delete
+ *    the COMMITTED records at or below W0, and end the sweep.
  */
 int64_t sweep_txn_locked(db_t *db, bool start) {
   // Start a sweep only when none is pending.
@@ -616,7 +623,7 @@ void gc_queue_drops(db_t *db, uint64_t commit_ts,
   db->gc_cv.notify_one();
 }
 
-/* Purge queued tombstones, then drop stores no snapshot can see. */
+/* Do the GC work that is due now; see db.h. */
 void gc_run_once(db_t *db) {
   // One GC run at a time.
   std::lock_guard<std::mutex> run(db->gc_run_mu);

@@ -743,10 +743,17 @@ void chain_repair(db_t *db, const std::vector<db_t::repair_t> &repairs);
 uint64_t chain_next_old(rocksdb::DB *rdb, rocksdb::ColumnFamilyHandle *cf);
 
 /*
- * Do the GC work that is due now: purge queued tombstones, drop
- * stores whose drop the watermark has passed, and advance
- * the CF:txn sweep once CF:txn has grown past its threshold.
- * The worker calls this; tests call it to run GC synchronously.
+ * Do the GC work that is due now. The worker calls this; tests call
+ * it to run GC synchronously.
+ * 1. Take the queued purges, the queued chained keys to repair, and
+ *    the drops the watermark has passed.
+ * 2. Put back the chained keys compaction found dead (chain_repair).
+ * 3. Purge the queued tombstones.
+ * 4. Drop each store whose drop the watermark has passed.
+ * 5. Free the SSI nodes the watermark has passed (ssi_cleanup).
+ * 6. Warn about snapshots that hold back GC too long (warn_stuck).
+ * 7. Finish a pending CF:txn sweep, or start one once CF:txn has
+ *    grown past its threshold.
  */
 void gc_run_once(db_t *db);
 

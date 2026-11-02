@@ -10910,3 +10910,42 @@ its call.
   crashed before the fix. rel cannot keep a tree's row cursor
   open between calls.
 
+## Step 371: algorithms in comments as numbered steps
+
+CLAUDE.md now asks that a comment that describes an algorithm,
+a protocol or a procedure lists it as steps 1. 2. 3. The
+comments of sm (sm0 to sm3, the C API, rel), aa, and digres's
+own comments in `access/sm` were swept: about 90 rewritten.
+sq and PostgreSQL's comments were left as they are. The code
+is unchanged, but for an empty scope that `sm1::commit()` and
+`sm1::commit_prepared()` lose, left when an out-of-memory
+guard was taken out (3c33a4d5).
+
+The sweep found comments that disagree with their code. Each
+is now as the code is:
+
+- `sm1/src/chain.cc`, `read_chained_batch()`: one `MultiGet`;
+  now the iterator over ascending keys, then `MultiGet`.
+- `sm1/src/db.cc`: the comment of `alloc_leased_locked()` was
+  above `persist_lease()`.
+- `sm1/src/db.h` and `gc.cc`, `gc_run_once()`: did not name
+  `chain_repair`, `ssi_cleanup` and `warn_stuck`.
+- `sm1/src/gc.cc`, `sweep_txn_locked()`: its second phase runs
+  in the same call when the old epoch has no readers.
+- `sm2/src/tree/tree.cc`, `fill()`: only the entries in range
+  are copied, not the leaf.
+- `sm3/include/sm3.h`, writes: a keyed row is named by its
+  key, not its `_id`, and a row another transaction moved is
+  not followed (`CLUSTER.md` §4).
+- `sm3/include/sm3.h`, `tbl_insert_arbiter()`: a tree
+  arbiter's entry goes in after the row, under a savepoint
+  (D5).
+- `sm3/src/catalog/internal.h`, `rewrite_table()`: only a
+  keyless row keeps its `_id`.
+- `rel/src/rel_ops.cc`, `abort_failed_write()`: three outcomes
+  are not errors, not two.
+- `access/sm/smstore.c`: `add_fkey()` checks the rows after
+  the key is in sm; a tree's integer bounds are exact, as a
+  primary key's (`smstore_index_beginscan()`); a tree's cursor
+  is aimed again, not closed (`open_probe()`); five comments
+  moved to the declarations they describe.

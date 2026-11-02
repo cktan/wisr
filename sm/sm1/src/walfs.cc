@@ -139,10 +139,12 @@ private:
   }
 
   /*
-   * Start zeroing a spare beside log, a log just made. A directory's
-   * first log since the open starts none: a database that never
-   * switches logs writes no second 64 MB, and what a crash left there
-   * goes. With no thread to be had the next log is zeroed in place.
+   * Start zeroing a spare beside log, a log just made.
+   * 1. If log is its directory's first log since the open, remove what
+   *    a crash left there, and start no spare: a database that never
+   *    switches logs writes no second 64 MB.
+   * 2. Else start a thread that zeroes the spare. With no thread to be
+   *    had, the next log is zeroed in place.
    */
   void make_spare(const std::string &log) {
     size_t slash = log.rfind('/');

@@ -534,9 +534,13 @@ int forget(session_t *s, int depth) {
 /*
  * Commit in sm1 and publish the overlay; a failed commit drops it.
  * With DDL to publish, the shared catalog's mutex is held across
- * both: sm1's commit releases the table-oid locks, and a transaction
- * that gets one then waits on the mutex to read the definition,
- * so it sees the new one, never the old (CATALOG_INMEM.md §1).
+ * both (CATALOG_INMEM.md §1):
+ * 1. Take the shared catalog's mutex.
+ * 2. Commit in sm1, which releases the table-oid locks.
+ * 3. Publish the overlay.
+ * 4. Let the mutex go. A transaction that gets a table-oid lock at
+ *    step 2 waits on the mutex to read the definition, so it sees
+ *    the new one, never the old.
  */
 int commit(session_t *s) {
   // Committed or not, the transaction is over, and its pins with it.

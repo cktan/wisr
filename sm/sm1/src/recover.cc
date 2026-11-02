@@ -24,10 +24,13 @@ using namespace wisr;
 namespace {
 
 /*
- * Rebuild each PREPARED record as an in-doubt transaction: in
- * the active table, holding the row locks of its write set,
- * pinning the watermark at its snapshot, and marked restored
- * for SSI (§8.4, §9.1 step 5).
+ * Rebuild each PREPARED record as an in-doubt transaction (§8.4,
+ * §9.1 step 5).
+ * 1. Put it in the active table.
+ * 2. Take the row locks of its write set.
+ * 3. Pin the watermark at its snapshot.
+ * 4. Mark it restored for SSI.
+ * 5. Register it under its gid.
  */
 int restore_prepared(db_t *db) {
   // Walk every status record in CF:txn.

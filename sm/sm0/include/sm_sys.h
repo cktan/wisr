@@ -167,10 +167,14 @@ sm_timer_id_t sm_timer_at(const sm_thread_ref_t &t, int64_t when_us,
  * its thread was gone, or the id was not there. A
  * firing under way is waited out first, so once this returns the
  * timer raises nothing more, and any bits it raised have landed.
- * To wait on the same bit again: cancel, then sm_take() the bit,
- * then arm the next timer. Any thread -- but not one holding the
- * mutex of a wait the timer may wake: a firing under way waits
- * for that mutex, and the cancel waits for the firing.
+ * Any thread -- but not one holding the mutex of a wait the timer
+ * may wake: a firing under way waits for that mutex, and the cancel
+ * waits for the firing.
+ *
+ * To wait on the same bit again:
+ * 1. Cancel the timer.
+ * 2. Claim the bit with sm_take().
+ * 3. Arm the next timer.
  */
 bool sm_timer_cancel(sm_timer_id_t id);
 

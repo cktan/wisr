@@ -808,10 +808,12 @@ int chain_read_settled(sm1::session_t *s, const store_t &st, rocksdb::Slice key,
 
 /*
  * Put key's chain back as a rollback leaves it, the caller holding
- * the key's latch: its newest version becomes the newest not written
- * by xid above seq seq_above, and the old versions passed are
- * unlinked; with none left, the key goes. Nothing is done if its
- * newest version is not one to undo. Returns 0 or -1 (chain.cc).
+ * the key's latch. Returns 0 or -1 (chain.cc).
+ * 1. Do nothing if its newest version is not one to undo.
+ * 2. Walk the chain to the newest version not written by xid above
+ *    seq seq_above.
+ * 3. Make that version the newest; with none left, the key goes.
+ * 4. Unlink the old versions passed.
  */
 int chain_restore(db_t *db, const store_t &st, rocksdb::Slice key, uint64_t xid,
                   uint32_t seq_above);

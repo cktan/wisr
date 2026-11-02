@@ -3,11 +3,14 @@
  * status table CF:txn (SM1_DESIGN.md §3.2, §3.4, §6, §8.2).
  *
  * A transaction enters the active table when it allocates its
- * xid and leaves it at commit or abort. Commit claims a
- * commit_ts from the sequencer, writes the status record, moves
- * the xid from the active table into the commit cache, and only
- * then publishes (§8.2). Abort writes nothing: absence of a
- * record resolves as dead (§3.4).
+ * xid and leaves it at commit or abort. A commit runs in this
+ * order (§8.2):
+ * 1. Claim a commit_ts from the sequencer.
+ * 2. Write the status record.
+ * 3. Move the xid from the active table into the commit cache.
+ * 4. Publish, only after step 3.
+ * Abort writes nothing: absence of a record resolves as dead
+ * (§3.4).
  *
  * A retryable error (CONFLICT, DEADLOCK) aborts the transaction
  * on the engine's side before it is reported (§12.1).
@@ -282,10 +285,11 @@ void drop_temp_seqs_made(sm1::session_t *s, size_t from) {
 }
 
 /*
- * End the transaction without committing (§6.6): close its
- * cursors, take it out of the active table so its versions
- * resolve dead, drop the stores it created, and release its
- * locks.
+ * End the transaction without committing (§6.6).
+ * 1. Close its cursors.
+ * 2. Take it out of the active table, so its versions resolve dead.
+ * 3. Drop the stores it created.
+ * 4. Release its locks.
  */
 void discard(sm1::session_t *s) {
   // A load still open ends here, and its files with it.
@@ -740,10 +744,13 @@ int commit(sm1::session_t *s) {
 
 /*
  * Commit a transaction that holds a claimed commit_ts and has
- * passed validation: write the status record, then resolve,
- * publish, and release (§8.2 steps 3-6). Shared by sm1::commit and
+ * passed validation (§8.2 steps 3-6). Shared by sm1::commit and
  * the commit of a prepared transaction, whose record this
  * overwrites.
+ * 1. Write the status record.
+ * 2. Resolve the xid.
+ * 3. Publish.
+ * 4. Release. publish_commit() does steps 2-4.
  */
 int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
   db_t *db = s->db;
@@ -1114,9 +1121,10 @@ int commit_prepared_txn(sm1::session_t *g) {
 }
 
 /*
- * Abort a prepared transaction g: supersede its PREPARED record
- * durably with ABORTED, so a crash cannot restore it, then
- * discard it as an ordinary abort would.
+ * Abort a prepared transaction g.
+ * 1. Supersede its PREPARED record durably with ABORTED, so a crash
+ *    cannot restore it.
+ * 2. Discard it as an ordinary abort would.
  */
 int abort_prepared_txn(sm1::session_t *g) {
   db_t *db = g->db;
@@ -1180,11 +1188,13 @@ void unhold_prepared(db_t *db, const std::string &gid,
 }
 
 /*
- * Resolve the prepared transaction gid (§8.5): hold its entry
- * null, so a concurrent resolver finds nothing and no prepare can
- * take the gid, commit or abort it, then put it back or drop it.
- * Holding the entry rather than erasing it is what lets a failed
- * resolution put the transaction back without allocating.
+ * Resolve the prepared transaction gid (§8.5).
+ * 1. Hold its entry null, so a concurrent resolver finds nothing and
+ *    no prepare can take the gid.
+ * 2. Commit or abort it.
+ * 3. Put it back or drop it. Holding the entry rather than erasing it
+ *    is what lets a failed resolution put the transaction back
+ *    without allocating.
  */
 int resolve(db_t *db, const std::string &gid, bool commit_it) {
   sm1::session_t *g = nullptr;
@@ -1355,10 +1365,14 @@ int xct_alloc_xid(sm1::session_t *s) {
 }
 
 /*
- * Active table, then commit cache, then CF:txn (§3.4 steps 1-4).
- * A record in any state but COMMITTED or ABORTED -- PREPARED --
- * is in flight, so a compaction filter running before recovery
- * has rebuilt the active table still leaves it alone.
+ * The status of xid (§3.4 steps 1-4).
+ * 1. Look in the active table: in flight if there.
+ * 2. Look in the commit cache: committed if there.
+ * 3. Look up its record in CF:txn. A record in any state but
+ *    COMMITTED or ABORTED -- PREPARED -- is in flight, so a
+ *    compaction filter running before recovery has rebuilt the
+ *    active table still leaves it alone.
+ * 4. With no record, the transaction never committed: dead.
  */
 xct_state_t xct_status(db_t *db, uint64_t xid, uint64_t *commit_ts) {
   {
@@ -1622,10 +1636,7 @@ int sm1::begin(sm1::session_t *session, sm1::xctlevel_t level, bool read_only) {
 
 /* Commit the active transaction, then run its on_commit functions. */
 int sm1::commit(sm1::session_t *session) {
-  int rc;
-  {
-    rc = ::commit(session);
-  }
+  int rc = ::commit(session);
   run_committed_fns();
   return rc;
 }
@@ -1711,10 +1722,7 @@ static int commit_prepared_gid(sm1::session_t *session,
 
 /* Commit a prepared transaction by gid, then run its on_commit functions. */
 int sm1::commit_prepared(sm1::session_t *session, std::string_view gid_arg) {
-  int rc;
-  {
-    rc = commit_prepared_gid(session, gid_arg);
-  }
+  int rc = commit_prepared_gid(session, gid_arg);
   run_committed_fns();
   return rc;
 }

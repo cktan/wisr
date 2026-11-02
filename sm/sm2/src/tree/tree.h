@@ -73,16 +73,18 @@ int tree_insert(tree_t &tree, std::string_view key, std::string_view value);
 
 /*
  * Insert key, which begins with prefix, with value, unless an entry
- * beginning with prefix conflicts (../BTREE.md §6): each other one is
- * judged by check(entry key, entry value), 0 no conflict, 1 a
- * duplicate, 2 a writer to wait for, -1 an error, under the latch of
- * the leaf that covers prefix, which every insert of a key beginning
- * with it takes first and holds until it has inserted; so two inserts
- * of one prefix take turns. Returns 0 inserted; 1 if key was there
- * already, unchanged; 2, every latch let go, for the caller to wait
- * as check found and call again; -1 on an error or a duplicate, its
- * error check's to set. The key's leaf is left not all visible, as by
- * tree_insert.
+ * beginning with prefix conflicts (../BTREE.md §6). Returns 0
+ * inserted; 1 if key was there already, unchanged; 2, every latch let
+ * go, for the caller to wait as check found and call again; -1 on an
+ * error or a duplicate, its error check's to set.
+ * 1. Latch the leaf that covers prefix. Every insert of a key
+ *    beginning with prefix takes this latch first, and holds it until
+ *    it has inserted; so two inserts of one prefix take turns.
+ * 2. Judge each other entry beginning with prefix by check(entry key,
+ *    entry value): 0 no conflict, 1 a duplicate, 2 a writer to wait
+ *    for, -1 an error. Return at the first conflict.
+ * 3. Insert the key. Its leaf is left not all visible, as by
+ *    tree_insert.
  */
 int tree_insert_unique(
     tree_t &tree, std::string_view prefix, std::string_view key,
@@ -165,21 +167,24 @@ void cursor_seek(cursor_t &cursor, const std::string &lo, bool inclusive);
 /*
  * Walk every leaf, left to right, and remove each entry dead says to:
  * dead(key, value) is 1 to remove it, 0 to keep it, 2 to keep it as
- * settled and live, -1 to stop with its error. A leaf's entries are
- * judged with no latch, and those dead says to remove are judged again
- * with the leaf latched, so dead reads what a writer wrote meanwhile:
- * it may be called twice for an entry, and only that second answer
- * removes it. A leaf is written once, if any went (../BTREE.md §7).
- *
- * A leaf whose every entry is dead or settled at the first judging is
- * judged again whole, latched, and set all visible (page_all_visible)
- * if each entry left is settled still: so a writer's row, written
- * before its latch is taken, is seen (../BTREE.md §4.1). A leaf set
- * already is skipped, and its entries not asked of.
+ * settled and live, -1 to stop with its error. For each leaf:
+ * 1. Skip a leaf set all visible (page_all_visible) already: its
+ *    entries are not asked of.
+ * 2. Judge the leaf's entries with no latch.
+ * 3. If every entry is dead or settled at this first judging, latch the
+ *    leaf and judge it again whole. Remove the dead, and set the leaf
+ *    all visible if each entry left is settled still: so a writer's
+ *    row, written before its latch is taken, is seen (../BTREE.md
+ *    §4.1).
+ * 4. Else, if dead says to remove any, latch the leaf and judge those
+ *    again. So dead reads what a writer wrote meanwhile: it may be
+ *    called twice for an entry, and only that second answer removes it.
+ * 5. Write the leaf once, if any went or step 3 set its bit
+ *    (../BTREE.md §7).
  *
  * A leaf that splits while it is judged keeps its right half's entries
- * until the next prune. removed counts them. Pages are not merged: an
- * empty leaf stays linked.
+ * until the next prune. removed counts the entries removed. Pages are
+ * not merged: an empty leaf stays linked.
  */
 int tree_prune(
     tree_t &tree,

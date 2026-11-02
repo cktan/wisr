@@ -568,9 +568,14 @@ static int concurrent_change(const char *table) {
 
 /*
  * Write to pg_global's table name, natts columns, the rows of rows that
- * differ from base, by oid: insert, update or delete each.  A row not as
- * base had it is another session's change, AA_ERR_CONFLICT.  row() makes
- * a row's values, decode() reads one, same() compares two.
+ * differ from base, by oid. row() makes a row's values, decode() reads
+ * one, same() compares two.
+ * 1. Pair each oid's row in base with its row in rows; either may be
+ *    missing.
+ * 2. Skip a pair whose two rows are the same.
+ * 3. Read the row as pg_global has it now. A row not as base had it is
+ *    another session's change, AA_ERR_CONFLICT.
+ * 4. Insert, update or delete the row, as the pair says.
  */
 template <typename T, typename R, typename D, typename S>
 static int write_changes(sm_session_t *session, const char *name, size_t natts,

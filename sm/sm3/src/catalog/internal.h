@@ -251,10 +251,13 @@ struct sm3::session_t {
 namespace sm3 {
 
 /*
- * Run f on a session of its own on dbname, opened with opt, in a
- * READ COMMITTED transaction of its own: committed if f returns 0,
- * aborted if not, and the session closed either way, with the
- * error as it was met.
+ * Run f in a session and a transaction of its own, with the error as
+ * it was met.
+ * 1. Open a session of its own on dbname, with opt.
+ * 2. Begin a READ COMMITTED transaction.
+ * 3. Run f on the session.
+ * 4. Commit if f returns 0; abort if not.
+ * 5. Close the session either way.
  */
 template <typename F>
 int in_own_txn(sm1::env_t *env, std::string_view dbname,
@@ -381,8 +384,10 @@ inline const index_def_t *primary_of(const table_def_t &def) {
 /*
  * Rewrite the table oid into a new store, its rows keyed as rec
  * says, rec being its record after (../CLUSTER.md §8): every row is
- * copied with its _id, and every index's entries made, under the
- * table-oid lock exclusive. The record is put, and the old store
+ * copied, and every index's entries made, under the table-oid lock
+ * exclusive. A keyless row keeps its _id, a keyed row has none, and
+ * the rows of a table that lost its primary key draw theirs in key
+ * order (../ROWKEY.md §2.4). The record is put, and the old store
  * goes at commit. Two rows with one primary key fail with
  * SM_ERR_DUPKEY, one's key in the old store in sm1::errdup().
  */

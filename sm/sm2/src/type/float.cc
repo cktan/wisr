@@ -86,10 +86,13 @@ template <typename F> int float_cmp(std::string_view a, std::string_view b) {
 }
 
 /*
- * The key of an F datum (TYPE.md §3.3): -0 folded into 0 and every
- * NaN into the one quiet NaN, as PostgreSQL calls them equal, then
- * every bit of a negative value flipped and the sign bit of any
- * other, big-endian, so memcmp orders it as float8_cmp_internal.
+ * The key of an F datum (TYPE.md §3.3), so memcmp orders it as
+ * float8_cmp_internal.
+ * 1. Fold -0 into 0, and every NaN into the one quiet NaN, as
+ *    PostgreSQL calls them equal.
+ * 2. Flip every bit of a negative value, and the sign bit of any
+ *    other.
+ * 3. Append the bits big-endian.
  */
 template <typename F>
 int float_key(const char *type, std::string_view datum, std::string &key) {

@@ -65,9 +65,11 @@ int check_missing(const sm2::type_t *type, int32_t typmod,
 
 /*
  * Refuse a NOT NULL column with no missing value, name, unless the
- * table oid holds no row, which it then goes on holding: its
- * table-oid lock X is taken if it is free now, and kept only if
- * the store is empty. Busy is SM_ERR_BLOCKED; rows, SM_ERR_NOTNULL.
+ * table oid holds no row, which it then goes on holding.
+ * 1. Take the table's table-oid lock X if it is free now. Busy is
+ *    SM_ERR_BLOCKED.
+ * 2. Check the store is empty. Rows are SM_ERR_NOTNULL.
+ * 3. Keep the lock only if the store is empty.
  */
 int need_empty(sm3::session_t *session, uint64_t oid, const std::string &name) {
   std::shared_ptr<const sm3::table_def_t> d = sm3::cat_get_table(session, oid);

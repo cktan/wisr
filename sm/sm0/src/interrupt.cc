@@ -82,11 +82,18 @@ std::chrono::steady_clock::time_point time_point_of(int64_t us) {
 sm_thread_ref_t sm_thread_self(void) { return self_ref(); }
 
 /*
- * Raise bits in t and wake it. The waiter's mutex is only tried,
- * never waited for, while the block's lock is held: the waiter
- * takes them the other way round, its mutex first. A busy mutex
- * means the waiter is not asleep, or another thread holds it for
- * a moment; let go and try again.
+ * Raise bits in t and wake it. The waiter takes its mutex first and
+ * the block's lock second, so this only tries the waiter's mutex.
+ * 1. Raise the bits in t's pending word.
+ * 2. Take the block's lock.
+ * 3. Write the wake fd, if t has one.
+ * 4. Return if t is in no wait, or its wait's mask has none of the
+ *    bits.
+ * 5. Try the waiter's mutex. If it is free, notify the waiter, let
+ *    the mutex go, and return.
+ * 6. Else let the block's lock go, yield, and go back to step 2. A
+ *    busy mutex means the waiter is not asleep, or another thread
+ *    holds it for a moment.
  */
 void sm_interrupt(const sm_thread_ref_t &t, uint32_t bits) {
   t->pending.fetch_or(bits, std::memory_order_release);
@@ -273,9 +280,13 @@ timer_service_t *service = nullptr;
 std::once_flag service_once;
 
 /*
- * The timer thread: sleep until the earliest timer is due, raise
- * its bits outside the lock, and arm it again if it is periodic.
- * A timer whose thread is gone is dropped. It takes no signal.
+ * The timer thread. It takes no signal.
+ * 1. Sleep until the earliest timer is due.
+ * 2. Take the timer out of the service.
+ * 3. If the timer's thread is gone, drop the timer.
+ * 4. Else raise its bits outside the lock, and arm it again if it is
+ *    periodic.
+ * 5. Go back to step 1.
  */
 void timer_main(timer_service_t *s) {
   // A signal to the process is never this thread's to take, whichever

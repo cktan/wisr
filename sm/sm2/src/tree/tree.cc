@@ -7,16 +7,21 @@
  * past a page whose high key its key is at or past: B-link needs no
  * coupling, so a reader holds no page while it waits for another. A
  * writer pins the leaf exclusive, moving right with the pin coupled,
- * and writes it whole. A split is two writes: the new right page and the
- * left page linked to it and flagged incomplete; then the parent's
- * new entry and the left page unflagged. The parent is found by a
- * descent to the level above. A crash between the two leaves the
- * flag, and the next writer to latch the page finishes the post
- * before its own change. The root's split is one write: its halves
- * to new pages, and page 0 a level up. So page 0 alone changes level,
- * and whoever reads it again by its id checks it is at the level
- * wanted. Exclusive pins are taken child before parent, left before
- * right, and a shared pin held under one only goes up or right.
+ * and writes it whole.
+ *
+ * A split is two writes:
+ * 1. Write the new right page, and the left page linked to it and
+ *    flagged incomplete.
+ * 2. Find the parent by a descent to the level above. Write the
+ *    parent's new entry, and the left page unflagged.
+ * A crash between the two leaves the flag, and the next writer to
+ * latch the page finishes the post before its own change.
+ *
+ * The root's split is one write: its halves to new pages, and page 0
+ * a level up. So page 0 alone changes level, and whoever reads it
+ * again by its id checks it is at the level wanted. Exclusive pins
+ * are taken child before parent, left before right, and a shared pin
+ * held under one only goes up or right.
  */
 
 #include "tree.h"
@@ -191,12 +196,17 @@ out_t out_of(uint64_t pageid, page_t &page, sm1::page_t *pin) {
 }
 
 /*
- * Descend to the page at level that covers key, from page 0, moving
- * right past each page whose high key key is at or past, one page
- * pinned at a time. Page 0, when it is above level, is read from the
- * session's own copy of it, with no pin, while the copy is the page
- * (../../BTREE.md §4.2). leaf, if given, takes the page found, still
+ * Descend to the page at level that covers key, from page 0, one page
+ * pinned at a time. leaf, if given, takes the page found, still
  * pinned, so it is not read again.
+ * 1. If page 0 is above level, read it from the session's own copy of
+ *    it, with no pin, while the copy is the page (../../BTREE.md §4.2).
+ * 2. Else pin the page shared. Keep a copy of page 0 if it is above
+ *    level.
+ * 3. If key is at or past the page's high key, move right to the next
+ *    page, and go to step 2.
+ * 4. If the page is at level, return it.
+ * 5. Else move down to the child that covers key, and go to step 2.
  */
 int descend(tree_t &tree, std::string_view key, uint8_t level, uint64_t &out,
             pinned_t *leaf = nullptr) {
@@ -308,11 +318,16 @@ int post(tree_t &tree, uint64_t childid, page_t &child, pinned_t &pin,
          const std::string &sep, uint64_t rightid);
 
 /*
- * Give a split's right page an id, and write the split's first change:
- * the right page, the left linked to it and flagged incomplete, and the
- * left's old right sibling, if any, linked back to the right page, so
- * prev and next agree however a crash cuts the split. leftpin holds the
- * left page.
+ * Give a split's right page an id, and write the split's first change,
+ * so prev and next agree however a crash cuts the split. leftpin holds
+ * the left page.
+ * 1. Take the right page's id from the sequence, and pin the page new.
+ * 2. If the left page has an old right sibling, pin it exclusive, and
+ *    link it back to the right page.
+ * 3. Link the left page and the right page to each other, and flag the
+ *    left page incomplete.
+ * 4. Write the right page, the left page, the sibling and more's pages
+ *    in one write.
  */
 int write_split(tree_t &tree, uint64_t leftid, page_t &left,
                 sm1::page_t *leftpin, page_t &right, uint64_t &rightid,
@@ -347,9 +362,13 @@ int write_split(tree_t &tree, uint64_t leftid, page_t &left,
 
 /*
  * Split the root, page 0, whose halves are left and right, in one
- * write: the halves to new pages, linked, and page 0 a level up, their
- * parent. It is never half done, so it is never flagged. rootpin holds
- * page 0; more's pages go in the same write.
+ * write. It is never half done, so it is never flagged. rootpin holds
+ * page 0.
+ * 1. Take two new page ids, and pin the two pages new.
+ * 2. Make page 0 a level up, the halves' parent, with an entry for each.
+ * 3. Link the halves to each other.
+ * 4. Write the halves to the new pages, page 0 and more's pages in one
+ *    write.
  */
 int split_root(tree_t &tree, sm1::page_t *rootpin, page_t &left, page_t &right,
                std::vector<out_t> more = {}) {
@@ -390,6 +409,20 @@ int finish_split(tree_t &tree, uint64_t pageid, page_t &page, pinned_t &pin) {
  * parent of its left page childid, which pin holds, decoded in child
  * and flagged incomplete; or make a new root over the two. The child
  * is written unflagged with the parent's change, and the pin released.
+ * 1. Clear the child's incomplete flag, in child.
+ * 2. Descend to the level above, and latch the page there that covers
+ *    sep, the parent.
+ * 3. If page 0 split past this level meanwhile, go to step 2.
+ * 4. If the parent is flagged incomplete, finish its split, and go to
+ *    step 2.
+ * 5. Insert the entry, sep and rightid, into the parent. If it is there
+ *    already, a post that a crash cut short made it: write the child
+ *    alone.
+ * 6. If the parent has room, write the parent and the child in one
+ *    write.
+ * 7. If the parent is full, split it with the entry, and write the
+ *    child in the same write. If the parent is page 0, split_root
+ *    makes it a level up; else post the parent's split a level up.
  */
 int post(tree_t &tree, uint64_t childid, page_t &child, pinned_t &pin,
          const std::string &sep, uint64_t rightid) {
@@ -778,8 +811,8 @@ bool past_hi(const cursor_t &c, std::string_view key) {
 
 /*
  * Read the next batch: the keys past from, or at it, in range, of the
- * first leaf from the cursor's on that has any, moving right; the
- * leaf's bytes copied whole, once, and its entries viewed in them.
+ * first leaf from the cursor's on that has any, moving right; those
+ * entries copied end to end, once, and read from the copy.
  */
 int fill(cursor_t &c) {
   tree_t &tree = *c.tree;
@@ -946,14 +979,17 @@ int prune_leaf(
 }
 
 /*
- * Judge every entry of leaf pageid again, the leaf latched from the
- * first row read to the write: remove those dead says are dead, and set
- * the leaf all visible if every one left is settled (2). A writer whose
- * row changed takes this latch before it clears the bit, so it either
- * waits for the write and clears what it set, or wrote its row before
- * the judging, which then finds it unsettled (../BTREE.md §4.1). next
- * takes the leaf's next link. 0; 1 if pageid is page 0, a leaf no
- * longer; or -1.
+ * Judge every entry of leaf pageid again: 0; 1 if pageid is page 0, a
+ * leaf no longer; or -1. next takes the leaf's next link.
+ * 1. Latch the leaf. The latch is held from the first row read to the
+ *    write.
+ * 2. Remove the entries dead says are dead.
+ * 3. Set the leaf all visible if every one left is settled (2).
+ * 4. Write the leaf if an entry went, or if step 3 set the bit.
+ * A writer whose row changed takes this latch before it clears the
+ * bit, so it either waits for the write and clears what it set, or
+ * wrote its row before the judging, which then finds it unsettled
+ * (../BTREE.md §4.1).
  */
 int settle_leaf(
     tree_t &tree, uint64_t pageid,

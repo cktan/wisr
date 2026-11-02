@@ -222,8 +222,14 @@ static bool done(uint64_t result, uint64_t mask, bool any) {
 }
 
 /*
- * The privileges of mask roleid holds by the ACL items: directly, by
- * PUBLIC, then through the roles whose privileges it has.
+ * The privileges of mask roleid holds by the ACL items. Each step
+ * returns once the privileges found answer mask (done()).
+ * 1. If roleid has the owner's privileges, take every grant option of
+ *    mask.
+ * 2. Add the privileges of each item granted roleid directly, or
+ *    PUBLIC.
+ * 3. Add the privileges of each item granted a role whose privileges
+ *    roleid has.
  */
 uint64_t aa_acl_mask(aa_env_t *env, aa_session_t *s, uint64_t dbid,
                      const aa_acl_item_t *items, size_t n, aa_oid_t roleid,
@@ -287,8 +293,15 @@ uint64_t aa_acl_mask_direct(const aa_acl_item_t *items, size_t n,
 static int bits(uint64_t v) { return __builtin_popcountll(v); }
 
 /*
- * Who roleid grants or revokes privs as: the owner, for itself or a
- * superuser; else the nearest role with the most of the grant options.
+ * Who roleid grants or revokes privs as, into *grantor, and the grant
+ * options of privs that role holds, into *goptions.
+ * 1. If roleid is the owner or a superuser, pick the owner, with every
+ *    grant option of privs.
+ * 2. Else walk the roles whose privileges roleid has, roleid first, the
+ *    nearest next.
+ * 3. Pick the first role that holds every grant option of privs.
+ * 4. Failing that, pick the nearest role with the most of them, or
+ *    roleid with none if no role holds any.
  */
 void aa_select_best_grantor(aa_env_t *env, aa_session_t *s, uint64_t dbid,
                             aa_oid_t roleid, uint64_t privs,

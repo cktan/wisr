@@ -104,12 +104,14 @@ bool parse_dbid(const char *name, uint64_t *dbid) {
 
 /*
  * Decide how every database of the home writes its new logs, and make
- * env->wal_env if they are zero-filled (WALPREALLOC.md). Off WSL they
- * are not. On it, the home's first attach times a sync that grows a
- * file against one that does not, in base/. Either way the answer is
- * kept in the root db, and every attach after reads it. A probe that
- * fails zero-fills nothing and keeps nothing, so the next attach
- * probes again.
+ * env->wal_env if they are zero-filled (WALPREALLOC.md).
+ * 1. Read the answer from the root db. If it is there, go to step 5.
+ * 2. Else, off WSL, the answer is that they are not zero-filled.
+ * 3. On WSL, time a sync that grows a file against one that does not,
+ *    in base/. A probe that fails zero-fills nothing and keeps
+ *    nothing, so the next attach probes again.
+ * 4. Keep the answer in the root db, so every attach after reads it.
+ * 5. Make env->wal_env if the logs are zero-filled.
  */
 int wal_prealloc(sm1::env_t *env) {
   std::string val;
@@ -431,9 +433,12 @@ sm1::env_t::~env_t() {
 namespace {
 
 /*
- * The reaper's loop: close each database whose last session closed
- * longer ago than its idle time, then sleep until the next is due, or
- * until a database's last session closes, until told to stop.
+ * The reaper's loop, until told to stop:
+ * 1. Close each database whose last session closed longer ago than its
+ *    idle time.
+ * 2. Sleep until the next is due, or until a database's last session
+ *    closes.
+ * 3. Go back to step 1.
  */
 void reaper_main(sm1::env_t *env) {
   std::unique_lock<std::mutex> guard(env->mu);

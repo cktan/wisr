@@ -3,15 +3,20 @@
  * committed, which every session reads, and each session's changes to
  * it, with the protocol that commits them (ROLE.md section 3).
  *
- * aa_load() reads every role, membership and object's entry once, into
- * snapshots the sessions share; a lookup reads a snapshot, and no
- * transaction of pg_global's.  A session's role DDL changes a copy of
- * the roles' snapshot it alone sees, and at aa_commit() writes what it
- * changed, in one transaction of pg_global's, and replaces the
- * snapshot.  A row another session changed meanwhile fails the commit
- * rather than lose that change.  Objects' entries are written after the
- * database's commit (aa_post_commit()), those that are to grant less
- * granting, before it, only what they grant before and after.
+ * The protocol, from the load to a session's commit:
+ * 1. aa_load() reads every role, membership and object's entry once,
+ *    into snapshots the sessions share. A lookup reads a snapshot, and
+ *    no transaction of pg_global's.
+ * 2. A session's role DDL changes a copy of the roles' snapshot, which
+ *    the session alone sees.
+ * 3. At aa_commit(), before the database's commit, the session writes
+ *    what it changed, in one transaction of pg_global's, and replaces
+ *    the snapshot. A row another session changed meanwhile fails the
+ *    commit, rather than lose that change. Objects' entries that are to
+ *    grant less are written here too, granting only what they grant
+ *    before and after.
+ * 4. After the database's commit, aa_post_commit() writes the objects'
+ *    entries.
  */
 #include <algorithm>
 
@@ -438,9 +443,14 @@ static int write_roles_and(aa_session_t *s, sm_session_t *session,
 
 /*
  * At the commit of the session's transaction, before the database's:
- * write its role changes to pg_global, and each entry that is to grant
- * less as granting only what it grants before and after, in one
- * transaction there, and replace the roles' snapshot.
+ * write its changes to pg_global.
+ * 1. Find each entry that is to grant less (intermediates()).
+ * 2. In one transaction of pg_global's, write the role changes, and each
+ *    entry that is to grant less as granting only what it grants before
+ *    and after.
+ * 3. Keep those entries as they were, for aa_abort() to put back if the
+ *    database's commit fails.
+ * 4. If the roles changed, replace the roles' snapshot.
  */
 int aa_commit(aa_session_t *s) {
   std::vector<intermediate_t> before = intermediates(s);
@@ -550,10 +560,13 @@ static void publish_objects(aa_env_t *env,
 }
 
 /*
- * After the database's commit: write each object's entry as the
- * transaction left it, and remove the entries of the databases it
- * dropped, and replace the objects' snapshot.  The changes are
- * forgotten either way.
+ * After the database's commit: write the transaction's changes to
+ * objects' entries, in one transaction of pg_global's.
+ * 1. Write each object's entry as the transaction left it.
+ * 2. Remove the entries of the databases it dropped.
+ * 3. If the writes succeed, replace the objects' snapshot
+ *    (publish_objects()).
+ * 4. Forget the changes, whether the writes succeed or not.
  */
 int aa_post_commit(aa_session_t *s) {
   std::map<aa_key_t, const aa_change_t *> last;

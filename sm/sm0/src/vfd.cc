@@ -132,8 +132,12 @@ int make_room(sm_vfd_cache_t *c, int n) {
 
 /*
  * open(2) path, with room made for it first and counted: the fd, or -1.
- * Out of fds at the system's limit, close another of the cache's and try
- * again.
+ * 1. Make room for one fd, and count it.
+ * 2. Open path. If the open is interrupted, open it again.
+ * 3. Out of fds at the system's limit, close another of the cache's
+ *    fds and go back to step 2.
+ * 4. On any other failure, or with no fd of the cache's left to close,
+ *    give the count back and fail.
  */
 int open_counted(sm_vfd_cache_t *c, const char *path, int flags, mode_t mode) {
   if (make_room(c, 1) != 0)

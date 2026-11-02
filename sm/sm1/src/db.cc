@@ -613,12 +613,7 @@ db_t *db_open(const std::string &path, const char *dbname,
   return db.release();
 }
 
-/*
- * Hand out *next from a lease, with db->alloc_mu held. When the
- * lease is used up, persist a new limit before handing out any
- * value under it, so no value is handed out twice across a
- * restart (§4.2).
- */
+/* Write new_limit as the lease at key, synced: 0, or -1. */
 static int persist_lease(db_t *db, const char *key, uint64_t new_limit) {
   // Encode it.
   std::string val;
@@ -635,6 +630,13 @@ static int persist_lease(db_t *db, const char *key, uint64_t new_limit) {
   return 0;
 }
 
+/*
+ * Hand out *next from a lease, with db->alloc_mu held: 0, or -1. No
+ * value is handed out twice across a restart (§4.2).
+ * 1. If the lease is used up, persist a new limit, *next plus
+ *    db->lease, before any value under it is handed out.
+ * 2. Hand out *next, and advance it.
+ */
 static int alloc_leased_locked(db_t *db, uint64_t *next, uint64_t *limit,
                                const char *key, uint64_t *out) {
   // Lease used up: persist a new limit first.
@@ -715,10 +717,13 @@ int db_claim_commit_ts(db_t *db, uint64_t *out) {
 }
 
 /*
- * Leave the sequencer and advance visible_ts: one below the
- * oldest commit in progress, or everything handed out so far if
- * none is. New values are always above what was handed out, so
- * visible_ts never moves backwards.
+ * Mark commit_ts done, under alloc_mu, the sequencer's mutex.
+ * 1. Leave the sequencer.
+ * 2. Advance visible_ts: one below the oldest commit in progress, or
+ *    everything handed out so far if none is. New values are always
+ *    above what was handed out, so visible_ts never moves backwards.
+ * 3. If visible_ts rose, wake the commits waiting for theirs to be
+ *    visible (db_commit_wait()).
  */
 void db_commit_done(db_t *db, uint64_t commit_ts) {
   // Hold alloc_mu, the sequencer's mutex.

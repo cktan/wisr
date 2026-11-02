@@ -1288,16 +1288,16 @@ index_state_t tbl_index_state(const table_t* table, uint64_t index);
  * key a unique index holds already is SM_ERR_DUPKEY, the index in
  * sm1::errdup(): the host has the row, to say the key.
  *
- * A row is named by its _id (../CLUSTER.md §2), which a table with
- * a primary key resolves to the row's key through its _id index, as
- * the snapshot shows it. At READ COMMITTED a row another
- * transaction moved since is followed (../CLUSTER.md §4): the
- * write meets SM_ERR_UPDATED at the old key, tbl_read_latest finds
- * the row at its new key from the newest version of its _id entry,
- * locking it exclusive there, and the write taken again goes there.
- * The _id entry is then held shared to the end of the transaction,
- * so that none moves the row again; above READ COMMITTED a moved
- * row is SM_ERR_CONFLICT, as any row changed since the snapshot.
+ * A row is named by its key (../ROWKEY.md §1). A keyless table's
+ * row is named by its _id, which is its key; a table with a primary
+ * key names its row by the key's values (row_key_t, below), and its
+ * calls by _id fail with SM_ERR_INVALID. A row another transaction
+ * moved since, its primary key changed, is not followed
+ * (../CLUSTER.md §4, ../ROWKEY.md §2.3): a write at its old key meets
+ * SM_ERR_UPDATED, and tbl_read_latest there SM_ERR_MOVED, which the
+ * host raises as a serialization failure. Above READ COMMITTED a
+ * moved row is SM_ERR_CONFLICT, as any row changed since the
+ * snapshot.
  */
 
 /*
@@ -1316,19 +1316,26 @@ int tbl_insert(table_t* table, std::span<const sm2::datum_t> values,
  * key, and its tuple in tuple if wanted, as the call found it,
  * from which the caller takes its key (../ROWKEY.md §3.3); or -1.
  *
- * It finds out before the row is written. It looks each
- * arbiter's key up first (sm2::idx_find), and a row the snapshot
- * shows there is the conflict, with nothing locked and nothing
- * written; at READ COMMITTED, where the snapshot may show a row
- * deleted since, the row is first confirmed against the newest
- * version. Finding none, it puts the row's entry into each arbiter
- * before the row itself: sm1's insert waits for another
- * transaction that has put the key in and not yet ended, and says
- * at once if a row is there, when only those entries are written;
- * they are then taken back, and that row, read under a lock that
- * is given back at once, is the conflict. So in neither case is
- * anything of the key left held: the lock on a key is the entry of
- * the row inserted, as in any insert.
+ * How it finds the conflict:
+ * 1. Look each arbiter's key up (sm2::idx_find, or a tree's lookup).
+ *    A row the snapshot shows there is the conflict: return 1, with
+ *    nothing locked and nothing written. At READ COMMITTED, where
+ *    the snapshot may show a row deleted since, first confirm the
+ *    row against its newest version.
+ * 2. If an arbiter is a tree, set a savepoint.
+ * 3. Put the row's entry into each arbiter that is not a tree, then
+ *    write the row, the primary key's entry. sm1's insert waits for
+ *    another transaction that has put the key in and not yet ended,
+ *    and says at once if a row is there.
+ * 4. Put the row's entry into each tree arbiter, after the row
+ *    (../../MAJORDECISION.md D5): another's check would call an entry
+ *    that names no row dead.
+ * 5. If step 3 or 4 meets a row that has the key, take back what
+ *    was written: the entries of step 3, or all, to the savepoint.
+ *    Read that row under a lock given back at once, and return 1
+ *    with it. If it is gone already, start again at step 1.
+ * So in neither case is anything of the key left held: the lock on
+ * a key is the entry of the row inserted, as in any insert.
  *
  * Above READ COMMITTED a key taken since the snapshot fails the
  * call, and the transaction, with SM_ERR_CONFLICT. A duplicate in
@@ -1759,14 +1766,17 @@ int cat_get_stats(session_t* session, uint64_t oid,
 
 /*
  * Analyze the table, opened in a transaction (SM3_DESIGN.md §6.4 to
- * §6.7): sample up to 300 x target of its rows, reading no more
- * than ten times that in _ids whatever its size, estimate each
- * live column's statistics, and record them with the table's sizes
- * and its indexes' by cat_put_stats. A table whose heap holds no
- * bytes and whose sample reads no row, as a new or truncated one,
- * is not analyzed, and keeps the statistics it had. Another analyze of the table waits for this
- * one's transaction before it samples. A target below 1 is
- * SM_ERR_INVALID.
+ * §6.7). A target below 1 is SM_ERR_INVALID.
+ * 1. Wait for the transaction of another analyze of the table, if
+ *    one runs, before sampling.
+ * 2. Sample up to 300 x target of its rows, reading no more than ten
+ *    times that in _ids whatever its size.
+ * 3. Estimate each live column's statistics.
+ * 4. Record them with the table's sizes and its indexes' by
+ *    cat_put_stats.
+ * A table whose heap holds no bytes and whose sample reads no row,
+ * as a new or truncated one, is not analyzed, and keeps the
+ * statistics it had.
  */
 int tbl_analyze(table_t* table, int32_t target);
 
@@ -1780,13 +1790,15 @@ int tbl_tryanalyze(table_t* table, int32_t target);
 
 /*
  * One batch of the build of the table's index oid, which must be
- * pending (SM3_DESIGN.md §3): cover up to max_rows rows in key
- * order from the key from on, the table's first for "". For each
- * it takes the row's lock shared, reads the row's newest committed
- * version, and adds the row's entry if it is not there. next is
- * set to the key to go on from, past the last row's, and done once
- * the end of the rows was reached. The caller commits the batch,
- * and marks the index valid after the last.
+ * pending (SM3_DESIGN.md §3). The caller commits the batch, and
+ * marks the index valid after the last.
+ * 1. Cover up to max_rows rows in key order from the key from on,
+ *    the table's first for "".
+ * 2. For each row, take its lock shared.
+ * 3. Read the row's newest committed version.
+ * 4. Add the row's entry if it is not there.
+ * 5. Set next to the key to go on from, past the last row's, and
+ *    done once the end of the rows was reached.
  *
  * The table is opened to write, in a READ COMMITTED transaction.
  * At another level only a table this transaction made, which no
@@ -1821,16 +1833,17 @@ std::span<const sm2::attribute_t> tbl_idx_value_schema(const table_t* table,
 
 /*
  * Attach cat to the builder: from now on the queue takes cat's
- * indexes. The builder does not look for work. It is given a
- * table and an index, by builder_enqueue; a worker takes them
- * from the queue, checks the index is still pending, and fills
- * it in batches of batch_rows rows, each a
- * transaction, on an sm1 session of its own from open, which
- * returns one on the catalog's database or nullptr, and which the
- * worker closes with sm1::closedb. Then it marks the index valid;
- * or failed, with the error kept in its record, if a batch met an
- * error that is not retryable. Fails with SM_ERR_INVALID if cat is
- * attached already.
+ * indexes. Fails with SM_ERR_INVALID if cat is attached already.
+ * The builder does not look for work: builder_enqueue gives it a
+ * table and an index. A worker then builds the index:
+ * 1. Take the table and the index from the queue.
+ * 2. Open an sm1 session of its own from open, which returns one on
+ *    the catalog's database or nullptr.
+ * 3. Check the index is still pending.
+ * 4. Fill it in batches of batch_rows rows, each a transaction.
+ * 5. Mark the index valid; or failed, with the error kept in its
+ *    record, if a batch met an error that is not retryable.
+ * 6. Close the session with sm1::closedb.
  */
 int builder_attach(catalog_t* cat, std::function<sm1::session_t*()> open,
                    size_t batch_rows = 1000);

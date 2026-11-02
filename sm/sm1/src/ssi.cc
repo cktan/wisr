@@ -228,9 +228,12 @@ void release(db_t *db, ssi_node_t *ro) {
 
 /*
  * Writer w has ended, committed or not: tell each read-only node
- * waiting on it, which is unsafe if w committed with an edge out
- * to a transaction committed before its snapshot, and safe once
- * it waits on no writer.
+ * waiting on it. For each such node:
+ * 1. Stop it waiting on w.
+ * 2. Skip it if it is unsafe already.
+ * 3. Mark it unsafe if w committed with an edge out to a transaction
+ *    committed before its snapshot.
+ * 4. Else, if it waits on no writer now, release it: it is safe.
  */
 void settle(db_t *db, ssi_node_t *w, bool committed) {
   for (ssi_node_t *ro : w->watchers) {
@@ -253,11 +256,13 @@ void settle(db_t *db, ssi_node_t *w, bool committed) {
 }
 
 /*
- * Start ro's safe-snapshot watch at its begin (§7.4): unsafe at
- * once if a writer already committed after its snapshot has an
- * edge out to one before it, or a restored transaction is about;
- * otherwise wait on every writer still running, safe at once if
- * there is none.
+ * Start ro's safe-snapshot watch at its begin (§7.4).
+ * 1. If a restored transaction is about, mark ro unsafe at once, and
+ *    return.
+ * 2. If a writer already committed after its snapshot has an edge out
+ *    to one before it, mark ro unsafe at once, and return.
+ * 3. Else wait on every writer still running.
+ * 4. If there is none, release ro: it is safe at once.
  */
 void watch_writers(db_t *db, ssi_node_t *ro) {
   // A restored transaction's edges are unknown (§8.4).
@@ -598,9 +603,11 @@ void ssi_range_close(sm1::scan_t *c) {
 }
 
 /*
- * The commit check (§7.3): fail if doomed or a pivot; otherwise
- * mark the node committed at end_ts, after which the rules treat
- * it as unable to fail. Returns 0 or -1.
+ * The commit check (§7.3). Returns 0 or -1.
+ * 1. Fail if the node is doomed.
+ * 2. Fail if the node is a pivot.
+ * 3. Otherwise mark the node committed at end_ts. From then on the
+ *    rules treat it as unable to fail.
  */
 int ssi_precommit(sm1::session_t *s, uint64_t end_ts) {
   // Non-SERIALIZABLE transactions pass unchecked.

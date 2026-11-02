@@ -87,6 +87,13 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
 	- Applies to new and edited prose in `.md` files and code
 	  comments; do not rewrite existing text only for style.
 
+- **Algorithms in comments as numbered steps:** a comment that
+  describes an algorithm, a protocol or a procedure (what a
+  function does in order, a latch or wake-up protocol, a
+  clock sweep) lists it as steps 1. 2. 3., one action a
+  step, not as prose. One sentence before the steps may say
+  what the algorithm is for; a step may add why, briefly.
+
 - **Fix one issue at a time:** Complete the full plan-act-validate
   cycle for a single issue before moving to the next.
 

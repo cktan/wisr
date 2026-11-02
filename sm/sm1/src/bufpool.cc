@@ -257,14 +257,24 @@ int bufpool_t::acquire(frame_t *f, bool ex, const tag_t &tag) {
   }
 }
 
-/* Wake the threads asleep on f, whose wait bit the caller saw. */
+/*
+ * Wake the threads asleep on f, whose wait bit the caller saw. A
+ * sleeper (acquire) holds q.mu from the time it sets the bit until it
+ * is in its wait.
+ * 1. Clear the wait bit.
+ * 2. Take q.mu and let it go at once. A sleeper that set the bit is
+ *    then in its wait. One that has yet to take q.mu sets the bit and
+ *    tries its pin again, and gets it. Without this step, the notify
+ *    can come between a sleeper's failed try and its wait, and be
+ *    lost: it sleeps with the bit clear, and no release wakes it.
+ * 3. Notify every sleeper, with q.mu let go, so that none wakes only
+ *    to wait for q.mu.
+ */
 void bufpool_t::wake(frame_t *f) {
   f->state.fetch_and(~state_wait, std::memory_order_relaxed);
   waitq_t &q = waitq_of(f);
-  // Through the mutex, so a sleeper that set the bit is in its wait.
-  {
-    std::lock_guard<std::mutex> guard(q.mu);
-  }
+  // Step 2: no sleeper between its try and its wait.
+  { std::lock_guard<std::mutex> guard(q.mu); }
   q.cv.notify_all();
 }
 
@@ -296,11 +306,19 @@ void bufpool_t::unlink(frame_t *f) {
 }
 
 /*
- * Take a frame by the clock, emptied and pinned exclusive: skip a
- * pinned one, age one with an age, shifting it right by one if inner
- * and by two if a leaf, take one with none. While every frame is
- * pinned it waits, as a pin is short and their number bounded. 0, or
- * -1 if interrupted.
+ * Take a frame by the clock, emptied and pinned exclusive: 0, or -1 if
+ * interrupted.
+ * 1. Move the hand to the next frame.
+ * 2. Skip the frame if it is pinned.
+ * 3. If it has an age, shift the age right, by one if its page is
+ *    inner and by two if a leaf, and go on to the next frame.
+ * 4. Pin a frame of age 0 exclusive. If another thread pinned it
+ *    first, go on to the next frame.
+ * 5. Empty it: unlink its page from its chain, clear its tag, and let
+ *    its shared copy go. Return it.
+ * 6. After nine turns of the hand with no frame taken, return if
+ *    interrupted; else sleep, and start again at step 1. Every frame
+ *    was pinned or aged, but a pin is short and their number bounded.
  */
 int bufpool_t::victim(frame_t *&out) {
   for (;;) {

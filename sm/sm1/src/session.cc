@@ -32,10 +32,13 @@ bool other_options(const db_t *db, const sm1::options_t *opt) {
 }
 
 /*
- * Find dbname in the registry, or open it and register it.
- * One left idle that a session asks other options of is closed
- * and opened again with them, as no session is using it.
- * Called with env->mu held. Returns NULL with the error set.
+ * Find dbname in the registry, or open it and register it. Called
+ * with env->mu held. Returns NULL with the error set.
+ * 1. Look for dbname among the open databases. Return one found,
+ *    unless it is idle and a session asks other options of it.
+ * 2. Close such an idle one, to open it again with them: no session
+ *    is using it.
+ * 3. Open the database, and register it.
  */
 db_t *find_or_open(sm1::env_t *env, const char *dbname,
                    const sm1::options_t *opt) {
@@ -143,9 +146,13 @@ int sm1::opendb(sm1::env_t *env, std::string_view dbname_arg,
 }
 
 /*
- * Close a session: its cursors, then its active transaction.
- * The last session on a database leaves it open for its idle
- * time, for the next to find, or closes it at once with none.
+ * Close a session.
+ * 1. Close its cursors.
+ * 2. Abort its active transaction.
+ * 3. Drop the temporary stores it still holds.
+ * 4. If it is the last session on its database, leave the database
+ *    open for its idle time, for the next to find, or close it at
+ *    once with none.
  */
 int sm1::closedb(sm1::session_t *session) {
   // Closing NULL is a no-op.

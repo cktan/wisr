@@ -110,10 +110,6 @@ typedef struct open_table_t {
 /* The tables a transaction opened: each oid's handles, one a lock mode. */
 typedef std::unordered_map<Oid, std::vector<open_table_t>> open_tables_t;
 
-/*
- * This session's state in sm: the tables its transaction opened, closed as
- * it ends: tcb->smstore.
- */
 /* An index CREATE INDEX made: its table, its oid, its name, whether unique. */
 struct made_index_t {
   uint64_t table;
@@ -198,6 +194,10 @@ struct name_entry_t {
 /* How long a size is good for, in ms: a plan's estimate may be this stale. */
 static constexpr int size_cache_age = 10000;
 
+/*
+ * This session's state in sm: the tables its transaction opened, closed as
+ * it ends: tcb->smstore.
+ */
 struct smstore_state_t {
   open_tables_t open_tables;
   /* The pg_statistic rows it made, by relation oid << 16 | column. */
@@ -382,12 +382,14 @@ static void sm_error(const char *what) {
 
 /*
  * Call f, a call into sm that may wait for another transaction, until it
- * does not fail on an interrupted wait.  An interrupt in this thread's wait
- * mask ends sm's wait, with SM_ERR_INTERRUPTED (miscinit.c sets the mask);
- * CHECK_FOR_INTERRUPTS() then acts on it, raising the error a cancel, an
- * end or a timeout calls for.  One that calls for nothing, or that must
- * wait until interrupts are allowed, has been taken: the call is made again,
- * and waits again.
+ * does not fail on an interrupted wait.
+ * 1. Call f.  An interrupt in this thread's wait mask ends sm's wait, with
+ *    SM_ERR_INTERRUPTED (miscinit.c sets the mask).
+ * 2. Return what f returned, unless it failed with SM_ERR_INTERRUPTED.
+ * 3. Call CHECK_FOR_INTERRUPTS().  It acts on the interrupt, raising the
+ *    error a cancel, an end or a timeout calls for.
+ * 4. Go to step 1.  An interrupt that calls for nothing, or that must wait
+ *    until interrupts are allowed, has been taken, so the call waits again.
  */
 template <class F> static int waiting(F f) {
   /*
@@ -1095,7 +1097,6 @@ static void add_index(List **out, const sm_table_def_t &def,
   remember_index(r->oid, r->table);
 }
 
-/* Add to *out the tables of sm's namespace nspoid, with their indexes. */
 /*
  * Add to *out the sequence oid, named name in nspoid, with its START,
  * INCREMENT and owner as sm keeps them.
@@ -1458,10 +1459,12 @@ static void drop_readers(Oid oid, int32_t attnum, const std::string &what,
 static void drop_view_oid(Oid oid);
 
 /*
- * Drop the schema nspname, nspoid, from sm, in this transaction.  With
- * cascade its views go first, with the views elsewhere that read them, then
- * its tables, each with its indexes and the sequences its columns own, then
- * its other sequences; without, a schema that holds any fails.
+ * Drop the schema nspname, nspoid, from sm, in this transaction.
+ * 1. With cascade, drop its views, with the views elsewhere that read them.
+ * 2. With cascade, drop its tables, each with its indexes and the sequences
+ *    its columns own.
+ * 3. With cascade, drop its other sequences.
+ * 4. Drop the schema.  Without cascade, a schema that holds any fails.
  */
 static void drop_namespace(const char *nspname, Oid nspoid, bool cascade) {
   if (cascade) {
@@ -2588,19 +2591,19 @@ void smstore_load_end(Relation rel) {
 }
 
 /*
- * A scan of a table in sm: the table, and sm's cursor over its rows; or,
- * over one of its indexes, sm's cursor over the index's entries and the scan
- * keys every row it reads must meet, with each key's column in the table.
- * A scan of the table's primary key is a cursor over its rows, in the key's
- * order (../sm/CLUSTER.md section 6).
- */
-/*
  * The most rows a scan reads ahead in one call (../sm/BATCHREAD.md): enough
  * to share a data block's lookups among rows next to each other, few enough
  * that a scan stopped early has read little it did not use.
  */
 static constexpr int read_batch_max = 8;
 
+/*
+ * A scan of a table in sm: the table, and sm's cursor over its rows; or,
+ * over one of its indexes, sm's cursor over the index's entries and the scan
+ * keys every row it reads must meet, with each key's column in the table.
+ * A scan of the table's primary key is a cursor over its rows, in the key's
+ * order (../sm/CLUSTER.md section 6).
+ */
 struct smstore_scan_t {
   sm_tbl_t *tbl;
   /* The table's oid, each row's tableoid, as WHERE CURRENT OF checks. */
@@ -3069,11 +3072,17 @@ uint64 smstore_sample_slots(Relation rel) {
 /*
  * Move a scan in key order (smstore_beginscan(), not by rowno) forward to
  * slot of nslots, as a sample scan does to a block it picked: the rows from
- * the key at its start to the key at its end, sm_tbl_keys_at()'s.  Slots
- * are taken in increasing order: a row read ahead at or past the slot's
- * start is kept, as the cursor is past it already.  The slot after the last
- * one starts where that one ended, its start never estimated again: sm's
- * estimate of a memtable is sampled anew each time, and could leave a gap.
+ * the key at its start to the key at its end, sm_tbl_keys_at()'s.
+ * 1. Find the keys at the slot's start and at its end.  The slot after the
+ *    last one starts where that one ended, its start never estimated again:
+ *    sm's estimate of a memtable is sampled anew each time, and could leave
+ *    a gap.
+ * 2. Keep the slot's end; none for the table's last slot.
+ * 3. Leave the cursor where it is at the scan's end, or for the slot after
+ *    the last one.
+ * 4. Keep a row read ahead at or past the slot's start, as the cursor is
+ *    past it already.  Slots are taken in increasing order.
+ * 5. Else move the cursor to the slot's start.
  */
 void smstore_sample_slot(smstore_scan_t *scan, uint64 slot, uint64 nslots) {
   bool next = scan->has_slot && slot == scan->slot + 1;
@@ -3211,11 +3220,6 @@ void smstore_endscan(smstore_scan_t *scan) {
   pfree(scan);
 }
 
-/*
- * Drop the table rv names, from sm, in this transaction: with its indexes,
- * rows and sequence.  One that is not there is an error, or with missing_ok
- * a notice.
- */
 static bool table_def_now(Oid oid, sm_table_def_t &out);
 static bool read_row_at(sm_tbl_t *tbl, const std::string &key, int natts,
                         TupleTableSlot *slot);
@@ -3298,6 +3302,11 @@ static void drop_readers(Oid oid, int32_t attnum, const std::string &what,
                          bool cascade, const std::vector<Oid> &dropping,
                          std::vector<Oid> *dropped);
 
+/*
+ * Drop the table rv names, from sm, in this transaction: with its indexes,
+ * rows and sequence.  One that is not there is an error, or with missing_ok
+ * a notice.
+ */
 static void drop_table(RangeVar *rv, bool missing_ok, bool cascade,
                        const std::vector<Oid> &dropping) {
   Oid oid;
@@ -3726,11 +3735,13 @@ static void drop_temp_views(void) {
 
 /*
  * Ready the table relid, named name, for an ALTER that changes its
- * definition: an error if it is not a table, or if this transaction is
- * using it.  Every session forgets its descriptor once this one commits,
- * and this one at its next command; and this transaction's handles of it,
- * which hold the old definition, are closed, so the next use opens one
- * afresh.
+ * definition.
+ * 1. Raise an error if it is not a table.
+ * 2. Raise an error if this transaction is using it.
+ * 3. Forget its definition (forget_table()).  Every session forgets its
+ *    descriptor once this one commits, and this one at its next command.
+ *    This transaction's handles of it, which hold the old definition, are
+ *    closed, so the next use opens one afresh.
  */
 static void alter_table_rel(Oid relid, const char *name) {
   /*
@@ -3929,11 +3940,15 @@ static void fill_column(Oid relid, Expr *expr, Oid typid, int32 typmod) {
 
 /*
  * ADD COLUMN col to rel, the table relid, in sm: NOT NULL and a DEFAULT
- * only.  Rows already there read the default, evaluated now; one that calls
- * something volatile is evaluated for each row instead, which is given its
- * value (fill_column()), and NOT NULL is then checked of every row.  A
- * serial or an identity column comes as parse analysis made it
- * (add_generated_column()).  NOT NULL with no default needs the table empty.
+ * only, or a serial or an identity column as parse analysis made it
+ * (add_generated_column()).
+ * 1. Evaluate the default now, unless it calls something volatile.  Rows
+ *    already there read this value.
+ * 2. Add the column.  NOT NULL with no default needs the table empty.
+ * 3. Evaluate a default that calls something volatile for each row, and
+ *    give the row its value (fill_column()).
+ * 4. Check NOT NULL of every row, after step 3.
+ * 5. Make an identity column identity, once it is NOT NULL.
  */
 static void add_column(Oid relid, const char *relname, ColumnDef *col,
                        bool if_not_exists) {
@@ -4141,10 +4156,13 @@ static bool generated_column(AlterTableCmd *cmd) {
 }
 
 /*
- * ADD COLUMN of a serial or an identity column, cmd of stmt: parse analysis
- * makes it a column with its sequence, as PostgreSQL's ALTER TABLE does,
- * the sequence's CREATE SEQUENCE before it and the OWNED BY that gives a
- * serial's sequence its owner after; add_column() gives each row a value.
+ * ADD COLUMN of a serial or an identity column, cmd of stmt, as
+ * PostgreSQL's ALTER TABLE does it.
+ * 1. Run parse analysis, which makes it a column with its sequence.
+ * 2. Run the sequence's CREATE SEQUENCE, before the column.
+ * 3. Add the column.  add_column() gives each row a value.
+ * 4. Run the OWNED BY that gives a serial's sequence its owner, after the
+ *    column.
  */
 static void add_generated_column(Oid relid, const char *relname,
                                  AlterTableStmt *stmt, AlterTableCmd *cmd) {
@@ -4191,10 +4209,12 @@ static void add_generated_column(Oid relid, const char *relname,
 }
 
 /*
- * ADD PRIMARY KEY or ADD UNIQUE, cmd of stmt: parse analysis makes it the
- * constraint's CREATE INDEX, as PostgreSQL's ALTER TABLE does, which
- * smstore_create_index() makes; a primary key's columns are made NOT NULL
- * first, as ATPrepAddPrimaryKey() has them (../PKDDL.md).
+ * ADD PRIMARY KEY or ADD UNIQUE, cmd of stmt, as PostgreSQL's ALTER TABLE
+ * does it.
+ * 1. Run parse analysis, which makes it the constraint's CREATE INDEX.
+ * 2. Make a primary key's columns NOT NULL first, as ATPrepAddPrimaryKey()
+ *    has them (../PKDDL.md).
+ * 3. Make the index with smstore_create_index().
  */
 static void add_index_constraint(Oid relid, const char *relname,
                                  AlterTableStmt *stmt, AlterTableCmd *cmd) {
@@ -4340,11 +4360,6 @@ void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
 }
 
 /*
- * The table or view an ALTER ... RENAME names, locked, or InvalidOid if it
- * is not there and stmt says IF EXISTS.  ALTER VIEW names a view, and ALTER
- * TABLE either, as type says; *view is whether it is one.
- */
-/*
  * Refuse DDL on the relation oid, named name, to a role that does not own
  * it, nor, if schema_too, as DROP allows, its schema: as PostgreSQL's
  * RangeVarCallbackOwnsRelation() and RangeVarCallbackForDropRelation()
@@ -4361,6 +4376,11 @@ static void check_owner(Oid oid, const char *name, bool schema_too) {
   aclcheck_error(ACLCHECK_NOT_OWNER, get_relkind_objtype(kind), name);
 }
 
+/*
+ * The table or view an ALTER ... RENAME names, locked, or InvalidOid if it
+ * is not there and stmt says IF EXISTS.  ALTER VIEW names a view, and ALTER
+ * TABLE either, as type says; *view is whether it is one.
+ */
 static Oid rename_target(RenameStmt *stmt, ObjectType type, bool *view) {
   /* Locked against other sessions' use until the transaction ends. */
   Oid relid = RangeVarGetRelid(stmt->relation, AccessExclusiveLock, true);
@@ -4756,10 +4776,13 @@ static char *fkey_name(const char *relname, List *cols,
 
 /*
  * ALTER TABLE ... ADD FOREIGN KEY, and CREATE TABLE's, which parse analysis
- * makes one of: choose the referenced columns, their unique index and the
- * operators as ATAddForeignKeyConstraint() does, and put the foreign key in
- * sm, which keeps it (../sm/FOREIGNKEY.md).  Unless it is NOT VALID, or the
- * table is new, the rows there are checked first, by RI_Initial_Check().
+ * makes one of (../sm/FOREIGNKEY.md).
+ * 1. Choose the referenced columns, their unique index and the operators,
+ *    as ATAddForeignKeyConstraint() does.
+ * 2. Put the foreign key in sm, which keeps it, and takes locks X on both
+ *    tables.
+ * 3. Unless it is NOT VALID, or the table is new, check the rows there by
+ *    RI_Initial_Check() (check_fkey_rows()), in this transaction.
  */
 static void add_fkey(Oid relid, const char *relname, Constraint *con) {
   AttrNumber fkattnum[INDEX_MAX_KEYS] = {0}, pkattnum[INDEX_MAX_KEYS] = {0};
@@ -5249,13 +5272,16 @@ static void keep_estimate(Oid oid, uint64_t index, uint64_t epoch,
 
 /*
  * How much the table has grown since it was analyzed, and its heap's bytes
- * now, in *now, at the compression recorded: bytes in memtables are
- * uncompressed, so they count at c.  The growth is its bytes now over then;
- * but when the analyze found nothing on disk, its compression is unknown,
- * and a flush since would read as a shrink, so the growth is then its row
- * numbers now over then, which counts inserts and not deletes
- * (STATISTICS.md section 2.2).  A table with a primary key draws no row
- * numbers (../sm/ROWKEY.md section 2.1), and its bytes say all the same.
+ * now, in *now.
+ * 1. Count its heap's bytes now, at the compression recorded: bytes in
+ *    memtables are uncompressed, so they count at c.
+ * 2. If the analyze found nothing on disk, and the table has row numbers,
+ *    return its row numbers now over then.  Its compression is unknown, and
+ *    a flush since would read as a shrink.  Row numbers count inserts and
+ *    not deletes (STATISTICS.md section 2.2).
+ * 3. Else return its bytes now over then.  A table with a primary key draws
+ *    no row numbers (../sm/ROWKEY.md section 2.1), and its bytes say all the
+ *    same.
  */
 static double growth(sm_tbl_t *tbl, const sm_stats_t &st, double *now) {
   uint64_t disk, mem, n;
@@ -6884,9 +6910,11 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
  * Wait for the builds of the indexes the transaction just committed made,
  * outside any transaction, so the next statement's snapshot may scan them:
  * sm builds one on a table with rows in the background, after the commit
- * (sm_cat_create_index()).  A build that failed is dropped, in a
- * transaction of its own, and its error raised, so CREATE INDEX ends as
- * PostgreSQL's does: with an index or with none (DECISION.md).
+ * (sm_cat_create_index()).
+ * 1. Wait for each index's build in turn.
+ * 2. Drop an index whose build failed, in a transaction of its own.
+ * 3. Raise the build's error, so CREATE INDEX ends as PostgreSQL's does:
+ *    with an index or with none (DECISION.md).
  */
 void smstore_wait_indexes(void) {
   std::vector<made_index_t> built;
@@ -7194,7 +7222,8 @@ static int array_elems(ScanKey key, Datum **elems) {
  * Open the index scan's probe at its bounds now (../INLIST.md): with point,
  * the row an equality on each of the primary key's columns names, read by
  * its key; else a range of the primary key's rows or of another index's
- * entries.  The last probe's cursor is closed first.
+ * entries.  A tree's cursor, once open, is aimed at the probe's bounds;
+ * any other last probe's cursor is closed first.
  */
 static void open_probe(smstore_scan_t *scan) {
   /* A tree's cursor is aimed at the next probe's bounds, not made anew. */
@@ -7293,9 +7322,9 @@ static bool next_probe(smstore_scan_t *scan) {
  * prefix gives it its values, the scan one probe a value, in the index's
  * order (../INLIST.md).  Every row read is checked against every
  * key, so a key that bounds nothing still holds; but not a key the bounds
- * hold exactly, one of a primary key's integer columns: its rows, keyed by
- * those columns, are read only between the bounds (../sm/sm2/SM2_DESIGN.md
- * section 5, a scan's bounds), and none is null.
+ * hold exactly, one of a primary key's or a tree's integer columns: its
+ * rows, keyed by those columns, are read only between the bounds
+ * (../sm/sm2/SM2_DESIGN.md section 5, a scan's bounds), and none is null.
  */
 smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
                                         ScanKey keys, int nkeys) {
@@ -8142,11 +8171,13 @@ static bool scan_tuple(smstore_scan_t *scan, const void **tuple, size_t *len) {
 
 /*
  * The row of rel key names into slot, as a virtual tuple of its first natts
- * columns: the kept one if it is that row, else as the statement sees it,
- * from the scan that read it if one is on it (scan_at()); false if it sees
- * none.  The executor fetches the row it is to update, the newest version
- * of one it locked, the row it deleted, for RETURNING, and a TID scan's
- * rows.
+ * columns; false if the statement sees none.  The executor fetches the row
+ * it is to update, the newest version of one it locked, the row it deleted,
+ * for RETURNING, and a TID scan's rows.
+ * 1. Take the kept row, if it is that row.
+ * 2. Else take the row as the statement sees it, from the scan that read
+ *    it, if one is on it (scan_at()).
+ * 3. Else read the row as the statement sees it.
  */
 bool smstore_fetch_row(Relation rel, const RowKey *key, int natts,
                        TupleTableSlot *slot) {

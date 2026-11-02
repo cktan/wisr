@@ -644,11 +644,15 @@ int tbl_insert(table_t *table, std::span<const sm2::datum_t> values,
 /*
  * The row that has entry e's key in unique index i of t now, past
  * the snapshot, its _id in found, and with tuple its newest
- * version's tuple there: 0, 1 if none has, or -1. sm1 reads a
- * newest version only under a lock on the key, and the locks are
- * given back at once, by a savepoint: the caller is left holding
- * nothing of the key, or it would stand between the row's owner
- * and the row. READ COMMITTED alone has such a read.
+ * version's tuple there: 0, 1 if none has, or -1. READ COMMITTED
+ * alone has such a read.
+ * 1. Set a savepoint.
+ * 2. Find the row by the key's newest version. sm1 reads a newest
+ *    version only under a lock on the key.
+ * 3. With tuple, lock the row shared and read its newest version.
+ * 4. Roll back to the savepoint, which gives the locks back at once.
+ *    The caller is left holding nothing of the key, or it would
+ *    stand between the row's owner and the row.
  */
 int find_now(sm3::table_t *t, size_t i, const entry_t &e, uint64_t &found,
              std::string *tuple) {
@@ -1792,12 +1796,14 @@ namespace {
 
 /*
  * Add a unique tree's entry e, of index i, for the row with key row
- * (../BTREE.md §6): each other entry of its key is judged by its
- * row's newest version, past the snapshot. A row committed, or this
- * transaction's own, that still has the entry's key is a duplicate,
- * SM_ERR_DUPKEY; one another transaction is still writing is waited
- * for, outside every latch, and the key checked again; any other
- * entry is dead.
+ * (../BTREE.md §6).
+ * 1. Judge each other entry of its key by its row's newest version,
+ *    past the snapshot.
+ * 2. A row committed, or this transaction's own, that still has the
+ *    entry's key is a duplicate: fail with SM_ERR_DUPKEY.
+ * 3. A row another transaction is still writing: wait for it,
+ *    outside every latch, and check the key again from step 1.
+ * 4. Take any other entry as dead.
  */
 int unique_tree_insert(sm3::table_t *t, size_t i, const entry_t &e,
                        const picked_t &inc, std::string_view row) {
@@ -1846,12 +1852,15 @@ int unique_tree_insert(sm3::table_t *t, size_t i, const entry_t &e,
 
 /*
  * The row a unique tree's key e names (../BTREE.md §6), as idx_find
- * and idx_find_latest give a unique index's: each entry of the key,
- * its row as the snapshot shows it; or with now, its newest version,
- * a running writer waited for and the key looked up again, and the
- * row then locked shared, as idx_find_latest locks the key. 0 with
- * its _id and key in row, 1 if no row has the key, -1. A key with a
- * null column is no row's.
+ * and idx_find_latest give a unique index's: 0 with its _id and key
+ * in row, 1 if no row has the key, -1.
+ * 1. Return 1 for a key with a null column, which is no row's.
+ * 2. Read the row of each entry of the key: as the snapshot shows
+ *    it, or with now, its newest version.
+ * 3. With now, if a writer of the row is running, wait for it and
+ *    look the key up again from step 2.
+ * 4. Take the first row that still has the key.
+ * 5. With now, lock the row shared, as idx_find_latest locks the key.
  */
 int tree_find(sm3::table_t *t, size_t i, const entry_t &e, bool now,
               uint64_t &found, std::string &row) {

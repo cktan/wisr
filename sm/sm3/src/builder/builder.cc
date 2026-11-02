@@ -82,10 +82,13 @@ bool stopping(const catalog_t *cat) {
 }
 
 /*
- * Set the index's state in a transaction of ws's own, again after
- * a retryable error; any other error gives up. A failed index is
- * given why: the error its build met, that error's message, and
+ * Set the index's state in a transaction of ws's own. A failed index
+ * is given why: the error its build met, that error's message, and
  * the rows of a duplicate key.
+ * 1. Begin a READ COMMITTED transaction.
+ * 2. Set the state and commit. Return on success.
+ * 3. Abort. After a retryable error, start again at step 1; any
+ *    other error gives up.
  */
 void set_state(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
                index_state_t state, sm1::errnum_t error = sm1::SM_OK,
@@ -110,12 +113,17 @@ void set_state(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
 }
 
 /*
- * Build one index to its end: batches from the first row on, each
- * a transaction of its own, then the index marked valid; or marked
- * failed, with the error kept, when a batch meets one that is not
- * retryable -- two rows with one key, a key too long. A table or
- * an index that has gone, or is no longer pending, ends the build
- * quietly.
+ * Build one index to its end, in batches from the first row on.
+ * 1. Begin a transaction of its own for the batch.
+ * 2. Open the table and fill one batch of the index. A table or an
+ *    index that has gone, or is no longer pending, ends the build
+ *    quietly.
+ * 3. Commit the batch.
+ * 4. If the batch meets an error that is not retryable -- two rows
+ *    with one key, a key too long -- mark the index failed, with the
+ *    error kept, and end. After a retryable one, take the batch again.
+ * 5. Go on from step 1 with the next batch until the rows end.
+ * 6. Mark the index valid.
  */
 void build_one(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
                size_t batch_rows) {
@@ -184,8 +192,11 @@ void build_one(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
 }
 
 /*
- * A worker: take builds from the queue until it is empty, each on
- * a session of its own on the build's database, then end.
+ * A worker: run builds from the queue until it is empty.
+ * 1. Take the next build from the queue. If it is empty, end.
+ * 2. Open a session of its own on the build's database.
+ * 3. Run the build on it (build_one), then close the session.
+ * 4. Start again at step 1.
  */
 void work() {
   builder_t &b = g_builder;

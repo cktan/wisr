@@ -175,12 +175,13 @@ struct ready_t {
 };
 
 /*
- * Make datums and isnull ready to write to rel. A pointer among
- * them is kept, for an update, or has its value fetched to be
- * stored again, for an insert. Then the longest datums are moved
- * out of line, longest first, while the tuple is longer than
- * toast_threshold, each given an id from the rel's sequence; none
- * shorter than toast_min is. Nothing is written.
+ * Make datums and isnull ready to write to rel. Nothing is written.
+ * 1. Keep a pointer among them, for an update; or fetch its value to
+ *    be stored again, for an insert.
+ * 2. Move the longest datums out of line, longest first, while the
+ *    tuple is longer than toast_threshold. Each gets an id from the
+ *    rel's sequence; none shorter than toast_min is moved.
+ * 3. Encode the tuple.
  */
 int make_ready(sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
                std::span<const bool> isnull, bool update, ready_t &out) {
@@ -301,10 +302,14 @@ int release(sm2::rel_t *rel) {
 }
 
 /*
- * After the row that held the tuple old was replaced, or deleted:
- * check each pointer the new row kept is the one old held for
- * that attribute, and erase the datums old held that are not kept
- * -- now, or with hold when the caller calls rel_release.
+ * Settle the datums out of line, after the row that held the tuple
+ * old was replaced, or deleted.
+ * 1. Read the TOAST pointers old holds.
+ * 2. Check each pointer the new row kept is the one old held for that
+ *    attribute.
+ * 3. Hold the datums old held that are not kept.
+ * 4. Erase the datums held -- now, or with hold when the caller calls
+ *    rel_release.
  */
 int settle_old(sm2::rel_t *rel, std::string_view old,
                const std::vector<std::pair<size_t, std::string>> &kept,
@@ -460,10 +465,11 @@ int insert_row(sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
 }
 
 /*
- * Move the row at key to new_key, with tuple: erase it with a
- * move's tombstone, which a writer at key then meets as
- * SM_ERR_MOVED (../ROWKEY.md §2.3), its old row pinned into p and
- * viewed by was; then insert it under new_key (../CLUSTER.md §4).
+ * Move the row at key to new_key, with tuple (../CLUSTER.md §4).
+ * 1. Erase it with a move's tombstone, which a writer at key then
+ *    meets as SM_ERR_MOVED (../ROWKEY.md §2.3). Its old row is pinned
+ *    into p and viewed by was.
+ * 2. Insert it under new_key.
  */
 int move_row(sm2::rel_t *rel, std::string_view key, std::string_view new_key,
              std::string_view tuple, sm1::rawpin_t *p, std::string_view &was) {
@@ -482,11 +488,12 @@ int move_row(sm2::rel_t *rel, std::string_view key, std::string_view new_key,
 
 /*
  * Replace the row at key, _id id, with the one datums and isnull
- * make: the row first, so that a write sm1 refuses has written
- * nothing, then what the old row held and the new does not is
- * erased, and what the new row moves out is written. A row whose
- * primary key changed moves. With pin, the old row is pinned into
- * it, and old views it; moved_to, if wanted, is the row's key after.
+ * make. With pin, the old row is pinned into it, and old views it;
+ * moved_to, if wanted, is the row's key after.
+ * 1. Write the row first, so that a write sm1 refuses has written
+ *    nothing. A row whose primary key changed moves.
+ * 2. Erase what the old row held and the new does not.
+ * 3. Write what the new row moves out.
  */
 int update_row(sm2::rel_t *rel, std::string_view key, uint64_t id,
                std::span<const sm2::datum_t> datums,
@@ -1153,8 +1160,12 @@ constexpr int max_depth = 256;
 /*
  * A key strictly between a and b, keys under one relid past it,
  * or with end above every such key: their mean, read as base-256
- * fractions, to one byte past the longer, trailing zeros dropped,
- * so that byte order and the fractions' order agree.
+ * fractions, so that byte order and the fractions' order agree.
+ * 1. Read a and b as fractions, to one byte past the longer. With
+ *    end, b is 1.
+ * 2. Add them digit by digit, and carry.
+ * 3. Halve the sum.
+ * 4. Drop the trailing zeros.
  */
 std::string midpoint(std::string_view a, std::string_view b, bool end) {
   size_t n = std::max(a.size(), end ? 0 : b.size()) + 1;
