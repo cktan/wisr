@@ -1469,8 +1469,10 @@ bool batch_iter_held(const batch_iter_t* iter);
  * together, in RocksDB's MultiGet, in any order; each key is checked,
  * takes its SIREAD entry and is resolved as a single read of it is.
  * Keys in ascending order are read by one iterator: iter's, if
- * given, brought up to date, or one made and kept in it. Returns 0,
- * or -1 on an error, the rows then undefined.
+ * given, brought up to date, or one made and kept in it. A batch
+ * whose keys are too far apart to step between marks iter, and
+ * iter's later batches of the store are read by MultiGet alone.
+ * Returns 0, or -1 on an error, the rows then undefined.
  */
 int chain_read_batch(session_t* session, uint64_t storeid,
                      const std::string_view* keys, size_t n,

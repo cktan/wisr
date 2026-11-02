@@ -739,10 +739,12 @@ int read_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
  * 1. Make each key's checks and SIREAD entry, as a single read makes
  *    them.
  * 2. Enter a read epoch, held until every key is resolved.
- * 3. If the keys ascend, read their newest versions by one iterator:
- *    bi's, refreshed, or one made and kept in bi. Seek the first key,
- *    then step at most four times to each next one; stop at the first
- *    key the steps miss.
+ * 3. If the keys ascend, and no batch of bi's found the store's keys
+ *    scattered, read their newest versions by one iterator: bi's,
+ *    refreshed, or one made and kept in bi. Seek the first key, then
+ *    step at most four times to each next one; stop at the first key
+ *    the steps miss. If that is the second key, mark bi missed, and
+ *    let its iterator go.
  * 4. Read the newest versions of the keys left by one MultiGet.
  * 5. Resolve each key as chain_get() resolves one.
  */
@@ -807,7 +809,11 @@ int read_chained_batch(sm1::session_t *s, uint64_t storeid,
     ascending = slices[i - 1].compare(slices[i]) < 0;
   }
   // Keys far apart, which the steps do not reach, go back to
-  // MultiGet from the first the steps miss on.
+  // MultiGet from the first the steps miss on; and every key, once a
+  // batch of the store's found its keys that far apart.
+  if (bi && bi->missed && bi->storeid == storeid) {
+    ascending = false;
+  }
   size_t done = 0;
   if (ascending) {
     std::unique_ptr<rocksdb::Iterator> own;
@@ -836,6 +842,7 @@ int read_chained_batch(sm1::session_t *s, uint64_t storeid,
         bi->storeid = storeid;
         bi->cf = st.cf;
         bi->session = s;
+        bi->missed = false;
         s->batch_iters.insert(bi);
       }
     }
@@ -851,6 +858,13 @@ int read_chained_batch(sm1::session_t *s, uint64_t storeid,
       }
       if (!placed || !it->Valid() || it->key().compare(slices[i]) < 0) {
         if (placed && ++seeks == 1) {
+          // No key past the first reached: the keys are scattered,
+          // as an uncorrelated index's rows are. A seek costs more
+          // than a MultiGet's key, so the next batches skip it.
+          if (bi && 1 == done) {
+            batch_iter_release(bi);
+            bi->missed = true;
+          }
           break;
         }
         it->Seek(slices[i]);

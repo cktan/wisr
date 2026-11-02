@@ -1137,6 +1137,53 @@ TEST_CASE("a batch read's kept iterator goes with the transaction") {
   sm1::batch_iter_free(iter);
 }
 
+TEST_CASE("a batch read's kept iterator gives way to MultiGet for scattered "
+          "keys") {
+  // Verify that a batch whose keys are too far apart to step between
+  // marks its kept iterator, and that the iterator's later batches of
+  // the store are read by MultiGet alone; close keys keep it.
+  // 1. Write r0000..r0999.
+  // 2. Batches of close keys through one iterator: it stays held.
+  // 3. A batch of close keys, then a gap: the steps reached keys past
+  //    the first, so it stays held.
+  // 4. Through another iterator, a batch of scattered keys: it is let
+  //    go. Its next batches, scattered and close, make none. Every
+  //    batch gives what single reads give.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  char buf[16];
+  begin_xct(f.s);
+  for (int i = 0; i < 1000; i++) {
+    snprintf(buf, sizeof buf, "r%04d", i);
+    REQUIRE(sm1::chain_insert(f.s, c, buf, buf) == 0);
+  }
+  commit_xct(f.s);
+  begin_xct(f.s);
+  std::vector<std::string> close1 = {"r0100", "r0101", "r0102"};
+  std::vector<std::string> close2 = {"r0200", "r0201", "r0203"};
+  std::vector<std::string> gap = {"r0300", "r0301", "r0302", "r0900"};
+  std::vector<std::string> far1 = {"r0000", "r0500", "r0900"};
+  std::vector<std::string> far2 = {"r0010", "r0510", "r0910"};
+  sm1::batch_iter_t *iter = sm1::batch_iter_new();
+  CHECK(batch_reads(f.s, c, close1, iter) == close1);
+  CHECK(sm1::batch_iter_held(iter));
+  CHECK(batch_reads(f.s, c, close2, iter) == close2);
+  CHECK(sm1::batch_iter_held(iter));
+  CHECK(batch_reads(f.s, c, gap, iter) == gap);
+  CHECK(sm1::batch_iter_held(iter));
+
+  sm1::batch_iter_t *other = sm1::batch_iter_new();
+  CHECK(batch_reads(f.s, c, far1, other) == far1);
+  CHECK(!sm1::batch_iter_held(other));
+  CHECK(batch_reads(f.s, c, far2, other) == far2);
+  CHECK(!sm1::batch_iter_held(other));
+  CHECK(batch_reads(f.s, c, close1, other) == close1);
+  CHECK(!sm1::batch_iter_held(other));
+  commit_xct(f.s);
+  sm1::batch_iter_free(iter);
+  sm1::batch_iter_free(other);
+}
+
 TEST_CASE("a batch of ascending keys is read by steps and seeks alike") {
   // Verify chain_read_batch's iterator over ascending keys, stepping
   // over short gaps and seeking past long ones.

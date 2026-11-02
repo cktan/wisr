@@ -51,14 +51,19 @@ struct sm1::rawpin_t {
 
 /*
  * A batch read's iterator, kept by its caller (sm1::batch_iter_t):
- * the store it reads, and the session whose list it is on while it
- * holds one.
+ * the store it reads, the session whose list it is on while it holds
+ * one, and whether its steps missed.
  */
 struct sm1::batch_iter_t {
   std::unique_ptr<rocksdb::Iterator> it; /* null when it holds none */
   uint64_t storeid = 0;
   rocksdb::ColumnFamilyHandle *cf = nullptr;
   sm1::session_t *session = nullptr;
+  /*
+   * A batch of storeid's keys found them too far apart to step to:
+   * its later batches go to MultiGet whole, with no iterator.
+   */
+  bool missed = false;
 };
 
 struct sm1::session_t {

@@ -10949,3 +10949,26 @@ is now as the code is:
   primary key's (`smstore_index_beginscan()`); a tree's cursor
   is aimed again, not closed (`open_probe()`); five comments
   moved to the declarations they describe.
+
+## Step 372: scattered keys skip the batch iterator
+
+A profile of q3 after step 369 put 11.8% of the server's time in
+`DBIter::Seek`, under `read_chained_batch`. q3's lastnames are
+drawn at random, so a lastname's 10 rows are far apart in the
+store. Each batch sought its first key, missed the second, and
+read the rest by `MultiGet`: a seek, which passes every level
+with no bloom filter, bought one row.
+
+- **sm1**: a batch whose steps reach no key past the first marks
+  its kept iterator (`batch_iter_t::missed`) and lets the RocksDB
+  iterator go. The cursor's later batches of the store are read
+  by `MultiGet` alone. A batch that steps through some keys
+  before a gap keeps the iterator, as a correlated index's do.
+- **Measured** (step 369's method): q3 249.7k to 234.3k
+  instructions a statement. Its profile otherwise: commit 7.3%
+  of the time, the executor's start and end about 8%, the first
+  row's single read 6.1%.
+- **Tests**: sm1, close keys keep the iterator, a gap after some
+  steps keeps it, scattered keys let it go and make none after;
+  each fails with its part taken out.
+

@@ -75,6 +75,18 @@ read. Q9's 100 rows lie in one or two data blocks.
   error) then holds no RocksDB file. q3 of `../bench`, about
   10 rows a probe through a tree, 283k to 249k instructions a
   statement (`../dg/WORKNOTE.md` step 369).
+- **Scattered keys skip the iterator.** The steps help only
+  when a batch's rows are close in the store, as an index
+  correlated with the key finds them. An uncorrelated index's
+  rows are far apart: the batch seeks the first key, misses
+  the second, and reads the rest by `MultiGet`. A seek costs
+  more than a key of `MultiGet`. So a batch whose steps reach
+  no key past the first marks the kept iterator, and lets its
+  RocksDB iterator go. The cursor's later batches of the store
+  are read by `MultiGet` alone. A batch that steps through
+  some keys before a gap keeps the iterator. q3, whose
+  lastnames are spread over the table at random, 249k to 234k
+  instructions a statement (`../dg/WORKNOTE.md` step 372).
 - **sm2**, `rel_read_batch()`: each key put under the table's
   relid, as `rel_read()` does one; a kept iterator passed on.
 - **sm3**, `tbl_read_keys(table, keys, n, refs, tuples, rc)`:
