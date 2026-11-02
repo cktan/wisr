@@ -582,27 +582,41 @@ vacuum.
 
 ### 4.2 A session's copy of the root
 
-*Built 2026-11-02 (`../dg/WORKNOTE.md` step 366,
-`../MAJORDECISION.md` D28).* Every descent reads page 0, so its
-pin, a count in its frame's state word, was a word every probe on
-every core wrote. A session now keeps its own copy of page 0 and
-descends from it with no pin while the page is as it was.
+*Built 2026-11-02 (`../dg/WORKNOTE.md` steps 366 to 368,
+`../MAJORDECISION.md` D28 and D29).* Every descent reads page 0,
+so its pin, a count in its frame's state word, was a word every
+probe on every core wrote. A session now holds a copy of page 0,
+shared with the other sessions that read it, and descends from it
+with no pin while the page is as it was.
 
 - **A frame's version** (`sm1/src/bufpool.cc`), a count moved by
   each change of the frame's page or bytes: an install, a
   discard, a purge, an eviction. All are under an exclusive pin.
   It sits in the descriptor's line, which still fits 64 bytes:
   the frame's bytes are found by its index, no longer a pointer.
-- **The copy**: `sm1::keep_page_copy()`, with the page pinned,
-  keeps its bytes, its frame and the frame's version, in the
-  session; `sm1::page_copy()` hands the bytes back while the
+- **The copy**: an immutable `bufpool_copy_t`, the page's bytes
+  and the frame's version, held by `shared_ptr`.
+  `sm1::keep_page_copy()`, with the page pinned, takes the copy
+  the frame keeps for this version (`bufpool_t::share()`), or
+  makes one and publishes it in the frame's slot, a
+  `std::atomic<std::shared_ptr>` beside the descriptors, for the
+  next session. The session holds its `shared_ptr`, its frame,
+  store and key. `sm1::page_copy()` hands the bytes back while the
   frame's version is unchanged, read with no pin: frames last the
-  pool's life. A good copy ages its frame as a pin does, its
-  age's top bit set (`bufpool_t::touch()`); without it, page 0,
-  pinned by no one, ages out of the pool while it is read most,
-  and every session's copy goes with it. A session keeps at most 32, by store and key, and
-  drops them all for the 33rd. It lives in the sm1 session, not
-  the tree: digres opens a table, and its trees, once a
+  pool's life. A probe with a good copy changes no count.
+- **The frame lets its copy go** when its page changes or leaves:
+  an install, a discard, a purge, an eviction, each under an
+  exclusive pin (`drop_copy()`). A session holding the old copy
+  keeps it until its next refresh or its close; the last holder
+  frees it. So memory is about one copy a root, and a stale one
+  for each session idle since the root changed.
+- **A good copy ages its frame** as a pin does, its age's top
+  bit set (`bufpool_t::touch()`); without it, page 0, pinned by
+  no one, ages out of the pool while it is read most, and every
+  session's copy goes with it.
+- **A session holds at most 32**, by store and key, and drops
+  them all for the 33rd. They live in the sm1 session, not the
+  tree: digres opens a table, and its trees, once a
   transaction.
 - **`descend()`** uses the copy when page 0 is above the level it
   descends to. Otherwise, or with no good copy, it pins page 0 as
@@ -625,7 +639,8 @@ descends from it with no pin while the page is as it was.
 | page 0 evicted | a good copy's check ages page 0 as a pin, so it is not while it is read; if it is, the copy is not good, and the next descent misses and reads it |
 | crash, restart | the pool and the copies start empty |
 | a root that is a leaf | pinned, as the leaf a descent wants |
-| another database, temp tables | the copy is by store and key in one session, of one database |
+| another database, temp tables | a session's copy is by store and key, of one database; a frame's, by the frame and its version |
+| two sessions refresh at once | each, pinned shared, finds the slot empty or stale; one publishes, the other takes it (compare and swap), or keeps its own if the slot moved on |
 
 Not done: copies of the inner pages below page 0.
 

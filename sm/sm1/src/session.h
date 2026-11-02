@@ -6,6 +6,7 @@
 #ifndef WISR_SESSION_H
 #define WISR_SESSION_H
 
+#include "bufpool.h"
 #include "db.h"
 #include "sm1.h"
 
@@ -81,16 +82,16 @@ struct sm1::session_t {
   std::unordered_set<uint64_t> temp_stores;
   bool temp_touched = false;
   /*
-   * Its own copies of pages, by sm1::keep_page_copy (page.cc): each
-   * page's store and key, the frame it was copied from and the
-   * frame's version then, and its bytes. At most page_copies_max.
+   * The copies of pages it reads, by sm1::keep_page_copy (page.cc):
+   * each page's store and key, the frame it was copied from, and the
+   * copy, at the frame's version then, shared with the other sessions
+   * that read it (bufpool_t::share). At most page_copies_max.
    */
   struct page_copy_t {
     uint64_t storeid = 0;
     std::string key;
     sm1::page_t *frame = nullptr;
-    uint64_t version = 0;
-    std::string bytes;
+    std::shared_ptr<const wisr::bufpool_copy_t> copy;
   };
   std::vector<page_copy_t> page_copies;
   /* The bulk load open in the transaction, if any (load.cc). */

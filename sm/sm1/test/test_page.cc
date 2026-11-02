@@ -340,6 +340,60 @@ TEST_CASE("page: a session's copy is good until its page changes") {
   REQUIRE(sm1::closedb(s) == 0);
 }
 
+TEST_CASE("page: sessions share one copy of a page") {
+  // Verify two sessions' copies of one page are one copy, until the
+  // page changes.
+  // 1. Two sessions keep a copy of a page: their bytes lie at one
+  //    address.
+  // 2. The page written again: neither copy is good; one session's
+  //    new copy is the new bytes, and the other's, kept after it, is
+  //    the same copy.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  sm1::session_t *s1 = opendb(home.env(), "db");
+  sm1::session_t *s2 = opendb(home.env(), "db");
+  REQUIRE(s1);
+  REQUIRE(s2);
+  REQUIRE(sm1::begin(s1, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t store = mkstore(s1);
+  REQUIRE(sm1::commit(s1) == 0);
+  REQUIRE(sm1::begin(s1, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(s2, sm1::xctlevel_t::read_committed) == 0);
+  write_page(s1, store, "r/0", "one");
+  auto keep = [&](sm1::session_t *s) {
+    sm1::page_t *page = nullptr;
+    std::string_view bytes;
+    REQUIRE(0 == sm1::pin_page(s, store, "r/0", sm1::page_mode_t::sh, 0, page,
+                               bytes));
+    sm1::keep_page_copy(s, store, "r/0", page, bytes);
+    sm1::unpin_page(s, page);
+  };
+  auto copy = [&](sm1::session_t *s, std::string_view &bytes) {
+    return sm1::page_copy(s, store, "r/0", bytes);
+  };
+  std::string_view b1, b2;
+  keep(s1);
+  keep(s2);
+  REQUIRE(copy(s1, b1));
+  REQUIRE(copy(s2, b2));
+  CHECK("one" == b1);
+  CHECK(b1.data() == b2.data());
+
+  write_page(s2, store, "r/0", "two");
+  CHECK_FALSE(copy(s1, b1));
+  CHECK_FALSE(copy(s2, b2));
+  keep(s1);
+  keep(s2);
+  REQUIRE(copy(s1, b1));
+  REQUIRE(copy(s2, b2));
+  CHECK("two" == b1);
+  CHECK(b1.data() == b2.data());
+  REQUIRE(sm1::commit(s2) == 0);
+  REQUIRE(sm1::commit(s1) == 0);
+  REQUIRE(sm1::closedb(s2) == 0);
+  REQUIRE(sm1::closedb(s1) == 0);
+}
+
 TEST_CASE("page: no version meets a page") {
   // Verify pages and versions of one store keep apart.
   // 1. In a chained store, write a version and pages under the same

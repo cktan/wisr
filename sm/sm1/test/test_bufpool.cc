@@ -15,6 +15,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -573,6 +574,52 @@ TEST_CASE("bufpool: a touch ages a frame as a pin does, with no pin") {
     pool.unpin(f);
   }
   CHECK_FALSE(cached(pool, 0));
+}
+
+TEST_CASE("bufpool: readers share one copy of a page at a version") {
+  // Verify share() hands every reader of a page at one version one
+  // copy, and lets a copy go once its page changes or leaves.
+  // 1. Two readers of a page share: one copy, its bytes the page's.
+  // 2. The page installed anew: the old copy's holder still reads
+  //    the old bytes; once its holders let it go it is freed, as the
+  //    frame no longer keeps it.
+  // 3. A share is a new copy, of the new bytes.
+  // 4. The page evicted: its copy, held by no reader, is freed.
+  bufpool_t pool(4);
+  store_t st;
+  fill(st, 20);
+  bufpool_t::frame_t *f = nullptr;
+  std::string_view b;
+  REQUIRE(0 == pin(pool, st, 0, false, bufpool_inner, f, b));
+  std::shared_ptr<const wisr::bufpool_copy_t> c1 = pool.share(f, b);
+  std::shared_ptr<const wisr::bufpool_copy_t> c2 = pool.share(f, b);
+  CHECK(c1.get() == c2.get());
+  CHECK("page0" == c1->bytes);
+  pool.unpin(f);
+
+  REQUIRE(0 == pin(pool, st, 0, true, 0, f, b));
+  pool.install(f, "page0 again");
+  pool.unpin(f);
+  CHECK("page0" == c1->bytes);
+  std::weak_ptr<const wisr::bufpool_copy_t> w1 = c1;
+  c1.reset();
+  c2.reset();
+  CHECK(w1.expired());
+
+  REQUIRE(0 == pin(pool, st, 0, false, bufpool_inner, f, b));
+  std::shared_ptr<const wisr::bufpool_copy_t> c3 = pool.share(f, b);
+  pool.unpin(f);
+  CHECK("page0 again" == c3->bytes);
+
+  std::weak_ptr<const wisr::bufpool_copy_t> w3 = c3;
+  c3.reset();
+  CHECK_FALSE(w3.expired());
+  for (size_t i = 1; i < 20 && cached(pool, 0); i++) {
+    REQUIRE(0 == pin(pool, st, i, false, 0, f, b));
+    pool.unpin(f);
+  }
+  REQUIRE_FALSE(cached(pool, 0));
+  CHECK(w3.expired());
 }
 
 TEST_CASE("bufpool: a pin's waits can be interrupted") {

@@ -10839,3 +10839,22 @@ if not set already. D28 amended.
   a pool of 8, and goes once no longer touched; a copy read after
   each of three pools' worth of page writes stays good, its page
   cached. Both fail with the touch removed: the copy went bad.
+
+## Step 368: sessions share one copy of a tree's root
+
+Step 366's copy of page 0 was each session's own: 4 KB a session
+a tree, so a thousand sessions over two trees held 7 MB of the
+same bytes. Now a copy is an immutable `bufpool_copy_t` held by
+`shared_ptr`. The buffer pool keeps the current one in a slot for
+each frame, `std::atomic<std::shared_ptr>`; the first reader at a
+version makes and publishes it, by compare and swap, and the
+others take it. The frame lets it go on an install, a discard, a
+purge or an eviction; the last holder frees it. A probe with a
+good copy touches no count. Decision D29.
+
+- **Tests**: sm1, two readers share one copy; an install leaves
+  a holder the old bytes, and frees the old copy once its
+  holders let it go; an eviction frees a copy no one holds; two
+  sessions' copies are one, before and after the page is written.
+  Each fails with sharing or the release broken. sm2's root-copy
+  tests pass as they were.

@@ -518,3 +518,22 @@ Decided with the user (2026-10-31).
   most, every session's copy failing with it.
 - **Undo:** `descend()` pins page 0 again; the version, the
   copies, the touch and their calls go.
+
+## D29. Sessions share one copy of a tree's root
+
+- **Decided:** a session's copy of page 0 (D28) is a
+  `shared_ptr` to an immutable `bufpool_copy_t`, which the frame
+  keeps in a slot, `std::atomic<std::shared_ptr>`, for the next
+  reader at that version (`bufpool_t::share()`). The frame lets
+  its copy go when its page changes or leaves; holders keep
+  theirs until they refresh or close.
+- **Why:** a private 4 KB copy a session a tree is a lot with
+  many sessions; the user asked for one shared copy. A holder's
+  reference keeps a copy alive, so no reclamation scheme is
+  needed, and no read meets bytes being written, as an
+  optimistic read of the frame would.
+- **Cost:** about 16 bytes a frame for the slot; a reference
+  count and the slot's lock touched when a root changes, not on
+  a probe. An idle session holds a stale copy until it probes or
+  closes.
+- **Undo:** each session's copy its own again, as D28 first had.

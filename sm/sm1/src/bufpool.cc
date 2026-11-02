@@ -104,6 +104,8 @@ struct alignas(64) bufpool_t::frame_t {
   std::atomic<uint64_t> k0{0};
   std::atomic<uint64_t> k1{0};
   std::atomic<uint32_t> len{no_page};
+  /* Its slot in m_copies holds a copy: under a pin. */
+  std::atomic<bool> copied{false};
   /*
    * Moved by each change of the tag or the bytes, under an exclusive
    * pin, so a copy of a page knows the frame since (bufpool.h).
@@ -141,6 +143,7 @@ struct bufpool_t::waitq_t {
 bufpool_t::bufpool_t(size_t frames)
     : m_nframes(frames), m_frames(new frame_t[frames]),
       m_mem(new char[frames * bufpool_frame_bytes]),
+      m_copies(new std::atomic<std::shared_ptr<const bufpool_copy_t>>[frames]),
       m_waitqs(new waitq_t[waitqs]) {
   static_assert(64 == sizeof(frame_t), "a frame's descriptor is one line");
   assert(frames > 0);
@@ -325,6 +328,7 @@ int bufpool_t::victim(frame_t *&out) {
       if (no_page != f->len.load(std::memory_order_relaxed)) {
         unlink(f);
         f->set_tag(tag_t{});
+        drop_copy(f);
       }
       f->valid = false;
       out = f;
@@ -467,6 +471,42 @@ void bufpool_t::install(frame_t *frame, std::string_view bytes) {
   frame->size = static_cast<uint16_t>(bytes.size());
   frame->valid = true;
   frame->version.fetch_add(1, std::memory_order_release);
+  drop_copy(frame);
+}
+
+/*
+ * Let f's shared copy go, its page changed or gone: under an exclusive
+ * pin, so no share() of f runs meanwhile. Its holders keep theirs.
+ */
+void bufpool_t::drop_copy(frame_t *f) {
+  if (f->copied.load(std::memory_order_relaxed)) {
+    m_copies[static_cast<size_t>(f - m_frames.get())].store(
+        nullptr, std::memory_order_release);
+    f->copied.store(false, std::memory_order_relaxed);
+  }
+}
+
+/* The shared copy of a frame's page; see bufpool.h. */
+std::shared_ptr<const bufpool_copy_t> bufpool_t::share(frame_t *frame,
+                                                       std::string_view bytes) {
+  // Under the caller's pin: the version, the bytes and the slot hold
+  // still but for another reader's share.
+  auto &slot = m_copies[static_cast<size_t>(frame - m_frames.get())];
+  uint64_t v = version(frame);
+  std::shared_ptr<const bufpool_copy_t> now =
+      slot.load(std::memory_order_acquire);
+  if (nullptr != now && v == now->version) {
+    return now;
+  }
+  auto made = std::make_shared<const bufpool_copy_t>(
+      bufpool_copy_t{v, std::string(bytes)});
+  // Another reader, pinned shared as well, may publish first: take its.
+  if (slot.compare_exchange_strong(now, made, std::memory_order_acq_rel,
+                                   std::memory_order_acquire)) {
+    frame->copied.store(true, std::memory_order_relaxed);
+    return made;
+  }
+  return nullptr != now && v == now->version ? now : made;
 }
 
 /* Age a frame as used; see bufpool.h. */
@@ -492,6 +532,7 @@ uint64_t bufpool_t::version(const frame_t *frame) const {
 void bufpool_t::discard(frame_t *frame) {
   unlink(frame);
   frame->set_tag(tag_t{});
+  drop_copy(frame);
   frame->valid = false;
   frame->age.store(0, std::memory_order_relaxed);
 }

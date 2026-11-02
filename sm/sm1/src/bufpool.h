@@ -22,6 +22,7 @@
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <string_view>
 
 namespace wisr {
@@ -60,6 +61,16 @@ constexpr unsigned bufpool_no_read = 2; /* a new page: exclusive alone */
  * 0; 1 if there is no such page; -1 with the error set.
  */
 typedef int (*bufpool_load_t)(void *arg, char *buf, size_t &len);
+
+/*
+ * A copy of a page as a frame held it at a version, shared by the
+ * sessions that read it (bufpool_t::share): never changed, and freed
+ * with its last holder.
+ */
+struct bufpool_copy_t {
+  uint64_t version;
+  std::string bytes;
+};
 
 class bufpool_t {
 public:
@@ -111,6 +122,16 @@ public:
   uint64_t version(const frame_t *frame) const;
 
   /*
+   * The copy of frame's page, which the caller holds pinned with
+   * bytes, at the frame's version now: the one a reader made at this
+   * version already, or one made now and kept with the frame for the
+   * others. A change of the page, or of the frame's page, lets the
+   * frame's copy go; a holder keeps its own.
+   */
+  std::shared_ptr<const bufpool_copy_t> share(frame_t *frame,
+                                              std::string_view bytes);
+
+  /*
    * Age frame as a pin does, its age's top bit set, with no pin: for a
    * page read from a copy (version), which would otherwise age out of
    * the pool while it is read most. Unpinned, it is a hint: the hand
@@ -155,10 +176,14 @@ private:
   size_t bucket_of(const tag_t &tag) const;
   waitq_t &waitq_of(const frame_t *f) const;
   char *bytes_of(const frame_t *f) const;
+  void drop_copy(frame_t *f);
 
   size_t m_nframes;
   std::unique_ptr<frame_t[]> m_frames;
   std::unique_ptr<char[]> m_mem;
+  /* Each frame's shared copy, if a reader made one (share). */
+  std::unique_ptr<std::atomic<std::shared_ptr<const bufpool_copy_t>>[]>
+      m_copies;
   size_t m_mask;
   std::unique_ptr<std::atomic<int32_t>[]> m_buckets;
   std::unique_ptr<std::mutex[]> m_locks;

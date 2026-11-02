@@ -1737,10 +1737,11 @@ int pin_page(session_t* session, uint64_t storeid, const page_store_t* store,
 void unpin_page(session_t* session, page_t* page);
 
 /*
- * A session's own copy of a page, read with no pin while the page's
- * frame is as it was when copied: for a page every descent of a tree
- * reads, whose pin would be a word every core writes (../BTREE.md
- * §4.2). The copy is as fresh as a page pinned, read and unpinned.
+ * A session's copy of a page, read with no pin while the page's frame
+ * is as it was when copied: for a page every descent of a tree reads,
+ * whose pin would be a word every core writes (../BTREE.md §4.2). The
+ * sessions that read a page at one version share one copy. A copy is
+ * as fresh as a page pinned, read and unpinned.
  */
 
 /* The most copies a session keeps; one more drops them all. */

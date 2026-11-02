@@ -158,6 +158,11 @@ cache, shared by every database and the temporary instance.
   when pinned: a session's copy of a tree's root is read so
   (`BTREE.md` §4.2). The frame's bytes are found by its index, so
   the descriptor still fits its line.
+- **A shared copy** of a frame's page, in a slot beside the
+  descriptors (`share()`): made by the first reader at a version,
+  taken by the others, and let go by the frame when its page
+  changes or leaves. A flag in the descriptor's spare bytes says
+  the slot is full, so a frame never copied costs nothing more.
 - **A touch** ages a frame as a pin does, with no pin: a good
   copy's check does it, so a page read only from copies is kept
   as if it were pinned. The age is written only if its top bit is
