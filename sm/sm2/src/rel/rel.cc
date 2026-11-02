@@ -799,7 +799,8 @@ int rel_read_settled(rel_t *rel, std::string_view key, sm1::rawpin_t *pin,
 
 /* Read the rows at keys into raw pins in one call; see sm2.h. */
 int rel_read_batch(rel_t *rel, const std::string_view *keys, size_t n,
-                   sm1::rawpin_t **pins, std::string_view *tuples, int *rc) {
+                   sm1::rawpin_t **pins, std::string_view *tuples, int *rc,
+                   sm1::batch_iter_t *iter) {
   std::vector<std::string> ks(n);
   std::vector<std::string_view> kv(n);
   for (size_t i = 0; i < n; i++) {
@@ -808,7 +809,7 @@ int rel_read_batch(rel_t *rel, const std::string_view *keys, size_t n,
   }
   if (rel->chained) {
     return sm1::chain_read_batch(rel->session, rel->storeid, kv.data(), n, pins,
-                                 tuples, rc);
+                                 tuples, rc, iter);
   }
   for (size_t i = 0; i < n; i++) {
     rc[i] = sm1::read(rel->session, rel->storeid, kv[i], pins[i], tuples[i]);

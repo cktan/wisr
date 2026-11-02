@@ -49,6 +49,18 @@ struct sm1::rawpin_t {
   } reuse;
 };
 
+/*
+ * A batch read's iterator, kept by its caller (sm1::batch_iter_t):
+ * the store it reads, and the session whose list it is on while it
+ * holds one.
+ */
+struct sm1::batch_iter_t {
+  std::unique_ptr<rocksdb::Iterator> it; /* null when it holds none */
+  uint64_t storeid = 0;
+  rocksdb::ColumnFamilyHandle *cf = nullptr;
+  sm1::session_t *session = nullptr;
+};
+
 struct sm1::session_t {
   sm1::env_t *env = nullptr;
   wisr::db_t *db = nullptr;
@@ -287,6 +299,8 @@ struct sm1::session_t {
 
   std::unordered_set<sm1::scan_t *> scans; /* open cursors */
   uint64_t next_scan_id = 0;               /* hands out sm1::scan_t::id */
+  /* The batch reads' iterators that hold one, let go with the scans. */
+  std::unordered_set<sm1::batch_iter_t *> batch_iters;
 
   /*
    * The raw pin sm1::read and sm1::read_latest share when the
@@ -691,8 +705,14 @@ xct_state_t xct_status(wisr::db_t *db, uint64_t xid, uint64_t *commit_ts);
  */
 int xct_resolve(wisr::db_t *db, uint64_t xid, uint64_t *commit_ts);
 
-/* Close every cursor open on session. */
+/* Close every cursor open on session, and its batch iterators'. */
 void xct_end_scans(sm1::session_t *session);
+
+/* Let go of the iterator iter holds, if any, off its session's list. */
+void batch_iter_release(sm1::batch_iter_t *iter);
+
+/* Let go of every batch iterator's iterator session holds. */
+void batch_iters_release(sm1::session_t *session);
 
 /*
  * Release what a cursor holds -- its SIREAD range, iterator,

@@ -741,7 +741,8 @@ int read_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
  */
 int read_chained_batch(sm1::session_t *s, uint64_t storeid,
                        const std::string_view *keys, size_t n,
-                       sm1::rawpin_t **pins, std::string_view *data, int *rc) {
+                       sm1::rawpin_t **pins, std::string_view *data, int *rc,
+                       sm1::batch_iter_t *bi) {
   if (xct_check_active(s) != 0) {
     return -1;
   }
@@ -802,10 +803,35 @@ int read_chained_batch(sm1::session_t *s, uint64_t storeid,
   // MultiGet from the first the steps miss on.
   size_t done = 0;
   if (ascending) {
-    rocksdb::ReadOptions ro;
-    // Across keys, past the CF's prefix extractor.
-    ro.total_order_seek = true;
-    std::unique_ptr<rocksdb::Iterator> it(st.rdb->NewIterator(ro, st.cf));
+    std::unique_ptr<rocksdb::Iterator> own;
+    rocksdb::Iterator *it = nullptr;
+    if (bi && bi->it && bi->session == s && bi->storeid == storeid &&
+        bi->cf == st.cf) {
+      // The kept iterator, brought to the store as it is now, as a
+      // new one would hold it: a cheap step while the store's files
+      // and memtables are as they were.
+      rocksdb::Status rs = bi->it->Refresh();
+      if (!rs.ok()) {
+        return set_status_error(rs, "refresh a batch iterator");
+      }
+      it = bi->it.get();
+    } else {
+      rocksdb::ReadOptions ro;
+      // Across keys, past the CF's prefix extractor.
+      ro.total_order_seek = true;
+      own.reset(st.rdb->NewIterator(ro, st.cf));
+      it = own.get();
+      if (bi) {
+        // Kept for the caller's next batch, on the session's list,
+        // so the transaction's end lets go of it.
+        batch_iter_release(bi);
+        bi->it = std::move(own);
+        bi->storeid = storeid;
+        bi->cf = st.cf;
+        bi->session = s;
+        s->batch_iters.insert(bi);
+      }
+    }
     bool placed = false;
     int seeks = 0;
     for (; done < n; done++) {
@@ -1362,10 +1388,51 @@ int sm1::chain_read(sm1::session_t *session, uint64_t storeid,
 /* Read many chained keys into their pins in one call; see sm1.h. */
 int sm1::chain_read_batch(sm1::session_t *session, uint64_t storeid,
                           const std::string_view *keys, size_t n,
-                          sm1::rawpin_t **pins, std::string_view *data,
-                          int *rc) {
-  return read_chained_batch(session, storeid, keys, n, pins, data, rc);
+                          sm1::rawpin_t **pins, std::string_view *data, int *rc,
+                          sm1::batch_iter_t *iter) {
+  return read_chained_batch(session, storeid, keys, n, pins, data, rc, iter);
 }
+
+/* Make a batch read's iterator; see sm1.h. */
+sm1::batch_iter_t *sm1::batch_iter_new() {
+  // Allocated as a handle, so sm1.h shows no RocksDB type.
+  return new sm1::batch_iter_t;
+}
+
+/* Let go of a batch read's iterator, then free it; see sm1.h. */
+void sm1::batch_iter_free(sm1::batch_iter_t *iter) {
+  if (!iter) {
+    return;
+  }
+  batch_iter_release(iter);
+  delete iter;
+}
+
+/* Whether a batch read's iterator holds one; see sm1.h. */
+bool sm1::batch_iter_held(const sm1::batch_iter_t *iter) {
+  return iter && iter->it;
+}
+
+namespace wisr {
+
+/* Let go of a batch iterator's iterator; see session.h. */
+void batch_iter_release(sm1::batch_iter_t *iter) {
+  if (iter->session) {
+    iter->session->batch_iters.erase(iter);
+  }
+  iter->it.reset();
+  iter->session = nullptr;
+  iter->cf = nullptr;
+}
+
+/* Let go of every batch iterator's iterator; see session.h. */
+void batch_iters_release(sm1::session_t *s) {
+  while (!s->batch_iters.empty()) {
+    batch_iter_release(*s->batch_iters.begin());
+  }
+}
+
+} // namespace wisr
 
 /* Read a chained key into the session's own pin; see sm1.h. */
 int sm1::chain_read(sm1::session_t *session, uint64_t storeid,

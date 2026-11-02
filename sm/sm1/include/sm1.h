@@ -1444,16 +1444,38 @@ int chain_read_latest(session_t* session, uint64_t storeid,
                       std::string_view key, rawpin_t* pin,
                       std::string_view& data);
 /*
+ * A batch read's iterator, kept by its caller from one
+ * sm1::chain_read_batch to the next, as a cursor reads its rows in
+ * batches (../BATCHREAD.md §2.1). The caller makes it, keeps it, and
+ * frees it. sm1 lets go of the iterator it holds at the end of the
+ * transaction, at a rollback to a savepoint, and as the session
+ * closes, so one left unfreed holds no RocksDB files.
+ */
+struct batch_iter_t;
+
+/* Make a batch read's iterator, holding none yet. */
+batch_iter_t* batch_iter_new();
+
+/* Let go of iter's iterator, then free it; nullptr is a no-op. */
+void batch_iter_free(batch_iter_t* iter);
+
+/* Whether iter holds an iterator now: for tests. */
+bool batch_iter_held(const batch_iter_t* iter);
+
+/*
  * sm1::chain_read of n keys in one call (../BATCHREAD.md): key i's
  * row into pins[i] and data[i], rc[i] 0, or rc[i] 1 if the read sees
  * none, its pin then empty. The keys' newest versions are read
  * together, in RocksDB's MultiGet, in any order; each key is checked,
  * takes its SIREAD entry and is resolved as a single read of it is.
- * Returns 0, or -1 on an error, the rows then undefined.
+ * Keys in ascending order are read by one iterator: iter's, if
+ * given, brought up to date, or one made and kept in it. Returns 0,
+ * or -1 on an error, the rows then undefined.
  */
 int chain_read_batch(session_t* session, uint64_t storeid,
                      const std::string_view* keys, size_t n,
-                     rawpin_t** pins, std::string_view* data, int* rc);
+                     rawpin_t** pins, std::string_view* data, int* rc,
+                     batch_iter_t* iter = nullptr);
 int chain_lock_row(session_t* session, uint64_t storeid,
                    std::string_view key, lockmode_t mode,
                    bool as_read = false, uint16_t kind = 0);

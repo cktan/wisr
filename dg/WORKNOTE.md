@@ -10858,3 +10858,37 @@ good copy touches no count. Decision D29.
   sessions' copies are one, before and after the page is written.
   Each fails with sharing or the release broken. sm2's root-copy
   tests pass as they were.
+
+## Step 369: a tree's cursor keeps its batch reads' iterator
+
+A profile of `../bench` q3 through a tree, `perf record` of the
+release server, found a fifth of its time in malloc and free. The
+largest part, about 6% of the time, was RocksDB's: an iterator
+made and freed by each batch read of the rows (step 349). A probe
+of about 10 rows reads them in batches of 1, 2, 4 and 8, so it
+made three.
+
+- **sm1**: `sm1::batch_iter_t`, made and freed by the caller,
+  passed to `chain_read_batch`. The batch refreshes it
+  (`Iterator::Refresh()`), so it holds the store as a new
+  iterator would; it is made again only for another store. The
+  session lists those that hold an iterator, and lets go of each
+  where it closes its cursors (`../sm/BATCHREAD.md` §2.1).
+- **sm2, sm3**: `rel_read_batch` passes it on; a tree's cursor
+  keeps one to its end.
+- **Measured**: user instructions of the server a statement,
+  10,000 q3 after 500, the server pinned, three runs each: 283k
+  to 249k. PostgreSQL 18: 89k.
+- **Tests**: sm1, a kept iterator reads another session's commit,
+  the session's own writes and a compacted store; it is let go
+  at a commit, at a rollback to a savepoint, at an abort and at
+  the session's close. Each fails with its part taken out. dg,
+  `btree_tree_cursor.test`: a cursor over a tree gives
+  PostgreSQL's rows across statements and its transaction's own
+  update; it passes with the refresh taken out, as a cursor's
+  view hides what a refresh adds. rel cannot keep a tree's row
+  cursor open between calls.
+- **Found**: a rollback to a savepoint with a tree's cursor open
+  crashes the server: `sm3::pins_rolled_back` reads the cursor's
+  rel scan, which a tree's cursor does not have. It is the same
+  on `main`; not fixed here.

@@ -59,6 +59,12 @@ struct sm3::scan_t {
    * whose key gives its columns back (../BTREE.md §4.1).
    */
   std::vector<uint8_t> cuts, unread;
+  /*
+   * The iterator its batches' rows are read by, made at the first
+   * batch of two or more and kept to the cursor's end, not made again
+   * for each (../../BATCHREAD.md §2.1).
+   */
+  sm1::batch_iter_t *iter = nullptr;
   size_t at = 0, n = 0, batch = 1;
   size_t last = 0; /* the entry handed out last, of the batch */
   std::string key; /* the recheck's entry key, its buffer reused */
@@ -71,6 +77,7 @@ struct sm3::scan_t {
     for (size_t i = 1; i < raws.size(); i++) {
       sm1::rawpin_free(raws[i]);
     }
+    sm1::batch_iter_free(iter);
   }
 };
 

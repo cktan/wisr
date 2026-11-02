@@ -721,12 +721,12 @@ int rel_read_settled(rel_t* rel, std::string_view key, sm1::rawpin_t* pin,
  * rel_read into a raw pin of the rows at n keys, in one call
  * (../BATCHREAD.md): key i's tuple into pins[i] and tuples[i], rc[i]
  * 0, or rc[i] 1 if there is none. A chained store's are read by
- * sm1::chain_read_batch, a versioned store's one by one. Returns 0,
- * or -1 on an error.
+ * sm1::chain_read_batch, through iter if given, a versioned store's
+ * one by one. Returns 0, or -1 on an error.
  */
 int rel_read_batch(rel_t* rel, const std::string_view* keys, size_t n,
                    sm1::rawpin_t** pins, std::string_view* tuples,
-                   int* rc);
+                   int* rc, sm1::batch_iter_t* iter = nullptr);
 
 /*
  * Read the newest committed version of the row at key, as

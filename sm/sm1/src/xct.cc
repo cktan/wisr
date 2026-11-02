@@ -576,6 +576,9 @@ int rollback(sm1::session_t *s, int depth) {
       c->rolled_back = true;
     }
   }
+  // And every batch iterator's: the stores made after the mark go
+  // below, and the next batch read makes a new iterator.
+  batch_iters_release(s);
 
   // Drop the stores created after the mark, newest first.
   for (size_t i = s->created.size(); i-- > m.created;) {
@@ -1605,6 +1608,9 @@ void xct_end_scans(sm1::session_t *s) {
   while (!s->scans.empty()) {
     sm1::scanend(*s->scans.begin());
   }
+  // A batch iterator's caller may not end it: dg drops a scan on an
+  // error. Let go of its iterator, so no RocksDB file stays held.
+  batch_iters_release(s);
 }
 
 } // namespace wisr

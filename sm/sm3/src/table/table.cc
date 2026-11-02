@@ -1728,8 +1728,11 @@ static int tree_fill(scan_t *scan) {
     keys[j] = scan->rows[want_rows[j]];
     raws[j] = scan->raws[want_rows[j]];
   }
+  if (!scan->iter) {
+    scan->iter = sm1::batch_iter_new();
+  }
   if (0 != sm2::rel_read_batch(t->rel, keys.data(), m, raws.data(),
-                               tuples.data(), rcs.data())) {
+                               tuples.data(), rcs.data(), scan->iter)) {
     return -1;
   }
   for (size_t j = 0; j < m; j++) {

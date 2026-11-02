@@ -1,0 +1,106 @@
+# Verify a cursor over a tree, whose rows are read in batches through
+# one kept iterator (../sm/BATCHREAD.md section 2.1), gives the rows
+# PostgreSQL's cursor gives, across statements and across the
+# transaction's own update, which a cursor opened before it does not
+# see.
+# 1. Make 40 rows of key 1, 10 of key 2, and a tree on the key.
+# 2. Open a cursor over key 1's rows and fetch 3: its second batch
+#    keeps an iterator. Fetch 10 more in another statement.
+# 3. Update a row the cursor has yet to give, and fetch the rest: the
+#    row is as it was when the cursor opened. After the commit, a new
+#    query gives the update.
+
+statement ok
+create table c (id int4 primary key, k int4, v text)
+
+statement ok
+insert into c select g, case when g <= 40 then 1 else 2 end, 'v' || g from generate_series(1, 50) g
+
+onlyif digres
+statement ok
+create index c_k on c (k) with (tree = on)
+
+skipif digres
+statement ok
+create index c_k on c (k)
+
+statement ok
+set enable_seqscan = off
+
+statement ok
+set enable_bitmapscan = off
+
+query T nosort
+explain (costs off) select id, v from c where k = 1
+----
+Index Scan using c_k on c
+  Index Cond: (k = 1)
+
+statement ok
+begin
+
+statement ok
+declare cur cursor for select id, v from c where k = 1
+
+query IT nosort
+fetch 3 from cur
+----
+1	v1
+2	v2
+3	v3
+
+query IT nosort
+fetch 10 from cur
+----
+4	v4
+5	v5
+6	v6
+7	v7
+8	v8
+9	v9
+10	v10
+11	v11
+12	v12
+13	v13
+
+statement ok
+update c set v = 'own' where id = 30
+
+query IT nosort
+fetch all from cur
+----
+14	v14
+15	v15
+16	v16
+17	v17
+18	v18
+19	v19
+20	v20
+21	v21
+22	v22
+23	v23
+24	v24
+25	v25
+26	v26
+27	v27
+28	v28
+29	v29
+30	v30
+31	v31
+32	v32
+33	v33
+34	v34
+35	v35
+36	v36
+37	v37
+38	v38
+39	v39
+40	v40
+
+statement ok
+commit
+
+query T nosort
+select v from c where id = 30
+----
+own

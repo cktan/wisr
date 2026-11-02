@@ -56,8 +56,27 @@ read. Q9's 100 rows lie in one or two data blocks.
   1,659k to 1,338k user instructions with today's entries,
   1,548k to 1,142k through a tree (`../dg/WORKNOTE.md` step
   349).
+- **A kept iterator.** A tree's cursor reads its rows in
+  batches of 1, 2, 4, up to 64, and each batch made and freed
+  its own iterator. The cursor now keeps one,
+  `sm1::batch_iter_t`, made at its first batch of two or more,
+  and passes it to each later batch (`iter`). Each batch calls
+  RocksDB's `Iterator::Refresh()` on it. The iterator then
+  holds the store as it is now, as a new one would. While the
+  store's memtables and files stay the same, `Refresh()` only
+  moves the read sequence; when they change, it makes the
+  iterator again. The refresh is where a new iterator was
+  made: after the batch's checks and SIREAD entries, inside
+  its read epoch.
+  The session keeps a list of the kept iterators, and lets go
+  of them where it closes its cursors: at the transaction's
+  end, at a rollback to a savepoint, and at its close. A
+  caller that does not free one (digres drops a scan on an
+  error) then holds no RocksDB file. q3 of `../bench`, about
+  10 rows a probe through a tree, 283k to 249k instructions a
+  statement (`../dg/WORKNOTE.md` step 369).
 - **sm2**, `rel_read_batch()`: each key put under the table's
-  relid, as `rel_read()` does one.
+  relid, as `rel_read()` does one; a kept iterator passed on.
 - **sm3**, `tbl_read_keys(table, keys, n, refs, tuples, rc)`:
   a pin from the session's pool for each key, as
   `read_into()` takes one, back to the pool for each key not

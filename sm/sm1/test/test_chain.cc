@@ -954,9 +954,13 @@ std::vector<std::string> single_reads(sm1::session_t *s, uint64_t storeid,
   return out;
 }
 
-/* Each key's row as one batch read gives them: the value, or "-". */
+/*
+ * Each key's row as one batch read gives them, through iter if given:
+ * the value, or "-".
+ */
 std::vector<std::string> batch_reads(sm1::session_t *s, uint64_t storeid,
-                                     const std::vector<std::string> &keys) {
+                                     const std::vector<std::string> &keys,
+                                     sm1::batch_iter_t *iter = nullptr) {
   size_t n = keys.size();
   std::vector<std::string_view> kv(keys.begin(), keys.end());
   std::vector<std::unique_ptr<sm1::rawpin_t>> own;
@@ -968,7 +972,7 @@ std::vector<std::string> batch_reads(sm1::session_t *s, uint64_t storeid,
   std::vector<std::string_view> data(n);
   std::vector<int> rc(n, -2);
   REQUIRE_MESSAGE(sm1::chain_read_batch(s, storeid, kv.data(), n, pins.data(),
-                                        data.data(), rc.data()) == 0,
+                                        data.data(), rc.data(), iter) == 0,
                   sm1::errmsg());
   std::vector<std::string> out;
   for (size_t i = 0; i < n; i++) {
@@ -1043,6 +1047,94 @@ TEST_CASE("a batch read gives each key's row as a single read does") {
   sm1::closedb(old);
   sm1::closedb(now);
   sm1::closedb(w);
+}
+
+TEST_CASE("a batch read's kept iterator reads the store as it is now") {
+  // Verify that an iterator kept from one batch read to the next
+  // sees what a new one would: other sessions' commits, the
+  // session's own writes, and a store compacted in between.
+  // 1. Write k0..k9. Read k1..k4 in a batch through a kept iterator.
+  // 2. Session W updates k2 and commits. A new statement reads k2
+  //    as W wrote it, through the same iterator.
+  // 3. This session updates k3 and erases k4: the next batch reads
+  //    its own writes.
+  // 4. Compact the store, so its files change; W updates k1. The
+  //    next batch reads W's k1, and a single read agrees.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  for (int i = 0; i < 10; i++) {
+    chain_put(f.s, c, "k" + std::to_string(i), "v" + std::to_string(i), true);
+  }
+  std::vector<std::string> keys = {"k1", "k2", "k3", "k4"};
+  sm1::batch_iter_t *iter = sm1::batch_iter_new();
+  begin_xct(f.s);
+  CHECK(batch_reads(f.s, c, keys, iter) ==
+        std::vector<std::string>{"v1", "v2", "v3", "v4"});
+  CHECK(sm1::batch_iter_held(iter));
+
+  sm1::session_t *w = f.open();
+  chain_put(w, c, "k2", "w2", false);
+  REQUIRE(sm1::stmt_begin(f.s) == 0);
+  CHECK(batch_reads(f.s, c, keys, iter) ==
+        std::vector<std::string>{"v1", "w2", "v3", "v4"});
+
+  REQUIRE(sm1::chain_update(f.s, c, "k3", "o3") == 0);
+  REQUIRE(sm1::chain_erase(f.s, c, "k4") == 0);
+  REQUIRE(sm1::stmt_begin(f.s) == 0);
+  CHECK(batch_reads(f.s, c, keys, iter) ==
+        std::vector<std::string>{"v1", "w2", "o3", "-"});
+
+  REQUIRE(sm1::compact(f.s, c) == 0);
+  chain_put(w, c, "k1", "w1", false);
+  REQUIRE(sm1::stmt_begin(f.s) == 0);
+  CHECK(batch_reads(f.s, c, keys, iter) ==
+        std::vector<std::string>{"w1", "w2", "o3", "-"});
+  CHECK(batch_reads(f.s, c, keys, iter) == single_reads(f.s, c, keys));
+  commit_xct(f.s);
+  sm1::batch_iter_free(iter);
+  sm1::closedb(w);
+}
+
+TEST_CASE("a batch read's kept iterator goes with the transaction") {
+  // Verify that sm1 lets go of a kept iterator where it ends its
+  // cursors, so one its caller never frees holds no RocksDB files.
+  // 1. A batch read keeps an iterator; the commit lets it go.
+  // 2. Kept again, a rollback to a savepoint lets it go; the next
+  //    batch keeps one again, and the abort lets that go.
+  // 3. Kept again, the session's close lets it go, and it is freed
+  //    after the session is gone.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  for (int i = 0; i < 4; i++) {
+    chain_put(f.s, c, "k" + std::to_string(i), "v" + std::to_string(i), true);
+  }
+  std::vector<std::string> keys = {"k0", "k1", "k2", "k3"};
+  sm1::batch_iter_t *iter = sm1::batch_iter_new();
+  CHECK(!sm1::batch_iter_held(iter));
+  begin_xct(f.s);
+  batch_reads(f.s, c, keys, iter);
+  CHECK(sm1::batch_iter_held(iter));
+  commit_xct(f.s);
+  CHECK(!sm1::batch_iter_held(iter));
+
+  begin_xct(f.s);
+  int depth = sm1::savepoint(f.s);
+  batch_reads(f.s, c, keys, iter);
+  CHECK(sm1::batch_iter_held(iter));
+  REQUIRE(sm1::rollback(f.s, depth) == 0);
+  CHECK(!sm1::batch_iter_held(iter));
+  batch_reads(f.s, c, keys, iter);
+  CHECK(sm1::batch_iter_held(iter));
+  REQUIRE(sm1::abort(f.s) == 0);
+  CHECK(!sm1::batch_iter_held(iter));
+
+  begin_xct(f.s);
+  batch_reads(f.s, c, keys, iter);
+  CHECK(sm1::batch_iter_held(iter));
+  sm1::closedb(f.s);
+  f.s = nullptr;
+  CHECK(!sm1::batch_iter_held(iter));
+  sm1::batch_iter_free(iter);
 }
 
 TEST_CASE("a batch of ascending keys is read by steps and seeks alike") {
