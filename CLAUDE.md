@@ -71,6 +71,22 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
 
 	- do not reformat code blocks, tables, or headings.
 
+- **Document style: 80% of ASD-STE100** (Simplified Technical
+  English). Keep its writing rules; relax its dictionary.
+	- Keep: short sentences (procedures at most 20 words,
+	  descriptions at most 25); active voice; simple tenses; one
+	  instruction per sentence; one topic per paragraph; keep
+	  "the" and "a"; no noun clusters of more than three words;
+	  steps as numbered lists; warnings and cautions stated first.
+	- Use one word for one meaning, and one meaning for each word,
+	  throughout a document: do not use synonyms for variety.
+	- Relaxed: technical terms of databases and code (snapshot,
+	  latch, B-link, rw-edge), names of functions, files and
+	  decisions, and common words outside STE's dictionary, are
+	  allowed. Define a term at its first use.
+	- Applies to new and edited prose in `.md` files and code
+	  comments; do not rewrite existing text only for style.
+
 - **Fix one issue at a time:** Complete the full plan-act-validate
   cycle for a single issue before moving to the next.
 
