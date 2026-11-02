@@ -1064,6 +1064,69 @@ TEST_CASE("tree: a cursor of rows aimed again gives each probe's rows") {
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
+TEST_CASE("tree: a cursor of rows goes on past a rollback to a savepoint") {
+  // Verify a rollback to a savepoint, with a tree's cursor of rows
+  // open, leaves the cursor to give the rest of its rows: a tree's
+  // cursor has no rel scan for the rollback to close.
+  // 1. Insert rows of states a to e, and commit.
+  // 2. Open a tree's cursor on c and read 3 rows.
+  // 3. Set a savepoint, insert a row of c, and roll back to it.
+  // 4. The cursor gives the rest of c's rows, the rolled-back row
+  //    not among them.
+  trees_t f;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  for (int i = 0; i < 100; i++) {
+    row_t r(i, std::string(1, static_cast<char>('a' + i % 5)), "O");
+    uint64_t id;
+    REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  std::string v = sm2::make_varlena("c");
+  sm2::datum_t d[1] = {sm2::datum_from_ptr(v.data())};
+  bool nn[1] = {false};
+  sm2::bound_t b{d, nn, true};
+  sm3::scan_t *scan = nullptr;
+  REQUIRE(sm3::tbl_idx_scan_rows(t, f.by_state, &b, &b, scan) == 0);
+  std::vector<int32_t> got;
+  uint64_t id;
+  std::string_view tuple;
+  auto next = [&]() {
+    sm2::datum_t col;
+    bool n;
+    REQUIRE(sm2::tup_decode(sm3::tbl_def(t).desc, tuple, 0, col, n) == 0);
+    got.push_back(sm2::datum_to_int32(col));
+  };
+  for (int i = 0; i < 3; i++) {
+    REQUIRE(sm3::tbl_scannxt(scan, id, tuple) == 0);
+    next();
+  }
+
+  REQUIRE(sm3::savepoint(f.a) == 1);
+  row_t r(1000, std::string("c"), "O");
+  REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
+  REQUIRE_MESSAGE(sm3::rollback(f.a, 1) == 0, sm1::errmsg());
+
+  int rc;
+  while (0 == (rc = sm3::tbl_scannxt(scan, id, tuple))) {
+    next();
+  }
+  CHECK(1 == rc);
+  std::sort(got.begin(), got.end());
+  std::vector<int32_t> want;
+  for (int i = 2; i < 100; i += 5) {
+    want.push_back(i);
+  }
+  CHECK(want == got);
+  sm3::tbl_scanend(scan);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
 TEST_CASE("tree: a table rewritten keyed anew keeps its trees") {
   // Verify a rewrite into a new store, a primary key added to rows,
   // makes each tree anew and fills it.

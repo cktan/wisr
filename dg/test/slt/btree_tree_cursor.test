@@ -1,12 +1,15 @@
 # Verify a cursor over a tree, whose rows are read in batches through
 # one kept iterator (../sm/BATCHREAD.md section 2.1), gives the rows
-# PostgreSQL's cursor gives, across statements and across the
+# PostgreSQL's cursor gives, across statements, across a rollback to
+# a savepoint, which lets go of the iterator, and across the
 # transaction's own update, which a cursor opened before it does not
 # see.
 # 1. Make 40 rows of key 1, 10 of key 2, and a tree on the key.
 # 2. Open a cursor over key 1's rows and fetch 3: its second batch
-#    keeps an iterator. Fetch 10 more in another statement.
-# 3. Update a row the cursor has yet to give, and fetch the rest: the
+#    keeps an iterator.
+# 3. Update a row under a savepoint, roll the savepoint back, and
+#    fetch 10.
+# 4. Update a row the cursor has yet to give, and fetch the rest: the
 #    row is as it was when the cursor opened. After the commit, a new
 #    query gives the update.
 
@@ -48,6 +51,15 @@ fetch 3 from cur
 1	v1
 2	v2
 3	v3
+
+statement ok
+savepoint s
+
+statement ok
+update c set v = 'x' where id = 20
+
+statement ok
+rollback to savepoint s
 
 query IT nosort
 fetch 10 from cur

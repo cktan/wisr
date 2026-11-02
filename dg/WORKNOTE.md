@@ -10892,3 +10892,21 @@ made three.
   crashes the server: `sm3::pins_rolled_back` reads the cursor's
   rel scan, which a tree's cursor does not have. It is the same
   on `main`; not fixed here.
+
+## Step 370: a rollback to a savepoint with a tree's cursor open
+
+Step 369 found that `ROLLBACK TO SAVEPOINT`, with a cursor over a
+tree open, crashed the server. `sm3::pins_rolled_back` drops the
+row of each cursor whose rel scan the rollback closed, and read
+the rel scan of every cursor; a tree's cursor has none. It now
+skips a cursor with no rel scan. A tree's cursor goes on: its rows
+are in its own raw pins, and each batch is read at the view of
+its call.
+
+- **Tests**: sm3, a tree's cursor read in part, a row inserted
+  under a savepoint and rolled back, then the rest of the rows,
+  the rolled-back row not among them. dg,
+  `btree_tree_cursor.test` takes its savepoint step back. Both
+  crashed before the fix. rel cannot keep a tree's row cursor
+  open between calls.
+

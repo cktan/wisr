@@ -145,7 +145,10 @@ void pin_release(pin_t *p) {
 /* Make the pins of the cursors a rollback closed stale; see pin.h. */
 void pins_rolled_back(session_t *s) {
   for (pin_t *p = s->pins_scan; p; p = p->next) {
-    if (sm2::rel_scan_rolled_back(p->scan->rel)) {
+    // A tree's cursor has no rel scan for the rollback to close: its
+    // rows are in its own raw pins, each batch read at the view of
+    // its call, so it goes on (../../BATCHREAD.md §2.1).
+    if (p->scan->rel && sm2::rel_scan_rolled_back(p->scan->rel)) {
       drop(p);
     }
   }
