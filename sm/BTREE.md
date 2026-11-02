@@ -385,13 +385,175 @@ opens a probe a scan, each descending through the inner pages its
 index holds (D11).
 
 **Index-only scans read the row.** None is answered from the tree
-alone; `count(*)` by an index gets slower. A visibility map, or
-InnoDB's page-level newest writer, can be added later; it is no
-part of this design.
+alone; `count(*)` by an index gets slower. A leaf's all-visible
+bit, proposed in §4.1, would answer it.
 
 **Backward** (planned, after `prev`): a step left can land on a
 page that has since split, so it must walk right until it meets
 the page it came from, as nbtree's `_bt_walk_left()`.
+
+### 4.1 Proposed: an all-visible leaf
+
+*Proposed 2026-11-02, for review; nothing here is built.* It
+changes §2's "the row decides visibility" for one case: a leaf
+vacuum has found settled answers an index-only scan alone.
+
+**Why.** `bench/` q2, `select count(*) from usertable where
+state = 'CA'`, 183 rows of 10,000: a regular index counts its
+entries, 0.18 ms; a tree reads each row, 0.39 to 0.59 ms. The
+tree's count costs what the regular index's costs reading the
+rows, 0.50 ms: the row reads are the difference. PostgreSQL
+answers it from the index alone after `VACUUM`, its visibility
+map's bits set, in 3 pages, 0.04 ms.
+
+**The bit.** `page_all_visible`, `0x04` in a leaf's `flags`
+(§3.2): every entry on the leaf is **settled and live**, its
+row's newest version committed at or below the GC watermark
+(`sm1/SM1_DESIGN.md` §8.3) with the entry's key, so every
+snapshot there is or will be sees the entry.
+
+**The algorithm.** `read_newest` is `sm1::read_newest`, a row's
+newest version and whether it has committed; a row is read by
+the key its entry ends with (§3.3).
+
+```
+INSERT an entry           (an insert, or an update's new key)
+  latch leaf(key)
+  add the entry if it is not there
+  leaf.all_visible = false
+  write leaf              -- an insert writes it already
+  unlatch
+
+DELETE a row, or UPDATE one changing an index's key or the
+primary key
+  write the row's new version              -- as today
+  for each tree index:
+    latch leaf(old key)
+    if leaf.all_visible:
+      leaf.all_visible = false
+      write leaf          -- the only new write
+    unlatch
+  (an update then INSERTs its new entry)
+
+VACUUM an index
+  for each leaf, left to right:
+    if leaf.all_visible: skip      -- it holds no dead entry
+    latch leaf
+    ok = true
+    for each entry:
+      r = read_newest(entry's row key)
+      if r committed at or below the watermark:
+        if r is gone or has another key: remove the entry
+        -- else settled and live
+      else:
+        ok = false        -- not settled: kept, judged next time
+      if the entry is cut: ok = false
+    if ok: leaf.all_visible = true
+    write leaf if anything changed
+    unlatch
+
+INDEX-ONLY SCAN
+  take the snapshot
+  for each leaf in the range:      -- no latch, as today
+    if leaf.all_visible:
+      hand out its entries in range, no row read
+    else:
+      for each entry in range:
+        read its row at the snapshot
+        hand it out if the row has the entry's key
+```
+
+**Why vacuum judges the leaf latched**, unlike §7's removal,
+which judges first without the latch: a delete's row write
+either comes before vacuum latches the leaf, so vacuum reads
+a version not settled and leaves the bit unset, or after, so
+the delete waits on the latch and finds the bit set, and
+clears it. Judged without the latch, vacuum could read the old
+row, and set the bit after the delete had looked. So a delete
+reads the bit latched too; the latch costs no write.
+
+**Why a scan needs no latch**: it reads a leaf after taking its
+snapshot, and a writer clears the bit before its commit, as an
+entry's insert is written (§5), in RocksDB's WAL before the
+user's commit. A snapshot that includes the delete reads the
+leaf with the bit clear.
+
+**What it costs a writer.** A delete, or an update of a key,
+latches the old key's leaf, descending to it through cached
+inner pages, which it does not today, and writes the leaf only
+if the bit is set: **once a leaf between two vacuums**, however
+many of its entries change. An update keeping the index's key
+and the row's key clears nothing: its entry is good at every
+snapshot. An insert writes its leaf already.
+
+**What it costs vacuum.** It skips a set leaf, as PostgreSQL's
+vacuum skips an all-visible heap page: a second `VACUUM` with
+no write between reads the leaves and no row. On a leaf not
+set it reads the row of each entry, as §7 does today.
+
+**The planner.** `estimate_rel_size()` gives an sm table
+`allvisfrac` 1, true of today's entries, not of a tree: a
+tree's would be its set leaves over its leaves, counted by
+vacuum.
+
+**Not taken:**
+
+- **InnoDB's newest writer on a page.** Here an update or a
+  delete does not touch its old entry's leaf, and an abort
+  leaves its entry: a leaf whose newest writer is old can hold
+  an entry whose row is gone.
+- **An xmin and xmax on each entry**, as today's entries have:
+  each update and delete writes its old entry's leaf, and an
+  abort needs undo in the tree, which is the write cost the
+  tree is for avoiding.
+- **A bit on each entry, not the leaf**, until the tree writes
+  back (§11, "Log the entry, write the page later"). A scan
+  would skip each settled entry's row, and vacuum read only the
+  changed entries' rows, but a delete would clear its own
+  entry's bit: a leaf written at every delete, not once between
+  vacuums. A classic B-tree changes its leaf at every delete
+  too, but as a redo record on a dirty page, written once for
+  many; here each change puts the whole page, and PostgreSQL's
+  btree has no index write at a delete at all. With write-back,
+  a clear is a small logged change, and the entry's bit is
+  worth having. Short of it, vacuum could keep a bit on each
+  entry for itself alone, a delete queueing its old key as a
+  small key of its own rather than writing the leaf, and read
+  only the unset entries' rows and the queued keys'.
+
+**Cases:**
+
+| Case | With the bit |
+| --- | --- |
+| TOAST, cut keys | a cut entry keeps its leaf unset; recheck on the row as today |
+| non-unique, unique | set only when every entry is live: a unique key's dead equals are removed first |
+| primary key | not a tree: the rows' keys |
+| expression, partial | the entry has the key; no change |
+| INCLUDE | not in the tree: the row is read, as today |
+| update A → B → A | A → B clears A's leaf and, inserting, B's; back to A finds A's entry and clears its leaf |
+| INCLUDE-only update, key kept | clears nothing: the entry is good at every snapshot |
+| primary key change | the old entries' leaves cleared as a delete's; the new inserted |
+| delete then reinsert | the delete clears; the reinsert finds the leaf unset |
+| abort, savepoint rollback | the insert cleared its leaf; vacuum sets it again only once the dead entry is gone |
+| undo-cap overflow | no undo in the tree: a clear is its own change |
+| crash | a clear is in the WAL before the commit; one whose commit is lost leaves a leaf unset, which is safe |
+| 2PC across restart | a prepared row is not settled: vacuum leaves its leaf unset |
+| two writers, vacuum | the leaf's latch: vacuum judges a leaf with it held, and a writer reads the bit with it held |
+| old RR snapshot, RC re-read | every snapshot is at or past the GC watermark: a set leaf's entries are its |
+| SSI | the range's SIREAD, as today (D10) |
+| open cursor, Halloween | an update's leaves are cleared before it returns: their rows are read |
+| GC watermark, `CF:txn` sweep | a set bit needs neither again |
+| CREATE INDEX pending, bulk load and its rollback | entries come in as inserts: leaves unset until vacuum |
+| DROP INDEX, TRUNCATE, ALTER rewrite | pages dropped; a new store has a new tree |
+| temp tables, keyless (`_id`) tables | the same, `_id` the row's key |
+
+**Open:**
+
+1. digres has no autovacuum (`../dg/UNSUPPORTED.md` §7): a bit
+   is set only by `VACUUM`, which `bench/load.sql` would run on
+   both systems.
+2. Whether a delete's extra descent shows on the old bench's
+   write-heavy Q11.
 
 ---
 
