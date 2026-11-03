@@ -3126,6 +3126,19 @@ done
 local_psql -c 'drop role ra, rb, rc, rd, re' > "$work/auth.out" 2>&1 ||
   fail "auth: drop roles"
 
+# Verify that the data directory's owner, whose OS user name is the
+# bootstrap superuser's, gets in on the socket whatever the catalog says
+# of that role (aa/ROLE.md section 5, locked out).
+# 1. Make the superuser NOLOGIN and past VALID UNTIL.
+# 2. The owner connects on the socket as the superuser.
+# 3. Give the superuser LOGIN and no VALID UNTIL again.
+local_psql -c "alter role \"$me\" nologin valid until '2000-01-01'" \
+  > "$work/lockout.out" 2>&1 || fail "lockout: alter the superuser"
+[ "$(local_psql -c 'select current_user' 2>> "$work/lockout.out")" = "$me" ] ||
+  fail "lockout: the owner is let in"
+local_psql -c "alter role \"$me\" login valid until 'infinity'" \
+  >> "$work/lockout.out" 2>&1 || fail "lockout: restore the superuser"
+
 # Verify that a role that is not a superuser runs statements, with
 # PostgreSQL 18's privileges on what initdb made: the catalogs PUBLIC may
 # read but pg_authid, schema public pg_database_owner's with USAGE for

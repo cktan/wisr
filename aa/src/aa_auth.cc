@@ -35,13 +35,16 @@ aa_method_t aa_auth_method(aa_env_t *env, const char *rolname, bool local,
   *as_owner = false;
   if (!local || NULL == os_user)
     return AA_PASSWORD;
-  if (0 == strcmp(os_user, rolname))
-    return AA_PEER;
-  /* Locked out (ROLE.md section 8, question 3): the owner is oid 10. */
+  /*
+   * Locked out (ROLE.md section 8, question 3): the owner is oid 10. Asked
+   * first, as the owner's OS user name is often oid 10's own.
+   */
   if (os_owner && bootstrap_name(*aa_roles(env)) == rolname) {
     *as_owner = true;
     return AA_PEER;
   }
+  if (0 == strcmp(os_user, rolname))
+    return AA_PEER;
   return AA_PASSWORD;
 }
 

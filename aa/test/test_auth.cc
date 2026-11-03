@@ -62,6 +62,27 @@ TEST_CASE("auth: method") {
   CHECK(!owner);
 }
 
+// Verify that the data directory's owner, whose OS user name is the
+// bootstrap superuser's, is let in as the owner, past the catalog's
+// LOGIN and VALID UNTIL (ROLE.md section 5, locked out).
+// 1. Ask on the local socket as OS user "admin", the owner, for "admin".
+// 2. Confirm peer, as the owner.
+// 3. Ask as OS user "admin", not the owner: peer, but not as the owner.
+TEST_CASE("auth: owner by the superuser's own name") {
+  home_t h;
+  bool owner;
+
+  // 1. 2.
+  CHECK(AA_PEER ==
+        aa_auth_method(h.aa(), "admin", true, "admin", true, &owner));
+  CHECK(owner);
+
+  // 3.
+  CHECK(AA_PEER ==
+        aa_auth_method(h.aa(), "admin", true, "admin", false, &owner));
+  CHECK(!owner);
+}
+
 // Verify the secret handed to the exchange, and each reason one is not.
 // 1. Ask for a role's that has a password.
 // 2. Ask for a role that does not exist, and one with no password.

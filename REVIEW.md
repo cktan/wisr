@@ -5,14 +5,14 @@ leaves this file when it is fixed, or decided not to be; git
 history keeps the closed reviews (`REVIEW.md` up to
 `1a8407e2`).
 
-1. **`aa/`**: open, not yet checked against the code.
+1. **`aa/`**: open; finding 1 fixed, the rest not yet checked.
 2. **`sm/`**: open, not yet checked against the code.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
 # Review: `aa/` (Authentication and Authorization)
 
-**Status: open.** No finding is fixed yet, and none has been
-checked against the code.
+**Status: open.** Finding 1, the lockout bypass, is fixed;
+the others are not yet checked against the code.
 
 Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 `CLAUDE.md`, `sm/CODE.md`, `aa/AA_DESIGN.md`, `aa/ROLE.md`, and
@@ -28,32 +28,12 @@ Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 | No `throw`, `catch`, or RTTI | PASS | Zero `throw`/`try`/`catch` in library code; builds with `-fno-rtti`. |
 | Naming (`snake_case`, `_t`, `m_`) & Yoda conditions | PASS | Types end in `_t`, private fields in `home_t` use `m_`, and comparisons use `0 == x`. |
 | SCRAM-SHA-256 & cycle detection | PASS | Constant-time digest comparison (`timingsafe_eq`), salt/iteration checks, and DFS cycle detection in `grant_role`. |
-| Correctness & concurrency | 3 High, 4 Medium | Lockout bypass bug, partial-epoch invalidation loss, and `env->objects` / `pg_global` consistency races. |
+| Correctness & concurrency | 2 High, 4 Medium | Partial-epoch invalidation loss, and `env->objects` / `pg_global` consistency races. |
 | `sm/CODE.md` & style rules | 5 Low | `std::map`/`std::pair` in `aa.h`, separate error state, duplicate `session_guard_t`. |
 
 ---
 
 ### 2. Correctness, Security, and Concurrency Findings
-
-#### [HIGH] 1. Lockout recovery (`as_owner`) bypassed when OS user name equals bootstrap superuser role name
-
-- **Location:** `aa/src/aa_auth.cc:38-44`
-- **Issue:** `aa_auth_method()` checks `if (0 == strcmp(os_user,
-  rolname)) return AA_PEER;` (line 38) before checking `if
-  (os_owner && bootstrap_name(*aa_roles(env)) == rolname)` (line
-  41), while `*as_owner` is initialized to `false` (line 35). In
-  standard `initdb` deployments, the bootstrap superuser's
-  `rolname` equals the data-directory owner's OS user name. When
-  that OS owner connects locally as the bootstrap superuser,
-  `aa_auth_method()` returns early at line 39 with `*as_owner =
-  false`. As a result, `aa_login_okay()` (`aa/src/aa_auth.cc:81`)
-  does not bypass `NOLOGIN` or `VALID UNTIL`, locking out the
-  data-directory owner and violating `aa/ROLE.md` §5 and
-  `aa/USAGE.md` §3.
-- **Fix:** Check `os_owner && bootstrap_name(*aa_roles(env)) ==
-  rolname` before the general `0 == strcmp(os_user, rolname)`
-  branch so `*as_owner = true` is set whenever the data-directory
-  owner logs in as the bootstrap superuser.
 
 #### [HIGH] 2. Partial-epoch eviction in `env->changed` drops cache invalidations (`aa_objects_moved`)
 
@@ -199,8 +179,8 @@ Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 
 # Review: `sm/` (Storage Manager Stack)
 
-**Status: open.** No finding is fixed yet, and none has been
-checked against the code.
+**Status: open.** Finding 1, the lockout bypass, is fixed;
+the others are not yet checked against the code.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
