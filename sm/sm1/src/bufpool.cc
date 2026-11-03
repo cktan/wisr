@@ -137,6 +137,11 @@ struct alignas(64) bufpool_t::frame_t {
 struct bufpool_t::waitq_t {
   std::mutex mu;
   std::condition_variable cv;
+  /*
+   * The threads asleep in cv, or woken and yet to take mu again, on any
+   * of the frames this queue serves. Read and written under mu only.
+   */
+  int sleepers = 0;
 };
 
 /* Make the frames, each empty, and the buckets, twice as many. */
@@ -227,6 +232,14 @@ bool try_pin(std::atomic<uint32_t> &state, bool ex, bool past_wait) {
 /*
  * Pin f, found for tag, waiting by sm_wait: 0; 1 if f holds another
  * page by now, nothing pinned; -1 if a wait was interrupted.
+ * 1. Spin on the fast path, which yields to a sleeper's wait bit.
+ * 2. Take the wait queue's mu, held from here to the wait.
+ * 3. Set the wait bit, so a release after it wakes this thread.
+ * 4. Try the pin, past the bit. On success, clear the bit if no
+ *    thread sleeps on the queue: else it outlasts the sleep it
+ *    stood for, and sends the page's next pins to the slow path.
+ * 5. If f holds another page by now, return 1.
+ * 6. Sleep, counted in the queue's sleepers; then go to step 3.
  */
 int bufpool_t::acquire(frame_t *f, bool ex, const tag_t &tag) {
   for (int i = 0; i < spins; i++) {
@@ -234,24 +247,36 @@ int bufpool_t::acquire(frame_t *f, bool ex, const tag_t &tag) {
       return 0;
     }
   }
-  // A pin's wait may last through a write that stalls (BUFFERPOOL.md
-  // §4.4), so it sleeps, and can be cut short.
+  // Step 2. A pin's wait may last through a write that stalls
+  // (BUFFERPOOL.md §4.4), so it sleeps, and can be cut short.
   waitq_t &q = waitq_of(f);
   std::unique_lock<std::mutex> guard(q.mu);
   for (;;) {
-    // The bit first: a release after it sees it, and wakes this.
+    // Step 3: the bit first, then the try.
     f->state.fetch_or(state_wait, std::memory_order_relaxed);
     if (try_pin(f->state, ex, true)) {
+      // Step 4. With mu held, every thread that set the bit and has
+      // yet to take its pin is in sleepers, so a count of 0 means none
+      // needs the bit. A sleeper on another frame of the queue keeps
+      // the bit too: a cost, never a lost wake-up.
+      if (0 == q.sleepers) {
+        f->state.fetch_and(~state_wait, std::memory_order_relaxed);
+      }
       return 0;
     }
-    // Never sleep on another page's frame: its holder may wait for a
-    // page this thread holds, out of the order pages are latched in.
+    // Step 5. Never sleep on another page's frame: its holder may wait
+    // for a page this thread holds, out of the order pages are latched
+    // in.
     if (!(f->tag() == tag)) {
       return 1;
     }
+    // Step 6. Counted until it has mu again, woken or interrupted.
     bool slept = false;
-    if (SM_WAIT_INTERRUPTED ==
-        sm_wait(&guard, &q.cv, woke, &slept, sm_wait_mask(), SM_FOREVER)) {
+    q.sleepers++;
+    sm_wait_result_t r =
+        sm_wait(&guard, &q.cv, woke, &slept, sm_wait_mask(), SM_FOREVER);
+    q.sleepers--;
+    if (SM_WAIT_INTERRUPTED == r) {
       return interrupted();
     }
   }
@@ -269,6 +294,9 @@ int bufpool_t::acquire(frame_t *f, bool ex, const tag_t &tag) {
  *    lost: it sleeps with the bit clear, and no release wakes it.
  * 3. Notify every sleeper, with q.mu let go, so that none wakes only
  *    to wait for q.mu.
+ * Each woken sleeper sets the bit again before it tries its pin; the
+ * last of them to take q.mu, with the queue's sleepers at 0, clears it
+ * (acquire, step 4).
  */
 void bufpool_t::wake(frame_t *f) {
   f->state.fetch_and(~state_wait, std::memory_order_relaxed);
@@ -593,6 +621,13 @@ size_t bufpool_t::exclusive() const {
     n += 0 != (s & state_ex) ? 1 : 0;
   }
   return n;
+}
+
+/* Whether a page's frame has its wait bit set; see bufpool.h. */
+bool bufpool_t::waiting(const bufpool_page_t &page) const {
+  const frame_t *f = find(tag_t(page));
+  return nullptr != f &&
+         0 != (f->state.load(std::memory_order_relaxed) & state_wait);
 }
 
 /* A page's age; see bufpool.h. */

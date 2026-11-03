@@ -198,6 +198,47 @@ TEST_CASE("bufpool: shared pins share, an exclusive pin excludes") {
   CHECK(read);
 }
 
+TEST_CASE("bufpool: a pin taken after a sleep leaves no wait bit behind") {
+  // Verify the wait bit lasts only while a thread sleeps on the frame:
+  // a sleeper that wakes and takes its pin clears it, so the page's
+  // next readers pin on the fast path, not under the wait queue's mutex.
+  // 1. Pin a page exclusive.
+  // 2. A reader pins it shared, and sleeps: the wait bit is set.
+  // 3. Unpin; the reader takes its pin and holds it.
+  // 4. While it holds, the wait bit is clear.
+  bufpool_t pool(8);
+  store_t st;
+  fill(st, 1);
+  std::string key = key_of(0);
+  bufpool_page_t page{1, 2, key};
+  bufpool_t::frame_t *x = nullptr;
+  std::string_view b;
+  REQUIRE(0 == pin(pool, st, 0, true, 0, x, b));
+
+  // 2.
+  std::atomic<int> stage{0};
+  std::thread reader([&] {
+    bufpool_t::frame_t *r = nullptr;
+    std::string_view v;
+    REQUIRE(0 == pin(pool, st, 0, false, 0, r, v));
+    stage = 1;
+    while (2 != stage) {
+      std::this_thread::yield();
+    }
+    pool.unpin(r);
+  });
+  REQUIRE(eventually([&] { return pool.waiting(page); }));
+
+  // 3.
+  pool.unpin(x);
+  REQUIRE(eventually([&] { return 1 == stage; }));
+
+  // 4.
+  CHECK_FALSE(pool.waiting(page));
+  stage = 2;
+  reader.join();
+}
+
 TEST_CASE("bufpool: a page's pins wait out its miss, and it is read once") {
   // Verify a miss holds its frame exclusive through its read.
   // 1. Eight threads pin one page, its load slow.

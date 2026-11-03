@@ -158,6 +158,9 @@ public:
   /* The frames pinned exclusive now: for tests. */
   size_t exclusive() const;
 
+  /* Whether page's frame has its wait bit set now: for tests. */
+  bool waiting(const bufpool_page_t &page) const;
+
   size_t frames() const { return m_nframes; }
 
 private:
