@@ -644,8 +644,17 @@ int alter_column_type(session_t *session, uint64_t oid, std::string_view name,
   c.typmod = to.typmod;
   c.default_expr = to.default_expr;
   c.on_update_expr = to.on_update_expr;
+  // A type with no collation: the column has none, nor does any
+  // index key on it, which create_index refuses for such a type.
   if (!collatable(to.type_code)) {
     c.collation = std::nullopt;
+    for (index_rec_t &x : rec.indexes) {
+      for (index_key_rec_t &k : x.keys) {
+        if (k.attnum == at) {
+          k.collation = std::nullopt;
+        }
+      }
+    }
   }
   bool empty = true;
   if (conv && sm1::store_empty(session->sm1, rec.storeid, empty) != 0) {

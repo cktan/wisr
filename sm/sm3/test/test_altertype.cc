@@ -307,6 +307,68 @@ TEST_CASE("a duplicate in a unique index names that index and the row") {
   sm3::abort(f.s);
 }
 
+TEST_CASE("a column retyped to one with no collation drops its keys' too") {
+  // Verify no index key keeps a collation its type does not take
+  // (ALTERTYPE.md §5).
+  // 1. t's b, text, gets an index t_bc whose key has a collation.
+  // 2. b goes to int4: t_bc's key has no collation in the record.
+  // 3. b goes back to text: still none.
+  alt_t f;
+  f.put(1, "1", 0);
+  uint64_t ci = 0, bc = 0;
+  std::vector<sm3::index_key_spec_t> by_b = {{1, false, false, std::nullopt}};
+  f.begin();
+  REQUIRE_MESSAGE(sm3::create_collation(f.s, sm3::nsp_public, "ci",
+                                        "und-u-ks-level2", false, ci) == 0,
+                  sm1::errmsg());
+  by_b[0].collation = ci;
+  REQUIRE(sm3::create_index(f.s, f.t, "t_bc", by_b, {}, false, bc) == 0);
+  REQUIRE(sm3::commit(f.s) == 0);
+  // The collation of t_bc's key in the record s's transaction sees.
+  auto key_collation = [&f, bc]() {
+    sm3::table_rec_t rec;
+    REQUIRE(sm3::cat_get_table_rec(f.s, f.t, rec) == 0);
+    for (const sm3::index_rec_t &x : rec.indexes) {
+      if (x.oid == bc) {
+        return x.keys[0].collation;
+      }
+    }
+    FAIL("no index t_bc");
+    return std::optional<uint64_t>();
+  };
+  sm3::column_conv_fn to_int = [](std::span<const sm2::datum_t> v,
+                                  std::span<const bool> n, std::string &out,
+                                  bool &out_null) {
+    out_null = n[1];
+    if (!out_null) {
+      out = int4_bytes(std::stoi(text_of(v, 1)));
+    }
+    return 0;
+  };
+  f.begin();
+  CHECK(key_collation() == ci);
+  REQUIRE_MESSAGE(sm3::alter_column_type(
+                      f.s, f.t, "b", {sm2::type_int4.code, -1}, &to_int) == 0,
+                  sm1::errmsg());
+  CHECK(key_collation() == std::nullopt);
+  REQUIRE(sm3::commit(f.s) == 0);
+  sm3::column_conv_fn to_text = [](std::span<const sm2::datum_t> v,
+                                   std::span<const bool> n, std::string &out,
+                                   bool &out_null) {
+    out_null = n[1];
+    if (!out_null) {
+      out = sm2::make_varlena(std::to_string(sm2::datum_to_int32(v[1])));
+    }
+    return 0;
+  };
+  f.begin();
+  REQUIRE_MESSAGE(sm3::alter_column_type(
+                      f.s, f.t, "b", {sm2::type_text.code, -1}, &to_text) == 0,
+                  sm1::errmsg());
+  CHECK(key_collation() == std::nullopt);
+  REQUIRE(sm3::commit(f.s) == 0);
+}
+
 TEST_CASE("a converter's failure, or a null in a NOT NULL column, fails it") {
   // Verify the change is all or nothing (ALTERTYPE.md §5).
   // 1. t has two rows.
