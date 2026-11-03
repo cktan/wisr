@@ -1722,12 +1722,12 @@ no version. Errors as `sm1::insert`'s.
 
 ### int sm1::erase_moved(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::rawpin_t* pin, std::string_view& old)
 
-`sm1::erase` of a row that moved to another key
-(`../ROWKEY.md` §2.3): its tombstone is marked a move's, flags
-bit 2 (`MVCC.md` §2). A reader sees it as any tombstone. A
+`sm1::erase` of a row that moved to another key (`../ROWKEY.md`
+§2.3): its tombstone is marked a move's, flags bit 2
+(`SM1_DESIGN.md` §3.1). A reader sees it as any tombstone. A
 writer that meets it as the key's newest version, an
-`sm1::update` or `sm1::erase`, fails with `SM_ERR_MOVED` where
-a plain tombstone is `SM_ERR_NOTFOUND`, and so does
+`sm1::update` or `sm1::erase`, fails with `SM_ERR_MOVED` where a
+plain tombstone is `SM_ERR_NOTFOUND`, and so does
 `sm1::read_latest` where a plain one returns 1: at READ
 COMMITTED, after `SM_ERR_UPDATED`, the writer learns the row
 lives on elsewhere. The row erased is pinned into `pin`, as

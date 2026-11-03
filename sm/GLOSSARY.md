@@ -242,7 +242,7 @@ or below it.
 
 **`visible_ts`** — the largest timestamp below which every
 commit is published, so that a snapshot never sees a gap
-(`sm1/MVCC.md` §3).
+(`sm1/SM1_DESIGN.md` §4.3).
 
 **view** — what a read actually sees: its `snapshot_ts`, its
 own `xid`, and the `seq` high-water mark that decides which of

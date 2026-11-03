@@ -2,7 +2,7 @@
  * test_print.cc -- sq_to_string: trees built by hand print as
  * PostgreSQL's nodeToString() prints the same statement. The
  * expected text in each test is what PostgreSQL's parser printed for
- * the SQL named in it (PLAN.md step 2).
+ * the SQL named in it.
  */
 
 #include "doctest.h"

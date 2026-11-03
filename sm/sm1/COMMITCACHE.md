@@ -79,10 +79,10 @@ opens. It replaced a hash map and a queue of the order of
 entry, on the order of 64 bytes an entry.
 
 The ids are hashed, not used as an index, because they are
-sparse: one counter hands out every `xid`, `wts` and
-`commit_ts` (`MVCC.md` §1), so consecutive transactions' ids
-are several apart. PostgreSQL can index its commit status by
-`xid` because its ids have a counter of their own.
+sparse: one counter hands out every `xid`, `wts` and `commit_ts`
+(`SM1_DESIGN.md` §4.1), so consecutive transactions' ids are
+several apart. PostgreSQL can index its commit status by `xid`
+because its ids have a counter of their own.
 
 The same mutex guards the active table. That is deliberate: a
 committing transaction leaves the active table and enters the

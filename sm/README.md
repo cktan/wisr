@@ -61,9 +61,6 @@ the wrapper through the `rel/` test suite.
 - `sm1/SM1_DESIGN.md` — how level 1 works; the design of record
 - `sm1/API.md` — sm1's C++ API, call by call, in
   `namespace sm1`
-- `sm1/MVCC.md` — a digest of sm1's MVCC: its timestamps, a
-  version's bytes, the status table, and how a reader turns a
-  writer's id into a commit timestamp
 - `sm1/WRITELOCK.md` — writes that keep no row lock: the
   uncommitted version stands for the lock, as in PostgreSQL
 - `sm1/COMMITCACHE.md` — the commit cache: what it holds,
@@ -97,8 +94,6 @@ the wrapper through the `rel/` test suite.
   representation, order, and key bytes
 - `sm2/TUPLE.md` — a row's bytes: the tuple format
 - `sm2/VARLENA.md` — a variable-width datum's bytes
-- `sm2/QUESTIONS.md` — what is still open in sm2, and where
-  each settled answer went
 - `sm3/SM3_OBJECTIVE.md` — what level 3 is for
 - `sm3/SM3_DESIGN.md` — the catalog, index maintenance and
   builds, scans and statistics
@@ -133,8 +128,6 @@ the wrapper through the `rel/` test suite.
   every level; built
 - `BTREE.md` — secondary indexes as B+trees of their own
   pages; proposed, not built
-- `SM_DECIMAL_PLAN.md` — the decimals carry their scale in
-  the datum; built
 - `LOGICALDECODE.md` — a change feed for replication: a
   change log committed with the data, drained in commit order
   into files of `pgoutput` messages; proposed, not built

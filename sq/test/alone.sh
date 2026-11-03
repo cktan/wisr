@@ -1,6 +1,6 @@
 #!/bin/bash
 # alone.sh -- verify that the library and its tests are built from
-# nothing outside sq: not digres's, and not sm's (PLAN.md step 1).
+# nothing outside sq: not digres's, and not sm's.
 # 1. Read the compiler's dependency files for the library, what is
 #    generated into it, its tests and the tools they run.
 # 2. Confirm no file under ../ is named in them.

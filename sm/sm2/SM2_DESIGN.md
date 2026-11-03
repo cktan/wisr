@@ -195,7 +195,7 @@ with two of DuckDB's four widths, each its own type:
 `decimal64`, 64 bits for a precision up to 17, and
 `decimal128`, 128 bits up to 36, the scale in the low bits of
 each, which costs a digit and two of DuckDB's 18 and 38
-(`../SM_DECIMAL_PLAN.md`). (DuckDB also has 16- and
+(§2.2). (DuckDB also has 16- and
 32-bit forms up to 4 and 9 digits; sm2 does not.) An earlier
 draft took Arrow's decimal, with a 256-bit form up to 76
 digits; DuckDB's limit of 38 was preferred. Three things

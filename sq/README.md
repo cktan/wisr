@@ -17,8 +17,8 @@ make nodes       rewrite include/sq_nodes.h from spec/
 It needs a C++20 compiler, flex, bison and Python 3, and nothing
 else: nothing sq is built from is outside this directory.
 
-`DESIGN.md` says how it is put together and why. `PLAN.md` is
-the record of how it was made, and of what is left. digres uses
+`DESIGN.md` says how it is put together and why, and what is
+left. digres uses
 it through `raw_parser()`, in `../dg/src/backend/parser`.
 
 ## Using it

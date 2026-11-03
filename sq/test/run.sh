@@ -18,7 +18,7 @@
 #
 # The expected files are PostgreSQL's own answers: each was written by
 # its parser and scanner, before sq stopped building them beside its
-# own (PLAN.md step 6); the .loc files by its parser as it is in this
+# own; the .loc files by its parser as it is in this
 # repository's history, built again for the purpose. --accept replaces them with sq's, which is to
 # say with nothing to check sq against: read the difference first.
 #

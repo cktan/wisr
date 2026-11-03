@@ -355,3 +355,30 @@ digres is checked with sq's own tests. `digres --parse` prints
 what `build/sq_parse` prints, for `raw_parser()`, so the
 expected files and digests of §8 hold digres's parser to what
 PostgreSQL's printed, locations among it.
+
+## What is left
+
+None of it is owed to a step. Each is a choice made on the way
+and written where it was made:
+
+- **A tree holds a little more memory than its nodes need**: a
+  list's outgrown cells, and the scanner's strings no node kept
+  (§9). A list assigned to a field is shared, not
+  copied (§6).
+- ~~The locations in a tree are not held by a test that
+  stays.~~ They are now. `sq_to_string_with_locations` prints
+  them; `expected/*.loc` and a third digest in
+  `test/regress.digest` hold what PostgreSQL's parser gave, for
+  the 28 files of statements here and the 49,034 pieces. That
+  parser was built again from this repository's history to
+  write them. digres's `digres --parse --locations` is held to
+  the same files.
+- **The expected files and digests cannot be remade** without
+  PostgreSQL's parser. Porting sq to a later PostgreSQL begins
+  with making them from that one (§2, §8).
+- **`make corpus-test` needs PostgreSQL 18.6's regression SQL**,
+  which is not in this repository.
+- **An `Oid` field is 32 bits**; digres's is to be 64.
+- **Text is not checked to be UTF-8.**
+- **`spi.c` in digres** can still be handed a PL/pgSQL parse
+  mode, which `raw_parser()` now refuses.

@@ -392,7 +392,7 @@ A chunk is written when the buffer fills, inside the call that
 hands over a row, and the last one when the loader closes.
 There is no call to write it sooner. The loading statement
 does not see its own rows in any case, as no statement sees
-its own writes (`sm1/MVCC.md` §10), and the next statement
+its own writes (`sm1/SM1_DESIGN.md` §6.2), and the next statement
 begins after the loader has closed.
 
 The transaction may also write the table the ordinary way

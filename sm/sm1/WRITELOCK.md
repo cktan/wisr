@@ -265,7 +265,7 @@ to commit:
 | `src/access.cc` | the write path of §3.2; `sm1::lock_row`'s check of §3.3 |
 | `src/lockmgr.cc` | a wait on a transaction, with its edge in the waits-for graph; a look-up of conflicting explicit holders without taking the lock |
 | `src/xct.cc` | commit, abort and rollback wake the waiters; prepare records explicit locks only |
-| `SM1_DESIGN.md` | §4.1, §5, §5.1, §5.4, §6.5, §8.4, §9.1 and §13; `MVCC.md` §9 and §13 |
+| `SM1_DESIGN.md` | §4.1, §5, §5.1, §5.4, §6.5, §8.4, §9.1 and §13 |
 
 ---
 

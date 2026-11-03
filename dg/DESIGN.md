@@ -68,8 +68,7 @@ all of it is done:
    by an option of `digres --parse` since gone. TSan found one
    race, the `lc_messages` hook calling `setlocale()`, which is
    the process's.
-3. **Connections as threads** (§1; `WIP_THREADS.md` has the
-   detail and what is left).
+3. **Connections as threads** (§1; what is left is in §5).
 4. **Signals became flags, and the process-only subsystems
    went**: crash restart and `EXEC_BACKEND` (`WORKNOTE.md`
    steps 23 and 24); shared memory, each structure the threads
@@ -92,7 +91,7 @@ every file first compiled as strict C++ and nothing linked:
   going away.
 - **Carve out the parser.** It is `../sq`, the parser alone,
   with its own nodes and no base under it, which digres links
-  (`WORKNOTE.md` step 5, `../sq/PLAN.md`). The base stayed in
+  (`WORKNOTE.md` step 5, `../sq/DESIGN.md`). The base stayed in
   digres.
 - **Defer the rest.** `src/timezone` and `regex` stay in
   digres: carving them out is tidy and unblocks nothing. The
@@ -322,8 +321,25 @@ Do not reopen these without the owner.
 
 ## 5. Known gaps
 
-What the threads left is in `WIP_THREADS.md`, "Left". Beside
-it:
+What making each session a thread left:
+
+- **Crash and immediate shutdown.** `SIGQUIT` reaches a thread
+  as a flag, and `quickdie()` calls `_exit(2)`: the whole
+  server ends. A thread that ends abnormally stops the server
+  too: there is no crash restart (`WORKNOTE.md` step 23).
+- **Nothing forks but `popen()`** (`WORKNOTE.md` steps 17 and
+  20): `COPY ... PROGRAM` and the like, which exec at once.
+- **A session thread has no `SIGFPE` handler**: the process's
+  disposition, the postmaster's, applies.
+- **RocksDB's files are counted by no one.** The sessions'
+  are, under one ceiling for the process (`WORKNOTE.md` step
+  135); RocksDB's `max_open_files` is still -1, every SST file
+  open. `datadir_load()` could set it to a share of the
+  ceiling, as MyRocks ties `rocksdb_max_open_files` to
+  `open_files_limit`.
+- `syslog_ident` (9 bytes) is not freed at a thread's end.
+
+Beside them:
 
 - **`initdb` cleans up on an error, not on a signal**: an
   interrupted `initdb` leaves its data directory behind

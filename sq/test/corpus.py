@@ -20,7 +20,7 @@ this takes three digests:
 
 test/regress.digest holds all three for every script, as PostgreSQL's
 own scanner and parser gave them: the first two were written from
-them before sq stopped building them beside its own (PLAN.md step 6),
+them before sq stopped building them beside its own,
 and the third from PostgreSQL's parser as it is in this repository's
 history, built again for the purpose. A digest that differs names
 the script; to see what differs, run the tools on its pieces in

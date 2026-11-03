@@ -76,8 +76,6 @@ its catalog is being replaced, not created (`../sm/PART4.md`
   files, ported to digres.
 - `SHMEM.md`: what is left of PostgreSQL's shared memory,
   locks and signals, and what replaces it.
-- `WIP_THREADS.md`: the record of the step that made a
-  session a thread, as it was when that step ended.
 
 ## Building
 
