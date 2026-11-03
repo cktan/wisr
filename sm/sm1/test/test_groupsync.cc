@@ -327,9 +327,6 @@ TEST_CASE("a commit is visible only once the WAL is synced past it") {
   sm1::session_t *a = f.first();
   sm1::session_t *b = f.open();
 
-  // The futures come first, so that let_go runs before they are
-  // destroyed.
-  std::future<int> a_rc;
   std::promise<void> entered, release;
   std::shared_future<void> released = release.get_future().share();
   std::atomic<int> calls{0};
@@ -340,6 +337,11 @@ TEST_CASE("a commit is visible only once the WAL is synced past it") {
     }
     return rocksdb::Status::OK();
   };
+  // Declared after the state the hook uses and before the guards,
+  // as locals go in reverse: on every way out the guards let the
+  // stalls go, then the futures wait for their commits, and only
+  // then does the hook's state go.
+  std::future<int> a_rc;
   // Let the stalled sync go on every way out of the test: a failed
   // REQUIRE would otherwise hang in the destructor of an
   // std::async future, which waits for its commit to return.
@@ -435,10 +437,6 @@ TEST_CASE("one sync serves the commits that wait while another runs") {
     others.push_back(f.open());
   }
 
-  // The futures come first, so that let_go runs before they are
-  // destroyed.
-  std::future<int> a_rc;
-  std::vector<std::future<int>> rcs;
   std::promise<void> entered, release;
   std::shared_future<void> released = release.get_future().share();
   std::atomic<int> calls{0};
@@ -449,6 +447,12 @@ TEST_CASE("one sync serves the commits that wait while another runs") {
     }
     return rocksdb::Status::OK();
   };
+  // Declared after the state the hook uses and before the guards,
+  // as locals go in reverse: on every way out the guards let the
+  // stalls go, then the futures wait for their commits, and only
+  // then does the hook's state go.
+  std::future<int> a_rc;
+  std::vector<std::future<int>> rcs;
   // Let the stalled sync go on every way out of the test: a failed
   // REQUIRE would otherwise hang in the destructor of an
   // std::async future, which waits for its commit to return.
@@ -496,10 +500,6 @@ TEST_CASE("the next sync goes to the oldest commit waiting") {
     others.push_back(f.open());
   }
 
-  // The futures come first, so that the guards run before they are
-  // destroyed.
-  std::future<int> a_rc;
-  std::vector<std::future<int>> rcs;
   std::promise<void> entered1, entered2, release1, release2;
   std::shared_future<void> released1 = release1.get_future().share();
   std::shared_future<void> released2 = release2.get_future().share();
@@ -520,6 +520,12 @@ TEST_CASE("the next sync goes to the oldest commit waiting") {
     }
     return rocksdb::Status::OK();
   };
+  // Declared after the state the hook uses and before the guards,
+  // as locals go in reverse: on every way out the guards let the
+  // stalls go, then the futures wait for their commits, and only
+  // then does the hook's state go.
+  std::future<int> a_rc;
+  std::vector<std::future<int>> rcs;
   // Let each stalled sync go on every way out of the test: a failed
   // REQUIRE would otherwise hang in the destructor of an
   // std::async future, which waits for its commit to return.
