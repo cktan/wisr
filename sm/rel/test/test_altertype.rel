@@ -1,0 +1,98 @@
+# test_altertype.rel -- a column's type changed through sm.h
+# (sm_cat_alter_column_type, ../../dg/ALTERTYPE.md): its rows
+# converted into a new store, a key column's rows keyed anew, the
+# record alone changed when the values stay, and what the change
+# refuses.
+#
+# 1. b of t, text with an index, goes to int4: the rows read back as
+#    numbers, and the index answers a range of int4s.
+# 2. t's key, int4, goes to text: the rows are scanned in text's
+#    order, and read by a text key.
+# 3. Inside a statement, as digres runs it, b goes back to text.
+# 4. A conversion that fails, a text that is no number, fails the
+#    call; the abort leaves the column as it was.
+# 5. b goes to varchar(10) with :keep, the record alone; int8 with
+#    :keep is ERR_INVALID.
+# 6. A column a foreign key names is ERR_INUSE; one not there
+#    panics.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_altertype"))
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "atdb")
+(db-open "atdb")
+
+# 1. A plain column, text to int4.
+(begin :rc)
+(table-create t
+  (columns (id :int4) (b :text))
+  (primary-key id))
+(index-create t_b (table t) (key (b)))
+(insert t [1 "30"])
+(insert t [2 "4"])
+(insert t [10 "200"])
+(commit)
+(begin :rc)
+(alter-column-type t b :int4)
+(commit)
+(begin :rc)
+(assert-eq (scan t) @[[[1] [1 30]] [[2] [2 4]] [[10] [10 200]]])
+(assert-count 1 (idx-scan t_b :ge [5] :le [100]))
+(commit)
+
+# 2. The key, int4 to text.
+(begin :rc)
+(alter-column-type t id :text)
+(commit)
+(begin :rc)
+(assert-eq (scan t) @[[["1"] ["1" 30]] [["10"] ["10" 200]] [["2"] ["2" 4]]])
+(assert-eq (read t ["10"]) ["10" 200])
+(commit)
+
+# 3. Inside a statement.
+(begin :rc)
+(stmt-begin)
+(alter-column-type t b :text)
+(stmt-begin)
+(assert-eq (read t ["2"]) ["2" "4"])
+(commit)
+
+# 4. A conversion that fails.
+(begin :rc)
+(insert t ["3" "three"])
+(commit)
+(begin :rc)
+(assert-err :err-invalid (alter-column-type t b :int4))
+(abort)
+(begin :rc)
+(assert-eq (read t ["3"]) ["3" "three"])
+(commit)
+
+# 5. The record alone.
+(begin :rc)
+(alter-column-type t b :varchar 10 :keep)
+(commit)
+(begin :rc)
+(assert-eq (read t ["3"]) ["3" "three"])
+(assert-err :err-invalid (alter-column-type t b :int8 :keep))
+(abort)
+
+# 6. Refused.
+(begin :rc)
+(table-create c (columns (pid :text)))
+(fkey-create c_pid (table c) (columns pid) (references t id))
+(commit)
+(begin :rc)
+(assert-err :err-inuse (alter-column-type c pid :varchar :keep))
+(assert-err :err-inuse (alter-column-type t id :varchar :keep))
+(abort)
+(begin :rc)
+(assert-eq (truthy? (try (do (alter-column-type t nope :int4) false)
+                         ([e] true))) true)
+(abort)
+
+(db-close)
+(env-detach)
+(rm-rf test-dir)
+(print "test_altertype.rel passed")

@@ -1754,6 +1754,58 @@ int sm_cat_set_not_null(sm_session_t* session, uint64_t oid,
                         const char* name);
 
 /*
+ * A column's new type, as sm_cat_alter_column_type takes it: sm2's
+ * code and typmod, and the host's default and update default for
+ * the new type, nullptr for none, which replace the column's.
+ */
+struct sm_column_type_t {
+    uint8_t     type_code;  /* sm2/TYPE.md section 3 */
+    int32_t     typmod;
+    const char* default_expr = nullptr;   /* the host's, opaque */
+    const char* on_update_expr = nullptr; /* the host's update default */
+};
+
+/*
+ * The host's conversion of one row's value of a column to its new
+ * type (sm3::column_conv_fn). Given ctx and the row as n values and
+ * null flags, one per column before the change, it puts the new
+ * value's bytes in out -- a by-value type's bytes, a fixed-width
+ * type's, or a varlena for a variable-width one -- or sets
+ * *out_isnull. A by-reference value of the row points at memory
+ * good only for the call. It returns 0, or -1 with the error set
+ * (sm_seterr).
+ *
+ * It is noexcept: it runs inside the rewrite, where what it throws
+ * has nowhere to go. It runs on the thread of the session that
+ * called sm_cat_alter_column_type, and must not call this API on
+ * that session.
+ */
+typedef int (*sm_column_conv_fn)(void* ctx, const sm_datum_t* values,
+                                 const bool* isnull, size_t n,
+                                 std::string& out, bool* out_isnull) noexcept;
+
+/*
+ * Change the column name of the table oid to the type to, under the
+ * table-oid lock X (sm3::alter_column_type). With conv, a table
+ * with rows is rewritten into a new store: each row's value of the
+ * column is conv's, given ctx, and every index on the column is
+ * made under the new type, a key column's rows keyed anew. With
+ * conv NULL only the record changes, which is taken only when every
+ * value stays as it is: the same type code, or text and varchar.
+ * The column's statistics go.
+ *
+ * Errors: SM_ERR_NOTFOUND, no such column; SM_ERR_INUSE, a column an
+ * expression or a partial index, a foreign key on either side or a
+ * view reads; SM_ERR_INVALID, an identity column, or a change
+ * without conv whose values would change; SM_ERR_DUPKEY, two rows
+ * with one key, a row's key in sm_errdup; SM_ERR_NOTNULL, conv's
+ * null in a NOT NULL column; conv's own error.
+ */
+int sm_cat_alter_column_type(sm_session_t* session, uint64_t oid,
+                             const char* name, const sm_column_type_t& to,
+                             sm_column_conv_fn conv, void* ctx);
+
+/*
  * Make the column name of the table oid an identity column, 'a' or
  * 'd', owning the sequence seq (sm3::set_identity).
  */

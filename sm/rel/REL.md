@@ -419,6 +419,26 @@ nullable column, or a table with a primary key already, is
 (add-primary-key users id)
 ```
 
+### `(alter-column-type table column type mods... [:keep])`
+Changes `column`'s type to `type`, with its modifiers, as
+`ALTER TABLE ... ALTER COLUMN ... TYPE`
+(`../../dg/ALTERTYPE.md`). Each row's value is printed as its
+old type's text and parsed as the new type, as a cast through
+text is. sm rewrites a table that has rows into a new store,
+every index on the column filled under the new type, a key
+column's rows keyed anew. With `:keep` no value is converted
+and only the record changes, which sm takes only when the
+values stay: the same type, or `text` and `varchar`. A value
+the new type does not parse, or `:keep` where the values
+change, is `ERR_INVALID`; two rows of one key `ERR_DUPKEY`; a
+column a foreign key, a view, or an expression or partial
+index uses `ERR_INUSE`.
+
+```janet
+(alter-column-type users age :int8)
+(alter-column-type users name :varchar 100 :keep)
+```
+
 ### `(table-drop name)`
 Drops the table `name`, its underlying store, and its
 associated `_id` sequence.

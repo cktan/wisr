@@ -854,6 +854,125 @@ static Janet cfun_add_primary_key(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
+/* A column's place, and its type before and after, for retype_conv. */
+struct retype_t {
+  size_t at;
+  uint8_t from_code;
+  int32_t from_typmod;
+  uint8_t to_code;
+  int32_t to_typmod;
+};
+
+/* A by-value type's width in bytes, by its code; 0 if not by value. */
+static size_t byval_width(uint8_t code) {
+  switch (code) {
+  case 1: // bool
+    return 1;
+  case 2: // int2
+    return 2;
+  case 3:  // int4
+  case 5:  // float4
+  case 11: // date
+    return 4;
+  case 4:  // int8
+  case 6:  // float8
+  case 12: // time
+  case 13: // timestamp
+  case 14: // timestamptz
+  case 17: // decimal64
+    return 8;
+  default:
+    return 0;
+  }
+}
+
+/*
+ * rel's converter for alter-column-type: the old value printed as
+ * its type's canonical text, and that text parsed as the new type,
+ * as a cast through text does.
+ */
+static int retype_conv(void *ctx, const sm_datum_t *values, const bool *isnull,
+                       size_t n, std::string &out, bool *out_isnull) noexcept {
+  const retype_t *r = static_cast<const retype_t *>(ctx);
+  if (r->at >= n) {
+    return sm_seterr(SM_ERR_INVALID, "alter-column-type: no such column");
+  }
+  *out_isnull = isnull[r->at];
+  if (*out_isnull) {
+    return 0;
+  }
+  std::string text, buf;
+  sm_datum_t d = 0;
+  if (sm_type_out(sm_type(r->from_code), r->from_typmod, values[r->at], text) !=
+          0 ||
+      sm_type_in(sm_type(r->to_code), r->to_typmod, text.data(), text.size(),
+                 &d, buf) != 0) {
+    return -1;
+  }
+  // A by-reference value is in buf; a by-value one is the datum's.
+  if (!buf.empty()) {
+    out = std::move(buf);
+    return 0;
+  }
+  size_t width = byval_width(r->to_code);
+  if (0 == width) {
+    return sm_seterr(SM_ERR_INVALID, "alter-column-type: a type rel cannot "
+                                     "convert to");
+  }
+  out.assign(reinterpret_cast<const char *>(&d), width);
+  return 0;
+}
+
+/*
+ * (alter-column-type table column type mods... [:keep]): change the
+ * column's type, as ALTER TABLE ... ALTER COLUMN ... TYPE; each row's
+ * value is converted through its text (retype_conv), and with :keep
+ * none is, the record alone changing.
+ */
+static Janet cfun_alter_column_type(int32_t argc, Janet *argv) {
+  janet_arity(argc, 3, -1);
+  session_ctx_t *s = require_session();
+  std::string tbl_name = identifier_of(argv[0]);
+  std::string col_name = identifier_of(argv[1]);
+  uint8_t code = 0;
+  if (parse_type_code(argv[2], &code) != 0) {
+    janet_panicf("alter-column-type: unknown type for '%s'", col_name.c_str());
+  }
+  std::vector<int32_t> mods;
+  bool keep = false;
+  for (int32_t k = 3; k < argc; k++) {
+    if (janet_checktype(argv[k], JANET_NUMBER)) {
+      mods.push_back(janet_unwrap_integer(argv[k]));
+    } else if ("keep" == identifier_of(argv[k])) {
+      keep = true;
+    } else {
+      janet_panicf("alter-column-type: unknown flag");
+    }
+  }
+  sm_column_type_t to{code, -1};
+  if (typmod_of(code, mods, &to.typmod) != 0) {
+    janet_panicf("alter-column-type: type %s takes no such modifiers",
+                 type_name_of(code));
+  }
+  // X, as the DDL takes it: the columns cannot change under us.
+  table_def_t *t = need_table(s, tbl_name, SM_LOCKMODE_EX, "alter-column-type");
+  retype_t r{SIZE_MAX, 0, -1, code, to.typmod};
+  for (size_t i = 0; i < t->columns.size(); i++) {
+    if (t->columns[i].name == col_name) {
+      r = {i, t->columns[i].type_code, t->columns[i].typmod, code, to.typmod};
+    }
+  }
+  if (SIZE_MAX == r.at) {
+    janet_panicf("alter-column-type: table '%s' has no column '%s'",
+                 tbl_name.c_str(), col_name.c_str());
+  }
+  if (sm_cat_alter_column_type(s->session, t->def->oid, col_name.c_str(), to,
+                               keep ? nullptr : retype_conv, &r) != 0) {
+    panic_sm_error("alter-column-type");
+  }
+  return janet_wrap_nil();
+}
+
 /* (table-create name (columns ...)) */
 static Janet cfun_table_create(int32_t argc, Janet *argv) {
   return table_create(argc, argv, false);
@@ -3067,6 +3186,7 @@ static const JanetReg s_rel_cfuns[] = {
     {"nextseq", cfun_nextseq, "(nextseq name) -- get next sequence value"},
     {"_index-create", cfun_index_create, "internal"},
     {"_add-primary-key", cfun_add_primary_key, "internal"},
+    {"_alter-column-type", cfun_alter_column_type, "internal"},
     {"_index-drop", cfun_index_drop, "internal"},
     {"_index-wait", cfun_index_wait, "internal"},
     {"_index-state", cfun_index_state, "internal"},
@@ -3170,6 +3290,9 @@ static const char *s_prelude = R"janet(
 
 (defmacro fkey-validate [tbl name]
   ~(_fkey-validate (string ',tbl) (string ',name)))
+
+(defmacro alter-column-type [tbl col type & rest]
+  ~(_alter-column-type (string ',tbl) (string ',col) ',type ,;rest))
 
 (defmacro fkey-rename [tbl name new-name]
   ~(_fkey-rename (string ',tbl) (string ',name) (string ',new-name)))

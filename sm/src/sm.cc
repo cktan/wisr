@@ -2598,6 +2598,33 @@ int sm_cat_set_not_null(sm_session_t *session, uint64_t oid, const char *name) {
   });
 }
 
+/* Change a column's type in the session's transaction. */
+int sm_cat_alter_column_type(sm_session_t *session, uint64_t oid,
+                             const char *name, const sm_column_type_t &to,
+                             sm_column_conv_fn conv, void *ctx) {
+  return guard(session, [&] {
+    sm3::column_type_t t{
+        to.type_code, to.typmod,
+        to.default_expr ? std::optional<std::string>(to.default_expr)
+                        : std::nullopt,
+        to.on_update_expr ? std::optional<std::string>(to.on_update_expr)
+                          : std::nullopt};
+    if (!conv) {
+      return sm3::alter_column_type(session->sm3, oid, name_of(name), t,
+                                    nullptr);
+    }
+    // The C callback behind sm3's, shown the row as it was.
+    sm3::column_conv_fn fn = [conv, ctx](std::span<const sm2::datum_t> values,
+                                         std::span<const bool> isnull,
+                                         std::string &out,
+                                         bool &out_null) noexcept {
+      return conv(ctx, values.data(), isnull.data(), values.size(), out,
+                  &out_null);
+    };
+    return sm3::alter_column_type(session->sm3, oid, name_of(name), t, &fn);
+  });
+}
+
 /* Make a column an identity column in the session's transaction. */
 int sm_cat_set_identity(sm_session_t *session, uint64_t oid, const char *name,
                         char identity, uint64_t seq) {
