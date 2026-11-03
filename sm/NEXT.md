@@ -106,8 +106,7 @@ and so are the catalog tables psql reads
       the `wip-btree` branch, unique ones and `ON CONFLICT`
       arbiters among them, asked for by
       `CREATE INDEX ... USING btree` (`lsm`, today's kind,
-      is the default); its decisions in
-      `../MAJORDECISION.md`, its steps in
+      is the default); its steps in
       `../dg/WORKNOTE.md` 345 to 349.
    2. **Rows of sorted, close keys read by one cursor**: built,
       inside sm1's `chain_read_batch` (`BATCHREAD.md` §2.1).
@@ -322,7 +321,7 @@ and so are the catalog tables psql reads
    289. The count of holders by mode that PostgreSQL keeps
    (`LOCK.granted[]`) is not needed for that, and would have to
    follow every conversion `lockmgr.cc` makes in place; it is not
-   built (`../QUESTION.md` §1). This item is done.
+   built. This item is done.
 5. **A write transaction's two trips through RocksDB's write
    queue** (`../dg/WORKNOTE.md` step 344). An insert writes its
    uncommitted version at once (`sm1/src/access.cc`,

@@ -5,9 +5,7 @@ disk, in memory and under concurrency, and what is left. This is
 the tree as built on `wip-btree`, off by default and asked for by
 `CREATE INDEX ... USING btree`: pages, cache, latches, the
 tree, unique trees, `ON CONFLICT` arbiters, vacuum, and digres's
-access. `../MAJORDECISION.md` (D1 to D14) says why each choice
-was made; where one changed the first proposal, the text says so.
-Paths are relative to `sm/`.
+access. Paths are relative to `sm/`.
 
 In short: a Lehman and Yao B-link tree whose pages are values in
 RocksDB and entries in RocksDB's block cache. Pages are
@@ -107,7 +105,7 @@ Proposed here:
     pinning them again when it has moved. An old pin goes when
     its session takes the new one. *Built otherwise*: an open
     index holds the inner pages it reads, and lets them go when
-    a descent has to move right (`../MAJORDECISION.md` D11).
+    a descent has to move right.
     Page 0 alone is now read from a session's copy, checked by
     its frame's version (§4.2).
   - **A leaf is pinned by its cache handle**, `Lookup` and
@@ -398,8 +396,7 @@ the page it came from, as nbtree's `_bt_walk_left()`.
 ### 4.1 An all-visible leaf
 
 *Proposed 2026-11-02, and built the same day
-(`../dg/WORKNOTE.md` step 365, `../MAJORDECISION.md` D22 to
-D26).* It changes §2's "the row decides visibility" for one
+(`../dg/WORKNOTE.md` step 365).* It changes §2's "the row decides visibility" for one
 case: a leaf vacuum has found settled answers an index-only
 scan alone.
 
@@ -582,8 +579,7 @@ vacuum.
 
 ### 4.2 A session's copy of the root
 
-*Built 2026-11-02 (`../dg/WORKNOTE.md` steps 366 to 368,
-`../MAJORDECISION.md` D28 and D29).* Every descent reads page 0,
+*Built 2026-11-02 (`../dg/WORKNOTE.md` steps 366 to 368).* Every descent reads page 0,
 so its pin, a count in its frame's state word, was a word every
 probe on every core wrote. A session now holds a copy of page 0,
 shared with the other sessions that read it, and descends from it
@@ -837,7 +833,7 @@ What each level holds:
   - **the page cache**: pages as entries of the block cache,
     write-through, a miss's fill latched against writes. It is
     sm1's (`sm1::pin_page`, `sm1::page_write`), as sm1 is the
-    only channel into RocksDB (`../MAJORDECISION.md` D2, D3);
+    only channel into RocksDB;
     the index's version and a session's pin on its inner
     pages (§2) are not built: an open index holds the inner
     pages it reads instead (D11);
@@ -921,8 +917,8 @@ on the machine above, which is still to be run both ways.
   of about 40 bytes now. Measured, a million rows loaded into
   `wide_mixed` with its `c2` index: 18 s with today's entries,
   51 s with a tree of 8 KB pages, 34 s of 4 KB, 27 s of 2 KB;
-  Q9 and Q10 within 2% of each other at all three
-  (`../MAJORDECISION.md` D12). An entry spliced into the page's
+  Q9 and Q10 within 2% of each other at all three.
+  An entry spliced into the page's
   bytes, none decoded, brought 4 KB to 27.7 s
   (`../dg/WORKNOTE.md` step 351). Logging the entry and
   writing the page later is what would close the rest.
@@ -1043,7 +1039,7 @@ section proposes, each on review before it is built.
   needs no flag: the right link takes it there.
 - **A root split** is one change: both halves to new pages,
   and page 0 a level up, their parent, so it has no half to
-  finish (`../MAJORDECISION.md` D14).
+  finish.
 - **Page ids come from one sequence for the database**, made
   with its catalog: never handed out twice, and its gaps are
   harmless (D14).
@@ -1068,8 +1064,7 @@ section proposes, each on review before it is built.
 
 **The steps:** all eight are built on `wip-btree`, with the
 tests each names and more (`../dg/WORKNOTE.md` steps 345 to
-350); where one went otherwise than written here,
-`../MAJORDECISION.md` says how. sm1's calls are
+350). sm1's calls are
 `pin_page`, `page_write`, `page_drop`, `page_approxsize`,
 `read_settled`, `read_newest`, `wait_writer`,
 `ssi_read_range` and `ssi_write_key`; the mvcc scenarios step
@@ -1086,8 +1081,7 @@ scenario driver has no verb for a tree.
 2. **The writers' latch table** (`sm2/src/tree/latch.cc`), by
    page id. Tests: `sm2/test`, many threads, one page and
    many, under TSan.
-3. **The page cache**, sm1's (`sm1/src/page.cc`,
-   `../MAJORDECISION.md` D2, D3): pages in the block cache,
+3. **The page cache**, sm1's (`sm1/src/page.cc`): pages in the block cache,
    write-through, a miss's fill latched against writes. Tests:
    `sm1/test`, a page written outside the transaction and read
    back after a restart; a writer and four readers through a

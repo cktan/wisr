@@ -255,8 +255,8 @@ there too:
   removed entry stays, dead once its row no longer has its key.
   Its scan is a scan of rows (`tbl_idx_scan_rows`): each
   entry's row read at the snapshot and handed out only if the
-  entry made of it, as a write would make it, is the entry
-  (`../../MAJORDECISION.md` D8). `tbl_compact`, VACUUM, removes
+  entry made of it, as a write would make it, is the entry.
+  `tbl_compact`, VACUUM, removes
   the entries whose rows are settled without them. A unique
   tree checks a key against the newest version of each row an
   equal entry names, waiting for a running writer

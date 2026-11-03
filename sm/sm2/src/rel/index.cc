@@ -92,7 +92,7 @@ size_t row_cap(const sm2::index_t *ix) {
 }
 
 // A tree's entry keeps room for a key column past the longest row key
-// a keyed table's entry ends with (../../MAJORDECISION.md D12).
+// a keyed table's entry ends with.
 static_assert(sm2::tree::entry_max(sm2::tree::page_limit) >
                   sm2::tree::entry_size(0, 8) + sm2::relid_len +
                       sm2::max_pk_len + 256,

@@ -1,5 +1,5 @@
 # Verify that CREATE INDEX's access method chooses the kind of an index
-# in sm (../../sm/BTREE.md section 12, ../../MAJORDECISION.md D7): lsm,
+# in sm (../../sm/BTREE.md section 12): lsm,
 # each entry a key of RocksDB's, is the default; btree is a tree.
 # PostgreSQL 18 makes a B-tree of each, and gives the same answers.
 # 1. Make a table with a primary key and a unique constraint, and an

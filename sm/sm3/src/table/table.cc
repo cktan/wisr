@@ -778,8 +778,8 @@ look:
       sm2::rel_row_key(table->rel, r, values, isnull, key) != 0) {
     return -1;
   }
-  // A tree's entry goes in after its row, never before
-  // (../../MAJORDECISION.md D5): another's check would find it
+  // A tree's entry goes in after its row, never before:
+  // another's check would find it
   // naming no row, and call it dead. So a tree arbiter's is added
   // last, under a savepoint the row's write is taken back to if the
   // key turns out another's.

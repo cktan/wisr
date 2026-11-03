@@ -10261,8 +10261,7 @@ to show what a lock table of sm1's own gains a client.
 ## Step 345: B+tree secondary indexes, the tree
 
 `../sm/BTREE.md`, handed over whole and unattended, on the
-`wip-btree` branch; each decision taken without asking is in
-`../MAJORDECISION.md`, D1 to D5 so far.
+`wip-btree` branch.
 
 - **The page's split** (D1): step 1 split a page without the
   entry that filled it, and capped an entry at a third of the
@@ -10371,8 +10370,8 @@ and counts every thread):
   1,548k, Q10 3,371k to 2,255k, today's entries 1,659k and
   3,565k, PostgreSQL 395k and 768k. A tree's rows read many to
   a call; a page opened without walking its entries; a cursor
-  copying only its entries; inner pages held by an open tree
-  (MAJORDECISION D11); a recheck's key in a reused buffer.
+  copying only its entries; inner pages held by an open tree;
+  a recheck's key in a reused buffer.
 - **Found**: held inner pages gone stale routed a million-row
   insert so far left that it took 424 s, not 51: a descent that
   moves right now lets them go. The load is 34 s with pages of
@@ -10486,7 +10485,7 @@ and digres's read-ahead of today's entries alike.
   and refuse with nothing else written. A unique tree's entry so
   added names a row not yet written, which another's check calls
   dead: both rows of one key could commit. A tree arbiter's entry
-  now goes in after the row (MAJORDECISION D5), under a savepoint
+  now goes in after the row, under a savepoint
   the row is taken back to if the key is another's.
 - **Tests**: sm2, a root's split's post cut short, then 200 keys
   into its right page; it failed before the fix. sm3, the unique
@@ -10546,7 +10545,7 @@ on the release builds, unpinned.
 - **sm3**: `DROP INDEX` of a tree drops its pages from an
   `on_commit` function; a rollback keeps them, and a crash before
   the function runs leaves them until the store goes, as every
-  drop did before (MAJORDECISION D6, revised).
+  drop did before.
 - **Tests**: sm1, pages dropped by an `on_commit` function, and a
   dropped store's no error; sm3, a drop rolled back keeps the
   tree whole, a drop committed leaves no meta page; rel, the
@@ -10557,7 +10556,7 @@ on the release builds, unpinned.
 ## Step 356: the root at page 0, and no meta page
 
 - **sm3**: `cat_init()` makes `sm3.tree_page`, the sequence every
-  tree's page ids come from (MAJORDECISION D14).
+  tree's page ids come from.
 - **sm2**: page 0 is the root for a tree's life, a root's split
   one write, so no half of it is left to finish; whoever reads a
   page again by its id checks its level. The meta page,
@@ -10576,7 +10575,7 @@ on the release builds, unpinned.
 
 - **sm2**: `prev` beside `next`, which was `right`, in a page's
   header, 30 bytes now. A split's first write links the page's old
-  right sibling back to the new page (MAJORDECISION D15), so a
+  right sibling back to the new page, so a
   crash leaves the two links agreeing. `tree_check()` checks it.
 - **Tests**: sm2, leaves walked both ways; a split cut short; a
   page with `prev` wrong does not check. Without the sibling's
@@ -10621,7 +10620,7 @@ measured again: `bench/build/pg18` is not here.
 ## Step 360: the buffer pool, alone
 
 `../sm/BUFFERPOOL.md` plan step 6, on a machine that may not run
-benchmarks, so with plan step 1 not run (MAJORDECISION D16).
+benchmarks, so with plan step 1 not run.
 
 - **sm1**: `src/bufpool.h`, a module of its own that knows tags,
   bytes and pins, and reads a miss through its caller's loader.
@@ -10721,8 +10720,7 @@ tree 0.39 to 0.43 ms against a regular index's 0.18 ms: a tree's
 entry carries no visibility, so an index-only scan read each row.
 `../sm/BTREE.md` §4.1, built: a leaf vacuum found every entry of
 settled and live is set all visible, and an index-only scan hands
-its entries out with their rows unread. Decisions D22 to D26 in
-`../MAJORDECISION.md`.
+its entries out with their rows unread.
 
 - **sm2**: `page_all_visible`, `0x04` in a leaf's flags. An
   insert into a page clears it, in the same write; one that finds
@@ -10787,8 +10785,7 @@ would compare them better.
 Every descent of a tree pinned page 0, so every probe on every
 core wrote its frame's state word, twice. `../sm/BTREE.md` §4.2,
 built: a session keeps its own copy of page 0 and descends from
-it with no pin while the page is as it was. Decision D28 in
-`../MAJORDECISION.md`.
+it with no pin while the page is as it was.
 
 - **sm1**: each frame of the buffer pool has a version, moved by
   an install and by every change of its tag: a discard, a purge,
@@ -11044,8 +11041,7 @@ behind it (step 344). Design and cases: `../sm/sm1/GROUPSYNC.md`.
 
 `CREATE INDEX ... USING btree` makes a tree (`../sm/BTREE.md`),
 and `USING lsm`, the default, makes the index sm had first,
-each entry a key of RocksDB's. `WITH (tree = on)` is gone
-(`../MAJORDECISION.md` D7, changed).
+each entry a key of RocksDB's. `WITH (tree = on)` is gone.
 
 - **Both names are `pg_am`'s `btree`**: the name chooses sm's
   kind at CREATE INDEX (`smstore.c`, `tree_kind()`), and

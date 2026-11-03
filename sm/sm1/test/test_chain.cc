@@ -85,7 +85,7 @@ struct chain_fixture_t {
 TEST_CASE("a chained store is one column family, and stays chained across "
           "a reopen") {
   // Verify that a chained store is one CF, named chain.N, whose flag
-  // survives a reopen (QUESTION.md Q1).
+  // survives a reopen.
   // 1. Make a chained store and a plain one, and commit.
   // 2. Confirm the chained one's CF is chain.N, flagged, and the plain
   //    one's store.N; neither has another CF.

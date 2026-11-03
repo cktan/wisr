@@ -18,7 +18,7 @@ namespace sm2::tree {
 
 /*
  * The bytes past which an insert splits a page: 4 KB, as each insert
- * writes its page whole (../../MAJORDECISION.md D12).
+ * writes its page whole.
  */
 constexpr size_t page_limit = 4096;
 
