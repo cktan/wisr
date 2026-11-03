@@ -12,6 +12,8 @@ tables live in Wisr. The repository holds both, in four parts:
 | `aa/` | roles, authentication and authorization, a library on sm that digres links (`aa/AA_DESIGN.md`, `aa/USAGE.md`) |
 | `bench/` | digres against PostgreSQL 18, query by query (`bench/README.md`) |
 
+To try digres, from a build to a query: `QUICKSTART.md`.
+
 ## How the parts fit
 
 ```
@@ -407,6 +409,7 @@ bench/run.sh dg                # one system, for a look; no report
 
 | Document | What it holds |
 | --- | --- |
+| `QUICKSTART.md` | build, make a database, connect, and run a query |
 | `sm/README.md` | the stack's levels, and each one's design document |
 | `sm/NEXT.md` | what is to be built next, in order |
 | `DG-vs-PG.md` | how digres differs from PostgreSQL 18 |
