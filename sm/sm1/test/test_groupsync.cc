@@ -7,6 +7,8 @@
 #include "doctest.h"
 #include "util.h"
 
+#include "sm0_defer.h"
+
 #include "db.h"
 #include "env.h"
 #include "session.h"
@@ -318,6 +320,9 @@ TEST_CASE("a commit is visible only once the WAL is synced past it") {
   sm1::session_t *a = f.first();
   sm1::session_t *b = f.open();
 
+  // The futures come first, so that let_go runs before they are
+  // destroyed.
+  std::future<int> a_rc;
   std::promise<void> entered, release;
   std::shared_future<void> released = release.get_future().share();
   std::atomic<int> calls{0};
@@ -328,9 +333,13 @@ TEST_CASE("a commit is visible only once the WAL is synced past it") {
     }
     return rocksdb::Status::OK();
   };
+  // Let the stalled sync go on every way out of the test: a failed
+  // REQUIRE would otherwise hang in the destructor of an
+  // std::async future, which waits for its commit to return.
+  sm0::scope_guard_t let_go([&] { release.set_value(); });
 
-  std::future<int> a_rc = std::async(
-      std::launch::async, [&] { return commit_one(a, f.store(), "a"); });
+  a_rc = std::async(std::launch::async,
+                    [&] { return commit_one(a, f.store(), "a"); });
   REQUIRE(entered.get_future().wait_for(std::chrono::seconds(10)) ==
           std::future_status::ready);
   // Time for A's commit to have returned, were it not to wait.
@@ -341,6 +350,7 @@ TEST_CASE("a commit is visible only once the WAL is synced past it") {
   CHECK(get(b, f.store(), "a") == "<none>");
   REQUIRE(sm1::commit(b) == 0);
 
+  let_go.dismiss();
   release.set_value();
   CHECK(a_rc.get() == 0);
   f.db()->test_before_sync = nullptr;
@@ -418,6 +428,10 @@ TEST_CASE("one sync serves the commits that wait while another runs") {
     others.push_back(f.open());
   }
 
+  // The futures come first, so that let_go runs before they are
+  // destroyed.
+  std::future<int> a_rc;
+  std::vector<std::future<int>> rcs;
   std::promise<void> entered, release;
   std::shared_future<void> released = release.get_future().share();
   std::atomic<int> calls{0};
@@ -428,12 +442,15 @@ TEST_CASE("one sync serves the commits that wait while another runs") {
     }
     return rocksdb::Status::OK();
   };
+  // Let the stalled sync go on every way out of the test: a failed
+  // REQUIRE would otherwise hang in the destructor of an
+  // std::async future, which waits for its commit to return.
+  sm0::scope_guard_t let_go([&] { release.set_value(); });
 
-  std::future<int> a_rc = std::async(
-      std::launch::async, [&] { return commit_one(a, f.store(), "a"); });
+  a_rc = std::async(std::launch::async,
+                    [&] { return commit_one(a, f.store(), "a"); });
   REQUIRE(entered.get_future().wait_for(std::chrono::seconds(10)) ==
           std::future_status::ready);
-  std::vector<std::future<int>> rcs;
   for (size_t i = 0; i < others.size(); i++) {
     rcs.push_back(std::async(std::launch::async, [&, i] {
       return commit_one(others[i], f.store(), "k" + std::to_string(i));
@@ -442,6 +459,7 @@ TEST_CASE("one sync serves the commits that wait while another runs") {
   // Every one has written its record once it waits for the sync.
   REQUIRE(wait_for_waiters(f.db(), (int)others.size()));
 
+  let_go.dismiss();
   release.set_value();
   CHECK(a_rc.get() == 0);
   for (std::future<int> &rc : rcs) {
