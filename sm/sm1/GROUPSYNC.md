@@ -145,8 +145,8 @@ loses committed data. A changes only the commit.
     after the publish, it sees the row.
   - A failed sync aborts the process, run in a child. After
     the reopen, the commit whose record reached the OS is
-    committed. With fail-stop in place of the abort, the child
-    returns.
+    committed. With an error returned in place of the abort,
+    the child returns.
   - Fifteen commits waiting behind a stalled sync share one
     more sync. With a leader covering only its own record, they
     make more.

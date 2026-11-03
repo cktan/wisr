@@ -738,9 +738,8 @@ or not. Passing NULL is a no-op returning 0.
 Closing the last session on a database leaves it open for
 `idle_close_ms`, 60 seconds by default, so a session that comes
 in meanwhile finds it as it was; a thread of the environment's
-then closes it. With `idle_close_ms` 0 it closes at once, and
-so does a database that has failed (fail-stop), so the next
-open recovers it. A session that asks an idle database for
+then closes it. With `idle_close_ms` 0 it closes at once. A
+session that asks an idle database for
 other options than it was opened with gets it opened anew with
 them; while any session has it open, options are ignored.
 Closing it writes each sequence's place, in one synced write,
@@ -793,14 +792,13 @@ reached the log, so the outcome is unknown. After the
 database is reopened, the transaction is committed or not
 according to what reached the log.
 
-On `SM_ERR_IO` the transaction did not commit: the database
-had failed stop before its commit record (a failed prepare
-or abort record), and refuses writes, commits, and prepares,
-while reads on existing snapshots continue.
+On `SM_ERR_IO` the transaction did not commit: persisting the
+lease that covers its commit timestamp failed, before its
+commit record was written, and it is aborted.
 
 Errors: `SM_ERR_SERIALIZATION` (retryable),
-`SM_ERR_NOTRANS`, `SM_ERR_IO` (the database has failed
-stop).
+`SM_ERR_NOTRANS`, `SM_ERR_IO` (no commit record was
+written).
 
 ### int sm1::abort(sm1::session_t* session)
 
@@ -1313,20 +1311,19 @@ preparing session has no transaction: its `sm1::commit` and
 `sm1::abort` fail with `SM_ERR_NOTRANS`, and `sm1::begin`
 succeeds.
 
-On `SM_ERR_IO` the outcome is **unknown**: the prepared
-record may or may not have reached the log. The transaction
-is no longer active on the session, and the database enters
-the same failed state as after `SM_ERR_IO` from `sm1::commit`.
-After the database is reopened, the transaction is either
-listed by `sm1::list_prepared` under `gid`, or it was never
-prepared and is aborted. A coordinator that got `SM_ERR_IO`
-checks the list; since the participant never voted yes,
-`sm1::abort_prepared` is always a correct resolution.
+A failed write of the prepared record aborts the process
+(`sm0::fatal()`): the record may or may not have reached the
+log, so the outcome is unknown. After the database is
+reopened, the transaction is either listed by
+`sm1::list_prepared` under `gid`, or it was never prepared
+and is aborted. The coordinator checks the list; since the
+participant never voted yes, `sm1::abort_prepared` is always
+a correct resolution.
 
 Errors: `SM_ERR_SERIALIZATION` (retryable; the transaction
 is aborted and *not* prepared), `SM_ERR_NOTRANS`,
 `SM_ERR_EXISTS` (`gid` already in use), `SM_ERR_INVALID`,
-`SM_ERR_IO` (outcome unknown).
+`SM_ERR_IO`.
 
 ### int sm1::list_prepared(sm1::session_t* session, std::vector<sm1::prepared_t>& out)
 
@@ -1360,6 +1357,12 @@ original session no longer exists.
 
 Neither call requires an active transaction on `session`,
 and neither disturbs one if present.
+
+A failed write of the `COMMITTED` or `ABORTED` record, or of
+the commit's sync, aborts the process (`sm0::fatal()`), as in
+`sm1::commit`: after the database is reopened, the
+transaction is resolved or still listed, according to what
+reached the log.
 
 Errors: `SM_ERR_NOTFOUND` (no unresolved prepared
 transaction with that `gid`), `SM_ERR_DISKFULL`,

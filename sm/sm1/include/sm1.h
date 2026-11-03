@@ -365,8 +365,8 @@ int rmseq(session_t* session, std::string_view name);
  * fails with SM_ERR_INVALID.
  *
  * Errors: SM_ERR_NOTFOUND (no such sequence), SM_ERR_INVALID,
- * SM_ERR_PREPARED, SM_ERR_CORRUPT, SM_ERR_IO (the database has
- * stopped, or persisting the next block failed),
+ * SM_ERR_PREPARED, SM_ERR_CORRUPT, SM_ERR_IO (persisting the
+ * next block failed),
  * SM_ERR_DISKFULL.
  */
 int nextseq(session_t* session, std::string_view name,
@@ -463,16 +463,15 @@ int begin(session_t* session, xctlevel_t level, bool read_only = false);
  * transaction is committed or not according to what reached
  * the log.
  *
- * On SM_ERR_IO the transaction did not commit: the database
- * had failed stop before its commit record (a failed prepare
- * or abort record), and refuses writes, commits, and prepares
- * while reads on existing snapshots continue.
+ * On SM_ERR_IO the transaction did not commit: persisting the
+ * lease that covers its commit timestamp failed, before its
+ * commit record was written, and it is aborted.
  *
  * Once called on an active transaction, the transaction is no
  * longer active whatever the result.
  *
  * Errors: SM_ERR_SERIALIZATION (retryable), SM_ERR_NOTRANS,
- * SM_ERR_IO (the database has failed stop).
+ * SM_ERR_IO (no commit record was written).
  */
 int commit(session_t* session);
 
@@ -964,18 +963,16 @@ int forget(session_t* session, int depth);
  * 2PC and is exposed rather than hidden;
  * sm1::abort_prepared() is the operator escape hatch.
  *
- * On SM_ERR_IO the outcome is UNKNOWN: the prepared record may
- * or may not have reached the log. The transaction is no
- * longer active, and the database enters the same failed state
- * as after SM_ERR_IO from sm1::commit(). After a reopen the
- * transaction is either listed by sm1::list_prepared() under
- * gid, or was never prepared and is aborted. Since the
- * participant never voted yes, sm1::abort_prepared() is always a
- * correct resolution.
+ * A failed write of the prepared record aborts the process
+ * (sm0::fatal): the record may or may not have reached the log,
+ * so the outcome is unknown. After a reopen the transaction is
+ * either listed by sm1::list_prepared() under gid, or was never
+ * prepared and is aborted. Since the participant never voted
+ * yes, sm1::abort_prepared() is always a correct resolution.
  *
  * Errors: SM_ERR_SERIALIZATION (retryable; the transaction is
  * aborted and NOT prepared), SM_ERR_NOTRANS, SM_ERR_EXISTS
- * (gid in use), SM_ERR_INVALID, SM_ERR_IO (outcome unknown).
+ * (gid in use), SM_ERR_INVALID, SM_ERR_IO.
  */
 int prepare(session_t* session, std::string_view gid);
 
@@ -1008,6 +1005,11 @@ int list_prepared(session_t* session, std::vector<prepared_t>& out);
  * one that prepared it -- in particular after a restart, when
  * the original session no longer exists. Neither call requires
  * an active transaction on session, and neither disturbs one.
+ *
+ * A failed write of the COMMITTED or ABORTED record, or of the
+ * commit's sync, aborts the process (sm0::fatal), as in
+ * sm1::commit(): after a reopen the transaction is resolved or
+ * still listed, according to what reached the log.
  *
  * Errors: SM_ERR_NOTFOUND (no unresolved prepared transaction
  * with that gid), SM_ERR_DISKFULL, SM_ERR_IO.

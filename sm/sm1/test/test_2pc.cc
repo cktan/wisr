@@ -785,34 +785,106 @@ TEST_CASE("startup drops store CFs that nothing names") {
   sm1::closedb(v);
 }
 
-TEST_CASE("a failed prepare write fails the database stop") {
-  // Verify §8.4's fail-stop on the PREPARED record.
-  // 1. The prepare write of "gx" fails: SM_ERR_IO, and the
-  //    session has no transaction left.
-  // 2. "gx" is not listed and cannot be resolved; writes fail.
-  // 3. After a restart the record never existed: nothing is
-  //    listed and the update of "a" is gone.
-  tpc_fixture_t f;
-  sm1::session_t *s = f.open();
-  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(set(s, "a", "1") == 0);
+/*
+ * The failed-prepare child: update "a" to "1", then prepare "gx"
+ * with its PREPARED record write failing, which aborts the
+ * process. Returns only on a setback.
+ */
+int prepare_fail_child_main(const char *homedir) {
+  sm1::env_t *env = attach(homedir);
+  sm1::session_t *s = env ? opendb(env, "db", nullptr) : nullptr;
+  if (!s || sm1::begin(s, sm1::xctlevel_t::repeatable_read) != 0) {
+    return 2;
+  }
+  uint64_t store = first_store(s);
+  if (store == 0 || sm1::update(s, store, "a", "1") != 0) {
+    return 3;
+  }
   s->db->test_before_prepare = [] {
     return rocksdb::Status::IOError("injected");
   };
-  CHECK(sm1::prepare(s, "gx") == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_IO);
-  s->db->test_before_prepare = nullptr;
-  CHECK(listed(s).empty());
-  CHECK(sm1::commit_prepared(s, "gx") == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(set(s, "b", "1") == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_IO);
-  REQUIRE(sm1::commit(s) == 0);
+  sm1::prepare(s, "gx");
+  return 4;
+}
 
-  f.restart();
+TEST_CASE("a failed prepare write aborts the process") {
+  // Verify a prepare whose PREPARED record write fails ends the
+  // process, and the reopen decides it from the WAL (§8.4).
+  // 1. Leave the home directory to a child, which updates "a"
+  //    and fails the prepare write of "gx": it dies of SIGABRT,
+  //    having said *** FATAL *** on stderr.
+  // 2. Attach again: nothing is listed, "a" is unchanged, and
+  //    writes work.
+  tpc_fixture_t f;
+  f.home().detach();
+  std::string out, err;
+  int status = run_child("--prepare-fail-child", f.home().path(), out, err);
+  CAPTURE(err);
+  REQUIRE(WIFSIGNALED(status));
+  CHECK(WTERMSIG(status) == SIGABRT);
+  CHECK(err.find("*** FATAL *** database db: prepare record write for gx "
+                 "failed") != std::string::npos);
+
+  f.home().attach();
   sm1::session_t *v = f.open();
   CHECK(listed(v).empty());
   CHECK(read_now(v, "a") == "0");
+  REQUIRE(sm1::begin(v, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(set(v, "b", "1") == 0);
+  REQUIRE(sm1::commit(v) == 0);
+  sm1::closedb(v);
+}
+
+/*
+ * The failed-abort child: update "a" to "1" and prepare "gx",
+ * then abort it with its ABORTED record write failing, which
+ * aborts the process. Returns only on a setback.
+ */
+int abort_fail_child_main(const char *homedir) {
+  sm1::env_t *env = attach(homedir);
+  sm1::session_t *s = env ? opendb(env, "db", nullptr) : nullptr;
+  if (!s || sm1::begin(s, sm1::xctlevel_t::repeatable_read) != 0) {
+    return 2;
+  }
+  uint64_t store = first_store(s);
+  if (store == 0 || sm1::update(s, store, "a", "1") != 0 ||
+      sm1::prepare(s, "gx") != 0) {
+    return 3;
+  }
+  s->db->test_before_abort_prepared = [] {
+    return rocksdb::Status::IOError("injected");
+  };
+  sm1::abort_prepared(s, "gx");
+  return 4;
+}
+
+TEST_CASE("a failed abort record write aborts the process") {
+  // Verify an abort of a prepared transaction whose ABORTED record
+  // write fails ends the process, and the reopen finds the
+  // transaction still prepared (§8.4).
+  // 1. Leave the home directory to a child, which prepares "gx"
+  //    and fails its abort record write: it dies of SIGABRT,
+  //    having said *** FATAL *** on stderr.
+  // 2. Attach again: "gx" is listed, and "a" is unchanged.
+  // 3. Abort "gx" by gid: "a" is still "0", and nothing is listed.
+  tpc_fixture_t f;
+  f.home().detach();
+  std::string out, err;
+  int status = run_child("--abort-fail-child", f.home().path(), out, err);
+  CAPTURE(err);
+  REQUIRE(WIFSIGNALED(status));
+  CHECK(WTERMSIG(status) == SIGABRT);
+  CHECK(err.find("*** FATAL *** database db: abort record write for gx "
+                 "failed") != std::string::npos);
+
+  f.home().attach();
+  sm1::session_t *v = f.open();
+  auto rows = listed(v);
+  REQUIRE(rows.size() == 1);
+  CHECK(rows[0].first == "gx");
+  CHECK(read_now(v, "a") == "0");
+  REQUIRE(sm1::abort_prepared(v, "gx") == 0);
+  CHECK(read_now(v, "a") == "0");
+  CHECK(listed(v).empty());
   sm1::closedb(v);
 }

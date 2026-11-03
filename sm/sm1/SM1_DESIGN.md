@@ -1745,10 +1745,9 @@ in 2018. The engine therefore aborts the process
   from what the WAL holds. A record that reached the OS
   survives the abort, and is committed.
 
-**The failed state** is what a failed `PREPARED` or `ABORTED`
-record write enters (§8.4): further writes, commits, prepares,
-and GC sweeps fail with `SM_ERR_IO`, while reads on existing
-snapshots continue, until the database is reopened.
+A failed `PREPARED` or `ABORTED` record write is fatal too
+(§8.4): every status record's failure aborts the process, so
+the engine has no failed state to keep.
 
 A read-only transaction (`T.xid == 0`) has no versions to
 publish and gets no status record (§3.2); it validates, releases,
@@ -2101,26 +2100,24 @@ versions sit in store CFs, its status record says `PREPARED`,
 and readers treat it as in-flight (invisible). It holds its row
 locks, and it pins `gc_watermark` at its `snapshot_ts`.
 
-**A failed prepare write is fail-stop**, for the reason §8.2
-gives for a failed commit write: if step 3 returns an error, the
+**A failed prepare write is fatal**, for the reason §8.2 gives
+for a failed commit write: if step 3 returns an error, the
 `PREPARED` record may still have reached the WAL, and §9.1 would
-then restore the transaction in doubt. The engine therefore does
-not treat it as aborted:
-
-- it stays in the active table with its locks and SSI state, so
-  its versions remain in-flight to readers and to the compaction
-  filter, and the column families in `T.created` are kept;
-- the database enters §8.2's failed state, so nothing can
-  resolve the transaction before the database is reopened;
-- `sm1::prepare` returns `SM_ERR_IO`, meaning *outcome unknown*,
-  and the transaction is no longer active on its session.
+then restore the transaction in doubt. The engine therefore
+aborts the process (`sm0::fatal()`), and `sm1::prepare` does not
+return.
 
 After reopen, WAL replay decides: either the record survived and
 the transaction is restored in doubt, listed by
 `sm1::list_prepared` under its `gid`, or it has no record and is
-dead (§3.4). A coordinator that got `SM_ERR_IO` checks the list
-and resolves by `gid`. It never received a "yes" vote, so abort
-is always a correct decision.
+dead (§3.4). A coordinator that lost its participant checks the
+list and resolves by `gid`. It never received a "yes" vote, so
+abort is always a correct decision.
+
+**A failed `ABORTED` record write is fatal** too: the record
+may have reached the WAL, so after reopen the transaction is
+either aborted or still listed in doubt, and the coordinator
+aborts it again.
 
 The coordinator later calls commit or abort. Commit is §8.2 starting
 at step 2, overwriting the record (dropping the now-unneeded write

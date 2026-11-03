@@ -1,7 +1,7 @@
 /*
  * test_xct.cc -- the commit sequencer, the active-transaction
- * table and commit cache, and the fail-stop state (SM1_DESIGN.md
- * §3.4, §4.3, §8.2).
+ * table and commit cache, and the abort on a failed commit record
+ * (SM1_DESIGN.md §3.4, §4.3, §8.2).
  */
 
 #include "doctest.h"
@@ -265,55 +265,6 @@ TEST_CASE("a failed status write aborts the process") {
   CHECK(get(s, store, "old") == "v");
   CHECK(get(s, store, "x") == "<none>");
   put(s, store, "y", "v");
-  REQUIRE(sm1::commit(s) == 0);
-  REQUIRE(sm1::closedb(s) == 0);
-}
-
-TEST_CASE("a database failed stop reads on, and refuses writes") {
-  // Verify the failed state (§8.2), which a failed prepare write
-  // enters (§8.4).
-  // 1. Session B begins and reads committed "old".
-  // 2. Session A's prepare write fails: SM_ERR_IO.
-  // 3. B's existing snapshot still reads "old".
-  // 4. A new transaction can begin, read, and commit with no
-  //    writes, but insert and sm1::mkstore fail with SM_ERR_IO.
-  // 5. Close every session and reopen: writes work again.
-  xct_fixture_t f;
-  sm1::session_t *a = f.first();
-  sm1::session_t *b = f.open();
-  REQUIRE(commit_one(a, f.store(), "old") == 0);
-  REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(get(b, f.store(), "old") == "v");
-
-  f.db()->test_before_prepare = [] {
-    return rocksdb::Status::IOError("injected");
-  };
-  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
-  put(a, f.store(), "x", "v");
-  CHECK(sm1::prepare(a, "gx") == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_IO);
-  f.db()->test_before_prepare = nullptr;
-
-  CHECK(get(b, f.store(), "old") == "v");
-  REQUIRE(sm1::commit(b) == 0);
-
-  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(get(a, f.store(), "old") == "v");
-  CHECK(get(a, f.store(), "x") == "<none>");
-  CHECK(sm1::insert(a, f.store(), "y", "v") == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_IO);
-  uint64_t newstore = 0;
-  CHECK(sm1::mkstore(a, newstore) == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_IO);
-  REQUIRE(sm1::commit(a) == 0); // read-only: nothing to publish
-
-  REQUIRE(sm1::closedb(a) == 0);
-  REQUIRE(sm1::closedb(b) == 0);
-  sm1::session_t *s = opendb(f.home().env(), "db", nullptr);
-  REQUIRE(s);
-  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(get(s, f.store(), "old") == "v");
-  put(s, f.store(), "y", "v");
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::closedb(s) == 0);
 }

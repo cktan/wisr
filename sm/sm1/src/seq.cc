@@ -126,9 +126,8 @@ int mkseq(sm1::session_t *s, const char *name, uint64_t start,
   if (r == 0) {
     return set_error(sm1::SM_ERR_EXISTS, "sequence {} already exists", name);
   }
-  // Refuse writes after fail-stop, then allocate the seqid.
-  if (xct_check_writable(s->db) != 0 ||
-      db_alloc_objid(s->db, &def.seqid) != 0) {
+  // Allocate the seqid.
+  if (db_alloc_objid(s->db, &def.seqid) != 0) {
     return -1;
   }
 
@@ -236,10 +235,6 @@ int nextseq(sm1::session_t *s, const char *name, uint64_t *out) {
   if (sm1::session_t::temp_seq_t *q = temp_seq(s, name)) {
     return temp_seq_next(q, out);
   }
-  // A stopped database persists nothing, leases included.
-  if (xct_check_writable(s->db) != 0) {
-    return -1;
-  }
   seqdef_t def;
   if (seq_find(s, name, &def) != 0) {
     return -1;
@@ -278,10 +273,6 @@ int nextseq_ref(sm1::session_t *s, const sm1::seqref_t &ref, uint64_t *out) {
                        ref.name.c_str());
     }
     return temp_seq_next(q, out);
-  }
-  // A stopped database persists nothing, leases included.
-  if (xct_check_writable(s->db) != 0) {
-    return -1;
   }
   return db_next_seq(s->db, ref.seqid, ref.start, ref.increment, out);
 }

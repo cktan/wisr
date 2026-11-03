@@ -381,14 +381,6 @@ struct db_t {
   size_t load_file_bytes = 0;
 
   /*
-   * Set when a PREPARED or ABORTED record write fails (§8.4): the
-   * outcome of that transaction is unknown until a reopen, so
-   * writes, commits, and DDL fail with SM_ERR_IO from then on. A
-   * failed commit record aborts the process instead (§8.2).
-   */
-  std::atomic<bool> failed{false};
-
-  /*
    * Test hook: called after a commit claims its commit_ts and
    * before it writes the status record. A non-OK status stands
    * in for the write's failure. Empty outside tests.
@@ -584,6 +576,9 @@ struct db_t {
   /* Test hook, as test_before_commit, for the PREPARED record. */
   std::function<rocksdb::Status()> test_before_prepare;
 
+  /* Test hook, as test_before_commit, for a prepared one's ABORTED record. */
+  std::function<rocksdb::Status()> test_before_abort_prepared;
+
   /* Destroy the CF handles and close RocksDB. */
   ~db_t();
 };
@@ -618,7 +613,7 @@ void db_commit_done(db_t *db, uint64_t commit_ts);
 
 /*
  * Wait until commit_ts, done, is visible: visible_ts at or past
- * it, or the database failed stop (COMMITVISIBLE.md).
+ * it (COMMITVISIBLE.md).
  */
 void db_commit_wait(db_t *db, uint64_t commit_ts);
 

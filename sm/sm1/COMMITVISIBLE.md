@@ -56,7 +56,7 @@ it likelier; a permanent table's commit is the same.
 | --- | --- |
 | no older commit in progress | `visible_ts` reaches commit_ts in `db_commit_done()`: no wait |
 | an older commit syncing | waits for that sync, which group commit shares |
-| an older commit's record write fails | it sets `failed` and signals: the waiter returns |
+| an older commit's record write or sync fails | the process aborts (§8.2): no waiter returns |
 | SERIALIZABLE validation fails after the claim | `done(commit_ts)` with nothing published, as now: it raises `visible_ts` for the waiters behind it |
 | COMMIT PREPARED, a prepared transaction restored at open | the same publish, the same wait |
 | read-only commit | no commit_ts: no wait |
