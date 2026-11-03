@@ -1,3 +1,112 @@
+# Code Review: Group-Sync Fixes
+
+The review read the fixes of the group-sync review on
+`wip-review`, `b1ddfcad..f81ea1b8`. It found two correctness
+gaps, two robustness gaps, stale documents and four cleanups.
+
+- **Target:** `wip-review` at `f81ea1b8`.
+- **Effort:** `high`.
+- **Verification:** the findings come from reading the code.
+  Findings 1 and 2 were checked against `f81ea1b8`.
+
+## Status
+
+The fixes are on branch `wip-review`.
+
+| Finding | Status | Commit |
+| --- | --- | --- |
+| 1 | gone: nothing sets a failed state now (finding 6) | `ca3b8bb9` |
+| 2 | kept, and documented in `SM1_DESIGN.md` §8.2 | `106da4df` |
+| 3 | fixed | `40613bfc` |
+| 4 | fixed, in both tests that stall a sync | `5520b20d` |
+| 5 | fixed | `ca3b8bb9`, `d74c4102` |
+| 6 | fixed | `ca3b8bb9` |
+| 7 | fixed | `70480e86` |
+| 8 | fixed for `run_oom_child()`; the others stay | `a7aec2fa` |
+| 9 | no change | — |
+
+## Findings
+
+### 1. A commit can return 0 after a failed sync
+
+- **Location:** `sm/sm1/src/db.cc`, `db_sync_wal()`.
+- **Defect:** `db_sync_wal()` did not check `db->failed`. A
+  PREPARE's synced write could fail its fsync and set the flag.
+  A commit that waits in `db_sync_wal()` then synced again, and
+  returned 0. After a failed fsync, Linux may drop the dirty
+  pages, so that record may be lost.
+- **Resolution:** finding 6 removed the failed state. Every
+  failed status record write now aborts the process.
+
+### 2. Every failed commit `Put` aborts the process
+
+- **Location:** `sm/sm1/src/xct.cc`, `finish_commit()`.
+- **Defect:** RocksDB refuses writes after a background error,
+  such as a full disk in a flush. The record is then not
+  written, but the process aborts.
+- **Resolution:** kept. The returned status does not tell a
+  refusal from a failure after the write. PostgreSQL also
+  PANICs on a failed WAL write. A failed `persist_lease()` is
+  not part of this finding: `db_claim_commit_ts()` returns
+  `SM_ERR_IO` for it, before the write.
+
+### 3. `fatal_v()` can hang
+
+- **Location:** `sm/sm0/src/log.cc`, `fatal_v()`.
+- **Defect:** `fatal_v()` took `g_log_mu` through `log_v()`. A
+  hook that calls `fatal()` deadlocks on the mutex its thread
+  holds. A hook stuck in another thread stops the abort.
+- **Fix:** a thread in the hook skips the hook. Other threads
+  wait at most one second for `g_log_mu`, now a
+  `std::timed_mutex`. stderr always has the message.
+
+### 4. A failed `REQUIRE` hangs the group-sync tests
+
+- **Location:** `sm/sm1/test/test_groupsync.cc`.
+- **Defect:** the destructor of a `std::async` future waits for
+  its commit. A failed `REQUIRE` before `release.set_value()`
+  left that commit stalled in the sync, so the suite hung.
+- **Fix:** a scope guard lets the sync go on every way out.
+
+### 5. Documents describe the removed fail-stop
+
+- **Location:** `db.h`, `sm1.h`, `API.md`, `sm0.h`.
+- **Defect:** comments and documents said that a failed write
+  stops the database until it is reopened.
+- **Fix:** they now say that the process aborts.
+
+### 6. Two failure policies for status records
+
+- **Location:** `sm/sm1/src/xct.cc`, `prepare()` and
+  `abort_prepared_txn()`.
+- **Defect:** a failed `COMMITTED` record aborted the process.
+  A failed `PREPARED` or `ABORTED` record still used the
+  failed state.
+- **Fix:** every failed status record write aborts the process.
+  The failed state, `xct_check_writable()` and limbo are gone.
+
+### 7. Unused includes
+
+- **Location:** `sm/sm1/src/env.cc`.
+- **Fix:** `<stdio.h>` and `<stdlib.h>` are removed.
+
+### 8. Child-process helpers duplicate `run_child()`
+
+- **Location:** `sm/sm1/test/util.h` and the test files.
+- **Fix:** `run_oom_child()` is replaced by `run_child()`.
+- **Kept:** `spawn_child()` and the crash and sequence
+  spawners. They kill the child after its report, and
+  `run_child()` waits for it to exit. sm0's `read_all()` stays,
+  because sm0 cannot include sm1's test helpers.
+
+### 9. `sync_waiters` is read only by tests
+
+- **Location:** `sm/sm1/src/db.h`.
+- **Resolution:** no change. The count changes under
+  `sync_mu`, which the waiting commit holds. Its cost is two
+  integer operations for each wait. A hook could count only
+  arrivals, and sleeps made the test depend on timing.
+
 # Code Review: Group Sync
 
 The review found no way to lose or wrongly show committed data
