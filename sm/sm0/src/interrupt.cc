@@ -2,6 +2,7 @@
  * interrupt.cc -- interrupting a thread, interruptible waits, and
  * timers that interrupt (INTERRUPT.md, include/sm_sys.h).
  */
+#include "sm0_defer.h"
 #include "sm_sys.h"
 
 #include "sm0_error.h"
@@ -174,6 +175,14 @@ sm_wait_result_t sm_wait(std::unique_lock<std::mutex> *lock,
     t->waiter_mu = lock->mutex();
     t->waiter_mask = mask;
   }
+  // Unregister however the wait ends, an exception from done among the
+  // ways: nothing may wake it, nor reach its cv and mutex, after.
+  defer {
+    std::lock_guard<std::mutex> guard(t->mu);
+    t->waiter_cv = nullptr;
+    t->waiter_mu = nullptr;
+    t->waiter_mask = 0;
+  };
 
   for (;;) {
     if (done(arg)) {
@@ -192,14 +201,6 @@ sm_wait_result_t sm_wait(std::unique_lock<std::mutex> *lock,
     } else {
       cv->wait_until(*lock, time_point_of(deadline_us));
     }
-  }
-
-  {
-    // Unregister: nothing may wake this wait now.
-    std::lock_guard<std::mutex> guard(t->mu);
-    t->waiter_cv = nullptr;
-    t->waiter_mu = nullptr;
-    t->waiter_mask = 0;
   }
   return result;
 }

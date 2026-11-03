@@ -7,7 +7,7 @@ history keeps the closed reviews (`REVIEW.md` up to
 
 1. **`aa/`**: open; findings 1, 2 and 4 to 7 fixed; 3 waits on
    a decision; the rule findings not yet checked.
-2. **`sm/`**: open, not yet checked against the code.
+2. **`sm/`**: open; High 1 fixed; the rest being checked.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
 # Review: `aa/` (Authentication and Authorization)
@@ -103,8 +103,8 @@ Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 
 # Review: `sm/` (Storage Manager Stack)
 
-**Status: open.** No finding is fixed yet, and none has been
-checked against the code.
+**Status: open.** High 1, a wait left registered by an
+exception, is fixed; the others are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -116,7 +116,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 
 | Level / Area | Layering & Opacity | Naming (`_t`, `m_`, no `strncpy`) | Findings |
 | --- | --- | --- | --- |
-| `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 1 High, 3 Medium, 3 Low |
+| `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Medium, 3 Low |
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 3 High, 4 Medium, 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 1 High, 2 Medium, 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 3 High, 3 Medium, 5 Low |
@@ -125,22 +125,6 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 ---
 
 ### 2. High-Severity Findings
-
-#### [HIGH] 1. `sm0`: Missing RAII unregistration in `sm_wait()` leaves dangling stack pointers on exception
-
-- **Location:** `sm/sm0/src/interrupt.cc:170-204`
-- **Issue:** `sm_wait()` stores pointers to the caller's
-  stack-allocated `cv` and `lock->mutex()` in `t->waiter_cv` and
-  `t->waiter_mu` (lines 173-175), loops calling `done(arg)` and
-  `cv->wait(...)`, and clears `t->waiter_cv` and `t->waiter_mu`
-  only at lines 199-203 without an RAII guard. If `done(arg)` or
-  `cv->wait` throws an exception (`sm/CODE.md` §5 notes that
-  exceptions may unwind frames), `t->waiter_cv` and
-  `t->waiter_mu` remain non-null dangling pointers. Any later
-  `sm_interrupt(t, ...)` from another thread dereferences those
-  destroyed stack objects (Use-After-Free).
-- **Fix:** Register a `defer` guard immediately after setting
-  `t->waiter_cv` and `t->waiter_mu` to clear both under `t->mu`.
 
 #### [HIGH] 2. `sm1`: Use-After-Free on `rocksdb::ColumnFamilyHandle*` (`st.cf`) across GC, stats, and rollback/abort
 

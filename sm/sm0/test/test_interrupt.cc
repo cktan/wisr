@@ -318,6 +318,37 @@ TEST_CASE("a periodic timer interrupts again and again, until cancelled") {
   CHECK(sm_pending() == 0);
 }
 
+/* A wait's predicate that throws, as a caller's callback may. */
+bool throwing_done(void *) { throw 1; }
+
+TEST_CASE("a wait left by an exception is no longer a waiter") {
+  // Verify sm_wait() unregisters its wait when its predicate throws, so
+  // a later interrupt finds no waiter to wake.
+  // 1. Hold a mutex, and wait on it with a predicate that throws.
+  // 2. Keep the mutex held, and interrupt this thread from another.
+  // 3. Confirm the interrupt returns at once: it found no waiter, where a
+  //    stale one would make it retry the held mutex forever.
+  // 4. Let the mutex go, and take the bit.
+  std::mutex mu;
+  std::condition_variable cv;
+  std::unique_lock<std::mutex> lock(mu);
+  bool thrown = false;
+  try {
+    sm_wait(&lock, &cv, throwing_done, nullptr, B1, SM_FOREVER);
+  } catch (int) {
+    thrown = true;
+  }
+  REQUIRE(thrown);
+  REQUIRE(lock.owns_lock());
+  sm_thread_ref_t self = sm_thread_self();
+  std::future<void> raised =
+      std::async(std::launch::async, [&] { sm_interrupt(self, B1); });
+  CHECK(raised.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
+  lock.unlock();
+  raised.wait();
+  CHECK(sm_take(B1) == B1);
+}
+
 TEST_CASE("a timer due never leaves the timer thread asleep") {
   // Verify a timer at SM_FOREVER costs no CPU while it is armed.
   // 1. Arm a timer on this thread for B1, due at SM_FOREVER.
