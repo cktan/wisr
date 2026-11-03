@@ -256,6 +256,57 @@ TEST_CASE("a key column's type changed keys the rows anew") {
   REQUIRE(sm3::commit(f.s) == 0);
 }
 
+TEST_CASE("a duplicate in a unique index names that index and the row") {
+  // Verify the rewrite says where the converted rows collide, for the
+  // host's error (ALTERTYPE.md §5).
+  // 1. u (a int4 NOT NULL, c int4), keyed by a, has rows with c = 1
+  //    and 2, and a unique index u_c on c, made with it.
+  // 2. c goes to int4, every value 0: SM_ERR_DUPKEY, naming u_c, not
+  //    the primary key, and the later row by its key in the old
+  //    store.
+  alt_t f;
+  std::vector<sm3::column_spec_t> cols = {
+      {"a", sm2::type_int4.code, -1, true},
+      {"c", sm2::type_int4.code, -1, false}};
+  std::vector<sm3::index_key_spec_t> by_a = {{0, false, false, std::nullopt}};
+  std::vector<sm3::index_key_spec_t> by_c = {{1, false, false, std::nullopt}};
+  uint64_t u = 0, u_pkey = 0, t_c = 0;
+  f.begin();
+  REQUIRE(sm3::create_table(f.s, sm3::nsp_public, "u", cols, u) == 0);
+  REQUIRE(sm3::create_index(f.s, u, "u_pkey", by_a, {}, true, u_pkey, true,
+                            true) == 0);
+  REQUIRE(sm3::create_index(f.s, u, "u_c", by_c, {}, true, t_c) == 0);
+  sm3::table_t *x = nullptr;
+  REQUIRE(sm3::tbl_open(f.s, u, sm1::SM_LOCKMODE_IX, x) == 0);
+  for (int32_t i : {1, 2}) {
+    sm2::datum_t d[2] = {sm2::datum_from_int32(i), sm2::datum_from_int32(i)};
+    bool n[2] = {false, false};
+    uint64_t id = 0;
+    REQUIRE(sm3::tbl_insert(x, d, n, id) == 0);
+  }
+  sm3::tbl_close(x);
+  REQUIRE(sm3::commit(f.s) == 0);
+  sm3::column_conv_fn to_zero = [](std::span<const sm2::datum_t>,
+                                   std::span<const bool>, std::string &out,
+                                   bool &out_null) {
+    out_null = false;
+    out = int4_bytes(0);
+    return 0;
+  };
+  f.begin();
+  CHECK(sm3::alter_column_type(f.s, u, "c", {sm2::type_int4.code, -1},
+                               &to_zero) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  CHECK(sm1::errdup().index == t_c);
+  sm2::key_column_t col = {&sm2::type_int4, -1, nullptr, false, false};
+  sm2::datum_t d[1] = {sm2::datum_from_int32(2)};
+  bool n[1] = {false};
+  std::string key;
+  REQUIRE(sm2::encode_key({&col, 1}, d, n, key) == 0);
+  CHECK(sm1::errdup().row == key);
+  sm3::abort(f.s);
+}
+
 TEST_CASE("a converter's failure, or a null in a NOT NULL column, fails it") {
   // Verify the change is all or nothing (ALTERTYPE.md §5).
   // 1. t has two rows.

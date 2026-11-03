@@ -396,9 +396,9 @@ struct column_conv_t {
  * the rows of a table that lost its primary key draw theirs in key
  * order (../ROWKEY.md §2.4). With conv, each row's value of its
  * column is conv's, of the column's type in rec. The record is put,
- * and the old store goes at commit. Two rows with one primary key
- * fail with SM_ERR_DUPKEY, one's key in the old store in
- * sm1::errdup().
+ * and the old store goes at commit. Two rows with one key in a
+ * unique index fail with SM_ERR_DUPKEY, the index and the later
+ * row's key in the old store in sm1::errdup().
  */
 int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec,
                   const column_conv_t *conv = nullptr);

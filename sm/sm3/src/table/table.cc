@@ -2455,11 +2455,19 @@ static int copy_rows(table_t *from, table_t *to, const column_conv_t *conv) {
       return -1;
     }
     // The row, by its key in the old store, which still holds the
-    // table, for the host to show the key it holds.
-    if (const index_def_t *pk = primary_of(*to->def)) {
-      sm1::seterr(sm1::SM_ERR_DUPKEY, "rewrite: two rows of " + def.name +
-                                          " have one key in " + pk->name);
-      sm1::setdup({pk->oid, std::string(tbl_scan_key(scan))});
+    // table, for the host to show the key it holds: in the index the
+    // insert met the duplicate in, the primary key if it named none.
+    uint64_t index = sm1::errdup().index;
+    const index_def_t *pk = primary_of(*to->def);
+    if (0 == index && pk) {
+      index = pk->oid;
+    }
+    for (const index_def_t &x : to->def->indexes) {
+      if (x.oid == index) {
+        sm1::seterr(sm1::SM_ERR_DUPKEY, "rewrite: two rows of " + def.name +
+                                            " have one key in " + x.name);
+        sm1::setdup({index, std::string(tbl_scan_key(scan))});
+      }
     }
     return -1;
   }
