@@ -583,6 +583,11 @@ int rollback(sm1::session_t *s, int depth) {
   // And every batch iterator's: the stores made after the mark go
   // below, and the next batch read makes a new iterator.
   batch_iters_release(s);
+  // And the session's own read pin, as an abort or a commit lets go of
+  // it: its iterator may be on a store dropped below. No iterator opened
+  // before the rollback serves a read after it.
+  sm1::unpin(&s->readpin);
+  s->write_gen++;
 
   // Drop the stores created after the mark, newest first.
   for (size_t i = s->created.size(); i-- > m.created;) {

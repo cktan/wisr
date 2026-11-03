@@ -129,6 +129,30 @@ TEST_CASE("rollback restores the values as of the savepoint, at every level") {
   }
 }
 
+TEST_CASE("rollback lets go of the session's read pin") {
+  // Verify a rollback to a savepoint lets go of the row the session's own
+  // read pin holds, as an abort or a commit does, so no iterator stays on
+  // a store the rollback drops.
+  // 1. Past a savepoint, make a store, write a key and read it: the read
+  //    pin holds an iterator on that store.
+  // 2. Roll back to the savepoint: the store goes, and the pin holds no
+  //    iterator.
+  sp_fixture_t f;
+  sm1::session_t *s = f.open();
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::savepoint(s) == 1);
+  uint64_t made = mkstore(s);
+  put(s, made, "k", "v");
+  CHECK(get(s, made, "k") == "v");
+  REQUIRE(s->readpin.it != nullptr);
+
+  // 2.
+  REQUIRE(sm1::rollback(s, 1) == 0);
+  CHECK(s->readpin.it == nullptr);
+  REQUIRE(sm1::commit(s) == 0);
+  sm1::closedb(s);
+}
+
 TEST_CASE("rollback needs a savepoint, and a savepoint lives only in its "
           "transaction") {
   // Verify SM_ERR_NOSAVEPOINT and the savepoint's lifetime.

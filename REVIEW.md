@@ -7,7 +7,7 @@ history keeps the closed reviews (`REVIEW.md` up to
 
 1. **`aa/`**: open; findings 1 to 7 fixed; the rule findings not
    yet checked.
-2. **`sm/`**: open; Highs 1 to 3 fixed; the rest being checked.
+2. **`sm/`**: open; Highs 1 to 4 fixed; the rest being checked.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
 # Review: `aa/` (Authentication and Authorization)
@@ -80,9 +80,11 @@ None open: findings 1 to 7 are fixed.
 
 **Status: open.** High 1, a wait left registered by an
 exception, High 2, a store's handle freed while copies use it,
-and High 3, a committed version copied unstamped, are fixed (its
-part 3, filter_old()'s unlinked versions, holds: only readers of
-the old epoch reach them); the others are being checked.
+High 3, a committed version copied unstamped (its part 3,
+filter_old()'s unlinked versions, holds: only readers of the old
+epoch reach them), and High 4, a rollback keeping the read pin (a
+Low: seq_hwm hides the undone versions, so it kept resources, not
+rows), are fixed; the others are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -95,7 +97,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | Level / Area | Layering & Opacity | Naming (`_t`, `m_`, no `strncpy`) | Findings |
 | --- | --- | --- | --- |
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Medium, 3 Low |
-| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 1 High, 4 Medium, 3 Low |
+| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 4 Medium, 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 1 High, 2 Medium, 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 3 High, 3 Medium, 5 Low |
 | `include/` & `src/` | FAIL (`std::optional` in `sm_stats.h`) | PASS | 1 High, 2 Medium, 3 Low |
@@ -103,20 +105,6 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 ---
 
 ### 2. High-Severity Findings
-
-#### [HIGH] 4. `sm1`: Savepoint rollback does not unpin `s->readpin`, leaving a live iterator on dropped column families
-
-- **Location:** `sm/sm1/src/xct.cc:571-593`
-- **Issue:** Unlike `discard()` (`xct.cc:299`) and `commit`
-  (`xct.cc:1182`), `rollback()` closes `s->scans` and releases
-  `batch_iters`, but never calls `sm1::unpin(&s->readpin)` (or
-  increments `s->write_gen`). If a transaction creates a store
-  after a savepoint, reads from it into `s->readpin`, and rolls
-  back to the savepoint, `rollback()` calls `db_drop_store_cf` at
-  line 590 and destroys `st.cf` while `s->readpin.it` still holds
-  an active `rocksdb::Iterator` on that column family.
-- **Fix:** Call `sm1::unpin(&s->readpin)` and increment
-  `s->write_gen` in `rollback()` before dropping created stores.
 
 #### [HIGH] 5. `sm2`: `rel->held` retains uncommitted TOAST pointers when `update_row(..., hold=true)` fails after `settle_old`
 
