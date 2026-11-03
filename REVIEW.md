@@ -7,7 +7,7 @@ history keeps the closed reviews (`REVIEW.md` up to
 
 1. **`aa/`**: open; findings 1, 2 and 4 to 7 fixed; 3 waits on
    a decision; the rule findings not yet checked.
-2. **`sm/`**: open; Highs 1 and 2 fixed; the rest being checked.
+2. **`sm/`**: open; Highs 1 to 3 fixed; the rest being checked.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
 # Review: `aa/` (Authentication and Authorization)
@@ -104,8 +104,10 @@ Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 # Review: `sm/` (Storage Manager Stack)
 
 **Status: open.** High 1, a wait left registered by an
-exception, and High 2, a store's handle freed while copies use it,
-are fixed; the others are being checked.
+exception, High 2, a store's handle freed while copies use it,
+and High 3, a committed version copied unstamped, are fixed (its
+part 3, filter_old()'s unlinked versions, holds: only readers of
+the old epoch reach them); the others are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -118,7 +120,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | Level / Area | Layering & Opacity | Naming (`_t`, `m_`, no `strncpy`) | Findings |
 | --- | --- | --- | --- |
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Medium, 3 Low |
-| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 2 High, 4 Medium, 3 Low |
+| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 1 High, 4 Medium, 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 1 High, 2 Medium, 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 3 High, 3 Medium, 5 Low |
 | `include/` & `src/` | FAIL (`std::optional` in `sm_stats.h`) | PASS | 1 High, 2 Medium, 3 Low |
@@ -126,38 +128,6 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 ---
 
 ### 2. High-Severity Findings
-
-#### [HIGH] 3. `sm1`: Chained store MVCC and `CF:txn` sweep race leaves committed versions unstamped
-
-- **Location:** `sm/sm1/src/chain.cc:409-447`,
-  `sm/sm1/src/chain.cc:1083-1115`, `sm/sm1/src/gc.cc:222-224`,
-  `sm/sm1/src/gc.cc:374-448`
-- **Issue:** `sweep_txn_locked()` records `w0 = db_watermark(db)`,
-  runs `CompactRange` on each store column family to stamp all
-  committed versions with `commit_ts <= w0`, and then deletes all
-  `COMMITTED` records with `commit_ts <= w0` from `CF:txn`.
-  Unlike versioned stores, chained stores move and rewrite
-  existing versions between `CURR` (`0x02`) and `OLD` (`0x03`)
-  into the active memtable during normal writes and rollbacks:
-  1. In `chain_write()` (`chain.cc:409-415`, `438-443`), when a
-     committed unstamped version (`commit_ts <= w0`) is moved
-     from `CURR` to `OLD` (or updated in `OLD`) after
-     `CompactRange`'s memtable flush, it is written to the new
-     memtable without setting `version_stamped` and `commit_ts`.
-  2. In `chain_restore()` (`chain.cc:1085-1088`, `1104-1114`),
-     restored `CURR` and `OLD` entries are written without
-     stamping committed versions.
-  3. In `gc_filter_t::filter_old()` (`gc.cc:222-224`), when
-     `v.flags & chain_unlinked` and `v.displaced > m_watermark`,
-     `filter_old` returns `false` before calling `stamp_own()`,
-     leaving `v`'s committed writer (`commit_ts <= w0`)
-     unstamped.
-  Once `CF:txn` deletes `xid` (`commit_ts <= w0`) and `xid`
-  leaves `commit_cache`, `xct_status` treats those committed
-  versions as `XCT_DEAD` (aborted).
-- **Fix:** Stamp resolved committed versions when writing them in
-  `chain_write()` and `chain_restore()`, and call `stamp_own()`
-  before returning `false` in `gc_filter_t::filter_old()`.
 
 #### [HIGH] 4. `sm1`: Savepoint rollback does not unpin `s->readpin`, leaving a live iterator on dropped column families
 
