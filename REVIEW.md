@@ -96,8 +96,9 @@ builds; its join race is none, as a worker that takes new work
 only makes the detach wait for it. High 8, a worker counted whose
 thread was never made, and High 9, std::optional in sm_stats.h, are
 fixed. Of the Mediums, 1, a deadline that overflowed into the
-past, and 2, a periodic timer's catch-up that starved its cancel,
-are fixed; the others and the Lows are being checked.
+past, 2, a periodic timer's catch-up that starved its cancel, and
+3, a real fd's open of no path, are fixed; the others and the Lows
+are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -109,7 +110,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 
 | Level / Area | Layering & Opacity | Naming (`_t`, `m_`, no `strncpy`) | Findings |
 | --- | --- | --- | --- |
-| `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 1 Medium, 3 Low |
+| `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Low |
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 4 Medium, 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 2 Medium, 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 3 Medium, 5 Low |
@@ -125,12 +126,6 @@ None open: Highs 1 to 9 are closed.
 
 ### 3. Medium-Severity Findings
 
-3. **`sm0` (`sm/sm0/src/vfd.cc:161, 484-491`) — Null dereference
-   in `sm_vfd_open_real`:** Unlike `sm_vfd_open`,
-   `sm_vfd_open_real` does not check `cache == nullptr` or `path
-   == nullptr`; passing `path == nullptr` causes
-   `std::string("open \"") + path` at line 161 to dereference
-   `nullptr`.
 4. **`sm1` (`sm/sm1/src/load.cc:470-503`) — `sm1::load_open` and
    `sm1::store_empty` bypass catalog visibility, store-0, and
    temp-store owner checks:** Both look up `storeid` via
