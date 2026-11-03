@@ -210,6 +210,22 @@ int commit_one(sm1::session_t *s, uint64_t store, const std::string &key) {
   return sm1::commit(s);
 }
 
+/* Wait up to 10 seconds for n commits to wait for a sync. */
+bool wait_for_waiters(wisr::db_t *db, int n) {
+  auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < until) {
+    {
+      // Hold sync_mu to read the count the commits keep under it.
+      std::lock_guard<std::mutex> guard(db->sync_mu);
+      if (db->sync_waiters == n) {
+        return true;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return false;
+}
+
 } // namespace
 
 TEST_CASE("a commit survives a power cut once sm1::commit returns") {
@@ -391,8 +407,8 @@ TEST_CASE("one sync serves the commits that wait while another runs") {
   // Verify the commits waiting behind a sync share the next one, as
   // PostgreSQL's XLogFlush() does (GROUPSYNC.md §3).
   // 1. Session A commits "a"; its sync stalls.
-  // 2. Fifteen sessions commit meanwhile, one at a time, so each
-  //    record has a sequence number of its own; each waits.
+  // 2. Fifteen sessions commit meanwhile: each writes its record
+  //    and waits for A's sync.
   // 3. Let A's sync go: the fifteen share a second sync, whichever
   //    of them leads it.
   sync_fixture_t f;
@@ -422,11 +438,9 @@ TEST_CASE("one sync serves the commits that wait while another runs") {
     rcs.push_back(std::async(std::launch::async, [&, i] {
       return commit_one(others[i], f.store(), "k" + std::to_string(i));
     }));
-    // Time for its record to be written alone.
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
-  // Time for the last to write its record and wait.
-  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  // Every one has written its record once it waits for the sync.
+  REQUIRE(wait_for_waiters(f.db(), (int)others.size()));
 
   release.set_value();
   CHECK(a_rc.get() == 0);

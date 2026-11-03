@@ -398,13 +398,15 @@ struct db_t {
   /*
    * The commits' WAL sync, outside RocksDB's write queue
    * (db_sync_wal(), GROUPSYNC.md). Under sync_mu: the last
-   * sequence number a finished sync covers, and whether a commit
-   * is syncing now; sync_cv wakes the commits waiting for it.
+   * sequence number a finished sync covers, whether a commit is
+   * syncing now, and how many commits wait for it, which tests
+   * read; sync_cv wakes the commits waiting.
    */
   std::mutex sync_mu;
   std::condition_variable sync_cv;
   uint64_t synced_seq = 0;
   bool syncing = false;
+  int sync_waiters = 0;
 
   /*
    * Test hook: called by a commit leading a sync, before

@@ -822,8 +822,10 @@ void db_sync_wal(db_t *db) {
     if (!db->syncing) {
       break;
     }
-    // Not leading: wait for the sync that runs.
+    // Not leading: wait for the sync that runs, counted.
+    db->sync_waiters++;
     db->sync_cv.wait(guard);
+    db->sync_waiters--;
   }
   // Lead the next sync; what it covers is fixed before it begins.
   db->syncing = true;
