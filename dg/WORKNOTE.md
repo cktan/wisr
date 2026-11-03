@@ -10972,3 +10972,30 @@ with no bloom filter, bought one row.
   steps keeps it, scattered keys let it go and make none after;
   each fails with its part taken out.
 
+## Step 373: ANALYZE's correlation chooses the batch reads
+
+After step 372, q3 still made its batch iterator and sought once
+a scan, about 10% of the server's time: 3.2% to make it, 5.4% for
+the seek, the rest to free it, for one row that `MultiGet` reads
+for less. ANALYZE already records each column's correlation with
+the rows' order (`sm3/src/analyze/estimate.cc`), as PostgreSQL's
+planner reads it.
+
+- **sm3**: a tree's cursor, as it makes its batch iterator, reads
+  the table's statistics (`cat_get_stats`, in memory) for the
+  correlation of the tree's leading key, its column's or its
+  expression's. Below 0.5 in absolute value, the iterator is made
+  scattered.
+- **sm1**: `batch_iter_new(scattered)`: every batch of a
+  scattered iterator is read by `MultiGet`, and it makes no
+  RocksDB iterator.
+- **Measured** (step 369's method): q3 234.3k to 203.4k
+  instructions a statement. A tree on `id / 10`, 10 rows a probe
+  that are together, made for this and dropped: 189.7k on `main`,
+  189.9k here, the statistics' lookup.
+- **Tests**: sm3, a cursor over rows that are together keeps its
+  iterator with no statistics and with a correlation of 0.9 or
+  -0.9, and makes none with -0.1; it fails with the choice taken
+  out, or with the sign of the correlation kept. sm1, an iterator
+  made scattered makes none; it fails with the flag ignored.
+

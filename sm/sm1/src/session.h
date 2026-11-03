@@ -64,6 +64,8 @@ struct sm1::batch_iter_t {
    * its later batches go to MultiGet whole, with no iterator.
    */
   bool missed = false;
+  /* The caller said so first (batch_iter_new): every store's too. */
+  bool scattered = false;
 };
 
 struct sm1::session_t {

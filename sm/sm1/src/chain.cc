@@ -739,12 +739,12 @@ int read_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
  * 1. Make each key's checks and SIREAD entry, as a single read makes
  *    them.
  * 2. Enter a read epoch, held until every key is resolved.
- * 3. If the keys ascend, and no batch of bi's found the store's keys
- *    scattered, read their newest versions by one iterator: bi's,
- *    refreshed, or one made and kept in bi. Seek the first key, then
- *    step at most four times to each next one; stop at the first key
- *    the steps miss. If that is the second key, mark bi missed, and
- *    let its iterator go.
+ * 3. If the keys ascend, and neither bi's caller nor a batch of bi's
+ *    found the store's keys scattered, read their newest versions by one
+ * iterator: bi's, refreshed, or one made and kept in bi. Seek the first key,
+ * then step at most four times to each next one; stop at the first key the
+ * steps miss. If that is the second key, mark bi missed, and let its iterator
+ * go.
  * 4. Read the newest versions of the keys left by one MultiGet.
  * 5. Resolve each key as chain_get() resolves one.
  */
@@ -811,7 +811,7 @@ int read_chained_batch(sm1::session_t *s, uint64_t storeid,
   // Keys far apart, which the steps do not reach, go back to
   // MultiGet from the first the steps miss on; and every key, once a
   // batch of the store's found its keys that far apart.
-  if (bi && bi->missed && bi->storeid == storeid) {
+  if (bi && (bi->scattered || (bi->missed && bi->storeid == storeid))) {
     ascending = false;
   }
   size_t done = 0;
@@ -1415,9 +1415,11 @@ int sm1::chain_read_batch(sm1::session_t *session, uint64_t storeid,
 }
 
 /* Make a batch read's iterator; see sm1.h. */
-sm1::batch_iter_t *sm1::batch_iter_new() {
+sm1::batch_iter_t *sm1::batch_iter_new(bool scattered) {
   // Allocated as a handle, so sm1.h shows no RocksDB type.
-  return new sm1::batch_iter_t;
+  sm1::batch_iter_t *iter = new sm1::batch_iter_t;
+  iter->scattered = scattered;
+  return iter;
 }
 
 /* Let go of a batch read's iterator, then free it; see sm1.h. */

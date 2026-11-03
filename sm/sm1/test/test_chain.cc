@@ -1147,8 +1147,9 @@ TEST_CASE("a batch read's kept iterator gives way to MultiGet for scattered "
   // 3. A batch of close keys, then a gap: the steps reached keys past
   //    the first, so it stays held.
   // 4. Through another iterator, a batch of scattered keys: it is let
-  //    go. Its next batches, scattered and close, make none. Every
-  //    batch gives what single reads give.
+  //    go. Its next batches, scattered and close, make none.
+  // 5. An iterator made scattered makes none, for close keys too.
+  //    Every batch gives what single reads give.
   chain_fixture_t f;
   uint64_t c = mkchain(f.s);
   char buf[16];
@@ -1179,9 +1180,16 @@ TEST_CASE("a batch read's kept iterator gives way to MultiGet for scattered "
   CHECK(!sm1::batch_iter_held(other));
   CHECK(batch_reads(f.s, c, close1, other) == close1);
   CHECK(!sm1::batch_iter_held(other));
+
+  sm1::batch_iter_t *told = sm1::batch_iter_new(true);
+  CHECK(batch_reads(f.s, c, close1, told) == close1);
+  CHECK(!sm1::batch_iter_held(told));
+  CHECK(batch_reads(f.s, c, close2, told) == close2);
+  CHECK(!sm1::batch_iter_held(told));
   commit_xct(f.s);
   sm1::batch_iter_free(iter);
   sm1::batch_iter_free(other);
+  sm1::batch_iter_free(told);
 }
 
 TEST_CASE("a batch of ascending keys is read by steps and seeks alike") {

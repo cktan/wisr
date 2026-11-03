@@ -87,6 +87,18 @@ read. Q9's 100 rows lie in one or two data blocks.
   some keys before a gap keeps the iterator. q3, whose
   lastnames are spread over the table at random, 249k to 234k
   instructions a statement (`../dg/WORKNOTE.md` step 372).
+- **ANALYZE says first.** The first batch that misses still
+  makes the iterator and seeks once a scan. A tree's cursor
+  now asks the table's statistics first: if the correlation
+  of the tree's leading key with the rows' order is below 0.5
+  in absolute value, its rows are scattered, and the cursor's
+  iterator is made scattered (`batch_iter_new(true)`). Every
+  batch then goes to `MultiGet` alone. With no statistics, or
+  a stronger correlation, a batch tries the steps, as above.
+  Statistics that are stale cost speed, never a wrong row.
+  q3, 234k to 203k instructions a statement; a tree on
+  `id / 10`, whose rows are together, 189.7k to 189.9k
+  (step 373).
 - **sm2**, `rel_read_batch()`: each key put under the table's
   relid, as `rel_read()` does one; a kept iterator passed on.
 - **sm3**, `tbl_read_keys(table, keys, n, refs, tuples, rc)`:

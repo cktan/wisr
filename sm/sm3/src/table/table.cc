@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -1657,6 +1658,39 @@ static int still_has(table_t *t, size_t i, std::string_view tuple,
 constexpr size_t tree_batch_max = 64;
 
 /*
+ * Below this, the absolute correlation of a tree's leading key with
+ * the rows' order says its rows are scattered (../../BATCHREAD.md
+ * §2.1).
+ */
+constexpr float tree_scattered_below = 0.5f;
+
+/*
+ * Whether the last ANALYZE of t found the rows of its index i
+ * scattered in the store: the correlation of the index's leading key
+ * with the rows' order, its column's or its expression's, is near 0.
+ * False with no statistics, or no correlation.
+ */
+static bool tree_scattered(table_t *t, size_t i) {
+  std::shared_ptr<const stats_t> stats;
+  if (0 != cat_get_stats(t->session, t->def->oid, stats) || !stats) {
+    return false;
+  }
+  const index_def_t &x = t->def->indexes[i];
+  if (x.key_attnums.empty()) {
+    return false;
+  }
+  int32_t att = x.key_attnums[0];
+  for (const stat_t &st : stats->stats) {
+    bool mine = att >= 0 ? !st.index && att == st.position
+                         : st.index && x.oid == *st.index && 0 == st.position;
+    if (mine && st.correlation) {
+      return std::fabs(*st.correlation) < tree_scattered_below;
+    }
+  }
+  return false;
+}
+
+/*
  * Read a tree's cursor's next entries, scan->batch of them or what is
  * left, and their rows at the transaction's snapshot, in one call
  * (../../BATCHREAD.md); the batch doubles for the next.
@@ -1733,7 +1767,9 @@ static int tree_fill(scan_t *scan) {
     raws[j] = scan->raws[want_rows[j]];
   }
   if (!scan->iter) {
-    scan->iter = sm1::batch_iter_new();
+    // Scattered rows skip the iterator from the first batch: a seek
+    // costs more than a MultiGet's key, and buys one row.
+    scan->iter = sm1::batch_iter_new(tree_scattered(t, scan->index));
   }
   if (0 != sm2::rel_read_batch(t->rel, keys.data(), m, raws.data(),
                                tuples.data(), rcs.data(), scan->iter)) {

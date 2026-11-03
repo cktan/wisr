@@ -5,6 +5,7 @@
  * its entry's key.
  */
 
+#include "../src/table/pin.h"
 #include "db.h"
 #include "doctest.h"
 #include "sm3.h"
@@ -1125,6 +1126,90 @@ TEST_CASE("tree: a cursor of rows goes on past a rollback to a savepoint") {
   sm3::tbl_scanend(scan);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("tree: a cursor of rows skips the iterator when ANALYZE found "
+          "them scattered") {
+  // Verify a tree's cursor reads its batches of rows without a RocksDB
+  // iterator when the statistics give its leading key a correlation
+  // near 0 with the rows' order, and with one otherwise, whatever the
+  // rows' own order (../BATCHREAD.md §2.1).
+  // 1. Insert 200 rows, 20 of each state, each state's rows together.
+  // 2. With no statistics, a cursor on one state keeps its iterator:
+  //    the rows are close.
+  // 3. With statistics giving state a correlation of 0.9, or of -0.9,
+  //    it keeps it.
+  // 4. With a correlation of -0.1, it makes none.
+  // 5. Each cursor gives the state's 20 rows.
+  trees_t f;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  char buf[8];
+  for (int i = 0; i < 200; i++) {
+    snprintf(buf, sizeof buf, "s%02d", i / 20);
+    row_t r(i, std::string(buf), "O");
+    uint64_t id;
+    REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  // The rows of state s03, and whether the cursor held an iterator.
+  auto read = [&](bool &held) {
+    REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+    sm3::table_t *t = f.table(f.a);
+    std::string v = sm2::make_varlena("s03");
+    sm2::datum_t d[1] = {sm2::datum_from_ptr(v.data())};
+    bool nn[1] = {false};
+    sm2::bound_t b{d, nn, true};
+    sm3::scan_t *scan = nullptr;
+    REQUIRE(sm3::tbl_idx_scan_rows(t, f.by_state, &b, &b, scan) == 0);
+    int n = 0;
+    uint64_t id;
+    std::string_view tuple;
+    while (0 == sm3::tbl_scannxt(scan, id, tuple)) {
+      n++;
+    }
+    held = sm1::batch_iter_held(scan->iter);
+    sm3::tbl_scanend(scan);
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
+    return n;
+  };
+  // Record statistics giving state the correlation c.
+  auto analyzed = [&](float c) {
+    sm3::stats_t st;
+    st.target = 100;
+    st.run_length = 64;
+    st.rows_sampled = 200;
+    st.rowno_limit = 200;
+    st.live_rows = 200;
+    st.heap_disk = 0;
+    st.heap_mem = 0;
+    st.avg_row_bytes = 20;
+    sm3::stat_t s;
+    s.position = 1;
+    s.null_frac = 0.0f;
+    s.width = 4;
+    s.distinct = 10.0f;
+    s.correlation = c;
+    st.stats = {s};
+    REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+    REQUIRE_MESSAGE(sm3::cat_put_stats(f.a, f.jobs, st) == 0, sm1::errmsg());
+    REQUIRE(sm3::commit(f.a) == 0);
+  };
+  bool held = false;
+  CHECK(20 == read(held));
+  CHECK(held);
+  analyzed(0.9f);
+  CHECK(20 == read(held));
+  CHECK(held);
+  analyzed(-0.9f);
+  CHECK(20 == read(held));
+  CHECK(held);
+  analyzed(-0.1f);
+  CHECK(20 == read(held));
+  CHECK(!held);
 }
 
 TEST_CASE("tree: a table rewritten keyed anew keeps its trees") {

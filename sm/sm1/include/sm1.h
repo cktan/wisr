@@ -1453,8 +1453,13 @@ int chain_read_latest(session_t* session, uint64_t storeid,
  */
 struct batch_iter_t;
 
-/* Make a batch read's iterator, holding none yet. */
-batch_iter_t* batch_iter_new();
+/*
+ * Make a batch read's iterator, holding none yet. With scattered, the
+ * caller knows its keys are far apart in the store, as an
+ * uncorrelated index's rows are: every batch is read by MultiGet
+ * alone, and it never holds one.
+ */
+batch_iter_t* batch_iter_new(bool scattered = false);
 
 /* Let go of iter's iterator, then free it; nullptr is a no-op. */
 void batch_iter_free(batch_iter_t* iter);
