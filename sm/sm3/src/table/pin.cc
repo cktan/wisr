@@ -163,6 +163,11 @@ void pins_close(session_t *s) {
   }
   s->pins.clear();
   s->pins_free = s->pins_held = s->pins_scan = nullptr;
+  // And the raw pins tree cursors gave back, emptied already.
+  for (sm1::rawpin_t *raw : s->raws_free) {
+    sm1::rawpin_free(raw);
+  }
+  s->raws_free.clear();
 }
 
 /* Release the pin ref names; see sm3.h. */

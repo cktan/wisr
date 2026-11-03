@@ -996,15 +996,10 @@ index is of one kind, and keeps it for its life.
 - **Built behind the kind, off by default**, so each step is
   measured against today's entries on the same table and can
   be left off if it fails.
-- **Kept both only if measured so**: the grid of index scans
-  and a write benchmark, on each kind. If one kind wins every
-  workload, the other goes; two kinds kept are two code paths
-  in sm2 and sm3 and every test run on each.
+- **Both kinds are kept**, each asked for by its name: two
+  code paths in sm2 and sm3, and every test run on each.
 - **Tests run on each kind**: slt and pgregress, the mvcc and
   rel cases each kind needs; a tree's cases are §8's.
-
-**Whether today's entries stay** is decided by measuring both
-kinds over that grid: a kind that loses every workload goes.
 
 ---
 

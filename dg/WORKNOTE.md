@@ -11252,3 +11252,66 @@ refused for every column. Design, cases and decisions:
   trimmed again: `skip` 6,063 to 6,037, `differs` 1,366 to
   1,361, no `crash`. `alter_table`'s duplicate made by `USING
   0` runs, its DETAIL PostgreSQL's.
+
+## Step 379: the grid again, and a row's allocations
+
+`../sm/NEXT.md` §1 item 3, its step 3: the grid of index scans
+measured again on both kinds, then the gap profiled.
+
+- **The grid** (`../bench.old/btree.sh`, each kind asked for by
+  `USING`): user instructions a statement, Q11 and Q12 in tps
+  under 16 clients.
+
+  | | PostgreSQL 18 | `lsm` | `btree` |
+  | --- | --- | --- | --- |
+  | Q9, a range of 100 | 397k | 1,325k (3.34) | 948k (2.39) |
+  | Q10, an IN list of 100 | 777k | 3,636k (4.68) | 1,664k (2.14) |
+  | Q11 | 31,790 | 9,508 (0.30) | 21,558 (0.68) |
+  | Q12 | 19,631 | 9,058 (0.46) | 16,431 (0.84) |
+  | load of a million rows | 12.3 s | 25.0 s | 34.3 s |
+
+  A tree wins every read and every mix; `lsm` loads faster.
+- **How it was measured, and what misled**: `perf record` on
+  this machine puts its samples on the instructions that wait,
+  not on those it counts: it gave `deconstruct_array()` 91k a
+  statement, where gdb counted two calls of 101 elements. Its
+  shares are not used. `perf stat`'s counts are exact, and
+  callgrind's self costs, with instrumentation switched on for
+  the measured statements alone (`--instr-atstart=no`), match
+  them; its inclusive costs, and `--toggle-collect`, do not hold
+  in digres. A first `perf stat` of the plans after 60 warm
+  statements read planning as 3 to 7 times PostgreSQL's; with
+  the plan forced (`plan_cache_mode`) and the server warm, it is
+  not.
+- **Where the gap is**, by difference of variants, `perf stat`,
+  a tree: a plan forced custom or generic, a range of no rows,
+  an IN list of values not there.
+
+  | A statement | PostgreSQL | digres |
+  | --- | --- | --- |
+  | fixed | 99k | 97k |
+  | planning, Q9 | 153k | 141k |
+  | planning, Q10 | 281k | 242k |
+  | a probe of Q10 | 6.8k | 7.3k |
+  | a row of Q9's range | 1.4k | 7.4k |
+  | a row of Q10, at random | 6.7k | 14.9k |
+
+  The rows are the gap. In Q9 on a generic plan, 174k of its
+  834k were `malloc` and `free`: about 5 allocations a row.
+- **sm**: none made a row now.
+  - `make_entry()` keeps its evaluator's null flags, as its
+    key's (`5942ef22`);
+  - `read_chained_batch()` keeps its keys and statuses in
+    buffers of the thread's, and copies a version into the key's
+    pin, whose buffer a pin read again keeps (`78a0364a`);
+  - a tree's cursor takes its batch's raw pins from a pool of
+    the session's, its keys end to end in one buffer, its
+    arrays reserved once (`b0c4547e`).
+- **Measured**: Q9 on a generic plan 834.2k to 688.5k user
+  instructions a statement, `new` 507 to 74 a statement, the
+  `malloc` family 174k to 42.5k; Q10 2,270.8k to 2,230.0k, its
+  rows one a probe. A row of Q9 is now about 5.9k, PostgreSQL's
+  1.4k: RocksDB's iteration about 750 of it, the recheck of the
+  entry about 700, `memcpy` and `bcmp` about 460.
+- **Tests**: none new: no behavior changed. sm, sq, aa and dg
+  pass.

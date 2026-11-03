@@ -265,7 +265,9 @@ struct entry_t {
   std::vector<std::string> own;
   std::vector<sm2::datum_t> key;
   std::unique_ptr<bool[]> key_null;
-  size_t key_cap = 0; /* key_null's room */
+  size_t key_cap = 0;               /* key_null's room */
+  std::unique_ptr<bool[]> own_null; /* the evaluator's null flags */
+  size_t own_cap = 0;               /* own_null's room */
 
   std::span<const sm2::datum_t> d() const { return key; }
   std::span<const bool> null() const { return {key_null.get(), key.size()}; }
@@ -305,7 +307,16 @@ int make_entry(const sm3::table_t *t, size_t i, const vals_t &r, entry_t &e) {
     e.key_cap = n;
   }
   std::fill(e.key_null.get(), e.key_null.get() + n, false);
-  std::unique_ptr<bool[]> own_null(new bool[nexpr]());
+  // The evaluator's flags, kept as the key's are; a plain key has
+  // none to make.
+  if (nexpr > 0 && (!e.own_null || e.own_cap < nexpr)) {
+    e.own_null.reset(new bool[nexpr]);
+    e.own_cap = nexpr;
+  }
+  bool *own_null = e.own_null.get();
+  if (nexpr > 0) {
+    std::fill(own_null, own_null + nexpr, false);
+  }
   if (!x.eval.empty()) {
     const sm3::index_eval_fn &eval = t->session->cat->eval;
     if (!eval) {
@@ -317,7 +328,7 @@ int make_entry(const sm3::table_t *t, size_t i, const vals_t &r, entry_t &e) {
     e.own.assign(nexpr, std::string());
     // The host's answer; its failure is this call's.
     if (ask_evaluator(eval, *t->def, x, r, e.belongs, e.own,
-                      {own_null.get(), nexpr}) != 0) {
+                      {own_null, nexpr}) != 0) {
       return -1;
     }
     if (!e.belongs) {
@@ -1701,8 +1712,24 @@ static int tree_fill(scan_t *scan) {
   size_t want = scan->batch;
   scan->batch = std::min(scan->batch * 2, tree_batch_max);
   if (scan->keys.size() < want) {
+    // Room for the largest batch at the second, so the doubling
+    // grows no array again; a probe of one row stops at the first.
+    if (want > 1 && scan->keys.capacity() < tree_batch_max) {
+      for (auto *v : {&scan->keys, &scan->rows, &scan->tuples}) {
+        v->reserve(tree_batch_max);
+      }
+      scan->key_at.reserve(tree_batch_max);
+      scan->row_at.reserve(tree_batch_max);
+      scan->ids.reserve(tree_batch_max);
+      scan->rcs.reserve(tree_batch_max);
+      scan->cuts.reserve(tree_batch_max);
+      scan->unread.reserve(tree_batch_max);
+      scan->raws.reserve(tree_batch_max);
+    }
     scan->keys.resize(want);
     scan->rows.resize(want);
+    scan->key_at.resize(want);
+    scan->row_at.resize(want);
     scan->ids.resize(want);
     scan->tuples.resize(want);
     scan->rcs.resize(want);
@@ -1713,10 +1740,20 @@ static int tree_fill(scan_t *scan) {
     if (scan->raws.empty()) {
       scan->raws.push_back(scan->pin->raw);
     }
+    // The others from the session's pool, which an ended cursor's
+    // batch filled; new ones past it.
+    std::vector<sm1::rawpin_t *> &pool = scan->session->raws_free;
     while (scan->raws.size() < want) {
-      scan->raws.push_back(sm1::rawpin_new());
+      if (pool.empty()) {
+        scan->raws.push_back(sm1::rawpin_new());
+      } else {
+        scan->raws.push_back(pool.back());
+        pool.pop_back();
+      }
     }
   }
+  // The batch's keys end to end, viewed once all are in.
+  scan->bytes.clear();
   while (scan->n < want && !scan->entries_done) {
     std::string_view row;
     bool cut;
@@ -1728,8 +1765,11 @@ static int tree_fill(scan_t *scan) {
       scan->entries_done = true;
       break;
     }
-    scan->keys[scan->n].assign(sm2::idx_scan_entry_key(scan->entries));
-    scan->rows[scan->n].assign(row);
+    std::string_view key = sm2::idx_scan_entry_key(scan->entries);
+    scan->key_at[scan->n] = {scan->bytes.size(), key.size()};
+    scan->bytes.append(key);
+    scan->row_at[scan->n] = {scan->bytes.size(), row.size()};
+    scan->bytes.append(row);
     scan->cuts[scan->n] = cut;
     // An index-only scan's entry on a leaf all visible is every
     // snapshot's: its row goes unread where the key gives its
@@ -1741,8 +1781,15 @@ static int tree_fill(scan_t *scan) {
     scan->rcs[scan->n] = 0;
     scan->n++;
   }
+  for (size_t i = 0; i < scan->n; i++) {
+    scan->keys[i] = std::string_view(scan->bytes)
+                        .substr(scan->key_at[i].first, scan->key_at[i].second);
+    scan->rows[i] = std::string_view(scan->bytes)
+                        .substr(scan->row_at[i].first, scan->row_at[i].second);
+  }
   // The rows to read: each entry's but an unread one's.
-  std::vector<size_t> want_rows;
+  std::vector<size_t> &want_rows = scan->want_rows;
+  want_rows.clear();
   for (size_t i = 0; i < scan->n; i++) {
     if (!scan->unread[i]) {
       want_rows.push_back(i);
@@ -1759,9 +1806,14 @@ static int tree_fill(scan_t *scan) {
     return rc < 0 ? -1 : 0;
   }
   size_t m = want_rows.size();
-  std::vector<std::string_view> keys(m), tuples(m);
-  std::vector<sm1::rawpin_t *> raws(m);
-  std::vector<int> rcs(m);
+  std::vector<std::string_view> &keys = scan->read_keys;
+  std::vector<std::string_view> &tuples = scan->read_tuples;
+  std::vector<sm1::rawpin_t *> &raws = scan->read_raws;
+  std::vector<int> &rcs = scan->read_rcs;
+  keys.resize(m);
+  tuples.resize(m);
+  raws.resize(m);
+  rcs.resize(m);
   for (size_t j = 0; j < m; j++) {
     keys[j] = scan->rows[want_rows[j]];
     raws[j] = scan->raws[want_rows[j]];
@@ -2006,7 +2058,7 @@ int tbl_idx_scan_rows(table_t *table, uint64_t index, const sm2::bound_t *lo,
         pin_put(p);
         return -1;
       }
-      out = new scan_t{nullptr, p, entries, table, i};
+      out = new scan_t{nullptr, p, entries, table, i, table->session};
       pin_scan_hold(p, out, table->def);
       return 0;
     }
