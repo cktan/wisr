@@ -30,6 +30,7 @@ struct intermediate_t {
   aa_key_t key;
   aa_object_t base;
   aa_object_t middle;
+  bool base_present = true; /* false: base is what no entry means */
 };
 
 /* Closes an sm session on pg_global as it goes out of scope. */
@@ -239,15 +240,46 @@ void aa_forget_database(aa_session_t *s, uint64_t dbid) {
   s->dropped_dbs.push_back(dbid);
 }
 
+/* Keep the temporary object objid's owner and ACL, to put back at level. */
+static void keep_temp(aa_session_t *s, int level, aa_oid_t objid) {
+  aa_temp_undo_t u{level, objid, false, 0, false, std::string()};
+  u.had_owner = aa_temp_owner(s, objid, &u.owner);
+  u.had_acl = aa_temp_acl(s, objid, &u.acl);
+  s->temp_undo.push_back(std::move(u));
+}
+
+/*
+ * Put back the temporary objects' owners and ACLs the subtransactions at
+ * level and deeper changed, the last change first.
+ */
+static void undo_temp(aa_session_t *s, int level) {
+  while (!s->temp_undo.empty() && s->temp_undo.back().level >= level) {
+    const aa_temp_undo_t &u = s->temp_undo.back();
+    if (u.had_owner)
+      s->temp_owners[u.objid] = u.owner;
+    else
+      s->temp_owners.erase(u.objid);
+    if (u.had_acl)
+      s->temp_acls[u.objid] = u.acl;
+    else
+      s->temp_acls.erase(u.objid);
+    s->temp_undo.pop_back();
+  }
+}
+
 /* Make owner the owner of the session's temporary object objid. */
-void aa_set_temp_owner(aa_session_t *s, aa_oid_t objid, aa_oid_t owner) {
+void aa_set_temp_owner(aa_session_t *s, int level, aa_oid_t objid,
+                       aa_oid_t owner) {
   s->version++;
+  keep_temp(s, level, objid);
   s->temp_owners[objid] = owner;
 }
 
 /* Make acl the ACL of the session's temporary object objid. */
-void aa_set_temp_acl(aa_session_t *s, aa_oid_t objid, const std::string &acl) {
+void aa_set_temp_acl(aa_session_t *s, int level, aa_oid_t objid,
+                     const std::string &acl) {
   s->version++;
+  keep_temp(s, level, objid);
   s->temp_acls[objid] = acl;
 }
 
@@ -272,8 +304,9 @@ bool aa_temp_acl(aa_session_t *s, aa_oid_t objid, std::string *acl) {
 }
 
 /* The session's temporary object objid goes: its owner and ACL too. */
-void aa_forget_temp(aa_session_t *s, aa_oid_t objid) {
+void aa_forget_temp(aa_session_t *s, int level, aa_oid_t objid) {
   s->version++;
+  keep_temp(s, level, objid);
   s->temp_owners.erase(objid);
   s->temp_acls.erase(objid);
 }
@@ -322,6 +355,9 @@ void aa_subcommit(aa_session_t *s, int level) {
   for (aa_change_t &c : s->changes)
     if (c.level >= level)
       c.level = level - 1;
+  for (aa_temp_undo_t &u : s->temp_undo)
+    if (u.level >= level)
+      u.level = level - 1;
 }
 
 /* A subtransaction at level aborts: its changes, the last made, go. */
@@ -329,6 +365,7 @@ void aa_subabort(aa_session_t *s, int level) {
   s->version++;
   while (!s->changes.empty() && s->changes.back().level >= level)
     s->changes.pop_back();
+  undo_temp(s, level);
 }
 
 /* An entry's ACL items, or its owner's default ones if it keeps none. */
@@ -352,6 +389,30 @@ static std::map<aa_key_t, const aa_change_t *> last_changes(aa_session_t *s) {
 }
 
 /*
+ * What an object with no entry is taken to be, as authorization takes it
+ * (owner_and_acl()): its database's owner's, the bootstrap superuser's
+ * for a database, with its owner's default ACL. Only for an object that
+ * can exist with no entry -- a database, or one of the bootstrap's, below
+ * AA_FIRST_NORMAL_OID -- in *out; false for one that is new, which grants
+ * nothing before it is made.
+ */
+static bool implied(const aa_objects_t &all, aa_key_t key, aa_oid_t classid,
+                    aa_object_t *out) {
+  if (0 != key.second && key.second >= AA_FIRST_NORMAL_OID)
+    return false;
+  aa_object_t o;
+  o.dbid = key.first;
+  o.objid = key.second;
+  o.classid = classid;
+  o.has_acl = false;
+  auto db = all.find(aa_key_t(key.first, 0));
+  o.owner = 0 == key.second || all.end() == db ? AA_BOOTSTRAP_SUPERUSER
+                                               : db->second.owner;
+  *out = o;
+  return true;
+}
+
+/*
  * The entries the session's transaction changes that grant less after
  * the database's commit than before it, in part: each as it is now
  * (base), and as it is to be until that commit (middle), granting what
@@ -367,22 +428,29 @@ static std::vector<intermediate_t> intermediates(aa_session_t *s) {
   all = aa_objects(s->env);
   for (const auto &[key, c] : last_changes(s)) {
     auto found = all->find(key);
-    aa_object_t middle;
+    aa_object_t base, middle;
+    bool present = all->end() != found;
 
-    if (all->end() == found || !c->present ||
-        same_object(found->second, c->object))
+    if (!c->present)
       continue;
-    middle = found->second;
+    if (present) {
+      base = found->second;
+    } else if (!implied(*all, key, c->object.classid, &base)) {
+      continue;
+    }
+    if (same_object(base, c->object))
+      continue;
+    middle = base;
     if (c->object.owner != middle.owner)
       middle.owner = AA_BOOTSTRAP_SUPERUSER;
     if (c->object.has_acl != middle.has_acl ||
         (middle.has_acl && c->object.acl != middle.acl)) {
       middle.has_acl = true;
-      middle.acl = aa_acl_text(aa_acl_intersect(acl_or_default(found->second),
-                                                acl_or_default(c->object)));
+      middle.acl = aa_acl_text(
+          aa_acl_intersect(acl_or_default(base), acl_or_default(c->object)));
     }
-    if (!same_object(middle, found->second))
-      out.push_back({key, found->second, middle});
+    if (!same_object(middle, base))
+      out.push_back({key, base, middle, present});
   }
   return out;
 }
@@ -441,24 +509,65 @@ static int write_roles_and(aa_session_t *s, sm_session_t *session,
   return 0;
 }
 
+/* Let go of the objects' commit order, if the session holds it. */
+static void release_objects_order(aa_session_t *s) {
+  if (s->objects_committing) {
+    s->objects_committing = false;
+    s->env->objects_commit_mutex.unlock();
+  }
+}
+
+/* Releases the session's hold on the objects' commit order at its scope's
+ * end: aa_post_commit()'s or aa_abort()'s, however it returns. */
+struct objects_order_release_t {
+  aa_session_t *s;
+  ~objects_order_release_t() { release_objects_order(s); }
+};
+
+/* Wait out another session's commit of objects in flight; see aa.h. */
+void aa_object_settled(aa_session_t *s) {
+  if (s->objects_committing)
+    return;
+  // Taken and let go at once: held only while a commit is in flight.
+  std::lock_guard<std::mutex> wait(s->env->objects_commit_mutex);
+}
+
 /*
  * At the commit of the session's transaction, before the database's:
  * write its changes to pg_global.
- * 1. Find each entry that is to grant less (intermediates()).
- * 2. In one transaction of pg_global's, write the role changes, and each
+ * 1. If objects' entries changed, take the objects' commit order, held
+ *    to the end of aa_post_commit() or aa_abort().
+ * 2. Find each entry that is to grant less (intermediates()).
+ * 3. If the roles changed, take the role commits' order.
+ * 4. In one transaction of pg_global's, write the role changes, and each
  *    entry that is to grant less as granting only what it grants before
- *    and after.
- * 3. Keep those entries as they were, for aa_abort() to put back if the
+ *    and after; read the roles back, and commit.
+ * 5. Keep those entries as they were, for aa_abort() to put back if the
  *    database's commit fails.
- * 4. If the roles changed, replace the roles' snapshot.
+ * 6. If the roles changed, replace the roles' snapshot with those read.
  */
 int aa_commit(aa_session_t *s) {
-  std::vector<intermediate_t> before = intermediates(s);
   bool roles = nullptr != s->working;
   sm_session_t *session;
 
+  // Changes to objects' entries commit one transaction at a time, to the
+  // end of aa_post_commit() or aa_abort(): read the entries under it, as
+  // the commit before left them.
+  if ((!s->changes.empty() || !s->dropped_dbs.empty()) &&
+      !s->objects_committing) {
+    s->env->objects_commit_mutex.lock();
+    s->objects_committing = true;
+  }
+  std::vector<intermediate_t> before = intermediates(s);
   if (!roles && before.empty())
     return 0;
+  // One role commit at a time, from before its transaction begins: its
+  // snapshot then holds every role commit before it, and the roles it
+  // reads back are pg_global's as they are at its commit.
+  std::unique_lock<std::mutex> order(s->env->roles_commit_mutex,
+                                     std::defer_lock);
+  if (roles)
+    order.lock();
   if (0 != write_session(s, &session))
     return -1;
   if (0 != sm_begin(session, SM_XCT_READ_COMMITTED, 0))
@@ -470,6 +579,15 @@ int aa_commit(aa_session_t *s) {
    * leaves less granted, not more.
    */
   if (0 != write_roles_and(s, session, before)) {
+    (void)sm_abort(session);
+    return -1;
+  }
+  /*
+   * The roles as this commit leaves them, read before it, so no read
+   * that can fail comes after the commit point.
+   */
+  auto next = std::make_shared<aa_roles_t>();
+  if (roles && 0 != aa_store_read_roles_in(session, next.get())) {
     (void)sm_abort(session);
     return -1;
   }
@@ -485,24 +603,23 @@ int aa_commit(aa_session_t *s) {
   /* Put back if the database's commit fails (aa_abort()). */
   s->to_restore.clear();
   for (const intermediate_t &i : before)
-    s->to_restore.push_back({i.key, i.base});
+    s->to_restore.push_back({i.key, i.base, i.base_present});
   if (!roles)
     return 0;
   s->base.reset();
   s->working.reset();
   s->version++;
 
-  /*
-   * Replace the snapshot with pg_global as it is now, read under the
-   * lock: the last to replace it read last, so no later read is lost to
-   * an earlier one.
-   */
-  auto next = std::make_shared<aa_roles_t>();
+  // Replace the snapshot with the roles read: the commits are in order,
+  // so no later read is lost to an earlier one.
   std::lock_guard<std::mutex> lock(s->env->mutex);
-  if (0 != aa_store_read_roles(session, next.get()))
-    return -1;
   s->env->roles = next;
-  s->epoch = ++s->env->epoch;
+  // The session's caches hold its own change already, but not one of
+  // another's it has not seen: it is up to date only if it was before.
+  bool fresh = s->epoch == s->env->epoch.load();
+  uint64_t epoch = ++s->env->epoch;
+  if (fresh)
+    s->epoch = epoch;
   return 0;
 }
 
@@ -512,8 +629,9 @@ int aa_commit(aa_session_t *s) {
  * failed.
  */
 int aa_abort(aa_session_t *s) {
-  std::vector<std::pair<aa_key_t, aa_object_t>> restore =
-      std::move(s->to_restore);
+  std::vector<aa_restore_t> restore = std::move(s->to_restore);
+  // The commit order goes once what is put back is written.
+  objects_order_release_t release{s};
 
   s->base.reset();
   s->working.reset();
@@ -521,11 +639,14 @@ int aa_abort(aa_session_t *s) {
   s->version++;
   s->dropped_dbs.clear();
   s->to_restore.clear();
+  // The temporary objects' owners and ACLs, as the transaction began.
+  undo_temp(s, 0);
   if (restore.empty())
     return 0;
   return write_objects(s, [&](sm_tbl_t *tbl) {
-    for (const auto &[key, object] : restore)
-      if (0 != aa_store_write_object(tbl, key, &object))
+    // An entry that was none goes, so its object is again what none means.
+    for (const aa_restore_t &r : restore)
+      if (0 != aa_store_write_object(tbl, r.key, r.present ? &r.object : NULL))
         return -1;
     return 0;
   });
@@ -553,8 +674,12 @@ static void publish_objects(aa_env_t *env,
   for (uint64_t dbid : dropped)
     next->erase(next->lower_bound(aa_key_t(dbid, 0)),
                 next->lower_bound(aa_key_t(dbid + 1, 0)));
-  while (env->changed.size() > CHANGED_KEPT)
+  // Trim to what is kept, noting the newest epoch that lost an entry:
+  // one epoch may span the trim, its first entries gone, its last kept.
+  while (env->changed.size() > CHANGED_KEPT) {
+    env->changed_lost = std::max(env->changed_lost, env->changed.front().first);
     env->changed.pop_front();
+  }
   env->objects = next;
   env->objects_epoch.store(epoch);
 }
@@ -569,11 +694,16 @@ static void publish_objects(aa_env_t *env,
  * 4. Forget the changes, whether the writes succeed or not.
  */
 int aa_post_commit(aa_session_t *s) {
+  // The commit order goes once the snapshot is replaced.
+  objects_order_release_t release{s};
   std::map<aa_key_t, const aa_change_t *> last;
   std::shared_ptr<const aa_objects_t> all;
   int rc;
 
   s->to_restore.clear();
+  // The temporary objects' owners and ACLs stand: the transaction
+  // committed.
+  s->temp_undo.clear();
   if (s->changes.empty() && s->dropped_dbs.empty())
     return 0;
   last = last_changes(s);
@@ -627,8 +757,9 @@ bool aa_objects_moved(aa_session_t *s, uint64_t dbid,
     std::lock_guard<std::mutex> lock(env->mutex);
 
     epoch = env->objects_epoch.load();
-    *all = env->changed.empty() ||
-           env->changed.front().first > s->objects_epoch + 1;
+    // All, if what is kept may not name every object changed since:
+    // nothing kept, or an entry of an epoch past this session's trimmed.
+    *all = env->changed.empty() || env->changed_lost > s->objects_epoch;
     if (!*all)
       for (const auto &[e, key] : env->changed)
         if (e > s->objects_epoch && key.first == dbid)

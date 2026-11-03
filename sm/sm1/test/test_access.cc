@@ -612,6 +612,38 @@ TEST_CASE("a scan from an absent key crosses many userkeys in SSTs") {
   REQUIRE(sm1::commit(s) == 0);
 }
 
+TEST_CASE("a store's handle copied before its drop is good to its last copy") {
+  // Verify a column family's handle outlives the drop of its store
+  // while a copy of the store is held, as the GC's sweep and the
+  // statistics hold one with no lock (SM1_DESIGN.md §3.1).
+  // 1. Make a store and commit; copy its store_t, as db_store() hands
+  //    one out.
+  // 2. Drop the store's column family, as a rolled-back CREATE does.
+  // 3. The copy still names its column family, and a compaction
+  //    through it returns, its status whatever RocksDB says of a
+  //    dropped one.
+  // 4. Let the copy go: the handle goes with it.
+  db_fixture_t f;
+  sm1::session_t *s = f.session();
+  uint64_t store = mkstore_committed(s);
+  wisr::store_t st = wisr::db_store(s->db, store);
+  REQUIRE(st.cf != nullptr);
+  std::string name = st.cf->GetName();
+
+  // 2.
+  REQUIRE(wisr::db_drop_store_cf(s->db, store) == 0);
+  CHECK(!wisr::db_store(s->db, store).cf);
+
+  // 3.
+  CHECK(st.cf->GetName() == name);
+  rocksdb::Status cs = st.rdb->CompactRange(rocksdb::CompactRangeOptions(),
+                                            st.cf, nullptr, nullptr);
+  (void)cs;
+
+  // 4.
+  st = wisr::store_t{};
+}
+
 TEST_CASE("current keys in SSTs scan whole in total order, apart from the "
           "versioned ones") {
   // Verify the class byte's key spaces (../VCHAIN.md §2) in one store

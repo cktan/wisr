@@ -7,6 +7,9 @@
 
 #include "home.h"
 
+#include <chrono>
+#include <future>
+
 /* A table's entry: of the database 1, its oid objid, owned by owner. */
 static aa_object_t table(aa_oid_t objid, aa_oid_t owner) {
   aa_object_t o;
@@ -66,6 +69,99 @@ TEST_CASE("objects: set, commit, restart") {
   REQUIRE(aa_find_object(h.aa(), NULL, aa_key_t(1, 20000), &o));
   CHECK(16500 == o.owner);
   CHECK(AA_CLASS_RELATION == o.classid);
+}
+
+// Verify that a session told which objects moved is never told too few:
+// past the changes aa keeps of, it is told all of them moved.
+// 1. One transaction sets the owner of 4,097 tables, one more than aa
+//    keeps; confirm another session is told all moved, or every oid.
+// 2. One transaction sets 2 tables' owners, and the next 4,095 more:
+//    the first of the 2 is no longer kept; confirm the other session is
+//    told all moved, or every oid of the 4,097.
+TEST_CASE("objects: more changes than are kept say all") {
+  home_t h;
+  aa_session_t *s1 = aa_session_new(h.aa());
+  aa_session_t *s2 = aa_session_new(h.aa());
+  std::vector<aa_oid_t> oids;
+  bool all;
+
+  // 1.
+  for (aa_oid_t i = 0; i < 4097; i++)
+    aa_set_object(s1, 1, table(20000 + i, 16500));
+  commit(s1);
+  REQUIRE(aa_objects_moved(s2, 1, &oids, &all));
+  CHECK((all || 4097 == oids.size()));
+
+  // 2.
+  oids.clear();
+  for (aa_oid_t i = 0; i < 2; i++)
+    aa_set_object(s1, 1, table(30000 + i, 16500));
+  commit(s1);
+  for (aa_oid_t i = 2; i < 4097; i++)
+    aa_set_object(s1, 1, table(30000 + i, 16500));
+  commit(s1);
+  REQUIRE(aa_objects_moved(s2, 1, &oids, &all));
+  CHECK((all || 4097 == oids.size()));
+  aa_session_free(s1);
+  aa_session_free(s2);
+}
+
+// Verify that the commits of objects' entries are ordered, and a change's
+// read waits out one in flight: what it reads is as that commit left it,
+// not as it was before.
+// 1. Session 1 sets a table's owner and runs aa_commit().
+// 2. Session 2 asks to read entries settled: it waits.
+// 3. Session 1 runs aa_post_commit(): session 2 goes on, and finds the
+//    owner as session 1 left it.
+// 4. Session 1's own commit does not wait on itself.
+TEST_CASE("objects: a change's read waits out a commit in flight") {
+  home_t h;
+  aa_session_t *s1 = aa_session_new(h.aa());
+  aa_session_t *s2 = aa_session_new(h.aa());
+  aa_object_t o;
+
+  // 1.
+  aa_set_object(s1, 1, table(20000, 16500));
+  REQUIRE(0 == aa_commit(s1));
+
+  // 2.
+  std::future<void> settled =
+      std::async(std::launch::async, [&] { aa_object_settled(s2); });
+  CHECK(std::future_status::timeout ==
+        settled.wait_for(std::chrono::milliseconds(200)));
+
+  // 4.
+  aa_object_settled(s1);
+
+  // 3.
+  REQUIRE(0 == aa_post_commit(s1));
+  CHECK(std::future_status::ready == settled.wait_for(std::chrono::seconds(5)));
+  REQUIRE(aa_find_object(h.aa(), s2, aa_key_t(1, 20000), &o));
+  CHECK(16500 == o.owner);
+  aa_session_free(s1);
+  aa_session_free(s2);
+}
+
+// Verify that an abort after aa's part lets go of the objects' commit
+// order: nothing waits on a commit that failed.
+// 1. Session 1 sets a table's owner, runs aa_commit(), then aa_abort().
+// 2. Session 2's settled read goes on at once.
+TEST_CASE("objects: an abort lets go of the commit order") {
+  home_t h;
+  aa_session_t *s1 = aa_session_new(h.aa());
+  aa_session_t *s2 = aa_session_new(h.aa());
+
+  // 1.
+  aa_set_object(s1, 1, table(20000, 16500));
+  REQUIRE(0 == aa_commit(s1));
+  REQUIRE(0 == aa_abort(s1));
+
+  // 2.
+  std::future<void> settled =
+      std::async(std::launch::async, [&] { aa_object_settled(s2); });
+  CHECK(std::future_status::ready == settled.wait_for(std::chrono::seconds(5)));
+  aa_session_free(s1);
+  aa_session_free(s2);
 }
 
 // Verify that a subtransaction's abort undoes its changes alone, and its
@@ -132,6 +228,72 @@ TEST_CASE("objects: a crash between the commits grants less") {
   CHECK(16500 == items[0].grantee);
   CHECK(16501 == items[1].grantee);
   CHECK(AA_SELECT == items[1].privs);
+}
+
+/* Database 1's entry with no PUBLIC privilege: the superuser's alone. */
+static aa_object_t database_revoked(void) {
+  aa_object_t db;
+
+  db.dbid = 1;
+  db.objid = 0;
+  db.classid = AA_CLASS_DATABASE;
+  db.owner = AA_BOOTSTRAP_SUPERUSER;
+  db.has_acl = true;
+  db.acl = aa_acl_text({{AA_BOOTSTRAP_SUPERUSER, AA_BOOTSTRAP_SUPERUSER,
+                         AA_ALL_RIGHTS_DATABASE}});
+  return db;
+}
+
+// Verify that a crash between the commits grants less of an object that
+// has no entry, as of one that has: a database's default, which lets
+// PUBLIC connect, is no entry at all.
+// 1. Revoke CONNECT from PUBLIC on database 1, which has no entry, and
+//    commit aa's part only.
+// 2. Restart, as a crash before aa_post_commit() leaves it.
+// 3. Confirm a role that is no superuser may not connect.
+TEST_CASE("objects: a crash between the commits grants less of no entry") {
+  home_t h;
+  aa_session_t *s = aa_session_new(h.aa());
+  aa_object_t o;
+  const char *why;
+
+  // 1.
+  REQUIRE(!aa_find_object(h.aa(), NULL, aa_key_t(1, 0), &o));
+  REQUIRE(aa_connect_okay(h.aa(), NULL, 1, 16501, &why));
+  aa_set_object(s, 1, database_revoked());
+  REQUIRE(0 == aa_commit(s));
+  aa_session_free(s);
+
+  // 2. 3.
+  h.restart();
+  CHECK(!aa_connect_okay(h.aa(), NULL, 1, 16501, &why));
+}
+
+// Verify that an abort after aa's part puts an object that had no entry
+// back as having none.
+// 1. Revoke CONNECT from PUBLIC on database 1, which has no entry, and
+//    commit aa's part only.
+// 2. Abort, as a failed database commit does.
+// 3. Confirm the database has no entry, and a role may connect.
+TEST_CASE("objects: an abort puts back no entry") {
+  home_t h;
+  aa_session_t *s = aa_session_new(h.aa());
+  aa_object_t o;
+  const char *why;
+
+  // 1.
+  aa_set_object(s, 1, database_revoked());
+  REQUIRE(0 == aa_commit(s));
+
+  // 2.
+  REQUIRE(0 == aa_abort(s));
+  aa_session_free(s);
+
+  // 3.
+  CHECK(!aa_find_object(h.aa(), NULL, aa_key_t(1, 0), &o));
+  CHECK(aa_connect_okay(h.aa(), NULL, 1, 16501, &why));
+  h.restart();
+  CHECK(!aa_find_object(h.aa(), NULL, aa_key_t(1, 0), &o));
 }
 
 // Verify that the database's commit failing puts back what aa_commit()
@@ -240,8 +402,8 @@ TEST_CASE("objects: temporary") {
   std::string acl;
 
   // 1.
-  aa_set_temp_owner(s1, 30000, 16500);
-  aa_set_temp_acl(s1, 30000, "16500,16500,3");
+  aa_set_temp_owner(s1, 1, 30000, 16500);
+  aa_set_temp_acl(s1, 1, 30000, "16500,16500,3");
 
   // 2.
   CHECK(aa_temp_owner(s1, 30000, &owner));
@@ -253,9 +415,55 @@ TEST_CASE("objects: temporary") {
   CHECK(aa_objects(h.aa())->empty());
 
   // 3.
-  aa_forget_temp(s1, 30000);
+  aa_forget_temp(s1, 1, 30000);
   CHECK(!aa_temp_owner(s1, 30000, &owner));
   CHECK(!aa_temp_acl(s1, 30000, &acl));
   aa_session_free(s1);
   aa_session_free(s2);
+}
+
+// Verify that a rollback, whole or to a savepoint, undoes a temporary
+// object's owner and ACL as it undoes an object's entry.
+// 1. Set a temporary object's owner and ACL, and commit.
+// 2. Change its ACL, and abort: confirm the ACL is the committed one.
+// 3. At level 2 change its owner, and abort level 2: confirm the owner
+//    is the committed one; at level 2 change its ACL, commit level 2,
+//    abort: confirm the ACL is the committed one.
+// 4. Forget it, and abort: confirm the owner and ACL are back.
+TEST_CASE("objects: temporary rolled back") {
+  home_t h;
+  aa_session_t *s = aa_session_new(h.aa());
+  aa_oid_t owner;
+  std::string acl;
+
+  // 1.
+  aa_set_temp_owner(s, 1, 30000, 16500);
+  aa_set_temp_acl(s, 1, 30000, "16500,16500,3");
+  commit(s);
+
+  // 2.
+  aa_set_temp_acl(s, 1, 30000, "16500,16500,7");
+  REQUIRE(0 == aa_abort(s));
+  REQUIRE(aa_temp_acl(s, 30000, &acl));
+  CHECK("16500,16500,3" == acl);
+
+  // 3.
+  aa_set_temp_owner(s, 2, 30000, 16501);
+  aa_subabort(s, 2);
+  REQUIRE(aa_temp_owner(s, 30000, &owner));
+  CHECK(16500 == owner);
+  aa_set_temp_acl(s, 2, 30000, "16500,16500,7");
+  aa_subcommit(s, 2);
+  REQUIRE(0 == aa_abort(s));
+  REQUIRE(aa_temp_acl(s, 30000, &acl));
+  CHECK("16500,16500,3" == acl);
+
+  // 4.
+  aa_forget_temp(s, 1, 30000);
+  REQUIRE(0 == aa_abort(s));
+  REQUIRE(aa_temp_owner(s, 30000, &owner));
+  CHECK(16500 == owner);
+  REQUIRE(aa_temp_acl(s, 30000, &acl));
+  CHECK("16500,16500,3" == acl);
+  aa_session_free(s);
 }

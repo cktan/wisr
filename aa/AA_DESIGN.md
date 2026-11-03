@@ -192,6 +192,24 @@ commits can only leave **fewer** privileges granted, never more:
 So, at every moment, an object grants at most what both the old
 and the new version grant, until both commits are done.
 
+**One commit of objects' entries at a time.** The database's
+commit releases the transaction's locks before step 3 writes and
+publishes the entries. So a session that changed entries holds a
+mutex of aa's from step 1 to the end of step 3 or 4, across the
+database's commit:
+
+- pg_global and the objects' snapshot change in one order, the
+  commits';
+- a statement that changes an entry first waits out a commit in
+  flight (`aa_object_settled()`): GRANT and REVOKE, and an owner's
+  change, read the entry as that commit leaves it. Without the
+  wait, a GRANT could build on the ACL as it was before another
+  session's, and lose it.
+
+A transaction that changes no entry, DML or a temporary object's,
+never takes it. Commits that change entries wait for one another,
+each across its database's WAL sync.
+
 Role changes (CREATE, ALTER, DROP ROLE) are always committed
 whole in step 1. digres refuses them inside a transaction block,
 so they never need to be undone by a savepoint.

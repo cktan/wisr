@@ -22,6 +22,17 @@ struct aa_env_t {
   sm_env_t *env = NULL; /* the home directory pg_global is in */
   std::mutex mutex;     /* guards roles and objects, and orders their
                            replacement */
+  /* Orders the commits of role changes: held from before a commit's
+   * transaction begins to its snapshot's replacement, so the roles it
+   * reads back include every role commit before it. */
+  std::mutex roles_commit_mutex;
+  /* Orders the commits of objects' entries (AA_DESIGN.md section 5): held
+   * by the session whose transaction changed some, from aa_commit() to the
+   * end of aa_post_commit() or aa_abort(), across the database's commit,
+   * so pg_global and the objects' snapshot change in one order, and a
+   * change's read of an entry waits for it (aa_object_settled()). Taken
+   * before roles_commit_mutex. */
+  std::mutex objects_commit_mutex;
   std::shared_ptr<const aa_roles_t> roles;
   /* How many times roles was replaced: a session's caches of them are
    * stale when it has moved (aa_roles_moved()). */
@@ -33,6 +44,9 @@ struct aa_env_t {
    * those (aa_objects_moved()). */
   std::atomic<uint64_t> objects_epoch{0};
   std::deque<std::pair<uint64_t, aa_key_t>> changed;
+  /* The newest epoch an entry of changed was trimmed off of, 0 if none:
+   * a session behind it may have missed an object, and drops all. */
+  uint64_t changed_lost = 0;
 };
 
 /*
@@ -78,6 +92,26 @@ struct aa_change_t {
   aa_object_t object;
 };
 
+/*
+ * A temporary object's owner and ACL as they were before a change, to put
+ * back if the subtransaction at level, or the transaction, aborts.
+ */
+struct aa_temp_undo_t {
+  int level;
+  aa_oid_t objid;
+  bool had_owner;
+  aa_oid_t owner;
+  bool had_acl;
+  std::string acl;
+};
+
+/* An entry to put back at an abort: as it was, or none if it had none. */
+struct aa_restore_t {
+  aa_key_t key;
+  aa_object_t object;
+  bool present = true;
+};
+
 /* A session's own: its changes not yet committed, and its sm session. */
 struct aa_session_t {
   aa_env_t *env = NULL;
@@ -97,11 +131,17 @@ struct aa_session_t {
   /* The databases dropped by the transaction, whose entries go. */
   std::vector<uint64_t> dropped_dbs;
   /* Entries written before the database's commit, as they were, to put
-   * back if it fails (aa_commit()). */
-  std::vector<std::pair<aa_key_t, aa_object_t>> to_restore;
+   * back if it fails (aa_commit()): an object that had none, as none. */
+  std::vector<aa_restore_t> to_restore;
   /* The session's temporary objects' owners and ACLs, never written. */
   std::map<aa_oid_t, aa_oid_t> temp_owners;
   std::map<aa_oid_t, std::string> temp_acls;
+  /* What the transaction changed of them, each as it was before, in
+   * order: an abort puts them back. */
+  std::vector<aa_temp_undo_t> temp_undo;
+  /* Whether the session holds env->objects_commit_mutex, from its
+   * aa_commit() to its aa_post_commit() or aa_abort(). */
+  bool objects_committing = false;
 
   /* Bumped at each change to what the session sees of the roles or the
    * objects' entries: with the shared epochs, what its caches are of. */
@@ -123,6 +163,9 @@ struct aa_session_t {
 
 /* Every role and membership, in a transaction of session's own. */
 int aa_store_read_roles(sm_session_t *session, aa_roles_t *out);
+
+/* The same, in session's transaction, which is open. */
+int aa_store_read_roles_in(sm_session_t *session, aa_roles_t *out);
 
 /* Every object's entry, likewise. */
 int aa_store_read_objects(sm_session_t *session, aa_objects_t *out);

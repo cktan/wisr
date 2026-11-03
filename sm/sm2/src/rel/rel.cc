@@ -528,6 +528,9 @@ int update_row(sm2::rel_t *rel, std::string_view key, uint64_t id,
     return -1;
   }
   std::string_view was;
+  // What settle_old() holds of the old row goes if the update fails: the
+  // caller rolls back, and the old row's datums are live again.
+  size_t held = rel->held.size();
   int rc = 0 != (moves ? move_row(rel, key, new_key, row.tuple, p, was)
                        : write_update(rel, key, row.tuple, p, &was)) ||
                    (rel->toasts && 0 != settle_old(rel, was, row.kept, hold)) ||
@@ -538,6 +541,7 @@ int update_row(sm2::rel_t *rel, std::string_view key, uint64_t id,
     sm1::unpin(p);
   }
   if (0 != rc) {
+    rel->held.resize(held);
     return -1;
   }
   if (nullptr != old) {
@@ -1039,6 +1043,9 @@ int rel_load(rel_t *rel, sm1::loader_t *loader, size_t stream,
 
 /* Erase the datums the rel's writes held; see sm2.h. */
 int rel_release(rel_t *rel) { return release(rel); }
+
+/* Forget the datums the rel's writes held, erasing none; see sm2.h. */
+void rel_forget(rel_t *rel) { rel->held.clear(); }
 
 /* Read the datum a TOAST pointer names; see sm2.h. */
 int toast_fetch(rel_t *rel, std::string_view ptr, std::string &out) {

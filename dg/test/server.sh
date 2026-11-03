@@ -3139,6 +3139,22 @@ local_psql -c "alter role \"$me\" nologin valid until '2000-01-01'" \
 local_psql -c "alter role \"$me\" login valid until 'infinity'" \
   >> "$work/lockout.out" 2>&1 || fail "lockout: restore the superuser"
 
+# Verify that a rollback, whole or to a savepoint, undoes a GRANT on a
+# temporary table, as it undoes one on a table (aa's temporary objects).
+# 1. Make role rt, and temporary table tt in the session.
+# 2. GRANT SELECT on tt to rt, and roll back: rt has no SELECT on tt.
+# 3. GRANT it again in a savepoint, roll back to it, and commit: none.
+out=$(local_psql -q -c 'create role rt' -c 'create temp table tt (a int4)' \
+  -c 'begin' -c 'grant select on tt to rt' -c 'rollback' \
+  -c "select has_table_privilege('rt', 'tt', 'select')" \
+  -c 'begin' -c 'savepoint s' -c 'grant select on tt to rt' \
+  -c 'rollback to s' -c 'commit' \
+  -c "select has_table_privilege('rt', 'tt', 'select')" 2>&1)
+[ "$out" = "$(printf 'f\nf')" ] ||
+  fail "temporary grant: a rollback undoes it ($out)"
+local_psql -c 'drop role rt' > "$work/tempgrant.out" 2>&1 ||
+  fail "temporary grant: drop the role"
+
 # Verify that a role that is not a superuser runs statements, with
 # PostgreSQL 18's privileges on what initdb made: the catalogs PUBLIC may
 # read but pg_authid, schema public pg_database_owner's with USAGE for

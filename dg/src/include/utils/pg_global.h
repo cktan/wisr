@@ -73,5 +73,6 @@ extern void pg_global_subcommit(void);
 extern void pg_global_subabort(void);
 extern void pg_global_post_commit(void);
 extern void pg_global_objects_moved(void);
+extern void pg_global_settle(void);
 
 #endif /* PG_GLOBAL_H */

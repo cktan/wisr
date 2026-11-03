@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <optional>
 #include <string>
 
 namespace {
@@ -885,7 +886,7 @@ namespace {
  */
 bool stat_attribute(const sm3::stat_t &s, const sm3::table_def_t &def,
                     attribute_t &out) {
-  if (!s.index) {
+  if (!s.has_index) {
     if (s.position < 0 ||
         static_cast<size_t>(s.position) >= def.columns.size()) {
       return false;
@@ -895,7 +896,7 @@ bool stat_attribute(const sm3::stat_t &s, const sm3::table_def_t &def,
     return !c.dropped;
   }
   for (const sm3::index_def_t &x : def.indexes) {
-    if (x.oid != *s.index) {
+    if (x.oid != s.index) {
       continue;
     }
     if (s.position < 0 ||
@@ -1033,12 +1034,13 @@ int encode_stat(const stat_t &s, const table_def_t &def, std::string &blob) {
     return bad_stats("common values and frequencies of unequal counts");
   }
   writer_t w(8);
-  w.opt_i8(0, s.index);
+  w.opt_i8(0, s.has_index ? std::optional<uint64_t>(s.index) : std::nullopt);
   w.i4(1, s.position);
   w.f4(2, s.null_frac);
   w.i4(3, s.width);
   w.f4(4, s.distinct);
-  w.opt_f4(5, s.correlation);
+  w.opt_f4(5, s.has_correlation ? std::optional<float>(s.correlation)
+                                : std::nullopt);
   w.i4(6, static_cast<int32_t>(s.mcv.size()));
   w.i4(7, static_cast<int32_t>(s.bounds.size()));
   if (w.append(part_desc(part_t::statistic), blob) != 0) {
@@ -1086,12 +1088,16 @@ int decode_stat(std::string_view blob, const table_def_t &def, stat_t &s,
     return -1;
   }
   s = stat_t{};
-  s.index = r.opt_i8(0);
+  std::optional<uint64_t> index = r.opt_i8(0);
+  s.has_index = index.has_value();
+  s.index = index.value_or(0);
   s.position = r.i4(1);
   s.null_frac = r.f4(2);
   s.width = r.i4(3);
   s.distinct = r.f4(4);
-  s.correlation = r.opt_f4(5);
+  std::optional<float> correlation = r.opt_f4(5);
+  s.has_correlation = correlation.has_value();
+  s.correlation = correlation.value_or(0);
   int32_t nmcv = r.i4(6), nbound = r.i4(7);
   if (!r.ok || nmcv < 0 || nbound < 0) {
     return corrupt("a statistic part cut short");

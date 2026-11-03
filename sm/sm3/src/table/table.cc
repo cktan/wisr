@@ -870,10 +870,12 @@ look:
     return -1;
   }
   // Its entries in the indexes that are no arbiter: a duplicate in
-  // one of those is an error, as in tbl_insert.
+  // one of those is an error, as in tbl_insert. A tree arbiter's is in
+  // already, above.
   for (size_t i = 0; i < table->indexes.size(); i++) {
     if (!maintained(table, i) ||
-        std::find(arb.begin(), arb.end(), i) != arb.end()) {
+        std::find(arb.begin(), arb.end(), i) != arb.end() ||
+        std::find(trees.begin(), trees.end(), i) != trees.end()) {
       continue;
     }
     entry_t e;
@@ -927,6 +929,14 @@ static int update_row(table_t *table, uint64_t id, std::string_view key,
                            true, &at)) {
     return row_failed(table);
   }
+  // What the old row held out of line is forgotten, not erased, if a
+  // step below fails: the caller rolls back, and the old row is live.
+  bool released = false;
+  defer {
+    if (!released) {
+      sm2::rel_forget(table->rel);
+    }
+  };
   const bool moved = at != key;
   const table_def_t &def = *table->def;
   deformed_t before(def.schema.size());
@@ -980,6 +990,7 @@ static int update_row(table_t *table, uint64_t id, std::string_view key,
     }
   }
   // The indexes are fixed: what the old row held out of line goes.
+  released = true;
   if (sm2::rel_release(table->rel) != 0) {
     return -1;
   }
@@ -1044,6 +1055,13 @@ static int delete_row(table_t *table, std::string_view key, pin_ref_t *ref,
   if (0 != sm2::rel_delete(table->rel, key, p->raw, image, true)) {
     return -1;
   }
+  // As an update's: forgotten, not erased, if a step below fails.
+  bool released = false;
+  defer {
+    if (!released) {
+      sm2::rel_forget(table->rel);
+    }
+  };
   const table_def_t &def = *table->def;
   deformed_t before(def.schema.size());
   if (!table->indexes.empty() &&
@@ -1064,6 +1082,7 @@ static int delete_row(table_t *table, std::string_view key, pin_ref_t *ref,
     }
   }
   // The indexes are fixed: what the row held out of line goes.
+  released = true;
   if (sm2::rel_release(table->rel) != 0) {
     return -1;
   }
@@ -1692,10 +1711,11 @@ static bool tree_scattered(table_t *t, size_t i) {
   }
   int32_t att = x.key_attnums[0];
   for (const stat_t &st : stats->stats) {
-    bool mine = att >= 0 ? !st.index && att == st.position
-                         : st.index && x.oid == *st.index && 0 == st.position;
-    if (mine && st.correlation) {
-      return std::fabs(*st.correlation) < tree_scattered_below;
+    bool mine = att >= 0
+                    ? !st.has_index && att == st.position
+                    : st.has_index && x.oid == st.index && 0 == st.position;
+    if (mine && st.has_correlation) {
+      return std::fabs(st.correlation) < tree_scattered_below;
     }
   }
   return false;

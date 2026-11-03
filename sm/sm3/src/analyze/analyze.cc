@@ -107,6 +107,7 @@ int analyze_index(sm3::table_t *table, const sm3::table_def_t &def,
       return -1;
     }
     if (valid) {
+      stat.has_index = true;
       stat.index = x.oid;
       stat.position = static_cast<int32_t>(exprs[e]);
       stats.push_back(std::move(stat));

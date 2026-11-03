@@ -287,6 +287,25 @@ void pin_checked(checked_t &c, sm1::rawpin_t *pin) {
 }
 
 /*
+ * Stamp v, a version a write copies, with its own writer's commit_ts if
+ * that writer has committed. The copy goes into the memtable now, and a
+ * CF:txn sweep may have stamped the original already, to delete the
+ * writer's status record next (SM1_DESIGN.md §8.3): unstamped, the copy
+ * would then read as aborted. A writer in flight, aborted, or of unknown
+ * fate leaves the copy as it was.
+ */
+static void stamp_copy(db_t *db, chain_version_t *v) {
+  if (v->flags & version_stamped) {
+    return;
+  }
+  uint64_t commit_ts;
+  if (XCT_COMMITTED == xct_status(db, v->xid, &commit_ts)) {
+    v->flags |= version_stamped;
+    v->commit_ts = commit_ts;
+  }
+}
+
+/*
  * Check existence, then put one new chained version (../VCHAIN.md §5).
  * With pin, the row an update or erase replaces is pinned into it once
  * the write is made; on failure pin keeps what it held.
@@ -410,6 +429,7 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
     // CURR's version moves to OLD under a fresh id, displaced by us.
     uint64_t id = st.next_old->fetch_add(1);
     chain_version_t moved = c.head;
+    stamp_copy(s->db, &moved);
     moved.displaced = s->xid;
     batch_put(batch, st, old_key(id), chain_value(moved, true), bytes);
     nv.prev = id;
@@ -437,6 +457,7 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
     }
     if (c.found && c.at != 0) {
       chain_version_t hid = c.version;
+      stamp_copy(s->db, &hid);
       hid.flags &= ~chain_displaced_stamped;
       hid.displaced = s->xid;
       batch_put(batch, st, old_key(c.at), chain_value(hid, true), bytes);
@@ -1109,6 +1130,7 @@ int chain_restore(db_t *db, const store_t &st, rocksdb::Slice key, uint64_t xid,
     // The version kept goes back to CURR, its own prev unchanged, as
     // CURR holds it: none of OLD's flags.
     chain_version_t back = keep;
+    stamp_copy(db, &back);
     back.flags &= ~(chain_unlinked | chain_displaced_stamped);
     back.displaced = 0;
     batch_put(batch, st, curr_key(key), chain_value(back, false), bytes);

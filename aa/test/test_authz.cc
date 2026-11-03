@@ -381,7 +381,7 @@ TEST_CASE("authz: object mask") {
   // 4.
   CHECK(0 ==
         aa_object_mask(h.aa(), s, DB, 30000, AA_CLASS_RELATION, C, AA_UPDATE));
-  aa_set_temp_owner(s, 30000, C);
+  aa_set_temp_owner(s, 1, 30000, C);
   CHECK(AA_UPDATE ==
         aa_object_mask(h.aa(), s, DB, 30000, AA_CLASS_RELATION, C, AA_UPDATE));
 

@@ -563,6 +563,11 @@ void ExecuteGrantStmt(GrantStmt *stmt) {
  * Internal entry point for granting and revoking privileges.
  */
 static void ExecGrantStmt_oids(InternalGrant *istmt) {
+  /*
+   * The ACLs merged below are read as another session's commit of them,
+   * if one is in flight, leaves them, not as they were before it.
+   */
+  pg_global_settle();
   switch (istmt->objtype) {
   case OBJECT_TABLE:
   case OBJECT_SEQUENCE:

@@ -232,6 +232,76 @@ void chain_put(sm1::session_t *s, uint64_t storeid, std::string_view key,
 
 } // namespace
 
+namespace {
+
+/* The version under key k of the chained store c: its CURR, or with old
+ * the OLD one whose payload is payload. Fails the test if none is. */
+chain_version_t raw_version(sm1::session_t *s, uint64_t c, bool old,
+                            const std::string &k, const std::string &payload,
+                            std::string &buf) {
+  store_t st = db_store(s->db, c);
+  REQUIRE(st.cf != nullptr);
+  chain_version_t v;
+  if (!old) {
+    REQUIRE(st.rdb->Get(rocksdb::ReadOptions(), st.cf, curr_key(k), &buf).ok());
+    REQUIRE(chain_decode(buf, &v, false));
+    return v;
+  }
+  rocksdb::ReadOptions ro;
+  ro.total_order_seek = true;
+  std::unique_ptr<rocksdb::Iterator> it(st.rdb->NewIterator(ro, st.cf));
+  for (it->Seek(old_key(0)); it->Valid() && it->key()[0] == key_class_old;
+       it->Next()) {
+    buf.assign(it->value().data(), it->value().size());
+    if (chain_decode(buf, &v, true) && v.payload.ToString() == payload) {
+      return v;
+    }
+  }
+  FAIL("no OLD version holds " << payload);
+  return v;
+}
+
+} // namespace
+
+TEST_CASE("a committed version copied by a write carries its commit_ts") {
+  // Verify a write that copies a committed version stamps the copy with
+  // its writer's commit_ts, so a CF:txn sweep that stamped the original
+  // and deleted the writer's record leaves the copy readable
+  // (SM1_DESIGN.md §8.3).
+  // 1. Insert "k" as "v1" and commit: its version is unstamped, in the
+  //    memtable, as nothing has compacted it.
+  // 2. Update "k" to "v2" and commit: "v1" moves to OLD; its copy there
+  //    is stamped.
+  // 3. Update "k" to "v3" past a savepoint, and roll back to it: "v2"
+  //    goes back to CURR at once; the version put back is stamped.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  std::string buf;
+  begin_xct(f.s);
+  REQUIRE(sm1::chain_insert(f.s, c, "k", "v1") == 0);
+  commit_xct(f.s);
+
+  // 2.
+  begin_xct(f.s);
+  REQUIRE(sm1::chain_update(f.s, c, "k", "v2") == 0);
+  commit_xct(f.s);
+  chain_version_t v1 = raw_version(f.s, c, true, "k", "v1", buf);
+  CHECK((v1.flags & version_stamped) != 0);
+  CHECK(v1.commit_ts > 0);
+
+  // 3.
+  begin_xct(f.s);
+  int depth = sm1::savepoint(f.s);
+  REQUIRE(depth == 1);
+  REQUIRE(sm1::chain_update(f.s, c, "k", "v3") == 0);
+  REQUIRE(sm1::rollback(f.s, depth) == 0);
+  chain_version_t v2 = raw_version(f.s, c, false, "k", "", buf);
+  CHECK(v2.payload.ToString() == "v2");
+  CHECK((v2.flags & version_stamped) != 0);
+  CHECK(v2.commit_ts > v1.commit_ts);
+  commit_xct(f.s);
+}
+
 TEST_CASE("a chained key is written and read as a versioned one is") {
   // Verify the chained calls' basic contract on one key.
   // 1. Insert a key and read it back in the same transaction; a

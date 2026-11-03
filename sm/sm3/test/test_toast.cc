@@ -435,14 +435,14 @@ TEST_CASE("ANALYZE counts a datum out of line as wide, and fetches none but "
   REQUIRE(st);
   bool body = false, expr = false;
   for (const sm3::stat_t &s : st->stats) {
-    if (!s.index && s.position == 2) {
+    if (!s.has_index && s.position == 2) {
       body = true;
       CHECK(s.width > 4900);
       CHECK(s.width < 5100);
       CHECK(s.mcv.empty());
       CHECK(s.bounds.empty());
     }
-    if (s.index && *s.index == f.docs_pre) {
+    if (s.has_index && s.index == f.docs_pre) {
       expr = true;
       CHECK(s.distinct == 4);
     }
@@ -451,6 +451,59 @@ TEST_CASE("ANALYZE counts a datum out of line as wide, and fetches none but "
   CHECK(expr);
   CHECK_FALSE(g_saw_pointer);
   REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("a failed update leaves the old row's datums out of line") {
+  // Verify a write that fails after the row is written holds nothing of
+  // the old row's for a later write to erase: rolled back to a savepoint,
+  // the old row and its datums out of line are live.
+  // 1. Make docs_id, a unique index on id; insert rows 1 and 2, each with
+  //    a body out of line, and commit.
+  // 2. Past a savepoint, update row 1 to id 2 with another body: the
+  //    unique index refuses it, after the row is written.
+  // 3. Roll back to the savepoint; update row 2's title, a write that
+  //    releases what it holds; commit.
+  // 4. Row 1's body reads whole.
+  docs_t d;
+  std::vector<sm3::index_key_spec_t> by_id = {{0, false, false, std::nullopt}};
+  uint64_t docs_id = 0;
+  start(d.a);
+  REQUIRE(sm3::create_index(d.a, d.docs, "docs_id", by_id, {}, true, docs_id) ==
+          0);
+  REQUIRE(sm3::commit(d.a) == 0);
+  std::string body1 = text_of(20000, "one"), body2 = text_of(20000, "two");
+  start(d.a);
+  sm3::table_t *t = d.write(d.a);
+  uint64_t r1 = put(t, row_t(1, "t1", body1));
+  uint64_t r2 = put(t, row_t(2, "t2", body2));
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(d.a) == 0);
+
+  // 2.
+  start(d.a);
+  t = d.write(d.a);
+  int depth = sm3::savepoint(d.a);
+  REQUIRE(depth > 0);
+  row_t clash(2, "t1", text_of(20000, "new"));
+  CHECK(sm3::tbl_update(t, r1, clash.d(), clash.null()) != 0);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+
+  // 3.
+  REQUIRE(sm3::rollback(d.a, depth) == 0);
+  std::string kept = held(t, r2, 2);
+  row_t retitled(2, "t2b", kept, false, true);
+  REQUIRE_MESSAGE(sm3::tbl_update(t, r2, retitled.d(), retitled.null()) == 0,
+                  sm1::errmsg());
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(d.a) == 0);
+
+  // 4.
+  start(d.a);
+  t = d.write(d.a);
+  CHECK(value(t, r1, 2) == body1);
+  CHECK(value(t, r2, 2) == body2);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(d.a) == 0);
 }
 
 TEST_CASE("dropping a table drops the sequence of its TOAST ids") {

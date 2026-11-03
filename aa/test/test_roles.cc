@@ -103,6 +103,43 @@ TEST_CASE("roles: create, commit, restart") {
   CHECK(123456789 == back->rolvaliduntil);
 }
 
+// Verify that a session's own role commit does not hide another's before
+// it: a session that had not seen the other's is told its roles moved.
+// 1. Two sessions, each up to date.
+// 2. The second makes a role and commits; the first does not ask.
+// 3. The first makes a role and commits.
+// 4. Confirm the first is told its roles moved, once.
+TEST_CASE("roles: an own commit does not hide another's") {
+  home_t h;
+  aa_session_t *s1 = aa_session_new(h.aa());
+  aa_session_t *s2 = aa_session_new(h.aa());
+  aa_role_t bob, carol;
+
+  // 1.
+  (void)aa_roles_moved(s1);
+  (void)aa_roles_moved(s2);
+
+  // 2.
+  REQUIRE(0 == aa_new_oid(s2, &bob.oid));
+  bob.rolname = "bob";
+  aa_put_role(s2, bob);
+  REQUIRE(0 == aa_commit(s2));
+  REQUIRE(0 == aa_post_commit(s2));
+
+  // 3.
+  REQUIRE(0 == aa_new_oid(s1, &carol.oid));
+  carol.rolname = "carol";
+  aa_put_role(s1, carol);
+  REQUIRE(0 == aa_commit(s1));
+  REQUIRE(0 == aa_post_commit(s1));
+
+  // 4.
+  CHECK(aa_roles_moved(s1));
+  CHECK(!aa_roles_moved(s1));
+  aa_session_free(s1);
+  aa_session_free(s2);
+}
+
 // Verify that two sessions changing one role conflict, the second to
 // commit failing and writing nothing.
 // 1. Two sessions each rename the superuser.

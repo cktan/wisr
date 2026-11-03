@@ -5588,7 +5588,7 @@ HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
   const sm_stat_t *found = NULL;
 
   for (const sm_stat_t &x : st->stats)
-    if (x.index.has_value() == is_index && (!is_index || x.index == relid) &&
+    if (x.has_index == is_index && (!is_index || x.index == relid) &&
         x.position == attnum - 1) {
       found = &x;
       break;
@@ -5649,9 +5649,9 @@ HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
   if (found->bounds.size() >= 2 && OidIsValid(tc->lt_opr))
     slot(STATISTIC_KIND_HISTOGRAM, tc->lt_opr, 0, false,
          values_array(found->bounds), true);
-  if (found->correlation && OidIsValid(tc->lt_opr))
+  if (found->has_correlation && OidIsValid(tc->lt_opr))
     slot(STATISTIC_KIND_CORRELATION, tc->lt_opr,
-         float4_array(&*found->correlation, 1), true, 0, false);
+         float4_array(&found->correlation, 1), true, 0, false);
 
   /* Formed in pg_statistic's shape, which it has no rows of, and kept. */
   HeapTuple tup = heap_form_tuple(statistic_tupdesc(), values, nulls);
@@ -5733,7 +5733,7 @@ static void put_stats_rows(ReturnSetInfo *rsinfo, Oid oid) {
      * first, so the descriptor read is the one sm holds.
      */
     Relation rel =
-        relation_open(x.index ? (Oid)*x.index : oid, AccessShareLock);
+        relation_open(x.has_index ? (Oid)x.index : oid, AccessShareLock);
     Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), x.position);
     const sm_type_t *smtype = sm_type(type_code(att->atttypid));
     NameData nsp, name;
@@ -5761,8 +5761,8 @@ static void put_stats_rows(ReturnSetInfo *rsinfo, Oid oid) {
       values[9] = text_array(smtype, att->atttypid, x.bounds);
       nulls[9] = false;
     }
-    if (x.correlation) {
-      values[10] = Float4GetDatum(*x.correlation);
+    if (x.has_correlation) {
+      values[10] = Float4GetDatum(x.correlation);
       nulls[10] = false;
     }
     /* The tuplestore copies the row, attname too, before the close. */

@@ -278,9 +278,20 @@ void enqueue(catalog_t *cat, uint64_t table, uint64_t index) {
   }
   b.finished.clear();
   if (b.running < b.max_workers) {
-    b.running++;
-    // A worker thread, alive until it finds the queue empty.
-    b.threads.emplace_back(work);
+    try {
+      // A worker thread, alive until it finds the queue empty; counted
+      // once it is made. It waits on mu, held here, before it runs.
+      b.threads.emplace_back(work);
+      b.running++;
+    } catch (...) {
+      // No thread: with no other worker to run it, the build is not
+      // queued, and the index stays pending for the next attach.
+      if (0 == b.running) {
+        b.queue.pop_back();
+        b.active.erase({cat, index});
+      }
+      throw;
+    }
   }
 }
 
@@ -306,7 +317,14 @@ int builder_attach(catalog_t *cat, std::function<sm1::session_t *()> open,
   return 0;
 }
 
-/* Detach a catalog and wait for its builds to end; see sm3.h. */
+/*
+ * Detach a catalog and wait for its builds to end; see sm3.h.
+ *
+ * Its wait is NOT cut short by an interrupt, unlike every other wait in
+ * sm (../../CODE.md §7): a detach that returned first would leave a
+ * build using a catalog its caller is closing. It is bounded: each of
+ * the catalog's builds is interrupted below, and ends after its batch.
+ */
 void builder_detach(catalog_t *cat) {
   builder_t &b = g_builder;
   std::vector<std::thread> threads;
