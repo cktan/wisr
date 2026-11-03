@@ -97,8 +97,9 @@ only makes the detach wait for it. High 8, a worker counted whose
 thread was never made, and High 9, std::optional in sm_stats.h, are
 fixed. Of the Mediums, 1, a deadline that overflowed into the
 past, 2, a periodic timer's catch-up that starved its cancel, 3,
-a real fd's open of no path, and 4, a load into a store the
-transaction does not see, are fixed; the others and the Lows are
+a real fd's open of no path, 4, a load into a store the
+transaction does not see, and 5, a chained write or a drop of a
+store with a load open, are fixed; the others and the Lows are
 being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
@@ -112,7 +113,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | Level / Area | Layering & Opacity | Naming (`_t`, `m_`, no `strncpy`) | Findings |
 | --- | --- | --- | --- |
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Low |
-| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 3 Medium, 3 Low |
+| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 2 Medium, 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 2 Medium, 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 3 Medium, 5 Low |
 | `include/` & `src/` | PASS | PASS | 2 Medium, 3 Low |
@@ -127,12 +128,6 @@ None open: Highs 1 to 9 are closed.
 
 ### 3. Medium-Severity Findings
 
-5. **`sm1` (`sm/sm1/src/chain.cc:294-305`,
-   `sm/sm1/src/catalog.cc:100-134`) — `chain_write` and `rmstore`
-   do not check `load_open_on(s, storeid)`:** `sm1.h:1542`
-   states that other writes to a store with an open bulk loader
-   are refused with `SM_ERR_INVALID`, which `access_write`
-   enforces but `chain_write` and `rmstore` omit.
 6. **`sm1` (`sm/sm1/src/bufpool.cc:241-246`) —
    `bufpool_t::acquire` leaves `state_wait` set after waking:**
    Setting `f->state.fetch_or(state_wait)` unconditionally before
