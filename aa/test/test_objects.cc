@@ -7,6 +7,9 @@
 
 #include "home.h"
 
+#include <chrono>
+#include <future>
+
 /* A table's entry: of the database 1, its oid objid, owned by owner. */
 static aa_object_t table(aa_oid_t objid, aa_oid_t owner) {
   aa_object_t o;
@@ -99,6 +102,64 @@ TEST_CASE("objects: more changes than are kept say all") {
   commit(s1);
   REQUIRE(aa_objects_moved(s2, 1, &oids, &all));
   CHECK((all || 4097 == oids.size()));
+  aa_session_free(s1);
+  aa_session_free(s2);
+}
+
+// Verify that the commits of objects' entries are ordered, and a change's
+// read waits out one in flight: what it reads is as that commit left it,
+// not as it was before.
+// 1. Session 1 sets a table's owner and runs aa_commit().
+// 2. Session 2 asks to read entries settled: it waits.
+// 3. Session 1 runs aa_post_commit(): session 2 goes on, and finds the
+//    owner as session 1 left it.
+// 4. Session 1's own commit does not wait on itself.
+TEST_CASE("objects: a change's read waits out a commit in flight") {
+  home_t h;
+  aa_session_t *s1 = aa_session_new(h.aa());
+  aa_session_t *s2 = aa_session_new(h.aa());
+  aa_object_t o;
+
+  // 1.
+  aa_set_object(s1, 1, table(20000, 16500));
+  REQUIRE(0 == aa_commit(s1));
+
+  // 2.
+  std::future<void> settled =
+      std::async(std::launch::async, [&] { aa_object_settled(s2); });
+  CHECK(std::future_status::timeout ==
+        settled.wait_for(std::chrono::milliseconds(200)));
+
+  // 4.
+  aa_object_settled(s1);
+
+  // 3.
+  REQUIRE(0 == aa_post_commit(s1));
+  CHECK(std::future_status::ready == settled.wait_for(std::chrono::seconds(5)));
+  REQUIRE(aa_find_object(h.aa(), s2, aa_key_t(1, 20000), &o));
+  CHECK(16500 == o.owner);
+  aa_session_free(s1);
+  aa_session_free(s2);
+}
+
+// Verify that an abort after aa's part lets go of the objects' commit
+// order: nothing waits on a commit that failed.
+// 1. Session 1 sets a table's owner, runs aa_commit(), then aa_abort().
+// 2. Session 2's settled read goes on at once.
+TEST_CASE("objects: an abort lets go of the commit order") {
+  home_t h;
+  aa_session_t *s1 = aa_session_new(h.aa());
+  aa_session_t *s2 = aa_session_new(h.aa());
+
+  // 1.
+  aa_set_object(s1, 1, table(20000, 16500));
+  REQUIRE(0 == aa_commit(s1));
+  REQUIRE(0 == aa_abort(s1));
+
+  // 2.
+  std::future<void> settled =
+      std::async(std::launch::async, [&] { aa_object_settled(s2); });
+  CHECK(std::future_status::ready == settled.wait_for(std::chrono::seconds(5)));
   aa_session_free(s1);
   aa_session_free(s2);
 }

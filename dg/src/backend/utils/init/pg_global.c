@@ -513,6 +513,8 @@ void pg_global_set_owner(uint64_t dbid, Oid classid, Oid objid, Oid owner,
   if (temp)
     aa_set_temp_owner(s, GetCurrentTransactionNestLevel(), objid, owner);
   else {
+    /* An entry another session's commit is writing is read as it leaves it. */
+    aa_object_settled(s);
     pg_global_object_t object = entry_of(s, dbid, classid, objid);
 
     object.owner = owner;
@@ -592,6 +594,9 @@ Acl *pg_global_acl(uint64_t dbid, Oid objid) {
  */
 void pg_global_change_owner(uint64_t dbid, Oid classid, Oid objid, Oid owner,
                             bool temp) {
+  /* The old owner and ACL as another session's commit in flight leaves them. */
+  if (!temp)
+    aa_object_settled(session_state());
   Oid old = DatabaseRelationId == classid ? pg_global_database_owner(dbid)
                                           : pg_global_owner(objid);
   Acl *acl = pg_global_acl(dbid, objid);
@@ -620,6 +625,16 @@ void pg_global_subabort(void) {
 
   if (NULL != s)
     aa_subabort(s, GetCurrentTransactionNestLevel());
+}
+
+/*
+ * Before a change reads the owners and ACLs it changes, as GRANT does:
+ * wait out another session's commit of objects in flight, then take in
+ * what it changed, so the caches read next are as it left them.
+ */
+void pg_global_settle(void) {
+  aa_object_settled(session_state());
+  AcceptInvalidationMessages();
 }
 
 /*

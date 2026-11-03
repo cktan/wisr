@@ -243,6 +243,14 @@ bool aa_find_object(aa_env_t *env, aa_session_t *s, const aa_key_t &key,
 void aa_set_object(aa_session_t *s, int level, const aa_object_t &object);
 void aa_forget_object(aa_session_t *s, int level, const aa_key_t &key);
 
+/*
+ * Wait out another session's commit of objects' entries in flight, from
+ * its aa_commit() to its aa_post_commit() or aa_abort(): an entry read
+ * after it is as that commit leaves it. For a change, before it reads the
+ * entry it changes; a session in its own commit does not wait.
+ */
+void aa_object_settled(aa_session_t *s);
+
 /* Remove every entry of the database dbid, after the commit. */
 void aa_forget_database(aa_session_t *s, uint64_t dbid);
 

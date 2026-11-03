@@ -26,6 +26,13 @@ struct aa_env_t {
    * transaction begins to its snapshot's replacement, so the roles it
    * reads back include every role commit before it. */
   std::mutex roles_commit_mutex;
+  /* Orders the commits of objects' entries (AA_DESIGN.md section 5): held
+   * by the session whose transaction changed some, from aa_commit() to the
+   * end of aa_post_commit() or aa_abort(), across the database's commit,
+   * so pg_global and the objects' snapshot change in one order, and a
+   * change's read of an entry waits for it (aa_object_settled()). Taken
+   * before roles_commit_mutex. */
+  std::mutex objects_commit_mutex;
   std::shared_ptr<const aa_roles_t> roles;
   /* How many times roles was replaced: a session's caches of them are
    * stale when it has moved (aa_roles_moved()). */
@@ -132,6 +139,9 @@ struct aa_session_t {
   /* What the transaction changed of them, each as it was before, in
    * order: an abort puts them back. */
   std::vector<aa_temp_undo_t> temp_undo;
+  /* Whether the session holds env->objects_commit_mutex, from its
+   * aa_commit() to its aa_post_commit() or aa_abort(). */
+  bool objects_committing = false;
 
   /* Bumped at each change to what the session sees of the roles or the
    * objects' entries: with the shared epochs, what its caches are of. */

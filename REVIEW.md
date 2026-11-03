@@ -5,19 +5,20 @@ leaves this file when it is fixed, or decided not to be; git
 history keeps the closed reviews (`REVIEW.md` up to
 `1a8407e2`).
 
-1. **`aa/`**: open; findings 1, 2 and 4 to 7 fixed; 3 waits on
-   a decision; the rule findings not yet checked.
+1. **`aa/`**: open; findings 1 to 7 fixed; the rule findings not
+   yet checked.
 2. **`sm/`**: open; Highs 1 to 3 fixed; the rest being checked.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
 # Review: `aa/` (Authentication and Authorization)
 
-**Status: open.** Findings 1, the lockout bypass, 2, the
-invalidations lost past the changes kept, 4, no intermediate for
-an object with no entry, 5, an own role commit hiding another's,
-6, a failing read after the roles' commit, and 7, a temporary
-object's owner and ACL not undone, are fixed. Finding 3 is checked and
-waits on a design decision; the others are not yet checked.
+**Status: open.** Findings 1 to 7 are fixed: the lockout bypass,
+the snapshot out of step with pg_global (3, by one commit of
+objects at a time), the invalidations lost past the changes kept,
+no intermediate for an object with no entry, an own role commit
+hiding another's, a failing read after the roles' commit, and a
+temporary object's owner and ACL not undone. The rule findings
+are not yet checked.
 
 Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 `CLAUDE.md`, `sm/CODE.md`, `aa/AA_DESIGN.md`, `aa/ROLE.md`, and
@@ -33,40 +34,14 @@ Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 | No `throw`, `catch`, or RTTI | PASS | Zero `throw`/`try`/`catch` in library code; builds with `-fno-rtti`. |
 | Naming (`snake_case`, `_t`, `m_`) & Yoda conditions | PASS | Types end in `_t`, private fields in `home_t` use `m_`, and comparisons use `0 == x`. |
 | SCRAM-SHA-256 & cycle detection | PASS | Constant-time digest comparison (`timingsafe_eq`), salt/iteration checks, and DFS cycle detection in `grant_role`. |
-| Correctness & concurrency | 1 High | `env->objects` / `pg_global` consistency races. |
+| Correctness & concurrency | none open | |
 | `sm/CODE.md` & style rules | 5 Low | `std::map`/`std::pair` in `aa.h`, separate error state, duplicate `session_guard_t`. |
 
 ---
 
 ### 2. Correctness, Security, and Concurrency Findings
 
-#### [HIGH] 3. In-memory `env->objects` snapshot can diverge from `pg_global` on disk
-
-- **Location:** `aa/src/aa.cc:472-506`, `aa/src/aa.cc:539-560`,
-  `aa/src/aa.cc:571-598`
-- **Issue:**
-  1. **Reorder race between `write_objects()` and
-     `publish_objects()`:** In `aa_post_commit()`,
-     `write_objects()` commits to `pg_global` without holding
-     `env->mutex`, and `publish_objects()` then acquires
-     `env->mutex` and applies only this session's delta (`last`,
-     `dropped_dbs`) to `*env->objects`. If two sessions update
-     the same object's ACL/owner and commit to `pg_global` in
-     order `T1 -> T2`, but acquire `env->mutex` in
-     `publish_objects()` in order `T2 -> T1`, `env->objects` in
-     memory keeps `T1`'s state while `pg_global` on disk holds
-     `T2`'s state until restart.
-  2. **Intermediate restrictive entries (`before`) are never
-     published to `env->objects`:** `aa_commit()` writes `before`
-     (`i.middle`) only to `pg_global` on disk (line 472) and does
-     not update `env->objects`. Between `aa_commit()` and
-     `aa_post_commit()`—or permanently if `aa_post_commit()`
-     fails—other sessions continue reading the old, more
-     permissive privileges from `env->objects` in memory,
-     contrary to `aa/AA_DESIGN.md` §5.
-- **Fix:** Publish `before` to `env->objects` in `aa_commit()`,
-  and reload or serialize `env->objects` updates in commit order
-  under `env->mutex`.
+None open: findings 1 to 7 are fixed.
 
 ---
 

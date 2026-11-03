@@ -509,23 +509,56 @@ static int write_roles_and(aa_session_t *s, sm_session_t *session,
   return 0;
 }
 
+/* Let go of the objects' commit order, if the session holds it. */
+static void release_objects_order(aa_session_t *s) {
+  if (s->objects_committing) {
+    s->objects_committing = false;
+    s->env->objects_commit_mutex.unlock();
+  }
+}
+
+/* Releases the session's hold on the objects' commit order at its scope's
+ * end: aa_post_commit()'s or aa_abort()'s, however it returns. */
+struct objects_order_release_t {
+  aa_session_t *s;
+  ~objects_order_release_t() { release_objects_order(s); }
+};
+
+/* Wait out another session's commit of objects in flight; see aa.h. */
+void aa_object_settled(aa_session_t *s) {
+  if (s->objects_committing)
+    return;
+  // Taken and let go at once: held only while a commit is in flight.
+  std::lock_guard<std::mutex> wait(s->env->objects_commit_mutex);
+}
+
 /*
  * At the commit of the session's transaction, before the database's:
  * write its changes to pg_global.
- * 1. Find each entry that is to grant less (intermediates()).
- * 2. If the roles changed, take the role commits' order.
- * 3. In one transaction of pg_global's, write the role changes, and each
+ * 1. If objects' entries changed, take the objects' commit order, held
+ *    to the end of aa_post_commit() or aa_abort().
+ * 2. Find each entry that is to grant less (intermediates()).
+ * 3. If the roles changed, take the role commits' order.
+ * 4. In one transaction of pg_global's, write the role changes, and each
  *    entry that is to grant less as granting only what it grants before
  *    and after; read the roles back, and commit.
- * 4. Keep those entries as they were, for aa_abort() to put back if the
+ * 5. Keep those entries as they were, for aa_abort() to put back if the
  *    database's commit fails.
- * 5. If the roles changed, replace the roles' snapshot with those read.
+ * 6. If the roles changed, replace the roles' snapshot with those read.
  */
 int aa_commit(aa_session_t *s) {
-  std::vector<intermediate_t> before = intermediates(s);
   bool roles = nullptr != s->working;
   sm_session_t *session;
 
+  // Changes to objects' entries commit one transaction at a time, to the
+  // end of aa_post_commit() or aa_abort(): read the entries under it, as
+  // the commit before left them.
+  if ((!s->changes.empty() || !s->dropped_dbs.empty()) &&
+      !s->objects_committing) {
+    s->env->objects_commit_mutex.lock();
+    s->objects_committing = true;
+  }
+  std::vector<intermediate_t> before = intermediates(s);
   if (!roles && before.empty())
     return 0;
   // One role commit at a time, from before its transaction begins: its
@@ -597,6 +630,8 @@ int aa_commit(aa_session_t *s) {
  */
 int aa_abort(aa_session_t *s) {
   std::vector<aa_restore_t> restore = std::move(s->to_restore);
+  // The commit order goes once what is put back is written.
+  objects_order_release_t release{s};
 
   s->base.reset();
   s->working.reset();
@@ -659,6 +694,8 @@ static void publish_objects(aa_env_t *env,
  * 4. Forget the changes, whether the writes succeed or not.
  */
 int aa_post_commit(aa_session_t *s) {
+  // The commit order goes once the snapshot is replaced.
+  objects_order_release_t release{s};
   std::map<aa_key_t, const aa_change_t *> last;
   std::shared_ptr<const aa_objects_t> all;
   int rc;
