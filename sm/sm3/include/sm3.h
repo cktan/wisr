@@ -1380,9 +1380,8 @@ int tbl_insert(table_t* table, std::span<const sm2::datum_t> values,
  *    write the row, the primary key's entry. sm1's insert waits for
  *    another transaction that has put the key in and not yet ended,
  *    and says at once if a row is there.
- * 4. Put the row's entry into each tree arbiter, after the row
- *    (../../MAJORDECISION.md D5): another's check would call an entry
- *    that names no row dead.
+ * 4. Put the row's entry into each tree arbiter, after the row:
+ *    another's check would call an entry that names no row dead.
  * 5. If step 3 or 4 meets a row that has the key, take back what
  *    was written: the entries of step 3, or all, to the savepoint.
  *    Read that row under a lock given back at once, and return 1

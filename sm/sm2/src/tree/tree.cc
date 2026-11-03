@@ -1,6 +1,5 @@
 /*
- * tree.cc -- a B-link tree over sm1's pages (../BTREE.md §4, §5,
- * ../../../MAJORDECISION.md D4).
+ * tree.cc -- a B-link tree over sm1's pages (../BTREE.md §4, §5).
  *
  * A pin is a latch (../../BUFFERPOOL.md). A reader descends from page
  * 0, the root, pinning one page at a time, shared, and moves right

@@ -10261,31 +10261,31 @@ to show what a lock table of sm1's own gains a client.
 ## Step 345: B+tree secondary indexes, the tree
 
 `../sm/BTREE.md`, handed over whole and unattended, on the
-`wip-btree` branch; each decision taken without asking is in
-`../MAJORDECISION.md`, D1 to D5 so far.
+`wip-btree` branch.
 
-- **The page's split** (D1): step 1 split a page without the
+- **The page's split**: step 1 split a page without the
   entry that filled it, and capped an entry at a third of the
   limit without the left half's new high key. Three entries of
   2,730 bytes left a fourth that fit no half after any number
   of splits. The split now takes the entry, at the point
   nearest half the bytes where both halves fit, and an entry is
   at most `(limit - header) / 3`.
-- **sm1's pages** (D2, D3): class `0x04` keys, written outside
+- **sm1's pages**: class `0x04` keys, written outside
   every transaction in one batch, read through the block cache.
   The cache is sm1's, not sm2's, as sm1 is the only channel into
   RocksDB. A miss's `Get` and insert hold a fill latch that a
   write holds too, so a stale page is never put back. The GC
   filter, a chained store's next old id, a load's emptiness and
   a load's rollback leave pages alone.
-- **The writers' latch** (D3): one a page, in a sharded map,
+- **The writers' latch**: one a page, in a sharded map,
   not a stripe: a split holds a page's and its parent's.
-- **The tree** (`../sm/sm2/src/tree/tree.cc`, D4): a B-link
+- **The tree** (`../sm/sm2/src/tree/tree.cc`): a B-link
   tree; page ids from the meta page, a post's parent found by
   a descent from the root, a split's post cut short finished by
   the next writer to latch the page. A cursor copies a leaf's
   keys and reaches the next from the leaf it copied.
-- **D5**: an entry goes in after its row, not before, so vacuum
+- **An entry after its row**: an entry goes in after its row,
+  not before, so vacuum
   cannot remove an entry an insert has just found there.
 - **Tests**: sm1, four of pages; sm2, the page, the latch under
   TSan (`make tsan` in sm2, new), and the tree: 20,000 random
@@ -10302,8 +10302,8 @@ to show what a lock table of sm1's own gains a client.
 through it answers as through today's entries.
 
 - **sm1**: `read_settled`, a row's newest version only once
-  every snapshot sees it, for vacuum (D5); `ssi_read_range` and
-  `ssi_write_key`, SSI on keys no version holds (D10).
+  every snapshot sees it, for vacuum; `ssi_read_range` and
+  `ssi_write_key`, SSI on keys no version holds.
 - **sm2**: an index `rel` over a tree (`idx_open`'s `tree`): an
   entry's key always ends with its row's, its value the cut
   flag and the columns' length, no INCLUDE column; a cut at a
@@ -10312,11 +10312,11 @@ through it answers as through today's entries.
   latch; `rel_read_settled`.
 - **sm3**: the kind in the catalog (attribute 13 of an index's
   part); made with the index, in a truncate's new store and a
-  rewrite's; left by a drop (D6). `tbl_idx_scan_rows` on a tree
+  rewrite's; left by a drop. `tbl_idx_scan_rows` on a tree
   reads each entry's row and keeps it only if the row's entry,
-  made as a write makes it, is the entry (D8). `tbl_compact`
+  made as a write makes it, is the entry. `tbl_compact`
   removes the dead entries of settled rows.
-- **dg**: `WITH (tree = on)` (D7), a unique one refused (D9); a
+- **dg**: `WITH (tree = on)`, a unique one refused; a
   tree scanned by the rows' cursor, as a primary key is.
 - **Found**: a truncate made the new store in the statement
   and wrote its trees before its mark moved: "store does not
@@ -10371,13 +10371,13 @@ and counts every thread):
   1,548k, Q10 3,371k to 2,255k, today's entries 1,659k and
   3,565k, PostgreSQL 395k and 768k. A tree's rows read many to
   a call; a page opened without walking its entries; a cursor
-  copying only its entries; inner pages held by an open tree
-  (MAJORDECISION D11); a recheck's key in a reused buffer.
+  copying only its entries; inner pages held by an open tree;
+  a recheck's key in a reused buffer.
 - **Found**: held inner pages gone stale routed a million-row
   insert so far left that it took 424 s, not 51: a descent that
   moves right now lets them go. The load is 34 s with pages of
-  4 KB, 51 s of 8 KB, 18 s with today's entries (D12).
-- **A unique tree** (D13): an insert judges every other entry
+  4 KB, 51 s of 8 KB, 18 s with today's entries.
+- **A unique tree**: an insert judges every other entry
   of its key by its row's newest version, under the latch of the
   leaf that covers the key, waiting for a running writer with
   every latch let go; sm1's `read_newest` and `wait_writer`. An
@@ -10486,7 +10486,7 @@ and digres's read-ahead of today's entries alike.
   and refuse with nothing else written. A unique tree's entry so
   added names a row not yet written, which another's check calls
   dead: both rows of one key could commit. A tree arbiter's entry
-  now goes in after the row (MAJORDECISION D5), under a savepoint
+  now goes in after the row, under a savepoint
   the row is taken back to if the key is another's.
 - **Tests**: sm2, a root's split's post cut short, then 200 keys
   into its right page; it failed before the fix. sm3, the unique
@@ -10546,7 +10546,7 @@ on the release builds, unpinned.
 - **sm3**: `DROP INDEX` of a tree drops its pages from an
   `on_commit` function; a rollback keeps them, and a crash before
   the function runs leaves them until the store goes, as every
-  drop did before (MAJORDECISION D6, revised).
+  drop did before.
 - **Tests**: sm1, pages dropped by an `on_commit` function, and a
   dropped store's no error; sm3, a drop rolled back keeps the
   tree whole, a drop committed leaves no meta page; rel, the
@@ -10557,7 +10557,7 @@ on the release builds, unpinned.
 ## Step 356: the root at page 0, and no meta page
 
 - **sm3**: `cat_init()` makes `sm3.tree_page`, the sequence every
-  tree's page ids come from (MAJORDECISION D14).
+  tree's page ids come from.
 - **sm2**: page 0 is the root for a tree's life, a root's split
   one write, so no half of it is left to finish; whoever reads a
   page again by its id checks its level. The meta page,
@@ -10576,7 +10576,7 @@ on the release builds, unpinned.
 
 - **sm2**: `prev` beside `next`, which was `right`, in a page's
   header, 30 bytes now. A split's first write links the page's old
-  right sibling back to the new page (MAJORDECISION D15), so a
+  right sibling back to the new page, so a
   crash leaves the two links agreeing. `tree_check()` checks it.
 - **Tests**: sm2, leaves walked both ways; a split cut short; a
   page with `prev` wrong does not check. Without the sibling's
@@ -10621,7 +10621,7 @@ measured again: `bench/build/pg18` is not here.
 ## Step 360: the buffer pool, alone
 
 `../sm/BUFFERPOOL.md` plan step 6, on a machine that may not run
-benchmarks, so with plan step 1 not run (MAJORDECISION D16).
+benchmarks, so with plan step 1 not run.
 
 - **sm1**: `src/bufpool.h`, a module of its own that knows tags,
   bytes and pins, and reads a miss through its caller's loader.
@@ -10633,7 +10633,7 @@ benchmarks, so with plan step 1 not run (MAJORDECISION D16).
 - **Found reviewing it**: a lock-free lookup can hand back a frame
   just taken for another page, whose holder may wait for a page
   this thread has pinned: a cycle no latch order forbids. A pin
-  looks at the tag again before it sleeps (D19).
+  looks at the tag again before it sleeps.
 - **Tests**: sm1, 11 cases on the pool alone. Eleven mutations,
   each caught in 3 runs of 3.
 
@@ -10643,14 +10643,13 @@ Plan step 7: `sm1::pin_page` takes SH or EX, and `sm1::page_write`
 copies each page into its pinned frame once RocksDB has it.
 
 - **sm1**: attach gives the pool a quarter of `block_cache_bytes`,
-  64 frames at least (D17). A miss's `Get` has `fill_cache` off.
+  64 frames at least. A miss's `Get` has `fill_cache` off.
   `page_put_t::inner` goes, as the clock's age comes with the pin.
 - **sm2**: a reader pins one page at a time, as one holding a page
   while it waits for a child could wait on a writer waiting for
   the page it holds. A writer's pins replace its latches, in the
   same order. The fill latch, the latch table, held pins and
-  `tree_close` go, and `descend()` loses `afresh` and `moved`
-  (D20).
+  `tree_close` go, and `descend()` loses `afresh` and `moved`.
 - **Found**: `post()`, finding the parent has the entry already,
   returned with its child still latched, and its caller pinned
   that page again and waited on itself: a crash's path, from
@@ -10721,8 +10720,7 @@ tree 0.39 to 0.43 ms against a regular index's 0.18 ms: a tree's
 entry carries no visibility, so an index-only scan read each row.
 `../sm/BTREE.md` §4.1, built: a leaf vacuum found every entry of
 settled and live is set all visible, and an index-only scan hands
-its entries out with their rows unread. Decisions D22 to D26 in
-`../MAJORDECISION.md`.
+its entries out with their rows unread.
 
 - **sm2**: `page_all_visible`, `0x04` in a leaf's flags. An
   insert into a page clears it, in the same write; one that finds
@@ -10742,7 +10740,7 @@ its entries out with their rows unread. Decisions D22 to D26 in
   `sm_rel_scan_cols`.
 - **SSI**: a tree's delete, or a key's change, now reports its
   old entry's key (`ssi_write_key`), as an insert reports its
-  new one (D27): an index-only scan that skips a row holds no
+  new one: an index-only scan that skips a row holds no
   SIREAD on it, and a write skew through a count went unseen,
   both committing, until it did.
 - **dg**: `smstore_index_getentry()` turns the mode on for a tree
@@ -10787,8 +10785,7 @@ would compare them better.
 Every descent of a tree pinned page 0, so every probe on every
 core wrote its frame's state word, twice. `../sm/BTREE.md` §4.2,
 built: a session keeps its own copy of page 0 and descends from
-it with no pin while the page is as it was. Decision D28 in
-`../MAJORDECISION.md`.
+it with no pin while the page is as it was.
 
 - **sm1**: each frame of the buffer pool has a version, moved by
   an install and by every change of its tag: a discard, a purge,
@@ -10833,7 +10830,7 @@ eviction failed every session's copy, and each session read page
 0 again. The user pointed it out. `sm1::page_copy()`, on a good
 copy, now sets the frame's age's top bit, as a pin does
 (`bufpool_t::touch()`, which `pin()` now calls too); written only
-if not set already. D28 amended.
+if not set already.
 
 - **Tests**: sm1, a touched page outlasts 64 leaves read through
   a pool of 8, and goes once no longer touched; a copy read after
@@ -10850,7 +10847,7 @@ each frame, `std::atomic<std::shared_ptr>`; the first reader at a
 version makes and publishes it, by compare and swap, and the
 others take it. The frame lets it go on an install, a discard, a
 purge or an eviction; the last holder frees it. A probe with a
-good copy touches no count. Decision D29.
+good copy touches no count.
 
 - **Tests**: sm1, two readers share one copy; an install leaves
   a holder the old bytes, and frees the old copy once its
@@ -10938,8 +10935,7 @@ is now as the code is:
   key, not its `_id`, and a row another transaction moved is
   not followed (`CLUSTER.md` §4).
 - `sm3/include/sm3.h`, `tbl_insert_arbiter()`: a tree
-  arbiter's entry goes in after the row, under a savepoint
-  (D5).
+  arbiter's entry goes in after the row, under a savepoint.
 - `sm3/src/catalog/internal.h`, `rewrite_table()`: only a
   keyless row keeps its `_id`.
 - `rel/src/rel_ops.cc`, `abort_failed_write()`: three outcomes
@@ -11044,8 +11040,7 @@ behind it (step 344). Design and cases: `../sm/sm1/GROUPSYNC.md`.
 
 `CREATE INDEX ... USING btree` makes a tree (`../sm/BTREE.md`),
 and `USING lsm`, the default, makes the index sm had first,
-each entry a key of RocksDB's. `WITH (tree = on)` is gone
-(`../MAJORDECISION.md` D7, changed).
+each entry a key of RocksDB's. `WITH (tree = on)` is gone.
 
 - **Both names are `pg_am`'s `btree`**: the name chooses sm's
   kind at CREATE INDEX (`smstore.c`, `tree_kind()`), and
@@ -11081,7 +11076,138 @@ each entry a key of RocksDB's. `WITH (tree = on)` is gone
 - **Not changed**: sq's corpus test fails on 29 scripts, on
   `main` as here: the same 29.
 
-## Step 376: ALTER COLUMN TYPE, a key column's among them
+## Step 376: what is left of the 16-client write gap, profiled
+
+`../sm/NEXT.md` §1 item 5: after step 374, `ins` and `fk` at 16
+clients run at about 0.7 of PostgreSQL's tps. This step measures
+where the rest goes. It changes no code.
+
+- **Method**: `digres-release` at `471c870a` and PostgreSQL
+  18.6, the setup of `../bench.old/rowlocks.sh`, `ins` and `fk`
+  at 16 clients, 10 s a run. tps swings by up to half from run
+  to run on this machine (`ins` on digres: 7,726 then 3,078), so
+  the step compares costs a transaction, not tps. The kernel
+  allows user-space perf only (`perf_event_paranoid` 2), so:
+  - `perf stat -p` on the server: instructions, cycles and CPU
+    time;
+  - a preloaded library that counts each `fsync` and
+    `fdatasync` and its time;
+  - gdb stack samples of every thread, 20 a run.
+- **Neither system is CPU-bound**: each uses less than 2 of 12
+  CPUs. Both wait for WAL syncs.
+
+  | | instructions a txn | CPU a txn | CPUs busy |
+  | --- | --- | --- | --- |
+  | PostgreSQL `ins` | 34.6k | 113 µs | 1.2 |
+  | digres `ins` | 65.8k | 235 µs | 1.8 |
+  | PostgreSQL `fk` | 74k | 129 µs | 1.3 |
+  | digres `fk` | 151k | 254 µs | 1.9 |
+
+- **The syncs**: both systems sync at about the same rate. The
+  WAL sync of digres is idle for 27% of the time; the sync of
+  PostgreSQL almost never is. So fewer commits wait for each
+  sync of digres, and the group is smaller.
+
+  | | syncs/s | commits a sync | mean sync | sync busy |
+  | --- | --- | --- | --- | --- |
+  | PostgreSQL `ins` | 1,255 | 7.6 | 768 µs | about 96% |
+  | digres `ins` | 1,220 | 6.3 | 595 µs | about 73% |
+  | PostgreSQL `fk` | 1,426 | 7.6 | 687 µs | about 98% |
+  | digres `fk` | 1,231 | 6.2 | 593 µs | about 73% |
+
+- **Where a session of digres waits** (`ins`, 320 samples of
+  the 16 session threads):
+
+  | Share | State |
+  | --- | --- |
+  | 66.9% | waits for a sync (`db_sync_wal()`, `sync_cv`) |
+  | 11.3% | waits for an older commit (`db_commit_wait()`) |
+  | 9.7% | RocksDB's write queue, the version or the record |
+  | 4.4% | leads a sync, in `fdatasync` |
+  | 3.4% | reads from or writes to the client |
+  | 4.3% | other: runs, or takes a mutex |
+
+- **Finding 1, the handoff between syncs**: 6 of the 20
+  samples have no thread in `fdatasync`, as the 27% idle says.
+  In each, 14 or 15 sessions wait in `sync_cv`, and 1 to 3 are
+  in `db_sync_wal()` at a futex: every session needs a sync,
+  and none leads one. The leader that ends a sync calls
+  `notify_all()`. All the waiters wake and take `sync_mu` one
+  at a time, and only then does one of them lead the next sync.
+  On this machine each wake costs tens of µs.
+- **Finding 2, publish order**: `visible_ts` moves in
+  `commit_ts` order (`db_commit_done()`), but the WAL holds the
+  records in the order of their writes. A commit whose record
+  missed a sync that covers a newer `commit_ts` holds the newer
+  commit in `db_commit_wait()` for one more sync. PostgreSQL has
+  no such wait: a snapshot there is a set of xids, not a
+  timestamp.
+- **Finding 3, the CPU of the write path**: digres takes about
+  95k cycles a transaction, PostgreSQL 43k. In digres,
+  `DBImpl::WriteImpl` is 27% of the cycles: the version and the
+  commit record are each a trip through RocksDB's write queue.
+  `WriteThread::AwaitState` alone is 8.3%: a writer spins while
+  it waits for its turn (`enable_write_thread_adaptive_yield`).
+  `GetCachedPlan` is 7% and `smstore_lock_relation` 6.3%. In
+  PostgreSQL, `XLogInsert` is 3%. At 16 clients this CPU adds
+  to each transaction's time but does not limit the
+  throughput.
+- **What could close the gap**, not designed, to weigh in
+  order:
+  1. A handoff without a herd: the leader that ends a sync
+     wakes one waiter to lead the next one, or leads it itself
+     when commits wait; or a sync thread of its own that syncs
+     while any commit waits. If the sync is busy as
+     PostgreSQL's is, about 1/0.73 more syncs, or larger
+     groups: near PostgreSQL's tps.
+  2. Records in `commit_ts` order in the WAL, or a publish
+     that does not wait for older commits in other syncs.
+     This changes `COMMITVISIBLE.md`'s design; finding 1 first.
+  3. Fewer trips through the write queue (item 5's second
+     option), for the CPU and the latency at 1 client.
+
+## Step 377: the next sync goes to one commit, not to a herd
+
+Step 376's first finding: the WAL sync of digres was idle 27%
+of the time, because the leader that ended a sync woke every
+waiting commit on one condition variable.
+
+- **sm1** (`db_sync_wal()`, `../sm/sm1/GROUPSYNC.md` §3): a
+  commit that finds a sync running joins a line, oldest first,
+  and sleeps on a semaphore of its own (`sync_waiter_t`). The
+  leader that ends a sync takes the commits it covered out of
+  the line, and hands the next sync to the oldest commit left:
+  `syncing` stays set for it. It wakes that commit first, then
+  the covered ones. A woken commit takes no lock. PostgreSQL's
+  `LWLockRelease()` wakes its backends the same way, each on a
+  semaphore of its own. `sync_waiters` is gone: a test walks
+  the line.
+- **Measured**: as step 376, 16 clients, 10 s a run, the
+  binary before and after alternated in 5 rounds, PostgreSQL 18
+  in rounds 3 to 5. The disk's sync time changed from round to
+  round, 570 µs to 1.4 ms, and tps followed it; the share of
+  time the WAL sync is busy did not:
+
+  | | sync busy | commits a sync | tps, syncs of about 580 µs |
+  | --- | --- | --- | --- |
+  | digres before | 72% to 78% | 6.2 to 6.5 | 7,666 to 7,859 |
+  | digres after | 90% to 95% | 5.7 to 5.9 | 8,935 to 9,093 |
+  | PostgreSQL | 96% to 100% | 7.4 to 7.6 | 10,461 to 10,580 |
+
+  With syncs of about 580 µs, digres went from about 0.74 of
+  PostgreSQL's tps to about 0.86, on `ins` and `fk` both.
+- **What is left**: a sync of digres covers fewer commits than
+  one of PostgreSQL. A session of digres cycles slower: twice
+  the CPU a transaction (step 376, finding 3), and the wait in
+  `db_commit_wait()` (finding 2).
+- **Tests**: sm1 `test/test_groupsync.cc`, a new case: the
+  leader that ends a stalled sync hands the next one to the
+  oldest of five commits in line, and the other four stay in
+  line. It fails with the newest commit handed the sync. With
+  every commit released as covered, it fails, and so does the
+  case of fifteen commits that share one sync.
+
+## Step 378: ALTER COLUMN TYPE, a key column's among them
 
 `../sm/NEXT.md` §1 item 1, `../sm/CLUSTER.md` §11 step 3: the
 key-column ALTERs waited for `ALTER COLUMN TYPE`, which digres

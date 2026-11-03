@@ -19,6 +19,7 @@
 #include <list>
 #include <map>
 #include <mutex>
+#include <semaphore>
 #include <set>
 #include <shared_mutex>
 #include <string>
@@ -248,6 +249,19 @@ using lock_mark_t = lock_lists_t::mark_t;
  * One open database, shared by every session on it and held
  * in the environment's registry (SM1_DESIGN.md §1).
  */
+/*
+ * A commit waiting in line for a WAL sync (db_sync_wal()), on its
+ * own stack. The leader that ends a sync takes it out of the line
+ * and releases wake: covered by that sync, or, with lead set, to
+ * lead the next one.
+ */
+struct sync_waiter_t {
+  uint64_t target = 0;           /* the sequence number to sync past */
+  bool lead = false;             /* set by the leader: lead the next sync */
+  sync_waiter_t *next = nullptr; /* the next in line, under sync_mu */
+  std::binary_semaphore wake{0};
+};
+
 struct db_t {
   std::string name;
   rocksdb::DB *rdb = nullptr;
@@ -390,15 +404,15 @@ struct db_t {
   /*
    * The commits' WAL sync, outside RocksDB's write queue
    * (db_sync_wal(), GROUPSYNC.md). Under sync_mu: the last
-   * sequence number a finished sync covers, whether a commit is
-   * syncing now, and how many commits wait for it, which tests
-   * read; sync_cv wakes the commits waiting.
+   * sequence number a finished sync covers, whether a commit
+   * leads a sync now or has been handed the next one, and the
+   * line of commits waiting, oldest first.
    */
   std::mutex sync_mu;
-  std::condition_variable sync_cv;
   uint64_t synced_seq = 0;
   bool syncing = false;
-  int sync_waiters = 0;
+  sync_waiter_t *sync_head = nullptr;
+  sync_waiter_t *sync_tail = nullptr;
 
   /*
    * Test hook: called by a commit leading a sync, before

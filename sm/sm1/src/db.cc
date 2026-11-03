@@ -796,41 +796,64 @@ void db_commit_wait(db_t *db, uint64_t commit_ts) {
  *    after a group's WAL write, before its writers return, so it
  *    covers every write that returned before this call.
  * 2. If a finished sync covers the target, return.
- * 3. If another commit is syncing, wait for it and go to step 2.
- * 4. Lead: take upto, the last sequence number again. Every write
+ * 3. If a commit leads a sync, join the line and sleep on a
+ *    semaphore of its own. Woken covered, return; woken to lead,
+ *    go to step 5.
+ * 4. Else become the leader.
+ * 5. Lead: take upto, the last sequence number again. Every write
  *    at or below it is in the WAL file now.
- * 5. Sync the WAL with sync_mu let go; writers go on meanwhile.
- * 6. If the sync failed, abort the process (SM1_DESIGN.md §8.2).
- * 7. Record upto as synced, and wake the commits waiting.
+ * 6. Sync the WAL with sync_mu let go; writers go on meanwhile.
+ * 7. If the sync failed, abort the process (SM1_DESIGN.md §8.2).
+ * 8. Record upto as synced. Take the covered commits out of the
+ *    line, and hand the next sync to the oldest left, if any.
+ * 9. Let sync_mu go, and wake the next leader first, then the
+ *    covered commits.
+ *
+ * The handoff of step 8 wakes one commit to lead, not every
+ * commit waiting: a wake of all of them made each take sync_mu in
+ * turn before the next sync began, and left the WAL idle a
+ * quarter of the time (../../dg/WORKNOTE.md step 376). A woken
+ * commit takes no lock.
  *
  * Its wait is NOT cut short by an interrupt, unlike every other
  * wait in sm (../CODE.md §7): the caller's record is written, so
  * an interrupted commit would have an unknown outcome, which only
- * an abort could settle. It is bounded by one sync, which finishes
- * or aborts the process.
+ * an abort could settle. It is bounded by two syncs, which finish
+ * or abort the process.
  */
 void db_sync_wal(db_t *db) {
   uint64_t target = db->rdb->GetLatestSequenceNumber();
   // Hold sync_mu to read and claim the sync state.
   std::unique_lock<std::mutex> guard(db->sync_mu);
-  for (;;) {
-    // Covered by a finished sync: another commit's, or an earlier one.
-    if (db->synced_seq >= target) {
+  // Covered by a finished sync: another commit's, or an earlier one.
+  if (db->synced_seq >= target) {
+    return;
+  }
+  if (db->syncing) {
+    // A sync runs: wait in line, at the back.
+    sync_waiter_t w;
+    w.target = target;
+    if (db->sync_tail) {
+      db->sync_tail->next = &w;
+    } else {
+      db->sync_head = &w;
+    }
+    db->sync_tail = &w;
+    guard.unlock();
+    // Sleep until a leader takes this commit out of the line.
+    w.wake.acquire();
+    // Covered by that leader's sync.
+    if (!w.lead) {
       return;
     }
+    // Handed the next sync: syncing stays set for it.
+  } else {
     // No sync runs: lead one.
-    if (!db->syncing) {
-      break;
-    }
-    // Not leading: wait for the sync that runs, counted.
-    db->sync_waiters++;
-    db->sync_cv.wait(guard);
-    db->sync_waiters--;
+    db->syncing = true;
+    guard.unlock();
   }
-  // Lead the next sync; what it covers is fixed before it begins.
-  db->syncing = true;
+  // What the sync covers is fixed before it begins.
   uint64_t upto = db->rdb->GetLatestSequenceNumber();
-  guard.unlock();
   rocksdb::Status st;
   // Let a test stall or fail the sync.
   if (db->test_before_sync) {
@@ -854,10 +877,43 @@ void db_sync_wal(db_t *db) {
   }
   // Hold sync_mu again to record the result and end the sync.
   guard.lock();
-  db->syncing = false;
   db->synced_seq = upto;
-  // Wake the waiters: covered, or one leads the next sync.
-  db->sync_cv.notify_all();
+  // Take the covered commits out of the line, in a list of their own.
+  sync_waiter_t *covered = nullptr;
+  sync_waiter_t **link = &db->sync_head;
+  db->sync_tail = nullptr;
+  while (sync_waiter_t *w = *link) {
+    if (w->target <= upto) {
+      *link = w->next;
+      w->next = covered;
+      covered = w;
+    } else {
+      db->sync_tail = w;
+      link = &w->next;
+    }
+  }
+  // Hand the next sync to the oldest commit left, or end the syncs.
+  sync_waiter_t *lead = db->sync_head;
+  if (lead) {
+    db->sync_head = lead->next;
+    if (!db->sync_head) {
+      db->sync_tail = nullptr;
+    }
+    lead->lead = true;
+  } else {
+    db->syncing = false;
+  }
+  guard.unlock();
+  // Wake the next leader first: the WAL idles until it runs. A
+  // woken commit may return at once, so read next before waking.
+  if (lead) {
+    lead->wake.release();
+  }
+  while (covered) {
+    sync_waiter_t *next = covered->next;
+    covered->wake.release();
+    covered = next;
+  }
 }
 
 /* Allocate an object id: a storeid or a seqid. */

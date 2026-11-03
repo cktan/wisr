@@ -133,7 +133,7 @@ regression files are taken out for it (`test/pgregress`,
   index reads, a foreign key uses or references, or of an
   identity column; with COLLATE; and a USING that reads another
   column the same ALTER TABLE retypes** — refused
-  (`ALTERTYPE.md` §8, step 376). PostgreSQL makes the index,
+  (`ALTERTYPE.md` §8, step 378). PostgreSQL makes the index,
   the foreign key or the sequence again, and evaluates every
   USING on the row as it was.
 - **ALTER INDEX, ALTER TYPE, ALTER MATERIALIZED VIEW** —

@@ -1,9 +1,8 @@
 /*
- * page.cc -- pages (../BTREE.md §2, ../../BUFFERPOOL.md,
- * ../../MAJORDECISION.md D2): keys of class 0x04 in a store, whose
- * values the level above lays out as B+tree pages. They are not
- * versioned: a page is written outside every transaction, in one
- * RocksDB write batch, and read as it is.
+ * page.cc -- pages (../BTREE.md §2, ../../BUFFERPOOL.md): keys of
+ * class 0x04 in a store, whose values the level above lays out as
+ * B+tree pages. They are not versioned: a page is written outside
+ * every transaction, in one RocksDB write batch, and read as it is.
  *
  * A read goes through the environment's buffer pool (bufpool.h),
  * whose frames are never dirty: a page's writer pins it exclusive,

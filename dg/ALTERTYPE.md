@@ -1,6 +1,6 @@
 # ALTERTYPE — ALTER COLUMN TYPE, key columns among them
 
-**Status: built** (`WORKNOTE.md` step 376). §8 has what was
+**Status: built** (`WORKNOTE.md` step 378). §8 has what was
 decided, §9 what building it found. It is `../sm/CLUSTER.md`
 §11's step 3, the key-column ALTERs, and the general `ALTER
 COLUMN TYPE` they wait for (`UNSUPPORTED.md` §3, `PKDDL.md`

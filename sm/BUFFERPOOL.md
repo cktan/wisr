@@ -6,7 +6,7 @@ writers' latches. §17's decisions are taken as given, §2 here
 restates them, and this file adds what they leave open. Of §5's
 steps, 2 to 8 are built, the pool in `sm1/src/bufpool.h`. Step 1,
 and with it every measure below, has not been run: §5's verifies
-that need a benchmark are open (`../MAJORDECISION.md` D16).
+that need a benchmark are open.
 Paths are relative to `sm/`. A bare §17 below is `BTREE.md`'s.
 
 ---
@@ -135,7 +135,7 @@ From `BTREE.md` §17:
 ### 3.1 Where it sits
 
 The pool is sm1's, as sm1 owns a page's I/O and knows nothing of
-trees (D2). There is one in the environment, beside the block
+trees. There is one in the environment, beside the block
 cache, shared by every database and the temporary instance.
 
 ### 3.2 Frames

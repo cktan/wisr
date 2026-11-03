@@ -1019,7 +1019,7 @@ int drop_index(session_t *session, uint64_t table, uint64_t oid) {
   // A tree's pages are no transaction's, and a rollback brings the
   // index back: they go once the drop has committed, under a relid
   // never given again; a crash first leaves them until the store
-  // goes (../../MAJORDECISION.md D6).
+  // goes.
   if (it->tree) {
     sm1::session_t *s = session->sm1;
     uint64_t storeid = rec.storeid;

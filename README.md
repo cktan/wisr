@@ -7,7 +7,7 @@ tables live in Wisr. The repository holds both, in four parts:
 | Where | What it is |
 | --- | --- |
 | `sm/` | the storage stack: an MVCC storage manager on RocksDB, types and tuples over it, and schema and index maintenance over those, with one API, `sm/include/sm.h` |
-| `dg/` | digres: a fork of PostgreSQL 18.6 that runs on the stack. It compiles as C++, is one process with a thread a session, and serves PostgreSQL's own `psql`, its tables sm's; `dg/README.md` says what runs, and `sm/PART4.md` §10 how it is being made |
+| `dg/` | digres: a fork of PostgreSQL 18.6 that runs on the stack (`DG-vs-PG.md`). It compiles as C++, is one process with a thread a session, and serves PostgreSQL's own `psql`, its tables sm's; `dg/README.md` says what runs, and `sm/PART4.md` §10 how it is being made |
 | `sq/` | the SQL parser: PostgreSQL 18's SQL in, a tree of nodes out, as a library with one API, `sq/include/sq.h`. It is built from nothing outside `sq/` |
 | `aa/` | roles, authentication and authorization, a library on sm that digres links (`aa/AA_DESIGN.md`, `aa/USAGE.md`) |
 | `bench/` | digres against PostgreSQL 18, query by query (`bench/README.md`) |
@@ -409,6 +409,7 @@ bench/run.sh dg                # one system, for a look; no report
 | --- | --- |
 | `sm/README.md` | the stack's levels, and each one's design document |
 | `sm/NEXT.md` | what is to be built next, in order |
+| `DG-vs-PG.md` | how digres differs from PostgreSQL 18 |
 | `dg/README.md`, `dg/DESIGN.md` | what digres is, and its decisions of record |
 | `dg/WORKNOTE.md` | every step taken in digres, and why |
 | `sm/BTREE.md` and the other notes in `sm/` | designs of a feature each, built or proposed |

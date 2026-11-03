@@ -20,7 +20,7 @@ and so are the catalog tables psql reads
    built. ADD and DROP PRIMARY KEY, and of a unique constraint
    (`../dg/PKDDL.md`), and `ALTER COLUMN TYPE` of any column, a
    key column's among them (`../dg/ALTERTYPE.md`,
-   `../dg/WORKNOTE.md` step 376). Left: the dependents
+   `../dg/WORKNOTE.md` step 378). Left: the dependents
    PostgreSQL makes again, an expression or a partial index, a
    foreign key, an identity column's sequence, which digres
    refuses (`ALTERTYPE.md` §8). This item is done.
@@ -109,8 +109,7 @@ and so are the catalog tables psql reads
       the `wip-btree` branch, unique ones and `ON CONFLICT`
       arbiters among them, asked for by
       `CREATE INDEX ... USING btree` (`lsm`, today's kind,
-      is the default); its decisions in
-      `../MAJORDECISION.md`, its steps in
+      is the default); its steps in
       `../dg/WORKNOTE.md` 345 to 349.
    2. **Rows of sorted, close keys read by one cursor**: built,
       inside sm1's `chain_read_batch` (`BATCHREAD.md` §2.1).
@@ -325,7 +324,7 @@ and so are the catalog tables psql reads
    289. The count of holders by mode that PostgreSQL keeps
    (`LOCK.granted[]`) is not needed for that, and would have to
    follow every conversion `lockmgr.cc` makes in place; it is not
-   built (`../QUESTION.md` §1). This item is done.
+   built. This item is done.
 5. **A write transaction's two trips through RocksDB's write
    queue** (`../dg/WORKNOTE.md` step 344). An insert writes its
    uncommitted version at once (`sm1/src/access.cc`,
@@ -373,8 +372,21 @@ and so are the catalog tables psql reads
      waiting, outside the queue, so no version write waits for a
      sync. At 16 clients `ins` 3,412 tps to 6,591 and `fk` 3,190
      to 6,545, 0.67 and 0.62 of PostgreSQL's 9,862 and 10,637; at
-     1 client 0.96 and 0.94. What is left of the gap at 16
-     clients is not yet profiled.
+     1 client 0.96 and 0.94.
+   - **What is left at 16 clients, profiled**
+     (`../dg/WORKNOTE.md` step 376): neither system is
+     CPU-bound. The WAL sync of digres is idle 27% of the time,
+     PostgreSQL's almost never, so its groups are smaller (6.3
+     commits a sync, against 7.6). The cause is the handoff
+     between syncs: `notify_all()` wakes every waiter before
+     one leads the next sync. A commit also waits 11% of its
+     time in `db_commit_wait()` for an older commit that missed
+     its sync.
+   - **The handoff wakes one leader**: built (step 377). The
+     sync is busy 90% to 95% of the time, and `ins` and `fk`
+     at 16 clients reach about 0.86 of PostgreSQL's tps. Left:
+     the wait in `db_commit_wait()`, and twice PostgreSQL's CPU
+     a transaction.
 6. **An lsm index's entry as a key alone, with no value**, as
    MyRocks keeps a secondary index: the key is the index's id,
    its columns and the row's primary key, and the value is
@@ -402,6 +414,44 @@ and so are the catalog tables psql reads
    - the floor: the GUC cannot go below the pins' floor;
    - an option in `sm_options_t` that digres's GUC sets, as
      `block_cache_bytes` is set now.
+8. **A list of the btree leaves that need vacuum**
+   (`BTREE.md` §4.1). A leaf's `page_all_visible` flag is
+   cleared by an insert into it, and by an update or a delete
+   of one of its entries. VACUUM finds such leaves by reading
+   every leaf, left to right, and skipping each leaf whose flag
+   is set. Instead, keep a list of the leaves whose flag was
+   cleared, an `sm0::blist_t` (`sm0/include/sm0_blist.h`), with
+   a 1-bit Bloom filter in front of it, so a leaf already
+   listed is not appended again. VACUUM then reads only the
+   leaves on the list. Not designed yet. To decide:
+   - a false positive of the filter leaves a cleared leaf off
+     the list: when VACUUM reads it, if ever;
+   - the list is in memory: after a restart, VACUUM reads every
+     leaf once, or the list is kept;
+   - when VACUUM empties the list and the filter, and a flag
+     cleared while VACUUM runs.
+9. **Smaller btree leaf entries** (`BTREE.md` §3.3 and §11).
+   A leaf entry is its key, its value and 6 bytes of lengths
+   and slot (`sm2/src/tree/page.h`, `entry_size()`). An index on
+   `status` with `'open'` in many rows, keyed by an `int8`
+   primary key: a key of 18 bytes (relid 2, `'open'` 7, the
+   primary key 9), a value of 1, so 25 bytes an entry and about
+   160 entries a 4 KB leaf. About 16 of the 18 key bytes equal
+   those of the entry before. In order:
+   1. **The prefix the whole page shares**, from its low and
+      high keys, stored once: about 10 bytes an entry, 2.5
+      times the entries. A binary search over the slots still
+      works.
+   2. **Less fixed overhead**: lengths of 1 byte, and the cut
+      flag as a bit, not a value: about 6 to 7 bytes an entry.
+   3. **Deduplication**: an equal key stored once a leaf, the
+      row keys after it as small deltas: 1 to 2 bytes a row,
+      10 times the entries or more on a column of few values.
+   Prefix compression alone gains little on keys that are
+   mostly distinct, such as an email, about 20%. Fewer leaves
+   mean fewer pages a range scan reads (item 3) and fewer
+   splits; an insert still writes its whole page. Each step
+   changes the page's format.
 
 Low priority:
 

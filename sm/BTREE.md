@@ -5,9 +5,7 @@ disk, in memory and under concurrency, and what is left. This is
 the tree as built on `wip-btree`, off by default and asked for by
 `CREATE INDEX ... USING btree`: pages, cache, latches, the
 tree, unique trees, `ON CONFLICT` arbiters, vacuum, and digres's
-access. `../MAJORDECISION.md` (D1 to D14) says why each choice
-was made; where one changed the first proposal, the text says so.
-Paths are relative to `sm/`.
+access. Paths are relative to `sm/`.
 
 In short: a Lehman and Yao B-link tree whose pages are values in
 RocksDB and entries in RocksDB's block cache. Pages are
@@ -107,7 +105,7 @@ Proposed here:
     pinning them again when it has moved. An old pin goes when
     its session takes the new one. *Built otherwise*: an open
     index holds the inner pages it reads, and lets them go when
-    a descent has to move right (`../MAJORDECISION.md` D11).
+    a descent has to move right.
     Page 0 alone is now read from a session's copy, checked by
     its frame's version (§4.2).
   - **A leaf is pinned by its cache handle**, `Lookup` and
@@ -135,16 +133,15 @@ Proposed here:
 - **The entry follows the row**, in the same statement, so it is
   in the WAL before the commit, and a committed row always has
   its entry; a crash before the commit leaves only a dead one.
-  The WAL being one sequence, a commit's sync covers the entry
-  (D5).
+  The WAL being one sequence, a commit's sync covers the entry.
 - **A unique insert** latches the leaf covering the key's prefix,
   judges every other entry of the prefix by its row's newest
   version (`sm1::read_newest`), and inserts holding that latch.
   A live row is `SM_ERR_DUPKEY`; a running writer is waited for
-  with every latch let go, and the key checked again (D13).
+  with every latch let go, and the key checked again.
 - **Serializable**: a scan registers its whole requested range
-  as an SIREAD of its own, and an insert reports its entry's key
-  (D10). A scan stopped by `LIMIT` keeps the whole range, and may
+  as an SIREAD of its own, and an insert reports its entry's key.
+  A scan stopped by `LIMIT` keeps the whole range, and may
   fail a writer it need not.
 
 ---
@@ -213,7 +210,7 @@ page. A writer that latches a flagged page finishes the split
 before its own change, which is how a crash between the two
 writes is repaired. Page 0 is never flagged.
 
-**A page has a limit, not a size.** `page_limit` is 4 KB (D12):
+**A page has a limit, not a size.** `page_limit` is 4 KB:
 past it an insert splits the page. A page is stored at its
 length, with no free space, as every change writes it whole, and
 a fixed size is for frames and disk blocks, which this design
@@ -278,7 +275,7 @@ An entry is at most a third of what the header and a half's
 unused slots leave, as PostgreSQL limits a btree tuple to a third
 of a page: a half of a split holds a high key and two entries, so
 a split always finds a point where both halves fit, with the
-entry that caused it (D1). The split is made over the page's
+entry that caused it. The split is made over the page's
 entries and that one, as `_bt_findsplitloc()` does, at the point
 nearest half the bytes where both fit. A longer key is cut and
 flagged, and rechecked on the row (`sm2/SM2_DESIGN.md` §3.2); a
@@ -320,7 +317,7 @@ page's end, and each is named by one slot.
 - **One sequence for the database**, not one a store or an index,
   starting at 1, so page 0 is never handed out. Holes are
   harmless, as ids need only be unique within a tree, and one a
-  database has no table's lifetime to follow (D14).
+  database has no table's lifetime to follow.
 - **Made in `cat_init()`** (`sm3/src/catalog/ddl.cc`), beside
   `sm3.oid`. Its name starts `sm3.`, so `reserved_seq()` keeps it
   from users. sm2 names it, a constant in `tree.h`, as sm2 is
@@ -329,9 +326,9 @@ page's end, and each is named by one slot.
   split. A root split draws two.
 - **Why it is safe:** `sm1::nextseq` never hands a value out
   twice, across restarts too; a crash only skips values, and an
-  abort gives none back. D4's objection was to a sequence made by
-  `CREATE INDEX`, which an abort undoes; this one exists before
-  any index.
+  abort gives none back. A sequence made by `CREATE INDEX`
+  would be undone by an abort; this one exists before any
+  index.
 
 ### 3.7 A page holds a range
 
@@ -377,7 +374,7 @@ buffers (`cursor_rebound()`).
 
 **Each entry's row** is read by its key at the transaction's
 snapshot, into the cursor's pin, and handed out only if the row
-still gives this entry's key, compared as bytes (D8). Rows of
+still gives this entry's key, compared as bytes. Rows of
 sorted, close keys are read by one cursor (`BATCHREAD.md` §2.1).
 *Built*: sm3 reads them, many a call, and makes each row's entry
 as a write would, the evaluator asked for an expression or a
@@ -385,7 +382,7 @@ predicate. A cut key is rechecked against the row's columns.
 
 **An IN list's misses** by one `MultiGet` are *not built*: digres
 opens a probe a scan, each descending through the inner pages its
-index holds (D11).
+index holds.
 
 **Index-only scans read the row.** None is answered from the tree
 alone; `count(*)` by an index gets slower. A leaf's all-visible
@@ -398,8 +395,7 @@ the page it came from, as nbtree's `_bt_walk_left()`.
 ### 4.1 An all-visible leaf
 
 *Proposed 2026-11-02, and built the same day
-(`../dg/WORKNOTE.md` step 365, `../MAJORDECISION.md` D22 to
-D26).* It changes §2's "the row decides visibility" for one
+(`../dg/WORKNOTE.md` step 365).* It changes §2's "the row decides visibility" for one
 case: a leaf vacuum has found settled answers an index-only
 scan alone.
 
@@ -408,20 +404,20 @@ scan alone.
 - **Vacuum judges a leaf first without its latch**, as §7
   does, and latches it to judge whole only if every entry
   looked dead or settled: a leaf that cannot be set keeps
-  its readers and writers from waiting on its rows (D22).
-- **The planner is unchanged**: `allvisfrac` stays 1 (D23).
+  its readers and writers from waiting on its rows.
+- **The planner is unchanged**: `allvisfrac` stays 1.
 - **An index-only scan skips a row** only for a tree of key
   columns alone, whose keys give their columns back, and an
   entry not cut: one with INCLUDE columns reads them from
-  the row (D24). sm3's tree cursor does it, asked by digres
+  the row. sm3's tree cursor does it, asked by digres
   (`tbl_scan_entries_only`, `sm_rel_scan_entries`).
 - **A unique insert that finds its key** clears its leaf, as
-  any insert that finds its key does (D25).
+  any insert that finds its key does.
 - **A delete, or a key's change, reports its old entry's key
   to SSI** (`ssi_write_key`), as an insert reports its new
   one: a serializable index-only scan that read no row holds
   only its range's SIREAD, which a row's write alone does not
-  meet (D27).
+  meet.
 
 **Why.** `bench/` q2, `select count(*) from usertable where
 state = 'CA'`, 183 rows of 10,000: a regular index counts its
@@ -565,7 +561,7 @@ vacuum.
 | 2PC across restart | a prepared row is not settled: vacuum leaves its leaf unset |
 | two writers, vacuum | the leaf's latch: vacuum judges a leaf with it held, and a writer reads the bit with it held |
 | old RR snapshot, RC re-read | every snapshot is at or past the GC watermark: a set leaf's entries are its |
-| SSI | the range's SIREAD, as today (D10); a delete or a key's change reports its old entry's key into it (D27) |
+| SSI | the range's SIREAD, as today; a delete or a key's change reports its old entry's key into it |
 | open cursor, Halloween | an update's leaves are cleared before it returns: their rows are read |
 | GC watermark, `CF:txn` sweep | a set bit needs neither again |
 | CREATE INDEX pending, bulk load and its rollback | entries come in as inserts: leaves unset until vacuum |
@@ -582,8 +578,7 @@ vacuum.
 
 ### 4.2 A session's copy of the root
 
-*Built 2026-11-02 (`../dg/WORKNOTE.md` steps 366 to 368,
-`../MAJORDECISION.md` D28 and D29).* Every descent reads page 0,
+*Built 2026-11-02 (`../dg/WORKNOTE.md` steps 366 to 368).* Every descent reads page 0,
 so its pin, a count in its frame's state word, was a word every
 probe on every core wrote. A session now holds a copy of page 0,
 shared with the other sessions that read it, and descends from it
@@ -669,8 +664,7 @@ after the row's version is written, in the same statement, so
 its change is in RocksDB's WAL before the commit's: a row that
 commits always has its entry, and a crash before the commit
 leaves only a dead entry. The entry first, as a first draft had
-it, lets vacuum remove an entry an insert has just found there
-(D5).
+it, lets vacuum remove an entry an insert has just found there.
 
 **A split of page P**, S being its old right sibling, R new:
 
@@ -726,7 +720,7 @@ Then the new entry goes in, under the same latch. A key with
 a null column is not checked, as now.
 
 The check latches the leaf covering the key's prefix, and inserts
-holding that latch (D13).
+holding that latch.
 
 ---
 
@@ -750,7 +744,7 @@ filter does not touch class `0x04`.
   with no WAL, as its rows are.
 - **Vacuum** walks the leaves, and removes an entry only when its
   row is settled: its newest version committed at or below the GC
-  watermark, and gone or of another key (D5). A leaf's entries
+  watermark, and gone or of another key. A leaf's entries
   are judged with no latch, and those to go are judged again with
   it latched, as an insert that finds its entry there moves no
   version: only its row, written first, shows it.
@@ -758,8 +752,8 @@ filter does not touch class `0x04`.
   never shrinks, and page ids are not reused.
 - **`DROP INDEX`** drops the pages once it commits, by
   `sm1::page_drop` from an `on_commit` function, as a rollback
-  must keep them. A crash first leaves them until the store goes
-  (D6). `TRUNCATE` and a rewrite make a new store.
+  must keep them. A crash first leaves them until the store goes.
+  `TRUNCATE` and a rewrite make a new store.
 
 ---
 
@@ -769,7 +763,7 @@ filter does not touch class `0x04`.
 | --- | --- |
 | TOAST | an entry is built from the detoasted value, as now; no entry is out of line |
 | non-unique index | §4, §5 |
-| unique index | §6, built, an `ON CONFLICT` arbiter too (D13) |
+| unique index | §6, built, an `ON CONFLICT` arbiter too |
 | primary key | unchanged: the rows' keys |
 | expression index | the key is the expression's value, as now; the recheck evaluates it on the row |
 | partial index | an entry only where the predicate holds, as now; the recheck needs only the key |
@@ -787,11 +781,11 @@ filter does not touch class `0x04`.
 | two writers, one unique key | §6: the second waits for the first's transaction |
 | old RR snapshot | reads the row at its snapshot; an entry made since names a row it cannot see, or one with another key |
 | RC re-read | the row at the statement's snapshot, as now |
-| SSI | a scan registers the range of entry keys it reads as an SIREAD in sm1's tracker, under the index's relid (`sm1::ssi_read_range`), and an insert reports its entry's key (`sm1::ssi_write_key`): the keys need not be sm1's to be tracked (`sm1/SM1_DESIGN.md` §7.1, D10) |
+| SSI | a scan registers the range of entry keys it reads as an SIREAD in sm1's tracker, under the index's relid (`sm1::ssi_read_range`), and an insert reports its entry's key (`sm1::ssi_write_key`): the keys need not be sm1's to be tracked (`sm1/SM1_DESIGN.md` §7.1) |
 | open cursor, Halloween | an update's new entry ahead of the cursor is read, and its row, at the statement's snapshot, has the old key: skipped |
 | GC watermark, CF:txn sweep | §7; the tree holds no xid, so the sweep is unaffected |
 | CREATE INDEX pending | the backfill inserts entries as a writer does, each a top-level change; an entry already there is no change |
-| DROP INDEX | the pages go once the drop commits, by an `sm1::on_commit` function; a crash first leaves them until the store goes; a relid is never given again (D6) |
+| DROP INDEX | the pages go once the drop commits, by an `sm1::on_commit` function; a crash first leaves them until the store goes; a relid is never given again |
 | TRUNCATE, ALTER rewrite | a new store: new trees, built as CREATE INDEX builds |
 | temporary tables | a temporary store's pages, as its rows |
 | keyless tables | the row key is the `_id`, as now |
@@ -803,7 +797,7 @@ filter does not touch class `0x04`.
 
 ```
  digres   btree access method, USING btree (or lsm)
-            |  scans rows through sm3's cursor (D8)
+            |  scans rows through sm3's cursor
  sm3      index's kind, row check, unique check, DROP, vacuum
             |
  sm2      src/tree/   page.cc   bytes of one page, no I/O
@@ -816,7 +810,7 @@ filter does not touch class `0x04`.
 ```
 
 - **sm1 owns a page's I/O**, as it is the only channel into
-  RocksDB, and knows nothing of trees (D2).
+  RocksDB, and knows nothing of trees.
 - **sm2 owns the tree**, and holds no RocksDB handle.
 - **A primary key is never a tree.** Its entries are the rows'
   RocksDB keys. A row stays in sm1's MVCC store; a tree holds
@@ -837,10 +831,10 @@ What each level holds:
   - **the page cache**: pages as entries of the block cache,
     write-through, a miss's fill latched against writes. It is
     sm1's (`sm1::pin_page`, `sm1::page_write`), as sm1 is the
-    only channel into RocksDB (`../MAJORDECISION.md` D2, D3);
+    only channel into RocksDB;
     the index's version and a session's pin on its inner
     pages (§2) are not built: an open index holds the inner
-    pages it reads instead (D11);
+    pages it reads instead;
   - **the writers' latch table**, by page id;
   - **the tree**: descent, the IN list's batch, scans,
     inserts, splits and vacuum's walk, over the three and
@@ -921,8 +915,8 @@ on the machine above, which is still to be run both ways.
   of about 40 bytes now. Measured, a million rows loaded into
   `wide_mixed` with its `c2` index: 18 s with today's entries,
   51 s with a tree of 8 KB pages, 34 s of 4 KB, 27 s of 2 KB;
-  Q9 and Q10 within 2% of each other at all three
-  (`../MAJORDECISION.md` D12). An entry spliced into the page's
+  Q9 and Q10 within 2% of each other at all three.
+  An entry spliced into the page's
   bytes, none decoded, brought 4 KB to 27.7 s
   (`../dg/WORKNOTE.md` step 351). Logging the entry and
   writing the page later is what would close the rest.
@@ -936,12 +930,12 @@ on the machine above, which is still to be run both ways.
    rows' blocks as they are, or need a share of it set aside:
    a machine choice sm would make at a home's first attach,
    with no setting.
-2. Answered: 4 KB (D12). Whether a unique index's key refused
+2. Answered: 4 KB. Whether a unique index's key refused
    past a third of it (§3) is worth a larger limit is open.
 3. Whether the row read of Q9's adjacent rows, by one cursor,
    comes first: without it the tree does not bring Q9 under
    1.5.
-4. Answered (D7): `CREATE INDEX ... USING btree` makes a tree,
+4. Answered: `CREATE INDEX ... USING btree` makes a tree,
    and `USING lsm`, the default, makes today's kind (§12).
 
 **Not shown to run**: `tree_prune()`'s check of page 0's level
@@ -959,7 +953,7 @@ needed by what is built.
 | Deduplicate equal keys | smaller leaves on low-cardinality columns | §3.3, the entry's format |
 | Bottom-up sorted build | `CREATE INDEX` without a write per entry | sm3's build, `BULKLOAD.md` |
 | Many leaves by one `MultiGet` | an IN list's misses in one read | §3.5 |
-| Narrow an SIREAD at a cursor's end | fewer false failures | D10, a call with the last key read |
+| Narrow an SIREAD at a cursor's end | fewer false failures | a call with the last key read |
 | Page deletion and merge | a tree that shrinks | **every "no page is freed" above**: held pages, cursors, links |
 | Visibility data on a page | index-only scans from the tree | §2.1, a new write to every page |
 
@@ -1043,10 +1037,10 @@ section proposes, each on review before it is built.
   needs no flag: the right link takes it there.
 - **A root split** is one change: both halves to new pages,
   and page 0 a level up, their parent, so it has no half to
-  finish (`../MAJORDECISION.md` D14).
+  finish.
 - **Page ids come from one sequence for the database**, made
   with its catalog: never handed out twice, and its gaps are
-  harmless (D14).
+  harmless.
 - **A cached page is keyed by the database, the store, the
   index's relid and the page id**, as one block cache serves
   every database of the environment.
@@ -1068,8 +1062,7 @@ section proposes, each on review before it is built.
 
 **The steps:** all eight are built on `wip-btree`, with the
 tests each names and more (`../dg/WORKNOTE.md` steps 345 to
-350); where one went otherwise than written here,
-`../MAJORDECISION.md` says how. sm1's calls are
+350). sm1's calls are
 `pin_page`, `page_write`, `page_drop`, `page_approxsize`,
 `read_settled`, `read_newest`, `wait_writer`,
 `ssi_read_range` and `ssi_write_key`; the mvcc scenarios step
@@ -1086,8 +1079,7 @@ scenario driver has no verb for a tree.
 2. **The writers' latch table** (`sm2/src/tree/latch.cc`), by
    page id. Tests: `sm2/test`, many threads, one page and
    many, under TSan.
-3. **The page cache**, sm1's (`sm1/src/page.cc`,
-   `../MAJORDECISION.md` D2, D3): pages in the block cache,
+3. **The page cache**, sm1's (`sm1/src/page.cc`): pages in the block cache,
    write-through, a miss's fill latched against writes. Tests:
    `sm1/test`, a page written outside the transaction and read
    back after a restart; a writer and four readers through a
@@ -1120,7 +1112,7 @@ scenario driver has no verb for a tree.
 
 **After the eight steps**: the root moved to page 0 for life, the
 meta page went for the sequence of §3.6, and every page gained
-`prev` (D14). A pin's check was measured, and a snapshot older
+`prev`. A pin's check was measured, and a snapshot older
 than the last DDL now answers at its own snapshot (§14.3). The
 next project is §17.
 
@@ -1179,7 +1171,7 @@ pin_page(key, inner)
 ```
 
 **What a pin checks first** (`enter_pages()`, on every pin and
-page write, and D2's cost):
+page write):
 
 1. An active transaction, not prepared or doomed.
 2. A store other than 0.
@@ -1240,7 +1232,7 @@ without this a write could be lost:
 RocksDB's cache has no compare-and-insert, so a miss holds a
 latch across its `Get` and `Insert`, and a write across its
 `Write` and its inserts, and steps 1 and 3 cannot straddle step
-2 (D3). 256 stripes, by the cache key's hash, for the process.
+2. 256 stripes, by the cache key's hash, for the process.
 A hit takes none.
 
 ### 14.5 Pages an open tree holds
@@ -1253,7 +1245,7 @@ pointer, so its next probe needs no `Lookup`.
 This is here because a `Lookup` is not free: it takes the shard's
 mutex and writes the entry's reference count, a shared cache line
 on the hottest pages there are. A statement's 100 probes would
-make 300 of them (D11). A pool whose pin is one atomic would need
+make 300 of them. A pool whose pin is one atomic would need
 little of this.
 
 A tree is open as long as its table handle: in digres, to the
@@ -1265,7 +1257,7 @@ end of the transaction. It pins up to 64 inner pages
   moves only right, where the links reach it.
 - **A descent that has to move right drops them all**, so a long
   statement does not keep routing through old pages. A million
-  rows loaded took 424 s without this, 51 s with it (D11).
+  rows loaded took 424 s without this, 51 s with it.
 - **A held page 0 is not always safe to stop at**: a split can
   grow the tree past it, so a descent asking for a level above
   it drops the held pages and reads page 0 anew.
@@ -1342,8 +1334,8 @@ priority pool of half of each shard; no low-priority pool.
   set aside from rows' blocks is open (§7).
 - **A hit writes shared memory**: a reference, under the shard's
   mutex. Every session's first descent of a transaction takes
-  page 0's shard mutex. It is about 470 instructions a lookup,
-  by D11's numbers; held pages spare the rest of a transaction.
+  page 0's shard mutex. It is about 470 instructions a lookup;
+  held pages spare the rest of a transaction.
 
 ---
 
@@ -1376,7 +1368,7 @@ a page can be latched though it is not cached.
 
 A split's latch on its right sibling, for `prev`, is rule 2. A
 latch is held for a page's change alone, never across a wait for
-a transaction: a unique check lets every latch go first (D13).
+a transaction: a unique check lets every latch go first.
 Its wait is therefore not one `sm_wait()` cuts short.
 
 ---
@@ -1435,7 +1427,7 @@ What it must settle:
 
 - **Who waits under EX**: readers of P wait through the write to
   RocksDB, and through a unique check's row reads under the
-  leaf's latch (D13), as today's readers do not. Measure it.
+  leaf's latch, as today's readers do not. Measure it.
 - **Memory**: one budget becomes two, the pool's and the block
   cache's for rows. How `shared_buffers` divides is open
   (§7).
