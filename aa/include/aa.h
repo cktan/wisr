@@ -248,13 +248,17 @@ void aa_forget_database(aa_session_t *s, uint64_t dbid);
 
 /*
  * A temporary object's owner and ACL: the session's alone, never
- * written. A lookup is false if the object has none.
+ * written, set at the subtransaction's nesting level, so an abort of it
+ * or of the transaction undoes them, as an object's entry. A lookup is
+ * false if the object has none.
  */
-void aa_set_temp_owner(aa_session_t *s, aa_oid_t objid, aa_oid_t owner);
-void aa_set_temp_acl(aa_session_t *s, aa_oid_t objid, const std::string &acl);
+void aa_set_temp_owner(aa_session_t *s, int level, aa_oid_t objid,
+                       aa_oid_t owner);
+void aa_set_temp_acl(aa_session_t *s, int level, aa_oid_t objid,
+                     const std::string &acl);
 bool aa_temp_owner(aa_session_t *s, aa_oid_t objid, aa_oid_t *owner);
 bool aa_temp_acl(aa_session_t *s, aa_oid_t objid, std::string *acl);
-void aa_forget_temp(aa_session_t *s, aa_oid_t objid);
+void aa_forget_temp(aa_session_t *s, int level, aa_oid_t objid);
 
 /*
  * The entries, as the session sees them, of the objects roleid owns,

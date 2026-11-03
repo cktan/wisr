@@ -240,15 +240,46 @@ void aa_forget_database(aa_session_t *s, uint64_t dbid) {
   s->dropped_dbs.push_back(dbid);
 }
 
+/* Keep the temporary object objid's owner and ACL, to put back at level. */
+static void keep_temp(aa_session_t *s, int level, aa_oid_t objid) {
+  aa_temp_undo_t u{level, objid, false, 0, false, std::string()};
+  u.had_owner = aa_temp_owner(s, objid, &u.owner);
+  u.had_acl = aa_temp_acl(s, objid, &u.acl);
+  s->temp_undo.push_back(std::move(u));
+}
+
+/*
+ * Put back the temporary objects' owners and ACLs the subtransactions at
+ * level and deeper changed, the last change first.
+ */
+static void undo_temp(aa_session_t *s, int level) {
+  while (!s->temp_undo.empty() && s->temp_undo.back().level >= level) {
+    const aa_temp_undo_t &u = s->temp_undo.back();
+    if (u.had_owner)
+      s->temp_owners[u.objid] = u.owner;
+    else
+      s->temp_owners.erase(u.objid);
+    if (u.had_acl)
+      s->temp_acls[u.objid] = u.acl;
+    else
+      s->temp_acls.erase(u.objid);
+    s->temp_undo.pop_back();
+  }
+}
+
 /* Make owner the owner of the session's temporary object objid. */
-void aa_set_temp_owner(aa_session_t *s, aa_oid_t objid, aa_oid_t owner) {
+void aa_set_temp_owner(aa_session_t *s, int level, aa_oid_t objid,
+                       aa_oid_t owner) {
   s->version++;
+  keep_temp(s, level, objid);
   s->temp_owners[objid] = owner;
 }
 
 /* Make acl the ACL of the session's temporary object objid. */
-void aa_set_temp_acl(aa_session_t *s, aa_oid_t objid, const std::string &acl) {
+void aa_set_temp_acl(aa_session_t *s, int level, aa_oid_t objid,
+                     const std::string &acl) {
   s->version++;
+  keep_temp(s, level, objid);
   s->temp_acls[objid] = acl;
 }
 
@@ -273,8 +304,9 @@ bool aa_temp_acl(aa_session_t *s, aa_oid_t objid, std::string *acl) {
 }
 
 /* The session's temporary object objid goes: its owner and ACL too. */
-void aa_forget_temp(aa_session_t *s, aa_oid_t objid) {
+void aa_forget_temp(aa_session_t *s, int level, aa_oid_t objid) {
   s->version++;
+  keep_temp(s, level, objid);
   s->temp_owners.erase(objid);
   s->temp_acls.erase(objid);
 }
@@ -323,6 +355,9 @@ void aa_subcommit(aa_session_t *s, int level) {
   for (aa_change_t &c : s->changes)
     if (c.level >= level)
       c.level = level - 1;
+  for (aa_temp_undo_t &u : s->temp_undo)
+    if (u.level >= level)
+      u.level = level - 1;
 }
 
 /* A subtransaction at level aborts: its changes, the last made, go. */
@@ -330,6 +365,7 @@ void aa_subabort(aa_session_t *s, int level) {
   s->version++;
   while (!s->changes.empty() && s->changes.back().level >= level)
     s->changes.pop_back();
+  undo_temp(s, level);
 }
 
 /* An entry's ACL items, or its owner's default ones if it keeps none. */
@@ -568,6 +604,8 @@ int aa_abort(aa_session_t *s) {
   s->version++;
   s->dropped_dbs.clear();
   s->to_restore.clear();
+  // The temporary objects' owners and ACLs, as the transaction began.
+  undo_temp(s, 0);
   if (restore.empty())
     return 0;
   return write_objects(s, [&](sm_tbl_t *tbl) {
@@ -626,6 +664,9 @@ int aa_post_commit(aa_session_t *s) {
   int rc;
 
   s->to_restore.clear();
+  // The temporary objects' owners and ACLs stand: the transaction
+  // committed.
+  s->temp_undo.clear();
   if (s->changes.empty() && s->dropped_dbs.empty())
     return 0;
   last = last_changes(s);

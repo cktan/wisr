@@ -5,8 +5,8 @@ leaves this file when it is fixed, or decided not to be; git
 history keeps the closed reviews (`REVIEW.md` up to
 `1a8407e2`).
 
-1. **`aa/`**: open; findings 1, 2, 4, 5 and 6 fixed; 3 waits
-   on a decision; the rest not yet checked.
+1. **`aa/`**: open; findings 1, 2 and 4 to 7 fixed; 3 waits on
+   a decision; the rule findings not yet checked.
 2. **`sm/`**: open, not yet checked against the code.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
@@ -15,7 +15,8 @@ history keeps the closed reviews (`REVIEW.md` up to
 **Status: open.** Findings 1, the lockout bypass, 2, the
 invalidations lost past the changes kept, 4, no intermediate for
 an object with no entry, 5, an own role commit hiding another's,
-and 6, a failing read after the roles' commit, are fixed. Finding 3 is checked and
+6, a failing read after the roles' commit, and 7, a temporary
+object's owner and ACL not undone, are fixed. Finding 3 is checked and
 waits on a design decision; the others are not yet checked.
 
 Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
@@ -32,7 +33,7 @@ Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 | No `throw`, `catch`, or RTTI | PASS | Zero `throw`/`try`/`catch` in library code; builds with `-fno-rtti`. |
 | Naming (`snake_case`, `_t`, `m_`) & Yoda conditions | PASS | Types end in `_t`, private fields in `home_t` use `m_`, and comparisons use `0 == x`. |
 | SCRAM-SHA-256 & cycle detection | PASS | Constant-time digest comparison (`timingsafe_eq`), salt/iteration checks, and DFS cycle detection in `grant_role`. |
-| Correctness & concurrency | 1 High, 1 Medium | `env->objects` / `pg_global` consistency races. |
+| Correctness & concurrency | 1 High | `env->objects` / `pg_global` consistency races. |
 | `sm/CODE.md` & style rules | 5 Low | `std::map`/`std::pair` in `aa.h`, separate error state, duplicate `session_guard_t`. |
 
 ---
@@ -66,20 +67,6 @@ Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 - **Fix:** Publish `before` to `env->objects` in `aa_commit()`,
   and reload or serialize `env->objects` updates in commit order
   under `env->mutex`.
-
-#### [MEDIUM] 7. Temporary object owners and ACLs are not rolled back on `aa_abort()` / `aa_subabort()`
-
-- **Location:** `aa/src/aa.cc:242-279`, `aa/src/aa.cc:328-332`,
-  `aa/src/aa.cc:514-532`
-- **Issue:** `aa_set_temp_owner()`, `aa_set_temp_acl()`, and
-  `aa_forget_temp()` mutate `s->temp_owners` and `s->temp_acls`
-  in place without savepoint or transaction undo state. Rolling
-  back a transaction or savepoint after `GRANT`, `REVOKE`,
-  `ALTER ... OWNER TO`, or `DROP` on a temporary table leaves the
-  in-memory temporary owner and ACL changes in effect.
-- **Fix:** Track temporary object owner/ACL changes in
-  `s->changes` (or a parallel subtransaction-tagged log) so
-  `aa_abort()` and `aa_subabort()` restore prior entries.
 
 ---
 

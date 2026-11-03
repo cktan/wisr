@@ -511,7 +511,7 @@ void pg_global_set_owner(uint64_t dbid, Oid classid, Oid objid, Oid owner,
   aa_session_t *s = session_state();
 
   if (temp)
-    aa_set_temp_owner(s, objid, owner);
+    aa_set_temp_owner(s, GetCurrentTransactionNestLevel(), objid, owner);
   else {
     pg_global_object_t object = entry_of(s, dbid, classid, objid);
 
@@ -527,7 +527,7 @@ void pg_global_set_owner(uint64_t dbid, Oid classid, Oid objid, Oid owner,
 void pg_global_forget(uint64_t dbid, Oid objid) {
   aa_session_t *s = session_state();
 
-  aa_forget_temp(s, objid);
+  aa_forget_temp(s, GetCurrentTransactionNestLevel(), objid);
   aa_forget_object(s, GetCurrentTransactionNestLevel(), aa_key_t(dbid, objid));
 }
 
@@ -549,7 +549,7 @@ void pg_global_set_acl(uint64_t dbid, Oid classid, Oid objid, Oid owner,
   pg_global_object_t object;
 
   if (temp) {
-    aa_set_temp_acl(s, objid, text);
+    aa_set_temp_acl(s, GetCurrentTransactionNestLevel(), objid, text);
     return;
   }
   if (!find_object(s, aa_key_t(dbid, objid), &object)) {

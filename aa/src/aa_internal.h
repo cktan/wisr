@@ -85,6 +85,19 @@ struct aa_change_t {
   aa_object_t object;
 };
 
+/*
+ * A temporary object's owner and ACL as they were before a change, to put
+ * back if the subtransaction at level, or the transaction, aborts.
+ */
+struct aa_temp_undo_t {
+  int level;
+  aa_oid_t objid;
+  bool had_owner;
+  aa_oid_t owner;
+  bool had_acl;
+  std::string acl;
+};
+
 /* An entry to put back at an abort: as it was, or none if it had none. */
 struct aa_restore_t {
   aa_key_t key;
@@ -116,6 +129,9 @@ struct aa_session_t {
   /* The session's temporary objects' owners and ACLs, never written. */
   std::map<aa_oid_t, aa_oid_t> temp_owners;
   std::map<aa_oid_t, std::string> temp_acls;
+  /* What the transaction changed of them, each as it was before, in
+   * order: an abort puts them back. */
+  std::vector<aa_temp_undo_t> temp_undo;
 
   /* Bumped at each change to what the session sees of the roles or the
    * objects' entries: with the shared epochs, what its caches are of. */

@@ -341,8 +341,8 @@ TEST_CASE("objects: temporary") {
   std::string acl;
 
   // 1.
-  aa_set_temp_owner(s1, 30000, 16500);
-  aa_set_temp_acl(s1, 30000, "16500,16500,3");
+  aa_set_temp_owner(s1, 1, 30000, 16500);
+  aa_set_temp_acl(s1, 1, 30000, "16500,16500,3");
 
   // 2.
   CHECK(aa_temp_owner(s1, 30000, &owner));
@@ -354,9 +354,55 @@ TEST_CASE("objects: temporary") {
   CHECK(aa_objects(h.aa())->empty());
 
   // 3.
-  aa_forget_temp(s1, 30000);
+  aa_forget_temp(s1, 1, 30000);
   CHECK(!aa_temp_owner(s1, 30000, &owner));
   CHECK(!aa_temp_acl(s1, 30000, &acl));
   aa_session_free(s1);
   aa_session_free(s2);
+}
+
+// Verify that a rollback, whole or to a savepoint, undoes a temporary
+// object's owner and ACL as it undoes an object's entry.
+// 1. Set a temporary object's owner and ACL, and commit.
+// 2. Change its ACL, and abort: confirm the ACL is the committed one.
+// 3. At level 2 change its owner, and abort level 2: confirm the owner
+//    is the committed one; at level 2 change its ACL, commit level 2,
+//    abort: confirm the ACL is the committed one.
+// 4. Forget it, and abort: confirm the owner and ACL are back.
+TEST_CASE("objects: temporary rolled back") {
+  home_t h;
+  aa_session_t *s = aa_session_new(h.aa());
+  aa_oid_t owner;
+  std::string acl;
+
+  // 1.
+  aa_set_temp_owner(s, 1, 30000, 16500);
+  aa_set_temp_acl(s, 1, 30000, "16500,16500,3");
+  commit(s);
+
+  // 2.
+  aa_set_temp_acl(s, 1, 30000, "16500,16500,7");
+  REQUIRE(0 == aa_abort(s));
+  REQUIRE(aa_temp_acl(s, 30000, &acl));
+  CHECK("16500,16500,3" == acl);
+
+  // 3.
+  aa_set_temp_owner(s, 2, 30000, 16501);
+  aa_subabort(s, 2);
+  REQUIRE(aa_temp_owner(s, 30000, &owner));
+  CHECK(16500 == owner);
+  aa_set_temp_acl(s, 2, 30000, "16500,16500,7");
+  aa_subcommit(s, 2);
+  REQUIRE(0 == aa_abort(s));
+  REQUIRE(aa_temp_acl(s, 30000, &acl));
+  CHECK("16500,16500,3" == acl);
+
+  // 4.
+  aa_forget_temp(s, 1, 30000);
+  REQUIRE(0 == aa_abort(s));
+  REQUIRE(aa_temp_owner(s, 30000, &owner));
+  CHECK(16500 == owner);
+  REQUIRE(aa_temp_acl(s, 30000, &acl));
+  CHECK("16500,16500,3" == acl);
+  aa_session_free(s);
 }
