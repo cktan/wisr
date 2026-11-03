@@ -695,8 +695,15 @@ int tree_insert_unique(
       }
       return check(k, v);
     };
+    // Whether the prefix's entries may go on past a leaf: not if its
+    // high key is past them. The high key is above the prefix, so one
+    // that does not begin with it is above every key that does; an
+    // empty leaf, or one whose last entry is the prefix's, says so.
+    auto goes_on = [&](const page_view_t &v) {
+      return !v.has_high() || begins(v.high(), prefix);
+    };
     const page_view_t &fv = first.pin.view;
-    bool more = true;
+    bool more = goes_on(fv);
     for (size_t i = fv.lower_bound(prefix); i < fv.count(); i++) {
       if (!begins(fv.key(i), prefix)) {
         more = false;
@@ -714,6 +721,7 @@ int tree_insert_unique(
         return -1;
       }
       const page_view_t &v = p.view;
+      more = goes_on(v);
       for (size_t j = 0; j < v.count(); j++) {
         if (!begins(v.key(j), prefix)) {
           more = false;
