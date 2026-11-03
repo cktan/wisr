@@ -5262,7 +5262,7 @@ ANALYZE transition_table_level1;
 --dg DELETE FROM transition_table_level2
 --dg   WHERE level2_no BETWEEN 301 AND 305;
 
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER transition_table_level2_bad_usage_trigger
 --dg   ON transition_table_level2;
 
@@ -5342,9 +5342,8 @@ INSERT INTO alter_table_under_transition_tables
 --dg   SET name = name || name;
 
 -- now change 'name' to an integer to see what happens...
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE alter_table_under_transition_tables
---dg   ALTER COLUMN name TYPE int USING name::integer;
+ALTER TABLE alter_table_under_transition_tables
+  ALTER COLUMN name TYPE int USING name::integer;
 --dg-cascade
 --dg UPDATE alter_table_under_transition_tables
 --dg   SET name = (name::text || name::text)::integer;

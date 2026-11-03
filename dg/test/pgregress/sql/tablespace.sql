@@ -113,9 +113,9 @@ SELECT relfilenode as main_filenode FROM pg_class
 --dg SELECT c.relname FROM pg_class c, pg_tablespace s
 --dg   WHERE c.reltablespace = s.oid AND s.spcname = 'regress_tblspace'
 --dg   ORDER BY c.relname;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE regress_tblspace_test_tbl SET TABLESPACE regress_tblspace;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE regress_tblspace_test_tbl SET TABLESPACE pg_default;
 --dg-skip: relation "?" does not exist
 --dg SELECT c.relname FROM pg_class c, pg_tablespace s
@@ -472,19 +472,17 @@ CREATE INDEX test_tab_b_idx ON testschema.test_tab (b);
 \d testschema.test_tab_unique
 \d testschema.test_tab_a_idx
 \d testschema.test_tab_b_idx
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE testschema.test_tab ALTER b TYPE bigint, ADD UNIQUE (c);
+ALTER TABLE testschema.test_tab ALTER b TYPE bigint, ADD UNIQUE (c);
 \d testschema.test_tab_unique
 \d testschema.test_tab_a_idx
---dg-cascade
---dg \d testschema.test_tab_b_idx
+\d testschema.test_tab_b_idx
 DROP TABLE testschema.test_tab;
 
 -- let's try moving a table from one place to another
 CREATE TABLE testschema.atable AS VALUES (1), (2);
 CREATE UNIQUE INDEX anindex ON testschema.atable(column1);
 
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE testschema.atable SET TABLESPACE regress_tblspace;
 --dg-differs: another error: ALTER INDEX is not supported yet
 --dg ALTER INDEX testschema.anindex SET TABLESPACE regress_tblspace;
@@ -546,8 +544,7 @@ ALTER TABLE testschema.tablespace_acl OWNER TO regress_tablespace_user2;
 
 SET SESSION ROLE regress_tablespace_user2;
 CREATE TABLE tablespace_table (i int) TABLESPACE regress_tblspace; -- fail
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE testschema.tablespace_acl ALTER c TYPE bigint;
+ALTER TABLE testschema.tablespace_acl ALTER c TYPE bigint;
 --dg-differs: no error where PostgreSQL has: tablespace "?" does not exist
 --dg REINDEX (TABLESPACE regress_tblspace) TABLE tablespace_table; -- fail
 --dg-differs: no error where PostgreSQL has: tablespace "?" does not exist

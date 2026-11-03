@@ -43,7 +43,7 @@ VACUUM (FULL, FREEZE) vactst;
 VACUUM (ANALYZE, FULL) vactst;
 
 CREATE TABLE vaccluster (i INT PRIMARY KEY);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE vaccluster CLUSTER ON vaccluster_pkey;
 --dg-cascade
 --dg CLUSTER vaccluster;
@@ -202,7 +202,7 @@ DROP TABLE pvactst2;
 CREATE TABLE no_index_cleanup (i INT PRIMARY KEY, t TEXT);
 -- Use uncompressed data stored in toast.
 CREATE INDEX no_index_cleanup_idx ON no_index_cleanup(t);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE no_index_cleanup ALTER COLUMN t SET STORAGE EXTERNAL;
 INSERT INTO no_index_cleanup(i, t) VALUES (generate_series(1,30),
     repeat('1234567890',269));
@@ -210,16 +210,16 @@ INSERT INTO no_index_cleanup(i, t) VALUES (generate_series(1,30),
 VACUUM (INDEX_CLEANUP TRUE, FULL TRUE) no_index_cleanup;
 VACUUM (FULL TRUE) no_index_cleanup;
 -- Toast inherits the value from its parent table.
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE no_index_cleanup SET (vacuum_index_cleanup = false);
 DELETE FROM no_index_cleanup WHERE i < 15;
 -- Nothing is cleaned up.
 VACUUM no_index_cleanup;
 -- Both parent relation and toast are cleaned up.
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE no_index_cleanup SET (vacuum_index_cleanup = true);
 VACUUM no_index_cleanup;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE no_index_cleanup SET (vacuum_index_cleanup = auto);
 VACUUM no_index_cleanup;
 -- Parameter is set for both the parent table and its toast relation.
@@ -227,12 +227,12 @@ INSERT INTO no_index_cleanup(i, t) VALUES (generate_series(31,60),
     repeat('1234567890',269));
 DELETE FROM no_index_cleanup WHERE i < 45;
 -- Only toast index is cleaned up.
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE no_index_cleanup SET (vacuum_index_cleanup = off,
 --dg     toast.vacuum_index_cleanup = yes);
 VACUUM no_index_cleanup;
 -- Only parent is cleaned up.
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE no_index_cleanup SET (vacuum_index_cleanup = true,
 --dg     toast.vacuum_index_cleanup = false);
 VACUUM no_index_cleanup;
@@ -469,7 +469,7 @@ COMMIT;
 -- PROCESS_TOAST option
 CREATE TABLE vac_option_tab (a INT, t TEXT);
 INSERT INTO vac_option_tab SELECT a, 't' || a FROM generate_series(1, 10) AS a;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE vac_option_tab ALTER COLUMN t SET STORAGE EXTERNAL;
 -- Check the number of vacuums done on table vac_option_tab and on its
 -- toast relation, to check that PROCESS_TOAST and PROCESS_MAIN work on

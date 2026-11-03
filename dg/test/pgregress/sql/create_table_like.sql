@@ -30,7 +30,7 @@ SELECT * FROM inhx; /* Empty set since LIKE inherits structure only */
 
 CREATE TABLE inhf (LIKE inhx, LIKE inhx); /* Throw error */
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg CREATE TABLE inhf (LIKE inhx INCLUDING DEFAULTS INCLUDING CONSTRAINTS);
 --dg-cascade
 --dg INSERT INTO inhf DEFAULT VALUES;
@@ -223,7 +223,7 @@ DROP TABLE inhz;
 --dg ALTER TABLE ctlt1 ALTER COLUMN a SET STORAGE MAIN;
 
 CREATE TABLE ctlt2 (c text NOT NULL);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ctlt2 ALTER COLUMN c SET STORAGE EXTERNAL;
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON COLUMN ctlt2.c IS 'C';
@@ -246,7 +246,7 @@ CREATE TABLE ctlt2 (c text NOT NULL);
 --dg COMMENT ON CONSTRAINT ctlt3_a_check ON ctlt3 IS 't3_a_check';
 
 CREATE TABLE ctlt4 (a text, c text);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ctlt4 ALTER COLUMN c SET STORAGE EXTERNAL;
 
 --dg-cascade
@@ -313,8 +313,11 @@ ROLLBACK;
 
 -- LIKE must respect NO INHERIT property of constraints
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE noinh_con_copy (a int CHECK (a > 0) NO INHERIT, b int not null,
---dg 	c int not null no inherit);
+--dg CREATE TABLE noinh_con_copy (
+--dg 	a int CONSTRAINT noinh_con_copy_a_check CHECK (a > 0) NO INHERIT,
+--dg 	b int not null,
+--dg 	c int not null no inherit
+--dg );
 
 --dg-cascade
 --dg COMMENT ON CONSTRAINT noinh_con_copy_b_not_null ON noinh_con_copy IS 'not null b';
@@ -333,14 +336,30 @@ ROLLBACK;
 --dg AND   objoid = c.oid AND c.conrelid = 'noinh_con_copy1'::regclass
 --dg ORDER BY conname COLLATE "C";
 
--- fail, as partitioned tables don't allow NO INHERIT constraints
+-- ensure this fails due to the NOT NULL NO INHERIT constraint
 --dg-cascade
 --dg CREATE TABLE noinh_con_copy1_parted (LIKE noinh_con_copy INCLUDING ALL)
 --dg   PARTITION BY LIST (a);
 
 --dg-cascade
---dg DROP TABLE noinh_con_copy, noinh_con_copy1;
+--dg ALTER TABLE noinh_con_copy ALTER COLUMN c DROP NOT NULL;
 
+-- ensure this fails due to the NO INHERIT CHECK constraint
+--dg-cascade
+--dg CREATE TABLE noinh_con_copy1_parted (LIKE noinh_con_copy INCLUDING ALL)
+--dg   PARTITION BY LIST (a);
+
+-- drop the CHECK constraint and try again
+--dg-cascade
+--dg ALTER TABLE noinh_con_copy DROP CONSTRAINT noinh_con_copy_a_check;
+
+-- Ensure this creates the table
+--dg-cascade
+--dg CREATE TABLE noinh_con_copy1_parted (LIKE noinh_con_copy INCLUDING ALL)
+--dg   PARTITION BY LIST (a);
+
+--dg-cascade
+--dg DROP TABLE noinh_con_copy, noinh_con_copy1, noinh_con_copy1_parted;
 
 /* LIKE with other relation kinds */
 

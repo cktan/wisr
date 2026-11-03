@@ -6,7 +6,8 @@ seeks, the primary key's included, where PostgreSQL's heap fetch
 is a buffer lookup. This file is the pivot away from it: a table
 is kept in its primary key's order, and a hidden `_id` kept the
 6-byte TID PostgreSQL's executor ran on. Steps 1 and 2 of §11 are
-built, and of step 3 ADD and DROP PRIMARY KEY. `ROWKEY.md`
+built, and step 3: ADD and DROP PRIMARY KEY, and ALTER COLUMN
+TYPE. `ROWKEY.md`
 took the next step, built: digres names a row by its key,
 nothing in it is a TID, and a table with a primary key has no
 `_id` and no `_id` index. The state before the pivot is on the
@@ -445,8 +446,9 @@ Each step leaves every suite passing.
    step 2, and the system column renamed `_id` (§10, question
    1) with its step 3.
 3. **digres's DDL.** ADD and DROP PRIMARY KEY, and the
-   key-column ALTERs, through the rewrite. ADD and DROP are
-   built (`../dg/PKDDL.md`); the ALTERs wait for `ALTER
-   COLUMN TYPE`.
+   key-column ALTERs, through the rewrite. Built: ADD and DROP
+   (`../dg/PKDDL.md`), and `ALTER COLUMN TYPE` of any column, a
+   key column's among them (`../dg/ALTERTYPE.md`). A collation
+   change does not arise: digres has one collation, C.
 4. **The documents of §9**, each as its step lands, and this
    file marked built. Brought up to `ROWKEY.md`'s step 4.

@@ -1,0 +1,337 @@
+# Verify ALTER TABLE ... ALTER COLUMN ... TYPE (../ALTERTYPE.md): digres
+# converts the rows as PostgreSQL's ALTER TABLE does, keys a key column's
+# rows anew, and says what PostgreSQL says of what it refuses.
+# 1. A plain column with an index, text to int4 by USING: the rows read as
+#    numbers, the index finds a range of them, a prepared statement reads
+#    the new type; without USING, PostgreSQL's error and hint.
+# 2. The primary key, int4 to text and back: the rows in each type's
+#    order, the key found, a duplicate refused.
+# 3. The change without a rewrite: varchar to a longer varchar and to
+#    text; a shorter one, too short for a value, refused.
+# 4. A default and a serial's, cast to the new type.
+# 5. Refused as PostgreSQL refuses: an error in USING, a duplicate key
+#    after the cast, a null in a NOT NULL column, a column a view reads,
+#    an open cursor.
+# 6. Rolled back, whole and to a savepoint: the column as it was.
+# 7. Two in one statement; a temporary table; a value out of line; a
+#    numeric.
+# 8. Refused by digres alone: an expression or a partial index, a foreign
+#    key on either side, an identity column, COLLATE.
+
+# 1. A plain column.
+statement ok
+create table t (a int4 primary key, b text, c int4 default 7)
+
+statement ok
+insert into t values (1, '30', 1), (2, '4', 2), (3, '200', 3)
+
+statement ok
+create index t_b on t (b)
+
+statement ok
+prepare tq as select b from t where a = $1
+
+statement error column "b" cannot be cast automatically to type integer
+alter table t alter column b type int4
+
+statement ok
+alter table t alter column b type int4 using b::int4
+
+query II
+select a, b from t order by b
+----
+2	4
+1	30
+3	200
+
+query I
+select a from t where b between 5 and 100
+----
+1
+
+statement error cached plan must not change result type
+execute tq(2)
+
+query T
+select pg_typeof(b)::text from t where a = 1
+----
+integer
+
+# 2. The primary key.
+statement ok
+alter table t alter column a type text
+
+query TI
+select a, b from t order by a
+----
+1	30
+2	4
+3	200
+
+query I
+select b from t where a = '3'
+----
+200
+
+statement ok
+insert into t values ('10', 10, 0)
+
+statement ok
+alter table t alter column a type int8 using a::int8
+
+query II
+select a, b from t order by a
+----
+1	30
+2	4
+3	200
+10	10
+
+statement error duplicate key value violates unique constraint "t_pkey"
+insert into t values (10, 0, 0)
+
+# 3. Without a rewrite.
+statement ok
+create table v (k int4 primary key, s varchar(5))
+
+statement ok
+insert into v values (1, 'abc'), (2, 'de')
+
+statement ok
+alter table v alter column s type varchar(10)
+
+statement ok
+insert into v values (3, 'abcdefghij')
+
+statement ok
+alter table v alter column s type text
+
+query IT
+select k, s from v order by k
+----
+1	abc
+2	de
+3	abcdefghij
+
+statement ok
+alter table v alter column s type varchar(20)
+
+statement error value too long for type character varying\(2\)
+alter table v alter column s type varchar(2)
+
+# 4. Defaults.
+statement ok
+alter table t alter column c type int8
+
+statement ok
+insert into t (a, b) values (20, 20)
+
+query IT
+select c, pg_typeof(c)::text from t where a = 20
+----
+7	bigint
+
+statement ok
+create table sr (id serial primary key, x text)
+
+statement ok
+insert into sr (x) values ('one')
+
+statement ok
+alter table sr alter column id type int8
+
+statement ok
+insert into sr (x) values ('two')
+
+query IT
+select id, x from sr order by id
+----
+1	one
+2	two
+
+statement ok
+create table dt (k int4, d text default 'x')
+
+statement error default for column "d" cannot be cast automatically to type integer
+alter table dt alter column d type int4 using 0
+
+# 5. Refused.
+statement error division by zero
+alter table t alter column b type int4 using b / 0
+
+statement ok
+create table dup (a text primary key)
+
+statement ok
+insert into dup values ('1'), ('01')
+
+statement error could not create unique index "dup_pkey"
+alter table dup alter column a type int4 using a::int4
+
+statement ok
+create table nz (a int4, b text not null)
+
+statement ok
+insert into nz values (1, 'x')
+
+statement error column "b" of relation "nz" contains null values
+alter table nz alter column b type int4 using nullif(b, 'x')::int4
+
+statement ok
+create view tv as select a, b from t
+
+statement error cannot alter type of a column used by a view or rule
+alter table t alter column b type int8
+
+statement ok
+drop view tv
+
+statement ok
+begin
+
+statement ok
+declare cur cursor for select * from v
+
+query IT
+fetch 1 from cur
+----
+1	abc
+
+statement error cannot ALTER TABLE "v" because it is being used by active queries in this session
+alter table v alter column s type text
+
+statement ok
+rollback
+
+# 6. Rolled back.
+statement ok
+begin
+
+statement ok
+alter table t alter column b type text
+
+statement ok
+rollback
+
+query T
+select pg_typeof(b)::text from t where a = 1
+----
+integer
+
+statement ok
+begin
+
+statement ok
+savepoint s1
+
+statement ok
+alter table t alter column b type numeric(6,1)
+
+statement ok
+rollback to savepoint s1
+
+statement ok
+alter table t alter column b type int8
+
+statement ok
+commit
+
+query T
+select pg_typeof(b)::text from t where a = 1
+----
+bigint
+
+# 7. Two in one statement; a temporary table; a value out of line; a
+#    numeric.
+statement ok
+alter table v alter column s type varchar(30), alter column k type int8
+
+query TT
+select pg_typeof(k)::text, pg_typeof(s)::text from v where k = 1
+----
+bigint	character varying
+
+statement ok
+create temporary table tt (a int4 primary key, b int4)
+
+statement ok
+insert into tt values (2, 20), (1, 10)
+
+statement ok
+alter table tt alter column a type text
+
+query TI
+select a, b from tt order by a
+----
+1	10
+2	20
+
+statement ok
+create table big (k int4 primary key, body text)
+
+statement ok
+insert into big values (1, repeat('x', 100000)), (2, 'short')
+
+statement ok
+alter table big alter column body type varchar(200000)
+
+query II
+select k, length(body) from big order by k
+----
+1	100000
+2	5
+
+statement ok
+alter table t alter column b type numeric(6,1)
+
+query IR
+select a, b from t order by a
+----
+1	30.000
+2	4.000
+3	200.000
+10	10.000
+20	20.000
+
+# 8. Refused by digres alone.
+statement ok
+create table ix (a int4, b text)
+
+statement ok
+create index ix_e on ix (lower(b))
+
+statement ok
+create index ix_p on ix (a) where a > 0
+
+onlyif digres
+statement error ALTER COLUMN TYPE of a column an expression or a partial index reads is not supported yet
+alter table ix alter column b type varchar(10)
+
+onlyif digres
+statement error ALTER COLUMN TYPE of a column an expression or a partial index reads is not supported yet
+alter table ix alter column a type int8
+
+statement ok
+create table fp (k int4 primary key)
+
+statement ok
+create table fc (k int4 references fp)
+
+onlyif digres
+statement error ALTER COLUMN TYPE of a column a foreign key uses is not supported yet
+alter table fc alter column k type int8
+
+onlyif digres
+statement error ALTER COLUMN TYPE of a column a foreign key references is not supported yet
+alter table fp alter column k type int8
+
+statement ok
+create table idn (k int4 generated always as identity, x text)
+
+onlyif digres
+statement error ALTER COLUMN TYPE of an identity column is not supported yet
+alter table idn alter column k type int8
+
+onlyif digres
+statement error ALTER COLUMN TYPE \.\.\. COLLATE is not supported yet
+alter table v alter column s type text collate "C"

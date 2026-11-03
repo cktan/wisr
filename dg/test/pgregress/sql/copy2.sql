@@ -234,6 +234,13 @@ COPY x TO stdout WHERE a = 1;
 --dg \.
 
 --dg-cascade
+--dg COPY x from stdin WHERE NOT (a < 70003);
+--dg 70001	22	32	42	52
+--dg 70002	23	33	43	53
+--dg 70003	24	34	44	54
+--dg \.
+
+--dg-cascade
 --dg COPY x from stdin WHERE f > 60003;
 --dg \.
 
@@ -543,9 +550,9 @@ COPY rls_t1 (a, b, c) from stdin;
 
 --dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON rls_t1 FOR SELECT USING (a % 2 = 0);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_t1 ENABLE ROW LEVEL SECURITY;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_t1 FORCE ROW LEVEL SECURITY;
 
 GRANT SELECT ON TABLE rls_t1 TO regress_rls_copy_user;

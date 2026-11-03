@@ -4195,8 +4195,9 @@ Oid AlterTableLookupRelation(AlterTableStmt *stmt, LOCKMODE lockmode) {
                     errmsg("\"%s\" is not a view", stmt->relation->relname),
                     errhint("Use ALTER TABLE instead.")));
   /*
-   * sm's tables take ADD COLUMN and DROP COLUMN, and ADD, DROP and VALIDATE
-   * CONSTRAINT, of a foreign key, a primary key or a unique constraint; its
+   * sm's tables take ADD COLUMN, DROP COLUMN and ALTER COLUMN TYPE, and ADD,
+   * DROP and VALIDATE CONSTRAINT, of a foreign key, a primary key or a
+   * unique constraint; its
    * views SET and RESET of their options; and every relation OWNER TO
    * (smstore_alter_table()).
    */
@@ -4210,12 +4211,12 @@ Oid AlterTableLookupRelation(AlterTableStmt *stmt, LOCKMODE lockmode) {
                       errmsg("ALTER VIEW supports only SET and RESET of "
                              "options, and RENAME yet")));
     if (!view && subtype != AT_AddColumn && subtype != AT_DropColumn &&
-        subtype != AT_AddConstraint && subtype != AT_DropConstraint &&
-        subtype != AT_ValidateConstraint)
+        subtype != AT_AlterColumnType && subtype != AT_AddConstraint &&
+        subtype != AT_DropConstraint && subtype != AT_ValidateConstraint)
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("ALTER TABLE supports only ADD COLUMN, DROP "
-                             "COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and "
-                             "RENAME yet")));
+                             "COLUMN, ALTER COLUMN TYPE, ADD, DROP and "
+                             "VALIDATE CONSTRAINT, and RENAME yet")));
   }
   return relid;
 }

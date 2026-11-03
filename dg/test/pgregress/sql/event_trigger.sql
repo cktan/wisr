@@ -549,15 +549,12 @@ alter table rewriteme add column baz int default 0;
 --dg DROP MATERIALIZED VIEW heapmv;
 
 -- shouldn't trigger a table_rewrite event
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg alter table rewriteme alter column foo type numeric(12,4);
+alter table rewriteme alter column foo type numeric(12,4);
 begin;
 set timezone to 'UTC';
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg alter table rewriteme alter column bar type timestamp;
+alter table rewriteme alter column bar type timestamp;
 set timezone to '0';
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg alter table rewriteme alter column bar type timestamptz;
+alter table rewriteme alter column bar type timestamptz;
 set timezone to 'Europe/London';
 --dg-cascade
 --dg alter table rewriteme alter column bar type timestamp; -- does rewrite

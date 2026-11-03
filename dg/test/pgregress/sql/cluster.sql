@@ -96,7 +96,7 @@ INSERT INTO clstr_tst (b, c) VALUES (1111, 'this should fail');
 --dg 	AND indisclustered;
 
 -- Try changing indisclustered
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE clstr_tst CLUSTER ON clstr_tst_b_c;
 --dg-cascade
 --dg SELECT pg_class.relname FROM pg_index, pg_class, pg_class AS pg_class_2
@@ -106,7 +106,7 @@ INSERT INTO clstr_tst (b, c) VALUES (1111, 'this should fail');
 --dg 	AND indisclustered;
 
 -- Try turning off all clustering
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE clstr_tst SET WITHOUT CLUSTER;
 SELECT pg_class.relname FROM pg_index, pg_class, pg_class AS pg_class_2
 WHERE pg_class.oid=indexrelid
@@ -384,6 +384,25 @@ SET LOCAL enable_seqscan = false;
 --dg SELECT * FROM clstr_expression WHERE -a = -3 ORDER BY -a, b;
 COMMIT;
 
+-- CLUSTER with rollbacked subtransaction, where the same row is inserted,
+-- updated, then rollbacked.
+BEGIN;
+-- Index scan required for CLUSTER, force it.
+SET LOCAL random_page_cost = 0.0001;
+SET LOCAL seq_page_cost = 1000;
+CREATE TABLE cluster_aborted_upd (a int, b int);
+CREATE INDEX cluster_aborted_upd_idx ON cluster_aborted_upd (b);
+INSERT INTO cluster_aborted_upd VALUES (1, 3);
+SAVEPOINT sp;
+UPDATE cluster_aborted_upd SET a = 2;
+ROLLBACK TO sp;
+--dg-differs: the result
+--dg CLUSTER cluster_aborted_upd USING cluster_aborted_upd_idx;
+COMMIT;
+-- One row expected.
+SELECT count(*) FROM cluster_aborted_upd;
+SELECT * FROM cluster_aborted_upd;
+
 -- clean up
 DROP TABLE clustertest;
 DROP TABLE clstr_1;
@@ -392,5 +411,6 @@ DROP TABLE clstr_3;
 DROP TABLE clstr_4;
 --dg-cascade
 --dg DROP TABLE clstr_expression;
+DROP TABLE cluster_aborted_upd;
 
 DROP USER regress_clstr_user;

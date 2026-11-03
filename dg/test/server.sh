@@ -2657,7 +2657,7 @@ wait $alter
 local_psql -c 'alter table al2 alter column a set not null' \
   -c 'alter table al2 set schema s7' \
   -c 'alter index al1a rename to al1b' > "$work/alter3.out" 2>&1
-grep -q "ERROR:  ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet" \
+grep -q "ERROR:  ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet" \
   "$work/alter3.out" &&
   grep -q 'ERROR:  ALTER TABLE is not supported yet' "$work/alter3.out" &&
   grep -q 'ERROR:  ALTER INDEX is not supported yet' "$work/alter3.out" ||
@@ -5416,6 +5416,40 @@ grep -qx 1000 "$work/pkcrash.out" &&
 kill -INT $server
 wait $server || fail "crashed rewrite: shutdown status"
 
+# Verify that a column's type changed and not committed when the server
+# crashes leaves the column as it was: its rows were converted into a new
+# store, which no committed catalog names (ALTERTYPE.md section 5).
+# 1. Start the server again; make t3t with rows, b text.
+# 2. In a held session, begin and change b to int4; kill the server.
+# 3. Start it again: t3t has its rows, and b is text.
+# 4. Change b again, and commit: its values are numbers.
+$digres -D "$work/data" -k "$work" -p "$port" > "$work/log9" 2>&1 &
+server=$!
+server_ready $server "$work/log9" || fail "crashed retype: start"
+local_psql -c 'create table t3t (a int4 primary key, b text)' \
+  -c "insert into t3t select g, g::text from generate_series(1, 1000) g" \
+  > "$work/typecrash.out" 2>&1
+held_start typecrash
+held_send typecrash "begin; alter table t3t alter column b type int4
+  using b::int4; select 'typed ' || pg_typeof(b) from t3t where a = 5;"
+held_wait typecrash "typed integer" || fail "crashed retype: the type changed"
+kill -KILL $server
+wait $server 2> /dev/null
+held_end typecrash
+$digres -D "$work/data" -k "$work" -p "$port" > "$work/log10" 2>&1 &
+server=$!
+server_ready $server "$work/log10" || fail "crashed retype: restart"
+local_psql -c 'select count(*) from t3t' \
+  -c "select 'was ' || pg_typeof(b) from t3t where a = 5" \
+  -c 'alter table t3t alter column b type int4 using b::int4' \
+  -c "select 'sum ' || sum(b) from t3t" > "$work/typecrash.out" 2>&1
+grep -qx 1000 "$work/typecrash.out" &&
+  grep -qx 'was text' "$work/typecrash.out" &&
+  grep -qx 'sum 500500' "$work/typecrash.out" ||
+  fail "crashed retype: the column as it was"
+kill -INT $server
+wait $server || fail "crashed retype: shutdown status"
+
 # Verify that a smart shutdown (SIGTERM) waits for its sessions: the
 # postmaster reads it from its signalfd, refuses new sessions, and stops
 # once the last has ended.
@@ -5451,10 +5485,12 @@ fi
 wait $server || fail "smart shutdown: status"
 
 grep -q "terminated by signal" "$work/log" "$work/log2" "$work/log3" \
-  "$work/log4" "$work/log5" "$work/log6" "$work/log7" "$work/log8" &&
+  "$work/log4" "$work/log5" "$work/log6" "$work/log7" "$work/log8" \
+  "$work/log9" "$work/log10" &&
   fail "a process crashed"
 grep -q "ThreadSanitizer" "$work/log" "$work/log2" "$work/log3" \
-  "$work/log4" "$work/log5" "$work/log6" "$work/log7" "$work/log8" &&
+  "$work/log4" "$work/log5" "$work/log6" "$work/log7" "$work/log8" \
+  "$work/log9" "$work/log10" &&
   fail "a thread sanitizer report"
 
 [ $failed = 0 ] && echo "server: PASSED"

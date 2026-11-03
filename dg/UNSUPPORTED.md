@@ -120,16 +120,20 @@ regression files are taken out for it (`test/pgregress`,
 
 ## 3. DDL
 
-- **ALTER TABLE beyond ADD COLUMN, DROP COLUMN, ADD and DROP
-  CONSTRAINT of a foreign key, a primary key or a unique
-  constraint, a foreign key's VALIDATE CONSTRAINT, and
-  RENAME** — refused (pgregress: 271): CHECK constraints added
-  later, `ADD CONSTRAINT ... USING INDEX`, `SET SCHEMA`,
-  `ALTER COLUMN TYPE`, `SET`/`DROP NOT NULL`, `SET DEFAULT`,
-  row level security, replica identity (step 231); dropping a
-  column an index uses (step 110). A primary key added or
-  dropped re-keys the rows, which a scan then gives in key
-  order (`PKDDL.md`, step 312).
+- **ALTER TABLE beyond ADD COLUMN, DROP COLUMN, ALTER COLUMN
+  TYPE, ADD and DROP CONSTRAINT of a foreign key, a primary key
+  or a unique constraint, a foreign key's VALIDATE CONSTRAINT,
+  and RENAME** — refused (pgregress: 271): CHECK constraints
+  added later, `ADD CONSTRAINT ... USING INDEX`, `SET SCHEMA`,
+  `SET`/`DROP NOT NULL`, `SET DEFAULT`, row level security,
+  replica identity (step 231); dropping a column an index uses
+  (step 110). A primary key added or dropped re-keys the rows,
+  which a scan then gives in key order (`PKDDL.md`, step 312).
+- **ALTER COLUMN TYPE of a column an expression or a partial
+  index reads, a foreign key uses or references, or of an
+  identity column; and with COLLATE** — refused
+  (`ALTERTYPE.md` §8, step 375). PostgreSQL makes the index,
+  the foreign key or the sequence again.
 - **ALTER INDEX, ALTER TYPE, ALTER MATERIALIZED VIEW** —
   refused; ALTER VIEW takes only options and RENAME.
 - **DEFERRABLE constraints** — never for a primary key

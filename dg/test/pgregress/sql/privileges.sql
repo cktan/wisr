@@ -63,6 +63,13 @@ SET ROLE regress_priv_user3;
 GRANT regress_priv_user1 TO regress_priv_user4;
 SELECT grantor::regrole FROM pg_auth_members WHERE roleid = 'regress_priv_user1'::regrole and member = 'regress_priv_user4'::regrole;
 RESET ROLE;
+REVOKE INHERIT OPTION FOR regress_priv_user2 FROM regress_priv_user3;
+SET ROLE regress_priv_user3;
+--dg-differs: another error: no possible grantors
+--dg GRANT regress_priv_user1 TO regress_priv_user5; -- fail
+--dg-differs: another error: no possible grantors
+--dg ALTER GROUP regress_priv_user1 ADD USER regress_priv_user5; -- fail
+RESET ROLE;
 REVOKE regress_priv_user2 FROM regress_priv_user3;
 REVOKE regress_priv_user1 FROM regress_priv_user2 CASCADE;
 
@@ -122,8 +129,7 @@ REVOKE SET OPTION FOR pg_read_all_settings FROM regress_priv_user8;
 GRANT pg_read_all_stats TO regress_priv_user8 WITH SET FALSE;
 
 SET SESSION AUTHORIZATION regress_priv_user8;
---dg-differs: no error where PostgreSQL has: permission denied to set role "?"
---dg SET ROLE pg_read_all_settings;  -- fail, no SET option any more
+SET ROLE pg_read_all_settings;  -- fail, no SET option any more
 SET ROLE pg_read_all_stats;     -- fail, granted without SET option
 RESET ROLE;
 
@@ -134,16 +140,13 @@ RESET SESSION AUTHORIZATION;
 GRANT regress_priv_user9 TO regress_priv_user8;
 
 SET SESSION AUTHORIZATION regress_priv_user8;
---dg-skip: permission denied to set role "?"
---dg SET ROLE regress_priv_user9;
+SET ROLE regress_priv_user9;
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET debug_parallel_query = 0;
---dg-cascade
---dg SELECT session_user, current_role, current_user, current_setting('role') as role;
+SELECT session_user, current_role, current_user, current_setting('role') as role;
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET debug_parallel_query = 1;
---dg-cascade
---dg SELECT session_user, current_role, current_user, current_setting('role') as role;
+SELECT session_user, current_role, current_user, current_setting('role') as role;
 
 BEGIN;
 SET SESSION AUTHORIZATION regress_priv_user10;
@@ -156,12 +159,10 @@ SELECT session_user, current_role, current_user, current_setting('role') as role
 ROLLBACK;
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET debug_parallel_query = 0;
---dg-cascade
---dg SELECT session_user, current_role, current_user, current_setting('role') as role;
+SELECT session_user, current_role, current_user, current_setting('role') as role;
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET debug_parallel_query = 1;
---dg-cascade
---dg SELECT session_user, current_role, current_user, current_setting('role') as role;
+SELECT session_user, current_role, current_user, current_setting('role') as role;
 
 RESET SESSION AUTHORIZATION;
 -- session_user at this point is installation-dependent

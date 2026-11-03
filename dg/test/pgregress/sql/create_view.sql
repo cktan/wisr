@@ -805,15 +805,18 @@ select pg_get_viewdef('tt19v', true);
 
 -- check display of assorted RTE_FUNCTION expressions
 
-create view tt20v as
-select * from
-  coalesce(1,2) as c,
-  collation for ('x'::text) col,
-  current_date as d,
-  localtimestamp(3) as t,
-  cast(1+2 as int4) as i4,
-  cast(1+2 as int8) as i8;
-select pg_get_viewdef('tt20v', true);
+--dg-skip: function ?(...) does not exist
+--dg create view tt20v as
+--dg select * from
+--dg   coalesce(1,2) as c,
+--dg   collation for ('x'::text) col,
+--dg   current_date as d,
+--dg   localtimestamp(3) as t,
+--dg   cast(1+2 as int4) as i4,
+--dg   cast(1+2 as int8) as i8,
+--dg   cast('foo' is normalized as boolean) as isn;
+--dg-cascade
+--dg select pg_get_viewdef('tt20v', true);
 
 -- reverse-listing of various special function syntaxes required by SQL
 
@@ -927,9 +930,26 @@ select x + y + z as c1,
        (x > y) AND (y > z OR x > z) as c8,
        (x > y) OR (y > z AND NOT (x > z)) as c9,
        (x,y) <> ALL (values(1,2),(3,4)) as c10,
-       (x,y) <= ANY (values(1,2),(3,4)) as c11
+       (x,y) <= ANY (values(1,2),(3,4)) as c11,
+       (x>0 OR y>0) IN (SELECT false) AS c12,
+       (x < y) <> ALL (SELECT false) AS c13,
+       true = (y = ANY (SELECT 1)) AS c14
 from (values(1,2,3)) v(x,y,z);
-select pg_get_viewdef('tt26v', true);
+--dg-differs: the result
+--dg select pg_get_viewdef('tt26v', true);
+
+-- xml IS DOCUMENT needs to be treated specially
+--dg-skip: relation pg_operator cannot be written: digres has no catalog tables
+--dg create operator ||
+--dg   (function = xmlconcat2, leftarg=xml, rightarg=xml);
+--dg-cascade
+--dg create view tt261v as
+--dg select x is document as c1,
+--dg        (x || x) is document as c2,
+--dg        f = (x is document) as c3
+--dg from (values(false,null::xml)) v(f,x);
+--dg-cascade
+--dg select pg_get_viewdef('tt261v', true);
 
 -- test restriction on non-system view expansion.
 create table tt27v_tbl (a int);

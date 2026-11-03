@@ -402,7 +402,7 @@ create table trigtest2 (i int references trigtest(i) on delete cascade);
 --dg alter table trigtest disable trigger trigtest_b_row_tg;
 --dg-cascade
 --dg insert into trigtest default values;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table trigtest disable trigger user;
 insert into trigtest default values;
 --dg-cascade
@@ -422,7 +422,7 @@ insert into trigtest2 values(2);
 --dg delete from trigtest where i=2;
 --dg-cascade
 --dg select * from trigtest2;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table trigtest disable trigger all;
 delete from trigtest where i=1;
 --dg-cascade

@@ -63,6 +63,9 @@
 #include "catalog/pg_constraint_d.h"
 #include "commands/trigger.h"
 #include "parser/parse_coerce.h"
+#include "parser/parse_collate.h"
+#include "parser/parse_expr.h"
+#include "parser/parse_relation.h"
 #include "utils/builtins.h"
 #include "utils/control_block.h"
 #include "utils/fmgrprotos.h"
@@ -4142,6 +4145,9 @@ static void validate_constraint(Oid relid, const char *relname,
 
 static void alter_view(Oid relid, AlterTableStmt *stmt);
 
+static void alter_column_type(Oid relid, const char *relname,
+                              AlterTableCmd *cmd);
+
 /* Whether cmd adds a serial or an identity column, for parse analysis. */
 static bool generated_column(AlterTableCmd *cmd) {
   ColumnDef *col = castNode(ColumnDef, cmd->def);
@@ -4305,9 +4311,9 @@ static void add_index_constraint(Oid relid, const char *relname,
 
 /*
  * Do an ALTER TABLE of the table relid, in sm, in this transaction, one
- * subcommand after another: ADD COLUMN, DROP COLUMN, ADD, DROP and
- * VALIDATE CONSTRAINT of a foreign key, and ADD and DROP CONSTRAINT of a
- * primary key or a unique constraint, the subcommands
+ * subcommand after another: ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE,
+ * ADD, DROP and VALIDATE CONSTRAINT of a foreign key, and ADD and DROP
+ * CONSTRAINT of a primary key or a unique constraint, the subcommands
  * AlterTableLookupRelation() lets through.  A view's is alter_view()'s.
  */
 void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
@@ -4351,6 +4357,8 @@ void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
                       cmd->behavior == DROP_CASCADE);
     else if (cmd->subtype == AT_ValidateConstraint)
       validate_constraint(relid, relname, cmd->name);
+    else if (AT_AlterColumnType == cmd->subtype)
+      alter_column_type(relid, relname, cmd);
     else
       drop_column(relid, relname, cmd->name, cmd->missing_ok,
                   cmd->behavior == DROP_CASCADE);
@@ -6646,10 +6654,12 @@ static std::string error_dup_row(void) {
  * holds in the columns keys, "(k)=(1)", a key of -1 the next of the
  * expressions eval holds, an index's (index_eval_string()), evaluated on
  * the row; empty if the transaction does not see the row, or the table is
- * gone.
+ * gone.  The column conv_at, 0-based, if one, is shown as conv, ALTER
+ * COLUMN TYPE's transform, gives it from the row.
  */
 static std::string dup_key(Oid relid, const std::vector<int32_t> &keys,
-                           const std::string &eval, const std::string &row) {
+                           const std::string &eval, const std::string &row,
+                           int32_t conv_at = -1, Expr *conv = NULL) {
   Relation rel = try_relation_open(relid, AccessShareLock);
   sm_tbl_t *tbl;
   std::string out;
@@ -6661,8 +6671,8 @@ static std::string dup_key(Oid relid, const std::vector<int32_t> &keys,
   tbl = open_table(relid, SM_LOCKMODE_IS);
   if (!eval.empty())
     smstore_index_eval_parts(eval.c_str(), &exprs, &pred, &expr_names);
-  /* An expression may read any column. */
-  natts = NIL != exprs ? RelationGetDescr(rel)->natts : 0;
+  /* An expression may read any column, a transform among them. */
+  natts = NIL != exprs || NULL != conv ? RelationGetDescr(rel)->natts : 0;
   for (int32_t k : keys)
     natts = Max(natts, k + 1);
   TupleTableSlot *slot =
@@ -6683,7 +6693,14 @@ static std::string dup_key(Oid relid, const std::vector<int32_t> &keys,
         names += ", ";
         values += ", ";
       }
-      if (k >= 0) {
+      if (k >= 0 && k == conv_at) {
+        Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), k);
+
+        names += quote_identifier(NameStr(att->attname));
+        typid = exprType((Node *)conv);
+        value = ExecEvalExprSwitchContext(ExecPrepareExpr(conv, estate),
+                                          econtext, &isnull);
+      } else if (k >= 0) {
         Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), k);
 
         names += quote_identifier(NameStr(att->attname));
@@ -6726,6 +6743,305 @@ duplicate_build(const char *name, const std::string &key, const char *why) {
            key.empty() ? errdetail("%s", why)
                        : errdetail("Key %s is duplicated.", key.c_str())));
   pg_unreachable();
+}
+
+/*
+ * What ALTER COLUMN TYPE's converter evaluates for each row: the transform,
+ * over a row of the table before the change, and the new type's length and
+ * passing.
+ */
+struct alter_conv_t {
+  EState *estate;
+  ExprState *expr;
+  TupleTableSlot *slot;
+  int16 typlen;
+  bool typbyval;
+};
+
+/*
+ * sm's converter of ALTER COLUMN TYPE (sm_column_conv_fn, ../ALTERTYPE.md
+ * section 3): the row's new value of the column, the transform evaluated by
+ * PostgreSQL's executor, as ATRewriteTable() evaluates it.  An error is
+ * caught and kept, never thrown through sm (keep_eval_error()).
+ */
+static int alter_conv(void *ctx, const sm_datum_t *values, const bool *isnull,
+                      size_t n, std::string &out, bool *out_isnull) noexcept {
+  alter_conv_t *c = static_cast<alter_conv_t *>(ctx);
+  MemoryContext old = CurrentMemoryContext;
+  int rc = 0;
+
+  PG_TRY();
+  {
+    ExprContext *econtext = GetPerTupleExprContext(c->estate);
+    TupleTableSlot *slot = c->slot;
+    size_t natts = Min(n, (size_t)slot->tts_tupleDescriptor->natts);
+
+    /* sm's datums are PostgreSQL's, bit for bit (../DECIMAL.md). */
+    ExecClearTuple(slot);
+    memcpy(slot->tts_values, values, natts * sizeof(Datum));
+    memcpy(slot->tts_isnull, isnull, natts * sizeof(bool));
+    ExecStoreVirtualTuple(slot);
+    econtext->ecxt_scantuple = slot;
+    Datum value = ExecEvalExprSwitchContext(c->expr, econtext, out_isnull);
+
+    if (!*out_isnull)
+      out = key_value_bytes(value, c->typlen, c->typbyval);
+    ResetExprContext(econtext);
+  }
+  PG_CATCH();
+  { rc = keep_eval_error(); }
+  PG_END_TRY();
+  MemoryContextSwitchTo(old);
+  return rc;
+}
+
+/*
+ * Whether the transform expr, of the column varattno, may change a value,
+ * as PostgreSQL's ATColumnChangeRequiresRewrite() asks: anything but the
+ * column itself, relabelled, may.  A function may, even one PostgreSQL
+ * passes for timestamp and timestamptz, which sm stores as two types.
+ */
+static bool transform_changes(Node *expr, AttrNumber varattno) {
+  for (;;) {
+    if (IsA(expr, Var) && ((Var *)expr)->varattno == varattno)
+      return false;
+    if (!IsA(expr, RelabelType))
+      return true;
+    expr = (Node *)((RelabelType *)expr)->arg;
+  }
+}
+
+/*
+ * expr, a default as sm keeps it (nodeToString()), coerced to typid and
+ * typmod as ATExecAlterColumnType() coerces a column's default, as sm is to
+ * keep it.  what names the default in the error of one that cannot be.
+ */
+static std::string retyped_default(const std::string &expr, Oid typid,
+                                   int32 typmod, const char *colname,
+                                   const char *what) {
+  Node *e = strip_implicit_coercions((Node *)stringToNode(expr.c_str()));
+  Node *c = coerce_to_target_type(NULL, e, exprType(e), typid, typmod,
+                                  COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST,
+                                  -1);
+
+  if (NULL == c)
+    ereport(ERROR, (errcode(ERRCODE_DATATYPE_MISMATCH),
+                    errmsg("%s for column \"%s\" cannot be cast "
+                           "automatically to type %s",
+                           what, colname, format_type_be(typid))));
+  return nodeToString(c);
+}
+
+/*
+ * Refuse ALTER COLUMN TYPE of the column at, 0-based, of the table relid,
+ * whose definition is def, when what reads it would read it stale: a view,
+ * in PostgreSQL's words; and, which digres does not make again yet
+ * (../ALTERTYPE.md section 8), an expression or a partial index, a foreign
+ * key on either side, an identity column.
+ */
+static void check_retype(Oid relid, const sm_table_def_t &def, int32_t at,
+                         const char *colname) {
+  auto in = [at](const std::vector<int32_t> &v) {
+    return std::find(v.begin(), v.end(), at) != v.end();
+  };
+  std::vector<sm_view_reader_t> views;
+  sm_session_t *s = xact_session();
+
+  if (0 != sm_cat_view_readers(s, relid, views))
+    sm_error("find the views of a table");
+  for (const sm_view_reader_t &v : views)
+    for (const sm_view_read_t &r : v.reads)
+      if ((Oid)r.relation == relid && r.attnum == at)
+        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        errmsg("cannot alter type of a column used by a view "
+                               "or rule"),
+                        errdetail("rule _RETURN on view %s depends on column "
+                                  "\"%s\"",
+                                  v.name.c_str(), colname)));
+  for (const sm_index_def_t &x : def.indexes)
+    if (!x.eval.empty() && in(x.reads))
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("ALTER COLUMN TYPE of a column an expression or "
+                             "a partial index reads is not supported yet"),
+                      errdetail("Index \"%s\" reads column \"%s\".",
+                                x.name.c_str(), colname)));
+  for (const sm_fkey_def_t &fk : def.fkeys)
+    if (in(fk.columns))
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("ALTER COLUMN TYPE of a column a foreign key "
+                             "uses is not supported yet"),
+                      errdetail("Foreign key \"%s\" uses column \"%s\".",
+                                fk.name.c_str(), colname)));
+  for (const sm_fkey_ref_t &ref : def.referenced_by) {
+    sm_table_def_t child;
+
+    if (!table_def_now((Oid)ref.table, child))
+      continue;
+    for (const sm_fkey_def_t &fk : child.fkeys)
+      if (fk.oid == ref.fkey && in(fk.ref_columns))
+        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        errmsg("ALTER COLUMN TYPE of a column a foreign key "
+                               "references is not supported yet"),
+                        errdetail("Foreign key \"%s\" references column "
+                                  "\"%s\".",
+                                  fk.name.c_str(), colname)));
+  }
+  if (0 != def.columns[at].identity)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("ALTER COLUMN TYPE of an identity column is not "
+                           "supported yet")));
+}
+
+/*
+ * ALTER COLUMN ... TYPE, cmd, of the table relid named relname, as
+ * PostgreSQL's ATPrepAlterColumnType() and ATExecAlterColumnType() do it
+ * (../ALTERTYPE.md).
+ * 1. Find the column, and refuse what would read it stale (check_retype())
+ *    and a COLLATE, which CREATE TABLE refuses too.
+ * 2. Make the transform: USING's expression, or the column, coerced to the
+ *    new type, with PostgreSQL's error if it cannot be.
+ * 3. Coerce the column's default and update default to the new type.
+ * 4. Ask sm to change the record alone if no value changes, as PostgreSQL
+ *    rewrites no row then; else to rewrite the rows, each converted by the
+ *    transform (alter_conv()).
+ * 5. Raise sm's failure in PostgreSQL's words.
+ */
+static void alter_column_type(Oid relid, const char *relname,
+                              AlterTableCmd *cmd) {
+  ColumnDef *coldef = castNode(ColumnDef, cmd->def);
+  const char *colname = cmd->name;
+  /* Locked, as parse analysis of USING opens the table assuming it is. */
+  Relation rel = relation_open(relid, AccessShareLock);
+  TupleDesc desc = RelationGetDescr(rel);
+  AttrNumber attnum = InvalidAttrNumber;
+  sm_table_def_t def;
+
+  for (int i = 0; i < desc->natts; i++)
+    if (!TupleDescAttr(desc, i)->attisdropped &&
+        0 == strcmp(NameStr(TupleDescAttr(desc, i)->attname), colname))
+      attnum = i + 1;
+  if (InvalidAttrNumber == attnum)
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
+                    errmsg("column \"%s\" of relation \"%s\" does not exist",
+                           colname, relname)));
+  if (NULL != coldef->collClause)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("ALTER COLUMN TYPE ... COLLATE is not supported "
+                           "yet")));
+  if (!table_def_now(relid, def))
+    elog(ERROR, "table %u is not in sm", relid);
+  check_retype(relid, def, attnum - 1, colname);
+
+  Form_pg_attribute att = TupleDescAttr(desc, attnum - 1);
+  ParseState *pstate = make_parsestate(NULL);
+  Oid typid;
+  int32 typmod;
+  Node *transform;
+
+  typenameTypeIdAndMod(pstate, coldef->typeName, &typid, &typmod);
+  /* A numeric with no precision is its type's default one, kept in sm. */
+  if (is_decimal(typid))
+    typmod = numeric_typmod(typid, typmod);
+  /* The row is the table's before the change, as USING reads it. */
+  ParseNamespaceItem *nsitem = addRangeTableEntryForRelation(
+      pstate, rel, AccessShareLock, NULL, false, true);
+
+  addNSItemToQuery(pstate, nsitem, false, true, true);
+  if (NULL != coldef->raw_default)
+    transform = transformExpr(pstate, coldef->raw_default,
+                              EXPR_KIND_ALTER_COL_TRANSFORM);
+  else
+    transform = (Node *)makeVar(1, attnum, att->atttypid, att->atttypmod,
+                                att->attcollation, 0);
+  Node *coerced = coerce_to_target_type(pstate, transform, exprType(transform),
+                                        typid, typmod, COERCION_ASSIGNMENT,
+                                        COERCE_IMPLICIT_CAST, -1);
+
+  if (NULL == coerced && NULL != coldef->raw_default)
+    ereport(ERROR, (errcode(ERRCODE_DATATYPE_MISMATCH),
+                    errmsg("result of USING clause for column \"%s\""
+                           " cannot be cast automatically to type %s",
+                           colname, format_type_be(typid)),
+                    errhint("You might need to add an explicit cast.")));
+  if (NULL == coerced)
+    ereport(ERROR,
+            (errcode(ERRCODE_DATATYPE_MISMATCH),
+             errmsg("column \"%s\" cannot be cast automatically to type %s",
+                    colname, format_type_be(typid)),
+             errhint("You might need to specify \"USING %s::%s\".",
+                     quote_identifier(colname),
+                     format_type_with_typemod(typid, typmod))));
+  assign_expr_collations(pstate, coerced);
+  /* Planned now, so a coercion that changes nothing is seen as such. */
+  transform = (Node *)expression_planner((Expr *)coerced);
+  free_parsestate(pstate);
+
+  const sm_column_def_t &col = def.columns[attnum - 1];
+  std::string new_default, new_update;
+  sm_column_type_t to = {type_code(typid), typmod};
+
+  if (col.has_default) {
+    new_default =
+        retyped_default(col.default_expr, typid, typmod, colname, "default");
+    to.default_expr = new_default.c_str();
+  }
+  if (col.has_on_update) {
+    new_update = retyped_default(col.on_update_expr, typid, typmod, colname,
+                                 "update default");
+    to.on_update_expr = new_update.c_str();
+  }
+  /*
+   * No value changes, and sm stores them as they are: the same type, or
+   * text and varchar (../../../../sm/sm2/TYPE.md section 3).
+   */
+  uint8_t was = col.type_code;
+  bool texts = (TEXTOID == att->atttypid || VARCHAROID == att->atttypid) &&
+               (TEXTOID == typid || VARCHAROID == typid);
+  bool keep =
+      !transform_changes(transform, attnum) && (was == to.type_code || texts);
+  alter_conv_t conv = {};
+
+  if (!keep) {
+    conv.estate = CreateExecutorState();
+    conv.expr = ExecPrepareExpr((Expr *)transform, conv.estate);
+    conv.slot =
+        MakeSingleTupleTableSlot(CreateTupleDescCopy(desc), &TTSOpsVirtual);
+    get_typlenbyval(typid, &conv.typlen, &conv.typbyval);
+  }
+  relation_close(rel, NoLock);
+  sm_session_t *s = xact_session();
+  int rc = waiting([&] {
+    return sm_cat_alter_column_type(s, relid, colname, to,
+                                    keep ? nullptr : alter_conv, &conv);
+  });
+
+  if (!keep) {
+    ExecDropSingleTupleTableSlot(conv.slot);
+    FreeExecutorState(conv.estate);
+  }
+  /* The handles this transaction holds have the column's old type. */
+  forget_table(relid);
+  if (0 == rc)
+    return;
+  if (SM_ERR_NOTNULL == sm_errnum())
+    ereport(ERROR, (errcode(ERRCODE_NOT_NULL_VIOLATION),
+                    errmsg("column \"%s\" of relation \"%s\" contains null "
+                           "values",
+                           colname, relname)));
+  if (SM_ERR_DUPKEY == sm_errnum()) {
+    std::string why = sm_errmsg();
+    std::string row;
+    uint64_t index = 0;
+
+    sm_errdup(&index, &row);
+    for (const sm_index_def_t &x : def.indexes)
+      if (x.oid == index)
+        duplicate_build(x.name.c_str(),
+                        dup_key(relid, x.key_attnums, x.eval, row, attnum - 1,
+                                (Expr *)transform),
+                        why.c_str());
+  }
+  sm_error("alter a column's type");
 }
 
 /*

@@ -1,9 +1,10 @@
 # ALTERTYPE — ALTER COLUMN TYPE, key columns among them
 
-**Status: decided, being built.** §8 has what was decided. It
-is `../sm/CLUSTER.md` §11's step 3, the key-column
-ALTERs, and the general `ALTER COLUMN TYPE` they wait for
-(`UNSUPPORTED.md` §3, `PKDDL.md` §3).
+**Status: built** (`WORKNOTE.md` step 375). §8 has what was
+decided, §9 what building it found. It is `../sm/CLUSTER.md`
+§11's step 3, the key-column ALTERs, and the general `ALTER
+COLUMN TYPE` they wait for (`UNSUPPORTED.md` §3, `PKDDL.md`
+§3).
 
 ```sql
 CREATE TABLE t (a int4 PRIMARY KEY, b text, c int4 DEFAULT 7);
@@ -134,7 +135,7 @@ same type code, or `text` and `varchar`.
 
 1. sm3: `alter_column_type()`, its rewrite with the converter,
    and the record alone. → verify: sm3's tests, `rel`.
-2. `sm.h`: the call and the converter's registration. → verify:
+2. `sm.h`: the call, its converter passed with it. → verify:
    `rel`.
 3. digres: parse analysis, the converter, the default, the
    refusals. → verify: slt.
@@ -153,3 +154,34 @@ same type code, or `text` and `varchar`.
    column's sequence): refused, "not supported yet", in this
    build. Making each again is a step of its own.
 4. **Two in one statement**: one rewrite each.
+
+## 9. What building it found
+
+- **The converter is passed to the call**, with its context,
+  not registered once for the environment as the index
+  evaluator is: it runs only inside the session's own call,
+  never on a build worker, and needs what that call parsed.
+- **Parse analysis of `USING` is digres's own**:
+  `transformAlterTableStmt()` looks the column up with
+  `get_attnum()`, which reads a syscache digres has not
+  (`PKDDL.md` §8). `alter_column_type()` in `smstore.c` makes
+  the transform as `ATPrepAlterColumnType()` does, the table
+  locked first, as parse analysis assumes.
+- **`timestamp` and `timestamptz`** are one change PostgreSQL
+  can make without a rewrite; sm stores them as two types, so
+  digres rewrites the rows, each value unchanged.
+- **A prepared statement** whose result type changed fails as
+  PostgreSQL's does: `cached plan must not change result type`.
+- **A generated column** does not arise: digres refuses
+  `GENERATED ALWAYS AS` at CREATE TABLE.
+- **A key duplicated by the cast** is reported as PostgreSQL
+  reports it, `Key (test)=(0) is duplicated.`: `dup_key()` reads
+  the row from the old store, and gives the column's value as
+  the transform makes it from the row. pgregress's
+  `alter_table` shows it; slt matches the message alone.
+- **sm3's rewrite named the primary key for any duplicate**, a
+  secondary unique index's too, with no row for the host to
+  show. ADD PRIMARY KEY never met one there, as the rows were
+  unique in every other index already; a type change can. It
+  now names the index the insert met it in, and the row by its
+  key in the old store (`test_altertype.cc`).

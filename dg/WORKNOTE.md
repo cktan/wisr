@@ -11039,3 +11039,49 @@ behind it (step 344). Design and cases: `../sm/sm1/GROUPSYNC.md`.
   one more (fails with a leader covering only its own record);
   `durability_sync = 0` makes no sync. Not caught: the leader not
   setting `failed`, which `finish_commit()` sets right after.
+
+## Step 375: ALTER COLUMN TYPE, a key column's among them
+
+`../sm/NEXT.md` §1 item 1, `../sm/CLUSTER.md` §11 step 3: the
+key-column ALTERs waited for `ALTER COLUMN TYPE`, which digres
+refused for every column. Design, cases and decisions:
+`ALTERTYPE.md`.
+
+- **sm3**: `alter_column_type()`. With the host's converter, a
+  table with rows is rewritten into a new store, as ADD PRIMARY
+  KEY's rewrite is, each row's value of the column converted;
+  every index on the column is filled under the new type, a key
+  column's rows keyed anew. Without one, the record alone
+  changes, when every value stays: the same type code, or
+  `text` and `varchar`. A column an expression or a partial
+  index, a foreign key or a view reads is refused, and so is an
+  identity column. A retyped column's statistics are erased.
+  The rewrite named the primary key for any duplicate, a
+  secondary unique index's too; it names the index the insert
+  met it in, with the row.
+- **sm.h**: `sm_cat_alter_column_type()`, its converter
+  `sm_column_conv_fn` passed with the call; rel's
+  `alter-column-type`, converting through text.
+- **digres**: `alter_column_type()` in `smstore.c`, after
+  PostgreSQL's `ATPrepAlterColumnType()` and
+  `ATExecAlterColumnType()`: USING parsed against the table's
+  row, the transform coerced and planned, the default and the
+  update default coerced to the new type; no rewrite when the
+  transform changes no value, as PostgreSQL's
+  `ATColumnChangeRequiresRewrite()` asks. The converter,
+  `alter_conv()`, evaluates the transform with PostgreSQL's
+  executor, its error kept and raised again as the index
+  evaluator's is. A view's column is refused in PostgreSQL's
+  words; the dependents PostgreSQL makes again are refused,
+  "not supported yet".
+- **Tests**: sm3 `test/test_altertype.cc` and rel
+  `test/test_altertype.rel`, each shown to fail with a part left
+  out; `test/slt/alter_type.test`, its results PostgreSQL
+  18.6's, shown to fail with the conversion, the default's
+  coercion or the NOT NULL error left out; `server.sh`, a change
+  not committed when the server is killed leaves the column as
+  it was. pgregress: the 42 files that alter a column's type,
+  or held a marker naming the old refusal, copied back and
+  trimmed again: `skip` 6,063 to 6,037, `differs` 1,366 to
+  1,361, no `crash`. `alter_table`'s duplicate made by `USING
+  0` runs, its DETAIL PostgreSQL's.

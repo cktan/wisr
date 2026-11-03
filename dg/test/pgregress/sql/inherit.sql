@@ -348,8 +348,7 @@ CREATE TABLE thirdparent (tomorrow date default now()::date - 1);
 -- Test changing the type of inherited columns
 --dg-cascade
 --dg insert into d values('test','one','two','three');
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg alter table a alter column aa type integer using bit_length(aa);
+alter table a alter column aa type integer using bit_length(aa);
 --dg-cascade
 --dg select * from d;
 
@@ -362,8 +361,7 @@ create temp table parent2(f1 int, f3 bigint);
 --dg create temp table childtab(f4 int) inherits(parent1, parent2);
 --dg-cascade
 --dg alter table parent1 alter column f1 type bigint;  -- fail, conflict w/parent2
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg alter table parent1 alter column f2 type bigint;  -- ok
+alter table parent1 alter column f2 type bigint;  -- ok
 
 -- Test non-inheritable parent constraints
 create table p1(ff1 int);
@@ -1158,7 +1156,7 @@ reset enable_bitmapscan;
 --
 create table inhpar(f1 int, f2 name);
 create table inhcld(f2 name, f1 int);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table inhcld inherit inhpar;
 insert into inhpar select x, x::text from generate_series(1,5) x;
 insert into inhcld select x::text, x from generate_series(6,10) x;
@@ -1232,7 +1230,7 @@ create table cnullparent (f1 int);
 --dg create table cc2 (f4 float) inherits (pp1,cc1);
 --dg-cascade
 --dg create table cc3 () inherits (pp1,cc1,cc2);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table pp1 alter f1 set not null;
 --dg-cascade
 --dg \d+ cc3
@@ -1254,7 +1252,7 @@ create table cnullparent (f1 int);
 --dg \d+ cc1
 --dg-cascade
 --dg \d+ cc2
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table pp1 alter column f1 set not null;
 --dg-cascade
 --dg \d+ pp1
@@ -1292,7 +1290,7 @@ create table cnullparent (f1 int);
 --dg alter table cc1 alter column f1 drop not null;
 
 -- remove from pp1, should succeed
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table pp1 alter column f1 drop not null;
 --dg-cascade
 --dg \d+ pp1
@@ -1303,7 +1301,7 @@ alter table pp1 add primary key (f1);
 -- test that removing inheritance of NOT NULL NO INHERIT works correctly
 create table inh_parent (f1 int not null no inherit, f2 int not null no inherit);
 create table inh_child (f1 int not null no inherit, f2 int);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table inh_child inherit inh_parent;
 --dg-cascade
 --dg alter table inh_child no inherit inh_parent;
@@ -1317,7 +1315,7 @@ create table inh_pp1 (f1 int);
 --dg create table inh_cc1 (f2 text, f3 int) inherits (inh_pp1);
 --dg-cascade
 --dg create table inh_cc2(f4 float) inherits(inh_pp1,inh_cc1);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table inh_pp1 alter column f1 set not null;
 --dg-cascade
 --dg alter table inh_cc2 no inherit inh_pp1;
@@ -1334,7 +1332,7 @@ create table inh_pp1 (f1 int);
 --dg create table inh_cc1 (f2 text, f3 int) inherits (inh_pp1);
 --dg-cascade
 --dg create table inh_cc2(f4 float) inherits(inh_pp1,inh_cc1);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table inh_pp1 alter column f1 drop not null;
 --dg-cascade
 --dg \d+ inh_cc2
@@ -1625,14 +1623,14 @@ create table inh_p4(f1 int not null, f3 text not null);
 --
 create table inh_nn1 (f1 int not null no inherit);
 create table inh_nn2 (f2 text, f3 int, f1 int);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table inh_nn2 inherit inh_nn1;
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table inh_nn3 (f4 float) inherits (inh_nn2);
 create table inh_nn4 (f5 int, f4 float, f2 text, f3 int, f1 int);
 --dg-cascade
 --dg alter table inh_nn4 inherit inh_nn2, inherit inh_nn1, inherit inh_nn3;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table inh_nn1 alter constraint inh_nn1_f1_not_null inherit;
 --dg-cascade
 --dg select conrelid::regclass, conname, conkey, coninhcount, conislocal, connoinherit
@@ -1640,7 +1638,7 @@ create table inh_nn4 (f5 int, f4 float, f2 text, f3 int, f1 int);
 --dg  conrelid::regclass::text in ('inh_nn1', 'inh_nn2', 'inh_nn3', 'inh_nn4')
 --dg  order by 2, 1;
 -- ALTER CONSTRAINT NO INHERIT should work on top-level constraints
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table inh_nn1 alter constraint inh_nn1_f1_not_null no inherit;
 --dg-cascade
 --dg select conrelid::regclass, conname, conkey, coninhcount, conislocal, connoinherit
@@ -1701,7 +1699,7 @@ delete from inh_nn2;
 --dg alter table inh_nn1 alter constraint inh_nn1_f1_not_null inherit;
 --dg-cascade
 --dg alter table inh_nn3 alter constraint nn3_f1 inherit;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table inh_nn1 alter constraint inh_nn1_f1_not_null inherit; -- now it works
 --dg-cascade
 --dg select conrelid::regclass, conname, conkey, coninhcount, conislocal, connoinherit
@@ -1722,7 +1720,7 @@ delete from inh_nn2;
 --dg-cascade
 --dg alter table inh_nn1 alter constraint inh_nn1_f1_fkey inherit;
 -- try to drop a nonexistant constraint
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table inh_nn1 alter constraint foo inherit;
 -- Can't modify inheritability of inherited constraints
 --dg-cascade

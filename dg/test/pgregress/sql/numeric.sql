@@ -1975,19 +1975,16 @@ select 117743296169.0 ^ 1000000000 as overflows;
 select 3.789 ^ 21.0000000000000000;
 --dg-differs: the result
 --dg select 3.789 ^ 35.0000000000000000;
---dg-differs: the result
---dg select 1.2 ^ 345;
+select 1.2 ^ 345;
 select 0.12 ^ (-20);
---dg-differs: the result
---dg select 1.000000000123 ^ (-2147483648);
+select 1.000000000123 ^ (-2147483648);
 select coalesce(nullif(0.9999999999 ^ 23300000000000, 0), 0) as rounds_to_zero;
 --dg-skip: "?" is out of range for type double precision
 --dg select round(((1 - 1.500012345678e-1000) ^ 1.45e1003) * 1e1000);
 
 -- cases that used to error out
 select 0.12 ^ (-25);
---dg-differs: the result
---dg select 0.5678 ^ (-85);
+select 0.5678 ^ (-85);
 select coalesce(nullif(0.9999999999 ^ 70000000000000, 0), 0) as underflows;
 
 -- negative base to integer powers
@@ -2059,8 +2056,7 @@ select coalesce(nullif(exp(-10000::numeric), 0), 0) as underflows;
 
 -- cases that used to generate inaccurate results
 select exp(32.999);
---dg-differs: the result
---dg select exp(-32.999);
+select exp(-32.999);
 --dg-skip: value overflows numeric format
 --dg select exp(123.456);
 --dg-differs: the result
@@ -2115,10 +2111,8 @@ select ln(0.0);
 select ln(0.0456789);
 --dg-differs: the result
 --dg select ln(0.349873948359354029493948309745709580730482050975);
---dg-differs: the result
---dg select ln(0.99949452);
---dg-differs: the result
---dg select ln(1.00049687395);
+select ln(0.99949452);
+select ln(1.00049687395);
 select ln(1234.567890123456789);
 select ln(5.80397490724e5);
 --dg-differs: the result
@@ -2137,8 +2131,7 @@ select ln(5.80397490724e5);
 -- some random tests
 --dg-differs: the result
 --dg select log(1.234567e-89);
---dg-differs: the result
---dg select log(3.4634998359873254962349856073435545);
+select log(3.4634998359873254962349856073435545);
 select log(9.999999999999999999);
 select log(10.00000000000000000);
 select log(10.00000000000000001);
@@ -2249,7 +2242,7 @@ INSERT INTO num_variance VALUES (0);
 
 -- check that parallel execution produces the same result
 BEGIN;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE num_variance SET (parallel_workers = 4);
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET LOCAL parallel_setup_cost = 0;
@@ -2268,7 +2261,7 @@ DELETE FROM num_variance;
 
 -- check that parallel execution produces the same result
 BEGIN;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE num_variance SET (parallel_workers = 4);
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET LOCAL parallel_setup_cost = 0;

@@ -102,28 +102,28 @@ CREATE TABLE test_replica_identity_othertable (id serial primary key);
 --dg ALTER TABLE test_replica_identity REPLICA IDENTITY NOTHING;
 --dg-cascade
 --dg SELECT relreplident FROM pg_class WHERE oid = 'test_replica_identity'::regclass;
+--dg-cascade
+--dg \d+ test_replica_identity
 ---
 -- Test that ALTER TABLE rewrite preserves nondefault replica identity
 ---
 -- constraint variant
 CREATE TABLE test_replica_identity2 (id int UNIQUE NOT NULL);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE test_replica_identity2 REPLICA IDENTITY USING INDEX test_replica_identity2_id_key;
 --dg-cascade
 --dg \d test_replica_identity2
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE test_replica_identity2 ALTER COLUMN id TYPE bigint;
+ALTER TABLE test_replica_identity2 ALTER COLUMN id TYPE bigint;
 --dg-cascade
 --dg \d test_replica_identity2
 -- straight index variant
 CREATE TABLE test_replica_identity3 (id int NOT NULL);
 CREATE UNIQUE INDEX test_replica_identity3_id_key ON test_replica_identity3 (id);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE test_replica_identity3 REPLICA IDENTITY USING INDEX test_replica_identity3_id_key;
 --dg-cascade
 --dg \d test_replica_identity3
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE test_replica_identity3 ALTER COLUMN id TYPE bigint;
+ALTER TABLE test_replica_identity3 ALTER COLUMN id TYPE bigint;
 --dg-cascade
 --dg \d test_replica_identity3
 -- ALTER TABLE DROP NOT NULL is not allowed for columns part of an index
@@ -131,9 +131,9 @@ CREATE UNIQUE INDEX test_replica_identity3_id_key ON test_replica_identity3 (id)
 --dg-cascade
 --dg ALTER TABLE test_replica_identity3 ALTER COLUMN id DROP NOT NULL;
 -- but it's OK when the identity is FULL
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE test_replica_identity3 REPLICA IDENTITY FULL;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE test_replica_identity3 ALTER COLUMN id DROP NOT NULL;
 --
 -- Test that replica identity can be set on an index that's not yet valid.
@@ -165,15 +165,34 @@ ALTER TABLE ONLY test_replica_identity4_1
 CREATE TABLE test_replica_identity5 (a int not null, b int, c int,
 	PRIMARY KEY (b, c));
 CREATE UNIQUE INDEX test_replica_identity5_a_b_key ON test_replica_identity5 (a, b);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE test_replica_identity5 REPLICA IDENTITY USING INDEX test_replica_identity5_a_b_key;
 ALTER TABLE test_replica_identity5 DROP CONSTRAINT test_replica_identity5_pkey;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE test_replica_identity5 ALTER b SET NOT NULL;
 ALTER TABLE test_replica_identity5 DROP CONSTRAINT test_replica_identity5_pkey;
 ERROR:  constraint "test_replica_identity5_pkey" of relation "test_replica_identity5" does not exist
 --dg-cascade
 --dg ALTER TABLE test_replica_identity5 ALTER b DROP NOT NULL;
+-- An invalid (NOT VALID) not-null constraint sets attnotnull but does not
+-- prove the column null-free, so the index must not be accepted as replica
+-- identity until the constraint is validated.
+CREATE TABLE test_replica_identity6 (id int);
+INSERT INTO test_replica_identity6 VALUES (1), (NULL);
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg ALTER TABLE test_replica_identity6 ADD CONSTRAINT id_nn NOT NULL id NOT VALID;
+CREATE UNIQUE INDEX test_replica_identity6_idx ON test_replica_identity6 (id);
+-- should fail
+--dg-cascade
+--dg ALTER TABLE test_replica_identity6 REPLICA IDENTITY USING INDEX test_replica_identity6_idx;
+-- after removing offending row and validating, it should succeed
+DELETE FROM test_replica_identity6 WHERE id IS NULL;
+--dg-cascade
+--dg ALTER TABLE test_replica_identity6 VALIDATE CONSTRAINT id_nn;
+--dg-cascade
+--dg ALTER TABLE test_replica_identity6 REPLICA IDENTITY USING INDEX test_replica_identity6_idx;
+--dg-cascade
+--dg SELECT relreplident FROM pg_class WHERE oid = 'test_replica_identity6'::regclass;
 --dg-cascade
 --dg DROP TABLE test_replica_identity;
 DROP TABLE test_replica_identity2;
@@ -181,6 +200,7 @@ DROP TABLE test_replica_identity3;
 --dg-cascade
 --dg DROP TABLE test_replica_identity4;
 DROP TABLE test_replica_identity5;
+DROP TABLE test_replica_identity6;
 DROP TABLE test_replica_identity_othertable;
 --dg-cascade
 --dg DROP TABLE test_replica_identity_t3;

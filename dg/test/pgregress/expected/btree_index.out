@@ -524,16 +524,13 @@ reset enable_bitmapscan;
 --dg select * from btree_bpchar where f1::bpchar like 'foo%';
 --dg-cascade
 --dg select * from btree_bpchar where f1::bpchar like 'foo%';
--- get test coverage for "single value" deduplication strategy:
---dg-cascade
---dg insert into btree_bpchar select 'foo' from generate_series(1,1500);
 --
 -- Perform unique checking, with and without the use of deduplication
 --
 CREATE TABLE dedup_unique_test_table (a int) WITH (autovacuum_enabled=false);
---dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
+--dg-skip: storage parameter "?" is not supported
 --dg CREATE UNIQUE INDEX dedup_unique ON dedup_unique_test_table (a) WITH (deduplicate_items=on);
---dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
+--dg-skip: storage parameter "?" is not supported
 --dg CREATE UNIQUE INDEX plain_unique ON dedup_unique_test_table (a) WITH (deduplicate_items=off);
 -- Generate enough garbage tuples in index to ensure that even the unique index
 -- with deduplication enabled has to check multiple leaf pages during unique
@@ -567,9 +564,9 @@ INSERT INTO dedup_unique_test_table SELECT i FROM generate_series(0,450) i;
 -- truncation would otherwise truncate tuples on internal pages, leaving us
 -- with a short tree.
 create table btree_tall_tbl(id int4, t text);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table btree_tall_tbl alter COLUMN t set storage plain;
---dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
+--dg-skip: storage parameter "?" is not supported
 --dg create index btree_tall_idx on btree_tall_tbl (t, id) with (fillfactor = 10);
 insert into btree_tall_tbl select g, repeat('x', 250)
 from generate_series(1, 130) g;

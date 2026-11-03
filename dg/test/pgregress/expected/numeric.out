@@ -2479,16 +2479,24 @@ select 3.789 ^ 21.0000000000000000;
 
 --dg-differs: the result
 --dg select 3.789 ^ 35.0000000000000000;
---dg-differs: the result
---dg select 1.2 ^ 345;
+select 1.2 ^ 345;
+            ?column?            
+--------------------------------
+ 2077446682327378559843444695.6
+(1 row)
+
 select 0.12 ^ (-20);
         ?column?        
 ------------------------
  2608405330458882702.55
 (1 row)
 
---dg-differs: the result
---dg select 1.000000000123 ^ (-2147483648);
+select 1.000000000123 ^ (-2147483648);
+      ?column?      
+--------------------
+ 0.7678656556403084
+(1 row)
+
 select coalesce(nullif(0.9999999999 ^ 23300000000000, 0), 0) as rounds_to_zero;
  rounds_to_zero 
 ----------------
@@ -2504,8 +2512,12 @@ select 0.12 ^ (-25);
  104825960103961013959336.50
 (1 row)
 
---dg-differs: the result
---dg select 0.5678 ^ (-85);
+select 0.5678 ^ (-85);
+          ?column?          
+----------------------------
+ 782333637740774446257.7719
+(1 row)
+
 select coalesce(nullif(0.9999999999 ^ 70000000000000, 0), 0) as underflows;
  underflows 
 ------------
@@ -2698,8 +2710,12 @@ select exp(32.999);
  214429043492155.053
 (1 row)
 
---dg-differs: the result
---dg select exp(-32.999);
+select exp(-32.999);
+               exp                
+----------------------------------
+ 0.000000000000004663547361468248
+(1 row)
+
 --dg-skip: value overflows numeric format
 --dg select exp(123.456);
 --dg-differs: the result
@@ -2815,10 +2831,18 @@ select ln(0.0456789);
 
 --dg-differs: the result
 --dg select ln(0.349873948359354029493948309745709580730482050975);
---dg-differs: the result
---dg select ln(0.99949452);
---dg-differs: the result
---dg select ln(1.00049687395);
+select ln(0.99949452);
+           ln            
+-------------------------
+ -0.00050560779808326467
+(1 row)
+
+select ln(1.00049687395);
+           ln           
+------------------------
+ 0.00049675054901370394
+(1 row)
+
 select ln(1234.567890123456789);
          ln         
 --------------------
@@ -2844,8 +2868,12 @@ select ln(5.80397490724e5);
 -- some random tests
 --dg-differs: the result
 --dg select log(1.234567e-89);
---dg-differs: the result
---dg select log(3.4634998359873254962349856073435545);
+select log(3.4634998359873254962349856073435545);
+                 log                  
+--------------------------------------
+ 0.5395151714070134409152404011959981
+(1 row)
+
 select log(9.999999999999999999);
          log          
 ----------------------
@@ -3098,7 +3126,7 @@ INSERT INTO num_variance VALUES (0);
 --dg SELECT trim_scale(variance(a) * 1e1000) FROM num_variance;
 -- check that parallel execution produces the same result
 BEGIN;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE num_variance SET (parallel_workers = 4);
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET LOCAL parallel_setup_cost = 0;
@@ -3115,7 +3143,7 @@ DELETE FROM num_variance;
 --dg SELECT variance(a) FROM num_variance;
 -- check that parallel execution produces the same result
 BEGIN;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE num_variance SET (parallel_workers = 4);
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET LOCAL parallel_setup_cost = 0;

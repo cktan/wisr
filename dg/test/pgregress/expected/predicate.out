@@ -237,7 +237,7 @@ DROP TABLE pred_tab;
 CREATE TABLE pred_parent (a int);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE pred_child () INHERITS (pred_parent);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ONLY pred_parent ALTER a SET NOT NULL;
 -- Ensure that the scan on pred_child contains the IS NOT NULL qual.
 --dg-cascade
@@ -247,7 +247,7 @@ CREATE TABLE pred_parent (a int);
 --dg-cascade
 --dg EXPLAIN (COSTS OFF)
 --dg SELECT * FROM pred_parent WHERE a IS NULL;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE pred_parent ALTER a DROP NOT NULL;
 --dg-cascade
 --dg ALTER TABLE pred_child ALTER a SET NOT NULL;

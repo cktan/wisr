@@ -83,8 +83,8 @@ Run on PostgreSQL 18.6:
 - **`USING INDEX`**: refused, as now. sm would have to mark an
   existing index a constraint's, or re-key by it.
 - **The key-column ALTERs** (`ALTER COLUMN TYPE`, a collation
-  change) that §11 step 3 names: ALTER COLUMN TYPE is refused
-  for every column, a feature of its own (`UNSUPPORTED.md` §3).
+  change) that §11 step 3 names: built later, as ALTER COLUMN
+  TYPE of any column (`ALTERTYPE.md`).
 - **DEFERRABLE**: refused, as for CREATE TABLE.
 
 ## 4. The cases

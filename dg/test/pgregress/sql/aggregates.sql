@@ -552,7 +552,7 @@ create unique index t2_z_uidx on t2(z);
 explain (costs off) select y,z from t2 group by y,z;
 
 -- Make the column NOT NULL and ensure we remove the redundant column
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table t2 alter column z set not null;
 --dg-cascade
 --dg explain (costs off) select y,z from t2 group by y,z;
@@ -577,7 +577,7 @@ explain (costs off) select y,z from t2 group by y,z;
 -- NULL constraint on the indexed columns.  Ensure the redundant columns are
 -- removed from the GROUP BY for such a table.
 drop index t2_z_uidx;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table t2 alter column z drop not null;
 --dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg create unique index t2_z_uidx on t2(z) nulls not distinct;
