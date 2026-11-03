@@ -11080,3 +11080,93 @@ each entry a key of RocksDB's. `WITH (tree = on)` is gone
   that print one by server.
 - **Not changed**: sq's corpus test fails on 29 scripts, on
   `main` as here: the same 29.
+
+## Step 376: what is left of the 16-client write gap, profiled
+
+`../sm/NEXT.md` §1 item 5: after step 374, `ins` and `fk` at 16
+clients run at about 0.7 of PostgreSQL's tps. This step measures
+where the rest goes. It changes no code.
+
+- **Method**: `digres-release` at `471c870a` and PostgreSQL
+  18.6, the setup of `../bench.old/rowlocks.sh`, `ins` and `fk`
+  at 16 clients, 10 s a run. tps swings by up to half from run
+  to run on this machine (`ins` on digres: 7,726 then 3,078), so
+  the step compares costs a transaction, not tps. The kernel
+  allows user-space perf only (`perf_event_paranoid` 2), so:
+  - `perf stat -p` on the server: instructions, cycles and CPU
+    time;
+  - a preloaded library that counts each `fsync` and
+    `fdatasync` and its time;
+  - gdb stack samples of every thread, 20 a run.
+- **Neither system is CPU-bound**: each uses less than 2 of 12
+  CPUs. Both wait for WAL syncs.
+
+  | | instructions a txn | CPU a txn | CPUs busy |
+  | --- | --- | --- | --- |
+  | PostgreSQL `ins` | 34.6k | 113 µs | 1.2 |
+  | digres `ins` | 65.8k | 235 µs | 1.8 |
+  | PostgreSQL `fk` | 74k | 129 µs | 1.3 |
+  | digres `fk` | 151k | 254 µs | 1.9 |
+
+- **The syncs**: both systems sync at about the same rate. The
+  WAL sync of digres is idle for 27% of the time; the sync of
+  PostgreSQL almost never is. So fewer commits wait for each
+  sync of digres, and the group is smaller.
+
+  | | syncs/s | commits a sync | mean sync | sync busy |
+  | --- | --- | --- | --- | --- |
+  | PostgreSQL `ins` | 1,255 | 7.6 | 768 µs | about 96% |
+  | digres `ins` | 1,220 | 6.3 | 595 µs | about 73% |
+  | PostgreSQL `fk` | 1,426 | 7.6 | 687 µs | about 98% |
+  | digres `fk` | 1,231 | 6.2 | 593 µs | about 73% |
+
+- **Where a session of digres waits** (`ins`, 320 samples of
+  the 16 session threads):
+
+  | Share | State |
+  | --- | --- |
+  | 66.9% | waits for a sync (`db_sync_wal()`, `sync_cv`) |
+  | 11.3% | waits for an older commit (`db_commit_wait()`) |
+  | 9.7% | RocksDB's write queue, the version or the record |
+  | 4.4% | leads a sync, in `fdatasync` |
+  | 3.4% | reads from or writes to the client |
+  | 4.3% | other: runs, or takes a mutex |
+
+- **Finding 1, the handoff between syncs**: 6 of the 20
+  samples have no thread in `fdatasync`, as the 27% idle says.
+  In each, 14 or 15 sessions wait in `sync_cv`, and 1 to 3 are
+  in `db_sync_wal()` at a futex: every session needs a sync,
+  and none leads one. The leader that ends a sync calls
+  `notify_all()`. All the waiters wake and take `sync_mu` one
+  at a time, and only then does one of them lead the next sync.
+  On this machine each wake costs tens of µs.
+- **Finding 2, publish order**: `visible_ts` moves in
+  `commit_ts` order (`db_commit_done()`), but the WAL holds the
+  records in the order of their writes. A commit whose record
+  missed a sync that covers a newer `commit_ts` holds the newer
+  commit in `db_commit_wait()` for one more sync. PostgreSQL has
+  no such wait: a snapshot there is a set of xids, not a
+  timestamp.
+- **Finding 3, the CPU of the write path**: digres takes about
+  95k cycles a transaction, PostgreSQL 43k. In digres,
+  `DBImpl::WriteImpl` is 27% of the cycles: the version and the
+  commit record are each a trip through RocksDB's write queue.
+  `WriteThread::AwaitState` alone is 8.3%: a writer spins while
+  it waits for its turn (`enable_write_thread_adaptive_yield`).
+  `GetCachedPlan` is 7% and `smstore_lock_relation` 6.3%. In
+  PostgreSQL, `XLogInsert` is 3%. At 16 clients this CPU adds
+  to each transaction's time but does not limit the
+  throughput.
+- **What could close the gap**, not designed, to weigh in
+  order:
+  1. A handoff without a herd: the leader that ends a sync
+     wakes one waiter to lead the next one, or leads it itself
+     when commits wait; or a sync thread of its own that syncs
+     while any commit waits. If the sync is busy as
+     PostgreSQL's is, about 1/0.73 more syncs, or larger
+     groups: near PostgreSQL's tps.
+  2. Records in `commit_ts` order in the WAL, or a publish
+     that does not wait for older commits in other syncs.
+     This changes `COMMITVISIBLE.md`'s design; finding 1 first.
+  3. Fewer trips through the write queue (item 5's second
+     option), for the CPU and the latency at 1 client.

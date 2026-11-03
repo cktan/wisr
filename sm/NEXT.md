@@ -370,8 +370,17 @@ and so are the catalog tables psql reads
      waiting, outside the queue, so no version write waits for a
      sync. At 16 clients `ins` 3,412 tps to 6,591 and `fk` 3,190
      to 6,545, 0.67 and 0.62 of PostgreSQL's 9,862 and 10,637; at
-     1 client 0.96 and 0.94. What is left of the gap at 16
-     clients is not yet profiled.
+     1 client 0.96 and 0.94.
+   - **What is left at 16 clients, profiled**
+     (`../dg/WORKNOTE.md` step 376): neither system is
+     CPU-bound. The WAL sync of digres is idle 27% of the time,
+     PostgreSQL's almost never, so its groups are smaller (6.3
+     commits a sync, against 7.6). The cause is the handoff
+     between syncs: `notify_all()` wakes every waiter before
+     one leads the next sync. Next is a handoff that wakes
+     one leader, or a sync thread. A commit also waits 11% of
+     its time in `db_commit_wait()` for an older commit that
+     missed its sync.
 6. **An lsm index's entry as a key alone, with no value**, as
    MyRocks keeps a secondary index: the key is the index's id,
    its columns and the row's primary key, and the value is
