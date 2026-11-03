@@ -625,16 +625,20 @@ int alter_column_type(session_t *session, uint64_t oid, std::string_view name,
   if (0 != c.identity) {
     return invalid("alter column type: " + c.name + " is an identity column");
   }
-  // text and varchar store the same bytes and the same key
-  // (../sm2/TYPE.md §3).
-  bool text_pair = (c.type_code == sm2::type_text.code ||
-                    c.type_code == sm2::type_varchar.code) &&
-                   (to.type_code == sm2::type_text.code ||
-                    to.type_code == sm2::type_varchar.code);
-  if (!conv && c.type_code != to.type_code && !text_pair) {
+  // Without a converter every stored value must stay a value of the
+  // new type: the same type and typmod; or text and varchar, which
+  // store the same bytes and the same key (../sm2/TYPE.md §3), the
+  // new one no narrower. A typmod of -1 is no limit.
+  auto text_like = [](uint8_t code) {
+    return code == sm2::type_text.code || code == sm2::type_varchar.code;
+  };
+  bool same = c.type_code == to.type_code && c.typmod == to.typmod;
+  bool wider = text_like(c.type_code) && text_like(to.type_code) &&
+               (to.typmod < 0 || (c.typmod >= 0 && to.typmod >= c.typmod));
+  if (!conv && !same && !wider) {
     return invalid("alter column type: " + c.name +
-                   "'s values change with its type, and no converter was "
-                   "given");
+                   "'s values may change with its type, and no converter "
+                   "was given");
   }
   c.type_code = to.type_code;
   c.typmod = to.typmod;

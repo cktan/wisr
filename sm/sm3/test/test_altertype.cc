@@ -356,17 +356,21 @@ TEST_CASE("a converter's failure, or a null in a NOT NULL column, fails it") {
 
 TEST_CASE("a change whose values stay changes the record alone") {
   // Verify the change without a rewrite (ALTERTYPE.md §4).
-  // 1. b goes from text to varchar(10) with no converter: the store
-  //    stays, b is varchar, and the rows read as before.
-  // 2. c from int4 to int8 with no converter is SM_ERR_INVALID.
+  // 1. b goes from text to varchar with no limit, with no converter:
+  //    the store stays, b is varchar, and the rows read as before.
+  // 2. With no converter, SM_ERR_INVALID: c from int4 to int8; b to
+  //    varchar(10), which a value may be longer than.
   // 3. An empty table's column changes with a converter that is
   //    never called, in its store.
+  // 4. With no converter, on e's columns: varchar(10) to varchar(20)
+  //    is taken; to varchar(5), and a decimal's scale from 2 to 4,
+  //    are SM_ERR_INVALID.
   alt_t f;
   f.put(1, "x", 0);
   uint64_t store = f.store();
   f.begin();
   REQUIRE_MESSAGE(sm3::alter_column_type(f.s, f.t, "b",
-                                         {sm2::type_varchar.code, 14},
+                                         {sm2::type_varchar.code, -1},
                                          nullptr) == 0,
                   sm1::errmsg());
   REQUIRE(sm3::commit(f.s) == 0);
@@ -377,9 +381,17 @@ TEST_CASE("a change whose values stay changes the record alone") {
   CHECK(sm3::alter_column_type(f.s, f.t, "c", {sm2::type_int8.code, -1},
                                nullptr) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm3::alter_column_type(f.s, f.t, "b", {sm2::type_varchar.code, 14},
+                               nullptr) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   sm3::abort(f.s);
 
-  std::vector<sm3::column_spec_t> cols = {{"k", sm2::type_int4.code, -1, true}};
+  // A decimal's typmod: (precision << 16 | scale) + 4, as PostgreSQL's.
+  auto dec = [](int p, int s) { return ((p << 16) | s) + 4; };
+  std::vector<sm3::column_spec_t> cols = {
+      {"k", sm2::type_int4.code, -1, true},
+      {"v", sm2::type_varchar.code, 14, false},
+      {"d", sm2::type_decimal64.code, dec(10, 2), false}};
   uint64_t e = 0;
   f.begin();
   REQUIRE(sm3::create_table(f.s, sm3::nsp_public, "e", cols, e) == 0);
@@ -397,6 +409,19 @@ TEST_CASE("a change whose values stay changes the record alone") {
   CHECK(calls == 0);
   CHECK(sm3::cat_get_table(f.cat, e)->storeid == e_store);
   CHECK(sm3::cat_get_table(f.cat, e)->columns[0].type == &sm2::type_int8);
+
+  f.begin();
+  CHECK_MESSAGE(sm3::alter_column_type(
+                    f.s, e, "v", {sm2::type_varchar.code, 24}, nullptr) == 0,
+                sm1::errmsg());
+  CHECK(sm3::alter_column_type(f.s, e, "v", {sm2::type_varchar.code, 9},
+                               nullptr) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm3::alter_column_type(f.s, e, "d",
+                               {sm2::type_decimal64.code, dec(10, 4)},
+                               nullptr) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  sm3::abort(f.s);
 }
 
 TEST_CASE("a column something would read stale keeps its type") {

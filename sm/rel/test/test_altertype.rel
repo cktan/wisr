@@ -11,8 +11,9 @@
 # 3. Inside a statement, as digres runs it, b goes back to text.
 # 4. A conversion that fails, a text that is no number, fails the
 #    call; the abort leaves the column as it was.
-# 5. b goes to varchar(10) with :keep, the record alone; int8 with
-#    :keep is ERR_INVALID.
+# 5. b goes to varchar with no limit with :keep, the record alone;
+#    varchar(10) or int8 with :keep, which values may not fit, is
+#    ERR_INVALID.
 # 6. A column a foreign key names is ERR_INUSE; one not there
 #    panics.
 
@@ -71,10 +72,11 @@
 
 # 5. The record alone.
 (begin :rc)
-(alter-column-type t b :varchar 10 :keep)
+(alter-column-type t b :varchar :keep)
 (commit)
 (begin :rc)
 (assert-eq (read t ["3"]) ["3" "three"])
+(assert-err :err-invalid (alter-column-type t b :varchar 10 :keep))
 (assert-err :err-invalid (alter-column-type t b :int8 :keep))
 (abort)
 

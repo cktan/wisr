@@ -7,7 +7,8 @@
 # 2. The primary key, int4 to text and back: the rows in each type's
 #    order, the key found, a duplicate refused.
 # 3. The change without a rewrite: varchar to a longer varchar and to
-#    text; a shorter one, too short for a value, refused.
+#    text; a shorter one, too short for a value, refused; a numeric of
+#    more precision, which digres converts and PostgreSQL does not.
 # 4. A default and a serial's, cast to the new type.
 # 5. Refused as PostgreSQL refuses: an error in USING, a duplicate key
 #    after the cast, a null in a NOT NULL column, a column a view reads,
@@ -118,6 +119,25 @@ alter table v alter column s type varchar(20)
 
 statement error value too long for type character varying\(2\)
 alter table v alter column s type varchar(2)
+
+statement ok
+create table nm (k int4 primary key, n numeric(10,2))
+
+statement ok
+insert into nm values (1, 12345678.91), (2, 0.5)
+
+statement ok
+alter table nm alter column n type numeric(12,2)
+
+statement ok
+insert into nm values (3, 1234567890.12)
+
+query IR
+select k, n from nm order by k
+----
+1	12345678.910
+2	0.500
+3	1234567890.120
 
 # 4. Defaults.
 statement ok

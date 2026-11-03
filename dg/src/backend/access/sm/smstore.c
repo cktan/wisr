@@ -7001,14 +7001,17 @@ static void alter_column_type(Oid relid, const char *relname,
     to.on_update_expr = new_update.c_str();
   }
   /*
-   * No value changes, and sm stores them as they are: the same type, or
-   * text and varchar (../../../../sm/sm2/TYPE.md section 3).
+   * No value changes, and sm keeps each as a value of the new type, as it
+   * takes a change without a converter: the same type and typmod, or text
+   * and varchar no narrower (../../../../sm/sm2/TYPE.md section 3).  A
+   * wider numeric, which PostgreSQL does not rewrite, is converted.
    */
-  uint8_t was = col.type_code;
   bool texts = (TEXTOID == att->atttypid || VARCHAROID == att->atttypid) &&
                (TEXTOID == typid || VARCHAROID == typid);
-  bool keep =
-      !transform_changes(transform, attnum) && (was == to.type_code || texts);
+  bool wider = texts && (typmod < 0 || (col.typmod >= 0 && typmod >= col.typmod));
+  bool keep = !transform_changes(transform, attnum) &&
+              ((col.type_code == to.type_code && col.typmod == typmod) ||
+               wider);
   alter_conv_t conv = {};
 
   if (!keep) {

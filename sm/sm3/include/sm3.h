@@ -853,9 +853,9 @@ using column_conv_fn = std::function<int(std::span<const sm2::datum_t> values,
  * column with SM_ERR_NOTNULL; conv's failure is the call's.
  *
  * Without conv, only the column's record changes: taken only when
- * every stored value and key stays as it is, the same type code,
- * or text and varchar; else SM_ERR_INVALID. The host decides that
- * the values need no conversion.
+ * every stored value and key stays a value of the new type, the
+ * same type and typmod, or text and varchar with the new one no
+ * narrower; else SM_ERR_INVALID.
  *
  * Refused with SM_ERR_INUSE, changing nothing: a column an
  * expression or a partial index reads, one a foreign key of the
