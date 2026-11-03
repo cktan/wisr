@@ -6780,16 +6780,23 @@ static int alter_conv(void *ctx, const sm_datum_t *values, const bool *isnull,
   MemoryContext old = CurrentMemoryContext;
   int rc = 0;
 
+  /*
+   * sm's row has a value for each place of the table's schema, dropped
+   * columns among them, as the descriptor has: a row of another width
+   * would leave the slot's other columns unset.
+   */
+  if (n != (size_t)c->slot->tts_tupleDescriptor->natts)
+    return sm_seterr(SM_ERR_INVALID, "ALTER COLUMN TYPE: sm's row is not "
+                                     "the width of the table's descriptor");
   PG_TRY();
   {
     ExprContext *econtext = GetPerTupleExprContext(c->estate);
     TupleTableSlot *slot = c->slot;
-    size_t natts = Min(n, (size_t)slot->tts_tupleDescriptor->natts);
 
     /* sm's datums are PostgreSQL's, bit for bit (../DECIMAL.md). */
     ExecClearTuple(slot);
-    memcpy(slot->tts_values, values, natts * sizeof(Datum));
-    memcpy(slot->tts_isnull, isnull, natts * sizeof(bool));
+    memcpy(slot->tts_values, values, n * sizeof(Datum));
+    memcpy(slot->tts_isnull, isnull, n * sizeof(bool));
     ExecStoreVirtualTuple(slot);
     econtext->ecxt_scantuple = slot;
     Datum value = ExecEvalExprSwitchContext(c->expr, econtext, out_isnull);

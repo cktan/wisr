@@ -15,6 +15,7 @@
 #    an open cursor.
 # 6. Rolled back, whole and to a savepoint: the column as it was.
 # 7. Two in one statement; a temporary table; a value out of line; a
+#    table with a dropped column, USING reading another column; a
 #    numeric.
 # 8. Refused by digres alone: an expression or a partial index, a foreign
 #    key on either side, an identity column, COLLATE, an interval index
@@ -263,6 +264,7 @@ select pg_typeof(b)::text from t where a = 1
 bigint
 
 # 7. Two in one statement; a temporary table; a value out of line; a
+#    table with a dropped column, USING reading another column; a
 #    numeric.
 statement ok
 alter table v alter column s type varchar(30), alter column k type int8
@@ -301,6 +303,24 @@ select k, length(body) from big order by k
 ----
 1	100000
 2	5
+
+statement ok
+create table dc (k int4 primary key, gone text, v text)
+
+statement ok
+insert into dc values (1, 'x', '7'), (2, 'y', '8')
+
+statement ok
+alter table dc drop column gone
+
+statement ok
+alter table dc alter column v type int4 using v::int4 + k
+
+query II
+select k, v from dc order by k
+----
+1	8
+2	10
 
 statement ok
 alter table t alter column b type numeric(6,1)
