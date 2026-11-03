@@ -822,6 +822,13 @@ int rel_load(rel_t* rel, sm1::loader_t* loader, size_t stream,
 int rel_release(rel_t* rel);
 
 /*
+ * Forget the datums the rel's writes with hold kept, erasing none: the
+ * write failed past the row, and its caller rolls back, which makes the
+ * old rows' datums live again.
+ */
+void rel_forget(rel_t* rel);
+
+/*
  * TOAST (SM2_DESIGN.md §4.2). A rel opened with a toast_seq keeps
  * a tuple to toast_threshold bytes where it can: the row's longest
  * variable-width datums are written to the store's TOAST relid,

@@ -927,6 +927,14 @@ static int update_row(table_t *table, uint64_t id, std::string_view key,
                            true, &at)) {
     return row_failed(table);
   }
+  // What the old row held out of line is forgotten, not erased, if a
+  // step below fails: the caller rolls back, and the old row is live.
+  bool released = false;
+  defer {
+    if (!released) {
+      sm2::rel_forget(table->rel);
+    }
+  };
   const bool moved = at != key;
   const table_def_t &def = *table->def;
   deformed_t before(def.schema.size());
@@ -980,6 +988,7 @@ static int update_row(table_t *table, uint64_t id, std::string_view key,
     }
   }
   // The indexes are fixed: what the old row held out of line goes.
+  released = true;
   if (sm2::rel_release(table->rel) != 0) {
     return -1;
   }
@@ -1044,6 +1053,13 @@ static int delete_row(table_t *table, std::string_view key, pin_ref_t *ref,
   if (0 != sm2::rel_delete(table->rel, key, p->raw, image, true)) {
     return -1;
   }
+  // As an update's: forgotten, not erased, if a step below fails.
+  bool released = false;
+  defer {
+    if (!released) {
+      sm2::rel_forget(table->rel);
+    }
+  };
   const table_def_t &def = *table->def;
   deformed_t before(def.schema.size());
   if (!table->indexes.empty() &&
@@ -1064,6 +1080,7 @@ static int delete_row(table_t *table, std::string_view key, pin_ref_t *ref,
     }
   }
   // The indexes are fixed: what the row held out of line goes.
+  released = true;
   if (sm2::rel_release(table->rel) != 0) {
     return -1;
   }

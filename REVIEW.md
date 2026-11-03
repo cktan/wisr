@@ -7,7 +7,7 @@ history keeps the closed reviews (`REVIEW.md` up to
 
 1. **`aa/`**: open; findings 1 to 7 fixed; the rule findings not
    yet checked.
-2. **`sm/`**: open; Highs 1 to 4 fixed; the rest being checked.
+2. **`sm/`**: open; Highs 1 to 5 fixed; the rest being checked.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
 # Review: `aa/` (Authentication and Authorization)
@@ -84,7 +84,10 @@ High 3, a committed version copied unstamped (its part 3,
 filter_old()'s unlinked versions, holds: only readers of the old
 epoch reach them), and High 4, a rollback keeping the read pin (a
 Low: seq_hwm hides the undone versions, so it kept resources, not
-rows), are fixed; the others are being checked.
+rows), and High 5, TOAST pointers held past a failed write (wider
+than written: an index's refusal after the row write, rolled back
+to a savepoint, let the next write erase the live row's chunks),
+are fixed; the others are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -98,30 +101,13 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | --- | --- | --- | --- |
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Medium, 3 Low |
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 4 Medium, 3 Low |
-| `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 1 High, 2 Medium, 3 Low |
+| `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 2 Medium, 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 3 High, 3 Medium, 5 Low |
 | `include/` & `src/` | FAIL (`std::optional` in `sm_stats.h`) | PASS | 1 High, 2 Medium, 3 Low |
 
 ---
 
 ### 2. High-Severity Findings
-
-#### [HIGH] 5. `sm2`: `rel->held` retains uncommitted TOAST pointers when `update_row(..., hold=true)` fails after `settle_old`
-
-- **Location:** `sm/sm2/src/rel/rel.cc:328-336`,
-  `sm/sm2/src/rel/rel.cc:531-536`
-- **Issue:** When `hold == true`, `settle_old()` appends the old
-  row's TOAST pointers into `rel->held` before `update_row()`
-  calls `write_moved(rel, row)` at line 534 (and before later
-  iterations of `settle_old`'s validation loop finish). If
-  `write_moved` or a later validation fails, `update_row` returns
-  `-1` while the old row's TOAST pointers remain in `rel->held`.
-  If the caller rolls back to a savepoint and later calls
-  `rel_release(rel)`, `toast_erase` deletes TOAST chunks still
-  referenced by the live row.
-- **Fix:** Run `write_moved(rel, row)` before `settle_old()`, and
-  validate all pointers in `settle_old()` before appending to
-  `rel->held`.
 
 #### [HIGH] 6. `sm3`: `tbl_insert_arbiter` inserts duplicate entries into unique B+tree arbiter indexes
 
