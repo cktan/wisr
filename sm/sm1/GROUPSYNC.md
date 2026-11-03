@@ -65,18 +65,31 @@ loses committed data. A changes only the commit.
   2. Lock `sync_mu`.
   3. If `synced_seq` is at or past the target, unlock and
      return: another commit's sync covered this record.
-  4. If another commit is syncing, wait on `sync_cv`, and go
-     to step 3.
-  5. Become the leader: read `GetLatestSequenceNumber()` again,
-     as `upto`, and unlock. Every write at or below `upto` is
-     in the WAL file now.
-  6. Call `FlushWAL(true)`, outside the write queue. Under
+  4. If another commit leads a sync, join the line of waiting
+     commits, unlock, and sleep on a semaphore of its own. Woken
+     as covered, return. Woken as the next leader, go to step
+     6.
+  5. Become the leader, and unlock.
+  6. Read `GetLatestSequenceNumber()` again, as `upto`. Every
+     write at or below `upto` is in the WAL file now.
+  7. Call `FlushWAL(true)`, outside the write queue. Under
      `manual_wal_flush`, it first writes RocksDB's WAL buffer
      to the file, which `SyncWAL()` alone does not. Then it
      calls `SyncWAL()`. Writers go on meanwhile: `SyncWAL()`
      syncs the files without flushing a buffer (`db_impl.cc`).
-  7. Lock `sync_mu`, set `synced_seq` to `upto`, and wake the
-     waiters on `sync_cv`.
+  8. Lock `sync_mu`, and set `synced_seq` to `upto`. Take the
+     commits at or below `upto` out of the line. Hand the next
+     sync to the oldest commit left, if any: `syncing` stays
+     set for it.
+  9. Unlock. Wake the next leader first, then the covered
+     commits.
+- **The handoff wakes one leader**, as PostgreSQL's
+  `LWLockRelease()` wakes each backend on a semaphore of its
+  own. A first version woke every waiter on one condition
+  variable. Each then took `sync_mu` in turn before one of them
+  led, and the WAL sync was idle 27% of the time
+  (`../../dg/WORKNOTE.md` steps 376 and 377). A woken commit
+  takes no lock.
 - **Then publish, as now**: `enter_cache()` takes the xid out
   of the active table, and `db_commit_done()` moves
   `visible_ts`. Until then every reader, the compaction filter
@@ -96,8 +109,9 @@ loses committed data. A changes only the commit.
 - **The wait is not cut short by an interrupt**, unlike every
   other wait in sm (`../CODE.md` §7). The record is written, so
   an interrupted commit has an unknown outcome, and only an
-  abort could settle it. The wait is bounded by one sync, which
-  finishes or aborts the process.
+  abort could settle it. The wait is bounded by two syncs:
+  the one that runs, and the next, which covers the record.
+  Each finishes or aborts the process.
 - **`durability_sync = false` skips the wait**, as it skips the
   sync now.
 - **`group_commit_us` stays unused**: a leader does not wait
@@ -150,6 +164,11 @@ loses committed data. A changes only the commit.
   - Fifteen commits waiting behind a stalled sync share one
     more sync. With a leader covering only its own record, they
     make more.
+  - The leader that ends a sync hands the next one to the
+    oldest commit in line, and the others stay in line. With
+    the newest commit handed the sync, the test fails; with
+    every commit released as covered, it and the test above
+    fail.
   - `durability_sync = 0` makes no sync.
 - **mvcc**: every scenario passes unchanged. A scenario cannot
   stall a sync, so none is added.

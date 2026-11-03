@@ -212,16 +212,23 @@ int commit_one(sm1::session_t *s, uint64_t store, const std::string &key) {
   return sm1::commit(s);
 }
 
-/* Wait up to 10 seconds for n commits to wait for a sync. */
+/* How many commits wait in line for a sync, read under sync_mu. */
+int sync_line_length(wisr::db_t *db) {
+  // Hold sync_mu to walk the line the commits keep under it.
+  std::lock_guard<std::mutex> guard(db->sync_mu);
+  int n = 0;
+  for (wisr::sync_waiter_t *w = db->sync_head; w; w = w->next) {
+    n++;
+  }
+  return n;
+}
+
+/* Wait up to 10 seconds for n commits to wait in line for a sync. */
 bool wait_for_waiters(wisr::db_t *db, int n) {
   auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
   while (std::chrono::steady_clock::now() < until) {
-    {
-      // Hold sync_mu to read the count the commits keep under it.
-      std::lock_guard<std::mutex> guard(db->sync_mu);
-      if (db->sync_waiters == n) {
-        return true;
-      }
+    if (sync_line_length(db) == n) {
+      return true;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
@@ -462,6 +469,86 @@ TEST_CASE("one sync serves the commits that wait while another runs") {
   let_go.dismiss();
   release.set_value();
   CHECK(a_rc.get() == 0);
+  for (std::future<int> &rc : rcs) {
+    CHECK(rc.get() == 0);
+  }
+  CHECK(calls == 2);
+  f.db()->test_before_sync = nullptr;
+  for (sm1::session_t *s : others) {
+    REQUIRE(sm1::closedb(s) == 0);
+  }
+}
+
+TEST_CASE("the next sync goes to the oldest commit waiting") {
+  // Verify the leader that ends a sync hands the next one to the
+  // oldest commit in line, and wakes no other (GROUPSYNC.md §3).
+  // 1. Session A commits "a"; its sync stalls.
+  // 2. Five sessions commit in turn, each in line before the next
+  //    starts.
+  // 3. Let A's sync go; the second sync stalls.
+  // 4. The first of the five leads it; the other four are still in
+  //    line.
+  // 5. Let it go: every commit returns, after two syncs in all.
+  sync_fixture_t f;
+  sm1::session_t *a = f.first();
+  std::vector<sm1::session_t *> others;
+  for (int i = 0; i < 5; i++) {
+    others.push_back(f.open());
+  }
+
+  // The futures come first, so that the guards run before they are
+  // destroyed.
+  std::future<int> a_rc;
+  std::vector<std::future<int>> rcs;
+  std::promise<void> entered1, entered2, release1, release2;
+  std::shared_future<void> released1 = release1.get_future().share();
+  std::shared_future<void> released2 = release2.get_future().share();
+  std::atomic<int> calls{0};
+  // Which of the five leads the second sync: its index, or -1.
+  std::atomic<int> second_leader{-1};
+  // Each commit's thread knows its index; A's is -1.
+  static thread_local int t_index = -1;
+  f.db()->test_before_sync = [&] {
+    int n = calls++;
+    if (n == 0) {
+      entered1.set_value();
+      released1.wait();
+    } else if (n == 1) {
+      second_leader = t_index;
+      entered2.set_value();
+      released2.wait();
+    }
+    return rocksdb::Status::OK();
+  };
+  // Let each stalled sync go on every way out of the test: a failed
+  // REQUIRE would otherwise hang in the destructor of an
+  // std::async future, which waits for its commit to return.
+  sm0::scope_guard_t let_go1([&] { release1.set_value(); });
+  sm0::scope_guard_t let_go2([&] { release2.set_value(); });
+
+  a_rc = std::async(std::launch::async,
+                    [&] { return commit_one(a, f.store(), "a"); });
+  REQUIRE(entered1.get_future().wait_for(std::chrono::seconds(10)) ==
+          std::future_status::ready);
+  for (size_t i = 0; i < others.size(); i++) {
+    rcs.push_back(std::async(std::launch::async, [&, i] {
+      t_index = (int)i;
+      return commit_one(others[i], f.store(), "k" + std::to_string(i));
+    }));
+    // In line before the next one starts, so the line is in order.
+    REQUIRE(wait_for_waiters(f.db(), (int)i + 1));
+  }
+
+  let_go1.dismiss();
+  release1.set_value();
+  REQUIRE(entered2.get_future().wait_for(std::chrono::seconds(10)) ==
+          std::future_status::ready);
+  CHECK(a_rc.get() == 0);
+  CHECK(second_leader == 0);
+  CHECK(sync_line_length(f.db()) == 4);
+
+  let_go2.dismiss();
+  release2.set_value();
   for (std::future<int> &rc : rcs) {
     CHECK(rc.get() == 0);
   }

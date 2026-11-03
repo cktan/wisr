@@ -11170,3 +11170,44 @@ where the rest goes. It changes no code.
      This changes `COMMITVISIBLE.md`'s design; finding 1 first.
   3. Fewer trips through the write queue (item 5's second
      option), for the CPU and the latency at 1 client.
+
+## Step 377: the next sync goes to one commit, not to a herd
+
+Step 376's first finding: the WAL sync of digres was idle 27%
+of the time, because the leader that ended a sync woke every
+waiting commit on one condition variable.
+
+- **sm1** (`db_sync_wal()`, `../sm/sm1/GROUPSYNC.md` §3): a
+  commit that finds a sync running joins a line, oldest first,
+  and sleeps on a semaphore of its own (`sync_waiter_t`). The
+  leader that ends a sync takes the commits it covered out of
+  the line, and hands the next sync to the oldest commit left:
+  `syncing` stays set for it. It wakes that commit first, then
+  the covered ones. A woken commit takes no lock. PostgreSQL's
+  `LWLockRelease()` wakes its backends the same way, each on a
+  semaphore of its own. `sync_waiters` is gone: a test walks
+  the line.
+- **Measured**: as step 376, 16 clients, 10 s a run, the
+  binary before and after alternated in 5 rounds, PostgreSQL 18
+  in rounds 3 to 5. The disk's sync time changed from round to
+  round, 570 µs to 1.4 ms, and tps followed it; the share of
+  time the WAL sync is busy did not:
+
+  | | sync busy | commits a sync | tps, syncs of about 580 µs |
+  | --- | --- | --- | --- |
+  | digres before | 72% to 78% | 6.2 to 6.5 | 7,666 to 7,859 |
+  | digres after | 90% to 95% | 5.7 to 5.9 | 8,935 to 9,093 |
+  | PostgreSQL | 96% to 100% | 7.4 to 7.6 | 10,461 to 10,580 |
+
+  With syncs of about 580 µs, digres went from about 0.74 of
+  PostgreSQL's tps to about 0.86, on `ins` and `fk` both.
+- **What is left**: a sync of digres covers fewer commits than
+  one of PostgreSQL. A session of digres cycles slower: twice
+  the CPU a transaction (step 376, finding 3), and the wait in
+  `db_commit_wait()` (finding 2).
+- **Tests**: sm1 `test/test_groupsync.cc`, a new case: the
+  leader that ends a stalled sync hands the next one to the
+  oldest of five commits in line, and the other four stay in
+  line. It fails with the newest commit handed the sync. With
+  every commit released as covered, it fails, and so does the
+  case of fifteen commits that share one sync.

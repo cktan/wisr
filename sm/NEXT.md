@@ -377,10 +377,14 @@ and so are the catalog tables psql reads
      PostgreSQL's almost never, so its groups are smaller (6.3
      commits a sync, against 7.6). The cause is the handoff
      between syncs: `notify_all()` wakes every waiter before
-     one leads the next sync. Next is a handoff that wakes
-     one leader, or a sync thread. A commit also waits 11% of
-     its time in `db_commit_wait()` for an older commit that
-     missed its sync.
+     one leads the next sync. A commit also waits 11% of its
+     time in `db_commit_wait()` for an older commit that missed
+     its sync.
+   - **The handoff wakes one leader**: built (step 377). The
+     sync is busy 90% to 95% of the time, and `ins` and `fk`
+     at 16 clients reach about 0.86 of PostgreSQL's tps. Left:
+     the wait in `db_commit_wait()`, and twice PostgreSQL's CPU
+     a transaction.
 6. **An lsm index's entry as a key alone, with no value**, as
    MyRocks keeps a secondary index: the key is the index's id,
    its columns and the row's primary key, and the value is
