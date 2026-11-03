@@ -248,6 +248,46 @@ TEST_CASE("a commit survives a power cut once sm1::commit returns") {
   REQUIRE(sm1::closedb(s) == 0);
 }
 
+TEST_CASE("a commit survives a power cut under manual_wal_flush") {
+  // Verify the commit's sync writes RocksDB's WAL buffer out before
+  // it syncs: SyncWAL() alone syncs the file without the buffer.
+  // 1. Make "db" on a file system that loses unsynced data at a
+  //    power cut, opened with manual_wal_flush=true.
+  // 2. Commit "a" in a new store.
+  // 3. Cut the power, close the database, and lose what was not
+  //    synced.
+  // 4. Open "db" again: "a" is there.
+  home_t home;
+  auto fs = std::make_shared<powercut_fs_t>();
+  // Every file of "db" through the power-cut file system.
+  home.env()->wal_env = rocksdb::NewCompositeEnv(fs);
+  sm1::options_t opt;
+  opt.rocksdb_options = "manual_wal_flush=true";
+  REQUIRE(sm1::mkdb(home.env(), "db", &opt) == 0);
+  sm1::session_t *s = opendb(home.env(), "db", &opt);
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  uint64_t store = mkstore(s);
+  REQUIRE(sm1::commit(s) == 0);
+
+  REQUIRE(commit_one(s, store, "a") == 0);
+
+  fs->cut();
+  REQUIRE(sm1::closedb(s) == 0);
+  // Detach closes the database; lose its unsynced data before the
+  // attach, whose recovery opens it again.
+  home.detach();
+  fs->lose_unsynced();
+  home.attach();
+
+  s = opendb(home.env(), "db", &opt);
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(s, store, "a") == "v");
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::closedb(s) == 0);
+}
+
 TEST_CASE("a commit is visible only once the WAL is synced past it") {
   // Verify a commit publishes after its sync, not before: until then
   // its xid is in flight (GROUPSYNC.md §3).

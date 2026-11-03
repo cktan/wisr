@@ -407,7 +407,8 @@ struct db_t {
 
   /*
    * Test hook: called by a commit leading a sync, before
-   * SyncWAL(). A non-OK status stands in for the sync's failure.
+   * FlushWAL(true). A non-OK status stands in for the sync's
+   * failure.
    * Empty outside tests.
    */
   std::function<rocksdb::Status()> test_before_sync;

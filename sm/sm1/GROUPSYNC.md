@@ -70,9 +70,11 @@ loses committed data. A changes only the commit.
   5. Become the leader: read `GetLatestSequenceNumber()` again,
      as `upto`, and unlock. Every write at or below `upto` is
      in the WAL file now.
-  6. Call `SyncWAL()`, outside the write queue. Writers go on
-     meanwhile: `SyncWAL()` syncs the files without flushing
-     a buffer (`db_impl.cc`).
+  6. Call `FlushWAL(true)`, outside the write queue. Under
+     `manual_wal_flush`, it first writes RocksDB's WAL buffer
+     to the file, which `SyncWAL()` alone does not. Then it
+     calls `SyncWAL()`. Writers go on meanwhile: `SyncWAL()`
+     syncs the files without flushing a buffer (`db_impl.cc`).
   7. Lock `sync_mu`, set `synced_seq` to `upto`, and wake the
      waiters on `sync_cv`.
 - **Then publish, as now**: `enter_cache()` takes the xid out
@@ -115,6 +117,7 @@ loses committed data. A changes only the commit.
 | a temporary-only transaction | the same wait as now. Skipping it is `NEXT.md` §3, and not part of this |
 | bulk load, and its rollback | the load's files go in before the record; unchanged |
 | a log switch during the sync | `SyncWAL()` syncs every log up to the current one |
+| `manual_wal_flush=true` | `FlushWAL(true)` writes the WAL buffer to the file before the sync |
 | `durability_sync = false` | no sync, no wait |
 | older commits in progress (`COMMITVISIBLE.md`) | a commit waits for the older ones' syncs as now |
 
@@ -127,6 +130,9 @@ loses committed data. A changes only the commit.
     refuses every write after the cut and then truncates each
     file to its last sync. With the sync left out, the commit
     is lost.
+  - The same holds with `manual_wal_flush=true`. With
+    `SyncWAL()` in place of `FlushWAL(true)`, the commit is
+    lost.
   - A commit is not visible, and does not return, until its
     sync is done: a test hook stalls the leader's sync, and
     another session does not see the row. With the sync moved

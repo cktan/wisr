@@ -835,8 +835,11 @@ rocksdb::Status db_sync_wal(db_t *db) {
     st = db->test_before_sync();
   }
   // Sync every log up to the current one: the durability point.
+  // FlushWAL(true) writes the WAL buffer of manual_wal_flush out
+  // first, which SyncWAL() alone leaves unsynced; else it is
+  // SyncWAL().
   if (st.ok()) {
-    st = db->rdb->SyncWAL();
+    st = db->rdb->FlushWAL(true);
   }
   guard.lock();
   db->syncing = false;
