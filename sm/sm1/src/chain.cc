@@ -790,15 +790,33 @@ int read_chained_batch(sm1::session_t *s, uint64_t storeid,
   // Hold a read epoch until the statuses are resolved.
   uint64_t epoch = db_read_enter(s->db);
   defer { db_read_leave(s->db, epoch); };
-  // The keys' current-version keys, for steps 3 and 4.
-  std::vector<std::string> ckeys(n);
-  std::vector<rocksdb::Slice> slices(n);
+  // The keys' current-version keys, for steps 3 and 4, end to end in
+  // buffers the thread keeps: a batch is read a few rows apart, and
+  // no call this one makes reads another.
+  thread_local std::string ckeys;
+  thread_local std::vector<size_t> ends;
+  thread_local std::vector<rocksdb::Slice> slices;
+  thread_local std::vector<rocksdb::PinnableSlice> got;
+  thread_local std::vector<rocksdb::Status> status;
+  ckeys.clear();
+  ends.resize(n);
   for (size_t i = 0; i < n; i++) {
-    ckeys[i] = curr_key(rocksdb::Slice(keys[i].data(), keys[i].size()));
-    slices[i] = rocksdb::Slice(ckeys[i]);
+    ckeys.push_back(key_class_current);
+    ckeys.append(keys[i].data(), keys[i].size());
+    ends[i] = ckeys.size();
   }
-  std::vector<rocksdb::PinnableSlice> got(n);
-  std::vector<rocksdb::Status> status(n);
+  slices.resize(n);
+  for (size_t i = 0, at = 0; i < n; at = ends[i], i++) {
+    slices[i] = rocksdb::Slice(ckeys.data() + at, ends[i] - at);
+  }
+  status.assign(n, rocksdb::Status());
+  // A version MultiGet read and the call did not move to a pin goes
+  // with the call, not with the thread.
+  defer {
+    for (rocksdb::PinnableSlice &g : got) {
+      g.Reset();
+    }
+  };
   // Keys in ascending order, as a range of an index names its rows
   // in its key's order and close: one iterator steps from each to the
   // next, seeking only past a gap, where MultiGet searches the index
@@ -870,8 +888,9 @@ int read_chained_batch(sm1::session_t *s, uint64_t storeid,
         placed = true;
       }
       if (it->Valid() && it->key() == slices[i]) {
-        // Copied: the iterator goes with the call, the pin stays.
-        got[i].PinSelf(it->value());
+        // Copied into the key's pin, whose buffer a pin read again
+        // keeps: the iterator goes with the call, the pin stays.
+        pins[i]->got.PinSelf(it->value());
         status[i] = rocksdb::Status::OK();
       } else if (!it->status().ok()) {
         status[i] = it->status();
@@ -881,9 +900,13 @@ int read_chained_batch(sm1::session_t *s, uint64_t storeid,
     }
   }
   if (done < n) {
+    // MultiGet fills an array of its own, moved to the pins below.
+    if (got.size() < n - done) {
+      got.resize(n - done);
+    }
     st.rdb->MultiGet(rocksdb::ReadOptions(), st.cf, n - done,
-                     slices.data() + done, got.data() + done,
-                     status.data() + done, false);
+                     slices.data() + done, got.data(), status.data() + done,
+                     false);
   }
   for (size_t i = 0; i < n; i++) {
     sm1::rawpin_t *pin = pins[i];
@@ -894,8 +917,11 @@ int read_chained_batch(sm1::session_t *s, uint64_t storeid,
     } else if (!status[i].ok()) {
       return set_status_error(status[i], "read a version");
     } else {
-      // The version's bytes into the key's pin, then decoded there.
-      pin->got = std::move(got[i]);
+      // The version's bytes into the key's pin, where the iterator's
+      // are already, then decoded there.
+      if (i >= done) {
+        pin->got = std::move(got[i - done]);
+      }
       if (!chain_decode(pin->got, &v, false)) {
         return set_error(sm1::SM_ERR_CORRUPT, "malformed version");
       }
