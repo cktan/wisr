@@ -639,14 +639,24 @@ int cat_put_table(session_t *session, uint64_t oid, const table_rec_t &rec) {
       return -1;
     }
   }
-  // A column dropped now takes its statistics with it.
+  // A column dropped now takes its statistics with it, and so does
+  // one whose type changed: they hold values of the old type, which
+  // the statistics in memory forget at commit, to load again.
+  bool retyped = false;
   for (size_t i = 0; i < old.columns.size(); i++) {
+    const column_rec_t &was = old.columns[i], &now = rec.columns[i];
+    bool changed = !was.dropped && !now.dropped &&
+                   (was.type_code != now.type_code || was.typmod != now.typmod);
+    retyped |= changed;
     std::string k;
-    if (!old.columns[i].dropped && rec.columns[i].dropped &&
+    if (!was.dropped && (now.dropped || changed) &&
         (stats_key(oid, 0, i + 1, k) != 0 ||
          erase_if_there(session, kv.get(), k) != 0)) {
       return -1;
     }
+  }
+  if (retyped) {
+    overlay_stats(session, oid, nullptr);
   }
   if (record_table(session, oid, rec) != 0) {
     return -1;

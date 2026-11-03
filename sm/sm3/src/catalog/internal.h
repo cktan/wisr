@@ -381,17 +381,27 @@ inline const index_def_t *primary_of(const table_def_t &def) {
   return nullptr;
 }
 
+/* One column's conversion in a rewrite: its 0-based place, and the
+ * host's converter (alter_column_type). */
+struct column_conv_t {
+  int32_t attnum;
+  const column_conv_fn *fn;
+};
+
 /*
  * Rewrite the table oid into a new store, its rows keyed as rec
  * says, rec being its record after (../CLUSTER.md §8): every row is
  * copied, and every index's entries made, under the table-oid lock
  * exclusive. A keyless row keeps its _id, a keyed row has none, and
  * the rows of a table that lost its primary key draw theirs in key
- * order (../ROWKEY.md §2.4). The record is put, and the old store
- * goes at commit. Two rows with one primary key fail with
- * SM_ERR_DUPKEY, one's key in the old store in sm1::errdup().
+ * order (../ROWKEY.md §2.4). With conv, each row's value of its
+ * column is conv's, of the column's type in rec. The record is put,
+ * and the old store goes at commit. Two rows with one primary key
+ * fail with SM_ERR_DUPKEY, one's key in the old store in
+ * sm1::errdup().
  */
-int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec);
+int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec,
+                  const column_conv_t *conv = nullptr);
 
 /*
  * The state of the index index_oid as s sees it, as

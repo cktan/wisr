@@ -814,6 +814,59 @@ int add_column(session_t* session, uint64_t oid,
 int set_not_null(session_t* session, uint64_t oid, std::string_view name);
 
 /*
+ * A column's new type, as alter_column_type takes it: sm2's code
+ * and typmod, and the host's default and update default for the
+ * new type, opaque to sm, which replace the column's.
+ */
+struct column_type_t {
+    uint8_t                    type_code;  /* sm2/TYPE.md §3 */
+    int32_t                    typmod;
+    std::optional<std::string> default_expr = std::nullopt;
+    std::optional<std::string> on_update_expr = std::nullopt;
+};
+
+/*
+ * The host's conversion of one row's value to a column's new type.
+ * Given the row as values and null flags, one per column of the
+ * table's schema before the change, it puts the new value's bytes
+ * in out, as sm2::datum_bytes gives them -- a varlena for a
+ * variable-width type -- or sets out_null. A by-reference value of
+ * the row points at memory good only for the call. It returns 0,
+ * or -1 with the error set (sm1::seterr). It runs on the calling
+ * session's thread, inside alter_column_type, and must not call
+ * the storage manager on that session.
+ */
+using column_conv_fn = std::function<int(std::span<const sm2::datum_t> values,
+                                         std::span<const bool> isnull,
+                                         std::string& out, bool& out_null)>;
+
+/*
+ * Change the live column name of the table oid to the type to
+ * (../dg/ALTERTYPE.md at the top level), under the table-oid lock
+ * exclusive.
+ *
+ * With conv, a table with rows is rewritten into a new store, as
+ * rewrite_table does: each row's value of the column is conv's, the
+ * others are kept, and every index on the column is made under the
+ * new type, the primary key among them. Two rows with one key fail
+ * with SM_ERR_DUPKEY, as a rewrite does; a null in a NOT NULL
+ * column with SM_ERR_NOTNULL; conv's failure is the call's.
+ *
+ * Without conv, only the column's record changes: taken only when
+ * every stored value and key stays as it is, the same type code,
+ * or text and varchar; else SM_ERR_INVALID. The host decides that
+ * the values need no conversion.
+ *
+ * Refused with SM_ERR_INUSE, changing nothing: a column an
+ * expression or a partial index reads, one a foreign key of the
+ * table names, one a foreign key that references the table names,
+ * one a view reads. An identity column is SM_ERR_INVALID. The
+ * column's statistics go.
+ */
+int alter_column_type(session_t* session, uint64_t oid, std::string_view name,
+                      const column_type_t& to, const column_conv_fn* conv);
+
+/*
  * Make the live column name of the table oid an identity column,
  * GENERATED ALWAYS ('a') or BY DEFAULT ('d'), whose values come
  * from the sequence seq, which it then owns for good, as

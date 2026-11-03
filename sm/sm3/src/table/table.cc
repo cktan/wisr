@@ -2359,14 +2359,69 @@ int tbl_index_backfill(table_t *table, uint64_t index, std::string_view from,
 }
 
 /*
+ * Ask the host's converter for a row's new value. Its type, a
+ * std::function, cannot say noexcept: asked from here, one that
+ * throws ends the process, where it would unwind through a rewrite.
+ */
+static int ask_converter(const column_conv_fn &fn,
+                         std::span<const sm2::datum_t> values,
+                         std::span<const bool> isnull, std::string &out,
+                         bool &out_null) noexcept {
+  return fn(values, isnull, out, out_null);
+}
+
+/*
+ * Put conv's value of the row's column into row: the converter's
+ * bytes, held in own, as a datum of the column's type in to.
+ */
+static int convert_value(const table_t *to, const column_conv_t &conv,
+                         deformed_t &row, std::string &own) {
+  std::span<const sm2::datum_t> values(row.d.data(), row.d.size());
+  std::span<const bool> isnull(row.null.get(), row.n);
+  bool out_null = false;
+  own.clear();
+  if (ask_converter(*conv.fn, values, isnull, own, out_null) != 0) {
+    return -1;
+  }
+  const column_def_t &c = to->def->columns[conv.attnum];
+  // Checked here, as a key column's null would fail its key's
+  // encoding first, with another error.
+  if (out_null && c.not_null) {
+    return sm1::seterr(sm1::SM_ERR_NOTNULL, "rewrite: the converter gave " +
+                                                c.name + ", NOT NULL, a null");
+  }
+  row.null[conv.attnum] = out_null;
+  if (out_null) {
+    row.d[conv.attnum] = 0;
+    return 0;
+  }
+  // The bytes as sm2::datum_bytes gives them, as make_entry takes an
+  // evaluator's.
+  int32_t width = sm2::datum_width(c.type, c.typmod);
+  if (own.empty() || (width > 0 && own.size() != static_cast<size_t>(width))) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "rewrite: the converter gave column " + c.name +
+                           " a value of the wrong width");
+  }
+  if (c.type->byval) {
+    row.d[conv.attnum] = 0;
+    memcpy(&row.d[conv.attnum], own.data(), own.size());
+  } else {
+    row.d[conv.attnum] = sm2::datum_from_ptr(own.data());
+  }
+  return 0;
+}
+
+/*
  * Copy the rows of from into to, which is the same table on a new
  * store keyed anew, its values out of line fetched from from's
  * store, and its entries in every index to maintains
  * (../CLUSTER.md §8): a keyless row keeps its _id, a keyed row has
  * none, and the rows of a table that lost its primary key draw
- * theirs in key order (../ROWKEY.md §2.4).
+ * theirs in key order (../ROWKEY.md §2.4). With conv, each row's
+ * value of its column is the converter's.
  */
-static int copy_rows(table_t *from, table_t *to) {
+static int copy_rows(table_t *from, table_t *to, const column_conv_t *conv) {
   const table_def_t &def = *from->def;
   std::vector<int32_t> all(def.schema.size());
   for (size_t i = 0; i < all.size(); i++) {
@@ -2389,6 +2444,10 @@ static int copy_rows(table_t *from, table_t *to) {
         tbl_fetch_cols(from, all, row.d, {row.null.get(), row.n}, own) != 0) {
       return -1;
     }
+    std::string converted;
+    if (conv && convert_value(to, *conv, row, converted) != 0) {
+      return -1;
+    }
     if (insert_row(to, row.d, {row.null.get(), row.n}, id, got) == 0) {
       continue;
     }
@@ -2408,7 +2467,8 @@ static int copy_rows(table_t *from, table_t *to) {
 }
 
 /* Rewrite the table into a new store, keyed as rec says; see internal.h. */
-int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec) {
+int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec,
+                  const column_conv_t *conv) {
   // Every other transaction out, to the end of this one: the rows
   // are read from one store and written to another.
   table_t *from = nullptr;
@@ -2450,7 +2510,8 @@ int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec) {
       return -1;
     }
   }
-  if (copy_rows(from, to.get()) != 0 || cat_put_table(session, oid, rec) != 0) {
+  if (copy_rows(from, to.get(), conv) != 0 ||
+      cat_put_table(session, oid, rec) != 0) {
     return -1;
   }
   // The old store goes at commit, with the rows and entries in it,

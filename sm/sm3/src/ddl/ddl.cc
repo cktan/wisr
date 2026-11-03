@@ -529,6 +529,139 @@ int set_not_null(session_t *session, uint64_t oid, std::string_view name) {
   return cat_put_table(session, oid, rec);
 }
 
+/*
+ * Fail with SM_ERR_INUSE if what a type change of rec's column at
+ * would leave stale uses it: an expression or a partial index that
+ * reads it, a foreign key of the table or one referencing it that
+ * names it, or a view that reads it. A plain index takes the new
+ * type from the column.
+ */
+static int column_typed_in(session_t *session, uint64_t oid,
+                           const table_rec_t &rec, int32_t at) {
+  const std::string &name = rec.columns[at].name;
+  auto in = [at](const std::vector<int32_t> &v) {
+    return std::find(v.begin(), v.end(), at) != v.end();
+  };
+  for (const index_rec_t &x : rec.indexes) {
+    if (!x.eval.empty() && in(x.reads)) {
+      return sm1::seterr(sm1::SM_ERR_INUSE, "alter column type: index " +
+                                                x.name + " evaluates " + name);
+    }
+  }
+  for (const fkey_rec_t &fk : rec.fkeys) {
+    if (in(fk.attnums)) {
+      return sm1::seterr(sm1::SM_ERR_INUSE, "alter column type: foreign key " +
+                                                fk.name + " uses " + name);
+    }
+  }
+  for (const fkey_ref_t &ref : rec.referenced_by) {
+    table_rec_t child;
+    if (cat_get_table_rec(session, ref.table, child) != 0) {
+      return -1;
+    }
+    for (const fkey_rec_t &fk : child.fkeys) {
+      if (fk.oid == ref.fkey && in(fk.ref_attnums)) {
+        return sm1::seterr(sm1::SM_ERR_INUSE,
+                           "alter column type: foreign key " + fk.name +
+                               " references " + name);
+      }
+    }
+  }
+  // Another session's temporary view among them (../VIEW.md §12.3).
+  for (const view_reader_t &v : cat_view_readers(session, oid)) {
+    for (const view_read_t &r : v.def->reads) {
+      if (r.relation == oid && r.attnum == at) {
+        return sm1::seterr(sm1::SM_ERR_INUSE, "alter column type: view " +
+                                                  v.def->name + " reads " +
+                                                  name);
+      }
+    }
+  }
+  return 0;
+}
+
+/* Whether a value of the type code takes a collation. */
+static bool collatable(uint8_t code) {
+  return code == sm2::type_text.code || code == sm2::type_varchar.code ||
+         code == sm2::type_bpchar.code;
+}
+
+/*
+ * Change a column's type; see sm3.h.
+ * 1. Lock the table exclusive, so no row is read or written meanwhile.
+ * 2. Refuse a column that is not there, an identity column, one
+ *    something would read stale (column_typed_in()), and a change
+ *    with no converter whose values would not stay as they are.
+ * 3. Give the record the new type, default and update default.
+ * 4. With a converter and rows, rewrite the table, each row's
+ *    value converted; else put the record alone. The put erases
+ *    the column's statistics, of the old type.
+ */
+int alter_column_type(session_t *session, uint64_t oid, std::string_view name,
+                      const column_type_t &to, const column_conv_fn *conv) {
+  const sm2::type_t *type = sm2::type_by_code(to.type_code);
+  if (!type || sm2::datum_width(type, to.typmod) == 0) {
+    return invalid("alter column type: a type code sm2 lacks, or a typmod "
+                   "its type refuses");
+  }
+  // No other transaction reads or writes a row until this one ends.
+  std::shared_ptr<const table_def_t> def;
+  if (cat_lock_table(session, oid, sm1::SM_LOCKMODE_EX, def) != 0) {
+    return -1;
+  }
+  table_rec_t rec;
+  if (cat_get_table_rec(session, oid, rec) != 0) {
+    return -1;
+  }
+  int at = live_column(rec, name);
+  if (at < 0) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "alter column type: no column " + std::string(name));
+  }
+  if (column_typed_in(session, oid, rec, at) != 0) {
+    return -1;
+  }
+  column_rec_t &c = rec.columns[at];
+  if (0 != c.identity) {
+    return invalid("alter column type: " + c.name + " is an identity column");
+  }
+  // text and varchar store the same bytes and the same key
+  // (../sm2/TYPE.md §3).
+  bool text_pair = (c.type_code == sm2::type_text.code ||
+                    c.type_code == sm2::type_varchar.code) &&
+                   (to.type_code == sm2::type_text.code ||
+                    to.type_code == sm2::type_varchar.code);
+  if (!conv && c.type_code != to.type_code && !text_pair) {
+    return invalid("alter column type: " + c.name +
+                   "'s values change with its type, and no converter was "
+                   "given");
+  }
+  c.type_code = to.type_code;
+  c.typmod = to.typmod;
+  c.default_expr = to.default_expr;
+  c.on_update_expr = to.on_update_expr;
+  if (!collatable(to.type_code)) {
+    c.collation = std::nullopt;
+  }
+  bool empty = true;
+  if (conv && sm1::store_empty(session->sm1, rec.storeid, empty) != 0) {
+    return -1;
+  }
+  if (conv && !empty) {
+    // Every row is stored whole in the new store, so none reads a
+    // missing value of the old type.
+    c.missing = std::nullopt;
+    column_conv_t cv{at, conv};
+    return rewrite_table(session, oid, std::move(rec), &cv);
+  }
+  // A converted column of an empty table has no row that reads its
+  // missing value.
+  if (conv) {
+    c.missing = std::nullopt;
+  }
+  return cat_put_table(session, oid, rec);
+}
+
 /* Make a column an identity column, owning its sequence; see sm3.h. */
 int set_identity(session_t *session, uint64_t oid, std::string_view name,
                  char identity, uint64_t seq) {

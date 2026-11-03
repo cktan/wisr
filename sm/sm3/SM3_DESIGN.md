@@ -1108,6 +1108,14 @@ and sm3 never encodes a key itself.
   again, and the old store dropped at commit, as `TRUNCATE`
   drops it (`../CLUSTER.md` §8). A table made in the same
   transaction with no row yet only records it.
+- **Changing a column's type** (`alter_column_type`,
+  `../../dg/ALTERTYPE.md`) rewrites a table with rows the same
+  way, each row's value of the column given by the host's
+  converter, every index on the column filled under the new
+  type, a key column's rows keyed anew. A change whose values
+  stay, the same type code or `text` and `varchar`, changes the
+  record alone. A column an expression or a partial index, a
+  foreign key or a view reads keeps its type.
 - **The cost: tables are bounded by sm1's store count.**
   sm1 targets hundreds to low thousands of stores, and
   every table, each partition included, takes one. Accepted
@@ -1546,6 +1554,7 @@ worse plan and never a wrong answer:
 | `DROP TABLE` | its `STATS` entry is deleted with the table's others, and its map entry dropped after commit |
 | `DROP INDEX`, `DROP COLUMN` | the index's expressions' entries, or the column's, are erased with it; the table's own entry is left, and a reader skips its part for an index gone |
 | `ADD COLUMN`, `CREATE INDEX` | none until the next analyze; the planner's defaults meanwhile |
+| `ALTER COLUMN TYPE` | the column's entries are erased; the table's in memory are forgotten at commit and loaded again, and its transaction reads none |
 | `TRUNCATE` | left, as PostgreSQL leaves `pg_statistic` |
 
 Dropping a column or an index erases only that one's entries,
