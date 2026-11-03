@@ -1,3 +1,177 @@
+# Code Review: Group Sync
+
+The review found no way to lose or wrongly show committed data
+under the default RocksDB options. Two findings are durability
+gaps: one needs a non-default option, the other a rare error. The
+other findings are about waits, tests, comments and efficiency.
+
+- **Target:** `fa1c683b`, "sm1: a commit's sync outside RocksDB's
+  write queue".
+- **Effort:** `high`.
+- **Verification:** the findings come from reading the code. The
+  review ran no tests and no benchmarks. Findings 1, 3, 6 and 7
+  were checked against `db.cc:805-850`.
+- **RocksDB version:** the build links the system RocksDB 9.11.2.
+  The review read the vendored 8.9.1 source in `rocksdb/src`. The
+  9.11 header confirms finding 1: `SyncWAL()` "does not imply
+  FlushWAL, so `FlushWAL(true)` is recommended if using
+  manual_wal_flush=true" (`rocksdb/db.h`). Finding 2 was not
+  checked against 9.11.
+- **Order:** the most severe finding is first.
+
+## Checked and Sound
+
+- The leader and follower protocol in `db_sync_wal()`.
+- The active-table guard, which stops a reader from taking an
+  unsynced record for a commit.
+- `GetLatestSequenceNumber()` covers the caller's record.
+- In RocksDB 8.9, `SyncWAL()` calls `IOStatusCheck()` when a file
+  sync fails. A failed fsync of a log file therefore stops
+  RocksDB, as `GROUPSYNC.md` states.
+
+## Findings
+
+### 1. `SyncWAL()` skips the WAL buffer of `manual_wal_flush`
+
+- **Location:** `sm/sm1/src/db.cc:839`
+- **Defect:** `db_sync_wal()` calls `rdb->SyncWAL()`, which syncs
+  with `SyncWithoutFlush()`. It does not empty the WAL writer's
+  buffer. With `manual_wal_flush=true`, the commit record does
+  not become durable.
+- **Scenario:**
+  1. A user sets `rocksdb_options="manual_wal_flush=true"`.
+     `db_options()` parses any DBOptions string.
+  2. The commit record goes into the buffer of `log::Writer`.
+  3. `SyncWAL()` fsyncs the file without that buffer.
+  4. `sm1::commit` returns 0.
+  5. A power loss loses the acknowledged commit.
+- **Note:** the old `Put(sync=true)` path flushed the buffer
+  before the sync.
+- **Fix:** call `DBImpl::FlushWAL(true)`. It flushes the buffer,
+  then calls `SyncWAL()`, so it is correct in both modes.
+
+### 2. A failed fsync of the WAL directory no longer stops RocksDB
+
+- **Location:** `sm/sm1/src/db.cc:839`
+- **Defect:** the sync moved out of the write path. On a failed
+  fsync of the WAL directory, the old path called
+  `IOStatusCheck()`, which put RocksDB in its background-error
+  state. `SyncWAL()` returns the failure without that call.
+- **Scenario:**
+  1. A log switch occurs.
+  2. The next commit's `SyncWAL()` fails at
+     `FsyncWithDirOptions`.
+  3. sm1 sets `db->failed`, but RocksDB still accepts writes and
+     flushes.
+  4. Writers that do not check `db->failed` change the database
+     after the fail-stop: the GC's CF:txn sweep
+     (`xct_drop_committed_records`) and the memtable flushes.
+- **Note:** before this change, the same failure in
+  `WriteToWAL` (`db_impl_write.cc:1434`, then `IOStatusCheck` at
+  line 599) stopped every write.
+
+### 3. The sync wait cannot be interrupted
+
+- **Location:** `sm/sm1/src/db.cc:826`
+- **Defect:** `sync_cv.wait(guard)` is a raw wait, and an
+  interrupt cannot cut it short. `sm/CODE.md` §7 requires every
+  wait made for a caller to be an `sm_wait()` with
+  `sm_wait_mask()`. Only `db_commit_wait` has a documented
+  exception.
+- **Scenario:**
+  1. The leader's `SyncWAL()` hangs on a stalled disk.
+  2. Every commit behind it blocks in `sync_cv.wait`.
+  3. An interrupt or a cancel cannot release the commits.
+- **Fix:** use `sm_wait()`, and fail-stop on
+  `SM_ERR_INTERRUPTED`, since the outcome is unknown. Or document
+  the exception next to the one for `db_commit_wait`.
+
+### 4. The one-sync test depends on fixed sleeps
+
+- **Location:** `sm/sm1/test/test_groupsync.cc:390`
+- **Defect:** `CHECK(calls == 2)` depends on sleeps of 50 ms for
+  each session, then 300 ms. The sleeps must let all 15 records
+  be written before the stalled sync is released.
+- **Scenario:**
+  1. The machine is loaded, or the test runs under sanitizers.
+  2. One of the 15 sessions is still in begin, insert or
+     `db_claim_commit_ts` when `release.set_value()` runs.
+  3. Its record gets a sequence number above the `upto` of the
+     second leader.
+  4. It leads a third sync, `calls` becomes 3, and the test fails
+     on correct code.
+
+### 5. The failed-sync test can miss its target path
+
+- **Location:** `sm/sm1/test/test_groupsync.cc:331`
+- **Defect:** the target path is a follower that waits behind
+  the failing leader. If B is slow, the test passes without that
+  path: B fails in `xct_check_writable` instead.
+- **Scenario:**
+  1. B does not reach `db_sync_wal()` within 300 ms.
+  2. A's sync fails and sets `db->failed`.
+  3. B gets `SM_ERR_IO` from `xct_check_writable()`, in
+     `commit()` or in the insert.
+  4. The test passes, but the code that wakes waiters with the
+     failure does not run.
+  5. A regression in that code is not caught.
+
+### 6. A comment says the opposite of its code
+
+- **Location:** `sm/sm1/src/db.cc:822`
+- **Defect:** the comment "Not leading: wait for the sync that
+  runs." is above `if (!db->syncing) break;`. That branch is
+  where the caller becomes the leader.
+- **Scenario:** a maintainer reads the comment as a description
+  of the break, and inverts the condition or moves the wait. The
+  leader election of the protocol becomes harder to review.
+- **Fix:** write "No sync runs: lead one" above the break, and
+  put the wait comment on the `sync_cv.wait` line.
+
+### 7. Two lock acquisitions have no comment
+
+- **Location:** `sm/sm1/src/db.cc:812` and `db.cc:841`
+- **Defect:** `std::unique_lock<std::mutex> guard(db->sync_mu);`
+  and `guard.lock();` have no comment that says why.
+- **Scenario:** `CLAUDE.md` requires a short comment on each
+  significant call, a lock included. `sm/CODE.md` §8 states the
+  same rule. Other code in `db.cc` follows it, for example
+  "// Hold alloc_mu, the sequencer's mutex."
+
+### 8. Lease writes still lead synced write groups
+
+- **Location:** `sm/sm1/src/db.cc:623`
+- **Defect:** the fix changes only the commit record. Other
+  writes in the same RocksDB queue still use `sync=true`:
+  - the commit_ts lease renewal (`persist_lease`, through
+    `cover_ts_locked` in `db_claim_commit_ts`, under `alloc_mu`);
+  - the sequence lease, near `db.cc:904`.
+- **Scenario:**
+  1. The `ins` and `fk` workloads run at 16 clients.
+  2. Each lease renewal, and each nextval lease for SERIAL keys,
+     leads a synced write group.
+  3. That group takes in the insert versions in the queue, and
+     they wait for its sync.
+  4. The commit_ts lease renewal holds `alloc_mu` during its
+     fsync, which blocks every commit_ts claim.
+- **Fix:** one durable-write helper for every write that must be
+  durable: an unsynced write, then `db_sync_wal()`.
+
+### 9. RocksDB's own syncs do not move `synced_seq`
+
+- **Location:** `sm/sm1/src/db.cc:815`
+- **Defect:** `synced_seq` moves only when `db_sync_wal()` syncs.
+  Syncs that RocksDB makes for a synced write (PREPARE, ABORTED,
+  the leases) do not move it.
+- **Scenario:**
+  1. A lease renewal or a PREPARE syncs the WAL past sequence S.
+  2. A commit has its record at or below S.
+  3. The commit finds `synced_seq` below its target.
+  4. It leads a full `SyncWAL()`: an extra fsync and a round trip
+     on `log_write_mutex_`.
+- **Fix:** after a synced write, read the latest sequence number,
+  and raise `synced_seq` to it under `sync_mu`.
+
 # Code Review: Scattered Keys
 
 The review found no wrong-row, crash or memory-safety bug. The
