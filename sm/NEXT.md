@@ -135,10 +135,17 @@ and so are the catalog tables psql reads
       malloc and free a fifth, the executor's own share, each
       row's recheck; Q10's, a descent a probe and its row.
    3. **Then measure** the grid again, on both kinds of index
-      (`BTREE.md` §12): what is left past 1.5 is recorded
-      here, and the kind that loses every workload goes.
+      (`BTREE.md` §12): measured on 2026-11-03
+      (`../dg/WORKNOTE.md` step 379). A tree wins every read
+      and mix, Q9 2.39 and Q10 2.14 times PostgreSQL's;
+      `lsm` loads faster, 25 s to 34 s. The gap is a row's
+      read, not the plan: a row of Q9's range 7.4k against
+      1.4k, planning and a probe near PostgreSQL's. A row's
+      allocations are gone, Q9 to 688k; next, RocksDB's
+      iteration, the recheck of the entry, and the copies,
+      about 750, 700 and 460 a row.
 
-   For today's entries, only if they stay (`BTREE.md` §12):
+   For today's entries (`BTREE.md` §12):
    one cursor a scan, moved from probe to probe, not one
    opened a probe (`open_probe()` in
    `../dg/src/backend/access/sm/smstore.c`), with each

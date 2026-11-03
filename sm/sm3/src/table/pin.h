@@ -41,18 +41,28 @@ struct sm3::scan_t {
   pin_t *pin = nullptr;
   sm2::index_scan_t *entries = nullptr;
   table_t *table = nullptr;
-  size_t index = 0; /* the tree's place in the table's indexes */
+  size_t index = 0;             /* the tree's place in the table's indexes */
+  session_t *session = nullptr; /* whose pool its batch's raw pins are */
   /*
    * A tree's entries read ahead, their rows read in one call
    * (../../BATCHREAD.md): each entry's key, its row's key and _id,
    * and the row in a raw pin of the batch's; batch the next read's
    * size, doubling to tree_batch_max, as digres's read-ahead does.
+   * The keys lie end to end in bytes, which each batch fills anew;
+   * keys and rows view it, good until the next batch.
    */
-  std::vector<std::string> keys, rows;
+  std::string bytes;
+  std::vector<std::pair<size_t, size_t>> key_at, row_at; /* in bytes */
+  std::vector<std::string_view> keys, rows;
   std::vector<uint64_t> ids;
   std::vector<sm1::rawpin_t *> raws;
   std::vector<std::string_view> tuples;
   std::vector<int> rcs;
+  /* A batch's read of its rows: which entries, and the call's arrays. */
+  std::vector<size_t> want_rows;
+  std::vector<std::string_view> read_keys, read_tuples;
+  std::vector<sm1::rawpin_t *> read_raws;
+  std::vector<int> read_rcs;
   /*
    * Each entry's cut flag, and whether its row goes unread: an
    * index-only scan's (entries_only) entry, on a leaf all visible,
@@ -72,10 +82,16 @@ struct sm3::scan_t {
   bool entries_only = false;
   /* tbl_scan_cols's by-reference datums. */
   std::vector<std::optional<std::string>> datums;
-  /* raws[0] is the cursor's pin's own, the batch's others its. */
+  /*
+   * raws[0] is the cursor's pin's own; the batch's others go back to
+   * the session's pool, emptied, so their iterators and blocks go now.
+   */
   ~scan_t() {
     for (size_t i = 1; i < raws.size(); i++) {
-      sm1::rawpin_free(raws[i]);
+      if (raws[i]) {
+        sm1::unpin(raws[i]);
+        session->raws_free.push_back(raws[i]);
+      }
     }
     sm1::batch_iter_free(iter);
   }

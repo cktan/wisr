@@ -246,6 +246,12 @@ struct sm3::session_t {
   sm3::pin_t *pins_free = nullptr;
   sm3::pin_t *pins_held = nullptr;
   sm3::pin_t *pins_scan = nullptr;
+  /*
+   * The raw pins a tree's cursor read its batches into, emptied and
+   * given back at its end, for the next cursor to take, so a
+   * statement's batches make none anew; freed at session_close.
+   */
+  std::vector<sm1::rawpin_t *> raws_free;
 };
 
 namespace sm3 {
