@@ -6,6 +6,11 @@ analyzer, planner, and executor. It replaces the process model,
 storage engine, transaction manager, catalog, and authentication
 layer.
 
+> **Roles, authentication, and authorization are redone.** DG
+> does not keep PG's role and privilege machinery. A new
+> library, `aa/`, stores roles and ACLs, checks logins, and
+> answers privilege checks. PG's code calls it (§3).
+
 | Area | PostgreSQL 18 (PG) | digres (DG) |
 | --- | --- | --- |
 | Wire protocol & clients | PG v3 protocol; `psql`, `libpq`, `pgbench` | Unchanged; uses stock PG 18 clients |
@@ -23,7 +28,7 @@ layer.
 | `SERIALIZABLE` | Predicate locks and SSI in shared memory | `sm1` serializable isolation |
 | Row & table locks | Shared-memory lock tables + heap tuple header bits | `sm1` lock manager (5 table modes, row locks in memory) |
 | System catalog | Heap tables (`pg_class`, `pg_attribute`, ...) | Compiled-in arrays + `sm3` catalog; virtual read-only relations |
-| Roles & auth | `pg_authid` heap table, `pg_hba.conf`, TLS, GSSAPI | `aa/` library in `pg_global`; fixed peer / SCRAM-SHA-256 rules; no TLS or GSSAPI |
+| Roles & auth | `pg_authid` heap table, `pg_hba.conf`, TLS, GSSAPI | **Redone**: new `aa/` library in `pg_global`; fixed peer / SCRAM-SHA-256 rules; no TLS or GSSAPI |
 | Index access methods | B-tree, Hash, GiST, SP-GiST, GIN, BRIN | `lsm` (default) and `btree`, a B-link tree, both in `sm`; no bitmap scans |
 | Procedural languages | PL/pgSQL, SQL functions, C extensions | Removed (SPI remains for a future language) |
 
@@ -97,11 +102,26 @@ layer.
   read-only virtual catalog relations (`dg/SYSCATALOG.md`). A
   sequential scan on `pg_class` or `pg_attribute` synthesizes
   rows on the fly from compiled-in data and `sm3`.
-- **Roles and authentication (`aa/`).** Roles, memberships,
-  owners, and ACLs live in the `pg_global` database managed by
-  `aa/`. `pg_hba.conf` and `pg_ident.conf` are removed. Local
-  Unix socket connections authenticate via OS peer match or
-  password; TCP connections require SCRAM-SHA-256. Column and
+- **Roles, authentication, and authorization: redone
+  (`aa/`).** DG replaces PG's implementation with `aa/`, a
+  library of its own on `sm` (`aa/AA_DESIGN.md`). It includes
+  no PG header. PG's `acl.c`, `aclchk.c`, `auth.c`, `crypt.c`,
+  and others call `aa/` in place of the shared catalogs.
+  The design differs from PG's:
+  - **Storage.** `sm` has no shared catalogs, and no
+    transaction spans two databases. So roles, memberships,
+    owners, and ACLs live in a separate database, `pg_global`,
+    that no client connects to.
+  - **Checks.** `aa/` holds all of `pg_global` in memory as
+    immutable snapshots. A repeated privilege check is a
+    lookup, with no lock and no catalog read.
+  - **Commit.** A change to an ACL commits in `pg_global` and
+    in the user's database in a fixed order. A crash between
+    the two commits can leave fewer privileges, never more.
+- **Roles and authentication rules.** `pg_hba.conf` and
+  `pg_ident.conf` are removed. Local Unix socket connections
+  authenticate via OS peer match or password; TCP connections
+  require SCRAM-SHA-256. Column and
   function privileges, `ALTER ROLE ... SET`, and `ALTER DEFAULT
   PRIVILEGES` fail; role DDL is refused in a transaction block.
 - **No TLS or GSSAPI.** Their build options are off. A
