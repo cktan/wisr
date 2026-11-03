@@ -33,6 +33,9 @@ struct aa_env_t {
    * those (aa_objects_moved()). */
   std::atomic<uint64_t> objects_epoch{0};
   std::deque<std::pair<uint64_t, aa_key_t>> changed;
+  /* The newest epoch an entry of changed was trimmed off of, 0 if none:
+   * a session behind it may have missed an object, and drops all. */
+  uint64_t changed_lost = 0;
 };
 
 /*

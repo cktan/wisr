@@ -5,14 +5,16 @@ leaves this file when it is fixed, or decided not to be; git
 history keeps the closed reviews (`REVIEW.md` up to
 `1a8407e2`).
 
-1. **`aa/`**: open; finding 1 fixed, the rest not yet checked.
+1. **`aa/`**: open; findings 1 and 2 fixed, the rest not yet
+   checked.
 2. **`sm/`**: open, not yet checked against the code.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
 # Review: `aa/` (Authentication and Authorization)
 
-**Status: open.** Finding 1, the lockout bypass, is fixed;
-the others are not yet checked against the code.
+**Status: open.** Findings 1, the lockout bypass, and 2, the
+invalidations lost past the changes kept, are fixed; the others
+are not yet checked against the code.
 
 Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 `CLAUDE.md`, `sm/CODE.md`, `aa/AA_DESIGN.md`, `aa/ROLE.md`, and
@@ -28,37 +30,12 @@ Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 | No `throw`, `catch`, or RTTI | PASS | Zero `throw`/`try`/`catch` in library code; builds with `-fno-rtti`. |
 | Naming (`snake_case`, `_t`, `m_`) & Yoda conditions | PASS | Types end in `_t`, private fields in `home_t` use `m_`, and comparisons use `0 == x`. |
 | SCRAM-SHA-256 & cycle detection | PASS | Constant-time digest comparison (`timingsafe_eq`), salt/iteration checks, and DFS cycle detection in `grant_role`. |
-| Correctness & concurrency | 2 High, 4 Medium | Partial-epoch invalidation loss, and `env->objects` / `pg_global` consistency races. |
+| Correctness & concurrency | 1 High, 4 Medium | `env->objects` / `pg_global` consistency races. |
 | `sm/CODE.md` & style rules | 5 Low | `std::map`/`std::pair` in `aa.h`, separate error state, duplicate `session_guard_t`. |
 
 ---
 
 ### 2. Correctness, Security, and Concurrency Findings
-
-#### [HIGH] 2. Partial-epoch eviction in `env->changed` drops cache invalidations (`aa_objects_moved`)
-
-- **Location:** `aa/src/aa.cc:546-557`, `aa/src/aa.cc:630-635`
-- **Issue:** `publish_objects()` pushes one `{epoch, key}` entry
-  per modified object (all sharing the same `epoch`) and trims
-  `env->changed` to `CHANGED_KEPT` (4,096) via `pop_front()`. In
-  `aa_objects_moved()`, overflow is tested with
-  `env->changed.front().first > s->objects_epoch + 1` (line 631):
-  1. If a single transaction at `epoch = s->objects_epoch + 1`
-     modifies more than 4,096 objects (for example, `REASSIGN
-     OWNED` or `DROP OWNED`), the first `N - 4096` objects are
-     evicted, yet `env->changed.front().first` still equals
-     `s->objects_epoch + 1`.
-  2. If `epoch = s->objects_epoch + 1` modified `k >= 2` objects
-     and later epochs evict `1 .. k-1` of those entries while at
-     least one entry with `epoch == s->objects_epoch + 1` remains
-     at `front()`, the condition also evaluates to `false`.
-  In both cases, `*all` is `false` and the evicted object OIDs are
-  omitted from `*oids`, leaving stale relation cache entries in
-  other sessions.
-- **Fix:** Group each commit's changed keys into a single entry
-  per epoch (or record `evicted_epoch` whenever `pop_front()`
-  evicts an entry and set `*all = true` when `evicted_epoch >
-  s->objects_epoch`).
 
 #### [HIGH] 3. In-memory `env->objects` snapshot can diverge from `pg_global` on disk
 

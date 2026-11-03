@@ -68,6 +68,41 @@ TEST_CASE("objects: set, commit, restart") {
   CHECK(AA_CLASS_RELATION == o.classid);
 }
 
+// Verify that a session told which objects moved is never told too few:
+// past the changes aa keeps of, it is told all of them moved.
+// 1. One transaction sets the owner of 4,097 tables, one more than aa
+//    keeps; confirm another session is told all moved, or every oid.
+// 2. One transaction sets 2 tables' owners, and the next 4,095 more:
+//    the first of the 2 is no longer kept; confirm the other session is
+//    told all moved, or every oid of the 4,097.
+TEST_CASE("objects: more changes than are kept say all") {
+  home_t h;
+  aa_session_t *s1 = aa_session_new(h.aa());
+  aa_session_t *s2 = aa_session_new(h.aa());
+  std::vector<aa_oid_t> oids;
+  bool all;
+
+  // 1.
+  for (aa_oid_t i = 0; i < 4097; i++)
+    aa_set_object(s1, 1, table(20000 + i, 16500));
+  commit(s1);
+  REQUIRE(aa_objects_moved(s2, 1, &oids, &all));
+  CHECK((all || 4097 == oids.size()));
+
+  // 2.
+  oids.clear();
+  for (aa_oid_t i = 0; i < 2; i++)
+    aa_set_object(s1, 1, table(30000 + i, 16500));
+  commit(s1);
+  for (aa_oid_t i = 2; i < 4097; i++)
+    aa_set_object(s1, 1, table(30000 + i, 16500));
+  commit(s1);
+  REQUIRE(aa_objects_moved(s2, 1, &oids, &all));
+  CHECK((all || 4097 == oids.size()));
+  aa_session_free(s1);
+  aa_session_free(s2);
+}
+
 // Verify that a subtransaction's abort undoes its changes alone, and its
 // commit hands them to its parent.
 // 1. At level 1 set a table's owner; at level 2 set another's.

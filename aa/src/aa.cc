@@ -553,8 +553,12 @@ static void publish_objects(aa_env_t *env,
   for (uint64_t dbid : dropped)
     next->erase(next->lower_bound(aa_key_t(dbid, 0)),
                 next->lower_bound(aa_key_t(dbid + 1, 0)));
-  while (env->changed.size() > CHANGED_KEPT)
+  // Trim to what is kept, noting the newest epoch that lost an entry:
+  // one epoch may span the trim, its first entries gone, its last kept.
+  while (env->changed.size() > CHANGED_KEPT) {
+    env->changed_lost = std::max(env->changed_lost, env->changed.front().first);
     env->changed.pop_front();
+  }
   env->objects = next;
   env->objects_epoch.store(epoch);
 }
@@ -627,8 +631,9 @@ bool aa_objects_moved(aa_session_t *s, uint64_t dbid,
     std::lock_guard<std::mutex> lock(env->mutex);
 
     epoch = env->objects_epoch.load();
-    *all = env->changed.empty() ||
-           env->changed.front().first > s->objects_epoch + 1;
+    // All, if what is kept may not name every object changed since:
+    // nothing kept, or an entry of an epoch past this session's trimmed.
+    *all = env->changed.empty() || env->changed_lost > s->objects_epoch;
     if (!*all)
       for (const auto &[e, key] : env->changed)
         if (e > s->objects_epoch && key.first == dbid)
