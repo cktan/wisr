@@ -95,7 +95,8 @@ wait is now a documented exception, as a detach must outlast its
 builds; its join race is none, as a worker that takes new work
 only makes the detach wait for it. High 8, a worker counted whose
 thread was never made, and High 9, std::optional in sm_stats.h, are
-fixed. The Mediums and Lows are being checked.
+fixed. Of the Mediums, 1, a deadline that overflowed into the
+past, is fixed; the others and the Lows are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -107,7 +108,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 
 | Level / Area | Layering & Opacity | Naming (`_t`, `m_`, no `strncpy`) | Findings |
 | --- | --- | --- | --- |
-| `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Medium, 3 Low |
+| `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 2 Medium, 3 Low |
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 4 Medium, 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 2 Medium, 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 3 Medium, 5 Low |
@@ -123,11 +124,6 @@ None open: Highs 1 to 9 are closed.
 
 ### 3. Medium-Severity Findings
 
-1. **`sm0` (`sm/sm0/src/interrupt.cc:74-76, 193, 307-309`) —
-   Signed overflow in `time_point_of(int64_t us)`:** Multiplying
-   `us * 1000` to form nanoseconds overflows `int64_t` when `us >
-   INT64_MAX / 1000` (e.g., `SM_FOREVER`), wrapping to a negative
-   `time_point` and causing `timer_main` or `sm_wait` to spin.
 2. **`sm0` (`sm/sm0/src/interrupt.cc:326-333, 372-385`) —
    Periodic timer catch-up can starve `sm_timer_cancel`:** When
    `next = when + timer.period_us <= sm_now_us()`, `timer_main`

@@ -72,9 +72,20 @@ const sm_thread_ref_t &self_ref() {
 /* The calling thread's block. */
 sm_thread_t *self_block() { return self_ref().get(); }
 
-/* A time on the monotonic clock, from microseconds. */
+/*
+ * A time on the monotonic clock, from microseconds; the clock's last for
+ * one past what its nanoseconds hold, which would overflow into the past.
+ */
 std::chrono::steady_clock::time_point time_point_of(int64_t us) {
-  return std::chrono::steady_clock::time_point(std::chrono::microseconds(us));
+  using clock = std::chrono::steady_clock;
+  constexpr int64_t most_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          clock::duration::max())
+          .count();
+  if (us >= most_us) {
+    return clock::time_point::max();
+  }
+  return clock::time_point(std::chrono::microseconds(us));
 }
 
 } // namespace
