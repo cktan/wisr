@@ -24,7 +24,7 @@ layer.
 | Row & table locks | Shared-memory lock tables + heap tuple header bits | `sm1` lock manager (5 table modes, row locks in memory) |
 | System catalog | Heap tables (`pg_class`, `pg_attribute`, ...) | Compiled-in arrays + `sm3` catalog; virtual read-only relations |
 | Roles & auth | `pg_authid` heap table, `pg_hba.conf` | `aa/` library in `pg_global`; fixed peer / SCRAM-SHA-256 rules |
-| Index access methods | B-tree, Hash, GiST, SP-GiST, GIN, BRIN | B-tree only (in `sm3`), no bitmap scans |
+| Index access methods | B-tree, Hash, GiST, SP-GiST, GIN, BRIN | `lsm` (default) and `btree` (in `sm`), no bitmap scans |
 | Procedural languages | PL/pgSQL, SQL functions, C extensions | Removed (SPI remains for a future language) |
 
 ---
@@ -136,10 +136,17 @@ layer.
 
 ## 5. Queries, Indexes, and Plans
 
-- **B-tree indexes only.** Hash, GIN, GiST, SP-GiST, and BRIN
-  access methods are removed. DG supports B-tree indexes over
-  columns and expressions, including `UNIQUE`, partial (`WHERE`),
-  and covering (`INCLUDE`) indexes.
+- **Two secondary index types (`lsm` and `btree`).** Hash, GIN,
+  GiST, SP-GiST, and BRIN access methods are removed; DG
+  supports `UNIQUE`, partial (`WHERE`), covering (`INCLUDE`),
+  and expression indexes in two formats (`sm/BTREE.md`):
+  - **`lsm` (default, `USING 'lsm'`):** Stores each secondary
+    index entry as an individual MVCC key-value record in
+    RocksDB's LSM tree.
+  - **`btree` (`USING 'tree'`):** Stores secondary index entries
+    in 4 KB Lehman-Yao B-link tree pages stored as RocksDB
+    values and cached in `sm1`'s buffer pool, where rows decide
+    visibility.
 - **No bitmap scans or backward index scans.** Because rows have
   no page numbers, `BitmapIndexScan` and `BitmapHeapScan` do not
   exist. Descending scans on ascending indexes use an explicit
