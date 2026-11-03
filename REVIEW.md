@@ -1,13 +1,51 @@
 # Code Reviews
 
-Two reviews, at `high` effort, from reading the code; neither ran
-a test. In `dg/`, each read only the lines this repository
-changed, not PostgreSQL's own code (`CLAUDE.md`). In each, the
-most severe finding is first.
+Three reviews, at `high` effort, from reading the code. In
+`dg/`, each read only the lines this repository changed, not
+PostgreSQL's own code (`CLAUDE.md`). In each, the most severe
+finding is first.
 
 1. **ALTER COLUMN TYPE**, `fa1c683b..16a4480f` on
    `wip-altertype`.
 2. **Code merged from main**, `fa1c683b..471c870a`.
+3. **The merge of `wip-altertype` into main**: the branch whole,
+   Review 1's fixes among it, before the merge.
+
+# Review 3: wip-altertype, Before the Merge
+
+- **Target:** `wip-altertype` at `5ee42a2b`, main at `bd9f8991`
+  merged into it (`0182e9db`).
+- **Verification:** read against the code; the suites run after
+  the fixes: sm, sq, aa and dg pass, pgregress 231 of 231.
+- **Result:** no new defect in ALTER COLUMN TYPE. Review 1's
+  fixes hold. Review 2's findings were open on main: five are
+  fixed here, one is a decision kept, and two are left.
+
+**Checked and sound:**
+
+- A value out of line reaches the converter fetched:
+  `copy_rows()` calls `tbl_fetch_cols()` first, and
+  `key_value_bytes()` detoasts. No row of the new store points
+  into the old store's TOAST.
+- A numeric: the transform is coerced at the typmod sm keeps,
+  and `decimal128`'s datum is sm's, 16 bytes.
+- A collation: a column changed from a type with none keeps
+  none, which digres reads as the default, the order sm keys
+  text in, as CREATE INDEX does.
+- The change without a rewrite: digres's test and sm3's agree,
+  so sm never refuses what digres passes without a converter.
+- A converter's error is kept (`keep_eval_error()`) and raised
+  after the call; an error leaves no executor state behind it.
+- Other sessions see the new type by sm's catalog version, as
+  after DROP COLUMN.
+
+**Not changed:**
+
+- **Review 2, finding 3** (`USING btree` makes a tree): it is
+  the user's decision of `471c870a`, an index's kind by its
+  access method's name, `lsm` the default.
+- Review 1 findings 7, 8 and 10, and Review 2 finding 8:
+  cleanups.
 
 # Review 1: ALTER COLUMN TYPE
 
@@ -35,7 +73,8 @@ taken now.
 | 4 | fixed, `47edc273` |
 | 5 | fixed, `a8fc0b6d`: a row of another width is an error |
 | 6 | fixed, `40f53744` |
-| 7 to 10 | not taken: cleanups |
+| 7, 8, 10 | not taken: cleanups |
+| 9 | fixed, `3df865d2` |
 
 ## Findings
 
@@ -182,6 +221,22 @@ taken now.
   `smstore_index_am()` can return NULL.
 - **Result:** three correctness defects, three rule and document
   defects, and three cleanups.
+
+## Status
+
+Fixed on `wip-altertype` before its merge (Review 3).
+
+| Finding | Status |
+| --- | --- |
+| 1 | fixed, `eaabaa65`: the kind read in the loop already there; an index not listed is named by `pg_am` |
+| 2 | fixed, `e1c80f9e`, in all three tests that stall a sync |
+| 3 | not changed: the user's decision |
+| 4 | fixed, `66d455c6` |
+| 5 | fixed, `d261793f`: a rule compares by its count of columns |
+| 6 | fixed, `3d637dc2` |
+| 7 | fixed with 1, `eaabaa65` |
+| 8 | not taken: a cleanup |
+| 9 | gone: `sync_waiters` was removed (`5e79e023`) |
 
 ## Findings
 
