@@ -131,9 +131,11 @@ regression files are taken out for it (`test/pgregress`,
   which a scan then gives in key order (`PKDDL.md`, step 312).
 - **ALTER COLUMN TYPE of a column an expression or a partial
   index reads, a foreign key uses or references, or of an
-  identity column; and with COLLATE** — refused
+  identity column; with COLLATE; and a USING that reads another
+  column the same ALTER TABLE retypes** — refused
   (`ALTERTYPE.md` §8, step 376). PostgreSQL makes the index,
-  the foreign key or the sequence again.
+  the foreign key or the sequence again, and evaluates every
+  USING on the row as it was.
 - **ALTER INDEX, ALTER TYPE, ALTER MATERIALIZED VIEW** —
   refused; ALTER VIEW takes only options and RENAME.
 - **DEFERRABLE constraints** — never for a primary key

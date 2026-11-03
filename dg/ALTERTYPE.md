@@ -112,7 +112,7 @@ same type code, or `text` and `varchar`.
 | An index key changed to interval | refused, as CREATE INDEX refuses an interval key: sm orders intervals PostgreSQL calls equal as two keys. An INCLUDE column, or one no index has, is taken |
 | The column's statistics | dropped: ANALYZE makes them again |
 | `COLLATE` | the collations digres takes at CREATE TABLE; PostgreSQL's error for a type with none |
-| Two in one statement | §8, question 4 |
+| Two in one statement | one rewrite each (§8, question 4). One column twice is refused, PostgreSQL's `cannot alter type of column "a" twice`; a `USING` that reads another column the statement retypes, "not supported yet" |
 | Abort, savepoint rollback | the new store dropped; the catalog as it was |
 | Crash before commit | the new store unreferenced, as a TRUNCATE's swap leaves one |
 | Other sessions | the table-oid lock X; a prepared plan's descriptor invalidated (`forget_table()`) |
@@ -154,7 +154,12 @@ same type code, or `text` and `varchar`.
    partial index, a foreign key on either side, an identity
    column's sequence): refused, "not supported yet", in this
    build. Making each again is a step of its own.
-4. **Two in one statement**: one rewrite each.
+4. **Two in one statement**: one rewrite each. A later `USING`
+   would then read a column an earlier one converted, where
+   PostgreSQL reads every column as it was; so a `USING` that
+   reads another column the statement retypes is refused, and
+   one column twice is, in PostgreSQL's words. What is taken
+   gives PostgreSQL's values.
 
 ## 9. What building it found
 

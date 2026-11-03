@@ -4323,6 +4323,60 @@ static void add_index_constraint(Oid relid, const char *relname,
   }
 }
 
+/* Add to reads the name of each column node, a raw expression, reads. */
+static bool column_refs(Node *node, std::vector<std::string> *reads) {
+  if (NULL == node)
+    return false;
+  if (IsA(node, ColumnRef)) {
+    Node *last = (Node *)llast(castNode(ColumnRef, node)->fields);
+
+    /* A column's name is the last field; a table's star reads none. */
+    if (IsA(last, String))
+      reads->push_back(strVal(last));
+    return false;
+  }
+  return raw_expression_tree_walker(node, column_refs, reads);
+}
+
+/*
+ * Refuse what stmt's ALTER COLUMN TYPEs, one rewrite each
+ * (../ALTERTYPE.md section 8), would do otherwise than PostgreSQL's one
+ * rewrite for all: a column two of them change, in PostgreSQL's words; and
+ * a USING that reads another column one of them changes, which would read
+ * it converted, where PostgreSQL reads every column as it was.
+ */
+static void check_retypes(AlterTableStmt *stmt) {
+  std::vector<std::string> retyped;
+
+  foreach_node(AlterTableCmd, c, stmt->cmds) {
+    if (AT_AlterColumnType != c->subtype)
+      continue;
+    if (std::find(retyped.begin(), retyped.end(), c->name) != retyped.end())
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("cannot alter type of column \"%s\" twice",
+                             c->name)));
+    retyped.push_back(c->name);
+  }
+  if (retyped.size() < 2)
+    return;
+  foreach_node(AlterTableCmd, c, stmt->cmds) {
+    if (AT_AlterColumnType != c->subtype)
+      continue;
+    std::vector<std::string> reads;
+
+    column_refs(castNode(ColumnDef, c->def)->raw_default, &reads);
+    for (const std::string &r : reads)
+      if (r != c->name &&
+          std::find(retyped.begin(), retyped.end(), r) != retyped.end())
+        ereport(ERROR,
+                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                 errmsg("a USING that reads a column the same ALTER TABLE "
+                        "changes the type of is not supported yet"),
+                 errdetail("The USING of column \"%s\" reads column \"%s\".",
+                           c->name, r.c_str())));
+  }
+}
+
 /*
  * Do an ALTER TABLE of the table relid, in sm, in this transaction, one
  * subcommand after another: ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE,
@@ -4346,6 +4400,8 @@ void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
     alter_view(relid, stmt);
     return;
   }
+  /* Before any subcommand runs, as one changes what a later one reads. */
+  check_retypes(stmt);
   foreach (l, stmt->cmds) {
     AlterTableCmd *cmd = lfirst_node(AlterTableCmd, l);
 

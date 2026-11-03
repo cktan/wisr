@@ -15,9 +15,11 @@
 #    with the cast's and the default's errors before the view's, an open
 #    cursor.
 # 6. Rolled back, whole and to a savepoint: the column as it was.
-# 7. Two in one statement; a temporary table; a value out of line; a
-#    table with a dropped column, USING reading another column; a
-#    numeric.
+# 7. Two in one statement, each USING reading its own column; one column
+#    twice, refused as PostgreSQL refuses it; a USING reading another
+#    column the statement retypes, refused by digres alone; a temporary
+#    table; a value out of line; a table with a dropped column, USING
+#    reading another column; a numeric.
 # 8. Refused by digres alone: an expression or a partial index, a foreign
 #    key on either side, an identity column, COLLATE, an interval index
 #    key; an interval column with no index, or an INCLUDE one, is taken.
@@ -279,11 +281,45 @@ select pg_typeof(b)::text from t where a = 1
 ----
 bigint
 
-# 7. Two in one statement; a temporary table; a value out of line; a
-#    table with a dropped column, USING reading another column; a
-#    numeric.
+# 7. Two in one statement, each USING reading its own column; one column
+#    twice, refused as PostgreSQL refuses it; a USING reading another
+#    column the statement retypes, refused by digres alone; a temporary
+#    table; a value out of line; a table with a dropped column, USING
+#    reading another column; a numeric.
 statement ok
 alter table v alter column s type varchar(30), alter column k type int8
+
+statement ok
+create table mu (a int4, b int4)
+
+statement ok
+insert into mu values (1, 100), (2, 200)
+
+statement ok
+alter table mu alter column a type int8 using a * 10, alter column b type int8 using b + 1
+
+query II
+select a, b from mu order by a
+----
+10	101
+20	201
+
+statement error cannot alter type of column "a" twice
+alter table mu alter column a type int4, alter column a type text
+
+onlyif digres
+statement error a USING that reads a column the same ALTER TABLE changes the type of is not supported yet
+alter table mu alter column a type text using a::text, alter column b type text using (a + b)::text
+
+onlyif digres
+statement error a USING that reads a column the same ALTER TABLE changes the type of is not supported yet
+alter table mu alter column a type int4 using b, alter column b type int4
+
+query II
+select a, b from mu order by a
+----
+10	101
+20	201
 
 query TT
 select pg_typeof(k)::text, pg_typeof(s)::text from v where k = 1
