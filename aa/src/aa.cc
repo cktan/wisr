@@ -534,7 +534,12 @@ int aa_commit(aa_session_t *s) {
   if (0 != aa_store_read_roles(session, next.get()))
     return -1;
   s->env->roles = next;
-  s->epoch = ++s->env->epoch;
+  // The session's caches hold its own change already, but not one of
+  // another's it has not seen: it is up to date only if it was before.
+  bool fresh = s->epoch == s->env->epoch.load();
+  uint64_t epoch = ++s->env->epoch;
+  if (fresh)
+    s->epoch = epoch;
   return 0;
 }
 
