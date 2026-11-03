@@ -22,6 +22,10 @@ struct aa_env_t {
   sm_env_t *env = NULL; /* the home directory pg_global is in */
   std::mutex mutex;     /* guards roles and objects, and orders their
                            replacement */
+  /* Orders the commits of role changes: held from before a commit's
+   * transaction begins to its snapshot's replacement, so the roles it
+   * reads back include every role commit before it. */
+  std::mutex roles_commit_mutex;
   std::shared_ptr<const aa_roles_t> roles;
   /* How many times roles was replaced: a session's caches of them are
    * stale when it has moved (aa_roles_moved()). */
@@ -133,6 +137,9 @@ struct aa_session_t {
 
 /* Every role and membership, in a transaction of session's own. */
 int aa_store_read_roles(sm_session_t *session, aa_roles_t *out);
+
+/* The same, in session's transaction, which is open. */
+int aa_store_read_roles_in(sm_session_t *session, aa_roles_t *out);
 
 /* Every object's entry, likewise. */
 int aa_store_read_objects(sm_session_t *session, aa_objects_t *out);

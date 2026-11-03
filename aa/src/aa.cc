@@ -477,12 +477,13 @@ static int write_roles_and(aa_session_t *s, sm_session_t *session,
  * At the commit of the session's transaction, before the database's:
  * write its changes to pg_global.
  * 1. Find each entry that is to grant less (intermediates()).
- * 2. In one transaction of pg_global's, write the role changes, and each
+ * 2. If the roles changed, take the role commits' order.
+ * 3. In one transaction of pg_global's, write the role changes, and each
  *    entry that is to grant less as granting only what it grants before
- *    and after.
- * 3. Keep those entries as they were, for aa_abort() to put back if the
+ *    and after; read the roles back, and commit.
+ * 4. Keep those entries as they were, for aa_abort() to put back if the
  *    database's commit fails.
- * 4. If the roles changed, replace the roles' snapshot.
+ * 5. If the roles changed, replace the roles' snapshot with those read.
  */
 int aa_commit(aa_session_t *s) {
   std::vector<intermediate_t> before = intermediates(s);
@@ -491,6 +492,13 @@ int aa_commit(aa_session_t *s) {
 
   if (!roles && before.empty())
     return 0;
+  // One role commit at a time, from before its transaction begins: its
+  // snapshot then holds every role commit before it, and the roles it
+  // reads back are pg_global's as they are at its commit.
+  std::unique_lock<std::mutex> order(s->env->roles_commit_mutex,
+                                     std::defer_lock);
+  if (roles)
+    order.lock();
   if (0 != write_session(s, &session))
     return -1;
   if (0 != sm_begin(session, SM_XCT_READ_COMMITTED, 0))
@@ -502,6 +510,15 @@ int aa_commit(aa_session_t *s) {
    * leaves less granted, not more.
    */
   if (0 != write_roles_and(s, session, before)) {
+    (void)sm_abort(session);
+    return -1;
+  }
+  /*
+   * The roles as this commit leaves them, read before it, so no read
+   * that can fail comes after the commit point.
+   */
+  auto next = std::make_shared<aa_roles_t>();
+  if (roles && 0 != aa_store_read_roles_in(session, next.get())) {
     (void)sm_abort(session);
     return -1;
   }
@@ -524,15 +541,9 @@ int aa_commit(aa_session_t *s) {
   s->working.reset();
   s->version++;
 
-  /*
-   * Replace the snapshot with pg_global as it is now, read under the
-   * lock: the last to replace it read last, so no later read is lost to
-   * an earlier one.
-   */
-  auto next = std::make_shared<aa_roles_t>();
+  // Replace the snapshot with the roles read: the commits are in order,
+  // so no later read is lost to an earlier one.
   std::lock_guard<std::mutex> lock(s->env->mutex);
-  if (0 != aa_store_read_roles(session, next.get()))
-    return -1;
   s->env->roles = next;
   // The session's caches hold its own change already, but not one of
   // another's it has not seen: it is up to date only if it was before.

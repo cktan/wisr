@@ -527,23 +527,26 @@ static int in_read_transaction(sm_session_t *session, F read) {
   return 0;
 }
 
+/* Every role and membership, in session's transaction, which is open. */
+int aa_store_read_roles_in(sm_session_t *session, aa_roles_t *out) {
+  return 0 != read_rows(session, AUTHID_TABLE, A_NATTS,
+                        [&](const row_t &r) {
+                          out->roles.emplace_back();
+                          return role_of_row(r, &out->roles.back());
+                        }) ||
+                 0 != read_rows(session, MEMBERS_TABLE, M_NATTS,
+                                [&](const row_t &r) {
+                                  out->members.emplace_back();
+                                  return member_of_row(r, &out->members.back());
+                                })
+             ? -1
+             : 0;
+}
+
 /* Every role and membership, in a transaction of session's own. */
 int aa_store_read_roles(sm_session_t *session, aa_roles_t *out) {
-  return in_read_transaction(session, [&] {
-    return 0 != read_rows(session, AUTHID_TABLE, A_NATTS,
-                          [&](const row_t &r) {
-                            out->roles.emplace_back();
-                            return role_of_row(r, &out->roles.back());
-                          }) ||
-                   0 != read_rows(session, MEMBERS_TABLE, M_NATTS,
-                                  [&](const row_t &r) {
-                                    out->members.emplace_back();
-                                    return member_of_row(r,
-                                                         &out->members.back());
-                                  })
-               ? -1
-               : 0;
-  });
+  return in_read_transaction(
+      session, [&] { return aa_store_read_roles_in(session, out); });
 }
 
 /* Every object's entry, in a transaction of session's own. */
