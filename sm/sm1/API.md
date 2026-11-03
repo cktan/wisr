@@ -431,7 +431,7 @@ has them.
 | Level | Event |
 | --- | --- |
 | `error` | a background GC step failed: a tombstone purge, a flush, a column family drop, or a `CF:txn` sweep |
-| `error` | a status record write failed, and the database stopped until reopened |
+| `error` | a status record write or its WAL sync failed, and the process is aborting (`*** FATAL ***`) |
 | `error` | the process ran out of memory and is aborting (`*** FATAL ***`) |
 | `warn` | the compaction filter kept versions unstamped because it could not judge them; once per compaction |
 | `warn` | a `CF:txn` sweep was abandoned rather than delete records still needed |
@@ -1592,9 +1592,8 @@ Errors for `sm1::mkseq`: `SM_ERR_EXISTS`, `SM_ERR_NOTRANS`,
 `sm1::rmseq`: `SM_ERR_NOTFOUND` and the same otherwise. For
 `sm1::nextseq`: `SM_ERR_NOTFOUND` (no such sequence),
 `SM_ERR_INVALID` (NULL session, bad name, or exhausted),
-`SM_ERR_PREPARED`, `SM_ERR_CORRUPT`, `SM_ERR_IO` (the
-database has stopped, or persisting the next block failed),
-`SM_ERR_DISKFULL`.
+`SM_ERR_PREPARED`, `SM_ERR_CORRUPT`, `SM_ERR_IO` (persisting
+the next block failed), `SM_ERR_DISKFULL`.
 
 `sm1::lastseq` reports the last value handed out, drawing none:
 no lease is extended and nothing is written. It returns 1 if
