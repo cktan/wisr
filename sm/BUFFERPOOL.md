@@ -135,7 +135,7 @@ From `BTREE.md` §17:
 ### 3.1 Where it sits
 
 The pool is sm1's, as sm1 owns a page's I/O and knows nothing of
-trees (D2). There is one in the environment, beside the block
+trees. There is one in the environment, beside the block
 cache, shared by every database and the temporary instance.
 
 ### 3.2 Frames

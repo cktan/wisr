@@ -10263,28 +10263,29 @@ to show what a lock table of sm1's own gains a client.
 `../sm/BTREE.md`, handed over whole and unattended, on the
 `wip-btree` branch.
 
-- **The page's split** (D1): step 1 split a page without the
+- **The page's split**: step 1 split a page without the
   entry that filled it, and capped an entry at a third of the
   limit without the left half's new high key. Three entries of
   2,730 bytes left a fourth that fit no half after any number
   of splits. The split now takes the entry, at the point
   nearest half the bytes where both halves fit, and an entry is
   at most `(limit - header) / 3`.
-- **sm1's pages** (D2, D3): class `0x04` keys, written outside
+- **sm1's pages**: class `0x04` keys, written outside
   every transaction in one batch, read through the block cache.
   The cache is sm1's, not sm2's, as sm1 is the only channel into
   RocksDB. A miss's `Get` and insert hold a fill latch that a
   write holds too, so a stale page is never put back. The GC
   filter, a chained store's next old id, a load's emptiness and
   a load's rollback leave pages alone.
-- **The writers' latch** (D3): one a page, in a sharded map,
+- **The writers' latch**: one a page, in a sharded map,
   not a stripe: a split holds a page's and its parent's.
-- **The tree** (`../sm/sm2/src/tree/tree.cc`, D4): a B-link
+- **The tree** (`../sm/sm2/src/tree/tree.cc`): a B-link
   tree; page ids from the meta page, a post's parent found by
   a descent from the root, a split's post cut short finished by
   the next writer to latch the page. A cursor copies a leaf's
   keys and reaches the next from the leaf it copied.
-- **D5**: an entry goes in after its row, not before, so vacuum
+- **An entry after its row**: an entry goes in after its row,
+  not before, so vacuum
   cannot remove an entry an insert has just found there.
 - **Tests**: sm1, four of pages; sm2, the page, the latch under
   TSan (`make tsan` in sm2, new), and the tree: 20,000 random
@@ -10301,8 +10302,8 @@ to show what a lock table of sm1's own gains a client.
 through it answers as through today's entries.
 
 - **sm1**: `read_settled`, a row's newest version only once
-  every snapshot sees it, for vacuum (D5); `ssi_read_range` and
-  `ssi_write_key`, SSI on keys no version holds (D10).
+  every snapshot sees it, for vacuum; `ssi_read_range` and
+  `ssi_write_key`, SSI on keys no version holds.
 - **sm2**: an index `rel` over a tree (`idx_open`'s `tree`): an
   entry's key always ends with its row's, its value the cut
   flag and the columns' length, no INCLUDE column; a cut at a
@@ -10311,11 +10312,11 @@ through it answers as through today's entries.
   latch; `rel_read_settled`.
 - **sm3**: the kind in the catalog (attribute 13 of an index's
   part); made with the index, in a truncate's new store and a
-  rewrite's; left by a drop (D6). `tbl_idx_scan_rows` on a tree
+  rewrite's; left by a drop. `tbl_idx_scan_rows` on a tree
   reads each entry's row and keeps it only if the row's entry,
-  made as a write makes it, is the entry (D8). `tbl_compact`
+  made as a write makes it, is the entry. `tbl_compact`
   removes the dead entries of settled rows.
-- **dg**: `WITH (tree = on)` (D7), a unique one refused (D9); a
+- **dg**: `WITH (tree = on)`, a unique one refused; a
   tree scanned by the rows' cursor, as a primary key is.
 - **Found**: a truncate made the new store in the statement
   and wrote its trees before its mark moved: "store does not
@@ -10375,8 +10376,8 @@ and counts every thread):
 - **Found**: held inner pages gone stale routed a million-row
   insert so far left that it took 424 s, not 51: a descent that
   moves right now lets them go. The load is 34 s with pages of
-  4 KB, 51 s of 8 KB, 18 s with today's entries (D12).
-- **A unique tree** (D13): an insert judges every other entry
+  4 KB, 51 s of 8 KB, 18 s with today's entries.
+- **A unique tree**: an insert judges every other entry
   of its key by its row's newest version, under the latch of the
   leaf that covers the key, waiting for a running writer with
   every latch let go; sm1's `read_newest` and `wait_writer`. An
@@ -10632,7 +10633,7 @@ benchmarks, so with plan step 1 not run.
 - **Found reviewing it**: a lock-free lookup can hand back a frame
   just taken for another page, whose holder may wait for a page
   this thread has pinned: a cycle no latch order forbids. A pin
-  looks at the tag again before it sleeps (D19).
+  looks at the tag again before it sleeps.
 - **Tests**: sm1, 11 cases on the pool alone. Eleven mutations,
   each caught in 3 runs of 3.
 
@@ -10642,14 +10643,13 @@ Plan step 7: `sm1::pin_page` takes SH or EX, and `sm1::page_write`
 copies each page into its pinned frame once RocksDB has it.
 
 - **sm1**: attach gives the pool a quarter of `block_cache_bytes`,
-  64 frames at least (D17). A miss's `Get` has `fill_cache` off.
+  64 frames at least. A miss's `Get` has `fill_cache` off.
   `page_put_t::inner` goes, as the clock's age comes with the pin.
 - **sm2**: a reader pins one page at a time, as one holding a page
   while it waits for a child could wait on a writer waiting for
   the page it holds. A writer's pins replace its latches, in the
   same order. The fill latch, the latch table, held pins and
-  `tree_close` go, and `descend()` loses `afresh` and `moved`
-  (D20).
+  `tree_close` go, and `descend()` loses `afresh` and `moved`.
 - **Found**: `post()`, finding the parent has the entry already,
   returned with its child still latched, and its caller pinned
   that page again and waited on itself: a crash's path, from
@@ -10740,7 +10740,7 @@ its entries out with their rows unread.
   `sm_rel_scan_cols`.
 - **SSI**: a tree's delete, or a key's change, now reports its
   old entry's key (`ssi_write_key`), as an insert reports its
-  new one (D27): an index-only scan that skips a row holds no
+  new one: an index-only scan that skips a row holds no
   SIREAD on it, and a write skew through a count went unseen,
   both committing, until it did.
 - **dg**: `smstore_index_getentry()` turns the mode on for a tree
@@ -10830,7 +10830,7 @@ eviction failed every session's copy, and each session read page
 0 again. The user pointed it out. `sm1::page_copy()`, on a good
 copy, now sets the frame's age's top bit, as a pin does
 (`bufpool_t::touch()`, which `pin()` now calls too); written only
-if not set already. D28 amended.
+if not set already.
 
 - **Tests**: sm1, a touched page outlasts 64 leaves read through
   a pool of 8, and goes once no longer touched; a copy read after
@@ -10847,7 +10847,7 @@ each frame, `std::atomic<std::shared_ptr>`; the first reader at a
 version makes and publishes it, by compare and swap, and the
 others take it. The frame lets it go on an install, a discard, a
 purge or an eviction; the last holder frees it. A probe with a
-good copy touches no count. Decision D29.
+good copy touches no count.
 
 - **Tests**: sm1, two readers share one copy; an install leaves
   a holder the old bytes, and frees the old copy once its
@@ -10935,8 +10935,7 @@ is now as the code is:
   key, not its `_id`, and a row another transaction moved is
   not followed (`CLUSTER.md` §4).
 - `sm3/include/sm3.h`, `tbl_insert_arbiter()`: a tree
-  arbiter's entry goes in after the row, under a savepoint
-  (D5).
+  arbiter's entry goes in after the row, under a savepoint.
 - `sm3/src/catalog/internal.h`, `rewrite_table()`: only a
   keyless row keeps its `_id`.
 - `rel/src/rel_ops.cc`, `abort_failed_write()`: three outcomes
