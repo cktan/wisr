@@ -457,19 +457,22 @@ int begin(session_t* session, xctlevel_t level, bool read_only = false);
  * On SM_ERR_SERIALIZATION the transaction is aborted and its
  * effects discarded; retry.
  *
- * On SM_ERR_IO the outcome is UNKNOWN: the commit record may
- * or may not have reached the log. DO NOT RETRY BLINDLY -- the
- * work may already be committed. The database enters a failed
- * state, where further writes, commits, and prepares fail with
- * SM_ERR_IO while reads on existing snapshots continue. After
- * a reopen the transaction is committed or not according to
- * what reached the log.
+ * A failed write or sync of the commit record aborts the
+ * process (sm0::fatal): the record may or may not have reached
+ * the log, so the outcome is unknown. After a reopen the
+ * transaction is committed or not according to what reached
+ * the log.
+ *
+ * On SM_ERR_IO the transaction did not commit: the database
+ * had failed stop before its commit record (a failed prepare
+ * or abort record), and refuses writes, commits, and prepares
+ * while reads on existing snapshots continue.
  *
  * Once called on an active transaction, the transaction is no
  * longer active whatever the result.
  *
  * Errors: SM_ERR_SERIALIZATION (retryable), SM_ERR_NOTRANS,
- * SM_ERR_IO (outcome unknown).
+ * SM_ERR_IO (the database has failed stop).
  */
 int commit(session_t* session);
 

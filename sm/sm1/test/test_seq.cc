@@ -355,7 +355,7 @@ TEST_CASE("concurrent sessions never receive the same value") {
 
 TEST_CASE("a stopped database hands out no sequence values") {
   // Verify the failed state (§8.2) covers the sequence.
-  // 1. Make a commit's status write fail.
+  // 1. Make a prepare's status write fail (§8.4).
   // 2. sm1::nextseq then fails with SM_ERR_IO.
   seq_fixture_t f;
   sm1::session_t *s = f.s();
@@ -363,11 +363,11 @@ TEST_CASE("a stopped database hands out no sequence values") {
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   uint64_t storeid = 0;
   REQUIRE(sm1::mkstore(s, storeid) == 0);
-  s->db->test_before_commit = [](uint64_t) {
+  s->db->test_before_prepare = [] {
     return rocksdb::Status::IOError("injected");
   };
-  CHECK(sm1::commit(s) == -1);
-  s->db->test_before_commit = nullptr;
+  CHECK(sm1::prepare(s, "gs") == -1);
+  s->db->test_before_prepare = nullptr;
   uint64_t v;
   CHECK(sm1::nextseq(s, SEQ, v) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_IO);

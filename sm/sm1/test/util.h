@@ -9,6 +9,8 @@
 #include "sm1.h"
 
 #include <stdlib.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <filesystem>
 #include <set>
@@ -47,6 +49,53 @@ inline sm1::env_t *attach(std::string_view homedir) {
   sm1::env_t *env = nullptr;
   attach(homedir, env);
   return env;
+}
+
+/* Read fd until its end. */
+inline std::string read_fd(int fd) {
+  std::string out;
+  char buf[512];
+  ssize_t n;
+  while ((n = read(fd, buf, sizeof(buf))) > 0) {
+    out.append(buf, n);
+  }
+  return out;
+}
+
+/*
+ * Run `test_sm1 flag homedir`, a child workload main.cc knows,
+ * and wait for it. Returns its wait status, with what it wrote
+ * to stdout in out and to stderr in err. Each must stay under a
+ * pipe's buffer, as stdout is read to its end before stderr.
+ */
+inline int run_child(const char *flag, const char *homedir, std::string &out,
+                     std::string &err) {
+  int out_fds[2], err_fds[2];
+  REQUIRE(pipe(out_fds) == 0);
+  REQUIRE(pipe(err_fds) == 0);
+  pid_t pid = fork();
+  REQUIRE(pid >= 0);
+  if (pid == 0) {
+    // In the child: stdout and stderr become the pipes, then exec,
+    // so the child starts without the parent's RocksDB threads.
+    dup2(out_fds[1], 1);
+    dup2(err_fds[1], 2);
+    close(out_fds[0]);
+    close(out_fds[1]);
+    close(err_fds[0]);
+    close(err_fds[1]);
+    execl("/proc/self/exe", "test_sm1", flag, homedir, (char *)nullptr);
+    _exit(127);
+  }
+  close(out_fds[1]);
+  close(err_fds[1]);
+  out = read_fd(out_fds[0]);
+  err = read_fd(err_fds[0]);
+  close(out_fds[0]);
+  close(err_fds[0]);
+  int status;
+  REQUIRE(waitpid(pid, &status, 0) == pid);
+  return status;
 }
 
 /* sm1::opendb, handing back the session, or nullptr with the error set. */

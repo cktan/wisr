@@ -776,18 +776,15 @@ void db_commit_done(db_t *db, uint64_t commit_ts) {
  *
  * It is NOT cut short by an interrupt, unlike every other wait in sm
  * (../CODE.md §7): the transaction has committed, and a
- * cancel here would bring the bug back. It ends without its commit
- * visible only when the database has failed stop: an older commit
- * whose record write failed stays in the sequencer, holding back
- * visible_ts until a reopen, and wakes this wait as it fails
- * (finish_commit()). Everything after is refused anyway.
+ * cancel here would bring the bug back. An older commit whose
+ * record write or sync fails does not leave it waiting: the
+ * process aborts (finish_commit(), db_sync_wal()).
  */
 void db_commit_wait(db_t *db, uint64_t commit_ts) {
   // Hold alloc_mu, the sequencer's mutex, which visible_cv waits on.
   std::unique_lock<std::mutex> guard(db->alloc_mu);
-  db->visible_cv.wait(guard, [&] {
-    return db->visible_ts.load() >= commit_ts || db->failed.load();
-  });
+  db->visible_cv.wait(guard,
+                      [&] { return db->visible_ts.load() >= commit_ts; });
 }
 
 /*
@@ -799,26 +796,21 @@ void db_commit_wait(db_t *db, uint64_t commit_ts) {
  *    after a group's WAL write, before its writers return, so it
  *    covers every write that returned before this call.
  * 2. If a finished sync covers the target, return.
- * 3. If the database failed stop, return IOError.
- * 4. If another commit is syncing, wait for it and go to step 2.
- * 5. Lead: take upto, the last sequence number again. Every write
+ * 3. If another commit is syncing, wait for it and go to step 2.
+ * 4. Lead: take upto, the last sequence number again. Every write
  *    at or below it is in the WAL file now.
- * 6. Sync the WAL with sync_mu let go; writers go on meanwhile.
- * 7. Record upto as synced, or the database as failed, and wake
- *    the commits waiting.
+ * 5. Sync the WAL with sync_mu let go; writers go on meanwhile.
+ * 6. If the sync failed, abort the process (SM1_DESIGN.md §8.2).
+ * 7. Record upto as synced, and wake the commits waiting.
  */
-rocksdb::Status db_sync_wal(db_t *db) {
+void db_sync_wal(db_t *db) {
   uint64_t target = db->rdb->GetLatestSequenceNumber();
   // Hold sync_mu to read and claim the sync state.
   std::unique_lock<std::mutex> guard(db->sync_mu);
   for (;;) {
     // Covered by a finished sync: another commit's, or an earlier one.
     if (db->synced_seq >= target) {
-      return rocksdb::Status::OK();
-    }
-    // An earlier sync failed: this record's outcome is unknown too.
-    if (db->failed.load()) {
-      return rocksdb::Status::IOError("an earlier WAL sync failed");
+      return;
     }
     // No sync runs: lead one.
     if (!db->syncing) {
@@ -843,18 +835,21 @@ rocksdb::Status db_sync_wal(db_t *db) {
   if (st.ok()) {
     st = db->rdb->FlushWAL(true);
   }
+  // The records it was to cover may be in the WAL or not, and a
+  // retried sync proves nothing: abort, and let WAL replay decide.
+  if (!st.ok()) {
+    fatal("database {}: WAL sync failed, so the outcome of the commits "
+          "it covers is unknown: {}. The process is aborting; reopen "
+          "the database: WAL replay recovers every committed "
+          "transaction.",
+          db->name.c_str(), st.ToString().c_str());
+  }
   // Hold sync_mu again to record the result and end the sync.
   guard.lock();
   db->syncing = false;
-  if (st.ok()) {
-    db->synced_seq = upto;
-  } else {
-    // Fail stop: the waiters' records may be in the WAL or not.
-    db->failed = true;
-  }
-  // Wake the waiters: covered, failed, or one leads the next sync.
+  db->synced_seq = upto;
+  // Wake the waiters: covered, or one leads the next sync.
   db->sync_cv.notify_all();
-  return st;
 }
 
 /* Allocate an object id: a storeid or a seqid. */

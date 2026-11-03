@@ -83,11 +83,12 @@ loses committed data. A changes only the commit.
   among them, finds the xid in the active table before CF:txn
   (`xct_status()` step 1), so the unsynced record is never
   read as a commit.
-- **A failed sync is a failed record write**: fail-stop, as
-  `finish_commit()` does now (`SM1_DESIGN.md` §8.2). The
-  record may be in the WAL, so the outcome is unknown. RocksDB
-  stops writes too (`IOStatusCheck`). The leader wakes the
-  waiters with the failure.
+- **A failed sync is fatal**, as a failed record write is
+  (`SM1_DESIGN.md` §8.2). The records it was to cover may be
+  in the WAL or not, and a second sync proves nothing. So the
+  leader aborts the process (`sm0::fatal()`), and no commit
+  waiting behind it returns. The reopen's WAL replay decides
+  each commit.
 - **Only the commit record changes.** The PREPARED record
   (§8.4) and a prepared transaction's ABORTED record keep
   `sync = true`: they are rare, and a group led by one of them
@@ -110,7 +111,7 @@ loses committed data. A changes only the commit.
 | process crash after the record, before the sync | the record is in the OS's page cache: the reopen finds it committed; the client was not told. As a crash inside today's synced `Put` |
 | power loss before the sync | the record may be lost: the transaction is dead at reopen; the client was not told |
 | power loss after `sm1::commit` returns | the record was synced: committed |
-| the sync fails | fail-stop, outcome unknown, as a failed `Put` now |
+| the sync fails | the process aborts; the reopen's WAL replay decides each commit |
 | abort, savepoint rollback | no record written: unchanged |
 | 2PC: PREPARE, COMMIT PREPARED, across restart | PREPARE stays synced. COMMIT PREPARED goes through `finish_commit()`: the same wait |
 | a commit of DDL: CREATE INDEX, DROP, TRUNCATE, ALTER | the same record and wait; `last_ddl_ts` set after the sync, as now |
@@ -137,8 +138,10 @@ loses committed data. A changes only the commit.
     sync is done: a test hook stalls the leader's sync, and
     another session does not see the row. With the sync moved
     after the publish, it sees the row.
-  - A failed sync stops the database, and the commit waiting
-    behind it returns `SM_ERR_IO` too.
+  - A failed sync aborts the process, run in a child. After
+    the reopen, the commit whose record reached the OS is
+    committed. With fail-stop in place of the abort, the child
+    returns.
   - Fifteen commits waiting behind a stalled sync share one
     more sync. With a leader covering only its own record, they
     make more.

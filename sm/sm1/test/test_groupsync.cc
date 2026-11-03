@@ -12,6 +12,8 @@
 #include "session.h"
 #include "sm1.h"
 
+#include <signal.h>
+#include <string.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -332,53 +334,57 @@ TEST_CASE("a commit is visible only once the WAL is synced past it") {
   REQUIRE(sm1::closedb(b) == 0);
 }
 
-TEST_CASE("a failed sync fails the database stop, with the commits behind "
-          "it") {
-  // Verify a failed WAL sync is a failed status write (§8.2): the
-  // outcome of every commit it was to cover is unknown.
-  // 1. Session A commits "a"; its sync stalls.
-  // 2. Session B commits "b" meanwhile: its record is written, and it
-  //    waits for a sync.
-  // 3. A's sync fails: both commits return SM_ERR_IO, and the
-  //    database has failed stop.
-  sync_fixture_t f;
-  sm1::session_t *a = f.first();
-  sm1::session_t *b = f.open();
+/*
+ * The failed-sync child: make a store and write its storeid to
+ * stdout, then commit "a" with its WAL sync failing, which aborts
+ * the process. Returns only on a setback.
+ */
+int sync_fail_child_main(const char *homedir) {
+  sm1::env_t *env = attach(homedir);
+  sm1::session_t *s = env ? opendb(env, "db") : nullptr;
+  uint64_t store = 0;
+  if (!s || sm1::begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||
+      sm1::mkstore(s, store) != 0 || sm1::commit(s) != 0) {
+    return 2;
+  }
+  if (write(1, &store, sizeof(store)) != (ssize_t)sizeof(store)) {
+    return 3;
+  }
+  s->db->test_before_sync = [] { return rocksdb::Status::IOError("injected"); };
+  commit_one(s, store, "a");
+  return 4;
+}
 
-  std::promise<void> entered, release;
-  std::shared_future<void> released = release.get_future().share();
-  std::atomic<int> calls{0};
-  f.db()->test_before_sync = [&] {
-    if (calls++ == 0) {
-      entered.set_value();
-      released.wait();
-      return rocksdb::Status::IOError("injected");
-    }
-    return rocksdb::Status::OK();
-  };
+TEST_CASE("a failed sync aborts the process") {
+  // Verify a failed WAL sync ends the process, so no commit it was
+  // to cover returns, and the reopen decides them from the WAL
+  // (SM1_DESIGN.md §8.2).
+  // 1. Make "db", and leave the home directory to a child.
+  // 2. The child commits "a", and its sync fails: it dies of
+  //    SIGABRT, having said *** FATAL *** on stderr.
+  // 3. Attach again: "a" is committed, as its record reached the
+  //    OS before the abort, though the sync failed.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  home.detach();
+  std::string out, err;
+  int status = run_child("--sync-fail-child", home.path(), out, err);
+  CAPTURE(err);
+  REQUIRE(WIFSIGNALED(status));
+  CHECK(WTERMSIG(status) == SIGABRT);
+  CHECK(err.find("*** FATAL *** database db: WAL sync failed") !=
+        std::string::npos);
+  uint64_t store = 0;
+  REQUIRE(out.size() == sizeof(store));
+  memcpy(&store, out.data(), sizeof(store));
 
-  // A commit's return code and error, read on its own thread.
-  auto commit_err = [&](sm1::session_t *s, const char *key) {
-    int rc = commit_one(s, f.store(), key);
-    return rc == 0 ? 0 : sm1::errnum();
-  };
-  std::future<int> a_err =
-      std::async(std::launch::async, [&] { return commit_err(a, "a"); });
-  REQUIRE(entered.get_future().wait_for(std::chrono::seconds(10)) ==
-          std::future_status::ready);
-  std::future<int> b_err =
-      std::async(std::launch::async, [&] { return commit_err(b, "b"); });
-  // Time for B to write its record and wait for A's sync.
-  CHECK(b_err.wait_for(std::chrono::milliseconds(300)) !=
-        std::future_status::ready);
-
-  release.set_value();
-  CHECK(a_err.get() == sm1::SM_ERR_IO);
-  CHECK(b_err.get() == sm1::SM_ERR_IO);
-  CHECK(calls == 1);
-  CHECK(f.db()->failed.load());
-  f.db()->test_before_sync = nullptr;
-  REQUIRE(sm1::closedb(b) == 0);
+  home.attach();
+  sm1::session_t *s = opendb(home.env(), "db");
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(s, store, "a") == "v");
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::closedb(s) == 0);
 }
 
 TEST_CASE("one sync serves the commits that wait while another runs") {

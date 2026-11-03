@@ -381,9 +381,10 @@ struct db_t {
   size_t load_file_bytes = 0;
 
   /*
-   * Set when a status write fails (§8.2): the outcome of that
-   * commit is unknown until a reopen, so writes, commits, and
-   * DDL fail with SM_ERR_IO from then on.
+   * Set when a PREPARED or ABORTED record write fails (§8.4): the
+   * outcome of that transaction is unknown until a reopen, so
+   * writes, commits, and DDL fail with SM_ERR_IO from then on. A
+   * failed commit record aborts the process instead (§8.2).
    */
   std::atomic<bool> failed{false};
 
@@ -622,10 +623,10 @@ void db_commit_wait(db_t *db, uint64_t commit_ts);
 /*
  * Wait until the WAL is synced past every write that returned
  * before the call, one commit syncing for all that wait
- * (GROUPSYNC.md §3). Returns a sync's failure, or IOError if
- * the database failed stop meanwhile.
+ * (GROUPSYNC.md §3). A failed sync aborts the process
+ * (SM1_DESIGN.md §8.2).
  */
-rocksdb::Status db_sync_wal(db_t *db);
+void db_sync_wal(db_t *db);
 
 /* Allocate an object id -- a storeid or a seqid. Returns 0 or -1. */
 int db_alloc_objid(db_t *db, uint64_t *out);

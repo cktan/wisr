@@ -782,37 +782,21 @@ int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
                       rocksdb::Slice(key, sizeof(key)),
                       rocksdb::Slice(val, sizeof(val)));
   }
+  // The record's fate is unknown: it may have reached the WAL.
+  // Abort, and let WAL replay decide (§8.2).
+  if (!st.ok()) {
+    fatal("database {}: commit record write failed, so the outcome of "
+          "the commit is unknown: {}. The process is aborting; reopen "
+          "the database: WAL replay recovers every committed "
+          "transaction.",
+          db->name.c_str(), st.ToString().c_str());
+  }
   // Sync the WAL past it, unless durability was traded away: the
   // commit point (§8.2). Until then the xid is in the active
-  // table, so no reader takes the record for a commit.
-  if (st.ok() && db->durability_sync) {
-    st = db_sync_wal(db);
-  }
-  // The record's fate is unknown.
-  if (!st.ok()) {
-    // Fail stop: the record may have reached the WAL, so the
-    // transaction stays in flight -- in the active table,
-    // its commit_ts holding back visible_ts -- until a
-    // reopen resolves it from the log (§8.2). Its locks go:
-    // the database refuses writes from now on anyway.
-    db->failed = true;
-    {
-      // Wake the newer commits waiting behind this one, which
-      // now never becomes visible (db_commit_wait()).
-      std::lock_guard<std::mutex> guard(db->alloc_mu);
-      db->visible_cv.notify_all();
-    }
-    log_msg(sm1::loglevel_t::error,
-            "database {}: commit record write or sync failed, database "
-            "stopped until reopened: {}",
-            db->name.c_str(), st.ToString().c_str());
-    // Release the locks: writes are refused from now on.
-    lock_release_all(s);
-    // Forget the transaction.
-    reset(s);
-    return set_error(sm1::SM_ERR_IO,
-                     "write commit record (outcome unknown): {}",
-                     st.ToString().c_str());
+  // table, so no reader takes the record for a commit. A failed
+  // sync aborts the process.
+  if (db->durability_sync) {
+    db_sync_wal(db);
   }
   // Keep its on_commit functions for the entry point to run.
   committed_fns.swap(s->on_commit);

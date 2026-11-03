@@ -787,17 +787,20 @@ happened at prepare time.
 On `SM_ERR_SERIALIZATION` the transaction has been aborted
 and its effects discarded; the caller retries.
 
-On `SM_ERR_IO` the outcome is **unknown**: the commit record
-may or may not have reached the log. **Do not retry
-blindly** — the work may already be committed. The database
-enters a failed state: further writes, commits, and
-prepares fail with `SM_ERR_IO`, while reads on existing
-snapshots continue. After the database is reopened, the
-transaction is committed or not according to what reached
-the log.
+A failed write or sync of the commit record aborts the
+process (`sm0::fatal()`): the record may or may not have
+reached the log, so the outcome is unknown. After the
+database is reopened, the transaction is committed or not
+according to what reached the log.
+
+On `SM_ERR_IO` the transaction did not commit: the database
+had failed stop before its commit record (a failed prepare
+or abort record), and refuses writes, commits, and prepares,
+while reads on existing snapshots continue.
 
 Errors: `SM_ERR_SERIALIZATION` (retryable),
-`SM_ERR_NOTRANS`, `SM_ERR_IO` (outcome unknown).
+`SM_ERR_NOTRANS`, `SM_ERR_IO` (the database has failed
+stop).
 
 ### int sm1::abort(sm1::session_t* session)
 
