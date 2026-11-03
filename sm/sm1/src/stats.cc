@@ -12,6 +12,7 @@
 #include "session.h"
 #include "version.h"
 
+#include <charconv>
 #include <string>
 
 #include <rocksdb/options.h>
@@ -162,7 +163,8 @@ int probes(sm1::session_t *s, uint64_t storeid, uint64_t *out) {
             &v)) {
       continue;
     }
-    uint64_t files = std::stoull(v);
+    uint64_t files = 0;
+    std::from_chars(v.data(), v.data() + v.size(), files);
     n += l == 0 ? files : (files > 0 ? 1 : 0);
   }
   *out = n;

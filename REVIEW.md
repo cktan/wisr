@@ -99,8 +99,9 @@ fixed. Of the Mediums, 1, a deadline that overflowed into the
 past, 2, a periodic timer's catch-up that starved its cancel, 3,
 a real fd's open of no path, 4, a load into a store the
 transaction does not see, 5, a chained write or a drop of a
-store with a load open, and 6, a wait bit left set after its
-sleep, are fixed; the others and the Lows are being checked.
+store with a load open, 6, a wait bit left set after its sleep,
+and 7, a catch and a std::stoull, are fixed; the others and the
+Lows are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -113,7 +114,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | Level / Area | Layering & Opacity | Naming (`_t`, `m_`, no `strncpy`) | Findings |
 | --- | --- | --- | --- |
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Low |
-| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 1 Medium, 3 Low |
+| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 2 Medium, 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 3 Medium, 5 Low |
 | `include/` & `src/` | PASS | PASS | 2 Medium, 3 Low |
@@ -128,11 +129,6 @@ None open: Highs 1 to 9 are closed.
 
 ### 3. Medium-Severity Findings
 
-7. **`sm1` (`sm/sm1/src/walfs.cc:163-170`,
-   `sm/sm1/src/stats.cc:165`) — `try`/`catch` and `std::stoull`
-   in `sm1` (`sm/CODE.md` §5):** `walfs.cc` uses `try`/`catch`
-   and `stats.cc` calls throwing `std::stoull(v)` instead of
-   `std::from_chars`.
 8. **`sm2` (`sm/sm2/src/tree/tree.cc:700-730`) —
    `tree_insert_unique` walks right siblings past `high()`:** On
    `first` (when `lower_bound == count()`) and on empty leaves

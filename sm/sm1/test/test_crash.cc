@@ -305,6 +305,58 @@ TEST_CASE("zero-filling pays where a sync that grows a file costs more") {
   CHECK(!wal_prealloc_pays(0, 0));
 }
 
+TEST_CASE(
+    "a new log takes the spare a thread zeroed, and the next spare starts") {
+  // Verify walfs's spare (WALPREALLOC.md section 2): each log after a
+  // directory's first starts a thread that zeroes the next log ahead,
+  // the next log takes it, and the Env's end removes what is left.
+  // 1. The first log is zero-filled in place, and starts no spare.
+  // 2. The second log starts a spare, zeroed to the size.
+  // 3. The third log takes the spare, and a new spare starts.
+  // 4. With the Env gone, the logs stay and the spare does not.
+  tmpdir_t tmp;
+  const uint64_t bytes = 4096;
+  std::string spare = std::string(tmp.path()) + "/" + wal_spare_name;
+  auto size_of = [](const std::string &path) -> int64_t {
+    struct stat st;
+    return 0 == stat(path.c_str(), &st) ? st.st_size : -1;
+  };
+  auto spare_ready = [&] {
+    for (int i = 0; i < 10000 && size_of(spare) != int64_t(bytes); i++) {
+      usleep(1000);
+    }
+    return size_of(spare) == int64_t(bytes);
+  };
+  std::unique_ptr<rocksdb::Env> env = walfs_env(bytes);
+  auto make_log = [&](const char *name) {
+    std::unique_ptr<rocksdb::FSWritableFile> f;
+    std::string path = std::string(tmp.path()) + "/" + name;
+    REQUIRE(env->GetFileSystem()
+                ->NewWritableFile(path, rocksdb::FileOptions(), &f, nullptr)
+                .ok());
+    REQUIRE(f->Close(rocksdb::IOOptions(), nullptr).ok());
+    CHECK(size_of(path) == int64_t(bytes));
+  };
+  make_log("000001.log");
+  usleep(20000);
+  CHECK(size_of(spare) == -1);
+
+  // 2.
+  make_log("000002.log");
+  CHECK(spare_ready());
+
+  // 3.
+  make_log("000003.log");
+  CHECK(spare_ready());
+
+  // 4.
+  env.reset();
+  CHECK(size_of(spare) == -1);
+  for (const char *name : {"000001.log", "000002.log", "000003.log"}) {
+    CHECK(size_of(std::string(tmp.path()) + "/" + name) == int64_t(bytes));
+  }
+}
+
 TEST_CASE("only WSL's kernels zero-fill new logs") {
   // Verify the first gate of a home's decision (WALPREALLOC.md §2).
   // 1. WSL's two kernels' releases are known as WSL's.

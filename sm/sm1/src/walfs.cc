@@ -8,10 +8,16 @@
  * fifth of the cost on ext4 (WALPREALLOC.md section 1). So no write
  * waits for those zeros, the next log is made ahead, as a spare a
  * thread zeroes, and a new log takes its place (section 2).
+ *
+ * This file system, and so its zeroing thread, is for WSL only: a
+ * home's first attach puts it under RocksDB only on a WSL kernel, and
+ * only where the probe finds a sync that grows a file the dearer
+ * (wal_prealloc, src/env.cc). A server's file system never runs it.
  */
 #include "walfs.h"
 
 #include <fcntl.h>
+#include <pthread.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -20,8 +26,6 @@
 #include <mutex>
 #include <set>
 #include <string>
-#include <system_error>
-#include <thread>
 #include <vector>
 
 #include <rocksdb/file_system.h>
@@ -130,11 +134,12 @@ private:
   /* The finished spare's path, waiting for one being made; or empty. */
   std::string take_spare() {
     std::lock_guard<std::mutex> guard(m_mutex);
-    if (!m_zeroer.joinable()) {
+    if (!m_zeroing) {
       return {};
     }
     // Waits at most what zeroing the log here would.
-    m_zeroer.join();
+    pthread_join(m_zeroer, nullptr);
+    m_zeroing = false;
     return m_spare_ok ? m_spare : std::string();
   }
 
@@ -145,6 +150,7 @@ private:
    *    switches logs writes no second 64 MB.
    * 2. Else start a thread that zeroes the spare. With no thread to be
    *    had, the next log is zeroed in place.
+   * The thread runs only under this file system: on WSL alone.
    */
   void make_spare(const std::string &log) {
     size_t slash = log.rfind('/');
@@ -155,25 +161,30 @@ private:
       unlink(path.c_str());
       return;
     }
-    if (m_zeroer.joinable()) {
+    if (m_zeroing) {
       return;
     }
     m_spare = path;
     m_spare_ok = false;
-    try {
-      // On a thread of its own: 64 MB and a sync are what no write
-      // should wait for.
-      m_zeroer = std::thread([this, path] {
-        m_spare_ok = zero_fill(path, m_prealloc_bytes, O_CREAT | O_TRUNC);
-      });
-    } catch (const std::system_error &) {
-    }
+    // On a thread of its own: 64 MB and a sync are what no write
+    // should wait for. pthread_create fails with a code, not a throw,
+    // in this RocksDB callback (sm/CODE.md section 5).
+    m_zeroing = 0 == pthread_create(&m_zeroer, nullptr, zero_main, this);
+  }
+
+  /* The spare's thread: zero m_spare, set before it started. */
+  static void *zero_main(void *arg) {
+    walfs_t *fs = static_cast<walfs_t *>(arg);
+    fs->m_spare_ok =
+        zero_fill(fs->m_spare, fs->m_prealloc_bytes, O_CREAT | O_TRUNC);
+    return nullptr;
   }
 
   uint64_t m_prealloc_bytes;
   std::mutex m_mutex;           /* guards all below, but m_spare_ok */
-  std::thread m_zeroer;         /* the spare's, joined to take it */
-  std::string m_spare;          /* the spare's path */
+  pthread_t m_zeroer;           /* the spare's, joined to take it */
+  bool m_zeroing = false;       /* whether m_zeroer is yet to be joined */
+  std::string m_spare;          /* the spare's path; fixed while zeroing */
   bool m_spare_ok = false;      /* written by m_zeroer, read after join */
   std::set<std::string> m_dirs; /* directories that have had a log */
 };
