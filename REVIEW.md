@@ -21,6 +21,22 @@ most severe finding is first.
   robustness gap, an order of errors that differs, and four
   cleanups.
 
+## Status
+
+The fixes are on `wip-altertype`, one finding a commit, in the
+order 3, 4, 1, 5, 6, 2. Findings 7 to 10 are cleanups, not
+taken now.
+
+| Finding | Status |
+| --- | --- |
+| 1 | fixed, `712af0b8` |
+| 2 | fixed, `3228544d`, as decided: one column altered twice is refused in PostgreSQL's words, and a `USING` that reads another column the statement retypes, "not supported yet" |
+| 3 | fixed, `1a240f98` |
+| 4 | fixed, `47edc273` |
+| 5 | fixed, `a8fc0b6d`: a row of another width is an error |
+| 6 | fixed, `40f53744` |
+| 7 to 10 | not taken: cleanups |
+
 ## Findings
 
 ### 1. ALTER COLUMN TYPE makes an interval index key
@@ -74,6 +90,13 @@ most severe finding is first.
 - **Note:** digres passes no converter only when PostgreSQL's
   test says no value changes, so this is reached through `sm.h`
   and rel, not SQL.
+- **Fix:** without a converter, sm3 takes only the same type and
+  typmod, or `text` and `varchar` with the new one no narrower.
+  digres asks the same before it passes no converter; a wider
+  `numeric`, which PostgreSQL does not rewrite, is converted.
+  `test_altertype.cc` refuses `varchar(10)` to `varchar(5)` and
+  a decimal's new scale, and fails with the old check; rel's
+  test and `alter_type.test` follow.
 
 ### 4. A retyped column's index keeps a key collation
 
