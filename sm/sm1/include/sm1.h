@@ -1267,9 +1267,9 @@ int read(session_t* session, uint64_t storeid,
          std::string_view key, rawpin_t* pin, std::string_view& data);
 
 /*
- * Make an empty raw pin: nullptr with SM_ERR_NOMEM if there is
- * no memory for it. Every raw pin is emptied before the database
- * it read closes, since RocksDB closes none with an iterator open.
+ * Make an empty raw pin. Every raw pin is emptied before the
+ * database it read closes, since RocksDB closes none with an
+ * iterator open.
  */
 rawpin_t* rawpin_new();
 

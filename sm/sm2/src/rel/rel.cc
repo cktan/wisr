@@ -142,8 +142,7 @@ int write_delete(sm2::rel_t *rel, std::string_view key, sm1::rawpin_t *pin,
 
 /*
  * The pin a write keeps the old row in: pin, or else the rel's
- * scratch pin, made now if it has none; nullptr with
- * SM_ERR_NOMEM if it cannot be.
+ * scratch pin, made now if it has none.
  */
 sm1::rawpin_t *old_pin(sm2::rel_t *rel, sm1::rawpin_t *pin) {
   if (pin) {
@@ -524,9 +523,6 @@ int update_row(sm2::rel_t *rel, std::string_view key, uint64_t id,
   // The old row's pointers are read after more calls on the
   // session, so it is pinned: into pin, or the rel's own.
   sm1::rawpin_t *p = old_pin(rel, pin);
-  if (!p) {
-    return -1;
-  }
   std::string_view was;
   // What settle_old() holds of the old row goes if the update fails: the
   // caller rolls back, and the old row's datums are live again.
@@ -960,9 +956,6 @@ static int delete_row(rel_t *rel, std::string_view key, sm1::rawpin_t *pin,
     return write_delete(rel, key, pin, old);
   }
   sm1::rawpin_t *p = old_pin(rel, pin);
-  if (!p) {
-    return -1;
-  }
   std::string_view was;
   int rc = 0 != write_delete(rel, key, p, &was) ||
                    (rel->toasts && 0 != settle_old(rel, was, {}, hold))

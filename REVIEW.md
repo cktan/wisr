@@ -108,8 +108,9 @@ then up, so no deadlock, and the path runs once a crash. Medium
 10, statistics loaded under uncommitted DDL kept for every
 session, is fixed. Medium 11 is closed: the evaluator's contract
 (sm.h, sm3.h) is -1 only with the error set, and both evaluators,
-digres's and rel's, keep it. The others and the Lows are being
-checked.
+digres's and rel's, keep it. Medium 12, a pin's allocation with
+new (std::nothrow) and SM_ERR_NOMEM, is fixed, in sm1's
+rawpin_new too. The others and the Lows are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -124,7 +125,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Low |
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 3 Low |
-| `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 1 Medium, 5 Low |
+| `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 5 Low |
 | `include/` & `src/` | PASS | PASS | 2 Medium, 3 Low |
 
 ---
@@ -137,10 +138,6 @@ None open: Highs 1 to 9 are closed.
 
 ### 3. Medium-Severity Findings
 
-12. **`sm3` (`sm/sm3/src/table/pin.cc:71-77`) — Prohibited `new
-    (std::nothrow)` and `SM_ERR_NOMEM` (`sm/CODE.md` §5):**
-    `pin_new()` uses `new (std::nothrow) pin_t` and sets
-    `SM_ERR_NOMEM`, contrary to `sm/CODE.md` §5.
 13. **`src/sm.cc` (`sm/src/sm.cc:2193-2197`) — `sm_tbl_truncate`
     overwrites `*tbl->def` in place:** Move-assigning
     `api_def(...)` into `*tbl->def` reallocates internal vectors

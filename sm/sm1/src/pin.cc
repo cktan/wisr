@@ -8,18 +8,12 @@
 #include "error.h"
 #include "session.h"
 
-#include <new>
-
 using namespace wisr;
 
-/* Make an empty raw pin, or nullptr with SM_ERR_NOMEM. */
+/* Make an empty raw pin; see sm1.h. */
 sm1::rawpin_t *sm1::rawpin_new() {
   // Allocated as a handle, so sm1.h shows no RocksDB type.
-  sm1::rawpin_t *p = new (std::nothrow) sm1::rawpin_t;
-  if (!p) {
-    set_error(sm1::SM_ERR_NOMEM, "no memory for a pin");
-  }
-  return p;
+  return new sm1::rawpin_t;
 }
 
 /* Empty a raw pin, then free it. */

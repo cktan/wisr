@@ -102,7 +102,7 @@ namespace sm3 {
 /*
  * A pin from s's pool, to read a row into: a free one, or a new one
  * with its raw pin. On no list until pin_hold, pin_put or
- * pin_scan_hold; nullptr with SM_ERR_NOMEM if none can be made.
+ * pin_scan_hold.
  */
 pin_t *pin_take(session_t *s);
 
