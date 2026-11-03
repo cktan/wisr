@@ -79,8 +79,8 @@ TEST_CASE("uniform values: distinct estimated, a histogram, no order") {
   }
   CHECK(int4_of(st.bounds.front()) < 50);
   CHECK(int4_of(st.bounds.back()) > 9950);
-  REQUIRE(st.correlation);
-  CHECK(std::abs(*st.correlation) < 0.05f);
+  REQUIRE(st.has_correlation);
+  CHECK(std::abs(st.correlation) < 0.05f);
 }
 
 TEST_CASE("skewed values: the common one listed, distinct scaling") {
@@ -115,11 +115,11 @@ TEST_CASE("clustered values: correlation follows the order") {
     down.push_back(-i);
   }
   sm3::stat_t a = ints(up, 10000.0), b = ints(down, 10000.0);
-  REQUIRE(a.correlation);
-  CHECK(*a.correlation > 0.999f);
+  REQUIRE(a.has_correlation);
+  CHECK(a.correlation > 0.999f);
   CHECK(a.distinct == -1.0f);
-  REQUIRE(b.correlation);
-  CHECK(*b.correlation < -0.999f);
+  REQUIRE(b.has_correlation);
+  CHECK(b.correlation < -0.999f);
 }
 
 TEST_CASE("few values, and nulls: a complete list, the null fraction") {
@@ -247,8 +247,8 @@ TEST_CASE("tbl_analyze records each column's statistics and the sizes") {
   const sm3::stat_t &a = st->stats[0], &b = st->stats[1], &c = st->stats[2];
   CHECK(a.position == 0);
   CHECK(a.distinct == -1.0f);
-  REQUIRE(a.correlation);
-  CHECK(*a.correlation > 0.99f);
+  REQUIRE(a.has_correlation);
+  CHECK(a.correlation > 0.99f);
   CHECK(b.distinct == 10.0f);
   CHECK(b.mcv.size() == 10);
   for (float f : b.mcv_freq) {
@@ -344,6 +344,7 @@ TEST_CASE("tbl_analyze asks the evaluator of partial and expression indexes") {
   REQUIRE(st->stats.size() == 2);
   CHECK_FALSE(st->stats[0].index);
   const sm3::stat_t &e = st->stats[1];
+  CHECK(e.has_index);
   CHECK(e.index == mod10);
   CHECK(e.position == 0);
   CHECK(e.distinct == 10.0f);

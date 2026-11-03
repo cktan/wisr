@@ -16,7 +16,6 @@
 #define SM_STATS_H
 
 #include <cstdint>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,7 +27,8 @@ constexpr int32_t sm_stats_format = 1;
  * PostgreSQL's six.
  */
 struct sm_stat_t {
-    std::optional<uint64_t>  index;       /* nullopt: a column's */
+    bool                     has_index = false; /* false: a column's */
+    uint64_t                 index = 0;   /* the index's oid, has_index */
     int32_t                  position;    /* the column's attnum, 0-based,
                                              or the expression's place
                                              among the index's keys */
@@ -36,7 +36,8 @@ struct sm_stat_t {
     int32_t                  width;       /* average bytes of a value */
     float                    distinct;    /* a count, or, below 0, minus
                                              a fraction of the rows */
-    std::optional<float>     correlation;
+    bool                     has_correlation = false;
+    float                    correlation = 0; /* has_correlation */
     std::vector<std::string> mcv;         /* most common values */
     std::vector<float>       mcv_freq;    /* each one's frequency */
     std::vector<std::string> bounds;      /* histogram bounds */

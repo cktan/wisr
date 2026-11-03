@@ -104,6 +104,7 @@ sm3::stats_t sample_stats(uint64_t index, double live_rows) {
   a.null_frac = 0.0f;
   a.width = 4;
   a.distinct = -1.0f;
+  a.has_correlation = true;
   a.correlation = 0.5f;
   a.mcv = {le4(7), le4(-3)};
   a.mcv_freq = {0.25f, 0.125f};
@@ -146,6 +147,7 @@ void check_same(const sm3::stats_t &x, const sm3::stats_t &y) {
     CHECK(x.stats[i].null_frac == y.stats[i].null_frac);
     CHECK(x.stats[i].width == y.stats[i].width);
     CHECK(x.stats[i].distinct == y.stats[i].distinct);
+    CHECK(x.stats[i].has_correlation == y.stats[i].has_correlation);
     CHECK(x.stats[i].correlation == y.stats[i].correlation);
     CHECK(x.stats[i].mcv == y.stats[i].mcv);
     CHECK(x.stats[i].mcv_freq == y.stats[i].mcv_freq);
@@ -305,6 +307,7 @@ TEST_CASE("what DDL does to statistics") {
   CHECK(sm3::cat_put_stats(db.ss, t, bad) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   bad = st;
+  bad.stats[0].has_index = true;
   bad.stats[0].index = ix;
   CHECK(sm3::cat_put_stats(db.ss, t, bad) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);

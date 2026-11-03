@@ -1192,6 +1192,7 @@ TEST_CASE("tree: a cursor of rows skips the iterator when ANALYZE found "
     s.null_frac = 0.0f;
     s.width = 4;
     s.distinct = 10.0f;
+    s.has_correlation = true;
     s.correlation = c;
     st.stats = {s};
     REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);

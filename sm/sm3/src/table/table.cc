@@ -1711,10 +1711,11 @@ static bool tree_scattered(table_t *t, size_t i) {
   }
   int32_t att = x.key_attnums[0];
   for (const stat_t &st : stats->stats) {
-    bool mine = att >= 0 ? !st.index && att == st.position
-                         : st.index && x.oid == *st.index && 0 == st.position;
-    if (mine && st.correlation) {
-      return std::fabs(*st.correlation) < tree_scattered_below;
+    bool mine = att >= 0
+                    ? !st.has_index && att == st.position
+                    : st.has_index && x.oid == st.index && 0 == st.position;
+    if (mine && st.has_correlation) {
+      return std::fabs(st.correlation) < tree_scattered_below;
     }
   }
   return false;

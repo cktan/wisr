@@ -7,7 +7,8 @@ history keeps the closed reviews (`REVIEW.md` up to
 
 1. **`aa/`**: open; findings 1 to 7 fixed; the rule findings not
    yet checked.
-2. **`sm/`**: open; Highs 1 to 8 closed; the rest being checked.
+2. **`sm/`**: open; every High closed; the Mediums and Lows being
+   checked.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
 # Review: `aa/` (Authentication and Authorization)
@@ -93,7 +94,8 @@ check, not a duplicate), are fixed. High 7 is closed: its raw
 wait is now a documented exception, as a detach must outlast its
 builds; its join race is none, as a worker that takes new work
 only makes the detach wait for it. High 8, a worker counted whose
-thread was never made, is fixed. The others are being checked.
+thread was never made, and High 9, std::optional in sm_stats.h, are
+fixed. The Mediums and Lows are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -109,24 +111,13 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 4 Medium, 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 2 Medium, 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 3 Medium, 5 Low |
-| `include/` & `src/` | FAIL (`std::optional` in `sm_stats.h`) | PASS | 1 High, 2 Medium, 3 Low |
+| `include/` & `src/` | PASS | PASS | 2 Medium, 3 Low |
 
 ---
 
 ### 2. High-Severity Findings
 
-#### [HIGH] 9. `include/`: `std::optional` exposed in public header `sm/include/sm_stats.h` (`sm/CODE.md` §2)
-
-- **Location:** `sm/include/sm_stats.h:19, 31, 39` (included by
-  `sm/include/sm.h:75`)
-- **Issue:** `sm/CODE.md` §2 and `sm/include/sm.h:4-5` forbid
-  `std::optional` in public headers (`include/sm.h`, `sm_sys.h`).
-  `sm_stats.h` includes `<optional>` and exposes
-  `std::optional<uint64_t> index` and `std::optional<float>
-  correlation` in `struct sm_stat_t`.
-- **Fix:** Replace the two `std::optional` fields in `sm_stat_t`
-  with boolean flags (`has_index`, `has_correlation`) and plain
-  value fields.
+None open: Highs 1 to 9 are closed.
 
 ---
 

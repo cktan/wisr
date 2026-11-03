@@ -435,14 +435,14 @@ TEST_CASE("ANALYZE counts a datum out of line as wide, and fetches none but "
   REQUIRE(st);
   bool body = false, expr = false;
   for (const sm3::stat_t &s : st->stats) {
-    if (!s.index && s.position == 2) {
+    if (!s.has_index && s.position == 2) {
       body = true;
       CHECK(s.width > 4900);
       CHECK(s.width < 5100);
       CHECK(s.mcv.empty());
       CHECK(s.bounds.empty());
     }
-    if (s.index && *s.index == f.docs_pre) {
+    if (s.has_index && s.index == f.docs_pre) {
       expr = true;
       CHECK(s.distinct == 4);
     }

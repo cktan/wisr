@@ -156,7 +156,8 @@ int compute_scalar_stats(const sm2::key_column_t &col,
   out.null_frac = 0;
   out.width = 0;
   out.distinct = 0;
-  out.correlation = std::nullopt;
+  out.has_correlation = false;
+  out.correlation = 0;
   out.mcv.clear();
   out.mcv_freq.clear();
   out.bounds.clear();
@@ -306,6 +307,7 @@ int compute_scalar_stats(const sm2::key_column_t &col,
       double n = values_cnt;
       double xsum = (n - 1) * n / 2.0;
       double x2sum = (n - 1) * n * (2 * n - 1) / 6.0;
+      out.has_correlation = true;
       out.correlation = static_cast<float>((n * corr_xysum - xsum * xsum) /
                                            (n * x2sum - xsum * xsum));
     }

@@ -852,7 +852,8 @@ int cat_put_stats(session_t *session, uint64_t oid, const stats_t &stats) {
   want[key] = blob;
   for (const stat_t &st : stats.stats) {
     if (encode_stat(st, *def, blob) != 0 ||
-        stats_key(oid, st.index.value_or(0), st.position + 1, key) != 0) {
+        stats_key(oid, st.has_index ? st.index : 0, st.position + 1, key) !=
+            0) {
       return -1;
     }
     if (!want.emplace(key, blob).second) {
