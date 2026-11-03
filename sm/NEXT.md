@@ -412,6 +412,22 @@ and so are the catalog tables psql reads
    - the floor: the GUC cannot go below the pins' floor;
    - an option in `sm_options_t` that digres's GUC sets, as
      `block_cache_bytes` is set now.
+8. **A list of the btree leaves that need vacuum**
+   (`BTREE.md` §4.1). A leaf's `page_all_visible` flag is
+   cleared by an insert into it, and by an update or a delete
+   of one of its entries. VACUUM finds such leaves by reading
+   every leaf, left to right, and skipping each leaf whose flag
+   is set. Instead, keep a list of the leaves whose flag was
+   cleared, an `sm0::blist_t` (`sm0/include/sm0_blist.h`), with
+   a 1-bit Bloom filter in front of it, so a leaf already
+   listed is not appended again. VACUUM then reads only the
+   leaves on the list. Not designed yet. To decide:
+   - a false positive of the filter leaves a cleared leaf off
+     the list: when VACUUM reads it, if ever;
+   - the list is in memory: after a restart, VACUUM reads every
+     leaf once, or the list is kept;
+   - when VACUUM empties the list and the filter, and a flag
+     cleared while VACUUM runs.
 
 Low priority:
 
