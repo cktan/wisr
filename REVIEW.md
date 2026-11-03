@@ -179,8 +179,8 @@ Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 
 # Review: `sm/` (Storage Manager Stack)
 
-**Status: open.** Finding 1, the lockout bypass, is fixed;
-the others are not yet checked against the code.
+**Status: open.** No finding is fixed yet, and none has been
+checked against the code.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,

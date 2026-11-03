@@ -3131,7 +3131,7 @@ local_psql -c 'drop role ra, rb, rc, rd, re' > "$work/auth.out" 2>&1 ||
 # of that role (aa/ROLE.md section 5, locked out).
 # 1. Make the superuser NOLOGIN and past VALID UNTIL.
 # 2. The owner connects on the socket as the superuser.
-# 3. Give the superuser LOGIN and no VALID UNTIL again.
+# 3. Give the superuser LOGIN again, and VALID UNTIL 'infinity': no expiry.
 local_psql -c "alter role \"$me\" nologin valid until '2000-01-01'" \
   > "$work/lockout.out" 2>&1 || fail "lockout: alter the superuser"
 [ "$(local_psql -c 'select current_user' 2>> "$work/lockout.out")" = "$me" ] ||
