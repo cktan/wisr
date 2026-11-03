@@ -428,6 +428,28 @@ and so are the catalog tables psql reads
      leaf once, or the list is kept;
    - when VACUUM empties the list and the filter, and a flag
      cleared while VACUUM runs.
+9. **Smaller btree leaf entries** (`BTREE.md` §3.3 and §11).
+   A leaf entry is its key, its value and 6 bytes of lengths
+   and slot (`sm2/src/tree/page.h`, `entry_size()`). An index on
+   `status` with `'open'` in many rows, keyed by an `int8`
+   primary key: a key of 18 bytes (relid 2, `'open'` 7, the
+   primary key 9), a value of 1, so 25 bytes an entry and about
+   160 entries a 4 KB leaf. About 16 of the 18 key bytes equal
+   those of the entry before. In order:
+   1. **The prefix the whole page shares**, from its low and
+      high keys, stored once: about 10 bytes an entry, 2.5
+      times the entries. A binary search over the slots still
+      works.
+   2. **Less fixed overhead**: lengths of 1 byte, and the cut
+      flag as a bit, not a value: about 6 to 7 bytes an entry.
+   3. **Deduplication**: an equal key stored once a leaf, the
+      row keys after it as small deltas: 1 to 2 bytes a row,
+      10 times the entries or more on a column of few values.
+   Prefix compression alone gains little on keys that are
+   mostly distinct, such as an email, about 20%. Fewer leaves
+   mean fewer pages a range scan reads (item 3) and fewer
+   splits; an insert still writes its whole page. Each step
+   changes the page's format.
 
 Low priority:
 
