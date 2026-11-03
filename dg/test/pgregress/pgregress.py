@@ -568,9 +568,11 @@ def test(w, name):
         f.write(out)
 
     # A rule's width follows the longest value, which as_postgres()
-    # may have changed: rules compare as one.
+    # may have changed: a rule compares by its count of columns alone,
+    # each run of dashes as one, as its rows compare by their values.
     def norm(t):
-        return ['-' if RULE.match(line.strip()) else re.sub(r'\s+', '', line)
+        return [re.sub(r'-+', '-', line.strip()) if RULE.match(line.strip())
+                else re.sub(r'\s+', '', line)
                 for line in rowset(t).split('\n')]
 
     w, g = bitmap_plans(want, as_postgres(out))
