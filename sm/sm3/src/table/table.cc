@@ -1712,8 +1712,24 @@ static int tree_fill(scan_t *scan) {
   size_t want = scan->batch;
   scan->batch = std::min(scan->batch * 2, tree_batch_max);
   if (scan->keys.size() < want) {
+    // Room for the largest batch at the second, so the doubling
+    // grows no array again; a probe of one row stops at the first.
+    if (want > 1 && scan->keys.capacity() < tree_batch_max) {
+      for (auto *v : {&scan->keys, &scan->rows, &scan->tuples}) {
+        v->reserve(tree_batch_max);
+      }
+      scan->key_at.reserve(tree_batch_max);
+      scan->row_at.reserve(tree_batch_max);
+      scan->ids.reserve(tree_batch_max);
+      scan->rcs.reserve(tree_batch_max);
+      scan->cuts.reserve(tree_batch_max);
+      scan->unread.reserve(tree_batch_max);
+      scan->raws.reserve(tree_batch_max);
+    }
     scan->keys.resize(want);
     scan->rows.resize(want);
+    scan->key_at.resize(want);
+    scan->row_at.resize(want);
     scan->ids.resize(want);
     scan->tuples.resize(want);
     scan->rcs.resize(want);
@@ -1724,10 +1740,20 @@ static int tree_fill(scan_t *scan) {
     if (scan->raws.empty()) {
       scan->raws.push_back(scan->pin->raw);
     }
+    // The others from the session's pool, which an ended cursor's
+    // batch filled; new ones past it.
+    std::vector<sm1::rawpin_t *> &pool = scan->session->raws_free;
     while (scan->raws.size() < want) {
-      scan->raws.push_back(sm1::rawpin_new());
+      if (pool.empty()) {
+        scan->raws.push_back(sm1::rawpin_new());
+      } else {
+        scan->raws.push_back(pool.back());
+        pool.pop_back();
+      }
     }
   }
+  // The batch's keys end to end, viewed once all are in.
+  scan->bytes.clear();
   while (scan->n < want && !scan->entries_done) {
     std::string_view row;
     bool cut;
@@ -1739,8 +1765,11 @@ static int tree_fill(scan_t *scan) {
       scan->entries_done = true;
       break;
     }
-    scan->keys[scan->n].assign(sm2::idx_scan_entry_key(scan->entries));
-    scan->rows[scan->n].assign(row);
+    std::string_view key = sm2::idx_scan_entry_key(scan->entries);
+    scan->key_at[scan->n] = {scan->bytes.size(), key.size()};
+    scan->bytes.append(key);
+    scan->row_at[scan->n] = {scan->bytes.size(), row.size()};
+    scan->bytes.append(row);
     scan->cuts[scan->n] = cut;
     // An index-only scan's entry on a leaf all visible is every
     // snapshot's: its row goes unread where the key gives its
@@ -1752,8 +1781,15 @@ static int tree_fill(scan_t *scan) {
     scan->rcs[scan->n] = 0;
     scan->n++;
   }
+  for (size_t i = 0; i < scan->n; i++) {
+    scan->keys[i] = std::string_view(scan->bytes)
+                        .substr(scan->key_at[i].first, scan->key_at[i].second);
+    scan->rows[i] = std::string_view(scan->bytes)
+                        .substr(scan->row_at[i].first, scan->row_at[i].second);
+  }
   // The rows to read: each entry's but an unread one's.
-  std::vector<size_t> want_rows;
+  std::vector<size_t> &want_rows = scan->want_rows;
+  want_rows.clear();
   for (size_t i = 0; i < scan->n; i++) {
     if (!scan->unread[i]) {
       want_rows.push_back(i);
@@ -1770,9 +1806,14 @@ static int tree_fill(scan_t *scan) {
     return rc < 0 ? -1 : 0;
   }
   size_t m = want_rows.size();
-  std::vector<std::string_view> keys(m), tuples(m);
-  std::vector<sm1::rawpin_t *> raws(m);
-  std::vector<int> rcs(m);
+  std::vector<std::string_view> &keys = scan->read_keys;
+  std::vector<std::string_view> &tuples = scan->read_tuples;
+  std::vector<sm1::rawpin_t *> &raws = scan->read_raws;
+  std::vector<int> &rcs = scan->read_rcs;
+  keys.resize(m);
+  tuples.resize(m);
+  raws.resize(m);
+  rcs.resize(m);
   for (size_t j = 0; j < m; j++) {
     keys[j] = scan->rows[want_rows[j]];
     raws[j] = scan->raws[want_rows[j]];
@@ -2017,7 +2058,7 @@ int tbl_idx_scan_rows(table_t *table, uint64_t index, const sm2::bound_t *lo,
         pin_put(p);
         return -1;
       }
-      out = new scan_t{nullptr, p, entries, table, i};
+      out = new scan_t{nullptr, p, entries, table, i, table->session};
       pin_scan_hold(p, out, table->def);
       return 0;
     }
