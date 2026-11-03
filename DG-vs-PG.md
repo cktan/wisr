@@ -17,7 +17,7 @@ layer.
 | Source language | C | Strict C++20 (`-fno-rtti`), errors as C++ exceptions |
 | Process model | Multi-process (`fork` per connection) | Single process, one `std::thread` per session |
 | Shared state | SysV / POSIX shared memory (`ShmemAlloc`) | Process heap (`pcb` and `shmem`); globals are `thread_local` |
-| SQL parser | Built into the backend (`gram.y`, `scan.l`) | Standalone library (`sq/`) linked into DG |
+| SQL parser | Built into the backend (`gram.y`, `scan.l`) | Standalone library (`sq/`) of original PG sql parser linked into DG |
 | Storage engine | Heap files, 8 KB pages, `smgr`, buffer pool | RocksDB via `sm/` (one column family per store) |
 | Row identity | Physical tuple ID (`ctid`: block + offset) | Primary key bytes, or hidden `int8` `_id` if keyless |
 | Table organization | Unordered heap + separate B-tree for PK | Index-organized (clustered on PK or `_id`) |
