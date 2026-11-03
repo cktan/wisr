@@ -656,21 +656,19 @@ int alter_column_type(session_t *session, uint64_t oid, std::string_view name,
       }
     }
   }
+  // A converted column has no row that reads its missing value of
+  // the old type: a rewrite stores every row whole, and an empty
+  // table has none.
+  if (conv) {
+    c.missing = std::nullopt;
+  }
   bool empty = true;
   if (conv && sm1::store_empty(session->sm1, rec.storeid, empty) != 0) {
     return -1;
   }
   if (conv && !empty) {
-    // Every row is stored whole in the new store, so none reads a
-    // missing value of the old type.
-    c.missing = std::nullopt;
     column_conv_t cv{at, conv};
     return rewrite_table(session, oid, std::move(rec), &cv);
-  }
-  // A converted column of an empty table has no row that reads its
-  // missing value.
-  if (conv) {
-    c.missing = std::nullopt;
   }
   return cat_put_table(session, oid, rec);
 }
