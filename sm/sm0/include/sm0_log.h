@@ -36,7 +36,9 @@ void log_msg(loglevel_t level, std::format_string<Args...> fmt,
 /*
  * Report a fatal error, "*** FATAL *** " and fmt formatted with
  * args, on stderr and to the log hook, then abort the process.
- * Allocates nothing, so an allocation's failure may call it.
+ * Allocates nothing, so an allocation's failure may call it. A
+ * hook may call it too: the hook is then skipped, as it is when
+ * another thread's hook does not return within a second.
  */
 [[noreturn]] void fatal_v(std::string_view fmt, std::format_args args);
 
