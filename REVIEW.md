@@ -106,7 +106,10 @@ finishes a split a crash left half done holds the first leaf, as
 its own split holds it while it posts; latches go left to right,
 then up, so no deadlock, and the path runs once a crash. Medium
 10, statistics loaded under uncommitted DDL kept for every
-session, is fixed. The others and the Lows are being checked.
+session, is fixed. Medium 11 is closed: the evaluator's contract
+(sm.h, sm3.h) is -1 only with the error set, and both evaluators,
+digres's and rel's, keep it. The others and the Lows are being
+checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -121,7 +124,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Low |
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 3 Low |
-| `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 2 Medium, 5 Low |
+| `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 1 Medium, 5 Low |
 | `include/` & `src/` | PASS | PASS | 2 Medium, 3 Low |
 
 ---
@@ -134,11 +137,6 @@ None open: Highs 1 to 9 are closed.
 
 ### 3. Medium-Severity Findings
 
-11. **`sm3` (`sm/sm3/src/catalog/internal.h:453-459`) —
-    `eval_index()` does not set `sm1::errnum()` when callback
-    returns non-zero:** Callers in `table.cc:520` and
-    `analyze.cc:149` return `-1` with `errnum() == SM_OK` if the
-    host callback fails without calling `sm_seterr`.
 12. **`sm3` (`sm/sm3/src/table/pin.cc:71-77`) — Prohibited `new
     (std::nothrow)` and `SM_ERR_NOMEM` (`sm/CODE.md` §5):**
     `pin_new()` uses `new (std::nothrow) pin_t` and sets
