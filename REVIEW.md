@@ -7,7 +7,7 @@ history keeps the closed reviews (`REVIEW.md` up to
 
 1. **`aa/`**: open; findings 1, 2 and 4 to 7 fixed; 3 waits on
    a decision; the rule findings not yet checked.
-2. **`sm/`**: open; High 1 fixed; the rest being checked.
+2. **`sm/`**: open; Highs 1 and 2 fixed; the rest being checked.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
 # Review: `aa/` (Authentication and Authorization)
@@ -104,7 +104,8 @@ Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 # Review: `sm/` (Storage Manager Stack)
 
 **Status: open.** High 1, a wait left registered by an
-exception, is fixed; the others are being checked.
+exception, and High 2, a store's handle freed while copies use it,
+are fixed; the others are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -117,7 +118,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | Level / Area | Layering & Opacity | Naming (`_t`, `m_`, no `strncpy`) | Findings |
 | --- | --- | --- | --- |
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Medium, 3 Low |
-| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 3 High, 4 Medium, 3 Low |
+| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 2 High, 4 Medium, 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 1 High, 2 Medium, 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 3 High, 3 Medium, 5 Low |
 | `include/` & `src/` | FAIL (`std::optional` in `sm_stats.h`) | PASS | 1 High, 2 Medium, 3 Low |
@@ -125,36 +126,6 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 ---
 
 ### 2. High-Severity Findings
-
-#### [HIGH] 2. `sm1`: Use-After-Free on `rocksdb::ColumnFamilyHandle*` (`st.cf`) across GC, stats, and rollback/abort
-
-- **Location:** `sm/sm1/src/db.cc:1036-1042`,
-  `sm/sm1/src/db.cc:1111-1139`, `sm/sm1/src/gc.cc:334-343`,
-  `sm/sm1/src/gc.cc:386-414`, `sm/sm1/src/chain.cc:1135-1142`,
-  `sm/sm1/src/stats.cc:41-50`, `sm/sm1/src/page.cc:305-327`
-- **Issue:** `sm1/SM1_DESIGN.md` §3.1 states that
-  `ColumnFamilyHandle*` is reference-counted and destroyed only
-  after the last user releases it. In the code, `store_t`
-  (`sm/sm1/src/db.h:92-104`) holds a raw
-  `rocksdb::ColumnFamilyHandle *cf`. `db_store()` copies
-  `store_t` under shared `db->store_mu` and immediately releases
-  `store_mu`. Meanwhile, `db_drop_store_cf()` acquires `store_mu`
-  exclusively, drops the column family, and immediately destroys
-  `st.cf` via `DestroyColumnFamilyHandle(st.cf)`.
-  `db_drop_store_cf` is called without `gc_run_mu` and without
-  waiting for `db_watermark` in `drop_created()`
-  (`xct.cc:253`), `rollback()` (`xct.cc:590`), `mkstore()`
-  (`catalog.cc:92`), `drop_temp_dropped()` (`xct.cc:267`), and
-  `sm1::closedb()` (`session.cc:172`). Concurrent threads that
-  copied `st.cf` (such as `sweep_txn_locked`, `purge_one`,
-  `chain_repair`, `approxsize`, `probes`, `compact`, and
-  `page_drop`) use `st.cf` outside `store_mu` after it is freed.
-  In addition, `sweep_txn_locked()` snapshots all `db->stores`
-  including sessions' temporary stores (`st.owner != nullptr`)
-  and calls `CompactRange` on them.
-- **Fix:** Manage `ColumnFamilyHandle` lifetime via
-  `std::shared_ptr` (or keep a pin/epoch across every `db_store`
-  user) and skip `st.owner != nullptr` in `sweep_txn_locked()`.
 
 #### [HIGH] 3. `sm1`: Chained store MVCC and `CF:txn` sweep race leaves committed versions unstamped
 

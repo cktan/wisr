@@ -545,7 +545,8 @@ db_t *db_open(const std::string &path, const char *dbname,
                   chained,
                   chained ? std::make_shared<std::atomic<uint64_t>>(
                                 chain_next_old(db->rdb, handles[i]))
-                          : nullptr};
+                          : nullptr,
+                  hold_cf(db->rdb, handles[i])};
     } else {
       // Unknown CF: release its handle and fail the open.
       db->rdb->DestroyColumnFamilyHandle(handles[i]);
@@ -1032,6 +1033,15 @@ void db_forget_seq(db_t *db, uint64_t seqid) {
   }
 }
 
+/* The owner of rdb's handle cf; see db.h. */
+std::shared_ptr<cf_owner_t> hold_cf(rocksdb::DB *rdb,
+                                    rocksdb::ColumnFamilyHandle *cf) {
+  auto owner = std::make_shared<cf_owner_t>();
+  owner->rdb = rdb;
+  owner->cf = cf;
+  return owner;
+}
+
 /* Look up store storeid under the shared lock. */
 store_t db_store(db_t *db, uint64_t storeid) {
   // Hold store_mu shared while reading the map.
@@ -1100,7 +1110,8 @@ int db_create_store_cf(db_t *db, uint64_t storeid, sm1::session_t *owner,
               mem,
               std::make_shared<filesize_t>(),
               chained,
-              chained ? std::make_shared<std::atomic<uint64_t>>(1) : nullptr};
+              chained ? std::make_shared<std::atomic<uint64_t>>(1) : nullptr,
+              hold_cf(rdb, h)};
   db->had_temp = db->had_temp || owner;
   // Sessions read their handles again (STORECACHE.md).
   db->stores_version.fetch_add(1, std::memory_order_release);
@@ -1124,9 +1135,8 @@ int db_drop_store_cf(db_t *db, uint64_t storeid) {
   rocksdb::Status s = st.rdb->DropColumnFamily(st.cf);
   // Sessions read their handles again, before this one goes.
   db->stores_version.fetch_add(1, std::memory_order_release);
-  // Release the handle either way.
-  st.rdb->DestroyColumnFamilyHandle(st.cf);
-  // Unregister it.
+  // Unregister it either way. The handle goes with its last copy: a
+  // sweep, statistics or a session may hold one, with no lock.
   db->stores.erase(it);
   // Report a failed drop; most callers cannot act on it, so log it.
   if (!s.ok()) {
@@ -1200,14 +1210,16 @@ wisr::db_t::~db_t() {
   keep_seq_positions(this);
   // Wait out running compactions, whose filters read the handles.
   rocksdb::CancelAllBackgroundWork(rdb, true);
-  // Destroy every store CF handle; a temporary store a session
-  // left behind is dropped first, as it is no use to anyone.
+  // Destroy every store CF handle now, before RocksDB closes, copies
+  // left or not; a temporary store a session left behind is dropped
+  // first, as it is no use to anyone.
   for (auto &kv : stores) {
     if (kv.second.owner) {
       kv.second.rdb->DropColumnFamily(kv.second.cf);
     }
-    kv.second.rdb->DestroyColumnFamilyHandle(kv.second.cf);
+    kv.second.hold->destroy();
   }
+  stores.clear();
   // A compaction of the temporary instance may still be running a
   // filter that reads this database, on a store just dropped. Wait
   // it out: with the stores gone, no other can start.

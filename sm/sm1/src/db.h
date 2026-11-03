@@ -89,7 +89,36 @@ struct store_t {
    */
   bool chained = false;
   std::shared_ptr<std::atomic<uint64_t>> next_old;
+  /*
+   * cf's owner, shared by every copy (SM1_DESIGN.md §3.1): the last
+   * copy destroys the handle, so a copy taken before the store is
+   * dropped stays good after it. NULL with cf.
+   */
+  std::shared_ptr<struct cf_owner_t> hold;
 };
+
+/*
+ * A column family handle's owner: destroys it once, when the last copy
+ * of a store_t goes, or when the database closes with copies left, as
+ * RocksDB needs every handle gone before it closes.
+ */
+struct cf_owner_t {
+  rocksdb::DB *rdb = nullptr;
+  rocksdb::ColumnFamilyHandle *cf = nullptr;
+
+  /* Destroy the handle now, if it is not already. */
+  void destroy() {
+    if (rdb && cf) {
+      rdb->DestroyColumnFamilyHandle(cf);
+    }
+    cf = nullptr;
+  }
+  ~cf_owner_t() { destroy(); }
+};
+
+/* The owner of rdb's column family handle cf, for store_t's hold. */
+std::shared_ptr<cf_owner_t> hold_cf(rocksdb::DB *rdb,
+                                    rocksdb::ColumnFamilyHandle *cf);
 
 /*
  * Count a write that put bytes into store's memtable under the user
