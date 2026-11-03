@@ -394,20 +394,12 @@ and so are the catalog tables psql reads
      at 16 clients reach about 0.86 of PostgreSQL's tps. Left:
      the wait in `db_commit_wait()`, and twice PostgreSQL's CPU
      a transaction.
-6. **An lsm index's entry as a key alone, with no value**, as
-   MyRocks keeps a secondary index: the key is the index's id,
-   its columns and the row's primary key, and the value is
-   empty. Today an lsm entry (`CREATE INDEX ... USING lsm`, the
-   default) is an MVCC version: its key ends in `~wts ‖ ~seq`,
-   and its value holds the flags, the xid or `commit_ts`, the
-   cut flag, the INCLUDE columns and the row's key
-   (`sm3/SM3_DESIGN.md`, the table of keys). Not designed yet.
-   The design must answer the decision checklist, and at least:
-   - how a reader knows an entry is visible without its own
-     version: from the row, as MyRocks does;
-   - the index-only scan, which an MVCC entry serves today;
-   - INCLUDE columns, and a key cut at `max_keylen`;
-   - a unique index, whose key drops the row's key today.
+6. **An lsm index's entry as a key alone**: dropped
+   (2026-11-04). An entry's value must keep its version's
+   flags and xid or `commit_ts`: the compaction filter stamps
+   a `commit_ts` over the xid, and can change a value, never a
+   key. What else the value holds saves about 15 bytes an
+   entry and a decode, not worth a change of format.
 7. **A GUC for the frames of sm1's buffer pool** (`bufpool_t`,
    `BUFFERPOOL.md`). Today nothing sets the count: sm1 gives
    the pool a quarter of `block_cache_bytes`, in frames of
