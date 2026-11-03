@@ -96,7 +96,8 @@ builds; its join race is none, as a worker that takes new work
 only makes the detach wait for it. High 8, a worker counted whose
 thread was never made, and High 9, std::optional in sm_stats.h, are
 fixed. Of the Mediums, 1, a deadline that overflowed into the
-past, is fixed; the others and the Lows are being checked.
+past, and 2, a periodic timer's catch-up that starved its cancel,
+are fixed; the others and the Lows are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -108,7 +109,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 
 | Level / Area | Layering & Opacity | Naming (`_t`, `m_`, no `strncpy`) | Findings |
 | --- | --- | --- | --- |
-| `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 2 Medium, 3 Low |
+| `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 1 Medium, 3 Low |
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 4 Medium, 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 2 Medium, 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 3 Medium, 5 Low |
@@ -124,12 +125,6 @@ None open: Highs 1 to 9 are closed.
 
 ### 3. Medium-Severity Findings
 
-2. **`sm0` (`sm/sm0/src/interrupt.cc:326-333, 372-385`) —
-   Periodic timer catch-up can starve `sm_timer_cancel`:** When
-   `next = when + timer.period_us <= sm_now_us()`, `timer_main`
-   loops and re-fires `id` without releasing `s->mu` or sleeping
-   on `s->cv`, preventing a thread waiting in `sm_timer_cancel`
-   on `s->fired_cv` from acquiring `s->mu`.
 3. **`sm0` (`sm/sm0/src/vfd.cc:161, 484-491`) — Null dereference
    in `sm_vfd_open_real`:** Unlike `sm_vfd_open`,
    `sm_vfd_open_real` does not check `cache == nullptr` or `path

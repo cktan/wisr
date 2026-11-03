@@ -406,6 +406,23 @@ TEST_CASE("a timer due never leaves the timer thread asleep") {
   CHECK(sm_pending() == 0);
 }
 
+TEST_CASE("a periodic timer far behind skips what it missed") {
+  // Verify a periodic timer that fell behind fires once and goes on from
+  // now, not every period it missed in a row, during which a cancel could
+  // not get in.
+  // 1. Arm a timer for B1 every 100 us, first due 100 s ago: a million
+  //    periods missed.
+  // 2. Cancel it from another thread: it returns within half a second.
+  sm_timer_id_t id =
+      sm_timer_at(sm_thread_self(), sm_now_us() - 100000000, B1, 100);
+  std::future<bool> cancelled =
+      std::async(std::launch::async, [&] { return sm_timer_cancel(id); });
+  CHECK(cancelled.wait_for(std::chrono::milliseconds(500)) ==
+        std::future_status::ready);
+  CHECK(cancelled.get());
+  sm_take(B1);
+}
+
 TEST_CASE("the timer thread blocks every signal") {
   // Verify a signal to the process cannot land in sm_sys.h's timer thread.
   // 1. Arm and cancel a timer, so the timer thread runs.

@@ -297,7 +297,8 @@ std::once_flag service_once;
  * 2. Take the timer out of the service.
  * 3. If the timer's thread is gone, drop the timer.
  * 4. Else raise its bits outside the lock, and arm it again if it is
- *    periodic.
+ *    periodic: for its next period, or a period from now if that is
+ *    past.
  * 5. Go back to step 1.
  */
 void timer_main(timer_service_t *s) {
@@ -343,7 +344,14 @@ void timer_main(timer_service_t *s) {
       lock.lock();
 
       if (timer.period_us > 0) {
+        // The next period's, or one from now if that is past: a timer
+        // behind skips what it missed, not firing them all in a row,
+        // which holds the lock a cancel waits for.
         int64_t next = when + timer.period_us;
+        int64_t now = sm_now_us();
+        if (next <= now) {
+          next = now + timer.period_us;
+        }
         s->by_when.emplace(std::make_pair(next, id), timer);
         s->when_of.emplace(id, next);
       }
