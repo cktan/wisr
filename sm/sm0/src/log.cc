@@ -84,12 +84,13 @@ void log_v(loglevel_t level, std::string_view fmt, std::format_args args) {
   // Tell the log hook, at its most severe level. Skip it in a hook
   // that failed, which holds the mutex already, and give up on a
   // hook stuck in another thread: stderr has the message.
-  if (!t_in_hook && g_log_mu.try_lock_for(fatal_hook_wait)) {
-    if (g_log_fn) {
+  if (!t_in_hook) {
+    // Wait a bounded time for the hook's mutex, held by a guard.
+    std::unique_lock<std::timed_mutex> guard(g_log_mu, fatal_hook_wait);
+    if (guard.owns_lock() && g_log_fn) {
       t_in_hook = true;
       g_log_fn(g_log_arg, loglevel_t::error, buf);
     }
-    g_log_mu.unlock();
   }
   // Abort: the process's state can no longer be trusted.
   abort();
