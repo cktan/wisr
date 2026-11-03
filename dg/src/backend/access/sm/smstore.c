@@ -6913,15 +6913,18 @@ static void check_retype(Oid relid, const sm_table_def_t &def, int32_t at,
  * ALTER COLUMN ... TYPE, cmd, of the table relid named relname, as
  * PostgreSQL's ATPrepAlterColumnType() and ATExecAlterColumnType() do it
  * (../ALTERTYPE.md).
- * 1. Find the column, and refuse what would read it stale (check_retype())
- *    and a COLLATE, which CREATE TABLE refuses too.
+ * 1. Find the column, and refuse a COLLATE, which CREATE TABLE refuses
+ *    too.
  * 2. Make the transform: USING's expression, or the column, coerced to the
  *    new type, with PostgreSQL's error if it cannot be.
  * 3. Coerce the column's default and update default to the new type.
- * 4. Ask sm to change the record alone if no value changes, as PostgreSQL
+ * 4. Refuse what would read the column stale (check_retype()), and an
+ *    interval index key: after steps 2 and 3, whose errors PostgreSQL
+ *    gives first.
+ * 5. Ask sm to change the record alone if no value changes, as PostgreSQL
  *    rewrites no row then; else to rewrite the rows, each converted by the
  *    transform (alter_conv()).
- * 5. Raise sm's failure in PostgreSQL's words.
+ * 6. Raise sm's failure in PostgreSQL's words.
  */
 static void alter_column_type(Oid relid, const char *relname,
                               AlterTableCmd *cmd) {
@@ -6947,7 +6950,6 @@ static void alter_column_type(Oid relid, const char *relname,
                            "yet")));
   if (!table_def_now(relid, def))
     elog(ERROR, "table %u is not in sm", relid);
-  check_retype(relid, def, attnum - 1, colname);
 
   Form_pg_attribute att = TupleDescAttr(desc, attnum - 1);
   ParseState *pstate = make_parsestate(NULL);
@@ -6988,19 +6990,6 @@ static void alter_column_type(Oid relid, const char *relname,
              errhint("You might need to specify \"USING %s::%s\".",
                      quote_identifier(colname),
                      format_type_with_typemod(typid, typmod))));
-  /*
-   * An interval is never an index key, as smstore_create_index() refuses
-   * it: sm orders intervals PostgreSQL calls equal as distinct keys.
-   */
-  if (INTERVALOID == typid)
-    for (const sm_index_def_t &x : def.indexes)
-      if (std::find(x.key_attnums.begin(), x.key_attnums.end(),
-                    (int32_t)(attnum - 1)) != x.key_attnums.end())
-        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                        errmsg("an index key of type interval is not "
-                               "supported"),
-                        errdetail("sm orders intervals PostgreSQL calls "
-                                  "equal as distinct keys.")));
   assign_expr_collations(pstate, coerced);
   /* Planned now, so a coercion that changes nothing is seen as such. */
   transform = (Node *)expression_planner((Expr *)coerced);
@@ -7020,6 +7009,25 @@ static void alter_column_type(Oid relid, const char *relname,
                                  "update default");
     to.on_update_expr = new_update.c_str();
   }
+  /*
+   * What would read the column stale, as PostgreSQL's
+   * ATExecAlterColumnType() finds it, once the transform and the defaults
+   * are made.
+   */
+  check_retype(relid, def, attnum - 1, colname);
+  /*
+   * An interval is never an index key, as smstore_create_index() refuses
+   * it: sm orders intervals PostgreSQL calls equal as distinct keys.
+   */
+  if (INTERVALOID == typid)
+    for (const sm_index_def_t &x : def.indexes)
+      if (std::find(x.key_attnums.begin(), x.key_attnums.end(),
+                    (int32_t)(attnum - 1)) != x.key_attnums.end())
+        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        errmsg("an index key of type interval is not "
+                               "supported"),
+                        errdetail("sm orders intervals PostgreSQL calls "
+                                  "equal as distinct keys.")));
   /*
    * No value changes, and sm keeps each as a value of the new type, as it
    * takes a change without a converter: the same type and typmod, or text

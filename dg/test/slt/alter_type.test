@@ -12,7 +12,8 @@
 # 4. A default and a serial's, cast to the new type.
 # 5. Refused as PostgreSQL refuses: an error in USING, a duplicate key
 #    after the cast, a null in a NOT NULL column, a column a view reads,
-#    an open cursor.
+#    with the cast's and the default's errors before the view's, an open
+#    cursor.
 # 6. Rolled back, whole and to a savepoint: the column as it was.
 # 7. Two in one statement; a temporary table; a value out of line; a
 #    table with a dropped column, USING reading another column; a
@@ -207,6 +208,21 @@ alter table t alter column b type int8
 
 statement ok
 drop view tv
+
+statement ok
+create table vx (a int4, b text default 'x')
+
+statement ok
+create view vxv as select b from vx
+
+statement error column "b" cannot be cast automatically to type integer
+alter table vx alter column b type int4
+
+statement error default for column "b" cannot be cast automatically to type integer
+alter table vx alter column b type int4 using 0
+
+statement ok
+drop view vxv
 
 statement ok
 begin
