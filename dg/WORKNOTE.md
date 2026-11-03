@@ -10999,3 +10999,43 @@ planner reads it.
   out, or with the sign of the correlation kept. sm1, an iterator
   made scattered makes none; it fails with the flag ignored.
 
+
+## Step 374: a commit's sync outside RocksDB's write queue
+
+`../sm/NEXT.md` §1 item 5: an insert's version write, unsynced,
+waited for the syncs of other sessions' commits, as RocksDB's
+write group led by a synced write takes in the unsynced writes
+behind it (step 344). Design and cases: `../sm/sm1/GROUPSYNC.md`.
+
+- **sm1**: `finish_commit()` writes the status record unsynced,
+  then calls `db_sync_wal()`: one commit calls `SyncWAL()` for
+  every commit waiting, outside the write queue, as PostgreSQL's
+  `XLogFlush()`. The xid stays in the active table until the sync
+  is done, so no reader takes the unsynced record for a commit. A
+  failed sync fails the database stop, and the commits waiting
+  for it.
+- **Measured**: `bench.old/rowlocks.sh`'s `ins` and `fk`, 10 s a
+  run, 3 a binary; digres before and after alternated twice, the
+  median of 6 runs; PostgreSQL 18 run again on a quiet machine,
+  the median of 3. Tps:
+
+  | stmt | clients | before | after | PostgreSQL | after / PG |
+  | --- | --- | --- | --- | --- | --- |
+  | ins | 1 | 756 | 854 | 886 | 0.96 |
+  | ins | 16 | 3,412 | 6,591 | 9,862 | 0.67 |
+  | fk | 1 | 724 | 798 | 850 | 0.94 |
+  | fk | 16 | 3,190 | 6,545 | 10,637 | 0.62 |
+
+  At 16 clients, 1.9 and 2.1 times as many; before, 0.35 and 0.30
+  of PostgreSQL's. A run swings by up to half on this machine
+  (`ins` at 16 clients after: 2,712 to 7,864).
+- **Tests**: sm1 `test/test_groupsync.cc`, each shown to fail
+  with the code it covers broken: a commit survives a power cut,
+  on a file system of the test's that refuses every write after
+  the cut and truncates each file to its last sync (fails with
+  the sync left out); a commit is invisible until its sync (fails
+  with the sync after the publish); a failed sync fails the
+  commit behind it; fifteen commits behind a stalled sync share
+  one more (fails with a leader covering only its own record);
+  `durability_sync = 0` makes no sync. Not caught: the leader not
+  setting `failed`, which `finish_commit()` sets right after.

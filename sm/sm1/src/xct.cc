@@ -747,7 +747,7 @@ int commit(sm1::session_t *s) {
  * passed validation (§8.2 steps 3-6). Shared by sm1::commit and
  * the commit of a prepared transaction, whose record this
  * overwrites.
- * 1. Write the status record.
+ * 1. Write the status record, and sync the WAL past it.
  * 2. Resolve the xid.
  * 3. Publish.
  * 4. Release. publish_commit() does steps 2-4.
@@ -775,12 +775,18 @@ int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
   }
   // Write the record unless the hook failed it.
   if (st.ok()) {
-    // Sync it, unless durability was traded away.
-    rocksdb::WriteOptions wo;
-    wo.sync = db->durability_sync != 0;
-    // Write the status record: the commit point (§8.2).
-    st = db->rdb->Put(wo, db->cf_txn, rocksdb::Slice(key, sizeof(key)),
+    // Write the status record unsynced: a synced write in RocksDB's
+    // queue makes the writes grouped with it wait for its sync
+    // (GROUPSYNC.md).
+    st = db->rdb->Put(rocksdb::WriteOptions(), db->cf_txn,
+                      rocksdb::Slice(key, sizeof(key)),
                       rocksdb::Slice(val, sizeof(val)));
+  }
+  // Sync the WAL past it, unless durability was traded away: the
+  // commit point (§8.2). Until then the xid is in the active
+  // table, so no reader takes the record for a commit.
+  if (st.ok() && db->durability_sync) {
+    st = db_sync_wal(db);
   }
   // The record's fate is unknown.
   if (!st.ok()) {
@@ -797,8 +803,8 @@ int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
       db->visible_cv.notify_all();
     }
     log_msg(sm1::loglevel_t::error,
-            "database {}: commit record write failed, database stopped "
-            "until reopened: {}",
+            "database {}: commit record write or sync failed, database "
+            "stopped until reopened: {}",
             db->name.c_str(), st.ToString().c_str());
     // Release the locks: writes are refused from now on.
     lock_release_all(s);

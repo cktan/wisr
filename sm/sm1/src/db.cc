@@ -753,7 +753,8 @@ void db_commit_done(db_t *db, uint64_t commit_ts) {
  * Commits are NOT serialized. Only their two ends take alloc_mu: the
  * claim of commit_ts (db_claim_commit_ts()) and its done
  * (db_commit_done()). Between them each writes and syncs its status
- * record with no lock, side by side, so RocksDB groups their syncs.
+ * record with no lock, side by side, so one sync serves many
+ * (db_sync_wal()).
  * And visible_ts is published in commit_ts order (SM1_DESIGN.md
  * section 4.3): one below the OLDEST commit still writing its record,
  * so no snapshot sees a commit_ts whose record is not there yet. So a
@@ -787,6 +788,67 @@ void db_commit_wait(db_t *db, uint64_t commit_ts) {
   db->visible_cv.wait(guard, [&] {
     return db->visible_ts.load() >= commit_ts || db->failed.load();
   });
+}
+
+/*
+ * Sync the WAL past the caller's writes, outside RocksDB's write
+ * queue, as PostgreSQL's XLogFlush() does (GROUPSYNC.md §3). A
+ * synced write in the queue makes every write grouped with it wait
+ * for its sync; here only the commits wait.
+ * 1. Take the target: the last sequence number. RocksDB sets it
+ *    after a group's WAL write, before its writers return, so it
+ *    covers every write that returned before this call.
+ * 2. If a finished sync covers the target, return.
+ * 3. If the database failed stop, return IOError.
+ * 4. If another commit is syncing, wait for it and go to step 2.
+ * 5. Lead: take upto, the last sequence number again. Every write
+ *    at or below it is in the WAL file now.
+ * 6. Sync the WAL with sync_mu let go; writers go on meanwhile.
+ * 7. Record upto as synced, or the database as failed, and wake
+ *    the commits waiting.
+ */
+rocksdb::Status db_sync_wal(db_t *db) {
+  uint64_t target = db->rdb->GetLatestSequenceNumber();
+  std::unique_lock<std::mutex> guard(db->sync_mu);
+  for (;;) {
+    // Covered by a finished sync: another commit's, or an earlier one.
+    if (db->synced_seq >= target) {
+      return rocksdb::Status::OK();
+    }
+    // An earlier sync failed: this record's outcome is unknown too.
+    if (db->failed.load()) {
+      return rocksdb::Status::IOError("an earlier WAL sync failed");
+    }
+    // Not leading: wait for the sync that runs.
+    if (!db->syncing) {
+      break;
+    }
+    db->sync_cv.wait(guard);
+  }
+  // Lead the next sync; what it covers is fixed before it begins.
+  db->syncing = true;
+  uint64_t upto = db->rdb->GetLatestSequenceNumber();
+  guard.unlock();
+  rocksdb::Status st;
+  // Let a test stall or fail the sync.
+  if (db->test_before_sync) {
+    st = db->test_before_sync();
+  }
+  // Sync every log up to the current one: the durability point.
+  if (st.ok()) {
+    st = db->rdb->SyncWAL();
+  }
+  guard.lock();
+  db->syncing = false;
+  if (st.ok()) {
+    db->synced_seq = upto;
+  } else {
+    // Fail stop: the waiters' records may be in the WAL or not.
+    db->failed = true;
+  }
+  // Wake the waiters: covered, failed, or one leads the next sync.
+  db->sync_cv.notify_all();
+  return st;
 }
 
 /* Allocate an object id: a storeid or a seqid. */

@@ -363,6 +363,14 @@ and so are the catalog tables psql reads
      record makes durable what the log holds before it, the
      transaction's versions with it. A design change; a note
      first.
+   - **sm1's own group sync**: built (`sm1/GROUPSYNC.md`,
+     `../dg/WORKNOTE.md` step 374). The commit record is written
+     unsynced, and one commit syncs the WAL for every commit
+     waiting, outside the queue, so no version write waits for a
+     sync. At 16 clients `ins` 3,412 tps to 6,591 and `fk` 3,190
+     to 6,545, 0.67 and 0.62 of PostgreSQL's 9,862 and 10,637; at
+     1 client 0.96 and 0.94. What is left of the gap at 16
+     clients is not yet profiled.
 
 Low priority:
 

@@ -1688,8 +1688,9 @@ is not implemented yet; `ssi_max_entries` is accepted but unused.
 
 ### 8.1 Where durability comes from
 
-RocksDB's WAL. Each `WriteBatch` is atomic and, when written with
-`sync=true`, durable. The storage manager adds no log of its own,
+RocksDB's WAL. Each `WriteBatch` is atomic, and durable once a
+sync of the WAL covers it: its own `sync=true`, or a later
+`SyncWAL()`. The storage manager adds no log of its own,
 because with eager writes there is exactly one thing that must be made
 atomic and durable at commit: **the status record**.
 
@@ -1707,7 +1708,9 @@ sm1::commit(T):
          → on failure: sequencer.done(commit_ts), unused;
            SM_ERR_SERIALIZATION
   3. batch = { CF:txn[T.xid] = {COMMITTED, T.snapshot_ts, commit_ts} }
-  4. db.Write(batch, sync = durability_sync)   ← group-committed
+  4. db.Write(batch, sync = false)
+     if durability_sync: sync the WAL past it   ← one sync for many
+                                                (GROUPSYNC.md)
   5. commit_cache.insert(T.xid → commit_ts);  active_table.remove(T.xid)
      if T made or dropped a store: last_ddl_ts = max(last_ddl_ts, commit_ts)  (§11)
      sequencer.done(commit_ts);  advancer moves visible_ts      (§4.3)
@@ -1755,15 +1758,19 @@ after it, they resolve as committed. There is no window where a
 transaction is half-visible, and no redo or undo work for a data
 version is ever needed.
 
-Commits are group-committed by RocksDB's own write group:
-concurrent `Write(..., sync=true)` calls queue behind one
-leader, which appends them to the WAL with a single sync.
-wisr adds no queue of its own, so `group_commit_us` is
-accepted but unused; RocksDB has no knob for waiting on
-followers. `sync` is
-configurable (`durability_sync=false` trades a bounded window of
-committed-transaction loss for throughput; the database is still
-crash-*consistent*, just not crash-*durable*).
+Commits are group-committed by sm1, outside RocksDB's write
+queue (`GROUPSYNC.md`): the record is written unsynced, and the
+commit then waits for a `SyncWAL()` past it, which one commit
+makes for every commit waiting, as PostgreSQL's `XLogFlush()`
+does. A synced write in RocksDB's queue would make every write
+grouped with it wait for its sync, an insert's version among
+them. The xid stays in the active table until the sync is done,
+so no reader takes the unsynced record for a commit. A leader
+does not wait for followers, so `group_commit_us` is accepted
+but unused. The sync is configurable (`durability_sync=false`
+trades a bounded window of committed-transaction loss for
+throughput; the database is still crash-*consistent*, just not
+crash-*durable*).
 
 ### 8.3 Garbage collection
 

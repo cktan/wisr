@@ -395,6 +395,24 @@ struct db_t {
   std::function<rocksdb::Status(uint64_t commit_ts)> test_before_commit;
 
   /*
+   * The commits' WAL sync, outside RocksDB's write queue
+   * (db_sync_wal(), GROUPSYNC.md). Under sync_mu: the last
+   * sequence number a finished sync covers, and whether a commit
+   * is syncing now; sync_cv wakes the commits waiting for it.
+   */
+  std::mutex sync_mu;
+  std::condition_variable sync_cv;
+  uint64_t synced_seq = 0;
+  bool syncing = false;
+
+  /*
+   * Test hook: called by a commit leading a sync, before
+   * SyncWAL(). A non-OK status stands in for the sync's failure.
+   * Empty outside tests.
+   */
+  std::function<rocksdb::Status()> test_before_sync;
+
+  /*
    * The lock table (§5.1): lock key -> the transactions holding it.
    * Each holder holds it in a mode of its own, and every pair of
    * holders' modes is compatible (sm1.h, lockmode_t). It is in
@@ -599,6 +617,14 @@ void db_commit_done(db_t *db, uint64_t commit_ts);
  * it, or the database failed stop (COMMITVISIBLE.md).
  */
 void db_commit_wait(db_t *db, uint64_t commit_ts);
+
+/*
+ * Wait until the WAL is synced past every write that returned
+ * before the call, one commit syncing for all that wait
+ * (GROUPSYNC.md §3). Returns a sync's failure, or IOError if
+ * the database failed stop meanwhile.
+ */
+rocksdb::Status db_sync_wal(db_t *db);
 
 /* Allocate an object id -- a storeid or a seqid. Returns 0 or -1. */
 int db_alloc_objid(db_t *db, uint64_t *out);
