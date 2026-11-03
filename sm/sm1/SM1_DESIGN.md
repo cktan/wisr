@@ -1745,6 +1745,15 @@ in 2018. The engine therefore aborts the process
   from what the WAL holds. A record that reached the OS
   survives the abort, and is committed.
 
+A write that RocksDB refuses before it reaches the WAL aborts
+the process too. RocksDB refuses writes after a background
+error, such as a full disk in a flush. The returned status
+does not tell this refusal from a failure after the write, so
+the engine treats both as unknown. PostgreSQL does the same: a
+failed WAL write is a PANIC, a full disk included. While the
+disk stays full, each restart aborts again at its first
+commit.
+
 A failed `PREPARED` or `ABORTED` record write is fatal too
 (§8.4): every status record's failure aborts the process, so
 the engine has no failed state to keep.
