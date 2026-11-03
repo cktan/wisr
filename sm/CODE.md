@@ -144,7 +144,11 @@ the two differ, `CLAUDE.md` wins.
   caller is an `sm_wait()` with the thread's `sm_wait_mask()`,
   and fails with `SM_ERR_INTERRUPTED` when a bit in the mask
   is pending. sm takes no bit: the host does
-  (`sm1/SM1_DESIGN.md`, `sm0/INTERRUPT.md`).
+  (`sm1/SM1_DESIGN.md`, `sm0/INTERRUPT.md`). Two waits in sm1
+  are exceptions, both past a commit's record:
+  `db_commit_wait()` and `db_sync_wal()` (`sm1/src/db.cc`).
+  Each is bounded by a sync, which finishes or aborts the
+  process.
 - **Threads are `std::thread`, locks `std::mutex`**, every
   mutex held by an RAII guard, so unwinding releases it.
 - **sm writes no log of its own.** It reports through the

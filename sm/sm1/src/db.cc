@@ -802,6 +802,12 @@ void db_commit_wait(db_t *db, uint64_t commit_ts) {
  * 5. Sync the WAL with sync_mu let go; writers go on meanwhile.
  * 6. If the sync failed, abort the process (SM1_DESIGN.md §8.2).
  * 7. Record upto as synced, and wake the commits waiting.
+ *
+ * Its wait is NOT cut short by an interrupt, unlike every other
+ * wait in sm (../CODE.md §7): the caller's record is written, so
+ * an interrupted commit would have an unknown outcome, which only
+ * an abort could settle. It is bounded by one sync, which finishes
+ * or aborts the process.
  */
 void db_sync_wal(db_t *db) {
   uint64_t target = db->rdb->GetLatestSequenceNumber();

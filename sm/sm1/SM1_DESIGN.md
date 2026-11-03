@@ -851,6 +851,9 @@ as after `SM_ERR_BLOCKED`. A session waits in one place only, on
 a condition of the lock manager's, its lock's partition's
 `lock_cv` for a lock and `xact_cv` for an uncommitted writer, and
 that wait is a `sm_wait()`, so every wait there is can be ended.
+Two waits of a commit past its record are the exceptions: the
+wait for older commits' visibility (`COMMITVISIBLE.md`) and the
+wait for the WAL sync (`GROUPSYNC.md` §3).
 The interrupt goes to a thread, not a session: it is the thread
 that blocks. sm1 takes no bit: **the bit stays pending until the
 host takes it**, so every later wait fails at once too. An

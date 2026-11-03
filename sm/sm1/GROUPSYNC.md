@@ -93,6 +93,11 @@ loses committed data. A changes only the commit.
   (§8.4) and a prepared transaction's ABORTED record keep
   `sync = true`: they are rare, and a group led by one of them
   syncs as today.
+- **The wait is not cut short by an interrupt**, unlike every
+  other wait in sm (`../CODE.md` §7). The record is written, so
+  an interrupted commit has an unknown outcome, and only an
+  abort could settle it. The wait is bounded by one sync, which
+  finishes or aborts the process.
 - **`durability_sync = false` skips the wait**, as it skips the
   sync now.
 - **`group_commit_us` stays unused**: a leader does not wait
