@@ -30,6 +30,7 @@ struct intermediate_t {
   aa_key_t key;
   aa_object_t base;
   aa_object_t middle;
+  bool base_present = true; /* false: base is what no entry means */
 };
 
 /* Closes an sm session on pg_global as it goes out of scope. */
@@ -352,6 +353,30 @@ static std::map<aa_key_t, const aa_change_t *> last_changes(aa_session_t *s) {
 }
 
 /*
+ * What an object with no entry is taken to be, as authorization takes it
+ * (owner_and_acl()): its database's owner's, the bootstrap superuser's
+ * for a database, with its owner's default ACL. Only for an object that
+ * can exist with no entry -- a database, or one of the bootstrap's, below
+ * AA_FIRST_NORMAL_OID -- in *out; false for one that is new, which grants
+ * nothing before it is made.
+ */
+static bool implied(const aa_objects_t &all, aa_key_t key, aa_oid_t classid,
+                    aa_object_t *out) {
+  if (0 != key.second && key.second >= AA_FIRST_NORMAL_OID)
+    return false;
+  aa_object_t o;
+  o.dbid = key.first;
+  o.objid = key.second;
+  o.classid = classid;
+  o.has_acl = false;
+  auto db = all.find(aa_key_t(key.first, 0));
+  o.owner = 0 == key.second || all.end() == db ? AA_BOOTSTRAP_SUPERUSER
+                                               : db->second.owner;
+  *out = o;
+  return true;
+}
+
+/*
  * The entries the session's transaction changes that grant less after
  * the database's commit than before it, in part: each as it is now
  * (base), and as it is to be until that commit (middle), granting what
@@ -367,22 +392,29 @@ static std::vector<intermediate_t> intermediates(aa_session_t *s) {
   all = aa_objects(s->env);
   for (const auto &[key, c] : last_changes(s)) {
     auto found = all->find(key);
-    aa_object_t middle;
+    aa_object_t base, middle;
+    bool present = all->end() != found;
 
-    if (all->end() == found || !c->present ||
-        same_object(found->second, c->object))
+    if (!c->present)
       continue;
-    middle = found->second;
+    if (present) {
+      base = found->second;
+    } else if (!implied(*all, key, c->object.classid, &base)) {
+      continue;
+    }
+    if (same_object(base, c->object))
+      continue;
+    middle = base;
     if (c->object.owner != middle.owner)
       middle.owner = AA_BOOTSTRAP_SUPERUSER;
     if (c->object.has_acl != middle.has_acl ||
         (middle.has_acl && c->object.acl != middle.acl)) {
       middle.has_acl = true;
-      middle.acl = aa_acl_text(aa_acl_intersect(acl_or_default(found->second),
-                                                acl_or_default(c->object)));
+      middle.acl = aa_acl_text(
+          aa_acl_intersect(acl_or_default(base), acl_or_default(c->object)));
     }
-    if (!same_object(middle, found->second))
-      out.push_back({key, found->second, middle});
+    if (!same_object(middle, base))
+      out.push_back({key, base, middle, present});
   }
   return out;
 }
@@ -485,7 +517,7 @@ int aa_commit(aa_session_t *s) {
   /* Put back if the database's commit fails (aa_abort()). */
   s->to_restore.clear();
   for (const intermediate_t &i : before)
-    s->to_restore.push_back({i.key, i.base});
+    s->to_restore.push_back({i.key, i.base, i.base_present});
   if (!roles)
     return 0;
   s->base.reset();
@@ -512,8 +544,7 @@ int aa_commit(aa_session_t *s) {
  * failed.
  */
 int aa_abort(aa_session_t *s) {
-  std::vector<std::pair<aa_key_t, aa_object_t>> restore =
-      std::move(s->to_restore);
+  std::vector<aa_restore_t> restore = std::move(s->to_restore);
 
   s->base.reset();
   s->working.reset();
@@ -524,8 +555,9 @@ int aa_abort(aa_session_t *s) {
   if (restore.empty())
     return 0;
   return write_objects(s, [&](sm_tbl_t *tbl) {
-    for (const auto &[key, object] : restore)
-      if (0 != aa_store_write_object(tbl, key, &object))
+    // An entry that was none goes, so its object is again what none means.
+    for (const aa_restore_t &r : restore)
+      if (0 != aa_store_write_object(tbl, r.key, r.present ? &r.object : NULL))
         return -1;
     return 0;
   });

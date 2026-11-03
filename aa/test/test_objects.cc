@@ -169,6 +169,72 @@ TEST_CASE("objects: a crash between the commits grants less") {
   CHECK(AA_SELECT == items[1].privs);
 }
 
+/* Database 1's entry with no PUBLIC privilege: the superuser's alone. */
+static aa_object_t database_revoked(void) {
+  aa_object_t db;
+
+  db.dbid = 1;
+  db.objid = 0;
+  db.classid = AA_CLASS_DATABASE;
+  db.owner = AA_BOOTSTRAP_SUPERUSER;
+  db.has_acl = true;
+  db.acl = aa_acl_text({{AA_BOOTSTRAP_SUPERUSER, AA_BOOTSTRAP_SUPERUSER,
+                         AA_ALL_RIGHTS_DATABASE}});
+  return db;
+}
+
+// Verify that a crash between the commits grants less of an object that
+// has no entry, as of one that has: a database's default, which lets
+// PUBLIC connect, is no entry at all.
+// 1. Revoke CONNECT from PUBLIC on database 1, which has no entry, and
+//    commit aa's part only.
+// 2. Restart, as a crash before aa_post_commit() leaves it.
+// 3. Confirm a role that is no superuser may not connect.
+TEST_CASE("objects: a crash between the commits grants less of no entry") {
+  home_t h;
+  aa_session_t *s = aa_session_new(h.aa());
+  aa_object_t o;
+  const char *why;
+
+  // 1.
+  REQUIRE(!aa_find_object(h.aa(), NULL, aa_key_t(1, 0), &o));
+  REQUIRE(aa_connect_okay(h.aa(), NULL, 1, 16501, &why));
+  aa_set_object(s, 1, database_revoked());
+  REQUIRE(0 == aa_commit(s));
+  aa_session_free(s);
+
+  // 2. 3.
+  h.restart();
+  CHECK(!aa_connect_okay(h.aa(), NULL, 1, 16501, &why));
+}
+
+// Verify that an abort after aa's part puts an object that had no entry
+// back as having none.
+// 1. Revoke CONNECT from PUBLIC on database 1, which has no entry, and
+//    commit aa's part only.
+// 2. Abort, as a failed database commit does.
+// 3. Confirm the database has no entry, and a role may connect.
+TEST_CASE("objects: an abort puts back no entry") {
+  home_t h;
+  aa_session_t *s = aa_session_new(h.aa());
+  aa_object_t o;
+  const char *why;
+
+  // 1.
+  aa_set_object(s, 1, database_revoked());
+  REQUIRE(0 == aa_commit(s));
+
+  // 2.
+  REQUIRE(0 == aa_abort(s));
+  aa_session_free(s);
+
+  // 3.
+  CHECK(!aa_find_object(h.aa(), NULL, aa_key_t(1, 0), &o));
+  CHECK(aa_connect_okay(h.aa(), NULL, 1, 16501, &why));
+  h.restart();
+  CHECK(!aa_find_object(h.aa(), NULL, aa_key_t(1, 0), &o));
+}
+
 // Verify that the database's commit failing puts back what aa_commit()
 // wrote before it.
 // 1. Commit a table owned by role A.

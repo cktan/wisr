@@ -81,6 +81,13 @@ struct aa_change_t {
   aa_object_t object;
 };
 
+/* An entry to put back at an abort: as it was, or none if it had none. */
+struct aa_restore_t {
+  aa_key_t key;
+  aa_object_t object;
+  bool present = true;
+};
+
 /* A session's own: its changes not yet committed, and its sm session. */
 struct aa_session_t {
   aa_env_t *env = NULL;
@@ -100,8 +107,8 @@ struct aa_session_t {
   /* The databases dropped by the transaction, whose entries go. */
   std::vector<uint64_t> dropped_dbs;
   /* Entries written before the database's commit, as they were, to put
-   * back if it fails (aa_commit()). */
-  std::vector<std::pair<aa_key_t, aa_object_t>> to_restore;
+   * back if it fails (aa_commit()): an object that had none, as none. */
+  std::vector<aa_restore_t> to_restore;
   /* The session's temporary objects' owners and ACLs, never written. */
   std::map<aa_oid_t, aa_oid_t> temp_owners;
   std::map<aa_oid_t, std::string> temp_acls;

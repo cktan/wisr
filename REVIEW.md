@@ -5,16 +5,17 @@ leaves this file when it is fixed, or decided not to be; git
 history keeps the closed reviews (`REVIEW.md` up to
 `1a8407e2`).
 
-1. **`aa/`**: open; findings 1 and 2 fixed, the rest not yet
-   checked.
+1. **`aa/`**: open; findings 1, 2 and 4 fixed; 3 waits on a
+   decision; the rest not yet checked.
 2. **`sm/`**: open, not yet checked against the code.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
 # Review: `aa/` (Authentication and Authorization)
 
-**Status: open.** Findings 1, the lockout bypass, and 2, the
-invalidations lost past the changes kept, are fixed; the others
-are not yet checked against the code.
+**Status: open.** Findings 1, the lockout bypass, 2, the
+invalidations lost past the changes kept, and 4, no intermediate
+for an object with no entry, are fixed. Finding 3 is checked and
+waits on a design decision; the others are not yet checked.
 
 Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 `CLAUDE.md`, `sm/CODE.md`, `aa/AA_DESIGN.md`, `aa/ROLE.md`, and
@@ -30,7 +31,7 @@ Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 | No `throw`, `catch`, or RTTI | PASS | Zero `throw`/`try`/`catch` in library code; builds with `-fno-rtti`. |
 | Naming (`snake_case`, `_t`, `m_`) & Yoda conditions | PASS | Types end in `_t`, private fields in `home_t` use `m_`, and comparisons use `0 == x`. |
 | SCRAM-SHA-256 & cycle detection | PASS | Constant-time digest comparison (`timingsafe_eq`), salt/iteration checks, and DFS cycle detection in `grant_role`. |
-| Correctness & concurrency | 1 High, 4 Medium | `env->objects` / `pg_global` consistency races. |
+| Correctness & concurrency | 1 High, 3 Medium | `env->objects` / `pg_global` consistency races. |
 | `sm/CODE.md` & style rules | 5 Low | `std::map`/`std::pair` in `aa.h`, separate error state, duplicate `session_guard_t`. |
 
 ---
@@ -64,23 +65,6 @@ Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 - **Fix:** Publish `before` to `env->objects` in `aa_commit()`,
   and reload or serialize `env->objects` updates in commit order
   under `env->mutex`.
-
-#### [MEDIUM] 4. `intermediates()` skips objects with no prior `pg_object` row when revoking default `PUBLIC` privileges
-
-- **Location:** `aa/src/aa.cc:372-374`
-- **Issue:** `intermediates()` skips any key where `all->end() ==
-  found`. A database with no entry in `pg_object` (such as
-  `postgres` after `initdb`) grants `AA_CONNECT | AA_CREATE_TEMP`
-  to `AA_PUBLIC` by default (`aa_acl_default`). When a transaction
-  revokes `CONNECT` from `PUBLIC` on that database, `all->end() ==
-  found` causes `aa_commit()` to write no restrictive record
-  before the database commit. If a crash or `aa_post_commit()`
-  failure occurs, the database still has no row in `pg_object` and
-  continues granting `CONNECT` to `PUBLIC`.
-- **Fix:** When `all->end() == found` for an object whose class
-  has non-empty default `PUBLIC` privileges (`AA_CLASS_DATABASE`,
-  `AA_CLASS_FUNCTION`) and `i.after` is present, synthesize `old`
-  using `aa_acl_default` before intersecting with `*i.after`.
 
 #### [MEDIUM] 5. `aa_commit()` unconditionally sets `s->epoch = ++s->env->epoch`, masking prior role commits
 
