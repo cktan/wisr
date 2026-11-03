@@ -19,6 +19,39 @@ other findings are about waits, tests, comments and efficiency.
   checked against 9.11.
 - **Order:** the most severe finding is first.
 
+## Status
+
+The fixes are on branch `wip-review`.
+
+| Finding | Status | Commit |
+| --- | --- | --- |
+| 1 | fixed: `FlushWAL(true)` in place of `SyncWAL()` | `ad395ca4` |
+| 2 | fixed: a failed commit record write or WAL sync aborts the process, through `sm0::fatal()` (`5aa4551b`) | `eaae2964` |
+| 3 | documented as an exception to interrupts | `0f91b03a` |
+| 4 | fixed: the test waits on `sync_waiters` | `2ccd9b27` |
+| 5 | gone: no commit waits behind a failed sync, as the process aborts | `eaae2964` |
+| 6 | fixed | `1bb2ae1b` |
+| 7 | fixed | `1bb2ae1b` |
+| 8 | dropped: the gain is too small to measure | — |
+| 9 | dropped: the gain is too small to measure | — |
+
+**Why 8 and 9 were dropped.** The synced writes they name are
+rare:
+
+- `ts_lease` is 1,000,000 by default (`include/sm_options.h`),
+  and the sequence lease takes a block of the same size.
+- A transaction takes a few timestamps: its xid, its
+  commit_ts, and its write timestamps.
+- At about 6,500 tps, a lease therefore renews once every 30 to
+  60 seconds. PREPARE and ABORTED are rare too.
+
+So a synced write group, and a sync that does not move
+`synced_seq`, costs one extra fsync about once a minute. A
+benchmark of `ins` and `fk` would not show it. The fix would add
+a durable-write helper, and it would make a failed lease sync
+abort the process. Look at it again only if `ts_lease` becomes
+small.
+
 ## Checked and Sound
 
 - The leader and follower protocol in `db_sync_wal()`.
