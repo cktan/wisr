@@ -1246,6 +1246,7 @@ static char *sm_indexdef(Oid indexrelid, int colno, bool attrsOnly,
   List *exprs = NIL, *pred = NIL, *names, *context;
   ListCell *expr_item;
   smstore_table_t *desc;
+  const char *am = NULL;
 
   /*
    * An index is known by its table once found by its name or listed in
@@ -1265,11 +1266,21 @@ static char *sm_indexdef(Oid indexrelid, int colno, bool attrsOnly,
   }
   idx = index->rd_index;
   table = relation_open(idx->indrelid, AccessShareLock);
-  /* Its expressions and predicate as CREATE INDEX gave them, not folded. */
+  /*
+   * Its kind, as CREATE INDEX ... USING names it, and its expressions and
+   * predicate as CREATE INDEX gave them, not folded.  An index the table's
+   * descriptor does not list is named by pg_am, as parse_utilcmd.c does.
+   */
   desc = smstore_table_desc(idx->indrelid);
-  for (int i = 0; desc != NULL && i < desc->nindexes; i++)
-    if (desc->indexes[i].oid == indexrelid && desc->indexes[i].eval != NULL)
+  for (int i = 0; desc != NULL && i < desc->nindexes; i++) {
+    if (desc->indexes[i].oid != indexrelid)
+      continue;
+    am = desc->indexes[i].tree ? SMSTORE_INDEX_TREE : SMSTORE_INDEX_LSM;
+    if (desc->indexes[i].eval != NULL)
       smstore_index_eval_parts(desc->indexes[i].eval, &exprs, &pred, &names);
+  }
+  if (NULL == am)
+    am = get_am_name(index->rd_rel->relam);
   expr_item = list_head(exprs);
   context = deparse_context_for(RelationGetRelationName(table), idx->indrelid);
   initStringInfo(&buf);
@@ -1280,7 +1291,7 @@ static char *sm_indexdef(Oid indexrelid, int colno, bool attrsOnly,
                      quote_qualified_identifier(
                          get_namespace_name(RelationGetNamespace(table)),
                          RelationGetRelationName(table)),
-                     smstore_index_am(idx->indrelid, indexrelid));
+                     am);
   for (int keyno = 0; keyno < idx->indnatts; keyno++) {
     AttrNumber attnum = idx->indkey.values[keyno];
     int16 opt;
