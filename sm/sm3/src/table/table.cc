@@ -870,10 +870,12 @@ look:
     return -1;
   }
   // Its entries in the indexes that are no arbiter: a duplicate in
-  // one of those is an error, as in tbl_insert.
+  // one of those is an error, as in tbl_insert. A tree arbiter's is in
+  // already, above.
   for (size_t i = 0; i < table->indexes.size(); i++) {
     if (!maintained(table, i) ||
-        std::find(arb.begin(), arb.end(), i) != arb.end()) {
+        std::find(arb.begin(), arb.end(), i) != arb.end() ||
+        std::find(trees.begin(), trees.end(), i) != trees.end()) {
       continue;
     }
     entry_t e;

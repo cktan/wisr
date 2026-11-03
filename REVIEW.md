@@ -7,7 +7,7 @@ history keeps the closed reviews (`REVIEW.md` up to
 
 1. **`aa/`**: open; findings 1 to 7 fixed; the rule findings not
    yet checked.
-2. **`sm/`**: open; Highs 1 to 5 fixed; the rest being checked.
+2. **`sm/`**: open; Highs 1 to 6 fixed; the rest being checked.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
 # Review: `aa/` (Authentication and Authorization)
@@ -87,7 +87,9 @@ Low: seq_hwm hides the undone versions, so it kept resources, not
 rows), and High 5, TOAST pointers held past a failed write (wider
 than written: an index's refusal after the row write, rolled back
 to a savepoint, let the next write erase the live row's chunks),
-are fixed; the others are being checked.
+and High 6, a tree arbiter's entry added twice (a Low: a tree's
+insert of an entry it has is no change, so it cost a second unique
+check, not a duplicate), are fixed; the others are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -102,33 +104,12 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Medium, 3 Low |
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 4 Medium, 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 2 Medium, 3 Low |
-| `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 3 High, 3 Medium, 5 Low |
+| `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 2 High, 3 Medium, 5 Low |
 | `include/` & `src/` | FAIL (`std::optional` in `sm_stats.h`) | PASS | 1 High, 2 Medium, 3 Low |
 
 ---
 
 ### 2. High-Severity Findings
-
-#### [HIGH] 6. `sm3`: `tbl_insert_arbiter` inserts duplicate entries into unique B+tree arbiter indexes
-
-- **Location:** `sm/sm3/src/table/table.cc:786-794`,
-  `sm/sm3/src/table/table.cc:835-857`,
-  `sm/sm3/src/table/table.cc:863-874`
-- **Issue:** At lines 786-794, unique B+tree arbiter indexes
-  (`table->def->indexes[i].tree`) are moved out of `arb` into
-  `trees`. At lines 835-857, `tbl_insert_arbiter` inserts into
-  each index in `trees` via `add_entry()`. On the success path,
-  `trees` is never merged back into `arb` (merging happens only
-  on the `goto look` retry paths). Then the loop over remaining
-  indexes at lines 863-874 checks only `std::find(arb.begin(),
-  arb.end(), i) != arb.end()`, misses every index in `trees`, and
-  calls `add_entry()` a second time on each B+tree arbiter index.
-  Because `unique_tree_insert` (`table.cc:1859`) treats an
-  existing entry with the same row key (`r == row`) as
-  non-conflicting and falls through to `sm2::idx_insert_unique`,
-  a duplicate entry is inserted into the B+tree.
-- **Fix:** Skip indexes present in `trees` (or merge `trees` back
-  into `arb` before line 863).
 
 #### [HIGH] 7. `sm3`: `builder_detach()` uninterruptible wait and worker-thread join race
 
