@@ -14,6 +14,9 @@
 #include "sm0_format.h"
 
 #include <atomic>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <mutex>
 
 namespace {
@@ -44,6 +47,30 @@ void log_v(loglevel_t level, std::string_view fmt, std::format_args args) {
   if (g_log_fn) {
     g_log_fn(g_log_arg, level, buf);
   }
+}
+
+/*
+ * Report a fatal error and abort, for a state no caller can act on.
+ * 1. Format "*** FATAL *** " and the message into a stack buffer.
+ * 2. Write it to stderr, whatever the log hook does, and flush.
+ * 3. Hand it to the log hook, if one is set.
+ * 4. Abort the process.
+ */
+[[noreturn]] void fatal_v(std::string_view fmt, std::format_args args) {
+  static constexpr char prefix[] = "*** FATAL *** ";
+  constexpr size_t plen = sizeof(prefix) - 1;
+  char buf[1024];
+  memcpy(buf, prefix, plen);
+  // Format the message after the prefix, cut short if it does not fit.
+  format_into(buf + plen, sizeof(buf) - plen, fmt, args);
+  // Tell stderr, whatever the log hook does.
+  fprintf(stderr, "%s\n", buf);
+  fflush(stderr);
+  // Tell the log hook, at its most severe level.
+  const char *msg = buf;
+  log_v(loglevel_t::error, "{}", std::make_format_args(msg));
+  // Abort: the process's state can no longer be trusted.
+  abort();
 }
 
 /* Install or remove the process-wide log hook. */

@@ -278,20 +278,9 @@ int recover_dbs(sm1::env_t *env) {
  * transaction. Formatting allocates nothing.
  */
 [[noreturn]] void oom_handler() {
-  char msg[256];
-  sm0::format_into(
-      msg, sizeof(msg),
-      "*** FATAL *** out of memory: the process is aborting. Reopen "
-      "the databases: WAL replay recovers every committed "
-      "transaction.",
-      std::make_format_args());
-  // Tell stderr, whatever the log hook does.
-  fprintf(stderr, "%s\n", msg);
-  fflush(stderr);
-  // Tell the log hook.
-  log_msg(sm1::loglevel_t::error, "{}", msg);
-  // Abort the process.
-  abort();
+  // Say so on stderr and the log hook, and abort the process.
+  fatal("out of memory: the process is aborting. Reopen the databases: "
+        "WAL replay recovers every committed transaction.");
 }
 
 /*

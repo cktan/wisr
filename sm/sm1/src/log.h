@@ -10,6 +10,7 @@
 
 namespace wisr {
 
+using sm0::fatal;
 using sm0::log_enabled;
 using sm0::log_msg;
 
