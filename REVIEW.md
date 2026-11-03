@@ -96,9 +96,10 @@ builds; its join race is none, as a worker that takes new work
 only makes the detach wait for it. High 8, a worker counted whose
 thread was never made, and High 9, std::optional in sm_stats.h, are
 fixed. Of the Mediums, 1, a deadline that overflowed into the
-past, 2, a periodic timer's catch-up that starved its cancel, and
-3, a real fd's open of no path, are fixed; the others and the Lows
-are being checked.
+past, 2, a periodic timer's catch-up that starved its cancel, 3,
+a real fd's open of no path, and 4, a load into a store the
+transaction does not see, are fixed; the others and the Lows are
+being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -111,7 +112,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | Level / Area | Layering & Opacity | Naming (`_t`, `m_`, no `strncpy`) | Findings |
 | --- | --- | --- | --- |
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Low |
-| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 4 Medium, 3 Low |
+| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 3 Medium, 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 2 Medium, 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 3 Medium, 5 Low |
 | `include/` & `src/` | PASS | PASS | 2 Medium, 3 Low |
@@ -126,12 +127,6 @@ None open: Highs 1 to 9 are closed.
 
 ### 3. Medium-Severity Findings
 
-4. **`sm1` (`sm/sm1/src/load.cc:470-503`) — `sm1::load_open` and
-   `sm1::store_empty` bypass catalog visibility, store-0, and
-   temp-store owner checks:** Both look up `storeid` via
-   `db_store(s->db, storeid)` instead of `catalog_lookup(s,
-   xct_view(s), storeid)` and do not reject `storeid == 0` or
-   `st.owner != s`.
 5. **`sm1` (`sm/sm1/src/chain.cc:294-305`,
    `sm/sm1/src/catalog.cc:100-134`) — `chain_write` and `rmstore`
    do not check `load_open_on(s, storeid)`:** `sm1.h:1542`

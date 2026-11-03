@@ -158,6 +158,45 @@ std::vector<std::string> two_keys(int n) {
 
 } // namespace
 
+TEST_CASE("a load and an emptiness check take a store the transaction sees") {
+  // Verify sm1::load_open and sm1::store_empty find their store as every
+  // write and read does: not the catalog's, store 0, and not one another
+  // transaction made and has not committed.
+  // 1. Both refuse store 0 with SM_ERR_INVALID.
+  // 2. Another session makes a store and does not commit; both refuse it
+  //    with SM_ERR_NOTFOUND.
+  // 3. Another session makes a temporary store; both refuse it with
+  //    SM_ERR_NOTFOUND.
+  load_fixture_t f;
+  sm1::session_t *other = f.open();
+  sm1::loader_t *l = nullptr;
+  bool empty = false;
+  begin_xct(f.s);
+  CHECK(sm1::load_open(f.s, 0, l) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm1::store_empty(f.s, 0, empty) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+
+  // 2.
+  begin_xct(other);
+  uint64_t made = mkstore(other);
+  CHECK(sm1::load_open(f.s, made, l) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  CHECK(sm1::store_empty(f.s, made, empty) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+
+  // 3.
+  uint64_t temp = 0;
+  REQUIRE(sm1::mkstore(other, temp, true) == 0);
+  CHECK(sm1::load_open(f.s, temp, l) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  CHECK(sm1::store_empty(f.s, temp, empty) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm1::abort(other) == 0);
+  REQUIRE(sm1::commit(f.s) == 0);
+  sm1::closedb(other);
+}
+
 TEST_CASE("a load's keys are the transaction's own once it closes") {
   // Verify a load in each of its two forms: one batch, and files.
   // 1. Make a store, open a load, and put 500 keys to an ascending
