@@ -16,15 +16,15 @@ layer.
 | Storage engine | Heap files, 8 KB pages, `smgr`, buffer pool | RocksDB via `sm/` (one column family per store) |
 | Row identity | Physical tuple ID (`ctid`: block + offset) | Primary key bytes, or hidden `int8` `_id` if keyless |
 | Table organization | Unordered heap + separate B-tree for PK | Index-organized (clustered on PK or `_id`) |
-| Database portability | Cluster-bound (shared XIDs, OIDs, WAL, `global/`) | Self-contained directory (`base/X` holds data, catalog, WAL) |
+| Database portability | Cluster-bound (shared XIDs, OIDs, WAL, `global/`) | Self-contained directory (`base/X` holds data, catalog, WAL); its import not built yet |
 | Garbage collection | `VACUUM` and autovacuum processes | Automatic in `sm1`; `VACUUM` only compacts RocksDB stores |
 | Durability & recovery | PG WAL (`pg_wal`), checkpointer, redo recovery | RocksDB WAL and flush; `CHECKPOINT` is a no-op |
 | Transactions & MVCC | Heap `xmin`/`xmax`, `pg_xact` SLRU, snapshots | `sm1` MVCC on RocksDB; no XID columns on rows |
 | `SERIALIZABLE` | Predicate locks and SSI in shared memory | `sm1` serializable isolation |
 | Row & table locks | Shared-memory lock tables + heap tuple header bits | `sm1` lock manager (5 table modes, row locks in memory) |
 | System catalog | Heap tables (`pg_class`, `pg_attribute`, ...) | Compiled-in arrays + `sm3` catalog; virtual read-only relations |
-| Roles & auth | `pg_authid` heap table, `pg_hba.conf` | `aa/` library in `pg_global`; fixed peer / SCRAM-SHA-256 rules |
-| Index access methods | B-tree, Hash, GiST, SP-GiST, GIN, BRIN | `lsm` (default) and `btree` (in `sm`), no bitmap scans |
+| Roles & auth | `pg_authid` heap table, `pg_hba.conf`, TLS, GSSAPI | `aa/` library in `pg_global`; fixed peer / SCRAM-SHA-256 rules; no TLS or GSSAPI |
+| Index access methods | B-tree, Hash, GiST, SP-GiST, GIN, BRIN | `lsm` (default) and `btree`, a B-link tree, both in `sm`; no bitmap scans |
 | Procedural languages | PL/pgSQL, SQL functions, C extensions | Removed (SPI remains for a future language) |
 
 ---
@@ -60,25 +60,29 @@ layer.
   single WAL, transaction ID counter, and cluster catalog. In DG,
   a database `X` lives entirely inside `base/X` as one RocksDB
   instance with its own WAL, catalog, sequences, and ID counters.
-  It shares nothing on disk with other databases.
+  It shares nothing on disk with other databases. The import of
+  such a directory into another instance is not built yet.
 - **Index-organized tables.** PG stores rows in an unordered heap
   and builds a separate B-tree file for the primary key. DG
   stores every table in primary-key order in `sm`. A `SELECT`
   without `ORDER BY` returns rows in key order, and a primary key
-  index uses zero extra bytes.
+  index uses zero extra bytes. A primary key is capped at 1024
+  encoded bytes.
 - **Row keys replace `ctid`.** PG identifies physical tuples by
   `ctid` (page and slot). DG has no pages or `ctid`. A table
   without a primary key gets a hidden `int8` system column named
   `_id` as its key. System columns `xmin`, `xmax`, `cmin`, and
   `cmax` do not exist.
-- **No buffer pool, TOAST, or WAL management.** PG's buffer
-  manager, `smgr`, free-space map, visibility map, TOAST tables,
-  and `xlog.c` are removed. `shared_buffers` configures the
+- **PG's storage layers are removed.** PG's buffer manager,
+  `smgr`, free-space map, visibility map, TOAST tables, and
+  `xlog.c` are removed. `sm` stores a long value out of line, as
+  TOAST did, and `sm1` caches the pages of `btree` indexes in a
+  buffer pool of its own. `shared_buffers` configures the
   RocksDB block cache size.
 - **Maintenance commands.** `sm` reclaims dead versions
   automatically and RocksDB bounds recovery. `VACUUM` compacts
-  each table's store. `CLUSTER`, `REINDEX`, and `CHECKPOINT`
-  succeed as no-ops.
+  each table's store. `CLUSTER` and `REINDEX` warn and do
+  nothing; `CHECKPOINT` does nothing.
 
 ## 3. System Catalog, Roles, and Authentication
 
@@ -97,10 +101,18 @@ layer.
   owners, and ACLs live in the `pg_global` database managed by
   `aa/`. `pg_hba.conf` and `pg_ident.conf` are removed. Local
   Unix socket connections authenticate via OS peer match or
-  password; TCP connections require SCRAM-SHA-256.
+  password; TCP connections require SCRAM-SHA-256. Column and
+  function privileges, `ALTER ROLE ... SET`, and `ALTER DEFAULT
+  PRIVILEGES` fail; role DDL is refused in a transaction block.
+- **No TLS or GSSAPI.** Their build options are off. A
+  connection over TCP is not encrypted.
 - **Fixed encoding and locale.** Every DG database uses `UTF8`
-  encoding and default collation `C` (with optional column-level
-  ICU collations).
+  encoding and collation `C`. A column's `COLLATE`, `CREATE
+  COLLATION`, and an index key collation other than the
+  column's are refused.
+- **Missing introspection.** `information_schema` and the
+  `pg_stat_*` views are missing. `pg_description` is empty,
+  `COMMENT ON` is refused, and `pg_stats` is a function.
 
 ## 4. Transactions, Locking, and Concurrency
 
@@ -116,7 +128,9 @@ layer.
   deadlock detector. PG's eight `LOCK TABLE` modes map onto
   `sm1`'s five modes, and `FOR KEY SHARE` / `FOR NO KEY UPDATE`
   map to `FOR SHARE` / `FOR UPDATE`. Advisory locks use a
-  separate in-memory table in DG.
+  separate in-memory table in DG. There are no lock wait queues:
+  a soft deadlock aborts a transaction where PG reorders the
+  waiters. `pg_locks` shows `sm`'s mode names.
 - **Behavioral differences under concurrency:**
   - Updating a primary key column in a way that collides with an
     existing row during the scan (e.g., `UPDATE t SET k = k + 1`)
@@ -140,13 +154,19 @@ layer.
   GiST, SP-GiST, and BRIN access methods are removed; DG
   supports `UNIQUE`, partial (`WHERE`), covering (`INCLUDE`),
   and expression indexes in two formats (`sm/BTREE.md`):
-  - **`lsm` (default, `USING 'lsm'`):** Stores each secondary
+  - **`lsm` (default, `USING lsm`):** Stores each secondary
     index entry as an individual MVCC key-value record in
     RocksDB's LSM tree.
-  - **`btree` (`USING 'tree'`):** Stores secondary index entries
+  - **`btree` (`USING btree`):** Stores secondary index entries
     in 4 KB Lehman-Yao B-link tree pages stored as RocksDB
     values and cached in `sm1`'s buffer pool, where rows decide
-    visibility.
+    visibility. `pg_dump` writes `USING btree` for every index,
+    so a restored schema gets this kind, not the default.
+- **Index limits.** An `interval` column cannot be an index key.
+  `NULLS NOT DISTINCT` and non-default operator classes are
+  refused, and so is `DROP INDEX CONCURRENTLY`. A row
+  comparison, `(a, b) > (...)`, is not an index qual. A table a
+  statement writes or locks gets no index-only scan.
 - **No bitmap scans or backward index scans.** Because rows have
   no page numbers, `BitmapIndexScan` and `BitmapHeapScan` do not
   exist. Descending scans on ascending indexes use an explicit
@@ -174,13 +194,36 @@ layer.
   bit strings, full-text search (`tsvector`, `tsquery`), `oid`,
   `tid`, and composite/user-defined types cannot be stored as
   table columns.
+- **ALTER TABLE.** DG takes `ADD COLUMN`, `DROP COLUMN`,
+  `ALTER COLUMN TYPE`, `ADD`, `DROP` and `VALIDATE CONSTRAINT`
+  of a foreign key, a primary key or a unique constraint, and
+  `RENAME`. It refuses `SET`/`DROP NOT NULL`, `SET DEFAULT`, a
+  `CHECK` added later, `USING INDEX`, `SET SCHEMA`, `ALTER
+  INDEX`, and `ALTER TYPE`. `ALTER COLUMN TYPE` refuses a column
+  an expression or partial index, a foreign key, or an identity
+  sequence uses, a `COLLATE`, and a `USING` that reads another
+  column the same statement retypes (`dg/ALTERTYPE.md`).
+- **Sequences.** A sequence takes `START`, `INCREMENT`, and
+  `AS`. `MINVALUE`, `MAXVALUE`, `CACHE`, `CYCLE`, `OWNED BY`,
+  `ALTER SEQUENCE`, `setval()`, and `TRUNCATE ... RESTART
+  IDENTITY` are refused.
+- **Queries.** A whole-row reference (`row_to_json(t)`), a
+  `RANGE` window frame with an offset, and backward movement of
+  a cursor not declared `SCROLL` are refused. `ANALYZE` of a
+  column list is refused, and `ANALYZE` skips a temporary
+  table. Built-in functions have no default arguments.
 - **Removed or refused SQL features.** Table inheritance,
   declarative partitioning, `MERGE`, triggers, rules, row-level
   security, `LISTEN`/`NOTIFY`, materialized views, foreign data
   wrappers, tablespaces, large objects, `CHECK` and `EXCLUDE`
-  constraints, `DEFERRABLE` constraints, generated columns, and
-  replication (`PUBLICATION`/`SUBSCRIPTION`) are removed or
-  refused (`dg/UNSUPPORTED.md`).
+  constraints, `DEFERRABLE` constraints, `NOT ENFORCED` and
+  `MATCH PARTIAL` foreign keys, generated columns, unlogged
+  tables, temporary sequences, `ON COMMIT` on a permanent table,
+  foreign tables, composite types, domains, operators,
+  aggregates, `CREATE DATABASE` options, `ALTER DATABASE`,
+  extensions and `LOAD`, and replication (`PUBLICATION`,
+  `SUBSCRIPTION`, base backup, PITR, archiving, hot standby)
+  are removed or refused (`dg/UNSUPPORTED.md`).
 - **Added in DG: `DEFAULT ... ON UPDATE`.** Because DG has no
   triggers, it extends column definitions with `DEFAULT expr ON
   UPDATE` (`dg/ONUPDATE.md`), which writes `expr` whenever an
