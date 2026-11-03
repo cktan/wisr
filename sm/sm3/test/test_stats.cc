@@ -345,6 +345,46 @@ TEST_CASE("what DDL does to statistics") {
   db.commit();
 }
 
+TEST_CASE("statistics loaded under a transaction's own DDL are not shared") {
+  // Verify a load typed by a definition the transaction changed and has
+  // not committed goes to it alone, not into the catalog's copy, which
+  // every session reads.
+  // 1. Record t's statistics, and restart, so none is in memory.
+  // 2. Drop t's index and its column a, uncommitted: the load leaves
+  //    out the index's entry and a's statistic.
+  // 3. The catalog holds no copy of t's statistics.
+  // 4. Abort: a load has the index's entry and both statistics again.
+  cat_db_t db;
+  uint64_t t = 0, ix = 0;
+  db.begin();
+  make_t(db, t, ix);
+  sm3::stats_t st = sample_stats(ix, 9000.0);
+  REQUIRE(sm3::cat_put_stats(db.ss, t, st) == 0);
+  db.commit();
+  db.reload();
+
+  // 2.
+  std::shared_ptr<const sm3::stats_t> got;
+  db.begin();
+  REQUIRE_MESSAGE(sm3::drop_index(db.ss, t, ix) == 0, sm1::errmsg());
+  REQUIRE_MESSAGE(sm3::drop_column(db.ss, t, "a") == 0, sm1::errmsg());
+  REQUIRE(sm3::cat_get_stats(db.ss, t, got) == 0);
+  REQUIRE(got != nullptr);
+  CHECK(got->indexes.empty());
+  CHECK(got->stats.size() == 1);
+
+  // 3.
+  CHECK(loaded(db.cat) == 0);
+
+  // 4.
+  REQUIRE(sm3::abort(db.ss) == 0);
+  db.begin();
+  REQUIRE(sm3::cat_get_stats(db.ss, t, got) == 0);
+  REQUIRE(got != nullptr);
+  check_same(*got, st);
+  db.commit();
+}
+
 namespace {
 
 /* How many STATS entries the table oid has, read in ss's transaction. */

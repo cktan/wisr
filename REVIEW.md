@@ -104,8 +104,9 @@ store with a load open, 6, a wait bit left set after its sleep,
 its prefix, are fixed. Medium 9 is closed: a unique insert that
 finishes a split a crash left half done holds the first leaf, as
 its own split holds it while it posts; latches go left to right,
-then up, so no deadlock, and the path runs once a crash. The
-others and the Lows are being checked.
+then up, so no deadlock, and the path runs once a crash. Medium
+10, statistics loaded under uncommitted DDL kept for every
+session, is fixed. The others and the Lows are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -120,7 +121,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Low |
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 3 Low |
-| `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 3 Medium, 5 Low |
+| `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 2 Medium, 5 Low |
 | `include/` & `src/` | PASS | PASS | 2 Medium, 3 Low |
 
 ---
@@ -133,13 +134,6 @@ None open: Highs 1 to 9 are closed.
 
 ### 3. Medium-Severity Findings
 
-10. **`sm3` (`sm/sm3/src/catalog/ddl.cc:926-984`) —
-    `cat_get_stats()` caches stats in shared `cat->stats` using
-    session's uncommitted `table_def_t`:** If a session has
-    uncommitted `DROP COLUMN` or `DROP INDEX` DDL and calls
-    `cat_get_stats()`, it filters the committed stats against its
-    uncommitted `def` and stores the truncated stats into shared
-    `cat->stats`.
 11. **`sm3` (`sm/sm3/src/catalog/internal.h:453-459`) —
     `eval_index()` does not set `sm1::errnum()` when callback
     returns non-zero:** Callers in `table.cc:520` and

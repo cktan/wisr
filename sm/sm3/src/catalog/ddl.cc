@@ -989,6 +989,12 @@ int cat_get_stats(session_t *session, uint64_t oid,
       }) != 0) {
     return -1;
   }
+  // Typed by a definition this transaction changed, and may abort:
+  // its own, not the copy every session reads.
+  if (def != cat_get_table(cat, oid)) {
+    out = std::move(loaded);
+    return 0;
+  }
   // A commit that published newer ones meanwhile keeps its own.
   std::unique_lock lock(cat->mu);
   out = cat->stats.try_emplace(oid, std::move(loaded)).first->second;
