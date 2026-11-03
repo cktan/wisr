@@ -17,7 +17,8 @@
 # 7. Two in one statement; a temporary table; a value out of line; a
 #    numeric.
 # 8. Refused by digres alone: an expression or a partial index, a foreign
-#    key on either side, an identity column, COLLATE.
+#    key on either side, an identity column, COLLATE, an interval index
+#    key; an interval column with no index, or an INCLUDE one, is taken.
 
 # 1. A plain column.
 statement ok
@@ -355,3 +356,31 @@ alter table idn alter column k type int8
 onlyif digres
 statement error ALTER COLUMN TYPE \.\.\. COLLATE is not supported yet
 alter table v alter column s type text collate "C"
+
+statement ok
+create table iv (a text primary key, b text, c text, d text)
+
+statement ok
+insert into iv values ('1 mon', '1 day', '2 days', '3 days')
+
+statement ok
+create index iv_b on iv (b) include (d)
+
+onlyif digres
+statement error an index key of type interval is not supported
+alter table iv alter column a type interval using a::interval
+
+onlyif digres
+statement error an index key of type interval is not supported
+alter table iv alter column b type interval using b::interval
+
+statement ok
+alter table iv alter column c type interval using c::interval
+
+statement ok
+alter table iv alter column d type interval using d::interval
+
+query TT
+select c::text, d::text from iv
+----
+2 days	3 days

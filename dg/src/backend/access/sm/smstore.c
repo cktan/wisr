@@ -6981,6 +6981,19 @@ static void alter_column_type(Oid relid, const char *relname,
              errhint("You might need to specify \"USING %s::%s\".",
                      quote_identifier(colname),
                      format_type_with_typemod(typid, typmod))));
+  /*
+   * An interval is never an index key, as smstore_create_index() refuses
+   * it: sm orders intervals PostgreSQL calls equal as distinct keys.
+   */
+  if (INTERVALOID == typid)
+    for (const sm_index_def_t &x : def.indexes)
+      if (std::find(x.key_attnums.begin(), x.key_attnums.end(),
+                    (int32_t)(attnum - 1)) != x.key_attnums.end())
+        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        errmsg("an index key of type interval is not "
+                               "supported"),
+                        errdetail("sm orders intervals PostgreSQL calls "
+                                  "equal as distinct keys.")));
   assign_expr_collations(pstate, coerced);
   /* Planned now, so a coercion that changes nothing is seen as such. */
   transform = (Node *)expression_planner((Expr *)coerced);

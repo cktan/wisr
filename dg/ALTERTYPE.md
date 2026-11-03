@@ -109,6 +109,7 @@ same type code, or `text` and `varchar`.
 | An expression or a partial index reads it | §8, question 3 |
 | A foreign key's column, either side | §8, question 3 |
 | An identity column | §8, question 3 |
+| An index key changed to interval | refused, as CREATE INDEX refuses an interval key: sm orders intervals PostgreSQL calls equal as two keys. An INCLUDE column, or one no index has, is taken |
 | The column's statistics | dropped: ANALYZE makes them again |
 | `COLLATE` | the collations digres takes at CREATE TABLE; PostgreSQL's error for a type with none |
 | Two in one statement | §8, question 4 |
