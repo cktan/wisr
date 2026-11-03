@@ -105,7 +105,8 @@ and so are the catalog tables psql reads
    1. **Secondary indexes as B+trees** (`BTREE.md`): built on
       the `wip-btree` branch, unique ones and `ON CONFLICT`
       arbiters among them, asked for by
-      `CREATE INDEX ... WITH (tree = on)`; its decisions in
+      `CREATE INDEX ... USING btree` (`lsm`, today's kind,
+      is the default); its decisions in
       `../MAJORDECISION.md`, its steps in
       `../dg/WORKNOTE.md` 345 to 349.
    2. **Rows of sorted, close keys read by one cursor**: built,
@@ -371,6 +372,33 @@ and so are the catalog tables psql reads
      to 6,545, 0.67 and 0.62 of PostgreSQL's 9,862 and 10,637; at
      1 client 0.96 and 0.94. What is left of the gap at 16
      clients is not yet profiled.
+6. **An lsm index's entry as a key alone, with no value**, as
+   MyRocks keeps a secondary index: the key is the index's id,
+   its columns and the row's primary key, and the value is
+   empty. Today an lsm entry (`CREATE INDEX ... USING lsm`, the
+   default) is an MVCC version: its key ends in `~wts ‖ ~seq`,
+   and its value holds the flags, the xid or `commit_ts`, the
+   cut flag, the INCLUDE columns and the row's key
+   (`sm3/SM3_DESIGN.md`, the table of keys). Not designed yet.
+   The design must answer the decision checklist, and at least:
+   - how a reader knows an entry is visible without its own
+     version: from the row, as MyRocks does;
+   - the index-only scan, which an MVCC entry serves today;
+   - INCLUDE columns, and a key cut at `max_keylen`;
+   - a unique index, whose key drops the row's key today.
+7. **A GUC for the frames of sm1's buffer pool** (`bufpool_t`,
+   `BUFFERPOOL.md`). Today nothing sets the count: sm1 gives
+   the pool a quarter of `block_cache_bytes`, in frames of
+   4 KB, at least 64 and at least 6 a session
+   (`sm1/src/env.cc`, `attach()`). digres sets
+   `block_cache_bytes` to `shared_buffers`
+   (`../dg/src/backend/utils/init/datadir.c`), so 128 MB gives
+   8,192 frames. To decide:
+   - whether the frames come out of `shared_buffers` or are
+     added to it, so the block cache's share is known;
+   - the floor: the GUC cannot go below the pins' floor;
+   - an option in `sm_options_t` that digres's GUC sets, as
+     `block_cache_bytes` is set now.
 
 Low priority:
 

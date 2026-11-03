@@ -166,6 +166,13 @@ struct sq_options_t {
     sq_backslash_quote_t backslash_quote = SQ_BACKSLASH_QUOTE_SAFE_ENCODING;
     bool                 escape_string_warning = true;
 
+    /*
+     * The access method of a CREATE INDEX, or of an EXCLUDE, that
+     * names none: PostgreSQL's DEFAULT_INDEX_TYPE. The parse copies
+     * it into the tree.
+     */
+    const char*          default_index_type = "btree";
+
     /* Called for each notice, or NULL to drop them. */
     sq_notice_fn         notice = nullptr;
     void*                notice_arg = nullptr;

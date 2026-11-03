@@ -16,15 +16,9 @@ connection w
 statement ok
 insert into g select i, (100000 + i)::text || repeat('g', 60) from generate_series(0, 399) i
 
-onlyif digres
 connection w
 statement ok
-create index g_k on g (k) with (tree = on)
-
-skipif digres
-connection w
-statement ok
-create index g_k on g (k)
+create index g_k on g using btree (k)
 
 connection r
 statement ok

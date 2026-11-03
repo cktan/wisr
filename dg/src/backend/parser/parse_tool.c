@@ -27,6 +27,7 @@
  */
 #include "postgres.h"
 
+#include "catalog/index.h"
 #include "lib/stringinfo.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
@@ -158,6 +159,12 @@ int parse_tool_main(int argc, char **argv) {
   /* The settings come first: a session's user is one. */
   InitializeGUCOptions();
 
+  /*
+   * An index that names no access method gets PostgreSQL's, btree, not
+   * sm's default kind, so the trees are PostgreSQL's (the head of this
+   * file).
+   */
+  raw_parser_index_type = DEFAULT_INDEX_TYPE;
   s.sql = read_stdin();
   s.out = stdout;
   run_session(&s);

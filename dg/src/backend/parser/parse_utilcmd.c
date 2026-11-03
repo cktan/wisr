@@ -26,6 +26,7 @@
 #include "access/htup_details.h"
 #include "access/relation.h"
 #include "access/reloptions.h"
+#include "access/smstore.h"
 #include "access/table.h"
 #include "access/toast_compression.h"
 #include "catalog/cat_builtin.h"
@@ -1653,7 +1654,10 @@ IndexStmt *generateClonedIndexStmt(RangeVar *heapRel, Relation source_idx,
   /* Begin building the IndexStmt */
   index = makeNode(IndexStmt);
   index->relation = heapRel;
-  index->accessMethod = pstrdup(NameStr(amrec->amname));
+  /* An index of sm's is pg_am's btree: its kind gives the name. */
+  index->accessMethod = (char *)smstore_index_am(indrelid, source_relid);
+  if (index->accessMethod == NULL)
+    index->accessMethod = pstrdup(NameStr(amrec->amname));
   if (OidIsValid(idxrelrec->reltablespace))
     index->tableSpace = get_tablespace_name(idxrelrec->reltablespace);
   else
@@ -2225,9 +2229,10 @@ static IndexStmt *transformIndexConstraint(Constraint *constraint,
     index->idxname = NULL; /* DefineIndex will choose name */
 
   index->relation = cxt->relation;
+  /* A constraint's index is sm's default kind (smstore.h). */
   index->accessMethod =
       (char *)(constraint->access_method ? constraint->access_method
-                                         : DEFAULT_INDEX_TYPE);
+                                         : SMSTORE_INDEX_LSM);
   index->options = constraint->options;
   index->tableSpace = constraint->indexspace;
   index->whereClause = constraint->where_clause;

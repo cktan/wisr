@@ -8186,7 +8186,11 @@ opt_unique:
 
 access_method_clause:
 			USING name								{ $$ = $2; }
-			| /*EMPTY*/								{ $$ = tree_strdup(DEFAULT_INDEX_TYPE); }
+			| /*EMPTY*/
+				{
+					/* The caller's default, PostgreSQL's unless it says. */
+					$$ = tree_strdup(scanner_extra(yyscanner)->options.default_index_type);
+				}
 		;
 
 index_params:	index_elem							{ $$ = list_make1($1); }

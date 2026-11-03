@@ -11039,3 +11039,44 @@ behind it (step 344). Design and cases: `../sm/sm1/GROUPSYNC.md`.
   one more (fails with a leader covering only its own record);
   `durability_sync = 0` makes no sync. Not caught: the leader not
   setting `failed`, which `finish_commit()` sets right after.
+
+## Step 375: an index's kind is its access method's name
+
+`CREATE INDEX ... USING btree` makes a tree (`../sm/BTREE.md`),
+and `USING lsm`, the default, makes the index sm had first,
+each entry a key of RocksDB's. `WITH (tree = on)` is gone
+(`../MAJORDECISION.md` D7, changed).
+
+- **Both names are `pg_am`'s `btree`**: the name chooses sm's
+  kind at CREATE INDEX (`smstore.c`, `tree_kind()`), and
+  nothing else sees it. The planner is unchanged: the same
+  operator families, order and costs for both kinds.
+- **The default comes from the parser**: sq has a new option,
+  `default_index_type`, PostgreSQL's `btree` unless the caller
+  says, so sq's corpus is unchanged. `raw_parser()` sets it to
+  `lsm`; `digres --parse` keeps `btree`, so sq's tests still
+  check that it builds PostgreSQL's trees.
+- **A constraint's index is lsm** (`transformIndexConstraint()`),
+  and `CREATE TABLE ... LIKE ... INCLUDING INDEXES` copies each
+  index's kind (`generateClonedIndexStmt()`, through
+  `smstore_index_am()`): before, the copy took `pg_am`'s name,
+  and would have made each index a tree, a primary key
+  refused.
+- **`pg_get_indexdef()` prints the kind**, `USING lsm` or
+  `USING btree`, and so does psql's `\d` of a table. `\d` of an
+  index prints `pg_am`'s `btree` for both.
+- **Every storage parameter is refused**, `tree` with them.
+- **A script written for PostgreSQL that says `USING btree`
+  makes a tree**: pgregress's `create_index` now builds its
+  explicit btrees as trees, and passes.
+- **Tests**: sq's `test_parse.cc` checks the option; slt's
+  `index_kind.test` checks each kind by `pg_get_indexdef()`,
+  a constraint's, a `LIKE` copy's, and the refusals; the
+  tree tests say `USING btree`, on both servers. With the
+  `LIKE` copy's kind left out, `index_kind.test` fails: the
+  copied primary key is refused as a tree. pgregress reads
+  `lsm` as PostgreSQL's `btree` where an index is printed
+  (`test/pgregress/README.md`); slt splits the five records
+  that print one by server.
+- **Not changed**: sq's corpus test fails on 29 scripts, on
+  `main` as here: the same 29.

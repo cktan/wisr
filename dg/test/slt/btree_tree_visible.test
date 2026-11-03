@@ -14,13 +14,8 @@ create table t (id int4 primary key, c2 int4, note text)
 statement ok
 insert into t select g, g % 30, 'n' || g from generate_series(1, 3000) g
 
-onlyif digres
 statement ok
-create index t_c2 on t (c2) with (tree = on)
-
-skipif digres
-statement ok
-create index t_c2 on t (c2)
+create index t_c2 on t using btree (c2)
 
 statement ok
 vacuum t

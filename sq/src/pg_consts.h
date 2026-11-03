@@ -41,9 +41,6 @@ inline constexpr char ATTRIBUTE_GENERATED_VIRTUAL = 'v';
 inline constexpr char AMTYPE_INDEX = 'i';
 inline constexpr char AMTYPE_TABLE = 't';
 
-/* catalog/index.h */
-inline constexpr char DEFAULT_INDEX_TYPE[] = "btree";
-
 /* catalog/pg_trigger.h */
 inline constexpr int TRIGGER_TYPE_BEFORE = 1 << 1;
 inline constexpr int TRIGGER_TYPE_INSERT = 1 << 2;

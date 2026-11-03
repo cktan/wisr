@@ -64,6 +64,8 @@ LOST = re.compile(r'server closed the connection unexpectedly|'
 # statement that meets one is taken out at once.
 # A plan node of a bitmap scan, which digres never plans.
 BITMAP = re.compile(r'\bBitmap (?:Heap|Index) Scan\b|\bBitmap(?:And|Or)\b')
+# Where pg_get_indexdef() and psql's \d print an index's kind.
+LSM = re.compile(r'(USING |, |" )lsm \(')
 INTRINSIC = re.compile(r'not supported|digres has no catalog tables|'
                        r'cannot be made: digres|unrecognized configuration '
                        r'parameter|^language "\?" does not exist')
@@ -391,6 +393,14 @@ def bitmap_plans(want, got):
     return '\n'.join(w), '\n'.join(g)
 
 
+def as_postgres(got):
+    """got, digres's output, with its default kind of index named as
+    PostgreSQL names its one index access method: an index made USING
+    lsm is pg_am's btree in digres, printed by the kind's name
+    (../../../sm/BTREE.md section 12)."""
+    return LSM.sub(r'\1btree (', got)
+
+
 def same(a, b):
     """Whether two units' outputs agree, a's PostgreSQL's: an unordered
     result's rows as a multiset (rowset.py), as a table with a primary
@@ -543,8 +553,9 @@ def expected(w, name):
 def test(w, name):
     """Run name on digres and compare its output with expected/name.out,
     blind to white space as pg_regress is, to the order of an unordered
-    result's rows, and to a plan where PostgreSQL's is a bitmap scan
-    (same()); whether they agree. The output
+    result's rows, to a plan where PostgreSQL's is a bitmap scan
+    (same()), and to an index's kind lsm (as_postgres()); whether they
+    agree. The output
     and a diff go in WORK/test."""
     with open(os.path.join(HERE, 'sql', name + '.sql'), encoding=ENC) as f:
         text = f.read()
@@ -556,10 +567,13 @@ def test(w, name):
     with open(os.path.join(dir, name + '.out'), 'w', encoding=ENC) as f:
         f.write(out)
 
+    # A rule's width follows the longest value, which as_postgres()
+    # may have changed: rules compare as one.
     def norm(t):
-        return [re.sub(r'\s+', '', line) for line in rowset(t).split('\n')]
+        return ['-' if RULE.match(line.strip()) else re.sub(r'\s+', '', line)
+                for line in rowset(t).split('\n')]
 
-    w, g = bitmap_plans(want, out)
+    w, g = bitmap_plans(want, as_postgres(out))
     ok = not timed_out and norm(g) == norm(w)
     diff = os.path.join(dir, name + '.diff')
     if ok:

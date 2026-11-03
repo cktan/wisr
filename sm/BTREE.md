@@ -3,7 +3,7 @@
 The design of record for a tree: why it exists, what it is on
 disk, in memory and under concurrency, and what is left. This is
 the tree as built on `wip-btree`, off by default and asked for by
-`CREATE INDEX ... WITH (tree = on)`: pages, cache, latches, the
+`CREATE INDEX ... USING btree`: pages, cache, latches, the
 tree, unique trees, `ON CONFLICT` arbiters, vacuum, and digres's
 access. `../MAJORDECISION.md` (D1 to D14) says why each choice
 was made; where one changed the first proposal, the text says so.
@@ -802,7 +802,7 @@ filter does not touch class `0x04`.
 ## 9. Where it sits
 
 ```
- digres   btree access method, WITH (tree = on)
+ digres   btree access method, USING btree (or lsm)
             |  scans rows through sm3's cursor (D8)
  sm3      index's kind, row check, unique check, DROP, vacuum
             |
@@ -941,8 +941,8 @@ on the machine above, which is still to be run both ways.
 3. Whether the row read of Q9's adjacent rows, by one cursor,
    comes first: without it the tree does not bring Q9 under
    1.5.
-4. How a statement asks for a tree (§12): `USING smtree`, or
-   `WITH (tree = on)`.
+4. Answered (D7): `CREATE INDEX ... USING btree` makes a tree,
+   and `USING lsm`, the default, makes today's kind (§12).
 
 **Not shown to run**: `tree_prune()`'s check of page 0's level
 has no test that reaches it.
@@ -980,9 +980,11 @@ index is of one kind, and keeps it for its life.
   the build, vacuum, DROP. A table's indexes are written in
   one call (`sm3/SM3_DESIGN.md` §3), whichever their kinds.
 - **digres has one index access method for both**; sm routes
-  by the kind. Today's kind is the default. A tree is asked
-  for when the index is made (§11, question 4); changing a
-  kind is DROP and CREATE.
+  by the kind. Today's kind, `USING lsm`, is the default. A
+  tree is asked for when the index is made, `USING btree`
+  (§11, question 4); changing a kind is DROP and CREATE.
+  `pg_get_indexdef()` prints the kind's name; psql's `\d`
+  shows `btree` for both, `pg_am`'s name.
 - **Where each is the better**, measured or estimated
   (instructions):
 

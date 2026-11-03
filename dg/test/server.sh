@@ -734,7 +734,7 @@ local_psql -c 'create table ix1(a int)' -c 'create index ix1_a on ix1(a)' \
   > /dev/null
 held_start idxreader
 held_send idxreader "select pg_get_indexdef('ix1_a'::regclass);"
-held_wait idxreader 'CREATE INDEX ix1_a ON public.ix1 USING btree (a)' ||
+held_wait idxreader 'CREATE INDEX ix1_a ON public.ix1 USING lsm (a)' ||
   fail "index definition read"
 held_start idxdropper
 held_send idxdropper "begin; drop index ix1_a; select 'dropped';"
@@ -1335,7 +1335,7 @@ grep -qx 'DETAIL:  Key ((id % 10::bigint))=([0-9]) is duplicated.' \
     "$work/expr_index.out" &&
   grep -qx 'ERROR:  could not create index "t3e_q": division by zero' \
     "$work/expr_index.out" &&
-  grep -qx 'CREATE UNIQUE INDEX t3e_e ON public.t3e USING btree (lower(e)) WHERE (d > 0)' \
+  grep -qx 'CREATE UNIQUE INDEX t3e_e ON public.t3e USING lsm (lower(e)) WHERE (d > 0)' \
     "$work/expr_index.out" &&
   grep -qx 'DETAIL:  Key (upper(k))=(A) already exists.' \
     "$work/expr_index.out" ||
@@ -2830,9 +2830,9 @@ di1|a_z|index|$me|a
 di1.a_pkey|1|1|t|1|0
 di1.a_yz|3|2|t|2 3 1|3 2
 di1.a_z|1|1|f|3|0
-CREATE UNIQUE INDEX a_pkey ON di1.a USING btree (x)
-CREATE UNIQUE INDEX a_yz ON di1.a USING btree (y DESC, "Z z" NULLS FIRST) INCLUDE (x)
-CREATE INDEX a_z ON di1.a USING btree ("Z z")
+CREATE UNIQUE INDEX a_pkey ON di1.a USING lsm (x)
+CREATE UNIQUE INDEX a_yz ON di1.a USING lsm (y DESC, "Z z" NULLS FIRST) INCLUDE (x)
+CREATE INDEX a_z ON di1.a USING lsm ("Z z")
 "Z z"
 OUT
 cmp -s "$work/di.out" "$work/di.expected" || fail "pg_index, pg_get_indexdef and \\di"
@@ -2869,8 +2869,8 @@ ALTER TABLE
  c      | numeric(10,2) |           |          |
  d      | integer       |           | not null | nextval('dd1.t_d_seq'::regclass)
 Indexes:
-    "t_pkey" PRIMARY KEY, btree (a)
-    "t_cb" UNIQUE, btree (c DESC) INCLUDE (b)
+    "t_pkey" PRIMARY KEY, lsm (a)
+    "t_cb" UNIQUE, lsm (c DESC) INCLUDE (b)
 
               Index "dd1.t_cb"
  Column |     Type      | Key? | Definition
@@ -2912,7 +2912,7 @@ Foreign-key constraints:
 --------+---------+-----------+----------+---------
  a      | integer |           | not null |
 Indexes:
-    "p_pkey" PRIMARY KEY, btree (a)
+    "p_pkey" PRIMARY KEY, lsm (a)
 Referenced by:
     TABLE "dd1.c" CONSTRAINT "c_x_fkey" FOREIGN KEY (x) REFERENCES dd1.p(a) ON DELETE CASCADE
 
@@ -3591,7 +3591,7 @@ CREATE SEQUENCE
  a      | integer |           | not null |           | plain    |             |              |
  b      | text    |           |          | 'x'::text | extended |             |              |
 Indexes:
-    "t_pkey" PRIMARY KEY, btree (a)
+    "t_pkey" PRIMARY KEY, lsm (a)
 Access method: heap
 
 dp1|t|table|$me|permanent|heap|0 bytes|
