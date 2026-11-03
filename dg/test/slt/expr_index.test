@@ -65,6 +65,7 @@ create index acct2_live on acct2 (id) where gone is null
 statement ok
 commit
 
+skipif digres
 query T rowsort
 select pg_get_indexdef(indexrelid) from pg_index where indrelid in ('acct'::regclass, 'acct2'::regclass) and not indisprimary
 ----
@@ -72,6 +73,15 @@ CREATE INDEX acct2_live ON public.acct2 USING btree (id) WHERE (gone IS NULL)
 CREATE INDEX acct_live ON public.acct USING btree (id) WHERE (gone IS NULL)
 CREATE UNIQUE INDEX acct2_email ON public.acct2 USING btree (upper(email))
 CREATE UNIQUE INDEX acct_email ON public.acct USING btree (lower(email))
+
+onlyif digres
+query T rowsort
+select pg_get_indexdef(indexrelid) from pg_index where indrelid in ('acct'::regclass, 'acct2'::regclass) and not indisprimary
+----
+CREATE INDEX acct2_live ON public.acct2 USING lsm (id) WHERE (gone IS NULL)
+CREATE INDEX acct_live ON public.acct USING lsm (id) WHERE (gone IS NULL)
+CREATE UNIQUE INDEX acct2_email ON public.acct2 USING lsm (upper(email))
+CREATE UNIQUE INDEX acct_email ON public.acct USING lsm (lower(email))
 
 query TTT rowsort
 select indexrelid::regclass::text, indexprs is not null, indpred is not null from pg_index where indrelid = 'acct'::regclass

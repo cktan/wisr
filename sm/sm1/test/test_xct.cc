@@ -1,7 +1,7 @@
 /*
  * test_xct.cc -- the commit sequencer, the active-transaction
- * table and commit cache, and the fail-stop state (SM1_DESIGN.md
- * §3.4, §4.3, §8.2).
+ * table and commit cache, and the abort on a failed commit record
+ * (SM1_DESIGN.md §3.4, §4.3, §8.2).
  */
 
 #include "doctest.h"
@@ -10,6 +10,9 @@
 #include "db.h"
 #include "session.h"
 #include "sm1.h"
+
+#include <signal.h>
+#include <string.h>
 
 #include <atomic>
 #include <chrono>
@@ -204,94 +207,64 @@ TEST_CASE("a stalled commit holds back every later commit's visibility") {
   sm1::closedb(c);
 }
 
-TEST_CASE("a commit waiting to be visible returns when an older one fails "
-          "stop") {
-  // Verify that a failed status write wakes the later commits
-  // waiting for theirs to be visible (COMMITVISIBLE.md).
-  // 1. Session A commits "a" and stalls after claiming its commit_ts.
-  // 2. Session B commits "b" meanwhile, and waits behind A.
-  // 3. A's status write fails: A's commit returns SM_ERR_IO, the
-  //    database fails stop, and B's commit returns, committed.
-  xct_fixture_t f;
-  sm1::session_t *a = f.first();
-  sm1::session_t *b = f.open();
-
-  std::promise<void> entered, release;
-  std::shared_future<void> released = release.get_future().share();
-  std::atomic<int> calls{0};
-  f.db()->test_before_commit = [&](uint64_t) {
-    if (calls++ == 0) {
-      entered.set_value();
-      released.wait();
-      return rocksdb::Status::IOError("injected");
-    }
-    return rocksdb::Status::OK();
-  };
-
-  int a_rc = 0;
-  std::thread ta([&] { a_rc = commit_one(a, f.store(), "a"); });
-  entered.get_future().wait();
-  std::future<int> b_rc = std::async(
-      std::launch::async, [&] { return commit_one(b, f.store(), "b"); });
-  // Time for B to reach its wait behind A.
-  std::this_thread::sleep_for(std::chrono::milliseconds(300));
-  CHECK(b_rc.wait_for(std::chrono::seconds(0)) != std::future_status::ready);
-
-  release.set_value();
-  ta.join();
-  CHECK(a_rc == -1);
-  REQUIRE(b_rc.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
-  CHECK(b_rc.get() == 0);
-  CHECK(f.db()->failed.load());
-  f.db()->test_before_commit = nullptr;
-  REQUIRE(sm1::closedb(b) == 0);
-}
-
-TEST_CASE("a failed status write fails the database stop") {
-  // Verify the §8.2 fail-stop state and recovery by reopening.
-  // 1. Session B begins and reads committed "old".
-  // 2. Session A inserts "x"; its status write fails, and
-  //    sm1::commit returns SM_ERR_IO.
-  // 3. B's existing snapshot still reads "old".
-  // 4. A new transaction can begin, read, and commit with no
-  //    writes, but insert and sm1::mkstore fail with SM_ERR_IO.
-  // 5. Close every session and reopen: "x" never committed,
-  //    and writes work again.
-  xct_fixture_t f;
-  sm1::session_t *a = f.first();
-  sm1::session_t *b = f.open();
-  REQUIRE(commit_one(a, f.store(), "old") == 0);
-  REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(get(b, f.store(), "old") == "v");
-
-  f.db()->test_before_commit = [](uint64_t) {
+/*
+ * The failed-commit child: commit "old" in a new store and write
+ * the storeid to stdout, then commit "x" with its status write
+ * failing, which aborts the process. Returns only on a setback.
+ */
+int commit_fail_child_main(const char *homedir) {
+  sm1::env_t *env = attach(homedir);
+  sm1::session_t *s = env ? opendb(env, "db") : nullptr;
+  uint64_t store = 0;
+  if (!s || sm1::begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||
+      sm1::mkstore(s, store) != 0 || sm1::insert(s, store, "old", "v") != 0 ||
+      sm1::commit(s) != 0) {
+    return 2;
+  }
+  if (write(1, &store, sizeof(store)) != (ssize_t)sizeof(store)) {
+    return 3;
+  }
+  if (sm1::begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||
+      sm1::insert(s, store, "x", "v") != 0) {
+    return 4;
+  }
+  s->db->test_before_commit = [](uint64_t) {
     return rocksdb::Status::IOError("injected");
   };
-  CHECK(commit_one(a, f.store(), "x") == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_IO);
-  f.db()->test_before_commit = nullptr;
+  sm1::commit(s);
+  return 5;
+}
 
-  CHECK(get(b, f.store(), "old") == "v");
-  REQUIRE(sm1::commit(b) == 0);
+TEST_CASE("a failed status write aborts the process") {
+  // Verify a commit whose record write fails ends the process, and
+  // the reopen decides it from the WAL (§8.2).
+  // 1. Make "db", and leave the home directory to a child.
+  // 2. The child commits "old", then fails the status write of
+  //    "x": it dies of SIGABRT, having said *** FATAL *** on
+  //    stderr.
+  // 3. Attach again: "old" is committed, "x" never was, and
+  //    writes work.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  home.detach();
+  std::string out, err;
+  int status = run_child("--commit-fail-child", home.path(), out, err);
+  CAPTURE(err);
+  REQUIRE(WIFSIGNALED(status));
+  CHECK(WTERMSIG(status) == SIGABRT);
+  CHECK(err.find("*** FATAL *** database db: commit record write failed") !=
+        std::string::npos);
+  uint64_t store = 0;
+  REQUIRE(out.size() == sizeof(store));
+  memcpy(&store, out.data(), sizeof(store));
 
-  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(get(a, f.store(), "old") == "v");
-  CHECK(get(a, f.store(), "x") == "<none>");
-  CHECK(sm1::insert(a, f.store(), "y", "v") == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_IO);
-  uint64_t newstore = 0;
-  CHECK(sm1::mkstore(a, newstore) == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_IO);
-  REQUIRE(sm1::commit(a) == 0); // read-only: nothing to publish
-
-  REQUIRE(sm1::closedb(a) == 0);
-  REQUIRE(sm1::closedb(b) == 0);
-  sm1::session_t *s = opendb(f.home().env(), "db", nullptr);
+  home.attach();
+  sm1::session_t *s = opendb(home.env(), "db");
   REQUIRE(s);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(get(s, f.store(), "old") == "v");
-  CHECK(get(s, f.store(), "x") == "<none>");
-  put(s, f.store(), "y", "v");
+  CHECK(get(s, store, "old") == "v");
+  CHECK(get(s, store, "x") == "<none>");
+  put(s, store, "y", "v");
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::closedb(s) == 0);
 }

@@ -496,10 +496,9 @@ int sm1::load_open(sm1::session_t *s, uint64_t storeid, sm1::loader_t *&out) {
   if (!st.cf) {
     return set_error(sm1::SM_ERR_NOTFOUND, "no such store: {}", storeid);
   }
-  // Refuse after fail-stop, or in a read-only transaction, which
-  // may still write a temporary store.
-  if (xct_check_writable(s->db) != 0 ||
-      (!st.owner && xct_check_readonly(s) != 0)) {
+  // Refuse in a read-only transaction, which may still write a
+  // temporary store.
+  if (!st.owner && xct_check_readonly(s) != 0) {
     return -1;
   }
   // It must hold nothing; the caller's lock keeps it so.

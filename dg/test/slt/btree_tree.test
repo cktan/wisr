@@ -1,6 +1,6 @@
-# Verify that an index made a tree, WITH (tree = on) (../sm/BTREE.md),
-# answers as any index does, on digres; PostgreSQL 18, which has no
-# such parameter, makes the same index plain and gives the answers.
+# Verify that an index made a tree, USING btree (../sm/BTREE.md),
+# answers as any index does, on digres; PostgreSQL 18 makes its own
+# B-tree and gives the same answers.
 # 1. Make a table of rows, and a tree on its column c2.
 # 2. Confirm a range, an equality and an IN list plan with the tree,
 #    and give the rows PostgreSQL gives.
@@ -17,13 +17,8 @@ create table t (id int4 primary key, c2 int4, note text)
 statement ok
 insert into t select g, g % 100, 'n' || g from generate_series(1, 2000) g
 
-onlyif digres
 statement ok
-create index t_c2 on t (c2) with (tree = on)
-
-skipif digres
-statement ok
-create index t_c2 on t (c2)
+create index t_c2 on t using btree (c2)
 
 statement ok
 set enable_seqscan = off
@@ -129,21 +124,11 @@ again
 statement ok
 insert into t values (2, 8, 'Ann'), (3, 9, 'ann'), (4, 9, 'pat'), (5, 9, 'pete')
 
-onlyif digres
 statement ok
-create index t_lower on t (lower(note)) with (tree = on)
+create index t_lower on t using btree (lower(note))
 
-skipif digres
 statement ok
-create index t_lower on t (lower(note))
-
-onlyif digres
-statement ok
-create index t_p on t (c2) with (tree = on) where note like 'p%'
-
-skipif digres
-statement ok
-create index t_p on t (c2) where note like 'p%'
+create index t_p on t using btree (c2) where note like 'p%'
 
 statement ok
 update t set note = 'Bob' where id = 2
@@ -174,13 +159,8 @@ select id from t where c2 = 9 and note like 'p%'
 #    parameter is refused.
 # 3. Dropping a tree leaves the table's other indexes answering.
 
-onlyif digres
 statement ok
-create unique index t_u on t (note) with (tree = on)
-
-skipif digres
-statement ok
-create unique index t_u on t (note)
+create unique index t_u on t using btree (note)
 
 statement error duplicate key value violates unique constraint "t_u"
 insert into t values (6, 1, 'pete')
@@ -225,13 +205,8 @@ select id from t where c2 = 9 and note like 'p%'
 statement ok
 create table lk (id int4 primary key, k text)
 
-onlyif digres
 statement ok
-create index lk_k on lk (k) with (tree = on)
-
-skipif digres
-statement ok
-create index lk_k on lk (k)
+create index lk_k on lk using btree (k)
 
 statement ok
 insert into lk select g, repeat(md5(g::text), 30) from generate_series(1, 1000) g

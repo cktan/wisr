@@ -12,6 +12,7 @@ error codes, besides the C++ standard library and POSIX.
 | the process-wide log hook: `loglevel_t`, `log_fn`, `set_log` | `include/sm0.h` | `src/log.cc` |
 | setting an error with a formatted message, from an errno, or for a bad name | `include/sm0_error.h` | `src/error.cc` |
 | reporting through the log hook: `log_msg` | `include/sm0_log.h` | `src/log.cc` |
+| a fatal error, reported on stderr and through the log hook before the process aborts: `fatal` | `include/sm0_log.h` | `src/log.cc` |
 | `std::format` into a fixed buffer, allocating nothing | `include/sm0_format.h` | `src/format.cc` |
 | defer blocks and scope guards | `include/sm0_defer.h` | — |
 | fixed-width big-endian integers | `include/sm0_codec.h` | — |

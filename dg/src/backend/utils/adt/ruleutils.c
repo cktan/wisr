@@ -1209,8 +1209,9 @@ static char *column_name(Oid relid, AttrNumber attnum) {
 /*
  * pg_get_indexdef_worker() for an index of sm's, from its descriptor: there
  * is no pg_index row.  It is a btree on columns, each with its type's
- * default operator class and collation, so only its uniqueness, its
- * columns' order and nulls, and its INCLUDE columns are printed.
+ * default operator class and collation, so only its kind (USING lsm or
+ * btree, smstore.h), its uniqueness, its columns' order and nulls, and
+ * its INCLUDE columns are printed.
  */
 /*
  * An index's key expr as pg_get_indexdef() writes it, in context, the
@@ -1273,12 +1274,13 @@ static char *sm_indexdef(Oid indexrelid, int colno, bool attrsOnly,
   context = deparse_context_for(RelationGetRelationName(table), idx->indrelid);
   initStringInfo(&buf);
   if (!attrsOnly)
-    appendStringInfo(&buf, "CREATE %sINDEX %s ON %s USING btree (",
+    appendStringInfo(&buf, "CREATE %sINDEX %s ON %s USING %s (",
                      idx->indisunique ? "UNIQUE " : "",
                      quote_identifier(RelationGetRelationName(index)),
                      quote_qualified_identifier(
                          get_namespace_name(RelationGetNamespace(table)),
-                         RelationGetRelationName(table)));
+                         RelationGetRelationName(table)),
+                     smstore_index_am(idx->indrelid, indexrelid));
   for (int keyno = 0; keyno < idx->indnatts; keyno++) {
     AttrNumber attnum = idx->indkey.values[keyno];
     int16 opt;

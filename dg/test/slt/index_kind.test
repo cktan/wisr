@@ -1,0 +1,104 @@
+# Verify that CREATE INDEX's access method chooses the kind of an index
+# in sm (../../sm/BTREE.md section 12, ../../MAJORDECISION.md D7): lsm,
+# each entry a key of RocksDB's, is the default; btree is a tree.
+# PostgreSQL 18 makes a B-tree of each, and gives the same answers.
+# 1. Make a table with a primary key and a unique constraint, and an
+#    index on it with no USING, one USING lsm and one USING btree.
+# 2. Confirm pg_get_indexdef() names each one's kind: the constraints
+#    and the index with no USING are lsm, the last a tree.
+# 3. Confirm a query by each index gives PostgreSQL's rows.
+# 4. Make a table LIKE it INCLUDING INDEXES: each index keeps its kind.
+# 5. Confirm WITH (tree = on) and USING hash are refused.
+
+statement ok
+create table t (id int4 primary key, a int4, b int4, c int4, d int4 unique)
+
+statement ok
+insert into t select g, g % 10, g % 20, g % 30, g from generate_series(1, 300) g
+
+statement ok
+create index t_a on t (a)
+
+onlyif digres
+statement ok
+create index t_b on t using lsm (b)
+
+skipif digres
+statement ok
+create index t_b on t (b)
+
+statement ok
+create index t_c on t using btree (c)
+
+onlyif digres
+query TT rowsort
+select c.relname, pg_get_indexdef(c.oid)
+from pg_index i join pg_class c on c.oid = i.indexrelid
+where i.indrelid = 't'::regclass
+----
+t_a
+CREATE INDEX t_a ON public.t USING lsm (a)
+t_b
+CREATE INDEX t_b ON public.t USING lsm (b)
+t_c
+CREATE INDEX t_c ON public.t USING btree (c)
+t_d_key
+CREATE UNIQUE INDEX t_d_key ON public.t USING lsm (d)
+t_pkey
+CREATE UNIQUE INDEX t_pkey ON public.t USING lsm (id)
+
+statement ok
+set enable_seqscan = off
+
+statement ok
+set enable_bitmapscan = off
+
+query I rowsort
+select id from t where a = 3 and id < 40
+----
+13
+23
+3
+33
+
+query I rowsort
+select id from t where b = 7 and id < 60
+----
+27
+47
+7
+
+query I rowsort
+select id from t where c = 11 and id < 100
+----
+11
+41
+71
+
+query I
+select id from t where d = 250
+----
+250
+
+statement ok
+create table t2 (like t including indexes)
+
+onlyif digres
+query T rowsort
+select substring(pg_get_indexdef(c.oid) from 'USING .*')
+from pg_index i join pg_class c on c.oid = i.indexrelid
+where i.indrelid = 't2'::regclass
+----
+USING btree (c)
+USING lsm (a)
+USING lsm (b)
+USING lsm (d)
+USING lsm (id)
+
+onlyif digres
+statement error storage parameter "tree" is not supported
+create index t_e on t (a) with (tree = on)
+
+onlyif digres
+statement error access method "hash" is not supported
+create index t_f on t using hash (a)

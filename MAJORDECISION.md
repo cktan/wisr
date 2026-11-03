@@ -150,11 +150,19 @@ What follows is the first decision.
   list sm3 keeps, or give sm1 a page drop that needs no
   transaction.
 
-## D7. A tree is asked for by `WITH (tree = on)`
+## D7. A tree is asked for by `USING btree` (changed: was `WITH (tree = on)`)
 
-- **Decided:** `CREATE INDEX ... WITH (tree = on)` makes a
-  tree; any other option is still refused, and `USING btree`,
-  the default, stays the one access method. (`BTREE.md` §11,
+- **Changed (2026-11-03):** `CREATE INDEX ... USING btree`
+  makes a tree, and `USING lsm` makes today's index, whose
+  entries are each a key of RocksDB's. `lsm` is the default.
+  Both names are `pg_am`'s one `btree`: the name chooses the
+  kind at `CREATE INDEX`, and the planner sees no difference,
+  as below. `WITH (tree = on)` is gone, and every storage
+  parameter is refused. A script written for PostgreSQL that
+  says `USING btree` now makes a tree.
+- **Decided first:** `CREATE INDEX ... WITH (tree = on)` made a
+  tree; any other option was refused, and `USING btree`,
+  the default, stayed the one access method. (`BTREE.md` §11,
   question 4.)
 - **Why:** a tree is the same B-tree to the planner: the same
   operator classes, order and costs. `USING smtree` would need

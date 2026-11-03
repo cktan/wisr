@@ -54,11 +54,10 @@ int mkstore(sm1::session_t *s, uint64_t *out, bool temporary, bool chained) {
     return -1;
   }
   uint64_t storeid;
-  // Refuse writes after fail-stop or in a read-only transaction,
-  // which may still make a temporary store, then allocate the
-  // storeid: before the CF is created.
-  if (xct_check_writable(s->db) != 0 ||
-      (!temporary && xct_check_readonly(s) != 0) ||
+  // Refuse writes in a read-only transaction, which may still
+  // make a temporary store, then allocate the storeid: before the
+  // CF is created.
+  if ((!temporary && xct_check_readonly(s) != 0) ||
       db_alloc_objid(s->db, &storeid) != 0) {
     return -1;
   }

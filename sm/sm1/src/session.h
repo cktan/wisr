@@ -278,7 +278,6 @@ struct sm1::session_t {
   bool prepared = false;     /* this object is a prepared transaction */
   long long prepared_at = 0; /* wall-clock seconds of sm1::prepare */
   bool restored = false;     /* rebuilt from its record at open (§9.1) */
-  bool limbo = false;        /* its prepare write failed (§8.4) */
 
   /*
    * The session's store cache (§11): whether each storeid it
@@ -677,9 +676,6 @@ bool xct_decode_prepared(wisr::db_t *db, uint64_t xid, rocksdb::Slice val,
  * store CFs nothing needs (§9.1 steps 4-6). Returns 0 or -1.
  */
 int recover(wisr::db_t *db);
-
-/* Fail with SM_ERR_IO if db has failed stop (§8.2). */
-int xct_check_writable(wisr::db_t *db);
 
 /*
  * Give the session's transaction its xid (§4.1) and enter it

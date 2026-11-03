@@ -725,8 +725,8 @@ int commit(sm1::session_t *s) {
   }
 
   uint64_t commit_ts;
-  // Refuse after fail-stop, else claim commit_ts from the sequencer.
-  if (xct_check_writable(db) != 0 || db_claim_commit_ts(db, &commit_ts) != 0) {
+  // Claim commit_ts from the sequencer.
+  if (db_claim_commit_ts(db, &commit_ts) != 0) {
     // No record was written, so the transaction is dead.
     discard(s);
     return -1;
@@ -782,37 +782,21 @@ int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
                       rocksdb::Slice(key, sizeof(key)),
                       rocksdb::Slice(val, sizeof(val)));
   }
+  // The record's fate is unknown: it may have reached the WAL.
+  // Abort, and let WAL replay decide (§8.2).
+  if (!st.ok()) {
+    fatal("database {}: commit record write failed, so the outcome of "
+          "the commit is unknown: {}. The process is aborting; reopen "
+          "the database: WAL replay recovers every committed "
+          "transaction.",
+          db->name.c_str(), st.ToString().c_str());
+  }
   // Sync the WAL past it, unless durability was traded away: the
   // commit point (§8.2). Until then the xid is in the active
-  // table, so no reader takes the record for a commit.
-  if (st.ok() && db->durability_sync) {
-    st = db_sync_wal(db);
-  }
-  // The record's fate is unknown.
-  if (!st.ok()) {
-    // Fail stop: the record may have reached the WAL, so the
-    // transaction stays in flight -- in the active table,
-    // its commit_ts holding back visible_ts -- until a
-    // reopen resolves it from the log (§8.2). Its locks go:
-    // the database refuses writes from now on anyway.
-    db->failed = true;
-    {
-      // Wake the newer commits waiting behind this one, which
-      // now never becomes visible (db_commit_wait()).
-      std::lock_guard<std::mutex> guard(db->alloc_mu);
-      db->visible_cv.notify_all();
-    }
-    log_msg(sm1::loglevel_t::error,
-            "database {}: commit record write or sync failed, database "
-            "stopped until reopened: {}",
-            db->name.c_str(), st.ToString().c_str());
-    // Release the locks: writes are refused from now on.
-    lock_release_all(s);
-    // Forget the transaction.
-    reset(s);
-    return set_error(sm1::SM_ERR_IO,
-                     "write commit record (outcome unknown): {}",
-                     st.ToString().c_str());
+  // table, so no reader takes the record for a commit. A failed
+  // sync aborts the process.
+  if (db->durability_sync) {
+    db_sync_wal(db);
   }
   // Keep its on_commit functions for the entry point to run.
   committed_fns.swap(s->on_commit);
@@ -1010,10 +994,6 @@ int prepare(sm1::session_t *s, const char *gid) {
     return -1;
   }
   db_t *db = s->db;
-  // Refuse after fail-stop.
-  if (xct_check_writable(db) != 0) {
-    return -1;
-  }
   // A prepared transaction outlives the session; its temporary
   // stores would not (TEMPTABLE.md §3.5).
   if (s->temp_touched) {
@@ -1070,8 +1050,7 @@ int prepare(sm1::session_t *s, const char *gid) {
   std::string txnkey = txn_key(s->xid);
   // Move the transaction out of the session, all or nothing.
   sm1::session_t *g = detach_prepared(s, key, prepared_at);
-  // From here the entry is replaced, whether the write succeeds or
-  // fails stop: keep the reservation.
+  // From here the entry is replaced: keep the reservation.
   unreserve.dismiss();
   // No error unless the hook or the write says so.
   rocksdb::Status st;
@@ -1086,27 +1065,17 @@ int prepare(sm1::session_t *s, const char *gid) {
     // Write the PREPARED record: the vote of yes.
     st = db->rdb->Put(wo, db->cf_txn, txnkey, val);
   }
-  // The record's fate is unknown: mark it before registering, so
-  // no resolver ever sees it resolvable.
+  // The record's fate is unknown: it may have reached the WAL.
+  // Abort, and let WAL replay decide (§8.4).
   if (!st.ok()) {
-    db->failed = true;
-    g->limbo = true;
+    fatal("database {}: prepare record write for {} failed, so the "
+          "outcome of the prepare is unknown: {}. The process is "
+          "aborting; reopen the database: WAL replay recovers every "
+          "prepared transaction.",
+          db->name.c_str(), gid, st.ToString().c_str());
   }
   // Register the transaction under its gid.
   register_prepared(db, g, key);
-  // The record's fate is unknown.
-  if (!st.ok()) {
-    // Fail stop: the record may be in the WAL, so the
-    // transaction stays in flight, unlisted and unresolvable,
-    // until a reopen decides (§8.4).
-    log_msg(sm1::loglevel_t::error,
-            "database {}: prepare record write for {} failed, database "
-            "stopped until reopened: {}",
-            db->name.c_str(), gid, st.ToString().c_str());
-    return set_error(sm1::SM_ERR_IO,
-                     "write prepare record (outcome unknown): {}",
-                     st.ToString().c_str());
-  }
   // The session remembers only the gid; a move cannot allocate.
   s->prepared_gid = std::move(key);
   return 0;
@@ -1115,9 +1084,8 @@ int prepare(sm1::session_t *s, const char *gid) {
 /* Commit a prepared transaction g (§8.4: §8.2 from step 2). */
 int commit_prepared_txn(sm1::session_t *g) {
   uint64_t commit_ts;
-  // Refuse after fail-stop, else claim commit_ts.
-  if (xct_check_writable(g->db) != 0 ||
-      db_claim_commit_ts(g->db, &commit_ts) != 0) {
+  // Claim commit_ts.
+  if (db_claim_commit_ts(g->db, &commit_ts) != 0) {
     return -1;
   }
   // Validated at prepare: the node only learns its end.
@@ -1134,29 +1102,33 @@ int commit_prepared_txn(sm1::session_t *g) {
  */
 int abort_prepared_txn(sm1::session_t *g) {
   db_t *db = g->db;
-  // Refuse after fail-stop.
-  if (xct_check_writable(db) != 0) {
-    return -1;
-  }
   // Build the ABORTED record.
   std::string val;
   val.push_back(static_cast<char>(txn_aborted));
   sm0::put_be64(val, g->snapshot_ts);
   sm0::put_be64(val, 0);
-  // Sync it, so the PREPARED record cannot come back.
-  rocksdb::WriteOptions wo;
-  wo.sync = true;
-  // Write the ABORTED record: the coordinator's decision.
-  rocksdb::Status st = db->rdb->Put(wo, db->cf_txn, txn_key(g->xid), val);
-  // The record's fate is unknown: fail stop.
+  // No error unless the hook or the write says so.
+  rocksdb::Status st;
+  // Let a test fail the abort write.
+  if (db->test_before_abort_prepared) {
+    st = db->test_before_abort_prepared();
+  }
+  // Write the record unless the hook failed it.
+  if (st.ok()) {
+    // Sync it, so the PREPARED record cannot come back.
+    rocksdb::WriteOptions wo;
+    wo.sync = true;
+    // Write the ABORTED record: the coordinator's decision.
+    st = db->rdb->Put(wo, db->cf_txn, txn_key(g->xid), val);
+  }
+  // The record's fate is unknown: it may have reached the WAL.
+  // Abort, and let WAL replay decide (§8.4).
   if (!st.ok()) {
-    db->failed = true;
-    log_msg(sm1::loglevel_t::error,
-            "database {}: abort record write for {} failed, database "
-            "stopped until reopened: {}",
-            db->name.c_str(), g->prepared_gid.c_str(), st.ToString().c_str());
-    return set_error(sm1::SM_ERR_IO, "write abort record: {}",
-                     st.ToString().c_str());
+    fatal("database {}: abort record write for {} failed, so the "
+          "outcome of the abort is unknown: {}. The process is "
+          "aborting; reopen the database: WAL replay recovers the "
+          "prepared transaction or its abort.",
+          db->name.c_str(), g->prepared_gid.c_str(), st.ToString().c_str());
   }
   // Free its SSI node and restored entry.
   ssi_prepared_aborted(g);
@@ -1209,9 +1181,8 @@ int resolve(db_t *db, const std::string &gid, bool commit_it) {
     std::lock_guard<std::mutex> guard(db->prepared_mu);
     // Find the gid.
     auto it = db->prepared.find(gid);
-    // Unknown, still being prepared or resolved, or in limbo:
-    // nothing to do.
-    if (it == db->prepared.end() || !it->second || it->second->limbo) {
+    // Unknown, or still being prepared or resolved: nothing to do.
+    if (it == db->prepared.end() || !it->second) {
       return set_error(sm1::SM_ERR_NOTFOUND,
                        "no unresolved prepared transaction {}", gid.c_str());
     }
@@ -1238,8 +1209,8 @@ int list_prepared(sm1::session_t *s, std::vector<sm1::prepared_t> &out) {
     // Hold prepared_mu while reading the registry.
     std::lock_guard<std::mutex> guard(s->db->prepared_mu);
     for (auto &kv : s->db->prepared) {
-      // Skip reservations and transactions in limbo.
-      if (kv.second && !kv.second->limbo) {
+      // Skip reservations.
+      if (kv.second) {
         rows.push_back({kv.first, kv.second->prepared_at});
       }
     }
@@ -1334,17 +1305,6 @@ view_t xct_read_view(sm1::session_t *s) {
     s->stmt_taken = true;
   }
   return xct_view(s);
-}
-
-/* Fail with SM_ERR_IO once the database has failed stop. */
-int xct_check_writable(db_t *db) {
-  // Refuse writes once a status write has failed.
-  if (db->failed) {
-    return set_error(sm1::SM_ERR_IO,
-                     "database {} failed a status write; reopen it",
-                     db->name.c_str());
-  }
-  return 0;
 }
 
 /* Allocate the xid and enter the active table, before any version. */

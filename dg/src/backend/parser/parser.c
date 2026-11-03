@@ -31,6 +31,7 @@
 
 #include "postgres.h"
 
+#include "access/smstore.h"
 #include "nodes/makefuncs.h"
 #include "parser/parser.h"
 #include "parser/sq_nodes.h"
@@ -126,6 +127,9 @@ static void report_error(void) {
            sq_errpos() > 0 ? errposition(sq_errpos()) : 0));
 }
 
+/* An index that names no access method: see parser.h. */
+thread_local /*LOCAL*/ const char *raw_parser_index_type = SMSTORE_INDEX_LSM;
+
 /*
  * raw_parser
  *		Given a query in string form, do lexical and grammatical
@@ -151,6 +155,8 @@ List *raw_parser(const char *str, RawParseMode mode) {
   options.standard_conforming_strings = standard_conforming_strings;
   options.backslash_quote = (sq_backslash_quote_t)backslash_quote;
   options.escape_string_warning = escape_string_warning;
+  /* An index names no access method: sm's default kind, lsm, as a rule. */
+  options.default_index_type = raw_parser_index_type;
   options.notice = keep_notice;
   options.notice_arg = &job;
   options.allocator = &sq_allocator;

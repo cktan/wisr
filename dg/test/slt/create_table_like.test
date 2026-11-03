@@ -29,10 +29,17 @@ select indexrelid::regclass::text, indisprimary::int, indisunique::int from pg_i
 lk_i_c2_idx	0	0
 lk_i_pkey	1	1
 
+skipif digres
 query T
 select pg_get_indexdef('lk_i_c2_idx'::regclass)
 ----
 CREATE INDEX lk_i_c2_idx ON public.lk_i USING btree (c2)
+
+onlyif digres
+query T
+select pg_get_indexdef('lk_i_c2_idx'::regclass)
+----
+CREATE INDEX lk_i_c2_idx ON public.lk_i USING lsm (c2)
 
 statement ok
 insert into lk_i select g, 100 - g, 'r' || g from generate_series(1, 50) g
@@ -106,11 +113,19 @@ create index lp_b on lp (b) where b > 1 and b < 9
 statement ok
 create table lp_i (like lp including indexes)
 
+skipif digres
 query T
 select pg_get_indexdef(indexrelid) from pg_index where indrelid = 'lp_i'::regclass order by 1
 ----
 CREATE INDEX lp_i_b_idx ON public.lp_i USING btree (b) WHERE ((b > 1) AND (b < 9))
 CREATE UNIQUE INDEX lp_i_a_idx ON public.lp_i USING btree (a) WHERE (a <> 'test'::text)
+
+onlyif digres
+query T
+select pg_get_indexdef(indexrelid) from pg_index where indrelid = 'lp_i'::regclass order by 1
+----
+CREATE INDEX lp_i_b_idx ON public.lp_i USING lsm (b) WHERE ((b > 1) AND (b < 9))
+CREATE UNIQUE INDEX lp_i_a_idx ON public.lp_i USING lsm (a) WHERE (a <> 'test'::text)
 
 statement ok
 insert into lp_i values ('test', 1), ('test', 2), ('x', 3)

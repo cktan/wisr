@@ -429,7 +429,8 @@ design:
   `PREPARED` record is written, an abort would kill in memory
   versions the WAL says are committed. Nothing does: that tail
   is `noexcept`, running out of memory in it aborts the process
-  as anywhere, and a failed write goes fail-stop.
+  as anywhere, and a failed status record write or sync
+  aborts the process.
   sm2 and sm3 must stay consistent when unwound mid-call, so
   the abort undoes what a
   half-done call changed — above all in sm3's in-memory catalog.

@@ -319,10 +319,10 @@ status record, and absence of a record *is* the abort. It holds
 at runtime too — a transaction whose `ABORTED` hint was never
 written leaves the same trace. A transaction whose *commit*
 status write failed does not: that record may still be durable,
-so the engine stops instead of judging it (§8.2). The process is
-the only one with the database open, so the active transaction
-table is exhaustive; two orderings keep a live transaction from
-being misjudged:
+so the process aborts and WAL replay judges it (§8.2). The
+process is the only one with the database open, so the active
+transaction table is exhaustive; two orderings keep a live
+transaction from being misjudged:
 
 - A transaction enters the active table no later than its xid
   allocation, before its first version reaches RocksDB.
@@ -545,9 +545,8 @@ commit sequencer (ordered set of commit_ts in progress)
   above what the advancer saw.
 - A committing transaction claims `commit_ts`, writes its status
   record (WAL-synced), then marks it done, removing it from the
-  set. If the write fails, it is *not* marked done: the database
-  fails stop (§8.2), and `visible_ts` stays below that
-  `commit_ts` until restart.
+  set. If the write or its sync fails, the process aborts
+  (§8.2), so no `commit_ts` stays in the set unmarked.
 - `global_ts` is an atomic. An xid or a write timestamp (`wts`)
   is a bare `fetch_add` with no mutex; only a lease renewal
   takes `alloc_mu`. Those values never enter the set, so only
@@ -852,6 +851,9 @@ as after `SM_ERR_BLOCKED`. A session waits in one place only, on
 a condition of the lock manager's, its lock's partition's
 `lock_cv` for a lock and `xact_cv` for an uncommitted writer, and
 that wait is a `sm_wait()`, so every wait there is can be ended.
+Two waits of a commit past its record are the exceptions: the
+wait for older commits' visibility (`COMMITVISIBLE.md`) and the
+wait for the WAL sync (`GROUPSYNC.md` §3).
 The interrupt goes to a thread, not a session: it is the thread
 that blocks. sm1 takes no bit: **the bit stays pending until the
 host takes it**, so every later wait fails at once too. An
@@ -1728,25 +1730,33 @@ its `commit_ts`, so the rules of §7.3 judge it at the time it
 commits; a read-only transaction takes none, and counts as
 ending just after the current `visible_ts`.
 
-**A failed status write is fail-stop.** If step 4 returns an
-error, the record may or may not have reached the WAL — a sync
-can fail after the bytes are written — so the transaction's
-outcome is unknown until WAL replay decides it. The engine
-therefore does not resolve it as dead:
+**A failed status write is fatal.** If step 4's write or its
+sync returns an error, the record may or may not have reached
+the WAL — a sync can fail after the bytes are written — so the
+transaction's outcome is unknown until WAL replay decides it.
+A second sync proves nothing: after a failed fsync, Linux may
+drop the dirty pages and clear the error, as PostgreSQL found
+in 2018. The engine therefore aborts the process
+(`sm0::fatal()`, `../CODE.md` §5):
 
-- the transaction stays in the active table and its
-  `commit_ts` stays in the sequencer set, so its versions
-  remain in-flight to readers and to the compaction filter, and
-  no snapshot can include its `commit_ts`;
-- the database enters a failed state: further writes, commits,
-  prepares, and GC sweeps fail with `SM_ERR_IO`, while reads on
-  existing snapshots continue;
-- `sm1::commit` returns `SM_ERR_IO`, meaning *outcome unknown*.
-  After the database is reopened, §3.4 resolves the transaction
-  from whatever the WAL holds.
+- no commit that the failed write or sync was to cover
+  returns, so none is acknowledged;
+- the next attach's WAL replay (§3.4) decides each transaction
+  from what the WAL holds. A record that reached the OS
+  survives the abort, and is committed.
 
-This matches RocksDB, which itself stops accepting writes after
-a WAL write or sync error.
+A write that RocksDB refuses before it reaches the WAL aborts
+the process too. RocksDB refuses writes after a background
+error, such as a full disk in a flush. The returned status
+does not tell this refusal from a failure after the write, so
+the engine treats both as unknown. PostgreSQL does the same: a
+failed WAL write is a PANIC, a full disk included. While the
+disk stays full, each restart aborts again at its first
+commit.
+
+A failed `PREPARED` or `ABORTED` record write is fatal too
+(§8.4): every status record's failure aborts the process, so
+the engine has no failed state to keep.
 
 A read-only transaction (`T.xid == 0`) has no versions to
 publish and gets no status record (§3.2); it validates, releases,
@@ -2099,26 +2109,24 @@ versions sit in store CFs, its status record says `PREPARED`,
 and readers treat it as in-flight (invisible). It holds its row
 locks, and it pins `gc_watermark` at its `snapshot_ts`.
 
-**A failed prepare write is fail-stop**, for the reason §8.2
-gives for a failed commit write: if step 3 returns an error, the
+**A failed prepare write is fatal**, for the reason §8.2 gives
+for a failed commit write: if step 3 returns an error, the
 `PREPARED` record may still have reached the WAL, and §9.1 would
-then restore the transaction in doubt. The engine therefore does
-not treat it as aborted:
-
-- it stays in the active table with its locks and SSI state, so
-  its versions remain in-flight to readers and to the compaction
-  filter, and the column families in `T.created` are kept;
-- the database enters §8.2's failed state, so nothing can
-  resolve the transaction before the database is reopened;
-- `sm1::prepare` returns `SM_ERR_IO`, meaning *outcome unknown*,
-  and the transaction is no longer active on its session.
+then restore the transaction in doubt. The engine therefore
+aborts the process (`sm0::fatal()`), and `sm1::prepare` does not
+return.
 
 After reopen, WAL replay decides: either the record survived and
 the transaction is restored in doubt, listed by
 `sm1::list_prepared` under its `gid`, or it has no record and is
-dead (§3.4). A coordinator that got `SM_ERR_IO` checks the list
-and resolves by `gid`. It never received a "yes" vote, so abort
-is always a correct decision.
+dead (§3.4). A coordinator that lost its participant checks the
+list and resolves by `gid`. It never received a "yes" vote, so
+abort is always a correct decision.
+
+**A failed `ABORTED` record write is fatal** too: the record
+may have reached the WAL, so after reopen the transaction is
+either aborted or still listed in doubt, and the coordinator
+aborts it again.
 
 The coordinator later calls commit or abort. Commit is §8.2 starting
 at step 2, overwriting the record (dropping the now-unneeded write
@@ -3245,11 +3253,10 @@ bullets below cover the rest of the engine.
   after its delete survive the purge (§8.3).
   Stall one commit's WAL sync under concurrent load and
   assert allocation continues and `visible_ts` catches up (§4.3).
-- **Status resolution.** Fail a commit's status write and assert
-  the database fails stop: `sm1::commit` returns `SM_ERR_IO`, the
-  versions stay in-flight and are not compacted away, and after
-  reopen the transaction is committed or dead according to the
-  WAL (§8.2). Fail a prepare's record write and assert
+- **Status resolution.** Fail a commit's status write, or its
+  sync, and assert the process aborts, and after reopen the
+  transaction is committed or dead according to the WAL
+  (§8.2). Fail a prepare's record write and assert
   `sm1::prepare` returns `SM_ERR_IO`, the versions stay
   in-flight, and after reopen the transaction is either listed by
   `sm1::list_prepared` or dead, according to the WAL (§8.4).

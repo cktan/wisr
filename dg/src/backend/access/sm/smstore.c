@@ -2245,6 +2245,7 @@ smstore_table_t *smstore_table_desc(Oid oid) {
     ix->name = pstrdup(x.name.c_str());
     ix->unique = x.unique;
     ix->primary = x.primary;
+    ix->tree = x.tree;
     ix->usable = sm_tbl_index_usable(tbl, x.oid);
     ix->nkeys = (int)x.key_attnums.size();
     ix->ncolumns = ix->nkeys + (int)x.include_attnums.size();
@@ -2335,6 +2336,19 @@ Oid smstore_index_table(Oid indexoid) {
   entry =
       (index_table_t *)hash_search(index_tables, &indexoid, HASH_FIND, NULL);
   return entry != NULL ? entry->table : InvalidOid;
+}
+
+/*
+ * The name CREATE INDEX ... USING gives the kind of the index indexoid of
+ * the table table, or NULL if the table has no such index.
+ */
+const char *smstore_index_am(Oid table, Oid indexoid) {
+  smstore_table_t *desc = smstore_table_desc(table);
+
+  for (int i = 0; desc != NULL && i < desc->nindexes; i++)
+    if (desc->indexes[i].oid == indexoid)
+      return desc->indexes[i].tree ? SMSTORE_INDEX_TREE : SMSTORE_INDEX_LSM;
+  return NULL;
 }
 
 /*
@@ -6425,23 +6439,13 @@ int smstore_set_index_evaluator(sm_env_t *env) {
 }
 
 /*
- * Whether a CREATE INDEX asks for a tree, WITH (tree = on): a B+tree of
- * the index's own pages (../sm/BTREE.md).  Any other storage parameter is
- * refused.
+ * Whether a CREATE INDEX asks for a tree, USING btree: a B+tree of the
+ * index's own pages (../sm/BTREE.md).  USING lsm, the default, asks for
+ * entries that are each a key of RocksDB's.
  */
-static bool tree_option(const IndexStmt *stmt) {
-  ListCell *l;
-  bool tree = false;
+static bool tree_kind(const IndexStmt *stmt) {
+  bool tree = strcmp(stmt->accessMethod, SMSTORE_INDEX_TREE) == 0;
 
-  foreach (l, stmt->options) {
-    DefElem *opt = lfirst_node(DefElem, l);
-
-    if (strcmp(opt->defname, "tree") != 0 || opt->defnamespace != NULL)
-      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      errmsg("storage parameter \"%s\" is not supported",
-                             opt->defname)));
-    tree = defGetBoolean(opt);
-  }
   if (tree && stmt->primary)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("a primary key is not a tree")));
@@ -6452,10 +6456,16 @@ static bool tree_option(const IndexStmt *stmt) {
 static void check_create_index(const IndexStmt *stmt) {
   ListCell *l;
 
-  if (strcmp(stmt->accessMethod, DEFAULT_INDEX_TYPE) != 0)
+  if (strcmp(stmt->accessMethod, SMSTORE_INDEX_LSM) != 0 &&
+      strcmp(stmt->accessMethod, SMSTORE_INDEX_TREE) != 0)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("access method \"%s\" is not supported",
                            stmt->accessMethod)));
+  if (stmt->options != NIL)
+    ereport(ERROR,
+            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+             errmsg("storage parameter \"%s\" is not supported",
+                    linitial_node(DefElem, stmt->options)->defname)));
   if (stmt->excludeOpNames != NIL || stmt->tableSpace != NULL ||
       stmt->nulls_not_distinct ||
       stmt->deferrable)
@@ -7189,7 +7199,7 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
   if (waiting([&] {
         return sm_cat_create_index(s, relid, name, keys, includes, stmt->unique,
                                    eval, reads, &oid, stmt->primary,
-                                   stmt->isconstraint, tree_option(stmt));
+                                   stmt->isconstraint, tree_kind(stmt));
       }) != 0) {
     /* A name taken since it was looked up, or a unique key duplicated. */
     if (sm_errnum() == SM_ERR_DUPKEY && !stmt->unique)

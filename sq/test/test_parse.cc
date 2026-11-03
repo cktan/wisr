@@ -232,3 +232,29 @@ TEST_CASE("a refused type name leaves the caller's pointer alone") {
   CHECK(sq_errpos() == 6);
   CHECK(type == &marker);
 }
+
+TEST_CASE("an index that names no access method gets the caller's default") {
+  // Verify default_index_type fills in a missing USING, and only then.
+  // 1. Parse a CREATE INDEX with no USING: PostgreSQL's btree.
+  // 2. Set default_index_type to lsm and parse it again: lsm.
+  // 3. Parse an EXCLUDE with no USING: lsm too.
+  // 4. Parse a CREATE INDEX ... USING btree: btree, whatever the default.
+  sq_tree_t tree;
+  REQUIRE(sq_parse("CREATE INDEX i ON t (a)", nullptr, tree) == 0);
+  REQUIRE(tree.stmts[0]->stmt->tag == SQ_T_INDEX_STMT);
+  CHECK(std::string(static_cast<sq_index_stmt_t *>(tree.stmts[0]->stmt)
+                        ->access_method) == "btree");
+
+  sq_options_t opt;
+  opt.default_index_type = "lsm";
+  REQUIRE(sq_parse("CREATE INDEX i ON t (a)", &opt, tree) == 0);
+  CHECK(std::string(static_cast<sq_index_stmt_t *>(tree.stmts[0]->stmt)
+                        ->access_method) == "lsm");
+
+  REQUIRE(sq_parse("ALTER TABLE t ADD EXCLUDE (a WITH =)", &opt, tree) == 0);
+  CHECK(text_of(tree.stmts[0]).find(":access_method lsm") != std::string::npos);
+
+  REQUIRE(sq_parse("CREATE INDEX i ON t USING btree (a)", &opt, tree) == 0);
+  CHECK(std::string(static_cast<sq_index_stmt_t *>(tree.stmts[0]->stmt)
+                        ->access_method) == "btree");
+}

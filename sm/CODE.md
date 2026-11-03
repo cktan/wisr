@@ -114,11 +114,14 @@ the two differ, `CLAUDE.md` wins.
   the process through `std::terminate`, unless the code there
   catches it, as the index builder's worker and its enqueue
   do. Beyond those two and the C wrapper, sm has no `catch`.
+- **A fatal error is `sm0::fatal()`.** It reports
+  `*** FATAL ***` and its message on stderr and through the
+  log hook, then aborts the process; WAL replay recovers.
+  Call it only for a state no caller can act on.
 - **Running out of memory aborts the process.** The
-  new-handler `sm1::attach` installs reports
-  `*** FATAL ***` and aborts at the failing allocation; WAL
-  replay recovers. Do not catch `std::bad_alloc`, and do not
-  report a failed allocation as `SM_ERR_NOMEM`.
+  new-handler `sm1::attach` installs calls `sm0::fatal()` at
+  the failing allocation. Do not catch `std::bad_alloc`, and
+  do not report a failed allocation as `SM_ERR_NOMEM`.
 
 ## 6. Names and headers
 
@@ -141,14 +144,18 @@ the two differ, `CLAUDE.md` wins.
   caller is an `sm_wait()` with the thread's `sm_wait_mask()`,
   and fails with `SM_ERR_INTERRUPTED` when a bit in the mask
   is pending. sm takes no bit: the host does
-  (`sm1/SM1_DESIGN.md`, `sm0/INTERRUPT.md`).
+  (`sm1/SM1_DESIGN.md`, `sm0/INTERRUPT.md`). Two waits in sm1
+  are exceptions, both past a commit's record:
+  `db_commit_wait()` and `db_sync_wal()` (`sm1/src/db.cc`).
+  Each is bounded by a sync, which finishes or aborts the
+  process.
 - **Threads are `std::thread`, locks `std::mutex`**, every
   mutex held by an RAII guard, so unwinding releases it.
 - **sm writes no log of its own.** It reports through the
   caller's log hook (`sm1::set_log`, `log_msg`), and only what
   no caller would otherwise learn; an error a call returns is
-  not also logged. The one exception is the out-of-memory
-  report, which goes to stderr as well.
+  not also logged. The one exception is a fatal error
+  (`sm0::fatal()`, §5), which goes to stderr as well.
 - **The log hook and the index evaluator are `noexcept`**:
   they are called with a library lock held, or from sm's own
   threads, where an exception has nowhere to go.

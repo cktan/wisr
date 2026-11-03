@@ -214,24 +214,6 @@ TEST_CASE("attach logs each database before recovering it") {
   sm1::closedb(v);
 }
 
-TEST_CASE("a failed status write is reported as the database stopping") {
-  // Verify fail-stop is logged, not only returned to one caller.
-  // 1. Make the next commit's status write fail.
-  // 2. An ERROR message says the database stopped.
-  log_fixture_t f;
-  sm1::session_t *s = f.open();
-  log_capture_t cap;
-  s->db->test_before_commit = [](uint64_t) {
-    return rocksdb::Status::IOError("injected");
-  };
-  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  put(s, f.store(), "k", "v");
-  CHECK(sm1::commit(s) == -1);
-  s->db->test_before_commit = nullptr;
-  CHECK_MESSAGE(cap.count(sm1::loglevel_t::error, "stopped") == 1, cap.all());
-  sm1::closedb(s);
-}
-
 TEST_CASE("a CF:txn sweep reports what it deleted") {
   // Verify a completed background sweep is logged.
   // 1. Commit a few transactions, then sweep.

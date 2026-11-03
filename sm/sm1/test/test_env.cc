@@ -16,7 +16,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
-#include <unistd.h>
 
 #include <filesystem>
 #include <new>
@@ -54,37 +53,6 @@ namespace {
 
 /* A host process's own out-of-memory policy, for the test below. */
 void host_oom_handler() { abort(); }
-
-/*
- * Run `test_sm1 --oom-child homedir` and wait for it; returns its
- * wait status, with everything it wrote to stderr in err.
- */
-int run_oom_child(const char *homedir, std::string &err) {
-  int fds[2];
-  REQUIRE(pipe(fds) == 0);
-  pid_t pid = fork();
-  REQUIRE(pid >= 0);
-  if (pid == 0) {
-    // In the child: stderr becomes the pipe, then exec.
-    dup2(fds[1], 2);
-    close(fds[0]);
-    close(fds[1]);
-    execl("/proc/self/exe", "test_sm1", "--oom-child", homedir,
-          (char *)nullptr);
-    _exit(127);
-  }
-  close(fds[1]);
-  // Collect its stderr until it exits.
-  char buf[512];
-  ssize_t n;
-  while ((n = read(fds[0], buf, sizeof(buf))) > 0) {
-    err.append(buf, n);
-  }
-  close(fds[0]);
-  int status;
-  REQUIRE(waitpid(pid, &status, 0) == pid);
-  return status;
-}
 
 } // namespace
 
@@ -131,8 +99,8 @@ TEST_CASE("running out of memory aborts the process, loudly") {
   // 3. It dies of SIGABRT, having said *** FATAL *** on stderr.
   tmpdir_t tmp;
   REQUIRE(sm1::init(tmp.path()) == 0);
-  std::string err;
-  int status = run_oom_child(tmp.path(), err);
+  std::string out, err;
+  int status = run_child("--oom-child", tmp.path(), out, err);
   CAPTURE(err);
   REQUIRE(WIFSIGNALED(status));
   CHECK(WTERMSIG(status) == SIGABRT);

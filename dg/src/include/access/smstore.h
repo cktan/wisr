@@ -83,6 +83,16 @@ typedef struct smstore_column_t {
 } smstore_column_t;
 
 /*
+ * The names CREATE INDEX ... USING gives sm's two kinds of index
+ * (../sm/BTREE.md section 12).  Both are pg_am's btree; the name chooses
+ * the kind, which sm keeps.
+ *  - lsm, the default: each entry a key of RocksDB's.
+ *  - btree: a B+tree of the index's own pages.
+ */
+#define SMSTORE_INDEX_LSM "lsm"
+#define SMSTORE_INDEX_TREE "btree"
+
+/*
  * An index of a table in sm: its columns by place in the table, 1-based,
  * the keys first and the INCLUDE columns after, and how each key sorts.
  */
@@ -91,6 +101,7 @@ typedef struct smstore_index_t {
   const char *name;
   bool unique;
   bool primary; /* the table's primary key */
+  bool tree;    /* a B+tree, USING btree; else USING lsm */
   bool usable;  /* the session may scan it now (sm_tbl_index_usable) */
   int nkeys;
   int ncolumns;
@@ -229,6 +240,7 @@ extern ObjectAddress smstore_replace_view(Oid oid, const char *name,
 extern Datum smstore_view_reloptions(const char *options);
 extern void smstore_drop_views(DropStmt *stmt);
 extern Oid smstore_index_table(Oid indexoid);
+extern const char *smstore_index_am(Oid table, Oid indexoid);
 extern bool smstore_relation_name(Oid relid, uint64 version, char **name,
                                   Oid *nspoid);
 extern bool smstore_index_usable(Relation rel, Oid indexoid);

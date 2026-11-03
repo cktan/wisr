@@ -57,6 +57,13 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool standard_conforming_strings;
 /* Primary entry point for the raw parsing functions */
 extern List *raw_parser(const char *str, RawParseMode mode);
 
+/*
+ * The access method raw_parser() gives an index that names none: sm's
+ * default kind, lsm (access/smstore.h), unless "digres --parse" sets
+ * PostgreSQL's.
+ */
+extern thread_local /*LOCAL*/ const char *raw_parser_index_type;
+
 /* Utility functions exported by gram.y (perhaps these should be elsewhere) */
 extern List *SystemFuncName(char *name);
 extern TypeName *SystemTypeName(char *name);

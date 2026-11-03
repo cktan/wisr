@@ -94,6 +94,13 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
   step, not as prose. One sentence before the steps may say
   what the algorithm is for; a step may add why, briefly.
 
+- **Code review: not PostgreSQL's own code.** When reviewing
+  code, do not review original PostgreSQL code. Review only
+  the code this repository added or changed. `dg/` is a fork
+  of PostgreSQL, and `sq/` also contains PostgreSQL's code
+  (its grammar, scanner and node definitions) with some
+  modifications: in both, review only the modified lines.
+
 - **Fix one issue at a time:** Complete the full plan-act-validate
   cycle for a single issue before moving to the next.
 

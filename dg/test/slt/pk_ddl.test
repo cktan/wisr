@@ -109,10 +109,17 @@ k_c	0	0
 k_lb	0	0
 k_pkey	1	1
 
+skipif digres
 query T
 select pg_get_indexdef('k_pkey'::regclass)
 ----
 CREATE UNIQUE INDEX k_pkey ON public.k USING btree (a)
+
+onlyif digres
+query T
+select pg_get_indexdef('k_pkey'::regclass)
+----
+CREATE UNIQUE INDEX k_pkey ON public.k USING lsm (a)
 
 query TT
 select conname, contype from pg_constraint where conrelid = 'k'::regclass and contype <> 'n' order by 1
@@ -319,12 +326,21 @@ u_b_a_key	u
 u_b_key	u
 u_c	u
 
+skipif digres
 query T
 select pg_get_indexdef(indexrelid) from pg_index where indrelid = 'u'::regclass order by 1
 ----
 CREATE UNIQUE INDEX u_b_a_key ON public.u USING btree (b) INCLUDE (a)
 CREATE UNIQUE INDEX u_b_key ON public.u USING btree (b)
 CREATE UNIQUE INDEX u_c ON public.u USING btree (c, b)
+
+onlyif digres
+query T
+select pg_get_indexdef(indexrelid) from pg_index where indrelid = 'u'::regclass order by 1
+----
+CREATE UNIQUE INDEX u_b_a_key ON public.u USING lsm (b) INCLUDE (a)
+CREATE UNIQUE INDEX u_b_key ON public.u USING lsm (b)
+CREATE UNIQUE INDEX u_c ON public.u USING lsm (c, b)
 
 statement error duplicate key value violates unique constraint "u_b_a_key"
 insert into u values (3, 'x', 'r')

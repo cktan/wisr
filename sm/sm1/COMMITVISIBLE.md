@@ -38,14 +38,12 @@ it likelier; a permanent table's commit is the same.
   sync. No lock is held while it waits: locks are released
   after it (§8.2 step 6), as now, so a waiter's own locks
   keep it from no one longer than the older commit's sync.
-- **A database that failed stop ends the wait**: an older
-  commit whose record write failed stays in the sequencer
-  until a restart (§8.2), and `visible_ts` with it. The
-  failing commit sets `db->failed` and signals; a waiter
-  returns, committed, as everything after it is refused.
+- **A failed record write or sync aborts the process**
+  (§8.2): no older commit stays in the sequencer for a waiter
+  to wait behind.
 - **It is not cut short by an interrupt**: it is past the
-  commit point, bounded by an older commit's sync, and the
-  failed-stop case ends it. A cancel then would leave a
+  commit point, and bounded by an older commit's sync, which
+  finishes or aborts the process. A cancel then would leave a
   committed transaction that its own next statement does not
   see.
 - **COMMIT PREPARED** publishes through the same path, and
@@ -58,7 +56,7 @@ it likelier; a permanent table's commit is the same.
 | --- | --- |
 | no older commit in progress | `visible_ts` reaches commit_ts in `db_commit_done()`: no wait |
 | an older commit syncing | waits for that sync, which group commit shares |
-| an older commit's record write fails | it sets `failed` and signals: the waiter returns |
+| an older commit's record write or sync fails | the process aborts (§8.2): no waiter returns |
 | SERIALIZABLE validation fails after the claim | `done(commit_ts)` with nothing published, as now: it raises `visible_ts` for the waiters behind it |
 | COMMIT PREPARED, a prepared transaction restored at open | the same publish, the same wait |
 | read-only commit | no commit_ts: no wait |

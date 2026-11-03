@@ -939,10 +939,9 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   if (!st.cf) {
     return -1;
   }
-  // Refuse writes after fail-stop, or in a read-only transaction,
-  // which may still write a temporary store.
-  if (xct_check_writable(s->db) != 0 ||
-      (!st.owner && xct_check_readonly(s) != 0)) {
+  // Refuse writes in a read-only transaction, which may still
+  // write a temporary store.
+  if (!st.owner && xct_check_readonly(s) != 0) {
     return -1;
   }
   // A load open into the store has keys this write cannot be

@@ -381,13 +381,6 @@ struct db_t {
   size_t load_file_bytes = 0;
 
   /*
-   * Set when a status write fails (§8.2): the outcome of that
-   * commit is unknown until a reopen, so writes, commits, and
-   * DDL fail with SM_ERR_IO from then on.
-   */
-  std::atomic<bool> failed{false};
-
-  /*
    * Test hook: called after a commit claims its commit_ts and
    * before it writes the status record. A non-OK status stands
    * in for the write's failure. Empty outside tests.
@@ -397,17 +390,20 @@ struct db_t {
   /*
    * The commits' WAL sync, outside RocksDB's write queue
    * (db_sync_wal(), GROUPSYNC.md). Under sync_mu: the last
-   * sequence number a finished sync covers, and whether a commit
-   * is syncing now; sync_cv wakes the commits waiting for it.
+   * sequence number a finished sync covers, whether a commit is
+   * syncing now, and how many commits wait for it, which tests
+   * read; sync_cv wakes the commits waiting.
    */
   std::mutex sync_mu;
   std::condition_variable sync_cv;
   uint64_t synced_seq = 0;
   bool syncing = false;
+  int sync_waiters = 0;
 
   /*
    * Test hook: called by a commit leading a sync, before
-   * SyncWAL(). A non-OK status stands in for the sync's failure.
+   * FlushWAL(true). A non-OK status stands in for the sync's
+   * failure.
    * Empty outside tests.
    */
   std::function<rocksdb::Status()> test_before_sync;
@@ -580,6 +576,9 @@ struct db_t {
   /* Test hook, as test_before_commit, for the PREPARED record. */
   std::function<rocksdb::Status()> test_before_prepare;
 
+  /* Test hook, as test_before_commit, for a prepared one's ABORTED record. */
+  std::function<rocksdb::Status()> test_before_abort_prepared;
+
   /* Destroy the CF handles and close RocksDB. */
   ~db_t();
 };
@@ -614,17 +613,17 @@ void db_commit_done(db_t *db, uint64_t commit_ts);
 
 /*
  * Wait until commit_ts, done, is visible: visible_ts at or past
- * it, or the database failed stop (COMMITVISIBLE.md).
+ * it (COMMITVISIBLE.md).
  */
 void db_commit_wait(db_t *db, uint64_t commit_ts);
 
 /*
  * Wait until the WAL is synced past every write that returned
  * before the call, one commit syncing for all that wait
- * (GROUPSYNC.md §3). Returns a sync's failure, or IOError if
- * the database failed stop meanwhile.
+ * (GROUPSYNC.md §3). A failed sync aborts the process
+ * (SM1_DESIGN.md §8.2).
  */
-rocksdb::Status db_sync_wal(db_t *db);
+void db_sync_wal(db_t *db);
 
 /* Allocate an object id -- a storeid or a seqid. Returns 0 or -1. */
 int db_alloc_objid(db_t *db, uint64_t *out);

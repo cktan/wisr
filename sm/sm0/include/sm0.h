@@ -137,7 +137,7 @@ using log_fn = void (*)(void *arg, loglevel_t level, const char *msg) noexcept;
  *
  * The library never writes a log of its own. The hook hears
  * only what no caller would otherwise learn: failures in
- * wisr's background GC, a database entering its failed state,
+ * wisr's background GC, a fatal error before the process aborts,
  * versions the compaction filter could not judge, a snapshot
  * holding back garbage collection for over a minute, and what
  * sm1::attach() and recovery clean up or restore. Errors a call

@@ -7,11 +7,15 @@
 #include "doctest.h"
 #include "util.h"
 
+#include "sm0_defer.h"
+
 #include "db.h"
 #include "env.h"
 #include "session.h"
 #include "sm1.h"
 
+#include <signal.h>
+#include <string.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -208,6 +212,22 @@ int commit_one(sm1::session_t *s, uint64_t store, const std::string &key) {
   return sm1::commit(s);
 }
 
+/* Wait up to 10 seconds for n commits to wait for a sync. */
+bool wait_for_waiters(wisr::db_t *db, int n) {
+  auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < until) {
+    {
+      // Hold sync_mu to read the count the commits keep under it.
+      std::lock_guard<std::mutex> guard(db->sync_mu);
+      if (db->sync_waiters == n) {
+        return true;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return false;
+}
+
 } // namespace
 
 TEST_CASE("a commit survives a power cut once sm1::commit returns") {
@@ -248,6 +268,46 @@ TEST_CASE("a commit survives a power cut once sm1::commit returns") {
   REQUIRE(sm1::closedb(s) == 0);
 }
 
+TEST_CASE("a commit survives a power cut under manual_wal_flush") {
+  // Verify the commit's sync writes RocksDB's WAL buffer out before
+  // it syncs: SyncWAL() alone syncs the file without the buffer.
+  // 1. Make "db" on a file system that loses unsynced data at a
+  //    power cut, opened with manual_wal_flush=true.
+  // 2. Commit "a" in a new store.
+  // 3. Cut the power, close the database, and lose what was not
+  //    synced.
+  // 4. Open "db" again: "a" is there.
+  home_t home;
+  auto fs = std::make_shared<powercut_fs_t>();
+  // Every file of "db" through the power-cut file system.
+  home.env()->wal_env = rocksdb::NewCompositeEnv(fs);
+  sm1::options_t opt;
+  opt.rocksdb_options = "manual_wal_flush=true";
+  REQUIRE(sm1::mkdb(home.env(), "db", &opt) == 0);
+  sm1::session_t *s = opendb(home.env(), "db", &opt);
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  uint64_t store = mkstore(s);
+  REQUIRE(sm1::commit(s) == 0);
+
+  REQUIRE(commit_one(s, store, "a") == 0);
+
+  fs->cut();
+  REQUIRE(sm1::closedb(s) == 0);
+  // Detach closes the database; lose its unsynced data before the
+  // attach, whose recovery opens it again.
+  home.detach();
+  fs->lose_unsynced();
+  home.attach();
+
+  s = opendb(home.env(), "db", &opt);
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(s, store, "a") == "v");
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::closedb(s) == 0);
+}
+
 TEST_CASE("a commit is visible only once the WAL is synced past it") {
   // Verify a commit publishes after its sync, not before: until then
   // its xid is in flight (GROUPSYNC.md §3).
@@ -260,6 +320,9 @@ TEST_CASE("a commit is visible only once the WAL is synced past it") {
   sm1::session_t *a = f.first();
   sm1::session_t *b = f.open();
 
+  // The futures come first, so that let_go runs before they are
+  // destroyed.
+  std::future<int> a_rc;
   std::promise<void> entered, release;
   std::shared_future<void> released = release.get_future().share();
   std::atomic<int> calls{0};
@@ -270,9 +333,13 @@ TEST_CASE("a commit is visible only once the WAL is synced past it") {
     }
     return rocksdb::Status::OK();
   };
+  // Let the stalled sync go on every way out of the test: a failed
+  // REQUIRE would otherwise hang in the destructor of an
+  // std::async future, which waits for its commit to return.
+  sm0::scope_guard_t let_go([&] { release.set_value(); });
 
-  std::future<int> a_rc = std::async(
-      std::launch::async, [&] { return commit_one(a, f.store(), "a"); });
+  a_rc = std::async(std::launch::async,
+                    [&] { return commit_one(a, f.store(), "a"); });
   REQUIRE(entered.get_future().wait_for(std::chrono::seconds(10)) ==
           std::future_status::ready);
   // Time for A's commit to have returned, were it not to wait.
@@ -283,6 +350,7 @@ TEST_CASE("a commit is visible only once the WAL is synced past it") {
   CHECK(get(b, f.store(), "a") == "<none>");
   REQUIRE(sm1::commit(b) == 0);
 
+  let_go.dismiss();
   release.set_value();
   CHECK(a_rc.get() == 0);
   f.db()->test_before_sync = nullptr;
@@ -292,61 +360,65 @@ TEST_CASE("a commit is visible only once the WAL is synced past it") {
   REQUIRE(sm1::closedb(b) == 0);
 }
 
-TEST_CASE("a failed sync fails the database stop, with the commits behind "
-          "it") {
-  // Verify a failed WAL sync is a failed status write (§8.2): the
-  // outcome of every commit it was to cover is unknown.
-  // 1. Session A commits "a"; its sync stalls.
-  // 2. Session B commits "b" meanwhile: its record is written, and it
-  //    waits for a sync.
-  // 3. A's sync fails: both commits return SM_ERR_IO, and the
-  //    database has failed stop.
-  sync_fixture_t f;
-  sm1::session_t *a = f.first();
-  sm1::session_t *b = f.open();
+/*
+ * The failed-sync child: make a store and write its storeid to
+ * stdout, then commit "a" with its WAL sync failing, which aborts
+ * the process. Returns only on a setback.
+ */
+int sync_fail_child_main(const char *homedir) {
+  sm1::env_t *env = attach(homedir);
+  sm1::session_t *s = env ? opendb(env, "db") : nullptr;
+  uint64_t store = 0;
+  if (!s || sm1::begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||
+      sm1::mkstore(s, store) != 0 || sm1::commit(s) != 0) {
+    return 2;
+  }
+  if (write(1, &store, sizeof(store)) != (ssize_t)sizeof(store)) {
+    return 3;
+  }
+  s->db->test_before_sync = [] { return rocksdb::Status::IOError("injected"); };
+  commit_one(s, store, "a");
+  return 4;
+}
 
-  std::promise<void> entered, release;
-  std::shared_future<void> released = release.get_future().share();
-  std::atomic<int> calls{0};
-  f.db()->test_before_sync = [&] {
-    if (calls++ == 0) {
-      entered.set_value();
-      released.wait();
-      return rocksdb::Status::IOError("injected");
-    }
-    return rocksdb::Status::OK();
-  };
+TEST_CASE("a failed sync aborts the process") {
+  // Verify a failed WAL sync ends the process, so no commit it was
+  // to cover returns, and the reopen decides them from the WAL
+  // (SM1_DESIGN.md §8.2).
+  // 1. Make "db", and leave the home directory to a child.
+  // 2. The child commits "a", and its sync fails: it dies of
+  //    SIGABRT, having said *** FATAL *** on stderr.
+  // 3. Attach again: "a" is committed, as its record reached the
+  //    OS before the abort, though the sync failed.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  home.detach();
+  std::string out, err;
+  int status = run_child("--sync-fail-child", home.path(), out, err);
+  CAPTURE(err);
+  REQUIRE(WIFSIGNALED(status));
+  CHECK(WTERMSIG(status) == SIGABRT);
+  CHECK(err.find("*** FATAL *** database db: WAL sync failed") !=
+        std::string::npos);
+  uint64_t store = 0;
+  REQUIRE(out.size() == sizeof(store));
+  memcpy(&store, out.data(), sizeof(store));
 
-  // A commit's return code and error, read on its own thread.
-  auto commit_err = [&](sm1::session_t *s, const char *key) {
-    int rc = commit_one(s, f.store(), key);
-    return rc == 0 ? 0 : sm1::errnum();
-  };
-  std::future<int> a_err =
-      std::async(std::launch::async, [&] { return commit_err(a, "a"); });
-  REQUIRE(entered.get_future().wait_for(std::chrono::seconds(10)) ==
-          std::future_status::ready);
-  std::future<int> b_err =
-      std::async(std::launch::async, [&] { return commit_err(b, "b"); });
-  // Time for B to write its record and wait for A's sync.
-  CHECK(b_err.wait_for(std::chrono::milliseconds(300)) !=
-        std::future_status::ready);
-
-  release.set_value();
-  CHECK(a_err.get() == sm1::SM_ERR_IO);
-  CHECK(b_err.get() == sm1::SM_ERR_IO);
-  CHECK(calls == 1);
-  CHECK(f.db()->failed.load());
-  f.db()->test_before_sync = nullptr;
-  REQUIRE(sm1::closedb(b) == 0);
+  home.attach();
+  sm1::session_t *s = opendb(home.env(), "db");
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(s, store, "a") == "v");
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::closedb(s) == 0);
 }
 
 TEST_CASE("one sync serves the commits that wait while another runs") {
   // Verify the commits waiting behind a sync share the next one, as
   // PostgreSQL's XLogFlush() does (GROUPSYNC.md §3).
   // 1. Session A commits "a"; its sync stalls.
-  // 2. Fifteen sessions commit meanwhile, one at a time, so each
-  //    record has a sequence number of its own; each waits.
+  // 2. Fifteen sessions commit meanwhile: each writes its record
+  //    and waits for A's sync.
   // 3. Let A's sync go: the fifteen share a second sync, whichever
   //    of them leads it.
   sync_fixture_t f;
@@ -356,6 +428,10 @@ TEST_CASE("one sync serves the commits that wait while another runs") {
     others.push_back(f.open());
   }
 
+  // The futures come first, so that let_go runs before they are
+  // destroyed.
+  std::future<int> a_rc;
+  std::vector<std::future<int>> rcs;
   std::promise<void> entered, release;
   std::shared_future<void> released = release.get_future().share();
   std::atomic<int> calls{0};
@@ -366,22 +442,24 @@ TEST_CASE("one sync serves the commits that wait while another runs") {
     }
     return rocksdb::Status::OK();
   };
+  // Let the stalled sync go on every way out of the test: a failed
+  // REQUIRE would otherwise hang in the destructor of an
+  // std::async future, which waits for its commit to return.
+  sm0::scope_guard_t let_go([&] { release.set_value(); });
 
-  std::future<int> a_rc = std::async(
-      std::launch::async, [&] { return commit_one(a, f.store(), "a"); });
+  a_rc = std::async(std::launch::async,
+                    [&] { return commit_one(a, f.store(), "a"); });
   REQUIRE(entered.get_future().wait_for(std::chrono::seconds(10)) ==
           std::future_status::ready);
-  std::vector<std::future<int>> rcs;
   for (size_t i = 0; i < others.size(); i++) {
     rcs.push_back(std::async(std::launch::async, [&, i] {
       return commit_one(others[i], f.store(), "k" + std::to_string(i));
     }));
-    // Time for its record to be written alone.
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
-  // Time for the last to write its record and wait.
-  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  // Every one has written its record once it waits for the sync.
+  REQUIRE(wait_for_waiters(f.db(), (int)others.size()));
 
+  let_go.dismiss();
   release.set_value();
   CHECK(a_rc.get() == 0);
   for (std::future<int> &rc : rcs) {

@@ -273,9 +273,6 @@ reuses the depth cannot drop them.
 restart for two-phase commit, named by a **gid**, with its
 locks saved and taken again by recovery.
 
-**fail-stop** — the state a database enters when it cannot go
-on safely; writes are refused from then on.
-
 ---
 
 ## 6. Level 1: locks and conflicts

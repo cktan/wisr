@@ -132,7 +132,7 @@ regression files are taken out for it (`test/pgregress`,
 - **ALTER COLUMN TYPE of a column an expression or a partial
   index reads, a foreign key uses or references, or of an
   identity column; and with COLLATE** — refused
-  (`ALTERTYPE.md` §8, step 375). PostgreSQL makes the index,
+  (`ALTERTYPE.md` §8, step 376). PostgreSQL makes the index,
   the foreign key or the sequence again.
 - **ALTER INDEX, ALTER TYPE, ALTER MATERIALIZED VIEW** —
   refused; ALTER VIEW takes only options and RENAME.

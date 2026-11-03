@@ -184,9 +184,8 @@ int sm1::closedb(sm1::session_t *session) {
     // Drop the session count; the last session closes the database,
     // or leaves it to the reaper for its idle time.
     if (--db->nsessions == 0) {
-      // A failed database is closed at once, so the next open
-      // recovers it rather than finding it failed.
-      if (db->idle_close_ms == 0 || db->failed.load()) {
+      // Close at once if the database keeps no idle time.
+      if (db->idle_close_ms == 0) {
         // Unregister the database before closing it.
         env->dbs.erase(db->name);
         // Close the database: its last session is gone.
