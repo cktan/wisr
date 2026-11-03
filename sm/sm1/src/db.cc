@@ -809,6 +809,7 @@ void db_commit_wait(db_t *db, uint64_t commit_ts) {
  */
 rocksdb::Status db_sync_wal(db_t *db) {
   uint64_t target = db->rdb->GetLatestSequenceNumber();
+  // Hold sync_mu to read and claim the sync state.
   std::unique_lock<std::mutex> guard(db->sync_mu);
   for (;;) {
     // Covered by a finished sync: another commit's, or an earlier one.
@@ -819,10 +820,11 @@ rocksdb::Status db_sync_wal(db_t *db) {
     if (db->failed.load()) {
       return rocksdb::Status::IOError("an earlier WAL sync failed");
     }
-    // Not leading: wait for the sync that runs.
+    // No sync runs: lead one.
     if (!db->syncing) {
       break;
     }
+    // Not leading: wait for the sync that runs.
     db->sync_cv.wait(guard);
   }
   // Lead the next sync; what it covers is fixed before it begins.
@@ -841,6 +843,7 @@ rocksdb::Status db_sync_wal(db_t *db) {
   if (st.ok()) {
     st = db->rdb->FlushWAL(true);
   }
+  // Hold sync_mu again to record the result and end the sync.
   guard.lock();
   db->syncing = false;
   if (st.ok()) {
