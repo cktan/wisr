@@ -304,6 +304,13 @@ void timer_main(timer_service_t *s) {
     }
     auto first = s->by_when.begin();
     int64_t when = first->first.first;
+    // Due never: sleep until a timer is armed or cancelled. Its time
+    // point would overflow steady_clock's nanoseconds into the past,
+    // and the wait would return at once, again and again.
+    if (SM_FOREVER == when) {
+      s->cv.wait(lock);
+      continue;
+    }
     if (sm_now_us() < when) {
       s->cv.wait_until(lock, time_point_of(when));
       continue;

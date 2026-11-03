@@ -318,6 +318,29 @@ TEST_CASE("a periodic timer interrupts again and again, until cancelled") {
   CHECK(sm_pending() == 0);
 }
 
+TEST_CASE("a timer due never leaves the timer thread asleep") {
+  // Verify a timer at SM_FOREVER costs no CPU while it is armed.
+  // 1. Arm a timer on this thread for B1, due at SM_FOREVER.
+  // 2. Sleep 200 ms, and read the CPU the process spent meanwhile.
+  // 3. Confirm it is far below the sleep: the timer thread slept.
+  // 4. Cancel the timer: it was removed, and nothing is pending.
+  sm_timer_id_t id = sm_timer_at(sm_thread_self(), SM_FOREVER, B1, 0);
+  // The CPU of every thread of the process, in microseconds.
+  auto cpu_us = [] {
+    struct rusage ru;
+    getrusage(RUSAGE_SELF, &ru);
+    return (ru.ru_utime.tv_sec + ru.ru_stime.tv_sec) * 1000000LL +
+           ru.ru_utime.tv_usec + ru.ru_stime.tv_usec;
+  };
+  int64_t before = cpu_us();
+  sleep_ms(200);
+  int64_t spent = cpu_us() - before;
+  CAPTURE(spent);
+  CHECK(spent < 50000);
+  CHECK(sm_timer_cancel(id));
+  CHECK(sm_pending() == 0);
+}
+
 TEST_CASE("the timer thread blocks every signal") {
   // Verify a signal to the process cannot land in sm_sys.h's timer thread.
   // 1. Arm and cancel a timer, so the timer thread runs.
