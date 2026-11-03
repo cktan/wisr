@@ -7,7 +7,7 @@ history keeps the closed reviews (`REVIEW.md` up to
 
 1. **`aa/`**: open; findings 1 to 7 fixed; the rule findings not
    yet checked.
-2. **`sm/`**: open; Highs 1 to 7 closed; the rest being checked.
+2. **`sm/`**: open; Highs 1 to 8 closed; the rest being checked.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
 # Review: `aa/` (Authentication and Authorization)
@@ -92,7 +92,8 @@ insert of an entry it has is no change, so it cost a second unique
 check, not a duplicate), are fixed. High 7 is closed: its raw
 wait is now a documented exception, as a detach must outlast its
 builds; its join race is none, as a worker that takes new work
-only makes the detach wait for it. The others are being checked.
+only makes the detach wait for it. High 8, a worker counted whose
+thread was never made, is fixed. The others are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -107,27 +108,12 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Medium, 3 Low |
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 4 Medium, 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 2 Medium, 3 Low |
-| `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 1 High, 3 Medium, 5 Low |
+| `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 3 Medium, 5 Low |
 | `include/` & `src/` | FAIL (`std::optional` in `sm_stats.h`) | PASS | 1 High, 2 Medium, 3 Low |
 
 ---
 
 ### 2. High-Severity Findings
-
-#### [HIGH] 8. `sm3`: Exception in `builder.cc:enqueue()` leaks `b.running` and wedges index builds
-
-- **Location:** `sm/sm3/src/builder/builder.cc:266-284`,
-  `sm/sm3/src/builder/builder.cc:351-360`
-- **Issue:** `enqueue()` inserts `(cat, index)` into `b.active`,
-  pushes the task to `b.queue`, and increments `b.running++`
-  before calling `b.threads.emplace_back(work)` (line 283). If
-  `emplace_back` throws `std::system_error` (caught in
-  `builder_enqueue()` at line 357), `b.running` stays incremented
-  and `(cat, index)` stays in `b.active` and `b.queue` even if
-  zero workers are running, causing `builder_wait()` to hang.
-- **Fix:** Increment `b.running` only after `emplace_back`
-  succeeds, and remove the task from `b.queue` and `b.active` if
-  no worker thread is running.
 
 #### [HIGH] 9. `include/`: `std::optional` exposed in public header `sm/include/sm_stats.h` (`sm/CODE.md` §2)
 

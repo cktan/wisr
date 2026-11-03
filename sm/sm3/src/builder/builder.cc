@@ -278,9 +278,20 @@ void enqueue(catalog_t *cat, uint64_t table, uint64_t index) {
   }
   b.finished.clear();
   if (b.running < b.max_workers) {
-    b.running++;
-    // A worker thread, alive until it finds the queue empty.
-    b.threads.emplace_back(work);
+    try {
+      // A worker thread, alive until it finds the queue empty; counted
+      // once it is made. It waits on mu, held here, before it runs.
+      b.threads.emplace_back(work);
+      b.running++;
+    } catch (...) {
+      // No thread: with no other worker to run it, the build is not
+      // queued, and the index stays pending for the next attach.
+      if (0 == b.running) {
+        b.queue.pop_back();
+        b.active.erase({cat, index});
+      }
+      throw;
+    }
   }
 }
 
