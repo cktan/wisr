@@ -265,7 +265,9 @@ struct entry_t {
   std::vector<std::string> own;
   std::vector<sm2::datum_t> key;
   std::unique_ptr<bool[]> key_null;
-  size_t key_cap = 0; /* key_null's room */
+  size_t key_cap = 0;               /* key_null's room */
+  std::unique_ptr<bool[]> own_null; /* the evaluator's null flags */
+  size_t own_cap = 0;               /* own_null's room */
 
   std::span<const sm2::datum_t> d() const { return key; }
   std::span<const bool> null() const { return {key_null.get(), key.size()}; }
@@ -305,7 +307,16 @@ int make_entry(const sm3::table_t *t, size_t i, const vals_t &r, entry_t &e) {
     e.key_cap = n;
   }
   std::fill(e.key_null.get(), e.key_null.get() + n, false);
-  std::unique_ptr<bool[]> own_null(new bool[nexpr]());
+  // The evaluator's flags, kept as the key's are; a plain key has
+  // none to make.
+  if (nexpr > 0 && (!e.own_null || e.own_cap < nexpr)) {
+    e.own_null.reset(new bool[nexpr]);
+    e.own_cap = nexpr;
+  }
+  bool *own_null = e.own_null.get();
+  if (nexpr > 0) {
+    std::fill(own_null, own_null + nexpr, false);
+  }
   if (!x.eval.empty()) {
     const sm3::index_eval_fn &eval = t->session->cat->eval;
     if (!eval) {
@@ -317,7 +328,7 @@ int make_entry(const sm3::table_t *t, size_t i, const vals_t &r, entry_t &e) {
     e.own.assign(nexpr, std::string());
     // The host's answer; its failure is this call's.
     if (ask_evaluator(eval, *t->def, x, r, e.belongs, e.own,
-                      {own_null.get(), nexpr}) != 0) {
+                      {own_null, nexpr}) != 0) {
       return -1;
     }
     if (!e.belongs) {
