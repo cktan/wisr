@@ -306,7 +306,14 @@ int builder_attach(catalog_t *cat, std::function<sm1::session_t *()> open,
   return 0;
 }
 
-/* Detach a catalog and wait for its builds to end; see sm3.h. */
+/*
+ * Detach a catalog and wait for its builds to end; see sm3.h.
+ *
+ * Its wait is NOT cut short by an interrupt, unlike every other wait in
+ * sm (../../CODE.md §7): a detach that returned first would leave a
+ * build using a catalog its caller is closing. It is bounded: each of
+ * the catalog's builds is interrupted below, and ends after its batch.
+ */
 void builder_detach(catalog_t *cat) {
   builder_t &b = g_builder;
   std::vector<std::thread> threads;

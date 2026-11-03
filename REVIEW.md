@@ -7,7 +7,7 @@ history keeps the closed reviews (`REVIEW.md` up to
 
 1. **`aa/`**: open; findings 1 to 7 fixed; the rule findings not
    yet checked.
-2. **`sm/`**: open; Highs 1 to 6 fixed; the rest being checked.
+2. **`sm/`**: open; Highs 1 to 7 closed; the rest being checked.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
 # Review: `aa/` (Authentication and Authorization)
@@ -89,7 +89,10 @@ than written: an index's refusal after the row write, rolled back
 to a savepoint, let the next write erase the live row's chunks),
 and High 6, a tree arbiter's entry added twice (a Low: a tree's
 insert of an entry it has is no change, so it cost a second unique
-check, not a duplicate), are fixed; the others are being checked.
+check, not a duplicate), are fixed. High 7 is closed: its raw
+wait is now a documented exception, as a detach must outlast its
+builds; its join race is none, as a worker that takes new work
+only makes the detach wait for it. The others are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -104,34 +107,12 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Medium, 3 Low |
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 4 Medium, 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 2 Medium, 3 Low |
-| `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 2 High, 3 Medium, 5 Low |
+| `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 1 High, 3 Medium, 5 Low |
 | `include/` & `src/` | FAIL (`std::optional` in `sm_stats.h`) | PASS | 1 High, 2 Medium, 3 Low |
 
 ---
 
 ### 2. High-Severity Findings
-
-#### [HIGH] 7. `sm3`: `builder_detach()` uninterruptible wait and worker-thread join race
-
-- **Location:** `sm/sm3/src/builder/builder.cc:253-258`,
-  `sm/sm3/src/builder/builder.cc:339-349`
-- **Issue:**
-  1. Line 339 (`b.cv.wait(lock, [&] { return
-     b.catalogs.at(cat).busy == 0; });`) uses raw
-     `std::condition_variable::wait` instead of `sm1::sm_wait`
-     (`sm/CODE.md` §7 violation).
-  2. In `work()`, a worker decrements `b.catalogs.at(task.cat).busy--`
-     and calls `changed(b)` at lines 254-255 before looping back
-     to `while (!b.queue.empty())` (line 209) and before
-     decrementing `b.running--` (line 258). When `builder_detach`
-     wakes at line 339, erases `cat`, sees `b.catalogs.empty()`,
-     and moves `b.threads` out to join them (lines 344-348), a
-     concurrent `builder_attach` + `builder_enqueue` can enqueue
-     work while `b.running` is stale and the detaching worker
-     thread is still in its loop.
-- **Fix:** Use `sm1::sm_wait` in `builder_detach`, and hold
-  worker lifecycle state until threads actually exit the queue
-  loop.
 
 #### [HIGH] 8. `sm3`: Exception in `builder.cc:enqueue()` leaks `b.running` and wedges index builds
 
