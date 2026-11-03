@@ -977,8 +977,9 @@ index is of one kind, and keeps it for its life.
   by the kind. Today's kind, `USING lsm`, is the default. A
   tree is asked for when the index is made, `USING btree`
   (§11, question 4); changing a kind is DROP and CREATE.
-  `pg_get_indexdef()` prints the kind's name; psql's `\d`
-  shows `btree` for both, `pg_am`'s name.
+  `pg_get_indexdef()` prints the kind's name, and so does
+  psql's `\d` of a table, which lists its indexes by it. `\d`
+  of an index prints `pg_am`'s name, `btree`, for both.
 - **Where each is the better**, measured or estimated
   (instructions):
 
