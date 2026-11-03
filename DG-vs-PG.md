@@ -162,10 +162,13 @@ layer.
   `int4`, `int8`, `float4`, `float8`, `numeric`, `text`,
   `varchar`, `char(n)`, `name`, `bytea`, `date`, `time`,
   `timestamp`, `timestamptz`, `interval`, and `uuid`.
-- **Constrained `numeric`.** `numeric` is stored as `sm`'s
-  64-bit or 128-bit decimal (up to 36 digits, no `NaN` or
-  `Infinity`; unconstrained `numeric` defaults to
-  `numeric(17,3)`).
+- **Constrained, fixed-size `numeric`.** PG stores `numeric` as
+  a variable-length (`varlena`) array of base-10000 digits. DG
+  replaces it with two fixed-size binary decimal types matching
+  `sm` bit for bit (`dg/DECIMAL.md`): 8-byte pass-by-value
+  `decimal64` (1 to 17 digits) and 16-byte `decimal128` (18 to
+  36 digits), with no `varlena` header, `NaN`, or `Infinity`
+  (unconstrained `numeric` columns default to `numeric(17,3)`).
 - **Unsupported column types.** Arrays, JSON/JSONB, XML, ranges,
   geometric types, network types (`inet`, `cidr`, `macaddr`),
   bit strings, full-text search (`tsvector`, `tsquery`), `oid`,
