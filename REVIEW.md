@@ -7,8 +7,8 @@ history keeps the closed reviews (`REVIEW.md` up to
 
 1. **`aa/`**: open; findings 1 to 7 fixed; the rule findings not
    yet checked.
-2. **`sm/`**: open; every High and Medium closed; the Lows being
-   checked.
+2. **`sm/`**: closed; every High, Medium and Low fixed or
+   closed.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
 # Review: `aa/` (Authentication and Authorization)
@@ -118,7 +118,14 @@ Lows are being checked. Of them, page_drop's with no transaction
 is closed but for its message: that path is for an on_commit
 function, which sm1::commit_prepared may run on any session, so a
 check for a prepared transaction there could refuse it, and the
-store it is given is the committing transaction's own.
+store it is given is the committing transaction's own. Three
+more Lows are closed. index_eval_fn keeps its name: sm's function
+types end in _fn (sm_log_fn, log_fn, column_conv_fn). rel's pin
+refs left by a janet_panic are released at the transaction's end,
+and the panic's longjmp skips any RAII guard. The C wrapper's
+guard() maps std::bad_alloc to NOMEM by design (DESIGN.md §5):
+only before attach installs the new-handler, or under a host's
+own. The misplaced comment at table.cc:569 was gone already.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -133,8 +140,8 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | none |
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | none |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | none |
-| `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 5 Low |
-| `include/` & `src/` | PASS | PASS | 3 Low |
+| `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS | none |
+| `include/` & `src/` | PASS | PASS | none |
 
 ---
 
@@ -152,22 +159,7 @@ None open: Mediums 1 to 14 are fixed or closed.
 
 ### 4. Low-Severity and Style Findings
 
-- **`sm3` (`sm/sm3/include/sm3.h:938`,
-  `sm/sm3/src/catalog/load.cc:18`,
-  `sm/sm3/src/catalog/ddl.cc:19`):** Type aliases `index_eval_fn`
-  and `kv_ptr` lack the `_t` suffix (`kv_ptr` is also duplicated
-  in `load.cc` and `ddl.cc`).
-- **`sm3` (`sm/sm3/src/ddl/ddl.cc:37-40, 1048-1051`):**
-  Duplicate `live_attnum()` helper definition in `ddl.cc`, and
-  misplaced doc comments at `ddl.cc:291` and `table.cc:569`.
-- **`rel` (`sm/rel/src/rel_ops.cc:1964-1983, 2326-2336,
-  2364-2374`):** `sm_pin_ref_t` handles leak if `janet_panic`
-  `longjmp`s out of `cfun_read_keys`, `cfun_update`, or
-  `cfun_delete`.
-- **`src/sm.cc` (`sm/src/sm.cc:111, 164-165, 282, 1282`):**
-  `guard()` catches `std::bad_alloc` (`sm/CODE.md` §5 says not to
-  catch `std::bad_alloc` or return `SM_ERR_NOMEM`); misplaced doc
-  comments above `api_fkey()` and `sm_cat_namespace_epoch()`.
+None open: every Low is fixed or closed.
 
 # Cleanups Not Taken
 
