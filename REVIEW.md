@@ -127,7 +127,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | Level / Area | Layering & Opacity | Naming (`_t`, `m_`, no `strncpy`) | Findings |
 | --- | --- | --- | --- |
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | none |
-| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 3 Low |
+| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 2 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 5 Low |
 | `include/` & `src/` | PASS | PASS | 3 Low |
@@ -148,10 +148,6 @@ None open: Mediums 1 to 14 are fixed or closed.
 
 ### 4. Low-Severity and Style Findings
 
-- **`sm1` (`sm/sm1/src/session.cc:20-32`):** `other_options()`
-  omits `load_small_bytes`, `load_sort_bytes`, and
-  `load_file_bytes` when checking if an idle `db_t` matches new
-  `options_t`.
 - **`sm1` (`sm/sm1/src/page.cc:301-309`):** `page_drop` when
   `!session->active` skips `SM_ERR_PREPARED` and temp-store owner
   checks, and reports `"store 0 holds no pages"` on

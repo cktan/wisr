@@ -28,7 +28,10 @@ bool other_options(const db_t *db, const sm1::options_t *opt) {
          opt->ts_lease != had.ts_lease ||
          opt->commit_cache_entries != had.commit_cache_entries ||
          opt->savepoint_undo_bytes != had.savepoint_undo_bytes ||
-         opt->idle_close_ms != had.idle_close_ms;
+         opt->idle_close_ms != had.idle_close_ms ||
+         opt->load_small_bytes != had.load_small_bytes ||
+         opt->load_sort_bytes != had.load_sort_bytes ||
+         opt->load_file_bytes != had.load_file_bytes;
 }
 
 /*
