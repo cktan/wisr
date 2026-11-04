@@ -243,6 +243,11 @@ regression files are taken out for it (`test/pgregress`,
   privileges, a function's, ALTER ROLE ... SET and ALTER
   DEFAULT PRIVILEGES fail. UTF8 only, collation C; `initdb`
   takes no other option (step 8).
+- **A password in cleartext over TCP** — refused: `CREATE` or
+  `ALTER ROLE ... PASSWORD` over TCP without TLS takes only a
+  hashed password, a SCRAM secret as psql's `\password` sends;
+  the local socket takes either (`../aa/ROLE.md` §5.1, step
+  380). A password is masked in every logged statement.
 
 ## 8. Locking and isolation
 

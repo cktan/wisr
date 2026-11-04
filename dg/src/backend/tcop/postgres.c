@@ -974,8 +974,8 @@ static void exec_simple_query(const char *query_string) {
 
   /* Log immediately if dictated by log_statement */
   if (check_log_statement(parsetree_list)) {
-    ereport(LOG, (errmsg("statement: %s", query_string), errhidestmt(true),
-                  errdetail_execute(parsetree_list)));
+    ereport(LOG, (errmsg("statement: %s", query_for_log(query_string)),
+                  errhidestmt(true), errdetail_execute(parsetree_list)));
     was_logged = true;
   }
 
@@ -1242,9 +1242,9 @@ static void exec_simple_query(const char *query_string) {
     ereport(LOG, (errmsg("duration: %s ms", msec_str), errhidestmt(true)));
     break;
   case 2:
-    ereport(LOG,
-            (errmsg("duration: %s ms  statement: %s", msec_str, query_string),
-             errhidestmt(true), errdetail_execute(parsetree_list)));
+    ereport(LOG, (errmsg("duration: %s ms  statement: %s", msec_str,
+                         query_for_log(query_string)),
+                  errhidestmt(true), errdetail_execute(parsetree_list)));
     break;
   }
 
@@ -1450,7 +1450,8 @@ exec_parse_message(const char *query_string, /* string to execute */
     break;
   case 2:
     ereport(LOG, (errmsg("duration: %s ms  parse %s: %s", msec_str,
-                         *stmt_name ? stmt_name : "<unnamed>", query_string),
+                         *stmt_name ? stmt_name : "<unnamed>",
+                         query_for_log(query_string)),
                   errhidestmt(true)));
     break;
   }
@@ -1879,11 +1880,12 @@ static void exec_bind_message(StringInfo input_message) {
     ereport(LOG, (errmsg("duration: %s ms", msec_str), errhidestmt(true)));
     break;
   case 2:
-    ereport(LOG, (errmsg("duration: %s ms  bind %s%s%s: %s", msec_str,
-                         *stmt_name ? stmt_name : "<unnamed>",
-                         *portal_name ? "/" : "",
-                         *portal_name ? portal_name : "", psrc->query_string),
-                  errhidestmt(true), errdetail_params(params)));
+    ereport(LOG,
+            (errmsg("duration: %s ms  bind %s%s%s: %s", msec_str,
+                    *stmt_name ? stmt_name : "<unnamed>",
+                    *portal_name ? "/" : "", *portal_name ? portal_name : "",
+                    query_for_log(psrc->query_string)),
+             errhidestmt(true), errdetail_params(params)));
     break;
   }
 
@@ -2014,7 +2016,7 @@ static void exec_execute_message(const char *portal_name, long max_rows) {
             (errmsg("%s %s%s%s: %s",
                     execute_is_fetch ? _("execute fetch from") : _("execute"),
                     prepStmtName, *portal_name ? "/" : "",
-                    *portal_name ? portal_name : "", sourceText),
+                    *portal_name ? portal_name : "", query_for_log(sourceText)),
              errhidestmt(true), errdetail_params(portalParams)));
     was_logged = true;
   }
@@ -2118,7 +2120,7 @@ static void exec_execute_message(const char *portal_name, long max_rows) {
             (errmsg("duration: %s ms  %s %s%s%s: %s", msec_str,
                     execute_is_fetch ? _("execute fetch from") : _("execute"),
                     prepStmtName, *portal_name ? "/" : "",
-                    *portal_name ? portal_name : "", sourceText),
+                    *portal_name ? portal_name : "", query_for_log(sourceText)),
              errhidestmt(true), errdetail_params(portalParams)));
     break;
   }

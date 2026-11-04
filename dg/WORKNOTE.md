@@ -11315,3 +11315,31 @@ measured again on both kinds, then the gap profiled.
   entry about 700, `memcpy` and `bcmp` about 460.
 - **Tests**: none new: no behavior changed. sm, sq, aa and dg
   pass.
+
+## Step 380: a password in cleartext is refused over TCP, and never logged
+
+SCRAM sends no password at a login, but `CREATE ROLE` and
+`ALTER ROLE ... PASSWORD 'x'` carry one in the statement's
+text, which crosses TCP in the clear while digres has no TLS,
+and which an error's `STATEMENT:` line writes to the log.
+Design: `../aa/ROLE.md` §5.1.
+
+- **user.c**: `check_cleartext_password()`, in `CreateRole()`
+  and `AlterRole()`: a password in cleartext over TCP without
+  TLS is refused, so the password that crossed the network is
+  not set. A SCRAM secret, as psql's `\password` sends, an
+  empty password, the local socket and a standalone backend
+  are taken.
+- **elog.c**: `query_for_log()`, a statement as a log line
+  shows it, each string after the keyword `PASSWORD` masked;
+  it scans quotes, `E'...'`, dollar quotes and comments itself,
+  as an error's report calls it and must raise none. Used at
+  the error's `STATEMENT:` line and at `postgres.c`'s six
+  statement and duration lines.
+- **Tests**: `server.sh`: over TCP a cleartext password is
+  refused at CREATE and ALTER ROLE, and the old password stays;
+  a SCRAM secret over TCP is taken and logs in; over the socket
+  the cleartext is taken; the log masks `'...'`, `E'...'` and
+  `$q$...$q$` and keeps a string after "password" in a string or
+  a comment, and holds none of the passwords. Shown to fail with
+  the refusal left out, and with the masking left out.

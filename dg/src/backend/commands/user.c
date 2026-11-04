@@ -33,6 +33,7 @@
 #include "commands/defrem.h"
 #include "commands/user.h"
 #include "libpq/crypt.h"
+#include "libpq/libpq-be.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "storage/lmgr.h"
@@ -130,6 +131,31 @@ static void refuse_replication(DefElem *defel) {
   if (boolVal(defel->arg))
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("the REPLICATION attribute is not supported")));
+}
+
+/*
+ * Refuse a password in cleartext that came over TCP without TLS
+ * (../aa/ROLE.md section 5.1): the statement crossed the network in the
+ * clear, so the password is never set.  A SCRAM secret, hashed by the
+ * client as psql's \password does, an empty password, which clears it, and
+ * a statement over the local socket are taken.
+ */
+static void check_cleartext_password(const char *password) {
+  if ('\0' == password[0] ||
+      PASSWORD_TYPE_PLAINTEXT != get_password_type(password))
+    return;
+  /* A standalone backend, or the local socket: nothing crossed a network. */
+  if (NULL == MyProcPort || AF_UNIX == MyProcPort->raddr.addr.ss_family ||
+      MyProcPort->ssl_in_use)
+    return;
+  ereport(ERROR,
+          (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+           errmsg("a password in cleartext is refused over an unencrypted "
+                  "connection"),
+           errdetail("The statement crossed the network unencrypted, so the "
+                     "password is not set."),
+           errhint("Use psql's \\password, which sends the password "
+                   "hashed.")));
 }
 
 /*
@@ -245,8 +271,10 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
       elog(ERROR, "option \"%s\" not recognized", defel->defname);
   }
 
-  if (dpassword && dpassword->arg)
+  if (dpassword && dpassword->arg) {
     password = strVal(dpassword->arg);
+    check_cleartext_password(password);
+  }
   if (dissuper)
     issuper = boolVal(dissuper->arg);
   if (dinherit)
@@ -631,8 +659,10 @@ Oid AlterRole(ParseState *pstate, AlterRoleStmt *stmt) {
       elog(ERROR, "option \"%s\" not recognized", defel->defname);
   }
 
-  if (dpassword && dpassword->arg)
+  if (dpassword && dpassword->arg) {
     password = strVal(dpassword->arg);
+    check_cleartext_password(password);
+  }
   if (dconnlimit) {
     connlimit = intVal(dconnlimit->arg);
     if (connlimit < -1)

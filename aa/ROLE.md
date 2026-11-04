@@ -344,6 +344,34 @@ by peer, whatever the catalog says of it: its password, its
 `LOGIN`, its `CONNECTION LIMIT`. Role oid 10 cannot be dropped,
 as in PostgreSQL. No single-user mode is kept for this.
 
+### 5.1 A password set in cleartext
+
+SCRAM sends no password when a client logs in. A password set
+by SQL does: `CREATE ROLE` or `ALTER ROLE ... PASSWORD 'x'`
+carries it in the statement's text, and without TLS that text
+crosses the network in the clear (`../dg/WORKNOTE.md` step
+380).
+
+- **Over TCP without TLS, a password in cleartext is
+  refused**: `a password in cleartext is refused over an
+  unencrypted connection`, with a hint to use psql's
+  `\password`. The statement crossed the network once, but the
+  password is not set, so what crossed is no role's password.
+  PostgreSQL takes it.
+- **Taken as before**: a SCRAM secret, which psql's `\password`
+  and libpq's `PQchangePassword()` make on the client and send
+  in place of the password; an empty password, which clears
+  it; and any password over the local socket, which crosses no
+  network. Over TLS, when it comes, too. An md5 hash is taken
+  too, as any password not in cleartext is, but no login
+  accepts it: a login is by SCRAM alone (§5).
+- **No log shows a password**: a statement that a log line
+  shows, an error's `STATEMENT:`, `log_statement` and the
+  durations, has each string after the keyword `PASSWORD`
+  replaced by `'********'` (`query_for_log()` in `elog.c`).
+  `UPDATE t SET password = 'x'` is not a role's password, and
+  stays as it is.
+
 ---
 
 ## 6. What changes, by level

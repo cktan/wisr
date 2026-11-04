@@ -217,6 +217,12 @@ extern int set_errcontext_domain(const char *domain);
 extern int errcontext_msg(const char *fmt, ...) pg_attribute_printf(1, 2);
 
 extern int errhidestmt(bool hide_stmt);
+
+/*
+ * query as a log line shows it: each string after the keyword PASSWORD
+ * masked (../aa/ROLE.md section 5.1).
+ */
+extern const char *query_for_log(const char *query);
 extern int errhidecontext(bool hide_ctx);
 
 extern int errbacktrace(void);

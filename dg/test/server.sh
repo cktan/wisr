@@ -226,6 +226,73 @@ tcp_psql wrong -c 'select 1' > "$work/badpw.out" 2>&1 &&
 grep -q "password authentication failed" "$work/badpw.out" ||
   fail "wrong password message"
 
+# Verify that a password in cleartext is refused over TCP, and never logged
+# (../aa/ROLE.md section 5.1).
+# 1. Over TCP, CREATE ROLE with a password in cleartext is refused, and makes
+#    no role.
+# 2. Over the local socket, the same statement makes the role; it logs in
+#    over TCP with that password.
+# 3. Over TCP, ALTER ROLE with a password in cleartext is refused: the old
+#    password still logs in, the new one does not.
+# 4. Over TCP, ALTER ROLE with a SCRAM secret, hashed as psql's \password
+#    hashes it, is taken: its password logs in.
+# 5. Over the local socket, with log_statement all, passwords as '...',
+#    E'...' and $q$...$q$ are masked in the log; a string that only follows
+#    the word "password" in a string or a comment is not.
+# 6. No password of these steps is in the server's log.
+# 7. Drop pw1, which the checks after this one do not expect.
+tcp_psql sesame -c "create role pw1 login password 'pwcreate'" \
+  > "$work/pw.out" 2>&1 && fail "cleartext password: created over TCP"
+grep -q "a password in cleartext is refused over an unencrypted connection" \
+  "$work/pw.out" || fail "cleartext password: the refusal"
+[ "$(local_psql -A -t -c "select count(*) from pg_roles where rolname = 'pw1'")" \
+  = 0 ] || fail "cleartext password: no role made"
+local_psql -c "create role pw1 login password 'pwfirst'" > "$work/pw.out" 2>&1 ||
+  fail "cleartext password: made over the socket"
+[ "$(tcp_psql pwfirst -U pw1 -c 'select 1' 2>&1)" = 1 ] ||
+  fail "cleartext password: the socket's password logs in"
+tcp_psql sesame -c "alter role pw1 password 'pwsecond'" > "$work/pw.out" 2>&1 &&
+  fail "cleartext password: altered over TCP"
+[ "$(tcp_psql pwfirst -U pw1 -c 'select 1' 2>&1)" = 1 ] ||
+  fail "cleartext password: the old password stays"
+tcp_psql pwsecond -U pw1 -c 'select 1' > /dev/null 2>&1 &&
+  fail "cleartext password: the refused password logs in"
+# A SCRAM-SHA-256 secret of pwthird, as libpq's PQencryptPasswordConn makes.
+secret=$(python3 -c '
+import base64, hashlib, hmac, os
+pw, salt, n = b"pwthird", os.urandom(16), 4096
+salted = hashlib.pbkdf2_hmac("sha256", pw, salt, n)
+ck = hmac.new(salted, b"Client Key", hashlib.sha256).digest()
+sk = hmac.new(salted, b"Server Key", hashlib.sha256).digest()
+b64 = lambda b: base64.b64encode(b).decode()
+print("SCRAM-SHA-256$%d:%s$%s:%s" % (n, b64(salt),
+      b64(hashlib.sha256(ck).digest()), b64(sk)))')
+tcp_psql sesame -c "alter role pw1 password '$secret'" > "$work/pw.out" 2>&1 ||
+  fail "cleartext password: a secret taken over TCP"
+[ "$(tcp_psql pwthird -U pw1 -c 'select 1' 2>&1)" = 1 ] ||
+  fail "cleartext password: the secret's password logs in"
+local_psql -c "set log_statement = 'all'" \
+  -c "alter role pw1 password 'pwfourth'" \
+  -c "alter role pw1 password E'pw\\'fifth'" \
+  -c 'alter role pw1 password $q$pwsixth$q$' \
+  -c "select 'password', 'keepone'" \
+  -c "/* password */ select 'keeptwo'" > "$work/pw.out" 2>&1 ||
+  fail "cleartext password: the logged statements"
+for _ in $(seq 50); do
+  grep -q "keeptwo" "$work/log" && break
+  sleep 0.1
+done
+grep -q "statement: alter role pw1 password '\*\*\*\*\*\*\*\*'" "$work/log" &&
+  grep -q "statement: alter role pw1 password E'\*\*\*\*\*\*\*\*'" "$work/log" &&
+  grep -q "STATEMENT:  create role pw1 login password '\*\*\*\*\*\*\*\*'" \
+    "$work/log" &&
+  grep -q "keepone" "$work/log" && grep -q "keeptwo" "$work/log" ||
+  fail "cleartext password: masked in the log"
+grep -q "pwcreate\|pwfirst\|pwsecond\|pwfourth\|pwfifth\|pwsixth" \
+  "$work/log" && fail "cleartext password: a password in the log"
+local_psql -c "drop role pw1" > /dev/null 2>&1 ||
+  fail "cleartext password: drop the role"
+
 # Verify that a statement the server cannot run yet fails without taking
 # the server down.
 # 1. Read a catalog table, which digres does not have.

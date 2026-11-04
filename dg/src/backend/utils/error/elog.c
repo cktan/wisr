@@ -2958,7 +2958,7 @@ static void send_message_to_server_log(ErrorData *edata) {
   if (check_log_of_query(edata)) {
     log_line_prefix(&buf, edata);
     appendStringInfoString(&buf, _("STATEMENT:  "));
-    append_with_tabs(&buf, debug_query_string);
+    append_with_tabs(&buf, query_for_log(debug_query_string));
     appendStringInfoChar(&buf, '\n');
   }
 
@@ -3247,6 +3247,126 @@ const char *error_severity(int elevel) {
   }
 
   return prefix;
+}
+
+/* Whether c may be in a word of SQL: a keyword or an unquoted name. */
+static bool word_char(char c) {
+  return isalnum((unsigned char)c) || '_' == c || '$' == c ||
+         (unsigned char)c >= 0x80;
+}
+
+/*
+ * The end of the string literal whose opening quote is at p: past its closing
+ * quote, or the end of the text.  backslash says a backslash escapes the next
+ * character, as in E'...'.
+ */
+static const char *literal_end(const char *p, bool backslash) {
+  for (p++; '\0' != *p; p++) {
+    if (backslash && '\\' == *p && '\0' != p[1])
+      p++;
+    else if ('\'' == *p && '\'' == p[1])
+      p++;
+    else if ('\'' == *p)
+      return p + 1;
+  }
+  return p;
+}
+
+/*
+ * The end of the dollar-quoted literal at p, $tag$...$tag$: past its closing
+ * tag, or the end of the text; NULL if p starts no dollar quote.
+ */
+static const char *dollar_end(const char *p) {
+  const char *t = p + 1;
+
+  while (word_char(*t) && '$' != *t)
+    t++;
+  if ('$' != *t || isdigit((unsigned char)p[1]))
+    return NULL;
+  size_t tag = t - p + 1;
+
+  for (const char *q = strchr(t + 1, '$'); NULL != q; q = strchr(q + 1, '$'))
+    if (0 == strncmp(q, p, tag))
+      return q + tag;
+  return p + strlen(p);
+}
+
+/*
+ * query as a log line shows it, so that a password set in cleartext
+ * (../aa/ROLE.md section 5.1) never reaches the log: query itself if it has
+ * no word "password", else a palloc'd copy with each string literal that
+ * follows the keyword PASSWORD replaced by '********'.  It scans quotes and
+ * comments itself, raising no error, as an error's own report calls it.
+ * 1. Copy white space and comments as they are; they keep what precedes.
+ * 2. Copy a quoted name, or a character of punctuation; it ends PASSWORD's
+ *    reach.
+ * 3. Read a word: PASSWORD opens the reach; a string's prefix, E, N or U&,
+ *    keeps it; any other word ends it.
+ * 4. Copy a string literal, '...' or $tag$...$tag$, or mask it if PASSWORD
+ *    reaches it, and end the reach.
+ */
+const char *query_for_log(const char *query) {
+  const char *p = query;
+  bool reach = false;
+  StringInfoData buf;
+
+  if (NULL == query || NULL == strcasestr(query, "password"))
+    return query;
+  initStringInfo(&buf);
+  while ('\0' != *p) {
+    const char *start = p;
+
+    if (isspace((unsigned char)*p)) {
+      p++;
+    } else if ('-' == p[0] && '-' == p[1]) {
+      while ('\0' != *p && '\n' != *p)
+        p++;
+    } else if ('/' == p[0] && '*' == p[1]) {
+      int depth = 0;
+
+      do {
+        if ('/' == p[0] && '*' == p[1])
+          depth++, p += 2;
+        else if ('*' == p[0] && '/' == p[1])
+          depth--, p += 2;
+        else
+          p++;
+      } while ('\0' != *p && depth > 0);
+    } else if ('"' == *p) {
+      for (p++; '\0' != *p && !('"' == *p && '"' != p[1]); p++)
+        if ('"' == *p)
+          p++;
+      if ('\0' != *p)
+        p++;
+      reach = false;
+    } else if ('\'' == *p || ('$' == *p && NULL != dollar_end(p))) {
+      bool backslash = p > query && ('E' == p[-1] || 'e' == p[-1]) &&
+                       (p - 1 == query || !word_char(p[-2]));
+
+      p = '\'' == *p ? literal_end(p, backslash) : dollar_end(p);
+      if (reach) {
+        appendStringInfoString(&buf, "'********'");
+        reach = false;
+        continue;
+      }
+    } else if (word_char(*p)) {
+      while (word_char(*p))
+        p++;
+      size_t len = p - start;
+
+      if (8 == len && 0 == pg_strncasecmp(start, "password", 8))
+        reach = true;
+      else if (!(reach && 1 == len && strchr("EeNnUu", *start)))
+        reach = false;
+    } else {
+      /* U&'...': the & of a Unicode string's prefix keeps the reach. */
+      if (!('&' == *p && p > query && strchr("Uu", p[-1]) && '\'' == p[1]))
+        reach = false;
+      p++;
+    }
+    appendBinaryStringInfo(&buf, start, p - start);
+  }
+  return buf.data;
 }
 
 /*

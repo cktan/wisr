@@ -125,7 +125,10 @@ layer.
   function privileges, `ALTER ROLE ... SET`, and `ALTER DEFAULT
   PRIVILEGES` fail; role DDL is refused in a transaction block.
 - **No TLS or GSSAPI.** Their build options are off. A
-  connection over TCP is not encrypted.
+  connection over TCP is not encrypted. Logins use SCRAM, which
+  sends no password; a password set by SQL over TCP must come
+  hashed, as psql's `\password` sends it, and a logged statement
+  never shows a password (`aa/ROLE.md` §5.1).
 - **Fixed encoding and locale.** Every DG database uses `UTF8`
   encoding and collation `C`. A column's `COLLATE`, `CREATE
   COLLATION`, and an index key collation other than the
