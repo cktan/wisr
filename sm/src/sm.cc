@@ -2190,10 +2190,12 @@ int sm_tbl_truncate(sm_tbl_t *tbl) {
     if (sm3::tbl_truncate(tbl->table) != 0) {
       return -1;
     }
-    // The table now lives in another store; a definition given out
-    // stays where it is, as its holders point into it.
+    // The table now lives in another store, which the definition does
+    // not show: of a definition given out, only the version changes,
+    // in place, as its holders point into it.
     if (tbl->def) {
-      tbl->def = api_def(tbl->session->sm3, sm3::tbl_def(tbl->table));
+      tbl->def->version =
+          sm3::cat_table_version(tbl->session->sm3, tbl->def->oid);
     }
     return 0;
   });

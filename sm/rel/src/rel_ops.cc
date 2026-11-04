@@ -2172,8 +2172,21 @@ static Janet cfun_truncate(int32_t argc, Janet *argv) {
   std::string tbl_name = identifier_of(argv[0]);
   // The table lock exclusive, as TRUNCATE takes it.
   table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_EX, "truncate");
+  // The handle's definition, given out already: a truncate must leave
+  // it, and all it holds, where its holders point (sm.h).
+  const sm_table_def_t *def = sm_tbl_def(p_tdef->tbl);
+  if (!def) {
+    panic_sm_error("truncate sm_tbl_def");
+  }
+  const sm_column_def_t *columns = def->columns.data();
   if (sm_tbl_truncate(p_tdef->tbl) != 0) {
     panic_sm_error("truncate sm_tbl_truncate");
+  }
+  if (sm_tbl_def(p_tdef->tbl) != def || def->columns.data() != columns) {
+    janet_panic("truncate: the table's definition moved");
+  }
+  if (def->version != sm_tbl_version(p_tdef->tbl)) {
+    janet_panic("truncate: the table's definition has an old version");
   }
   return janet_wrap_nil();
 }

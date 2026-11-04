@@ -110,7 +110,9 @@ session, is fixed. Medium 11 is closed: the evaluator's contract
 (sm.h, sm3.h) is -1 only with the error set, and both evaluators,
 digres's and rel's, keep it. Medium 12, a pin's allocation with
 new (std::nothrow) and SM_ERR_NOMEM, is fixed, in sm1's
-rawpin_new too. The others and the Lows are being checked.
+rawpin_new too. Medium 13, a truncate that rebuilt the handle's
+definition in place, is fixed. The others and the Lows are being
+checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -126,7 +128,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 5 Low |
-| `include/` & `src/` | PASS | PASS | 2 Medium, 3 Low |
+| `include/` & `src/` | PASS | PASS | 1 Medium, 3 Low |
 
 ---
 
@@ -138,11 +140,6 @@ None open: Highs 1 to 9 are closed.
 
 ### 3. Medium-Severity Findings
 
-13. **`src/sm.cc` (`sm/src/sm.cc:2193-2197`) — `sm_tbl_truncate`
-    overwrites `*tbl->def` in place:** Move-assigning
-    `api_def(...)` into `*tbl->def` reallocates internal vectors
-    and strings while callers of `sm_tbl_def` may hold pointers
-    into them; only `tbl->def->version` needs updating.
 14. **`src/sm.cc` (`sm/src/sm.cc:601, 608, 843, 940-1006, 1733,
     1880-1983, 2205-2312`) — Inconsistent null checks before
     `guard()`:** Several entry points dereference `session`,
