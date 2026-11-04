@@ -1237,16 +1237,6 @@ bool catrel_is_global(Oid relid) {
 }
 
 /*
- * Whether the syscache may keep a row of the catalog relid: one compiled in,
- * or of pg_global's, or of a catalog that is no catalog relation; not one
- * made from sm's catalog, which no DDL invalidates (SYSCATALOG.md).
- */
-bool catrel_is_cached(Oid relid) {
-  return NULL == cat_relation(relid) || catrel_is_builtin(relid) ||
-         catrel_is_global(relid);
-}
-
-/*
  * The quals of a sequential scan of rel, scanrelid in its plan, that can
  * narrow the rows the scan makes: a filter column's oid equal to a value
  * that reads nothing of rel and is not volatile, a constant or a

@@ -64,8 +64,8 @@ int aa_load(sm_env_t *env, aa_env_t **out) {
     return -1;
   e = new aa_env_t();
   e->env = env;
-  e->roles = roles;
-  e->objects = objects;
+  e->roles.store(roles, std::memory_order_relaxed);
+  e->objects.store(objects, std::memory_order_relaxed);
   *out = e;
   return 0;
 }
@@ -73,17 +73,15 @@ int aa_load(sm_env_t *env, aa_env_t **out) {
 /* Free what aa_load() read: at the end, once no session uses it. */
 void aa_close(aa_env_t *env) { delete env; }
 
-/* The roles as last committed, copied under the lock. */
+/* The roles as last committed. */
 std::shared_ptr<const aa_roles_t> aa_roles(aa_env_t *env) {
-  /* The snapshot is replaced as a whole; copy the pointer under the lock. */
-  std::lock_guard<std::mutex> lock(env->mutex);
-  return env->roles;
+  /* The snapshot is replaced as a whole; loaded without the lock. */
+  return env->roles.load(std::memory_order_acquire);
 }
 
-/* The objects' entries as last committed, copied under the lock. */
+/* The objects' entries as last committed. */
 std::shared_ptr<const aa_objects_t> aa_objects(aa_env_t *env) {
-  std::lock_guard<std::mutex> lock(env->mutex);
-  return env->objects;
+  return env->objects.load(std::memory_order_acquire);
 }
 
 /*
@@ -613,7 +611,7 @@ int aa_commit(aa_session_t *s) {
   // Replace the snapshot with the roles read: the commits are in order,
   // so no later read is lost to an earlier one.
   std::lock_guard<std::mutex> lock(s->env->mutex);
-  s->env->roles = next;
+  s->env->roles.store(next, std::memory_order_release);
   // The session's caches hold its own change already, but not one of
   // another's it has not seen: it is up to date only if it was before.
   bool fresh = s->epoch == s->env->epoch.load();
@@ -661,7 +659,8 @@ static void publish_objects(aa_env_t *env,
                             const std::map<aa_key_t, const aa_change_t *> &last,
                             const std::vector<uint64_t> &dropped) {
   std::lock_guard<std::mutex> lock(env->mutex);
-  auto next = std::make_shared<aa_objects_t>(*env->objects);
+  auto next = std::make_shared<aa_objects_t>(
+      *env->objects.load(std::memory_order_relaxed));
   uint64_t epoch = env->objects_epoch.load() + 1;
 
   for (const auto &[key, c] : last) {
@@ -669,18 +668,20 @@ static void publish_objects(aa_env_t *env,
       (*next)[key] = c->object;
     else
       next->erase(key);
-    env->changed.push_back({epoch, key});
+    env->changed.push_back({epoch, key, c->present ? c->object.classid : 0});
   }
-  for (uint64_t dbid : dropped)
+  for (uint64_t dbid : dropped) {
     next->erase(next->lower_bound(aa_key_t(dbid, 0)),
                 next->lower_bound(aa_key_t(dbid + 1, 0)));
+    env->changed.push_back({epoch, aa_key_t(dbid, 0), AA_CLASS_DATABASE});
+  }
   // Trim to what is kept, noting the newest epoch that lost an entry:
   // one epoch may span the trim, its first entries gone, its last kept.
   while (env->changed.size() > CHANGED_KEPT) {
-    env->changed_lost = std::max(env->changed_lost, env->changed.front().first);
+    env->changed_lost = std::max(env->changed_lost, env->changed.front().epoch);
     env->changed.pop_front();
   }
-  env->objects = next;
+  env->objects.store(next, std::memory_order_release);
   env->objects_epoch.store(epoch);
 }
 
@@ -740,17 +741,17 @@ bool aa_roles_moved(aa_session_t *s) {
   return true;
 }
 
-/*
- * Whether another session has changed objects' entries since this one
- * last asked: true once, with the oids of those of the database dbid in
- * *oids, or *all set if they are more than aa keeps of.
- */
-bool aa_objects_moved(aa_session_t *s, uint64_t dbid,
-                      std::vector<aa_oid_t> *oids, bool *all) {
+/* Whether another session has changed objects' entries; see aa.h. */
+bool aa_objects_stale(const aa_session_t *s) {
+  return s->env->objects_epoch.load() != s->objects_epoch;
+}
+
+/* Say what changed since this session last asked; see aa.h. */
+bool aa_objects_moved(aa_session_t *s, uint64_t dbid, aa_moved_t *out) {
   aa_env_t *env = s->env;
   uint64_t epoch;
 
-  *all = false;
+  *out = aa_moved_t();
   if (env->objects_epoch.load() == s->objects_epoch)
     return false;
   {
@@ -759,11 +760,18 @@ bool aa_objects_moved(aa_session_t *s, uint64_t dbid,
     epoch = env->objects_epoch.load();
     // All, if what is kept may not name every object changed since:
     // nothing kept, or an entry of an epoch past this session's trimmed.
-    *all = env->changed.empty() || env->changed_lost > s->objects_epoch;
-    if (!*all)
-      for (const auto &[e, key] : env->changed)
-        if (e > s->objects_epoch && key.first == dbid)
-          oids->push_back(key.second);
+    out->all = env->changed.empty() || env->changed_lost > s->objects_epoch;
+    out->namespaces = out->databases = out->all;
+    if (!out->all)
+      for (const aa_changed_t &c : env->changed) {
+        if (c.epoch <= s->objects_epoch)
+          continue;
+        out->databases |= AA_CLASS_DATABASE == c.classid;
+        if (c.key.first != dbid || 0 == c.key.second)
+          continue;
+        out->namespaces |= AA_CLASS_NAMESPACE == c.classid;
+        out->oids.push_back(c.key.second);
+      }
   }
   s->objects_epoch = epoch;
   return true;

@@ -520,6 +520,7 @@ void pg_global_set_owner(uint64_t dbid, Oid classid, Oid objid, Oid owner,
     object.owner = owner;
     aa_set_object(s, GetCurrentTransactionNestLevel(), object);
   }
+  CacheInvalidateCatalog(classid);
   /* The relation's cache entry has its owner, for a view's rules. */
   if (RelationRelationId == classid && pg_global_dbid(MyDatabaseId) == dbid)
     CacheInvalidateRelcacheByOid(objid);
@@ -536,6 +537,7 @@ void pg_global_forget(uint64_t dbid, Oid objid) {
 /* The database dbid goes: every entry of its with it, after the commit. */
 void pg_global_forget_database(uint64_t dbid) {
   aa_forget_database(session_state(), dbid);
+  CacheInvalidateCatalog(DatabaseRelationId);
 }
 
 /*
@@ -552,15 +554,16 @@ void pg_global_set_acl(uint64_t dbid, Oid classid, Oid objid, Oid owner,
 
   if (temp) {
     aa_set_temp_acl(s, GetCurrentTransactionNestLevel(), objid, text);
-    return;
+  } else {
+    if (!find_object(s, aa_key_t(dbid, objid), &object)) {
+      object = entry_of(s, dbid, classid, objid);
+      object.owner = owner;
+    }
+    object.has_acl = true;
+    object.acl = text;
+    aa_set_object(s, GetCurrentTransactionNestLevel(), object);
   }
-  if (!find_object(s, aa_key_t(dbid, objid), &object)) {
-    object = entry_of(s, dbid, classid, objid);
-    object.owner = owner;
-  }
-  object.has_acl = true;
-  object.acl = text;
-  aa_set_object(s, GetCurrentTransactionNestLevel(), object);
+  CacheInvalidateCatalog(classid);
   /* The relation's cache entry has no ACL, but is a view's: as an owner's. */
   if (RelationRelationId == classid && pg_global_dbid(MyDatabaseId) == dbid)
     CacheInvalidateRelcacheByOid(objid);
@@ -638,25 +641,40 @@ void pg_global_settle(void) {
 }
 
 /*
+ * Whether pg_global_objects_moved() has something to say: asked at every
+ * lock, so it is a load for nothing changed.
+ */
+bool pg_global_objects_stale(void) {
+  aa_session_t *s;
+
+  return pg_global_is_loaded() && NULL != (s = session_state()) &&
+         aa_objects_stale(s);
+}
+
+/*
  * At the start of a transaction: drop what this session's relation cache
  * keeps of the relations whose owner another session changed since it
- * last looked; of every relation if they are more than aa keeps.
+ * last looked; of every relation if they are more than aa keeps.  True if
+ * any object's entry changed, so the caller drops what the syscache keeps
+ * of owners and ACLs; *namespaces and *databases say whether a schema's or
+ * a database's did, whose rows the plan cache watches.
  */
-void pg_global_objects_moved(void) {
-  aa_session_t *s;
-  std::vector<aa_oid_t> oids;
-  bool all;
+bool pg_global_objects_moved(bool *namespaces, bool *databases) {
+  aa_session_t *s = session_state();
+  aa_moved_t moved;
 
-  if (!pg_global_is_loaded() || NULL == (s = session_state()))
-    return;
-  if (!aa_objects_moved(s, pg_global_dbid(MyDatabaseId), &oids, &all) ||
+  *namespaces = *databases = false;
+  if (!aa_objects_moved(s, pg_global_dbid(MyDatabaseId), &moved) ||
       !OidIsValid(MyDatabaseId))
-    return;
-  if (all)
+    return false;
+  if (moved.all)
     RelationCacheInvalidate(false);
   else
-    for (Oid oid : oids)
+    for (Oid oid : moved.oids)
       RelationCacheInvalidateEntry(oid);
+  *namespaces = moved.namespaces;
+  *databases = moved.databases;
+  return true;
 }
 
 /*

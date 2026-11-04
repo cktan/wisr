@@ -11343,3 +11343,58 @@ Design: `../aa/ROLE.md` §5.1.
   `$q$...$q$` and keeps a string after "password" in a string or
   a comment, and holds none of the passwords. Shown to fail with
   the refusal left out, and with the masking left out.
+
+## Step 381: sm's catalog rows in the syscache, and aa's snapshots without a lock
+
+`../sm/NEXT.md` §1 item 2, its steps 3 to 5. Step 321 stopped the
+syscache keeping sm's catalog rows, as no DDL of sm's invalidated
+them. Each lookup made its row again.
+
+- **The rows are kept again** (`catrel_is_cached()` is gone).
+  Another session's change reaches the syscache by
+  `smstore_catalog_moved()`, at each
+  `AcceptInvalidationMessages()`. This session's own DDL
+  invalidates what it changes, as a catalog tuple's write would,
+  and so holds through a rollback (`forget_table()`).
+- **`pg_namespace` and `pg_database` go only for a change of
+  theirs.** A first attempt flushed them at each catalog epoch
+  and object change. Their flush resets the plan cache, so a
+  table's DDL or a GRANT replanned every session's prepared
+  statements. `aa_objects_moved()` now says which classes
+  changed.
+- **The check at each lock is one load** when nothing moved:
+  `sm_cat_publishes()` and `aa_objects_stale()`. `sm_cat_epoch()`
+  through its layers cost 1.6% of a prepared point read.
+- **`aa_roles()` and `aa_objects()` read without the mutex**: an
+  atomic `shared_ptr`. 16 clients show no gain: the session
+  keeps its answers, so the mutex was not contended. It stays as
+  the plan asked: it costs nothing.
+- **Measured** on `digres-release`, instructions a statement.
+  Point reads and `t16` by callgrind, catalog reads by
+  `perf stat`, pinned:
+
+  | Statement | User | Before | After |
+  | --- | --- | --- | --- |
+  | point read, prepared | superuser | 41,657 | 41,193 |
+  | point read, prepared | role | 43,168 | 43,003 |
+  | 16 tables' checks, prepared | superuser | 143,859 | 138,725 |
+  | catalog reads, simple | superuser | 207,086 | 164,760 |
+  | catalog reads, prepared | superuser | 103,877 | 60,424 |
+
+  `perf stat` swings by 2% between runs on this machine, too
+  much to judge a gap of 3%, so the gap is callgrind's.
+- **The goal of 3% is not met**: a role's prepared point read
+  costs 4.4% more than a superuser's. PostgreSQL's EXECUTE check
+  of the operator's function is 3.1% by itself. PostgreSQL's gap
+  is 2.5%, by `perf stat`. No shortcut is taken around
+  PostgreSQL's check.
+- **Tests**: `server.sh`: a column dropped, a GRANT and a table
+  dropped by another session reach a held session's syscache; a
+  table or a grant replans nothing, a schema does; schema,
+  database and table grants reach another session.
+  `test_objects.cc`: a change says its class. Each flush and
+  the own DDL's invalidation were left out in turn, and a test
+  failed each time. A script of each kind of DDL digres supports,
+  as a later DDL of one transaction, printed the same as before
+  the rows were kept. `make tsan` passes, for aa and for digres.
+

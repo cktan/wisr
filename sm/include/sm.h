@@ -867,6 +867,15 @@ uint64_t sm_cat_namespace_epoch(sm_session_t* session);
 uint64_t sm_cat_epoch(sm_session_t* session);
 
 /*
+ * The count of the catalog's publishes, whatever the session's own
+ * transaction has done: one load, for a host that asks at every lock
+ * and makes its own DDL known to itself. A publish that moves
+ * sm_cat_namespace_epoch() moves this after, so one who reads this
+ * moved reads that moved too.
+ */
+uint64_t sm_cat_publishes(sm_session_t* session);
+
+/*
  * Create the namespace name, SQL's schema, in the session's
  * transaction, which sees it at once and others at commit; its oid
  * is set in oid. A name another namespace has fails with

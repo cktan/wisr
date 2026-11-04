@@ -17,11 +17,18 @@ int aa_seterr(aa_errnum_t code, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
 int aa_sm_failed(const char *what);
 
+/* One object an objects' replacement changed. */
+struct aa_changed_t {
+  uint64_t epoch;   /* the replacement's */
+  aa_key_t key;     /* the object's; its objid 0 for a database dropped */
+  aa_oid_t classid; /* its class; 0 for an entry that went */
+};
+
 /* The process's: pg_global as last committed, which every session reads. */
 struct aa_env_t {
   sm_env_t *env = NULL; /* the home directory pg_global is in */
-  std::mutex mutex;     /* guards roles and objects, and orders their
-                           replacement */
+  std::mutex mutex;     /* orders the snapshots' replacement, and guards
+                           changed */
   /* Orders the commits of role changes: held from before a commit's
    * transaction begins to its snapshot's replacement, so the roles it
    * reads back include every role commit before it. */
@@ -33,17 +40,17 @@ struct aa_env_t {
    * change's read of an entry waits for it (aa_object_settled()). Taken
    * before roles_commit_mutex. */
   std::mutex objects_commit_mutex;
-  std::shared_ptr<const aa_roles_t> roles;
+  std::atomic<std::shared_ptr<const aa_roles_t>> roles;
   /* How many times roles was replaced: a session's caches of them are
    * stale when it has moved (aa_roles_moved()). */
   std::atomic<uint64_t> epoch{0};
-  /* Every object's entry, replaced as a whole, under mutex. */
-  std::shared_ptr<const aa_objects_t> objects;
+  /* Every object's entry, replaced as a whole under mutex, read without it. */
+  std::atomic<std::shared_ptr<const aa_objects_t>> objects;
   /* How many times objects was replaced, and, for the last of them, which
    * object each replacement changed: a session drops what it caches of
    * those (aa_objects_moved()). */
   std::atomic<uint64_t> objects_epoch{0};
-  std::deque<std::pair<uint64_t, aa_key_t>> changed;
+  std::deque<aa_changed_t> changed;
   /* The newest epoch an entry of changed was trimmed off of, 0 if none:
    * a session behind it may have missed an object, and drops all. */
   uint64_t changed_lost = 0;

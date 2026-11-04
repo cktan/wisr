@@ -1289,6 +1289,11 @@ uint64_t sm_cat_epoch(sm_session_t *session) {
   return session && session->sm3 ? sm3::cat_epoch(session->sm3) : 0;
 }
 
+/* The count of the catalog's publishes: 0 for a session with no catalog. */
+uint64_t sm_cat_publishes(sm_session_t *session) {
+  return session && session->sm3 ? sm3::cat_publishes(session->sm3) : 0;
+}
+
 /* Create a namespace. */
 int sm_cat_create_namespace(sm_session_t *session, const char *name,
                             uint64_t *oid) {

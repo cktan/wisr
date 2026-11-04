@@ -974,6 +974,9 @@ uint64_t cat_namespace_epoch(const session_t *s) {
   return s->cat->nsp_seq.load();
 }
 
+/* The count of the catalog's publishes; see sm3.h. */
+uint64_t cat_publishes(const session_t *s) { return s->cat->seq.load(); }
+
 /* The catalog's epoch as s sees it; see sm3.h. */
 uint64_t cat_epoch(const session_t *s) {
   if (made_ddl(s)) {

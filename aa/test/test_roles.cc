@@ -4,6 +4,9 @@
  */
 #include "doctest.h"
 
+#include <atomic>
+#include <thread>
+
 #include "home.h"
 
 // Verify that aa_create() makes the superuser and PostgreSQL's
@@ -200,4 +203,51 @@ TEST_CASE("roles: delete") {
   roles = aa_roles(h.aa());
   CHECK(nullptr == find_role(*roles, "pg_read_all_settings"));
   CHECK(2 == roles->members.size());
+}
+
+// Verify that threads reading the roles and objects snapshots without a
+// lock see each snapshot whole while another session replaces both.
+// 1. Start four reader threads that read aa_roles() and aa_objects().
+// 2. Replace both snapshots twenty times in a writer session.
+// 3. Join the readers; confirm every snapshot read was complete.
+TEST_CASE("roles: concurrent readers while snapshots are replaced") {
+  home_t h;
+  std::atomic<bool> stop{false};
+  std::atomic<int> bad{0};
+  std::thread readers[4];
+
+  // 1.
+  for (std::thread &t : readers)
+    t = std::thread([&] {
+      while (!stop.load(std::memory_order_relaxed)) {
+        auto r = aa_roles(h.aa());
+        auto o = aa_objects(h.aa());
+        if (nullptr == find_role(*r, "admin") || o->size() > 20)
+          bad.fetch_add(1, std::memory_order_relaxed);
+      }
+    });
+
+  // 2.
+  aa_session_t *s = aa_session_new(h.aa());
+  for (int i = 0; i < 20; i++) {
+    aa_role_t role;
+    aa_object_t obj;
+    REQUIRE(0 == aa_new_oid(s, &role.oid));
+    role.rolname = "r" + std::to_string(i);
+    aa_put_role(s, role);
+    obj.dbid = 1;
+    obj.objid = 20000 + i;
+    obj.classid = AA_CLASS_RELATION;
+    obj.owner = role.oid;
+    aa_set_object(s, 1, obj);
+    REQUIRE(0 == aa_commit(s));
+    REQUIRE(0 == aa_post_commit(s));
+  }
+  aa_session_free(s);
+
+  // 3.
+  stop.store(true, std::memory_order_relaxed);
+  for (std::thread &t : readers)
+    t.join();
+  CHECK(0 == bad.load());
 }

@@ -2789,10 +2789,9 @@ AclMode pg_class_aclmask(Oid table_oid, Oid roleid, AclMode mask,
  * The privileges of mask roleid holds on the table or view relid of sm's,
  * by its owner and ACL in pg_global, as its pg_class row would give them
  * (catalog/catrel.c's relation_owner() and relation_acl()), without making
- * the row, which the syscache does not keep (catrel_is_cached()): the
- * check every statement on a table makes for a role not a superuser.  aa
- * keeps the answer in the session until an owner, an ACL or a role
- * changes (aa_object_mask()).
+ * the row: the check every statement on a table makes for a role not a
+ * superuser.  aa keeps the answer in the session until an owner, an ACL or
+ * a role changes (aa_object_mask()).
  */
 static AclMode sm_table_aclmask(Oid relid, Oid roleid, AclMode mask) {
   return aa_object_mask(pg_global_env(), pg_global_session(),

@@ -118,7 +118,10 @@
 #include "access/smstore.h"
 #include "catalog/pg_auth_members_d.h"
 #include "catalog/pg_authid_d.h"
+#include "catalog/pg_database_d.h"
 #include "catalog/pg_namespace_d.h"
+#include "catalog/pg_rewrite_d.h"
+#include "catalog/pg_sequence_d.h"
 #include "utils/catcache.h"
 #include "utils/injection_point.h"
 #include "utils/inval.h"
@@ -755,6 +758,45 @@ void LocalExecuteInvalidationMessage(SharedInvalidationMessage *msg) {
 void InvalidateSystemCaches(void) { InvalidateSystemCachesExtended(false); }
 
 /*
+ * Drop what this session's syscache keeps of the catalog catId, as a
+ * catalog invalidation message from another session would.
+ */
+static void flush_catalog(Oid catId) {
+  SharedInvalidationMessage msg;
+
+  msg.cat.id = SHAREDINVALCATALOG_ID;
+  msg.cat.dbId = IsSharedRelation(catId) ? InvalidOid : MyDatabaseId;
+  msg.cat.catId = catId;
+  LocalExecuteInvalidationMessage(&msg);
+  SharedInvalidMessageCounter++;
+}
+
+/* Drop what the syscache keeps of sm's catalogs: sm has published. */
+static void flush_sm_catalogs(void) {
+  static const Oid cats[] = {RelationRelationId, AttributeRelationId,
+                             IndexRelationId,    SequenceRelationId,
+                             RewriteRelationId,  ConstraintRelationId};
+
+  if (smstore_namespaces_moved())
+    flush_catalog(NamespaceRelationId);
+  for (Oid cat : cats)
+    flush_catalog(cat);
+}
+
+/* Drop what the syscache keeps of owners and ACLs that changed. */
+static void flush_object_catalogs(void) {
+  bool namespaces, databases;
+
+  if (!pg_global_objects_moved(&namespaces, &databases))
+    return;
+  flush_catalog(RelationRelationId);
+  if (namespaces)
+    flush_catalog(NamespaceRelationId);
+  if (databases)
+    flush_catalog(DatabaseRelationId);
+}
+
+/*
  * AcceptInvalidationMessages
  *		Read and process invalidation messages from the shared
  *invalidation message queue.
@@ -773,18 +815,14 @@ void AcceptInvalidationMessages(void) {
   /*
    * Nothing is received from other sessions: what this one caches of a
    * table of sm's is checked against sm's version under sm's lock
-   * (RelationCheckSmVersion()), and a schema, whose lookup no lock guards,
-   * against sm's namespaces' epoch here (SHMEM.md section 5.1).
+   * (RelationCheckSmVersion()), and what the syscache keeps of sm's
+   * catalog rows against sm's publishes here (smstore_catalog_moved()).
+   * pg_namespace and pg_database go only for a change of theirs: the plan
+   * cache resets at their flush (plancache.c), and a table's DDL is no
+   * reason for every session to plan again.
    */
-  if (smstore_namespace_epoch_moved()) {
-    SharedInvalidationMessage msg;
-
-    msg.cat.id = SHAREDINVALCATALOG_ID;
-    msg.cat.dbId = MyDatabaseId;
-    msg.cat.catId = NamespaceRelationId;
-    LocalExecuteInvalidationMessage(&msg);
-    SharedInvalidMessageCounter++;
-  }
+  if (smstore_catalog_moved())
+    flush_sm_catalogs();
 
   /*
    * The roles, which no lock guards either, against pg_global's epoch: a
@@ -802,34 +840,38 @@ void AcceptInvalidationMessages(void) {
     SharedInvalidMessageCounter++;
   }
 
-  /* The relations whose owner another session changed. */
-  pg_global_objects_moved();
-
-  /*----------
-   * Test code to force cache flushes anytime a flush could happen.
-   *
-   * This helps detect intermittent faults caused by code that reads a cache
-   * entry and then performs an action that could invalidate the entry, but
-   * rarely actually does so.  This can spot issues that would otherwise
-   * only arise with badly timed concurrent DDL, for example.
-   *
-   * The default debug_discard_caches = 0 does no forced cache flushes.
-   *
-   * If used with CLOBBER_FREED_MEMORY,
-   * debug_discard_caches = 1 (formerly known as CLOBBER_CACHE_ALWAYS)
-   * provides a fairly thorough test that the system contains no cache-flush
-   * hazards.  However, it also makes the system unbelievably slow --- the
-   * regression tests take about 100 times longer than normal.
-   *
-   * If you're a glutton for punishment, try
-   * debug_discard_caches = 3 (formerly known as CLOBBER_CACHE_RECURSIVELY).
-   * This slows things by at least a factor of 10000, so I wouldn't suggest
-   * trying to run the entire regression tests that way.  It's useful to try
-   * a few simple tests, to make sure that cache reload isn't subject to
-   * internal cache-flush hazards, but after you've done a few thousand
-   * recursive reloads it's unlikely you'll learn more.
-   *----------
+  /*
+   * The relations, schemas and databases whose owner or ACL another
+   * session changed in pg_global.
    */
+  if (pg_global_objects_stale())
+    flush_object_catalogs();
+
+    /*----------
+     * Test code to force cache flushes anytime a flush could happen.
+     *
+     * This helps detect intermittent faults caused by code that reads a cache
+     * entry and then performs an action that could invalidate the entry, but
+     * rarely actually does so.  This can spot issues that would otherwise
+     * only arise with badly timed concurrent DDL, for example.
+     *
+     * The default debug_discard_caches = 0 does no forced cache flushes.
+     *
+     * If used with CLOBBER_FREED_MEMORY,
+     * debug_discard_caches = 1 (formerly known as CLOBBER_CACHE_ALWAYS)
+     * provides a fairly thorough test that the system contains no cache-flush
+     * hazards.  However, it also makes the system unbelievably slow --- the
+     * regression tests take about 100 times longer than normal.
+     *
+     * If you're a glutton for punishment, try
+     * debug_discard_caches = 3 (formerly known as CLOBBER_CACHE_RECURSIVELY).
+     * This slows things by at least a factor of 10000, so I wouldn't suggest
+     * trying to run the entire regression tests that way.  It's useful to try
+     * a few simple tests, to make sure that cache reload isn't subject to
+     * internal cache-flush hazards, but after you've done a few thousand
+     * recursive reloads it's unlikely you'll learn more.
+     *----------
+     */
 #ifdef DISCARD_CACHES_ENABLED
   {
     static thread_local /*LOCAL*/ int recursion_depth = 0;

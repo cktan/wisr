@@ -61,6 +61,8 @@
 #include "catalog/pg_am_d.h"
 #include "catalog/pg_collation_d.h"
 #include "catalog/pg_constraint_d.h"
+#include "catalog/pg_rewrite_d.h"
+#include "catalog/pg_sequence_d.h"
 #include "commands/trigger.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
@@ -218,6 +220,8 @@ struct smstore_state_t {
   std::vector<held_view_t> held_views;
   /* sm's namespaces' epoch when this session last flushed them. */
   uint64_t nsp_epoch = 0;
+  /* sm's catalog publishes when this session last flushed its syscaches. */
+  uint64_t cat_publishes = 0;
   /* The indexes this transaction made, and those its commit is to wait on. */
   std::vector<made_index_t> made_indexes;
   std::vector<made_index_t> built_after_commit;
@@ -286,18 +290,36 @@ static thread_local /*LOCAL*/ sm_pin_ref_t kept_ref = {};
 static thread_local /*LOCAL*/ std::vector<smstore_scan_t *> open_scans;
 
 /*
+ * Whether sm's catalog has been published to since this session last
+ * asked (sm_cat_publishes()): another session's table, index, view,
+ * sequence or schema changed, so what the syscache keeps of them is to go.
+ * This is asked at every lock, so it is one load for nothing changed.
+ * This session's own DDL is not asked here: it invalidates what it
+ * changes, as a catalog tuple's write would, and so holds through a
+ * rollback.  False for a session with no storage.
+ */
+bool smstore_catalog_moved(void) {
+  sm_session_t *s = datadir_sm_session();
+  uint64_t publishes;
+
+  if (NULL == s)
+    return false;
+  publishes = sm_cat_publishes(s);
+  if (publishes == tcb->smstore->cat_publishes)
+    return false;
+  tcb->smstore->cat_publishes = publishes;
+  return true;
+}
+
+/*
  * Whether sm's namespaces' epoch has moved since this session last asked
  * (sm_cat_namespace_epoch()): a schema made or dropped, which no lock
- * guards the lookup of, so what it caches of them is to go (SHMEM.md
- * section 5.1).  False for a session with no storage.
+ * guards the lookup of (SHMEM.md section 5.1).  Asked once
+ * smstore_catalog_moved() is true: a publish moves this first.
  */
-bool smstore_namespace_epoch_moved(void) {
-  sm_session_t *s = datadir_sm_session();
-  uint64_t epoch;
+bool smstore_namespaces_moved(void) {
+  uint64_t epoch = sm_cat_namespace_epoch(datadir_sm_session());
 
-  if (s == NULL)
-    return false;
-  epoch = sm_cat_namespace_epoch(s);
   if (epoch == tcb->smstore->nsp_epoch)
     return false;
   tcb->smstore->nsp_epoch = epoch;
@@ -1834,6 +1856,10 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
   }
   /* What its ON COMMIT asks is done before each commit (xact.c). */
   register_on_commit_action((Oid)oid, stmt->oncommit);
+  /* The session's caches of its catalog rows go at its next command. */
+  CacheInvalidateCatalog(RelationRelationId);
+  CacheInvalidateCatalog(AttributeRelationId);
+  CacheInvalidateCatalog(SequenceRelationId);
   /* Its owner, the current role, is pg_global's; a temporary one's not. */
   pg_global_set_owner(pg_global_dbid(MyDatabaseId), RelationRelationId,
                       (Oid)oid, GetUserId(), temp);
@@ -1917,6 +1943,7 @@ ObjectAddress smstore_create_sequence(CreateSeqStmt *stmt) {
   /* Its owner, the current role, is pg_global's (ROLE.md). */
   pg_global_set_owner(pg_global_dbid(MyDatabaseId), RelationRelationId,
                       (Oid)oid, GetUserId(), false);
+  CacheInvalidateCatalog(SequenceRelationId);
   ObjectAddressSet(address, RelationRelationId, (Oid)oid);
   return address;
 }
@@ -2019,6 +2046,8 @@ static void drop_sequence(RangeVar *rv, bool missing_ok) {
                        "SEQUENCE ... OWNED BY NONE first.")));
     sm_error("drop a sequence");
   }
+  CacheInvalidateCatalog(RelationRelationId);
+  CacheInvalidateCatalog(SequenceRelationId);
 }
 
 /*
@@ -3375,6 +3404,7 @@ void smstore_drop_table(Oid oid) {
   pg_global_forget(pg_global_dbid(MyDatabaseId), oid);
   if (waiting([&] { return sm_cat_drop_table(s, oid); }) != 0)
     sm_error("drop a table");
+  forget_table(oid);
 }
 
 static void drop_temp_views(void);
@@ -3550,6 +3580,8 @@ ObjectAddress smstore_create_view(RangeVar *rv, Query *query, List *options) {
   /* Its owner, the current role, is pg_global's; a temporary one's not. */
   pg_global_set_owner(pg_global_dbid(MyDatabaseId), RelationRelationId,
                       (Oid)oid, GetUserId(), PG_TEMP_NAMESPACE == nspoid);
+  CacheInvalidateCatalog(AttributeRelationId);
+  CacheInvalidateCatalog(RewriteRelationId);
   ObjectAddressSet(address, RelationRelationId, (Oid)oid);
   return address;
 }
@@ -3785,16 +3817,22 @@ static void alter_table_rel(Oid relid, const char *name) {
 /*
  * Forget the table relid's definition, which DDL has changed or is to:
  * every session's descriptor of it once this one commits, this one's at
- * its next command, and this transaction's handles of it, which hold the
- * definition they were opened with, so the next use opens one afresh.
+ * its next command, its catalog rows in the syscache, and this
+ * transaction's handles of it, which hold the definition they were opened
+ * with, so the next use opens one afresh.
  */
 static void forget_table(Oid relid) {
+  static const Oid cats[] = {RelationRelationId, AttributeRelationId,
+                             IndexRelationId,    SequenceRelationId,
+                             RewriteRelationId,  ConstraintRelationId};
   Relation rel = RelationIdGetRelation(relid);
 
   if (RelationIsValid(rel)) {
     CacheInvalidateRelcache(rel);
     relation_close(rel, NoLock);
   }
+  for (Oid cat : cats)
+    CacheInvalidateCatalog(cat);
   auto it = open_tables().find(relid);
 
   if (it == open_tables().end())
@@ -4051,8 +4089,10 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
         return sm_cat_add_column(s, relid, spec,
                                  has_missing ? &missing : nullptr);
       })) {
-    if (NULL == volatile_default)
+    if (NULL == volatile_default) {
+      forget_table(relid);
       return;
+    }
     fill_column(relid, volatile_default, typid, typmod);
     if (not_null) {
       /*
@@ -6699,6 +6739,8 @@ ObjectAddress smstore_own_sequence(AlterSeqStmt *stmt, List *owned_by) {
                                 seq_name.c_str())));
     sm_error("give a sequence its owner");
   }
+  CacheInvalidateCatalog(RelationRelationId);
+  CacheInvalidateCatalog(SequenceRelationId);
   ObjectAddressSet(address, RelationRelationId, oid);
   return address;
 }
@@ -7362,6 +7404,7 @@ void smstore_wait_indexes(void) {
         }) != 0 &&
         sm_errnum() != SM_ERR_NOTFOUND)
       sm_error("drop an index whose build failed");
+    forget_table((Oid)m.table);
     CommitTransactionCommand();
     if (errnum == SM_ERR_DUPKEY && m.unique)
       duplicate_build(m.name.c_str(), key, why.c_str());

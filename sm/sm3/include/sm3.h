@@ -531,6 +531,14 @@ uint64_t cat_table_version(const session_t* s, uint64_t oid);
  */
 uint64_t cat_namespace_epoch(const session_t* s);
 
+/*
+ * The count of the catalog's publishes: what every session shares of
+ * cat_epoch, with no transaction of s's in it. A publish that moves
+ * cat_namespace_epoch moves it after, so one who reads this moved reads
+ * that moved too.
+ */
+uint64_t cat_publishes(const session_t* s);
+
 /* cat_epoch while s's transaction has DDL of its own. */
 constexpr uint64_t epoch_own = UINT64_MAX;
 

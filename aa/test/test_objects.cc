@@ -39,9 +39,8 @@ TEST_CASE("objects: set, commit, restart") {
   home_t h;
   aa_session_t *s1 = aa_session_new(h.aa());
   aa_session_t *s2 = aa_session_new(h.aa());
-  std::vector<aa_oid_t> oids;
+  aa_moved_t moved;
   aa_object_t o;
-  bool all;
 
   // 1.
   aa_set_object(s1, 1, table(20000, 16500));
@@ -55,12 +54,11 @@ TEST_CASE("objects: set, commit, restart") {
   commit(s1);
   REQUIRE(aa_find_object(h.aa(), NULL, aa_key_t(1, 20000), &o));
   CHECK(16500 == o.owner);
-  CHECK(aa_objects_moved(s2, 1, &oids, &all));
-  CHECK(!all);
-  REQUIRE(1 == oids.size());
-  CHECK(20000 == oids[0]);
-  oids.clear();
-  CHECK(!aa_objects_moved(s2, 1, &oids, &all));
+  CHECK(aa_objects_moved(s2, 1, &moved));
+  CHECK(!moved.all);
+  REQUIRE(1 == moved.oids.size());
+  CHECK(20000 == moved.oids[0]);
+  CHECK(!aa_objects_moved(s2, 1, &moved));
   aa_session_free(s1);
   aa_session_free(s2);
 
@@ -82,26 +80,92 @@ TEST_CASE("objects: more changes than are kept say all") {
   home_t h;
   aa_session_t *s1 = aa_session_new(h.aa());
   aa_session_t *s2 = aa_session_new(h.aa());
-  std::vector<aa_oid_t> oids;
-  bool all;
+  aa_moved_t moved;
 
   // 1.
   for (aa_oid_t i = 0; i < 4097; i++)
     aa_set_object(s1, 1, table(20000 + i, 16500));
   commit(s1);
-  REQUIRE(aa_objects_moved(s2, 1, &oids, &all));
-  CHECK((all || 4097 == oids.size()));
+  REQUIRE(aa_objects_moved(s2, 1, &moved));
+  CHECK((moved.all || 4097 == moved.oids.size()));
 
   // 2.
-  oids.clear();
   for (aa_oid_t i = 0; i < 2; i++)
     aa_set_object(s1, 1, table(30000 + i, 16500));
   commit(s1);
   for (aa_oid_t i = 2; i < 4097; i++)
     aa_set_object(s1, 1, table(30000 + i, 16500));
   commit(s1);
-  REQUIRE(aa_objects_moved(s2, 1, &oids, &all));
-  CHECK((all || 4097 == oids.size()));
+  REQUIRE(aa_objects_moved(s2, 1, &moved));
+  CHECK((moved.all || 4097 == moved.oids.size()));
+  aa_session_free(s1);
+  aa_session_free(s2);
+}
+
+// Verify that a session is told which classes of object changed, so that it
+// drops only what a change can touch.
+// 1. A table's entry changes: no schema and no database is reported.
+// 2. A schema's entry of another database changes: nothing of a schema.
+// 3. A schema's entry of this database changes: a schema is reported.
+// 4. A database's entry changes, under any dbid: a database is reported.
+// 5. A database is dropped: a database is reported, and no oid of 0.
+// 6. More changes than are kept: both are reported, with all.
+TEST_CASE("objects: a change says its class") {
+  home_t h;
+  aa_session_t *s1 = aa_session_new(h.aa());
+  aa_session_t *s2 = aa_session_new(h.aa());
+  aa_moved_t moved;
+  auto of_class = [](aa_oid_t objid, aa_oid_t classid) {
+    aa_object_t o = table(objid, 16500);
+    o.classid = classid;
+    return o;
+  };
+
+  // 1.
+  aa_set_object(s1, 1, table(20000, 16500));
+  commit(s1);
+  REQUIRE(aa_objects_moved(s2, 1, &moved));
+  CHECK(!moved.namespaces);
+  CHECK(!moved.databases);
+
+  // 2.
+  aa_object_t other = of_class(20001, AA_CLASS_NAMESPACE);
+  other.dbid = 2;
+  aa_set_object(s1, 1, other);
+  commit(s1);
+  REQUIRE(aa_objects_moved(s2, 1, &moved));
+  CHECK(!moved.namespaces);
+  CHECK(moved.oids.empty());
+
+  // 3.
+  aa_set_object(s1, 1, of_class(20002, AA_CLASS_NAMESPACE));
+  commit(s1);
+  REQUIRE(aa_objects_moved(s2, 1, &moved));
+  CHECK(moved.namespaces);
+  CHECK(!moved.databases);
+
+  // 4.
+  aa_object_t db = of_class(20003, AA_CLASS_DATABASE);
+  db.dbid = 2;
+  aa_set_object(s1, 1, db);
+  commit(s1);
+  REQUIRE(aa_objects_moved(s2, 1, &moved));
+  CHECK(moved.databases);
+  CHECK(!moved.namespaces);
+
+  // 5.
+  aa_forget_database(s1, 1);
+  commit(s1);
+  REQUIRE(aa_objects_moved(s2, 1, &moved));
+  CHECK(moved.databases);
+  CHECK(moved.oids.empty());
+
+  // 6.
+  for (aa_oid_t i = 0; i < 4097; i++)
+    aa_set_object(s1, 1, table(30000 + i, 16500));
+  commit(s1);
+  REQUIRE(aa_objects_moved(s2, 1, &moved));
+  CHECK((!moved.all || (moved.namespaces && moved.databases)));
   aa_session_free(s1);
   aa_session_free(s2);
 }

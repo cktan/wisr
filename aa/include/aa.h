@@ -313,13 +313,28 @@ int aa_abort(aa_session_t *s);
  */
 bool aa_roles_moved(aa_session_t *s);
 
+/* What aa_objects_moved() says changed. */
+struct aa_moved_t {
+  std::vector<aa_oid_t> oids; /* the objects of the database asked about */
+  bool all = false;           /* more changed than aa keeps of */
+  bool namespaces = false;    /* a schema's entry of that database */
+  bool databases = false;     /* a database's entry, of any database */
+};
+
+/*
+ * Whether aa_objects_moved() has something to say: a load, for a host
+ * that asks at every lock.
+ */
+bool aa_objects_stale(const aa_session_t *s);
+
 /*
  * Whether another session has changed objects' entries since this one
- * last asked: true once, with the oids of those of the database dbid
- * in *oids, or *all set if they are more than aa keeps of.
+ * last asked: true once, with what changed for the database dbid in
+ * *out. With out->all, oids is not whole, and namespaces and databases
+ * are set. An entry that went has no class: neither flag says so, and
+ * the schema's own drop is the caller's to see.
  */
-bool aa_objects_moved(aa_session_t *s, uint64_t dbid,
-                      std::vector<aa_oid_t> *oids, bool *all);
+bool aa_objects_moved(aa_session_t *s, uint64_t dbid, aa_moved_t *out);
 
 /* ---- authentication: ROLE.md section 5 ---- */
 

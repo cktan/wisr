@@ -110,16 +110,19 @@ shared by every session. It contains:
 - **Two snapshots**: one of all roles and memberships, one of
   all objects' owners and ACLs. A snapshot is never modified;
   when something changes, a new snapshot replaces the old one
-  as a whole.
-- **A mutex** that protects the two snapshot pointers while they
-  are copied or replaced.
+  as a whole, in an atomic `shared_ptr` read without a lock.
+- **A mutex** that orders the snapshots' replacement and
+  protects the list of recently changed objects.
 - **Two epoch counters**, one per snapshot, increased each time
   that snapshot is replaced. A session compares an epoch with
   the value it saw last to learn cheaply whether anything
   changed.
 - **A list of recently changed objects**: for each of the last
-  4096 changes, the epoch and the object. This lets a session
-  learn *which* objects changed, not just that something did.
+  4096 changes, the epoch, the object and its class. This lets a
+  session learn *which* objects changed, not just that something
+  did, and whether a schema or a database is among them: digres
+  drops those rows only then, as their flush resets its plan
+  cache.
 
 Reading roles or privileges never starts a transaction in
 `pg_global`; it reads the snapshots in memory.
@@ -301,9 +304,9 @@ keeps all of them, so a later check for any privilege on the
 object is a hit.
 
 Looking up an object's owner and ACL directly
-(`aa_find_object()`) is not cached: it copies the objects
-snapshot's pointer under the mutex each time. It is for
-changes, not for checks.
+(`aa_find_object()`) is not cached: it loads the objects
+snapshot's pointer each time. It is for changes, not for
+checks.
 
 ---
 
@@ -313,8 +316,8 @@ A digres server is one process; each session runs in its own
 thread.
 
 - The shared state (§3) is used by all threads. The snapshot
-  pointers are only read or replaced under the mutex; the
-  epochs are atomic.
+  pointers and the epochs are atomic, read without a lock and
+  replaced under the mutex.
 - Snapshots are never modified after they are made, so a session
   can keep reading an old one safely while another session
   replaces it.

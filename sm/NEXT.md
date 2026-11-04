@@ -51,37 +51,26 @@ and so are the catalog tables psql reads
    and an ACL's text is read without `sscanf()` (step 330), and
    a role's privileges on an object are kept in its session
    (step 331): an object's check costs a role 0.07 µs more than
-   the superuser (`../bench/roles.sh`). What is left of the
-   steps below is the syscache for the rows other paths read
-   (`catrel_is_cached()`, step 321), and the one mutex every
-   owner or ACL looked up takes (step 330): `aa_roles()` and
-   `aa_objects()` in `../aa/src/aa.cc` copy a `shared_ptr`
-   under `env->mutex`.
+   the superuser (`../bench/roles.sh`).
 
-   The plan, a step at a time, each measured as above:
+   **Done, short of the goal for a reason** (`../dg/WORKNOTE.md`
+   step 381). sm's catalog rows are kept in the syscache again,
+   and `aa_roles()` and `aa_objects()` read without the mutex.
+   Instructions a prepared point read, by callgrind:
 
-   1. **Keep the benchmark**: done, `../bench/roles.sh`.
-   2. **Profile first**: done, by gdb (step 329, above).
-   3. **Keep sm's catalog rows in the syscache again**, made
-      stale correctly: dropped when sm's catalog epoch moves
-      (`sm_cat_epoch()`, checked where the namespaces' epoch
-      is, `AcceptInvalidationMessages()`), when `pg_global`'s
-      objects epoch moves (an owner or an ACL), and by the
-      session's own DDL, which invalidates the catalog it
-      changed as a catalog tuple's write would. The check that
-      a dropped table's privilege is answered as for no table
-      (`server.sh`) must still pass, and be shown to fail with
-      the epoch's check left out.
-   4. **Read the snapshots without the mutex**:
-      `std::atomic<std::shared_ptr<const T>>`, loaded by every
-      reader and stored by the one that replaces it; the mutex
-      kept only to order the replacements. Run under TSan
-      (`make -C ../dg tsan`).
-   5. **Then measure**: the gap a step leaves is recorded here
-      and in `../dg/WORKNOTE.md`; done when a role's point read
-      costs within 3% of a superuser's. What is left, if more,
-      is the checks PostgreSQL itself makes, and is PostgreSQL's
-      cost too.
+   | | Superuser | Role | Gap |
+   | --- | --- | --- | --- |
+   | before | 41,657 | 43,168 | 3.6% |
+   | after | 41,193 | 43,003 | 4.4% |
+
+   The goal of 3% is not met. PostgreSQL's own EXECUTE check of
+   the operator's function is about 1,260 instructions, 3.1% of
+   the read by itself, and PostgreSQL pays it too: its gap is
+   2.5% by `perf stat`. digres's table check is about 360, 0.9%.
+   Skipping the EXECUTE check of a compiled-in function would
+   meet the goal, but it is a change to PostgreSQL's path that
+   PostgreSQL does not have, so it is not made.
+
 3. **A secondary index's scan, within 1.5 times PostgreSQL's**
    (`BTREE.md`, `../dg/WORKNOTE.md` steps 333 to 336). An
    index scan may cost digres no more than 1.5 times what it

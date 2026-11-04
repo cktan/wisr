@@ -293,6 +293,56 @@ grep -q "pwcreate\|pwfirst\|pwsecond\|pwfourth\|pwfifth\|pwsixth" \
 local_psql -c "drop role pw1" > /dev/null 2>&1 ||
   fail "cleartext password: drop the role"
 
+# Verify that a change elsewhere replans a prepared statement only if it can
+# matter to one, and that the owners and ACLs other sessions cache still go.
+# 1. A held session prepares a generic plan, and logs each plan it makes.
+# 2. Another session makes a table and grants on it: no plan is made.
+# 3. Another session makes a schema: a plan is made, as a namespace's change
+#    replans in PostgreSQL. This step shows that the count can move.
+# 4. The held session reads rp's privileges on a schema and on the database,
+#    and a table's ACL from its pg_class row.
+# 5. Another session grants all three: the held session reads them changed.
+local_psql -c 'create table rp_t (a int4)' -c 'create role rp' \
+  -c 'create schema rp_s' > "$work/rp.out" 2>&1 || fail "replan: setup"
+held_start rpheld
+held_send rpheld "set plan_cache_mode = force_generic_plan;"
+held_send rpheld "set log_planner_stats = on;"
+held_send rpheld "prepare rp_p (int4) as select a from rp_t where a = \$1;"
+held_send rpheld "execute rp_p (1);"
+held_send rpheld "select 'rp:0';"
+held_wait rpheld "rp:0" || fail "replan: the first plan"
+rp_plans() { grep -c "STATEMENT:  execute rp_p" "$work/log"; }
+first=$(rp_plans)
+local_psql -c 'create table rp_other (a int4)' \
+  -c 'grant select on rp_other to rp' > "$work/rp.out" 2>&1 ||
+  fail "replan: the unrelated changes"
+held_send rpheld "execute rp_p (1);"
+held_send rpheld "select 'rp:1';"
+held_wait rpheld "rp:1" || fail "replan: after the unrelated changes"
+[ "$(rp_plans)" = "$first" ] ||
+  fail "replan: an unrelated table or grant replanned ($first, $(rp_plans))"
+local_psql -c 'create schema rp_new' > "$work/rp.out" 2>&1 ||
+  fail "replan: the new schema"
+held_send rpheld "execute rp_p (1);"
+held_send rpheld "select 'rp:2';"
+held_wait rpheld "rp:2" || fail "replan: after the new schema"
+[ "$(rp_plans)" -gt "$first" ] || fail "replan: a new schema replanned nothing"
+held_send rpheld "set log_planner_stats = off;"
+rp_acls="select 'acl:' || has_schema_privilege('rp', 'rp_s', 'usage') || ':' || has_database_privilege('rp', 'postgres', 'create') || ':' || coalesce(pg_get_acl('pg_class'::regclass, 'rp_t'::regclass, 0)::text like '%rp=r/%', false);"
+held_send rpheld "$rp_acls"
+held_wait rpheld "acl:false:false:false" || fail "replan: rp's privileges before"
+local_psql -c 'grant usage on schema rp_s to rp' \
+  -c 'grant create on database postgres to rp' \
+  -c 'grant select on rp_t to rp' > "$work/rp.out" 2>&1 ||
+  fail "replan: the grants"
+held_send rpheld "$rp_acls"
+held_wait rpheld "acl:true:true:true" || fail "replan: rp's privileges after"
+held_end rpheld
+local_psql -c 'revoke create on database postgres from rp' \
+  -c 'revoke select on rp_t from rp' -c 'drop table rp_t' -c 'drop table rp_other' -c 'drop schema rp_new' \
+  -c 'revoke usage on schema rp_s from rp' -c 'drop schema rp_s' \
+  -c 'drop role rp' > "$work/rp.out" 2>&1 || fail "replan: cleanup"
+
 # Verify that a statement the server cannot run yet fails without taking
 # the server down.
 # 1. Read a catalog table, which digres does not have.
@@ -3231,8 +3281,10 @@ local_psql -c 'drop role rt' > "$work/tempgrant.out" 2>&1 ||
 #    read, pg_authid is not; np is refused, and so is CREATE in public;
 #    USAGE on public is had.
 # 3. pg_namespace has public's and pg_catalog's ACLs as PostgreSQL's.
-# 4. A row of sm's catalog is not kept by a session: rn's check of np2,
-#    made before the superuser drops it, is not answered from it after.
+# 4. A row of sm's catalog in a session's syscache is dropped when sm's
+#    catalog epoch or pg_global's objects epoch moves, or by the session's
+#    own DDL: rn's checks of np2 and its column are not answered from stale
+#    rows after a column drop, a GRANT, or a table drop.
 # 5. pg_monitor, a predefined role, has pg_read_all_stats, and cannot be
 #    dropped.
 local_psql -c "create role rn login password 'pn'" \
@@ -3256,12 +3308,24 @@ t
 OUT
 cmp -s "$work/nonsuper.out" "$work/nonsuper.expected" ||
   fail "non-superuser: what it may do"
-local_psql -c 'create table np2 (a int4)' > "$work/np2.out" 2>&1
+local_psql -c 'create table np2 (a int4, b int4)' > "$work/np2.out" 2>&1
 np2=$(local_psql -c "select 'np2'::regclass::oid")
 held_start npheld
 held_send npheld "\\c 'host=127.0.0.1 port=$port dbname=postgres user=rn password=pn'"
-held_send npheld "select 'np2:' || has_table_privilege($np2, 'select');"
-held_wait npheld "np2:false" || fail "non-superuser: np2 before its drop"
+held_send npheld "select 'np2:' || has_table_privilege($np2, 'select') || ':' || has_column_privilege($np2, 1::int2, 'select');"
+held_wait npheld "np2:false:false" || fail "non-superuser: np2 before its drop"
+out=$(local_psql -q -c 'begin' \
+  -c "select has_column_privilege('rn', $np2, 1::int2, 'select')" \
+  -c 'alter table np2 drop column a' \
+  -c "select coalesce(has_column_privilege('rn', $np2, 1::int2, 'select')::text, 'none')" \
+  -c 'commit')
+[ "$out" = "$(printf 'f\nnone')" ] ||
+  fail "non-superuser: own session column drop ($out)"
+held_send npheld "select 'col:' || coalesce(has_column_privilege($np2, 1::int2, 'select')::text, 'none');"
+held_wait npheld "col:none" || fail "non-superuser: np2 column after drop"
+local_psql -c 'grant select on np2 to rn' > "$work/np2.out" 2>&1
+held_send npheld "select 'grant:' || has_table_privilege($np2, 'select');"
+held_wait npheld "grant:true" || fail "non-superuser: np2 after grant"
 local_psql -c 'drop table np2' > "$work/np2.out" 2>&1
 held_send npheld "select 'np2:' || coalesce(has_table_privilege($np2, 'select')::text, 'none');"
 held_wait npheld "np2:none" || fail "non-superuser: np2 after its drop"
