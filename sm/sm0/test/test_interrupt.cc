@@ -124,6 +124,55 @@ TEST_CASE("an interrupt from another thread wakes a wait under way") {
   CHECK(result == SM_WAIT_INTERRUPTED);
 }
 
+TEST_CASE("an interrupt that waits for a busy waiter writes the wake fd once") {
+  // Verify sm_interrupt writes the thread's wake fd once, not once per
+  // try of a waiter's mutex another thread holds.
+  // 1. A thread makes its wake fd, then waits on a box, on B1.
+  // 2. Another thread takes the box's mutex once the waiter sleeps, and
+  //    holds it 50 ms, so the interrupt below tries and tries again.
+  // 3. Raise B1 in the waiter; it wakes once the mutex is let go.
+  // 4. The waiter reads its fd's count: 1.
+  box_t box;
+  std::promise<sm_thread_ref_t> who;
+  std::atomic<bool> waiting{false};
+  uint64_t count = 0;
+  sm_wait_result_t result = SM_WAIT_DONE;
+  std::thread waiter = start_publishing(&who, [&] {
+    int fd = sm_wake_fd();
+    REQUIRE(fd >= 0);
+    std::unique_lock<std::mutex> lock(box.mu);
+    waiting = true;
+    result = sm_wait(&lock, &box.cv, box_ready, &box, B1, SM_FOREVER);
+    lock.unlock();
+    REQUIRE(read(fd, &count, sizeof(count)) == sizeof(count));
+  });
+  sm_thread_ref_t t = who.get_future().get();
+
+  // 2.
+  std::atomic<bool> held{false};
+  std::thread holder([&] {
+    while (!waiting) {
+      sleep_ms(1);
+    }
+    // The waiter lets the mutex go only in its wait.
+    std::lock_guard<std::mutex> lock(box.mu);
+    held = true;
+    sleep_ms(50);
+  });
+  while (!held) {
+    sleep_ms(1);
+  }
+
+  // 3.
+  sm_interrupt(t, B1);
+  holder.join();
+  waiter.join();
+  CHECK(result == SM_WAIT_INTERRUPTED);
+
+  // 4.
+  CHECK(count == 1);
+}
+
 TEST_CASE("the condition ends a wait, and is checked before the bits") {
   // Verify a wait ends on its own condition, first.
   // 1. Start a thread that waits on a box, on B1.

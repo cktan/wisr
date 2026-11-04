@@ -72,7 +72,27 @@ int set_errno_error(int err, const char *what) {
     break;
   }
   // Record the code with the call and the system's message.
-  return set_error(e, "{}: {}", what, strerror(err));
+  return set_error(e, "{}: {}", what, errno_text(err));
+}
+
+namespace {
+
+/* XSI's strerror_r: 0, its message in buf. Unused under glibc's GNU one. */
+[[maybe_unused]] const char *errno_text_of(int rc, const char *buf) {
+  return 0 == rc ? buf : "unknown error";
+}
+
+/* GNU's strerror_r: its message, in buf or a static string. */
+const char *errno_text_of(const char *msg, const char *) { return msg; }
+
+} // namespace
+
+/* The system's message for errno value err; see sm0_error.h. */
+std::string errno_text(int err) {
+  char buf[256];
+  // strerror_r, as strerror's buffer is shared by every thread; its
+  // return type says which of the two it is.
+  return errno_text_of(strerror_r(err, buf, sizeof(buf)), buf);
 }
 
 /* Reject a NULL, empty, or over-long name. */
@@ -119,7 +139,10 @@ int seterr(errnum_t code, std::string_view msg) {
   // Copy what fits, leaving room for the terminating NUL.
   size_t n =
       msg.size() < sizeof(t_errmsg) - 1 ? msg.size() : sizeof(t_errmsg) - 1;
-  memcpy(t_errmsg, msg.data(), n);
+  // memmove, not memcpy: msg may lie in this buffer, as when a caller
+  // passes errmsg(), or a part of it, back to keep or trim the last
+  // message, and memcpy of bytes that overlap is undefined behavior.
+  memmove(t_errmsg, msg.data(), n);
   t_errmsg[n] = '\0';
   // Record the error code, which knows of no duplicate yet.
   t_errno = code;

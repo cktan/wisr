@@ -289,11 +289,6 @@ int create_temp_table(session_t *session, std::string_view name,
 }
 
 /*
- * Drop the sequences in nspoid that the table oid owns, by any of
- * its columns or by the column attnum alone. A sequence is owned
- * only in its table's namespace, so only that one is looked in.
- */
-/*
  * Whether a foreign key that references the table rec, under its
  * lock X, meets pred; by is then its name. Its child's definition is
  * read without the child's lock: a foreign key of it is made and
@@ -331,6 +326,11 @@ static int unreference(session_t *session, uint64_t parent, uint64_t fkey) {
   return cat_put_table(session, parent, p);
 }
 
+/*
+ * Drop the sequences in nspoid that the table oid owns, by any of
+ * its columns or by the column attnum alone. A sequence is owned
+ * only in its table's namespace, so only that one is looked in.
+ */
 static int drop_owned_sequences(session_t *session, uint64_t oid,
                                 uint64_t nspoid, int32_t attnum) {
   std::vector<std::string> names;
@@ -1186,12 +1186,6 @@ int own_sequence(session_t *session, uint64_t oid, uint64_t table,
 /* A sequence's next value; see sm3.h. */
 int nextval(session_t *session, uint64_t oid, uint64_t &out) {
   return sm1::nextseq(session->sm1, sequence_counter(oid), out);
-}
-
-/* Whether attnum is a live column of rec. */
-static bool live_attnum(const table_rec_t &rec, int32_t attnum) {
-  return attnum >= 0 && static_cast<size_t>(attnum) < rec.columns.size() &&
-         !rec.columns[attnum].dropped;
 }
 
 /* The foreign key oid of rec, or nullptr. */

@@ -279,11 +279,6 @@ sm_attribute_t api_attribute(const sm2::attribute_t &a) {
           a.missing.has_value(), a.missing.value_or("")};
 }
 
-/*
- * sm3's definition d as the API's, which owns all it holds, with
- * each index's state as ss sees it. A pending index a worker is
- * filling is building.
- */
 /* A foreign key as the C API gives it. */
 sm_fkey_def_t api_fkey(const sm3::fkey_rec_t &fk) {
   sm_fkey_def_t out;
@@ -303,6 +298,11 @@ sm_fkey_def_t api_fkey(const sm3::fkey_rec_t &fk) {
   return out;
 }
 
+/*
+ * sm3's definition d as the API's, which owns all it holds, with
+ * each index's state as ss sees it. A pending index a worker is
+ * filling is building.
+ */
 sm_table_def_t api_def(const sm3::session_t *ss, const sm3::table_def_t &d) {
   sm_table_def_t out{
       d.oid, d.nspoid, d.name, {}, {}, {}, sm3::cat_table_version(ss, d.oid),
@@ -1279,7 +1279,6 @@ void sm_idx_scanend(sm_idx_scan_t *scan) {
   sm2::idx_scanend(idx_scan_of(scan));
 }
 
-/* A table's oid by name, as the session sees it; 1 if none. */
 /* The namespaces' epoch: 0 for a session with no catalog. */
 uint64_t sm_cat_namespace_epoch(sm_session_t *session) {
   return session && session->sm3 ? sm3::cat_namespace_epoch(session->sm3) : 0;
@@ -1334,6 +1333,7 @@ int sm_cat_list_namespaces(sm_session_t *session,
   });
 }
 
+/* A table's oid by name, as the session sees it; 1 if none. */
 int sm_cat_table_oid(sm_session_t *session, uint64_t nspoid, const char *name,
                      uint64_t *oid) {
   return guard(session, [&] {

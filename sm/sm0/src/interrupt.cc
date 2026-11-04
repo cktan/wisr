@@ -98,7 +98,8 @@ sm_thread_ref_t sm_thread_self(void) { return self_ref(); }
  * the block's lock second, so this only tries the waiter's mutex.
  * 1. Raise the bits in t's pending word.
  * 2. Take the block's lock.
- * 3. Write the wake fd, if t has one.
+ * 3. Write the wake fd, if t has one and this call has not written
+ *    it yet: once is enough to make it readable.
  * 4. Return if t is in no wait, or its wait's mask has none of the
  *    bits.
  * 5. Try the waiter's mutex. If it is free, notify the waiter, let
@@ -110,15 +111,17 @@ sm_thread_ref_t sm_thread_self(void) { return self_ref(); }
 void sm_interrupt(const sm_thread_ref_t &t, uint32_t bits) {
   t->pending.fetch_or(bits, std::memory_order_release);
 
+  bool written = false;
   for (;;) {
     // The block's lock pins the waiter and the fd while we look.
     std::unique_lock<std::mutex> guard(t->mu);
 
     int fd = t->wake_fd.load();
-    if (fd >= 0) {
+    if (fd >= 0 && !written) {
       uint64_t one = 1;
       ssize_t rc = write(fd, &one, sizeof(one));
       (void)rc; /* full (EAGAIN) is still readable: fine */
+      written = true;
     }
     if (t->waiter_cv == nullptr || (t->waiter_mask & bits) == 0)
       return;

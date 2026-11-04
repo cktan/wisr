@@ -9,6 +9,7 @@
 
 #include "toast.h"
 #include "native.h"
+#include "sm0_defer.h"
 
 #include <algorithm>
 #include <string>
@@ -94,6 +95,8 @@ int toast_read(sm1::session_t *session, const toast_ptr_t &p,
                 hi.size(), 1, scan) != 0) {
     return -1;
   }
+  // Release sm1's cursor and its snapshot, however the read ends.
+  defer { sm1::scanend(scan); };
   std::string data;
   data.reserve(p.len);
   std::string_view key, chunk;
@@ -101,8 +104,6 @@ int toast_read(sm1::session_t *session, const toast_ptr_t &p,
   while ((rc = sm1::scannxt(scan, key, chunk)) == 0) {
     data += chunk;
   }
-  // Release sm1's cursor and its snapshot.
-  sm1::scanend(scan);
   if (rc < 0) {
     return -1;
   }

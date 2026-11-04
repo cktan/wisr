@@ -84,6 +84,7 @@ TEST_CASE("a database stays open for its idle time after its last session") {
   // 4. A database left idle can be removed: rmdb closes it first.
   // 5. One left idle that a session asks other options of is opened
   //    anew with them; asked for none, or the same, it is reused.
+  // 6. Other sizes of a bulk load are other options too.
   tmpdir_t tmp;
   REQUIRE(sm1::init(tmp.path()) == 0);
   sm1::env_t *env = attach(tmp.path());
@@ -135,6 +136,18 @@ TEST_CASE("a database stays open for its idle time after its last session") {
   REQUIRE(g);
   CHECK(g->db->opts.savepoint_undo_bytes == 1 << 20);
   REQUIRE(sm1::closedb(g) == 0);
+
+  // 6.
+  sm1::options_t loads = other;
+  loads.load_small_bytes = other.load_small_bytes + 1;
+  loads.load_sort_bytes = other.load_sort_bytes + 1;
+  loads.load_file_bytes = other.load_file_bytes + 1;
+  sm1::session_t *h = opendb(env, "db", &loads);
+  REQUIRE(h);
+  CHECK(h->db->opts.load_small_bytes == loads.load_small_bytes);
+  CHECK(h->db->opts.load_sort_bytes == loads.load_sort_bytes);
+  CHECK(h->db->opts.load_file_bytes == loads.load_file_bytes);
+  REQUIRE(sm1::closedb(h) == 0);
   CHECK(sm1::detach(env, 0) == 0);
 }
 

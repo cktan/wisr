@@ -12,6 +12,7 @@
 #include <atomic>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
@@ -20,6 +21,9 @@
 #include <vector>
 
 namespace sm3 {
+
+/* A catalog key-value handle, closed when it goes. */
+using kv_ptr_t = std::unique_ptr<sm2::catkv_t, decltype(&sm2::catkv_close)>;
 
 /*
  * The hash of a (nspoid, name) key, for the catalog's table_names.

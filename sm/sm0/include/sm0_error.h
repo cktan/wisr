@@ -35,6 +35,9 @@ int set_error(errnum_t e, std::format_string<Args...> fmt, Args &&...args) {
 /* Record an errno value from a system call on what. Returns -1. */
 int set_errno_error(int err, const char *what);
 
+/* The system's message for errno value err, as strerror's, thread-safe. */
+std::string errno_text(int err);
+
 /*
  * Check that name is a NUL-terminated string of 1..max bytes.
  * Returns 0, or -1 with SM_ERR_INVALID; what names the kind of

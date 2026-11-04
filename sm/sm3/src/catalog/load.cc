@@ -15,8 +15,6 @@
 
 namespace {
 
-using kv_ptr = std::unique_ptr<sm2::catkv_t, decltype(&sm2::catkv_close)>;
-
 /* Fail with SM_ERR_CORRUPT: the catalog contradicts itself. */
 int corrupt(const std::string &why) {
   return sm1::seterr(sm1::SM_ERR_CORRUPT, "catalog: " + why);
@@ -378,7 +376,7 @@ int cat_open(sm1::env_t *env, std::string_view dbname, catalog_t *&out) {
     if (sm2::catkv_open(session, raw) != 0) {
       return -1;
     }
-    kv_ptr kv(raw, &sm2::catkv_close);
+    kv_ptr_t kv(raw, &sm2::catkv_close);
     cat = std::make_unique<catalog_t>();
     // Kept for a load of the catalog's own later: statistics.
     cat->env = env;

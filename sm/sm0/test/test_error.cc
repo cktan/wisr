@@ -81,6 +81,35 @@ TEST_CASE("a message too long for the buffer is cut short") {
   CHECK(strlen(sm0::errmsg()) == n);
 }
 
+TEST_CASE("a message may be set from the message it replaces") {
+  // Verify seterr takes msg from this thread's own message buffer, as a
+  // caller that passes errmsg(), or a part of it, does.
+  // 1. Set a message, then set it again from errmsg(): it is unchanged.
+  // 2. Set it from its own tail: the message is the tail.
+  sm0::seterr(sm0::SM_ERR_INVALID, "store 7: not found");
+  sm0::seterr(sm0::SM_ERR_NOTFOUND, sm0::errmsg());
+  CHECK(std::string(sm0::errmsg()) == "store 7: not found");
+  CHECK(sm0::errnum() == sm0::SM_ERR_NOTFOUND);
+
+  // 2.
+  sm0::seterr(sm0::SM_ERR_NOTFOUND, std::string_view(sm0::errmsg() + 9));
+  CHECK(std::string(sm0::errmsg()) == "not found");
+}
+
+TEST_CASE("an errno's message is the system's, read thread-safely") {
+  // Verify errno_text gives strerror's text, without strerror's shared
+  // buffer, and set_errno_error puts it after the call's name.
+  // 1. errno_text of ENOENT is strerror's.
+  // 2. set_errno_error of ENOENT ends with it.
+  CHECK(sm0::errno_text(ENOENT) == std::string(strerror(ENOENT)));
+
+  // 2.
+  sm0::set_errno_error(ENOENT, "open x");
+  CHECK(std::string(sm0::errmsg()) ==
+        "open x: " + std::string(strerror(ENOENT)));
+  CHECK(sm0::errnum() == sm0::SM_ERR_NOTFOUND);
+}
+
 TEST_CASE("the helpers map their inputs onto codes") {
   // Verify the errno mapping and the name checks.
   // 1. Map ENOENT and ENOSPC and check codes and message.

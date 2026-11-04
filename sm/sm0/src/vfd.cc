@@ -154,7 +154,8 @@ int open_counted(sm_vfd_cache_t *c, const char *path, int flags, mode_t mode) {
     ceiling_give(1);
     if (err == EMFILE || err == ENFILE) {
       // Out at the system's limit, with nothing of the cache's to close.
-      sm0::set_error(SM_ERR_NOFDS, "open \"{}\": {}", path, strerror(err));
+      sm0::set_error(SM_ERR_NOFDS, "open \"{}\": {}", path,
+                     sm0::errno_text(err));
       errno = err;
       return -1;
     }

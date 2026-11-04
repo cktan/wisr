@@ -13,7 +13,7 @@
  * compared bytewise; a key's value is the caller's. Every change is
  * a top-level write of sm1's, made when it is made, whatever the
  * caller's transaction then does. Nothing is removed but by
- * tree_remove, and no page is ever freed.
+ * tree_remove_if and tree_prune, and no page is ever freed.
  */
 #ifndef SM2_TREE_TREE_H
 #define SM2_TREE_TREE_H

@@ -16,8 +16,6 @@
 
 namespace {
 
-using kv_ptr = std::unique_ptr<sm2::catkv_t, decltype(&sm2::catkv_close)>;
-
 /* The sequence oids come from; they start at first_oid (CATALOG_ONDISK.md §1).
  */
 constexpr const char *oid_seq = "sm3.oid";
@@ -29,7 +27,7 @@ constexpr const char *oid_seq = "sm3.oid";
 constexpr uint64_t nsp_of_namespaces = 0;
 
 /* Open session's catalog store into kv. */
-int open_kv(sm1::session_t *session, kv_ptr &kv) {
+int open_kv(sm1::session_t *session, sm3::kv_ptr_t &kv) {
   sm2::catkv_t *raw = nullptr;
   if (sm2::catkv_open(session, raw) != 0) {
     return -1;
@@ -364,7 +362,7 @@ namespace sm3 {
 int cat_init(sm1::env_t *env, std::string_view dbname,
              const sm1::options_t *opt) {
   return in_own_txn(env, dbname, opt, [&](sm1::session_t *session) {
-    kv_ptr kv(nullptr, &sm2::catkv_close);
+    kv_ptr_t kv(nullptr, &sm2::catkv_close);
     std::string key, value;
     std::string_view v;
     if (open_kv(session, kv) != 0 || meta_key(key) != 0) {
@@ -423,7 +421,7 @@ int cat_new_oid(session_t *session, uint64_t &oid) {
 
 /* Store a new namespace; see sm3.h. */
 int cat_put_namespace(session_t *session, uint64_t oid, std::string_view name) {
-  kv_ptr kv(nullptr, &sm2::catkv_close);
+  kv_ptr_t kv(nullptr, &sm2::catkv_close);
   std::string blob;
   // The name first, so a taken one fails before the namespace
   // is written.
@@ -443,7 +441,7 @@ int cat_del_namespace(session_t *session, uint64_t oid) {
   if (oid == nsp_pg_catalog || oid == nsp_public) {
     return invalid("drop namespace: a built-in namespace cannot be dropped");
   }
-  kv_ptr kv(nullptr, &sm2::catkv_close);
+  kv_ptr_t kv(nullptr, &sm2::catkv_close);
   std::string name, key;
   std::string_view v;
   // Exclusive: this waits out every transaction creating in it.
@@ -485,7 +483,7 @@ int cat_get_table_rec(session_t *session, uint64_t oid, table_rec_t &rec) {
 
 /* Store a table's record, new or changed; see sm3.h. */
 int cat_put_table(session_t *session, uint64_t oid, const table_rec_t &rec) {
-  kv_ptr kv(nullptr, &sm2::catkv_close);
+  kv_ptr_t kv(nullptr, &sm2::catkv_close);
   std::string blob;
   // The names rec takes, and what each names.
   std::map<std::string, name_rec_t> names;
@@ -710,7 +708,7 @@ int cat_put_index_state(session_t *session, uint64_t table_oid,
     overlay_state(session, index_oid, std::move(st), true);
     return 0;
   }
-  kv_ptr kv(nullptr, &sm2::catkv_close);
+  kv_ptr_t kv(nullptr, &sm2::catkv_close);
   std::string key, blob;
   if (open_kv(session->sm1, kv) != 0 ||
       part_key(kind_t::index_state, table_oid, index_oid, key) != 0) {
@@ -738,7 +736,7 @@ int cat_put_index_state(session_t *session, uint64_t table_oid,
 
 /* Erase a table's record and its names; see sm3.h. */
 int cat_del_table(session_t *session, uint64_t oid) {
-  kv_ptr kv(nullptr, &sm2::catkv_close);
+  kv_ptr_t kv(nullptr, &sm2::catkv_close);
   table_rec_t rec;
   std::string key;
   if (open_kv(session->sm1, kv) != 0 || latest_table(session, oid, rec) != 0) {
@@ -800,7 +798,7 @@ int cat_del_table(session_t *session, uint64_t oid) {
 int cat_put_collation(session_t *session, uint64_t oid, uint64_t nspoid,
                       std::string_view name, std::string_view locale,
                       bool deterministic) {
-  kv_ptr kv(nullptr, &sm2::catkv_close);
+  kv_ptr_t kv(nullptr, &sm2::catkv_close);
   std::string blob;
   if (open_kv(session->sm1, kv) != 0 ||
       use_nspace(session, nspoid, sm1::SM_LOCKMODE_SH, blob) != 0) {
@@ -862,7 +860,7 @@ int cat_put_stats(session_t *session, uint64_t oid, const stats_t &stats) {
     }
   }
   // Its own entry's lock X first: a second analyze queues here.
-  kv_ptr kv(nullptr, &sm2::catkv_close);
+  kv_ptr_t kv(nullptr, &sm2::catkv_close);
   std::vector<std::string> keys;
   if (cat_lock_stats(session, oid) != 0 || open_kv(session->sm1, kv) != 0 ||
       stats_keys(oid, def->rec, keys) != 0) {
@@ -892,7 +890,7 @@ int lock_stats(session_t *session, uint64_t oid, bool wait) {
   if (def && def->nspoid == nsp_temp) {
     return invalid("statistics are not kept for a temporary table yet");
   }
-  kv_ptr kv(nullptr, &sm2::catkv_close);
+  kv_ptr_t kv(nullptr, &sm2::catkv_close);
   std::string key;
   if (open_kv(session->sm1, kv) != 0 || stats_key(oid, 0, 0, key) != 0) {
     return -1;
@@ -947,7 +945,7 @@ int cat_get_stats(session_t *session, uint64_t oid,
   }
   std::shared_ptr<const stats_t> loaded;
   if (in_own_txn(cat->env, cat->dbname, nullptr, [&](sm1::session_t *s) {
-        kv_ptr kv(nullptr, &sm2::catkv_close);
+        kv_ptr_t kv(nullptr, &sm2::catkv_close);
         std::string prefix, head;
         sm2::catkv_scan_t *c = nullptr;
         if (open_kv(s, kv) != 0 || stats_prefix(oid, prefix) != 0 ||
@@ -1010,7 +1008,7 @@ std::string sequence_counter(uint64_t oid) {
 int cat_put_sequence(session_t *session, uint64_t oid, uint64_t nspoid,
                      std::string_view name, uint64_t start,
                      uint64_t increment) {
-  kv_ptr kv(nullptr, &sm2::catkv_close);
+  kv_ptr_t kv(nullptr, &sm2::catkv_close);
   std::string blob;
   // Shared: a drop of the namespace waits this transaction out.
   if (open_kv(session->sm1, kv) != 0 ||
@@ -1034,7 +1032,7 @@ int cat_put_sequence(session_t *session, uint64_t oid, uint64_t nspoid,
 /* A sequence's record, to change it; see internal.h. */
 int cat_get_sequence_rec(session_t *session, uint64_t oid, bool lock,
                          sequence_rec_t &rec) {
-  kv_ptr kv(nullptr, &sm2::catkv_close);
+  kv_ptr_t kv(nullptr, &sm2::catkv_close);
   std::string key;
   std::string_view v;
   if (open_kv(session->sm1, kv) != 0 ||
@@ -1060,7 +1058,7 @@ int cat_get_sequence_rec(session_t *session, uint64_t oid, bool lock,
 /* Replace a sequence's record; see internal.h. */
 int cat_put_sequence_rec(session_t *session, uint64_t oid,
                          const sequence_rec_t &rec) {
-  kv_ptr kv(nullptr, &sm2::catkv_close);
+  kv_ptr_t kv(nullptr, &sm2::catkv_close);
   std::string key;
   std::string blob;
   if (open_kv(session->sm1, kv) != 0 ||
@@ -1073,7 +1071,7 @@ int cat_put_sequence_rec(session_t *session, uint64_t oid,
 
 /* Erase a sequence and its counter; see sm3.h. */
 int cat_del_sequence(session_t *session, uint64_t oid) {
-  kv_ptr kv(nullptr, &sm2::catkv_close);
+  kv_ptr_t kv(nullptr, &sm2::catkv_close);
   std::string key;
   std::string_view v;
   // Its record under an X lock on its key, as a namespace's is
@@ -1153,7 +1151,7 @@ int cat_get_sequence_name(session_t *session, uint64_t oid, uint64_t &nspoid,
 /* A sequence by its oid, read in the transaction; see sm3.h. */
 int cat_get_sequence_def(session_t *session, uint64_t oid,
                          sequence_def_t &def) {
-  kv_ptr kv(nullptr, &sm2::catkv_close);
+  kv_ptr_t kv(nullptr, &sm2::catkv_close);
   std::string key;
   std::string_view v;
   if (open_kv(session->sm1, kv) != 0 ||
@@ -1214,7 +1212,7 @@ int cat_put_view(session_t *session, uint64_t oid, const view_def_t &def,
     overlay_view(session, oid, std::make_shared<const view_def_t>(def), true);
     return 0;
   }
-  kv_ptr kv(nullptr, &sm2::catkv_close);
+  kv_ptr_t kv(nullptr, &sm2::catkv_close);
   std::string key, blob;
   if (open_kv(session->sm1, kv) != 0 ||
       entity_key(kind_t::view, oid, key) != 0 || encode_view(def, blob) != 0) {
@@ -1253,7 +1251,7 @@ int cat_del_view(session_t *session, uint64_t oid, const view_def_t &def) {
     overlay_view(session, oid, nullptr, true);
     return 0;
   }
-  kv_ptr kv(nullptr, &sm2::catkv_close);
+  kv_ptr_t kv(nullptr, &sm2::catkv_close);
   std::string key;
   if (open_kv(session->sm1, kv) != 0 ||
       entity_key(kind_t::view, oid, key) != 0 ||
