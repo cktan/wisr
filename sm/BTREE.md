@@ -754,11 +754,12 @@ filter does not touch class `0x04`.
   must keep them. A crash first leaves them until the store goes.
   `TRUNCATE` and a rewrite make a new store.
 
-### 7.1 The vacuum thread
+### 7.1 The cleaner
 
-*Proposed 2026-11-04, not built. When built, it changes §4.1: a
-leaf is written once an entry between two vacuums, not once a
-leaf, and the bit §4.1 "Not taken" rejected is taken.*
+*Proposed 2026-11-05, not built. When built, it changes §4.1: a
+leaf is put once an entry between two vacuums, not once a leaf; a
+cut entry no longer keeps its leaf unset; and the bit §4.1 "Not
+taken" rejected is taken.*
 
 Today only `VACUUM` removes a dead entry, and digres has no
 autovacuum (`../dg/UNSUPPORTED.md`). `VACUUM` also reads the row
@@ -768,8 +769,8 @@ changes:
 
 - **A check bit on each entry** says that the entry needs a
   vacuum to read its row. Vacuum reads no other entry's row.
-- **A vacuum thread** visits the leaves that writers name, when
-  the system is not busy.
+- **A cleaner thread** cleans the leaves that readers and writers
+  queue, when the system is not busy.
 
 **An example.** Page 42 is an all-visible leaf of `t_status`, and
 holds `('open', 7)`, its check bit clear:
@@ -782,233 +783,311 @@ UPDATE t SET status = 'done' WHERE id = 7;
 
 1. The `UPDATE` writes the row.
 2. The `UPDATE` latches page 42, sets the entry's check bit,
-   clears the leaf's all-visible bit, and writes the page once.
-3. The `UPDATE` adds `{page 42, ('open', 7)}` to the list.
-4. The `UPDATE` inserts `('done', 7)`, its check bit set.
+   clears the leaf's all-visible flag, and writes the page once.
+3. The `UPDATE` lets go of the latch, and queues page 42.
+4. The `UPDATE` inserts `('done', 7)` on page 57, its check bit
+   set, and queues page 57.
 5. The `UPDATE` commits, and the GC watermark passes its commit.
-6. The system is not busy, so the thread wakes and takes the
-   list.
-7. The thread visits page 42. It reads row 7 alone: only that
+6. The system is not busy, so the cleaner takes the queue.
+7. The cleaner cleans page 42. It reads row 7 alone: only that
    entry has its check bit set. The row is settled, and its key
-   is `'done'`, so the entry is dead.
-8. The thread removes the entry. No entry of page 42 has its
-   check bit set now, so the thread sets the leaf all visible.
+   is `'done'`, so the cleaner removes the entry. No check bit is
+   left, so it sets the leaf all visible.
+8. The cleaner cleans page 57. Row 7 is settled and has the key,
+   so the cleaner clears that entry's check bit. The other 159
+   rows of each leaf are not read.
 
 **The check bit** is bit `0x02` of the entry's `value[0]`. Bit
 `0x01` is the cut flag. So the entry does not grow.
 
 - **An insert** sets the bit. The insert writes the page anyway,
   so the bit costs nothing. An aborted insert's entry therefore
-  has its bit set, and a vacuum finds it.
+  has its bit set, and a cleaning finds it.
 - **A delete, and an update that changes a key,** set the bit on
   the old entry. If the bit is set already, nothing is written.
-  So an entry no vacuum has judged since its insert costs no
+  So an entry no cleaning has judged since its insert costs no
   write.
 - **An insert that finds its key** sets the bit, as its row just
   changed.
 - **An update that keeps its keys** sets nothing.
-- **Only vacuum clears the bit,** under the leaf's latch, when
-  the row is settled and still has the entry's key.
+- **Only a cleaning clears the bit,** under the leaf's latch,
+  when the row is settled and still has the entry's key.
 
 **The rule for a leaf:** a leaf is all visible only if no entry
-on it has its check bit set, and no entry on it is cut. The check
-bit of a cut entry is cleared as any other's, so vacuum reads its
-row once. The cut flag alone keeps the leaf unset.
+on it has its check bit set. A leaf keeps a flag, not a count of
+such entries: a cleaning walks the whole page, so a count would
+save nothing.
+
+A cut entry does not stop a leaf being all visible. Its check bit
+is cleared as any other's, and an index-only scan reads a cut
+entry's row on any leaf (`tree_fill()` tests the cut flag first,
+`sm3/src/table/table.cc`). Today's rule, that a cut entry keeps
+its leaf unset, would here queue that leaf for ever.
 
 **A split recomputes the rule for both halves.** Today
 `page_split()` leaves neither half all visible. With the check
 bit, each half of a leaf split does this:
 
-1. Read each entry's check bit and cut flag. The page is decoded
-   already, and the split walks its entries already.
-2. Set the half all visible if no entry on it has either. That
+1. Read each entry's check bit. The page is decoded already, and
+   the split walks its entries already.
+2. Set the half all visible if no entry on it has the bit. That
    is the AND of each entry's "not in doubt", which is the
    inverse of the OR of its check bits.
-3. Clear the half's bit otherwise.
+3. Clear the half's flag otherwise.
 
 The new entry has its check bit set, so its half is never set.
 Only the other half can be. A split reads no row, and adds no
 write: the flags go out in the split's first batch. Setting the
-bit here is safe. A writer whose row is written, and who has not
-yet latched, sets its entry's bit and clears the leaf's when it
-does, as against a vacuum (below). A root split takes the same
-path through `page_split()`. An inner page has no such flag.
+flag here is safe. A writer whose row is written, and who has not
+yet latched, sets its entry's bit and clears the leaf's flag when
+it does, as against a cleaning (below). A root split takes the
+same path through `page_split()`. An inner page has no such flag.
 
-**Why the latch is enough.** A writer writes its row first, then
-latches the leaf to set the bit. Vacuum judges an entry again
+**Why the latch is enough.** The latch is the leaf's EX pin in
+sm's buffer pool (§17). A writer writes its row first, then
+latches the leaf to set the bit. A cleaning judges an entry again
 under the latch before it clears the bit:
 
-- If the row was written first, vacuum reads a version not
+- If the row was written first, the cleaning reads a version not
   settled, and leaves the bit.
-- If vacuum holds the latch first, the writer waits, and then
-  sets the entry's bit and clears the leaf's.
+- If the cleaning holds the latch first, the writer waits, and
+  then sets the entry's bit and clears the leaf's flag.
 
 This is §4.1's argument, for one entry. A scan needs no latch for
 §4.1's reason: a writer sets the bit before its commit.
 
-**Visiting a leaf.** `VACUUM` and the thread use the same
+**Cleaning a leaf.** `VACUUM` and the cleaner use the same
 procedure:
 
 1. Skip a leaf set all visible.
-2. With no latch, read the row of each entry with its check bit
-   set. Read no other row.
-3. If any was dead or settled, latch the leaf, and judge those
+2. Pin the leaf SH, copy it, and unpin it.
+3. With no pin held, read the row of each entry with its check
+   bit set. Read no other row.
+4. If any was dead or settled, pin the leaf EX, and judge those
    entries again.
-4. Remove each dead entry.
-5. Clear the check bit of each entry settled and live.
-6. Leave the check bit of each entry not settled.
-7. If the rule for a leaf holds, set the leaf all visible.
-8. Write the leaf once, if anything changed.
+5. Remove each dead entry.
+6. Clear the check bit of each entry settled and live.
+7. Leave the check bit of each entry not settled.
+8. If no check bit is left, set the leaf all visible.
+9. Write the leaf once, if anything changed, then unpin it.
 
-`VACUUM` walks every leaf, left to right, and visits each. A
-second `VACUUM` with no write between reads no row.
+An entry is not settled if its row was written by a transaction
+still running, or committed past the GC watermark: an old
+snapshot may still need the version before. An entry has no xid,
+so only its row shows this. `VACUUM` walks every leaf, left to
+right, and cleans each. A second `VACUUM` with no write between
+reads no row.
 
-**The list** tells the thread which leaves to visit. It is a
-hint. The check bit is in the page, so an entry lost from the
-list stays marked, and the next visit to its leaf finds it. A
-catalog (one database) has one thread and one list:
+**The buffer pool.** Every change to a page in this design goes
+through the pool, by §17's protocol: a writer's check bit, a
+split's two halves, and a cleaning's step 9. The cleaner is no
+exception for having no transaction:
 
-- **The list** is a `sm0::blist_t` of entries. `blist_t` needs a
-  type with no destructor, so an entry points to its key's bytes
-  in a `sm0::arena_t`, and the list and the arena are swapped
-  together.
-- **An entry** is `{table oid, index oid, store id, page id,
-  key}`. A page id and a key do not name a tree, and the thread
-  must open the table to read rows. The store id tells a tree
-  from the new tree of a `TRUNCATE` or a rewrite.
+1. Pin the page EX. Other pins are waited for, and readers of the
+   page wait from here on.
+2. Change a copy of the page, not the frame.
+3. Write the copy to RocksDB, by `page_write()`.
+4. `page_write()` copies it into the frame, which cannot fail.
+5. Unpin the page.
+
+The frame changes after RocksDB does, not before. EX hides the
+order from every reader, and a failed write then leaves the frame
+equal to RocksDB's, with nothing to undo.
+
+- **Row reads under EX.** Step 4 of a cleaning reads rows under
+  the EX pin, so the leaf's readers wait, as `BUFFERPOOL.md` §4.2
+  says of `tree_prune()`. Only entries that step 3 found dead or
+  settled are read, and step 3 has just read them, so they are
+  usually in the block cache. A disk read under EX is still
+  possible. Measure it.
+- **Frames.** A cleaning pins one frame at a time, and takes no
+  other pin while it holds it: row reads use no frame. So it can
+  wait for a frame without deadlock, and the pool's floor by
+  sessions needs no change.
+
+**The queue** is a hint. The check bit is in the page, so a page
+lost from the queue stays marked, and its next reader or writer
+queues it again. A catalog (one database) has one queue:
+
+- **The queue** is a circular queue: a fixed array of 262,144
+  slots, with a head and a tail, under a mutex. A page goes in at
+  the tail and comes out at the head. The array is made when the
+  catalog attaches, so a page in or out allocates nothing.
+- **A slot** is `{store id, relid, page id, watermark}`, 32
+  bytes, so the array is 8 MB. It holds the leaves of about 1 GB
+  of tree. The watermark is 0 for a page that does not wait
+  (below).
 - **The filter** is a 1-bit Bloom filter with one hash function,
-  over the store id and the key: 2^23 bits, 1 MB. A writer sets
-  the bit by an atomic `fetch_or`. A bit already set means the
-  entry is on the list, so the writer takes no mutex.
-- **A false positive** leaves an entry off the list. Its leaf is
-  visited later, by another entry's listing or by `VACUUM`. At
-  the cap, one entry in 20 is left off, and over a whole list one
-  in 40.
-- **The cap** is 32 MB of entries and keys, about 450,000 entries
-  of 74 bytes. A pass holds two lists, so 64 MB at most.
+  over the first three fields: 2^23 bits, 1 MB. A bit set means
+  the page is on the queue, so the caller stops.
+- **A false positive** leaves a page off the queue. Its next
+  reader or writer tries again. With the queue full, about 3% of
+  pages collide.
+- **A cleaner clears a page's filter bit as it takes the page**,
+  before it reads the page. So a change after that queues the
+  page again. Two pages can share a bit, so this may queue a page
+  twice, which costs one more look. One hash function is what
+  makes this safe: with two or more, clearing a bit could hide
+  other pages.
 
-**A writer.** A delete, and an update that changes a key, do
-this:
+**Queueing a page.** A cursor that reads a leaf not all visible,
+and a writer that finds one, do this, with no latch held:
 
-1. Write the row, as today.
-2. Latch the old entry's leaf, as `tree_unset_visible()` does.
-3. Set the entry's check bit and clear the leaf's bit. Write the
-   leaf if either changed. A pending index may not have the entry
-   yet: then only the leaf's bit is cleared.
-4. Let go of the latch, and keep the leaf's page id.
-5. Test and set the entry's bit in the filter. If it was set,
-   stop.
-6. Take the list's mutex, and append the entry.
+1. Hash the three fields, and load the filter's word. If the bit
+   is set, stop. The load keeps the shared word clean on the read
+   path.
+2. Set the bit by an atomic `fetch_or`. If another caller set it
+   first, stop.
+3. Take the queue's mutex. If the queue is full, clear the bit,
+   wake the cleaner, and stop. The page is dropped, and the
+   oldest pages stay.
+4. Put the page in at the tail.
 
-A temporary table's entries are not listed: the thread cannot
-read that session's instance. They keep their check bits for
-`VACUUM`.
+A writer queues as well as a reader: an `UPDATE` by primary key
+may leave a dead entry on a leaf that no cursor reads. A
+temporary table's pages are not queued: the cleaner cannot read
+that session's instance. They keep their check bits for `VACUUM`.
 
-**A pass.** A pass visits the leaves of one list:
+**A pass.** A pass handles the pages on the queue when it begins,
+one at a time. Several workers can run passes, as each takes its
+own pages. For each page:
 
-1. Under the list's mutex, swap the list and arena with empty
-   ones, and clear the filter.
-2. Sort the copy by table, index, page id and key.
-3. For each table, begin a READ COMMITTED transaction, and open
-   the table by `tbl_tryopen`, intent shared. Commit every 1,000
-   entries: the transaction's snapshot holds the watermark back
-   (`sm1/SM1_DESIGN.md` §8.3). A table locked by DDL goes back on
-   the list. For a table that has gone, or an index or a store
-   that differs, drop its entries.
-4. Visit each page id once. A page that is no longer a leaf is
-   treated as a page without the key: page 0 can stop being a
-   leaf.
-5. For a listed key not on its page, a split moved it. Locate it
-   again from the root, and visit that leaf too. If it is not
-   there, a vacuum has removed it, and nothing is left to do.
-6. A listed key whose check bit is still set was not settled. Put
-   it back on the list, with its filter bit set.
-7. Free the copy, and close the session.
+1. Under the queue's mutex, take a page from the head.
+2. If its slot's watermark equals the pass's watermark, the page
+   waits: put it back at the tail, unread, and go to the next.
+3. Clear its filter bit.
+4. Find the table's definition by `cat_get_table_by_store()`, and
+   the index by its relid. If the store or the index has gone,
+   drop the page.
+5. Clean the leaf. A page that is no longer a leaf is dropped:
+   page 0 can stop being a leaf.
+6. If a check bit is left, put the page in at the tail, its slot
+   holding the pass's watermark, and set its filter bit, so its
+   readers do not queue it again. If the queue is full, drop the
+   page, and clear the bit.
+
+**No transaction.** The cleaner starts no sm transaction, opens
+no table and takes no lock on one. It does not need them:
+
+- Judging an entry reads a row's newest version and compares it
+  with the GC watermark. It needs no snapshot.
+- A leaf's change is one `page_write()`, one RocksDB write batch,
+  atomic by itself. A tree's change already commits when it is
+  made (§2).
+- So the cleaner holds no snapshot, and never holds back the
+  watermark.
+
+What a transaction and a table lock give a reader, the cleaner
+gets another way:
+
+| Need | How the cleaner meets it |
+| --- | --- |
+| the store stays open | it keeps a copy of the store's handle: a handle goes with its last copy, as for GC's sweep (`db_drop_store_cf()`). A write to a dropped store fails, and the page is dropped |
+| `CF:txn` records stay | it counts itself in the read epoch while it reads, as every reader does (`db_read_enter()`) |
+| the table's definition | `table_def_t` is in memory, and is not changed once published. A relid's key does not change in a store: a change of type rewrites the table into a new store. To confirm when built, as a wrong answer here removes a live entry |
+| a key out of line | `still_has()` fetches a TOAST value through a snapshot read today. It needs a settled read of the chunks: a settled row's chunks are settled too |
+| `DROP INDEX` | not kept out: a cleaning may write a leaf after the drop. The page stays under a relid never used again, until the store goes |
 
 Page ids are not reused and pages are never freed, so a stale
-page id is safe to latch.
+page id is safe to latch. A split's right half needs no step
+here: it is queued by its next reader or writer.
 
-**The thread.** It works as the index builder's worker does:
+**A page that waits** is not read again until the watermark
+moves, so a long transaction does not make the cleaner read the
+same rows again and again. A page that waits costs a move from
+head to tail under the mutex, and no read. The queue counts the
+slots that wait.
 
-1. Sleep for a second, or until a writer finds the list at its
-   cap, or until a detach stops it.
-2. If the list is empty, go to step 1. If the system is busy and
-   the list is below its cap, go to step 1 (Open, item 3).
-3. Open a session with the function `start_builder()` gives the
+**The workers.** A database has one cleaner thread, and more when
+the queue overflows. The first works as the index builder's
+worker does:
+
+1. Sleep for a second, or until a caller finds the queue full,
+   or until a detach stops it.
+2. If the queue is empty, go to step 1.
+3. If every slot waits, and no transaction has begun since the
+   last pass, go to step 1. A session here would keep the reaper
+   from ever closing an idle database.
+4. If the system is busy and the queue is not full, go to step 1.
+   A full queue runs a pass, busy or not: with no autovacuum, a
+   system that is never quiet must not lose its cleaning.
+5. Open a session with the function `start_builder()` gives the
    builder (`src/sm.cc`), and read the watermark.
-4. If the list holds only entries put back, and the watermark has
-   not moved, close the session and go to step 1. They would be
-   judged the same way.
-5. Run a pass, then go to step 1.
+6. Run a pass, close the session, and go to step 1.
 
-The thread keeps no session between passes, so the reaper can
-still close an idle database. A catalog's detach stops the thread
-and joins it, as `builder_detach()` does its workers. An
-interrupt ends the pass after the leaf it is on.
+If the queue becomes full while a pass runs, the cleaner starts
+one more worker, up to 4, the builder's `max_workers`. An
+extra worker runs one pass and ends.
+
+No worker keeps a session between passes, so the reaper can still
+close an idle database. A catalog's detach stops the workers and
+joins them, as `builder_detach()` does. An interrupt ends a pass
+after the leaf it is on.
 
 **Busy** is the count of `sm3::begin()` calls on the catalog in
-the last second, less the thread's own: every transaction begins
-there. The system is busy if that count is above a fixed limit.
-Nothing measures this today: the catalog needs an atomic counter.
+the last second: every transaction begins there. The system is
+busy if that count is above a fixed limit. Nothing measures this
+today: the catalog needs an atomic counter.
+The gate also stops a cycle on a hot leaf: an insert clears the
+flag, a reader queues the page, a cleaning writes 4 KB, and the
+next insert clears the flag again.
 
-**What is left to `VACUUM`.** `VACUUM` stays. It reaches what the
-list does not: a leaf with only new entries, such as `('done',
-7)` in the example, an aborted insert's entry, and an entry a
-false positive or a restart took off the list. It still reads
-every leaf not set, but reads rows only for entries with the bit
-set. `NEXT.md` §1 item 8, a list of the leaves not set, would
-save that walk.
+**What is left to `VACUUM`.** `VACUUM` stays. It reaches a leaf
+that no reader or writer has touched since a restart, and a
+temporary table's leaves. It reads every leaf not set, but reads
+rows only for entries with the bit set. `NEXT.md` §1 item 8 is
+this queue.
 
 **What it adds to the code:**
 
 | Level | Change |
 | --- | --- |
-| sm1 | an accessor for the GC watermark |
-| sm2 | the check bit in `tree_value()`, and `value[0]`'s readers test bit `0x01` for cut (`src/rel/index.cc`); `tree_unset_visible()` also sets the entry's bit, and gives back the page id; `page_split()` recomputes both halves' flags, so the tree level reads a leaf entry's `value[0]`; a leaf's visit, out of `tree_prune()`, for the thread to call |
-| sm3 | a new module with the list, the filter, the thread, and `vacuum_run_once()` for tests; `tbl_compact()`'s judging is shared; `sm3::begin()` counts; `remove_entry()` appends |
-| sm | `src/sm.cc` attaches and detaches the thread beside the builder |
+| sm1 | an accessor for the GC watermark; `read_settled()`, `pin_page()` and `page_write()` with no active transaction, which they refuse today (`xct_check_active()`, `enter_pages()`), for the cleaner's session |
+| sm2 | the check bit in `tree_value()`, and `value[0]`'s readers test bit `0x01` for cut (`src/rel/index.cc`); `idx_vacuum()`'s rule for a cut entry goes; `tree_unset_visible()` also sets the entry's bit; `page_split()` recomputes both halves' flags, so the tree level reads a leaf entry's `value[0]`; `tree_t` holds a `leaf_note_fn`, called for a leaf not all visible, as sm2 may not call sm3; a leaf's cleaning, out of `tree_prune()`, for the cleaner to call |
+| sm3 | a new module with the circular queue, the filter, the workers, and `cleaner_run_once()` for tests; `tbl_compact()`'s judging is shared, and takes a table's definition, not an open table; `sm3::begin()` counts; an index's open gives the tree its `leaf_note_fn`, but for a temporary table |
+| sm | `src/sm.cc` attaches and detaches the cleaner beside the builder |
 | dg | none: `smstore_index_eval()` adopts any sm thread by `session_thread_adopt()` |
 
 **Cases:**
 
-| Case | With the check bit and the thread |
+| Case | With the check bit and the cleaner |
 | --- | --- |
-| TOAST | an entry is never out of line; `still_has()` fetches a key's value, as `VACUUM` does; a row that is gone needs no fetch |
+| TOAST | an entry is never out of line; `still_has()` fetches a key's value by a settled read; a row that is gone needs no fetch |
 | non-unique index | as in the example |
-| unique index | `tree_insert_unique()` holds the leaf's latch through its check, and a visit judges again under the same latch; the bit does not change the check |
-| primary key | not a tree: no bit, nothing listed |
-| expression, partial index | `still_has()` runs the evaluator on the thread, adopted as a builder's worker is |
+| unique index | `tree_insert_unique()` holds the leaf's latch through its check, and a cleaning judges again under the same latch; the bit does not change the check |
+| primary key | not a tree: no bit, nothing queued |
+| expression, partial index | `still_has()` runs the evaluator on the worker, adopted as a builder's worker is |
 | INCLUDE | not in the tree; an update of one sets no bit |
-| cut key | its row is read once, then its bit is clear; the cut flag keeps the leaf unset, and a scan rechecks it on the row, as today |
+| cut key | its row is read once by a cleaning, then its bit is clear; its leaf may be set; a scan rechecks it on the row, as today |
 | update A → B → A | A → B sets A's bit and inserts B; back to A finds A's entry and sets its bit, and sets B's. A is judged live and its bit cleared; B is removed |
-| INCLUDE-only update | no bit, nothing listed |
+| INCLUDE-only update | no bit, nothing queued |
 | primary key change | the old entries' bits set as a delete's; their row key holds no row, so they are dead |
 | delete then reinsert | the delete sets the bit; the reinsert finds the entry; judged live once settled |
-| leaf split | each half recomputed from its entries; the half with the new entry is not set |
-| abort, savepoint rollback | a rolled-back insert's entry has its bit set, and a vacuum removes it. A rolled-back delete's entry is judged live, and its bit cleared |
+| leaf split | each half recomputed from its entries; the half with the new entry is not set; a queued page id still names the left half |
+| abort, savepoint rollback | a rolled-back insert's entry has its bit set, and a cleaning removes it. A rolled-back delete's entry is judged live, and its bit cleared |
 | undo-cap overflow | no undo in the tree: a bit is its own change; as an abort |
-| crash | the bit is in the WAL before the commit, and a bit whose commit is lost costs one row read. The list is lost: the entries wait for `VACUUM` |
-| 2PC across restart | a prepared row is not settled, so the bit stays, across a restart too |
-| two writers, vacuum | the leaf's latch orders each bit against a visit; the filter's atomic bit, then the list's mutex, order the list |
-| old RR snapshot | it holds the watermark, so entries are not settled: bits stay, and listed keys go back; the thread's step 4 stops them being read each second |
-| RC re-read | an entry goes only when no snapshot needs it, as in `VACUUM` |
+| crash | the bit is in the WAL before the commit, and a bit whose commit is lost costs one row read. The queue is lost: the next reader or writer of each leaf queues it again |
+| 2PC across restart | a prepared row is not settled, so the bit stays, across a restart too; the page waits |
+| two writers, a cleaning | the leaf's latch orders each bit against a cleaning; the filter's atomic bit, then the queue's mutex, order the queue |
+| old RR snapshot | it holds the watermark, so entries are not settled: bits stay, and the page waits until the watermark moves |
+| RC re-read | an entry goes only when no snapshot needs it, as in `VACUUM`; the cleaner's own lack of a snapshot does not change that, as the watermark decides |
 | SSI | as §4.1: a delete or a key's change reports its old key; a removal or a bit is no write to SSI |
 | open cursor | a cursor holds no page, and reads its batch's rows at its snapshot; a scan treats the bit as data it does not read |
 | GC watermark, `CF:txn` sweep | `rel_read_settled()` decides, unchanged; the GC filter does not touch class `0x04` |
-| CREATE INDEX pending | a build's entries come in as inserts, bits set: the first vacuum reads each row once, as today |
-| DROP INDEX | the intent-shared lock keeps DDL out during a batch; after it, the index oid is gone, so the entries are dropped |
-| TRUNCATE, ALTER rewrite | a new store: the store id differs, so the entries are dropped |
-| temp tables | bits as any tree's; not listed, so `VACUUM` in the session |
+| CREATE INDEX pending | a build's entries come in as inserts, bits set: the first cleaning reads each row once, as today |
+| DROP INDEX | no lock: the relid is gone, so its pages are dropped. A cleaning already running may leave one page under the dead relid, until the store goes |
+| TRUNCATE, ALTER rewrite | a new store: the old store id finds no table, so its pages are dropped; a write to the old store fails, and the page is dropped |
+| temp tables | bits as any tree's; not queued, so `VACUUM` in the session |
 | keyless (`_id`) tables | the same, `_id` the row key |
-| bulk load and its rollback | entries come in as inserts, bits set: a rolled-back load's entries are found by `VACUUM` |
+| bulk load and its rollback | entries come in as inserts, bits set: a reader or writer of the leaf queues it, and a cleaning removes a rolled-back load's entries |
 
 **What it costs**, for a leaf of 160 judged entries, 20 of them
-changed between two vacuums:
+changed between two cleanings:
 
 | | Today | With the check bit |
 | --- | --- | --- |
 | Writer's page puts | 1 | 20 |
-| Vacuum's row reads | 160 | 20 |
+| Row reads to clean the leaf | 160 | 20 |
 
 - A page put is not a page I/O. RocksDB is the write-back layer:
   the put is a WAL append and a memtable insert, and a flush
@@ -1016,45 +1095,36 @@ changed between two vacuums:
   RocksDB snapshot holds an older one.
 - §10 measured a put of 4 KB against an entry of 40 bytes: 27.7 s
   against 18 s a million rows, so about 10 µs a put.
-- A vacuum's row reads are scattered, and can each be a disk
+- A cleaning's row reads are scattered, and can each be a disk
   read. So 10 µs of sequential log traffic buys up to 7 random
   reads fewer in this example.
-- The writer pays in the foreground, and vacuum saves in the
+- The writer pays in the foreground, and the cleaner saves in the
   background. Only a bench against PostgreSQL shows whether that
   matters.
-- A writer also takes one hash, one atomic `fetch_or`, and for a
-  new entry one mutex and a copy of the key.
+- A reader of a leaf not all visible takes one hash and one load.
+  A new page adds one `fetch_or`, one mutex and an append.
 
 **Tests:**
 
 - **mvcc**: cannot express it: sm1 has no tree.
 - **sm**: sm2's `test_tree.cc` for the bit, a split's two halves,
-  a moved key and page 0; sm3's `test_tree.cc` for each case
-  above, through `vacuum_run_once()`; `rel`, a new op for a pass.
+  and page 0; sm3's `test_tree.cc` for each case above, through
+  `cleaner_run_once()`, and for a reader's and a writer's
+  queueing, a page that waits, a full queue, and an extra worker;
+  `rel`, a new op for a pass.
 - **aa, sq**: not reached.
-- **dg**: `server.sh`, the thread running: dead entries of an
+- **dg**: `server.sh`, the cleaner running: dead entries of an
   `UPDATE` go with no `VACUUM`.
 
 **Open:**
 
-1. **Who lists an entry.** Above, a delete and a key-changing
-   update list the entry they make dead. An insert's entry is not
-   listed, so its leaf waits for `VACUUM`. A scan, or a unique
-   check, could also list a dead entry it meets, as PostgreSQL's
-   `kill_prior_tuple` does, but that puts a filter test on the
-   read path. Proposed: delete and update alone first.
-2. **The limit for busy.** A fixed count of transactions a second
+1. **The limit for busy.** A fixed count of transactions a second
    is a guess. The value needs a bench.
-3. **The list at its cap under constant load.** If a busy system
-   never runs a pass, the list stops growing, and new entries
-   wait for `VACUUM`. With no autovacuum, that is a leak.
-   Proposed, and written in the thread's step 2: a list at its
-   cap runs a pass, busy or not.
-4. **An index-only scan by entry.** A scan could skip the row of
+2. **An index-only scan by entry.** A scan could skip the row of
    any entry with its check bit clear and not cut, not only on a
    set leaf. One changed entry would then cost one row read, not
    a leaf's. Proposed: a second step, after this is measured.
-5. **A small write for the bit.** RocksDB's Merge could log a
+3. **A small write for the bit.** RocksDB's Merge could log a
    small change to a page's key, not 4 KB. sm uses no merge
    operator today, and the frames and the GC filter need a design
    for it. Proposed: plain puts, and Merge only if a bench asks.
@@ -1252,7 +1322,7 @@ needed by what is built.
 | --- | --- | --- |
 | Reverse scan | `ORDER BY ... DESC` | `prev`, §4's walk right; SSI's range |
 | Fix §15.3's two weaknesses | a fairer cache | measure first; `fill_cache`, a cursor that keeps the leaf's id |
-| Log the entry, write the page later | closes 27.7 s to 18 s, the write gap | RocksDB's memtable and WAL are the write-back, so no dirty pages of ours: a Merge on the page's key, with a design for the frames and the GC filter (§7.1, Open, item 5) |
+| Log the entry, write the page later | closes 27.7 s to 18 s, the write gap | RocksDB's memtable and WAL are the write-back, so no dirty pages of ours: a Merge on the page's key, with a design for the frames and the GC filter (§7.1, Open, item 3) |
 | Prefix compression, suffix truncation of separators | more entries a page, a lower tree, far fewer page writes | §3.3, a split, the search of a page |
 | Deduplicate equal keys | smaller leaves on low-cardinality columns | §3.3, the entry's format |
 | Bottom-up sorted build | `CREATE INDEX` without a write per entry | sm3's build, `BULKLOAD.md` |
