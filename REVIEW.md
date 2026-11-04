@@ -126,7 +126,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 
 | Level / Area | Layering & Opacity | Naming (`_t`, `m_`, no `strncpy`) | Findings |
 | --- | --- | --- | --- |
-| `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 2 Low |
+| `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 1 Low |
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 5 Low |
@@ -148,9 +148,6 @@ None open: Mediums 1 to 14 are fixed or closed.
 
 ### 4. Low-Severity and Style Findings
 
-- **`sm0` (`sm/sm0/src/interrupt.cc:105-110`):** `sm_interrupt()`
-  writes to `wake_fd` on every spin retry of
-  `waiter_mu->try_lock()` instead of once.
 - **`sm0` (`sm/sm0/include/sm_sys.h:12`,
   `sm/sm0/include/sm_vfd.h`):** Stale comment mentioning `sys_`
   functions in `sm_sys.h:12`; `sm_vfd.h` is omitted from
