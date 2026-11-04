@@ -182,7 +182,6 @@ int rmseq(sm1::session_t *s, const char *name) {
   return 0;
 }
 
-/* sm1::nextseq, minus the out-of-memory guard. */
 /*
  * Whether the session may draw from a sequence: 0, or -1 if it holds
  * a prepared transaction or one a rollback doomed.
@@ -220,6 +219,7 @@ int seq_find(sm1::session_t *s, const char *name, seqdef_t *def) {
   return 0;
 }
 
+/* sm1::nextseq, minus the out-of-memory guard. */
 int nextseq(sm1::session_t *s, const char *name, uint64_t *out) {
   // Require somewhere to put the value and a valid name.
   if (!out) {

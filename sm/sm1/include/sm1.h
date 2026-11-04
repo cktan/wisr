@@ -1422,27 +1422,34 @@ bool scan_rolled_back(const scan_t* scan);
  */
 int store_chained(session_t* session, uint64_t storeid, bool& out);
 
+/* sm1::insert, of a chained key. */
 int chain_insert(session_t* session, uint64_t storeid,
                  std::string_view key, std::string_view data);
+/* sm1::insert_new, of a chained key. */
 int chain_insert_new(session_t* session, uint64_t storeid,
                      std::string_view key, std::string_view data);
+/* sm1::update, of a chained key; with pin, keeping the row replaced. */
 int chain_update(session_t* session, uint64_t storeid,
                  std::string_view key, std::string_view data);
 int chain_update(session_t* session, uint64_t storeid,
                  std::string_view key, std::string_view data,
                  rawpin_t* pin, std::string_view& old);
+/* sm1::erase, of a chained key; with pin, keeping the row erased. */
 int chain_erase(session_t* session, uint64_t storeid,
                 std::string_view key);
 int chain_erase(session_t* session, uint64_t storeid,
                 std::string_view key, rawpin_t* pin, std::string_view& old);
+/* sm1::erase_moved, of a chained key. */
 int chain_erase_moved(session_t* session, uint64_t storeid,
                       std::string_view key, rawpin_t* pin,
                       std::string_view& old);
+/* sm1::read, of a chained key; with pin, the row read into it. */
 int chain_read(session_t* session, uint64_t storeid,
                std::string_view key, rawpin_t* pin,
                std::string_view& data);
 int chain_read(session_t* session, uint64_t storeid,
                std::string_view key, std::string_view& data);
+/* sm1::read_latest, of a chained key; with pin, the row read into it. */
 int chain_read_latest(session_t* session, uint64_t storeid,
                       std::string_view key, std::string_view& data);
 int chain_read_latest(session_t* session, uint64_t storeid,
@@ -1488,9 +1495,11 @@ int chain_read_batch(session_t* session, uint64_t storeid,
                      const std::string_view* keys, size_t n,
                      rawpin_t** pins, std::string_view* data, int* rc,
                      batch_iter_t* iter = nullptr);
+/* sm1::lock_row, of a chained key. */
 int chain_lock_row(session_t* session, uint64_t storeid,
                    std::string_view key, lockmode_t mode,
                    bool as_read = false, uint16_t kind = 0);
+/* sm1::trylock_row, of a chained key. */
 int chain_trylock_row(session_t* session, uint64_t storeid,
                       std::string_view key, lockmode_t mode,
                       bool as_read = false, uint16_t kind = 0);
