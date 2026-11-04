@@ -7,7 +7,7 @@ history keeps the closed reviews (`REVIEW.md` up to
 
 1. **`aa/`**: open; findings 1 to 7 fixed; the rule findings not
    yet checked.
-2. **`sm/`**: open; every High closed; the Mediums and Lows being
+2. **`sm/`**: open; every High and Medium closed; the Lows being
    checked.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
@@ -111,8 +111,10 @@ session, is fixed. Medium 11 is closed: the evaluator's contract
 digres's and rel's, keep it. Medium 12, a pin's allocation with
 new (std::nothrow) and SM_ERR_NOMEM, is fixed, in sm1's
 rawpin_new too. Medium 13, a truncate that rebuilt the handle's
-definition in place, is fixed. The others and the Lows are being
-checked.
+definition in place, is fixed. Medium 14, null checks of handles
+in some entry points and not others, is closed: sm.h now says a
+NULL handle is the caller's error, which some calls check. The
+Lows are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -128,7 +130,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 5 Low |
-| `include/` & `src/` | PASS | PASS | 1 Medium, 3 Low |
+| `include/` & `src/` | PASS | PASS | 3 Low |
 
 ---
 
@@ -140,10 +142,7 @@ None open: Highs 1 to 9 are closed.
 
 ### 3. Medium-Severity Findings
 
-14. **`src/sm.cc` (`sm/src/sm.cc:601, 608, 843, 940-1006, 1733,
-    1880-1983, 2205-2312`) — Inconsistent null checks before
-    `guard()`:** Several entry points dereference `session`,
-    `env`, or `tbl` (`tbl->session`) before entering `guard()`.
+None open: Mediums 1 to 14 are fixed or closed.
 
 ---
 
