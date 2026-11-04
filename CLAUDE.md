@@ -42,6 +42,8 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
 
 - use snake_case for names
 - class names and struct names end with '_t'
+- function types end with '_fn', not '_t': a function pointer
+  typedef or a std::function alias (`sm_log_fn`, `index_eval_fn`)
 - C++ class private and protected member variable names should 
   have prefixed 'm_'. 
 - for calls that trigger a significant operation (starting/
