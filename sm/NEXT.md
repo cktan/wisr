@@ -411,7 +411,11 @@ and so are the catalog tables psql reads
    cleared, an `sm0::blist_t` (`sm0/include/sm0_blist.h`), with
    a 1-bit Bloom filter in front of it, so a leaf already
    listed is not appended again. VACUUM then reads only the
-   leaves on the list. Not designed yet. To decide:
+   leaves on the list. `BTREE.md` §7.1, proposed 2026-11-04,
+   has a check bit on each entry, so VACUUM reads rows only for
+   entries that need it, and a vacuum thread with its own list
+   of changed entries. This item would then save only VACUUM's
+   walk of the leaves. Not designed yet. To decide:
    - a false positive of the filter leaves a cleared leaf off
      the list: when VACUUM reads it, if ever;
    - the list is in memory: after a restart, VACUUM reads every
