@@ -35,13 +35,14 @@ char *arena_t::grow(size_t n) {
   assert(n <= PTRDIFF_MAX);
   bool large = n > block_room;
   // Out of memory aborts the process, by the new-handler.
-  void *raw = ::operator new(sizeof(block_t) + (large ? n : block_room));
+  void *raw =
+      ::operator new(offsetof(block_t, data) + (large ? n : block_room));
   block_t *b = static_cast<block_t *>(raw);
   block_t *&list = large ? m_large : m_blocks;
   b->next = list;
   b->top = n;
   list = b;
-  return bytes(b);
+  return b->data;
 }
 
 } // namespace sm0

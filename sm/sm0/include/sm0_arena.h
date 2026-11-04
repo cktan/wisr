@@ -24,10 +24,11 @@
 namespace sm0 {
 
 class arena_t {
-  /* A block: this header, then its bytes. */
+  /* A block: a header, then its bytes, past data's declared size. */
   struct block_t {
     block_t *next;
     size_t top; /* bytes in use */
+    char data[1];
   };
 
   /* What a block takes, its header included, but for a large one. */
@@ -35,7 +36,7 @@ class arena_t {
 
 public:
   /* The largest piece that is cut from a block of the usual size. */
-  static constexpr size_t block_room = block_size - sizeof(block_t);
+  static constexpr size_t block_room = block_size - offsetof(block_t, data);
 
   arena_t() = default;
   ~arena_t();
@@ -49,15 +50,12 @@ public:
     if (nullptr == m_blocks || n > block_room - m_blocks->top) [[unlikely]] {
       return grow(n);
     }
-    char *p = bytes(m_blocks) + m_blocks->top;
+    char *p = m_blocks->data + m_blocks->top;
     m_blocks->top += n;
     return p;
   }
 
 private:
-  /* The bytes of b, addressed from its start: they follow its header. */
-  static char *bytes(block_t *b) { return reinterpret_cast<char *>(b + 1); }
-
   char *grow(size_t n);
 
   block_t *m_blocks = nullptr; /* the newest first, cut from */
