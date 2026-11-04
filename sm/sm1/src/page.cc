@@ -298,8 +298,11 @@ int sm1::page_drop(sm1::session_t *session, uint64_t storeid,
   store_t outside;
   const store_t *st = nullptr;
   if (session && !session->active) {
-    if (storeid == 0 || check_page_key(prefix) != 0) {
+    if (storeid == 0) {
       return set_error(sm1::SM_ERR_INVALID, "store 0 holds no pages");
+    }
+    if (check_page_key(prefix) != 0) {
+      return -1;
     }
     outside = db_store(session->db, storeid);
     if (!outside.cf) {

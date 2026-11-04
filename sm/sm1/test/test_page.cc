@@ -615,6 +615,8 @@ TEST_CASE("page: dropped outside a transaction, after a commit") {
   // 1. Write pages under "t"; commit with a function that drops them.
   // 2. After the commit they are gone, read in a new transaction.
   // 3. A store dropped is no error, outside a transaction.
+  // 4. Outside a transaction, store 0 and a prefix too long are refused,
+  //    each with its own message.
   home_t home;
   REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
   sm1::session_t *s = opendb(home.env(), "db");
@@ -637,6 +639,14 @@ TEST_CASE("page: dropped outside a transaction, after a commit") {
   REQUIRE(sm1::rmstore(s, store) == 0);
   REQUIRE(sm1::commit(s) == 0);
   CHECK(0 == sm1::page_drop(s, store, "u"));
+
+  // 4.
+  CHECK(-1 == sm1::page_drop(s, 0, "u"));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  CHECK(std::string(sm1::errmsg()) == "store 0 holds no pages");
+  CHECK(-1 == sm1::page_drop(s, store, std::string(sm1::max_keylen, 'k')));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  CHECK(std::string(sm1::errmsg()) == "a page's key is too long");
   REQUIRE(sm1::closedb(s) == 0);
 }
 

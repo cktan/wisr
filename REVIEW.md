@@ -114,7 +114,11 @@ rawpin_new too. Medium 13, a truncate that rebuilt the handle's
 definition in place, is fixed. Medium 14, null checks of handles
 in some entry points and not others, is closed: sm.h now says a
 NULL handle is the caller's error, which some calls check. The
-Lows are being checked.
+Lows are being checked. Of them, page_drop's with no transaction
+is closed but for its message: that path is for an on_commit
+function, which sm1::commit_prepared may run on any session, so a
+check for a prepared transaction there could refuse it, and the
+store it is given is the committing transaction's own.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -127,7 +131,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | Level / Area | Layering & Opacity | Naming (`_t`, `m_`, no `strncpy`) | Findings |
 | --- | --- | --- | --- |
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | none |
-| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 2 Low |
+| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | none |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 5 Low |
 | `include/` & `src/` | PASS | PASS | 3 Low |
@@ -148,14 +152,6 @@ None open: Mediums 1 to 14 are fixed or closed.
 
 ### 4. Low-Severity and Style Findings
 
-- **`sm1` (`sm/sm1/src/page.cc:301-309`):** `page_drop` when
-  `!session->active` skips `SM_ERR_PREPARED` and temp-store owner
-  checks, and reports `"store 0 holds no pages"` on
-  `check_page_key` failure.
-- **`sm1` (`sm/sm1/include/sm1.h:1425-1450, 1491-1496`,
-  `sm/sm1/src/seq.cc:185, 223`):** Missing individual doc
-  comments on `chain_*` declarations in `sm1.h` and misplaced doc
-  comment above `may_draw()` in `seq.cc`.
 - **`sm2` (`sm/sm2/src/type/decimal.cc:219-246`):** `decimal_key`
   does not verify that the datum's embedded scale bits match
   `typmod.scale`.
