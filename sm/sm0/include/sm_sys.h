@@ -9,7 +9,7 @@
  * bit: the caller defines them, claims them, and decides what an
  * interrupt means. Nothing here uses signals.
  *
- * The interface is C in style: sys_ functions, times as int64_t
+ * The interface is C in style: sm_ functions, times as int64_t
  * microseconds on the monotonic clock, and a function pointer with
  * a void * for a predicate. What is C++ is a thread's handle, a
  * std::shared_ptr to its control block, and the mutex and
@@ -111,8 +111,8 @@ typedef bool (*sm_wait_pred_t)(void *arg);
  * it at once.
  */
 sm_wait_result_t sm_wait(std::unique_lock<std::mutex> *lock,
-                           std::condition_variable *cv, sm_wait_pred_t done,
-                           void *arg, uint32_t mask, int64_t deadline_us);
+                         std::condition_variable *cv, sm_wait_pred_t done,
+                         void *arg, uint32_t mask, int64_t deadline_us);
 
 /*
  * The calling thread's wake fd, an eventfd made on the first call:
@@ -157,7 +157,7 @@ typedef uint64_t sm_timer_id_t;
  * first call. Returns the timer's id. Any thread.
  */
 sm_timer_id_t sm_timer_at(const sm_thread_ref_t &t, int64_t when_us,
-                            uint32_t bits, int64_t period_us);
+                          uint32_t bits, int64_t period_us);
 
 /*
  * Cancel a timer. Cancel and expiry are decided under one lock, so

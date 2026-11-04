@@ -51,7 +51,7 @@ TEST_OBJS := $(TEST_SRCS:test/%.cc=$(BUILD)/test/%.o)
 LIB      := $(BUILD)/libsm0.a
 TEST_BIN := $(BUILD)/test_sm0
 
-FORMAT_FILES := $(wildcard src/*.cc test/*.cc include/sm0*.h)
+FORMAT_FILES := $(wildcard src/*.cc test/*.cc include/sm0*.h include/sm_*.h)
 
 .PHONY: all test tsan asan format clean
 

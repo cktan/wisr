@@ -136,7 +136,7 @@ mode_t sm_vfd_raw_mode(const sm_vfd_cache_t *cache, sm_vfd_t vfd);
  * fds, on EMFILE or ENFILE as well, and tries again.
  */
 int sm_vfd_open_real(sm_vfd_cache_t *cache, const char *path, int flags,
-               mode_t mode);
+                     mode_t mode);
 
 /* Close a real fd sm_vfd_open_real() gave, and stop counting it. */
 int sm_vfd_close_real(sm_vfd_cache_t *cache, int fd);
