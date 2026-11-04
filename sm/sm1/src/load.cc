@@ -441,6 +441,22 @@ int ingest(sm1::loader_t *l) {
   return st.ok() ? 0 : set_status_error(st, "load: ingest the sorted files");
 }
 
+/*
+ * Refuse storeid unless the transaction sees it, as a write
+ * does: not store 0, the catalog, and not a store another
+ * transaction made and has not committed. 0 if seen, else -1.
+ */
+int check_store(sm1::session_t *s, uint64_t storeid) {
+  if (storeid == 0) {
+    return set_error(sm1::SM_ERR_INVALID, "store 0 is the catalog");
+  }
+  int r = catalog_lookup(s, xct_view(s), storeid);
+  if (r == 1) {
+    return set_error(sm1::SM_ERR_NOTFOUND, "no such store: {}", storeid);
+  }
+  return r;
+}
+
 } // namespace
 
 namespace wisr {
@@ -468,7 +484,7 @@ void load_discard(sm1::session_t *s) {
 
 /* Whether a store holds no key; see sm1.h. */
 int sm1::store_empty(sm1::session_t *s, uint64_t storeid, bool &empty) {
-  if (xct_check_active(s) != 0) {
+  if (xct_check_active(s) != 0 || check_store(s, storeid) != 0) {
     return -1;
   }
   store_t st = db_store(s->db, storeid);
@@ -491,6 +507,9 @@ int sm1::load_open(sm1::session_t *s, uint64_t storeid, sm1::loader_t *&out) {
   if (s->loader) {
     return set_error(sm1::SM_ERR_INVALID,
                      "load: the transaction has one open already");
+  }
+  if (check_store(s, storeid) != 0) {
+    return -1;
   }
   store_t st = db_store(s->db, storeid);
   if (!st.cf) {

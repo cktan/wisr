@@ -349,6 +349,40 @@ TEST_CASE("a wait left by an exception is no longer a waiter") {
   CHECK(sm_take(B1) == B1);
 }
 
+TEST_CASE("a wait with a deadline far ahead sleeps") {
+  // Verify a deadline too far ahead for the clock's nanoseconds is a long
+  // sleep, not one already past: the wait costs no CPU.
+  // 1. Another thread interrupts this one for B1 after 200 ms.
+  // 2. Wait for B1 with a deadline just short of SM_FOREVER, reading the
+  //    CPU the process spends meanwhile.
+  // 3. Confirm the wait was interrupted, and spent far less CPU than its
+  //    time.
+  std::mutex mu;
+  std::condition_variable cv;
+  std::unique_lock<std::mutex> lock(mu);
+  sm_thread_ref_t self = sm_thread_self();
+  std::thread raiser([&] {
+    sleep_ms(200);
+    sm_interrupt(self, B1);
+  });
+  // The CPU of every thread of the process, in microseconds.
+  auto cpu_us = [] {
+    struct rusage ru;
+    getrusage(RUSAGE_SELF, &ru);
+    return (ru.ru_utime.tv_sec + ru.ru_stime.tv_sec) * 1000000LL +
+           ru.ru_utime.tv_usec + ru.ru_stime.tv_usec;
+  };
+  int64_t before = cpu_us();
+  sm_wait_result_t r = sm_wait(
+      &lock, &cv, [](void *) { return false; }, nullptr, B1, SM_FOREVER - 1);
+  int64_t spent = cpu_us() - before;
+  raiser.join();
+  CAPTURE(spent);
+  CHECK(r == SM_WAIT_INTERRUPTED);
+  CHECK(spent < 50000);
+  CHECK(sm_take(B1) == B1);
+}
+
 TEST_CASE("a timer due never leaves the timer thread asleep") {
   // Verify a timer at SM_FOREVER costs no CPU while it is armed.
   // 1. Arm a timer on this thread for B1, due at SM_FOREVER.
@@ -370,6 +404,23 @@ TEST_CASE("a timer due never leaves the timer thread asleep") {
   CHECK(spent < 50000);
   CHECK(sm_timer_cancel(id));
   CHECK(sm_pending() == 0);
+}
+
+TEST_CASE("a periodic timer far behind skips what it missed") {
+  // Verify a periodic timer that fell behind fires once and goes on from
+  // now, not every period it missed in a row, during which a cancel could
+  // not get in.
+  // 1. Arm a timer for B1 every 100 us, first due 100 s ago: a million
+  //    periods missed.
+  // 2. Cancel it from another thread: it returns within half a second.
+  sm_timer_id_t id =
+      sm_timer_at(sm_thread_self(), sm_now_us() - 100000000, B1, 100);
+  std::future<bool> cancelled =
+      std::async(std::launch::async, [&] { return sm_timer_cancel(id); });
+  CHECK(cancelled.wait_for(std::chrono::milliseconds(500)) ==
+        std::future_status::ready);
+  CHECK(cancelled.get());
+  sm_take(B1);
 }
 
 TEST_CASE("the timer thread blocks every signal") {

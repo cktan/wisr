@@ -628,6 +628,65 @@ TEST_CASE("tree: a unique insert judges every entry of its prefix") {
   CHECK(304u == drain(c).size());
 }
 
+TEST_CASE("tree: a unique insert reads no leaf past its prefix's") {
+  // Verify tree_insert_unique stops its walk right at a leaf whose high
+  // key is past the prefix, so it pins no right sibling of no use.
+  // 1. Fill leaves with keys "a|" and even numbers; pick a leaf L and
+  //    its right sibling N, and a prefix, an odd number, between L's
+  //    last key and its high key: L holds no entry of it.
+  // 2. Remove two keys of L, so the insert finds room and splits
+  //    nothing.
+  // 3. Another session pins N exclusive.
+  // 4. A unique insert of the prefix goes in on L without waiting for
+  //    N.
+  db_t d;
+  open_tree_t t(d, 19, 512);
+  REQUIRE(0 == tree_create(t.tree));
+  auto key_of = [](int n) {
+    char buf[32];
+    snprintf(buf, sizeof buf, "a|%06d", n);
+    return std::string(buf);
+  };
+  for (int n = 0; n < 600; n++) {
+    REQUIRE(0 == tree_insert(t.tree, key_of(n * 2), "v"));
+  }
+  uint64_t lid = first_leaf(t.s, d.store(), 19);
+  page_t leaf = read_decoded(t.s, d.store(), 19, lid);
+  REQUIRE(leaf.has_high_key());
+  REQUIRE(0 != leaf.next);
+  const std::string last = leaf.entries.back().first;
+  int n = atoi(last.c_str() + 2);
+  std::string prefix = key_of(n + 1);
+  REQUIRE(prefix < leaf.high);
+
+  // 2.
+  auto drop = [](std::string_view, std::string_view) { return 0; };
+  REQUIRE(0 == tree_remove_if(t.tree, leaf.entries[0].first, drop));
+  REQUIRE(0 == tree_remove_if(t.tree, leaf.entries[1].first, drop));
+
+  // 3.
+  open_tree_t w(d, 19, 512);
+  std::string right = page_name(19, leaf.next);
+  sm1::page_t *pin = nullptr;
+  std::string_view bytes;
+  REQUIRE(0 == sm1::pin_page(w.s, d.store(), right, sm1::page_mode_t::ex, 0,
+                             pin, bytes));
+
+  // 4.
+  std::atomic<int> rc{-2};
+  std::thread inserter([&] {
+    auto none = [](std::string_view, std::string_view) { return 0; };
+    rc = tree_insert_unique(t.tree, prefix, prefix + "x", "v", none);
+  });
+  for (int i = 0; i < 2000 && -2 == rc; i++) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  CHECK(0 == rc);
+  sm1::unpin_page(w.s, pin);
+  inserter.join();
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+}
+
 TEST_CASE("tree: a probe reads an inner root from its copy, with no pin") {
   // Verify a descent takes no pin of page 0 while its session's copy
   // of it is good, and pins it again once the page has changed.

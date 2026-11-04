@@ -116,6 +116,10 @@ int rmstore(sm1::session_t *s, uint64_t storeid) {
   if (r == 1) {
     return set_error(sm1::SM_ERR_NOTFOUND, "store {} does not exist", storeid);
   }
+  // A load open into the store would ingest into a dropped one.
+  if (load_open_on(s, storeid)) {
+    return set_error(sm1::SM_ERR_INVALID, "a bulk load is open into the store");
+  }
   // A temporary store has no catalog row: it goes at commit.
   if (s->temp_stores.count(storeid)) {
     s->dropped.push_back(storeid);

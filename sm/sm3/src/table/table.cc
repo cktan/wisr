@@ -910,9 +910,6 @@ static int update_row(table_t *table, uint64_t id, std::string_view key,
   // pin goes to ref only once all of it succeeds, as values may
   // point into the row ref holds.
   pin_t *p = pin_take(table->session);
-  if (!p) {
-    return -1;
-  }
   bool kept = false;
   defer {
     if (!kept) {
@@ -1042,9 +1039,6 @@ static int delete_row(table_t *table, std::string_view key, pin_ref_t *ref,
   // held until its index entries are found and removed. The pin
   // goes to ref only once all of it succeeds.
   pin_t *p = pin_take(table->session);
-  if (!p) {
-    return -1;
-  }
   bool kept = false;
   defer {
     if (!kept) {
@@ -1286,9 +1280,6 @@ static int read_into(table_t *table, pin_ref_t &ref, std::string_view &tuple,
   if (!p) {
     p = pin_take(table->session);
   }
-  if (!p) {
-    return -1;
-  }
   int rc = read(p->raw);
   if (rc != 0) {
     pin_put(p);
@@ -1340,10 +1331,6 @@ int tbl_read_keys(table_t *table, const std::string_view *keys, size_t n,
     pins[i] = pin_reread(refs[i]);
     if (!pins[i]) {
       pins[i] = pin_take(table->session);
-    }
-    if (!pins[i]) {
-      give_back();
-      return -1;
     }
     raws[i] = pins[i]->raw;
   }
@@ -1570,9 +1557,6 @@ template <typename F>
 static int open_scan(table_t *table, scan_t *&out, F open) {
   out = nullptr;
   pin_t *p = pin_take(table->session);
-  if (!p) {
-    return -1;
-  }
   sm2::rel_scan_t *rel = nullptr;
   if (open(rel) != 0) {
     pin_put(p);
@@ -1916,9 +1900,6 @@ namespace {
 int unique_tree_insert(sm3::table_t *t, size_t i, const entry_t &e,
                        const picked_t &inc, std::string_view row) {
   sm3::pin_t *p = sm3::pin_take(t->session);
-  if (!p) {
-    return -1;
-  }
   uint64_t writer = 0;
   std::string kb;
   int rc;
@@ -1979,9 +1960,6 @@ int tree_find(sm3::table_t *t, size_t i, const entry_t &e, bool now,
   }
   sm2::bound_t b{e.d(), e.null(), true};
   sm3::pin_t *p = sm3::pin_take(t->session);
-  if (!p) {
-    return -1;
-  }
   std::string kb;
   int rc;
   for (;;) {
@@ -2070,9 +2048,6 @@ int tbl_idx_scan_rows(table_t *table, uint64_t index, const sm2::bound_t *lo,
     }
     if (x.tree) {
       pin_t *p = pin_take(table->session);
-      if (!p) {
-        return -1;
-      }
       sm2::index_scan_t *entries = nullptr;
       if (sm2::idx_scan(table->indexes[i], lo, hi, entries, widened) != 0) {
         pin_put(p);
@@ -2278,9 +2253,6 @@ int tbl_compact(table_t *table) {
       continue;
     }
     pin_t *p = pin_take(table->session);
-    if (!p) {
-      return -1;
-    }
     size_t removed = 0;
     int rc = sm2::idx_vacuum(
         table->indexes[i],

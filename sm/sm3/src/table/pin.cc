@@ -9,8 +9,6 @@
 
 #include "pin.h"
 
-#include <new>
-
 namespace {
 
 /* Link pin at the head of the list head. */
@@ -68,14 +66,8 @@ pin_t *pin_take(session_t *s) {
     return p;
   }
   // Else make one; the pool keeps it until the session closes.
-  pin_t *p = new (std::nothrow) pin_t;
-  sm1::rawpin_t *raw = p ? sm1::rawpin_new() : nullptr;
-  if (!raw) {
-    delete p;
-    sm1::seterr(sm1::SM_ERR_NOMEM, "no memory for a pin");
-    return nullptr;
-  }
-  p->raw = raw;
+  pin_t *p = new pin_t;
+  p->raw = sm1::rawpin_new();
   p->session = s;
   s->pins.push_back(p);
   return p;

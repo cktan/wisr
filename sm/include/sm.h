@@ -20,6 +20,10 @@
  *     below returns 1 for "no row", so does the call here.
  *   - A call that yields a handle hands it back through its last
  *     parameter, set only on success.
+ *   - A handle given to a call -- an environment, a session, a
+ *     table, a cursor -- must not be NULL: a NULL one is the
+ *     caller's error. Some calls check, and fail with
+ *     SM_ERR_INVALID; the others do not check.
  *   - Names are NUL-terminated strings; data is a pointer and a
  *     length. Both are read during the call and never retained.
  *   - A row or an index entry handed out points into engine

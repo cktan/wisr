@@ -109,6 +109,25 @@ TEST_CASE("a virtual fd reads back what it wrote") {
   sm_vfd_cache_free(c);
 }
 
+TEST_CASE("a real fd's open refuses no cache or no path, as a virtual one's") {
+  // Verify sm_vfd_open_real() checks its arguments as sm_vfd_open() does,
+  // with SM_ERR_INVALID, rather than read through a null pointer.
+  // 1. Open with no cache, with no path, and with an empty path.
+  // 2. Each fails with SM_ERR_INVALID and EINVAL, and opens nothing.
+  sm_vfd_cache_t *c = sm_vfd_cache_make(4);
+  for (int k = 0; k < 3; k++) {
+    CAPTURE(k);
+    errno = 0;
+    int fd = 0 == k   ? sm_vfd_open_real(nullptr, "/dev/null", O_RDONLY, 0)
+             : 1 == k ? sm_vfd_open_real(c, nullptr, O_RDONLY, 0)
+                      : sm_vfd_open_real(c, "", O_RDONLY, 0);
+    CHECK(fd == -1);
+    CHECK(errno == EINVAL);
+    CHECK(sm0::errnum() == SM_ERR_INVALID);
+  }
+  sm_vfd_cache_free(c);
+}
+
 TEST_CASE("a cache keeps its share open and reopens the rest") {
   // Verify many virtual fds work over a share of two real ones.
   // 1. Open six files through a cache whose share is two, writing each

@@ -72,9 +72,20 @@ const sm_thread_ref_t &self_ref() {
 /* The calling thread's block. */
 sm_thread_t *self_block() { return self_ref().get(); }
 
-/* A time on the monotonic clock, from microseconds. */
+/*
+ * A time on the monotonic clock, from microseconds; the clock's last for
+ * one past what its nanoseconds hold, which would overflow into the past.
+ */
 std::chrono::steady_clock::time_point time_point_of(int64_t us) {
-  return std::chrono::steady_clock::time_point(std::chrono::microseconds(us));
+  using clock = std::chrono::steady_clock;
+  constexpr int64_t most_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          clock::duration::max())
+          .count();
+  if (us >= most_us) {
+    return clock::time_point::max();
+  }
+  return clock::time_point(std::chrono::microseconds(us));
 }
 
 } // namespace
@@ -286,7 +297,8 @@ std::once_flag service_once;
  * 2. Take the timer out of the service.
  * 3. If the timer's thread is gone, drop the timer.
  * 4. Else raise its bits outside the lock, and arm it again if it is
- *    periodic.
+ *    periodic: for its next period, or a period from now if that is
+ *    past.
  * 5. Go back to step 1.
  */
 void timer_main(timer_service_t *s) {
@@ -332,7 +344,14 @@ void timer_main(timer_service_t *s) {
       lock.lock();
 
       if (timer.period_us > 0) {
+        // The next period's, or one from now if that is past: a timer
+        // behind skips what it missed, not firing them all in a row,
+        // which holds the lock a cancel waits for.
         int64_t next = when + timer.period_us;
+        int64_t now = sm_now_us();
+        if (next <= now) {
+          next = now + timer.period_us;
+        }
         s->by_when.emplace(std::make_pair(next, id), timer);
         s->when_of.emplace(id, next);
       }

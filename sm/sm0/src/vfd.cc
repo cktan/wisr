@@ -483,6 +483,11 @@ mode_t sm_vfd_raw_mode(const sm_vfd_cache_t *cache, sm_vfd_t vfd) {
 /* open(2) a real fd for the caller, counted. */
 int sm_vfd_open_real(sm_vfd_cache_t *cache, const char *path, int flags,
                      mode_t mode) {
+  if (cache == nullptr || path == nullptr || *path == '\0') {
+    sm0::set_error(SM_ERR_INVALID, "sm_vfd_open_real: no cache or no path");
+    errno = EINVAL;
+    return -1;
+  }
   int fd = open_counted(cache, path, flags, mode);
   if (fd < 0)
     return -1;

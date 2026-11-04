@@ -158,6 +158,45 @@ std::vector<std::string> two_keys(int n) {
 
 } // namespace
 
+TEST_CASE("a load and an emptiness check take a store the transaction sees") {
+  // Verify sm1::load_open and sm1::store_empty find their store as every
+  // write and read does: not the catalog's, store 0, and not one another
+  // transaction made and has not committed.
+  // 1. Both refuse store 0 with SM_ERR_INVALID.
+  // 2. Another session makes a store and does not commit; both refuse it
+  //    with SM_ERR_NOTFOUND.
+  // 3. Another session makes a temporary store; both refuse it with
+  //    SM_ERR_NOTFOUND.
+  load_fixture_t f;
+  sm1::session_t *other = f.open();
+  sm1::loader_t *l = nullptr;
+  bool empty = false;
+  begin_xct(f.s);
+  CHECK(sm1::load_open(f.s, 0, l) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm1::store_empty(f.s, 0, empty) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+
+  // 2.
+  begin_xct(other);
+  uint64_t made = mkstore(other);
+  CHECK(sm1::load_open(f.s, made, l) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  CHECK(sm1::store_empty(f.s, made, empty) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+
+  // 3.
+  uint64_t temp = 0;
+  REQUIRE(sm1::mkstore(other, temp, true) == 0);
+  CHECK(sm1::load_open(f.s, temp, l) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  CHECK(sm1::store_empty(f.s, temp, empty) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm1::abort(other) == 0);
+  REQUIRE(sm1::commit(f.s) == 0);
+  sm1::closedb(other);
+}
+
 TEST_CASE("a load's keys are the transaction's own once it closes") {
   // Verify a load in each of its two forms: one batch, and files.
   // 1. Make a store, open a load, and put 500 keys to an ascending
@@ -410,6 +449,41 @@ TEST_CASE("a load is into an empty store, whoever made it") {
   REQUIRE_MESSAGE(sm1::load_close(l) == 0, sm1::errmsg());
   CHECK(get(f.s, temp, "k1") == "v1");
   commit_xct(f.s);
+}
+
+TEST_CASE("a load open into a store refuses its chained writes and its drop") {
+  // Verify sm1.h's rule, that while a load is open the transaction's
+  // other writes to its store are refused, holds for a chained store's
+  // writes and for sm1::rmstore, as for a plain store's writes.
+  // 1. A load opens into a chained store; an insert, an update and an
+  //    erase there are SM_ERR_INVALID.
+  // 2. sm1::rmstore of the chained store is SM_ERR_INVALID.
+  // 3. A load opens into a plain store; its sm1::rmstore is
+  //    SM_ERR_INVALID.
+  load_fixture_t f;
+  begin_xct(f.s);
+  uint64_t chained = 0;
+  REQUIRE(sm1::mkstore(f.s, chained, false, true) == 0);
+  open_load(f.s, chained);
+  CHECK(sm1::chain_insert(f.s, chained, "k", "v") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm1::chain_update(f.s, chained, "k", "v") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm1::chain_erase(f.s, chained, "k") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+
+  // 2.
+  CHECK(sm1::rmstore(f.s, chained) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm1::abort(f.s) == 0);
+
+  // 3.
+  begin_xct(f.s);
+  uint64_t plain = mkstore(f.s);
+  open_load(f.s, plain);
+  CHECK(sm1::rmstore(f.s, plain) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm1::abort(f.s) == 0);
 }
 
 TEST_CASE("a transaction cannot commit with a load open, nor prepare after "

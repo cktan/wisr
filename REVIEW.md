@@ -7,7 +7,7 @@ history keeps the closed reviews (`REVIEW.md` up to
 
 1. **`aa/`**: open; findings 1 to 7 fixed; the rule findings not
    yet checked.
-2. **`sm/`**: open; every High closed; the Mediums and Lows being
+2. **`sm/`**: open; every High and Medium closed; the Lows being
    checked.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
@@ -95,7 +95,26 @@ wait is now a documented exception, as a detach must outlast its
 builds; its join race is none, as a worker that takes new work
 only makes the detach wait for it. High 8, a worker counted whose
 thread was never made, and High 9, std::optional in sm_stats.h, are
-fixed. The Mediums and Lows are being checked.
+fixed. Of the Mediums, 1, a deadline that overflowed into the
+past, 2, a periodic timer's catch-up that starved its cancel, 3,
+a real fd's open of no path, 4, a load into a store the
+transaction does not see, 5, a chained write or a drop of a
+store with a load open, 6, a wait bit left set after its sleep,
+7, a catch and a std::stoull, and 8, a unique insert's walk past
+its prefix, are fixed. Medium 9 is closed: a unique insert that
+finishes a split a crash left half done holds the first leaf, as
+its own split holds it while it posts; latches go left to right,
+then up, so no deadlock, and the path runs once a crash. Medium
+10, statistics loaded under uncommitted DDL kept for every
+session, is fixed. Medium 11 is closed: the evaluator's contract
+(sm.h, sm3.h) is -1 only with the error set, and both evaluators,
+digres's and rel's, keep it. Medium 12, a pin's allocation with
+new (std::nothrow) and SM_ERR_NOMEM, is fixed, in sm1's
+rawpin_new too. Medium 13, a truncate that rebuilt the handle's
+definition in place, is fixed. Medium 14, null checks of handles
+in some entry points and not others, is closed: sm.h now says a
+NULL handle is the caller's error, which some calls check. The
+Lows are being checked.
 
 Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 `sm/include/`, `sm/src/`, and `sm/rel/` against `CLAUDE.md`,
@@ -107,11 +126,11 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 
 | Level / Area | Layering & Opacity | Naming (`_t`, `m_`, no `strncpy`) | Findings |
 | --- | --- | --- | --- |
-| `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Medium, 3 Low |
-| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 4 Medium, 3 Low |
-| `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 2 Medium, 3 Low |
-| `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 3 Medium, 5 Low |
-| `include/` & `src/` | PASS | PASS | 2 Medium, 3 Low |
+| `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Low |
+| `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 3 Low |
+| `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 3 Low |
+| `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 5 Low |
+| `include/` & `src/` | PASS | PASS | 3 Low |
 
 ---
 
@@ -123,82 +142,7 @@ None open: Highs 1 to 9 are closed.
 
 ### 3. Medium-Severity Findings
 
-1. **`sm0` (`sm/sm0/src/interrupt.cc:74-76, 193, 307-309`) —
-   Signed overflow in `time_point_of(int64_t us)`:** Multiplying
-   `us * 1000` to form nanoseconds overflows `int64_t` when `us >
-   INT64_MAX / 1000` (e.g., `SM_FOREVER`), wrapping to a negative
-   `time_point` and causing `timer_main` or `sm_wait` to spin.
-2. **`sm0` (`sm/sm0/src/interrupt.cc:326-333, 372-385`) —
-   Periodic timer catch-up can starve `sm_timer_cancel`:** When
-   `next = when + timer.period_us <= sm_now_us()`, `timer_main`
-   loops and re-fires `id` without releasing `s->mu` or sleeping
-   on `s->cv`, preventing a thread waiting in `sm_timer_cancel`
-   on `s->fired_cv` from acquiring `s->mu`.
-3. **`sm0` (`sm/sm0/src/vfd.cc:161, 484-491`) — Null dereference
-   in `sm_vfd_open_real`:** Unlike `sm_vfd_open`,
-   `sm_vfd_open_real` does not check `cache == nullptr` or `path
-   == nullptr`; passing `path == nullptr` causes
-   `std::string("open \"") + path` at line 161 to dereference
-   `nullptr`.
-4. **`sm1` (`sm/sm1/src/load.cc:470-503`) — `sm1::load_open` and
-   `sm1::store_empty` bypass catalog visibility, store-0, and
-   temp-store owner checks:** Both look up `storeid` via
-   `db_store(s->db, storeid)` instead of `catalog_lookup(s,
-   xct_view(s), storeid)` and do not reject `storeid == 0` or
-   `st.owner != s`.
-5. **`sm1` (`sm/sm1/src/chain.cc:294-305`,
-   `sm/sm1/src/catalog.cc:100-134`) — `chain_write` and `rmstore`
-   do not check `load_open_on(s, storeid)`:** `sm1.h:1542`
-   states that other writes to a store with an open bulk loader
-   are refused with `SM_ERR_INVALID`, which `access_write`
-   enforces but `chain_write` and `rmstore` omit.
-6. **`sm1` (`sm/sm1/src/bufpool.cc:241-246`) —
-   `bufpool_t::acquire` leaves `state_wait` set after waking:**
-   Setting `f->state.fetch_or(state_wait)` unconditionally before
-   `try_pin(f->state, ex, true)` leaves `state_wait` set on the
-   frame when the last waiter acquires it, forcing subsequent
-   shared readers off the fast path onto `q.mu`.
-7. **`sm1` (`sm/sm1/src/walfs.cc:163-170`,
-   `sm/sm1/src/stats.cc:165`) — `try`/`catch` and `std::stoull`
-   in `sm1` (`sm/CODE.md` §5):** `walfs.cc` uses `try`/`catch`
-   and `stats.cc` calls throwing `std::stoull(v)` instead of
-   `std::from_chars`.
-8. **`sm2` (`sm/sm2/src/tree/tree.cc:700-730`) —
-   `tree_insert_unique` walks right siblings past `high()`:** On
-   `first` (when `lower_bound == count()`) and on empty leaves
-   left by `tree_prune` (`v.count() == 0`), `more` remains `true`
-   even when `has_high() && !begins(high(), prefix)`, pinning
-   unnecessary right siblings.
-9. **`sm2` (`sm/sm2/src/tree/tree.cc:738-754`) —
-   `tree_insert_unique` calls `finish_split(cur)` while holding
-   `first.pin` EX:** Releasing `first.pin` before `finish_split`
-   avoids holding two leaf EX pins while ascending the tree on a
-   path that immediately sets `restart = true`.
-10. **`sm3` (`sm/sm3/src/catalog/ddl.cc:926-984`) —
-    `cat_get_stats()` caches stats in shared `cat->stats` using
-    session's uncommitted `table_def_t`:** If a session has
-    uncommitted `DROP COLUMN` or `DROP INDEX` DDL and calls
-    `cat_get_stats()`, it filters the committed stats against its
-    uncommitted `def` and stores the truncated stats into shared
-    `cat->stats`.
-11. **`sm3` (`sm/sm3/src/catalog/internal.h:453-459`) —
-    `eval_index()` does not set `sm1::errnum()` when callback
-    returns non-zero:** Callers in `table.cc:520` and
-    `analyze.cc:149` return `-1` with `errnum() == SM_OK` if the
-    host callback fails without calling `sm_seterr`.
-12. **`sm3` (`sm/sm3/src/table/pin.cc:71-77`) — Prohibited `new
-    (std::nothrow)` and `SM_ERR_NOMEM` (`sm/CODE.md` §5):**
-    `pin_new()` uses `new (std::nothrow) pin_t` and sets
-    `SM_ERR_NOMEM`, contrary to `sm/CODE.md` §5.
-13. **`src/sm.cc` (`sm/src/sm.cc:2193-2197`) — `sm_tbl_truncate`
-    overwrites `*tbl->def` in place:** Move-assigning
-    `api_def(...)` into `*tbl->def` reallocates internal vectors
-    and strings while callers of `sm_tbl_def` may hold pointers
-    into them; only `tbl->def->version` needs updating.
-14. **`src/sm.cc` (`sm/src/sm.cc:601, 608, 843, 940-1006, 1733,
-    1880-1983, 2205-2312`) — Inconsistent null checks before
-    `guard()`:** Several entry points dereference `session`,
-    `env`, or `tbl` (`tbl->session`) before entering `guard()`.
+None open: Mediums 1 to 14 are fixed or closed.
 
 ---
 
