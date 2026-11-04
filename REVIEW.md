@@ -126,7 +126,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 
 | Level / Area | Layering & Opacity | Naming (`_t`, `m_`, no `strncpy`) | Findings |
 | --- | --- | --- | --- |
-| `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 3 Low |
+| `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | 2 Low |
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | 3 Low |
 | `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 3 Low |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 5 Low |
@@ -148,10 +148,6 @@ None open: Mediums 1 to 14 are fixed or closed.
 
 ### 4. Low-Severity and Style Findings
 
-- **`sm0` (`sm/sm0/src/error.cc:75, 118-123`):** `seterr` uses
-  `memcpy` into `t_errmsg` (use `memmove` in case a caller passes
-  `errmsg()`), and `set_errno_error` calls `strerror` instead of
-  `strerror_r`.
 - **`sm0` (`sm/sm0/src/interrupt.cc:105-110`):** `sm_interrupt()`
   writes to `wake_fd` on every spin retry of
   `waiter_mu->try_lock()` instead of once.
