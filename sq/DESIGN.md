@@ -165,6 +165,31 @@ for none of its nodes. What the allocator hands out the tree
 never frees. A failed alloc returns NULL, and sq reports running
 out of memory as it does any error.
 
+**WARNING: do not put digres's nodes in an arena.** digres needs
+this allocator, because PostgreSQL does not treat the tree as
+read-only. A branch that removed the allocator, `wip-sq-arena`,
+was dropped on 2026-11-04 for these reasons:
+
+- **The tree is not const.** `sq_parse()` gives the caller a tree
+  it may change, and digres's analyzer changes it.
+- **Each node and each list's array must be `palloc` memory.**
+  PostgreSQL grows and frees them itself: `list.c` calls
+  `repalloc`, `pfree` and `GetMemoryChunkContext()`. Each reads
+  the chunk header in front of the pointer. A piece cut from an
+  arena has no chunk header, even if the arena's block came from
+  `palloc`.
+- **PostgreSQL annotates the nodes.** Parse analysis writes in
+  them. `parse_utilcmd.c` appends to the `constraints` list of a
+  `ColumnDef` that the grammar made. `plancache.c` copies a raw
+  tree, because "the parser tends to scribble on its input".
+- **PostgreSQL duplicates the nodes.** `copyObject()` copies a
+  raw tree or a part of it, as `plancache.c` does, into the
+  current memory context. Each node must so have the tag and the
+  layout that PostgreSQL's copy functions expect.
+
+The arena is for a caller that only reads the tree, as sq's
+tools and tests do.
+
 This is what makes cleanup after an error one line. A parse that
 fails halfway has made hundreds of nodes, some reachable from
 bison's stack and some from nowhere. The tree owns them all the
