@@ -132,7 +132,7 @@ Reviewed `sm/sm0/`, `sm/sm1/`, `sm/sm2/`, `sm/sm3/`,
 | --- | --- | --- | --- |
 | `sm0/` | PASS (no RocksDB, depends only on `sm_error.h`) | PASS | none |
 | `sm1/` | PASS (`sm1.h` opaque, sole RocksDB channel) | PASS | none |
-| `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | 3 Low |
+| `sm2/` | PASS (`sm2.h` opaque, no RocksDB handles) | PASS | none |
 | `sm3/` & `rel/` | PASS (`sm3.h` opaque, no RocksDB handles) | PASS (minor `using` aliases) | 5 Low |
 | `include/` & `src/` | PASS | PASS | 3 Low |
 
@@ -152,14 +152,6 @@ None open: Mediums 1 to 14 are fixed or closed.
 
 ### 4. Low-Severity and Style Findings
 
-- **`sm2` (`sm/sm2/src/type/decimal.cc:219-246`):** `decimal_key`
-  does not verify that the datum's embedded scale bits match
-  `typmod.scale`.
-- **`sm2` (`sm/sm2/src/rel/toast.cc:92-106`):** `toast_read`
-  closes `sm1::scan_t*` manually instead of via `sm0::defer`.
-- **`sm2` (`sm/sm2/include/sm2.h:3-4, 656, 963-966`,
-  `sm/sm2/src/tree/tree.h:16`):** Stale comments referencing the
-  retired `_id` index and `tree_remove`.
 - **`sm3` (`sm/sm3/include/sm3.h:938`,
   `sm/sm3/src/catalog/load.cc:18`,
   `sm/sm3/src/catalog/ddl.cc:19`):** Type aliases `index_eval_fn`

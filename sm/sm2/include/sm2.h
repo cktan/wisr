@@ -1,7 +1,7 @@
 /*
  * sm2.h -- the wisr type and tuple level's public C++ API, in
- * namespace sm2 (SM2_DESIGN.md). What exists so far is step 1 of
- * SM2_DESIGN.md §8.2: the types.
+ * namespace sm2 (SM2_DESIGN.md): the four steps of SM2_DESIGN.md
+ * §8.2, the types, their keys, the tuple codec and the rels.
  *
  * Conventions that hold throughout, as in sm1.h:
  *
@@ -653,11 +653,10 @@ int rel_key(rel_t* rel, std::span<const datum_t> datums,
 
 /*
  * Insert a row: write tuple under its key, with a new _id drawn
- * from the rel's sequence, and its entry in the _id index. id, and
- * key if wanted, are set only on success. A tuple tup_check refuses
- * fails before an _id is drawn; one that fails later leaves its _id
- * unused, as a PostgreSQL sequence would. A key the rel has fails
- * with sm1's SM_ERR_DUPKEY.
+ * from the rel's sequence. id, and key if wanted, are set only on
+ * success. A tuple tup_check refuses fails before an _id is drawn;
+ * one that fails later leaves its _id unused, as a PostgreSQL
+ * sequence would. A key the rel has fails with sm1's SM_ERR_DUPKEY.
  */
 int rel_insert(rel_t* rel, std::string_view tuple, uint64_t& id,
                std::string* key = nullptr);
@@ -968,9 +967,8 @@ int rel_range_size(rel_t* rel, std::string_view lo, const std::string* hi,
  * a duplicate fails with sm1's SM_ERR_DUPKEY. A key's columns past
  * their budget are cut, at key_budget of the longest row key, and
  * a unique index's key is never cut (SM2_DESIGN.md §3.2). An
- * entry's value is a tuple, idx_value_schema's: the row's _id,
- * int8; whether the key was cut, bool; the INCLUDE columns; and,
- * in a table keyed by a primary key, the row's key, bytea.
+ * entry's value is a tuple, idx_value_schema's: whether the key
+ * was cut, bool; the INCLUDE columns; and the row's key, bytea.
  *
  * A table's primary key is an index too (idx_open_primary), with
  * no entries of its own: the rel's rows are keyed by it, and are
