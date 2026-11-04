@@ -328,8 +328,10 @@ TEST_CASE("objects: a crash between the commits grants less of no entry") {
   REQUIRE(0 == aa_commit(s));
   aa_session_free(s);
 
-  // 2. 3.
+  // 2.
   h.restart();
+
+  // 3.
   CHECK(!aa_connect_okay(h.aa(), NULL, 1, 16501, &why));
 }
 
@@ -425,8 +427,8 @@ TEST_CASE("objects: forget") {
 // Verify that the objects of a role are those it owns, and those whose
 // ACL names it other than as their owner.
 // 1. Set a table owned by A, granting B SELECT; another owned by B.
-// 2. Ask for A's and B's objects.
-// 3. Confirm A owns one and is granted none; B owns one, granted one.
+// 2. Ask for A's objects: A owns one and is granted none.
+// 3. Ask for B's objects: B owns one and is granted one.
 TEST_CASE("objects: of a role") {
   home_t h;
   aa_session_t *s = aa_session_new(h.aa());
@@ -440,10 +442,12 @@ TEST_CASE("objects: of a role") {
   aa_set_object(s, 1, o);
   aa_set_object(s, 1, table(20001, 16501));
 
-  // 2. 3.
+  // 2.
   aa_objects_of(h.aa(), s, 16500, &owned, &granted);
   CHECK(1 == owned.size());
   CHECK(granted.empty());
+
+  // 3.
   owned.clear();
   aa_objects_of(h.aa(), s, 16501, &owned, &granted);
   REQUIRE(1 == owned.size());

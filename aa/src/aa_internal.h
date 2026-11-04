@@ -17,6 +17,12 @@ int aa_seterr(aa_errnum_t code, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
 int aa_sm_failed(const char *what);
 
+/* Closes an sm session on pg_global as it goes out of scope. */
+struct session_guard_t {
+  sm_session_t *session = NULL;
+  ~session_guard_t() { sm_closedb(session); }
+};
+
 /* One object an objects' replacement changed. */
 struct aa_changed_t {
   uint64_t epoch;   /* the replacement's */

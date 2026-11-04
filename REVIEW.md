@@ -5,21 +5,20 @@ leaves this file when it is fixed, or decided not to be; git
 history keeps the closed reviews (`REVIEW.md` up to
 `1a8407e2`).
 
-1. **`aa/`**: open; findings 1 to 7 fixed; the rule findings not
-   yet checked.
+1. **`aa/`**: closed; every finding fixed or closed.
 2. **`sm/`**: closed; every High, Medium and Low fixed or
    closed.
 3. **Cleanups not taken** from the ALTER COLUMN TYPE reviews.
 
 # Review: `aa/` (Authentication and Authorization)
 
-**Status: open.** Findings 1 to 7 are fixed: the lockout bypass,
+**Status: closed.** Findings 1 to 7 are fixed: the lockout bypass,
 the snapshot out of step with pg_global (3, by one commit of
 objects at a time), the invalidations lost past the changes kept,
 no intermediate for an object with no entry, an own role commit
 hiding another's, a failing read after the roles' commit, and a
-temporary object's owner and ACL not undone. The rule findings
-are not yet checked.
+temporary object's owner and ACL not undone. Every rule finding
+is fixed or closed.
 
 Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 `CLAUDE.md`, `sm/CODE.md`, `aa/AA_DESIGN.md`, `aa/ROLE.md`, and
@@ -36,7 +35,7 @@ Reviewed `aa/include/`, `aa/src/`, and `aa/test/` against
 | Naming (`snake_case`, `_t`, `m_`) & Yoda conditions | PASS | Types end in `_t`, private fields in `home_t` use `m_`, and comparisons use `0 == x`. |
 | SCRAM-SHA-256 & cycle detection | PASS | Constant-time digest comparison (`timingsafe_eq`), salt/iteration checks, and DFS cycle detection in `grant_role`. |
 | Correctness & concurrency | none open | |
-| `sm/CODE.md` & style rules | 5 Low | `std::map`/`std::pair` in `aa.h`, separate error state, duplicate `session_guard_t`. |
+| `sm/CODE.md` & style rules | none open | |
 
 ---
 
@@ -48,34 +47,13 @@ None open: findings 1 to 7 are fixed.
 
 ### 3. `sm/CODE.md` and `CLAUDE.md` Rule Findings
 
-- **[LOW] `std::map` and `std::pair` in `aa/include/aa.h`
-  (`sm/CODE.md` §2):** `aa/include/aa.h:20, 23, 111, 114, 200`
-  exposes `std::pair` (`aa_key_t`) and `std::map`
-  (`aa_objects_t`), whereas `sm/CODE.md` §2 restricts public
-  headers to `std::string`, `std::string_view`, `std::vector`, and
-  `std::shared_ptr` (note that `aa/README.md:110-111` explicitly
-  documents `std::map` and `std::pair` for `aa.h`).
-- **[LOW] Separate error enum (`sm/CODE.md` §4):**
-  `aa/include/aa.h:42-53` and `aa/src/aa_error.cc` define a
-  standalone `aa_errnum_t` and thread-local error state rather
-  than using `sm_error.h` (as designed in `aa/AA_DESIGN.md` §9).
-- **[LOW] Duplicate `struct session_guard_t` definition:**
-  `aa/src/aa.cc:36-39` and `aa/src/aa_store.cc:69-72` both define
-  `struct session_guard_t` outside an anonymous namespace. Move it
-  to `aa/src/aa_internal.h` or wrap each in `namespace {}` to
-  avoid an ODR hazard.
-- **[LOW] `aa/Makefile` and `aa/test/home.h` (`CLAUDE.md` §1):**
-  - `aa/Makefile:53` sets `FORMAT_FILES := $(wildcard src/*.cc
-    src/*.h test/*.cc include/*.h)`, omitting `test/*.h`.
-  - `aa/test/home.h:24` uses
-    `std::filesystem::temp_directory_path()`, which defaults to
-    `/tmp` when `TMPDIR` is unset.
-- **[LOW] Minor comment and test step formatting (`CLAUDE.md`):**
-  - `aa/src/aa.cc:84, 542, 627`: `std::lock_guard<std::mutex>
-    lock(env->mutex);` calls lack a brief comment stating why the
-    lock is acquired.
-  - `aa/test/test_roles.cc:53` and `aa/test/test_objects.cc:217`:
-    combine two step numbers on one comment line (`// 2. 3.`).
+None open. Three are fixed: `session_guard_t` is defined once, in
+`aa_internal.h`; `make format` takes `test/*.h`; and the locks and
+test steps have their comments. Three are closed. `aa.h` keeps
+`std::map` and `std::pair`, which `aa/README.md` allows it. aa
+keeps an error state of its own, as `AA_DESIGN.md` §9 designs.
+`home.h` keeps `temp_directory_path()`, as sm's `util.h` does:
+it honors `TMPDIR`, which the test runs set.
 
 # Review: `sm/` (Storage Manager Stack)
 

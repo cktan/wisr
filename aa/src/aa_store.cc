@@ -65,12 +65,6 @@ struct row_t {
   explicit row_t(size_t natts) : v(natts), isnull(new bool[natts]()) {}
 };
 
-/* Closes an sm session on pg_global as it goes out of scope. */
-struct session_guard_t {
-  sm_session_t *session = NULL;
-  ~session_guard_t() { sm_closedb(session); }
-};
-
 /* Whether two roles are the same in every column. */
 static bool same_role(const aa_role_t &a, const aa_role_t &b) {
   return a.oid == b.oid && a.rolname == b.rolname && a.rolsuper == b.rolsuper &&

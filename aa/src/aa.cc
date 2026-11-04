@@ -33,12 +33,6 @@ struct intermediate_t {
   bool base_present = true; /* false: base is what no entry means */
 };
 
-/* Closes an sm session on pg_global as it goes out of scope. */
-struct session_guard_t {
-  sm_session_t *session = NULL;
-  ~session_guard_t() { sm_closedb(session); }
-};
-
 /*
  * Read pg_global into a state every session shares, once, at the start:
  * AA_ERR_NODB if the home directory has none, AA_ERR_NOTABLE if it lacks
@@ -658,6 +652,7 @@ int aa_abort(aa_session_t *s) {
 static void publish_objects(aa_env_t *env,
                             const std::map<aa_key_t, const aa_change_t *> &last,
                             const std::vector<uint64_t> &dropped) {
+  // Held so the snapshot, its epoch and changed move as one.
   std::lock_guard<std::mutex> lock(env->mutex);
   auto next = std::make_shared<aa_objects_t>(
       *env->objects.load(std::memory_order_relaxed));
@@ -755,6 +750,7 @@ bool aa_objects_moved(aa_session_t *s, uint64_t dbid, aa_moved_t *out) {
   if (env->objects_epoch.load() == s->objects_epoch)
     return false;
   {
+    // Held so no replacement trims changed as it is read.
     std::lock_guard<std::mutex> lock(env->mutex);
 
     epoch = env->objects_epoch.load();

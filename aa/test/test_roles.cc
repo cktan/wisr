@@ -53,8 +53,10 @@ TEST_CASE("roles: no pg_global") {
   home_t h(false);
   aa_env_t *env = NULL;
 
-  // 2. 3.
+  // 2.
   CHECK(-1 == aa_load(h.sm(), &env));
+
+  // 3.
   CHECK(AA_ERR_NODB == aa_errnum());
 }
 

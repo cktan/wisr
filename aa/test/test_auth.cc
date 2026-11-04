@@ -72,9 +72,11 @@ TEST_CASE("auth: owner by the superuser's own name") {
   home_t h;
   bool owner;
 
-  // 1. 2.
+  // 1.
   CHECK(AA_PEER ==
         aa_auth_method(h.aa(), "admin", true, "admin", true, &owner));
+
+  // 2.
   CHECK(owner);
 
   // 3.
