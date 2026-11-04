@@ -183,6 +183,14 @@ int decimal_in(std::string_view text, int32_t typmod, std::string &datum) {
   return 0;
 }
 
+/* Fail with SM_ERR_INVALID: a datum's scale s is not its column's. */
+template <size_t W> int bad_scale(int s, const numtype_t &t) {
+  return sm1::seterr(sm1::SM_ERR_INVALID,
+                     std::string("a ") + decimal_name<W>() + " datum's scale " +
+                         std::to_string(s) + " is not its column's " +
+                         std::to_string(t.scale));
+}
+
 /* Print a decimal datum under typmod. */
 template <size_t W>
 int decimal_out(std::string_view datum, int32_t typmod, std::string &text) {
@@ -197,10 +205,7 @@ int decimal_out(std::string_view datum, int32_t typmod, std::string &text) {
   int s;
   unpack<W>(load(datum), v, s);
   if (s != t.scale) {
-    return sm1::seterr(sm1::SM_ERR_INVALID,
-                       std::string("a ") + decimal_name<W>() +
-                           " datum's scale " + std::to_string(s) +
-                           " is not its column's " + std::to_string(t.scale));
+    return bad_scale<W>(s, t);
   }
   if (magnitude(v) >= pow10(t.precision)) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
@@ -224,7 +229,8 @@ int decimal_cmp(std::string_view a, std::string_view b, int32_t) {
 /*
  * A decimal's key (TYPE.md §3.4): the datum's word, sign bit
  * flipped, big-endian, which orders a column's values, since the
- * typmod fixes their scale bits.
+ * typmod fixes their scale bits. A datum at another scale is
+ * refused, as its key would sort among the column's wrongly.
  */
 template <size_t W>
 int decimal_key(std::string_view datum, int32_t typmod,
@@ -236,7 +242,12 @@ int decimal_key(std::string_view datum, int32_t typmod,
   if (datum.size() != W) {
     return sm2::bad_datum(decimal_name<W>(), datum, W);
   }
-  __int128 v = load(datum);
+  __int128 v = load(datum), value;
+  int s;
+  unpack<W>(v, value, s);
+  if (s != t.scale) {
+    return bad_scale<W>(s, t);
+  }
   if constexpr (W == 8) {
     sm2::put_key_int<uint64_t>(static_cast<int64_t>(v), key);
   } else {

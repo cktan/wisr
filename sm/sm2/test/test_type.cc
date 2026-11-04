@@ -952,6 +952,29 @@ TEST_CASE("decimal64 and decimal128 round trip, in integer order") {
   }
 }
 
+TEST_CASE("a decimal's key refuses a datum whose scale is not its column's") {
+  // Verify key_encode checks a decimal datum's scale bits against the
+  // typmod's, as out does, since a key at another scale sorts wrong.
+  // 1. Read "1.25" as numeric(5, 2), for each decimal width.
+  // 2. Its key under numeric(5, 2) is made.
+  // 3. Under numeric(5, 3) it is SM_ERR_INVALID, as out is.
+  for (const sm2::type_t *t : {&sm2::type_decimal64, &sm2::type_decimal128}) {
+    CAPTURE(t->name);
+    std::string datum, key, text;
+    REQUIRE(t->in("1.25", decimal_typmod(5, 2), datum) == 0);
+
+    // 2.
+    CHECK(t->key_encode(datum, decimal_typmod(5, 2), nullptr, key) == 0);
+
+    // 3.
+    key.clear();
+    CHECK(t->key_encode(datum, decimal_typmod(5, 3), nullptr, key) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    CHECK(t->out(datum, decimal_typmod(5, 3), text) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  }
+}
+
 TEST_CASE("only numeric(p, s)'s own text is decimal input") {
   // Verify in refuses what PostgreSQL never prints for numeric(p, s).
   // 1. At (5, 2): the wrong number of fraction digits, leading
