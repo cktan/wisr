@@ -493,7 +493,11 @@ TEST_CASE("a column something would read stale keeps its type") {
   //    t's a: SM_ERR_INUSE.
   // 3. A view reading b: SM_ERR_INUSE.
   // 4. A column not there: SM_ERR_NOTFOUND.
+  // 5. column_use says each of these, and its name, and none for a
+  //    column nothing reads; a column past the last is SM_ERR_INVALID.
   alt_t f;
+  sm3::column_use_t use;
+  std::string by;
   std::vector<int32_t> reads_c = {2};
   std::vector<sm3::index_key_spec_t> by_b = {{1, false, false, std::nullopt}};
   uint64_t part = 0;
@@ -504,6 +508,13 @@ TEST_CASE("a column something would read stale keeps its type") {
   CHECK(sm3::alter_column_type(f.s, f.t, "c", {sm2::type_int8.code, -1},
                                nullptr) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
+  REQUIRE(sm3::column_use(f.s, f.t, 2, use, by) == 0);
+  CHECK(sm3::column_use_t::index == use);
+  CHECK("t_part" == by);
+  REQUIRE(sm3::column_use(f.s, f.t, 1, use, by) == 0);
+  CHECK(sm3::column_use_t::none == use);
+  CHECK(sm3::column_use(f.s, f.t, 99, use, by) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   sm3::abort(f.s);
 
   std::vector<sm3::column_spec_t> pcols = {
@@ -524,6 +535,12 @@ TEST_CASE("a column something would read stale keeps its type") {
   CHECK(sm3::alter_column_type(f.s, f.t, "a", {sm2::type_int8.code, -1},
                                nullptr) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
+  REQUIRE(sm3::column_use(f.s, p, 0, use, by) == 0);
+  CHECK(sm3::column_use_t::fkey == use);
+  CHECK("p_k" == by);
+  REQUIRE(sm3::column_use(f.s, f.t, 0, use, by) == 0);
+  CHECK(sm3::column_use_t::referenced == use);
+  CHECK("p_k" == by);
   sm3::abort(f.s);
 
   sm3::view_def_t view;
@@ -540,7 +557,34 @@ TEST_CASE("a column something would read stale keeps its type") {
   CHECK(sm3::alter_column_type(f.s, f.t, "nope", {sm2::type_int8.code, -1},
                                nullptr) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm3::column_use(f.s, f.t, 1, use, by) == 0);
+  CHECK(sm3::column_use_t::view == use);
+  CHECK("v" == by);
   sm3::abort(f.s);
+}
+
+TEST_CASE("a change keeps a column's values only if each stays one") {
+  // Verify retype_keeps_values, the rule both sm and its host go by.
+  // 1. The same type and typmod keeps them; another typmod does not.
+  // 2. text and varchar keep them, the new one no narrower.
+  // 3. bpchar, which pads, does not join them.
+  // 4. Another type does not keep them.
+  uint8_t text = sm2::type_text.code, vc = sm2::type_varchar.code;
+  uint8_t bp = sm2::type_bpchar.code, i4 = sm2::type_int4.code;
+  CHECK(sm3::retype_keeps_values(i4, -1, i4, -1));
+  CHECK_FALSE(sm3::retype_keeps_values(vc, 10, vc, 5));
+
+  // 2.
+  CHECK(sm3::retype_keeps_values(text, -1, vc, -1));
+  CHECK(sm3::retype_keeps_values(vc, 10, vc, 20));
+  CHECK(sm3::retype_keeps_values(vc, 10, text, -1));
+  CHECK_FALSE(sm3::retype_keeps_values(text, -1, vc, 10));
+
+  // 3.
+  CHECK_FALSE(sm3::retype_keeps_values(text, -1, bp, -1));
+
+  // 4.
+  CHECK_FALSE(sm3::retype_keeps_values(i4, -1, sm2::type_int8.code, -1));
 }
 
 TEST_CASE("a column's type changed drops its statistics alone") {

@@ -874,6 +874,34 @@ using column_conv_fn = std::function<int(std::span<const sm2::datum_t> values,
 int alter_column_type(session_t* session, uint64_t oid, std::string_view name,
                       const column_type_t& to, const column_conv_fn* conv);
 
+/* What keeps a column's type from changing (column_use). */
+enum class column_use_t {
+    none,       /* nothing */
+    index,      /* an expression or a partial index reads it */
+    fkey,       /* a foreign key of the table names it */
+    referenced, /* a foreign key that references the table names it */
+    view,       /* a view reads it */
+    identity    /* it is an identity column */
+};
+
+/*
+ * What keeps the column at, 0-based, of the table oid from changing
+ * type, in use, with its name in by, for the host's own words; a
+ * view first, then as column_use_t lists them. The session holds the
+ * table's lock. alter_column_type refuses by this same answer.
+ */
+int column_use(session_t* session, uint64_t oid, int32_t at,
+               column_use_t& use, std::string& by);
+
+/*
+ * Whether every stored value and key of a column stays a value of
+ * the new type with no converter: the same type and typmod, or text
+ * and varchar with the new one no narrower. A typmod of -1 is no
+ * limit. alter_column_type takes such a change without a converter.
+ */
+bool retype_keeps_values(uint8_t from_code, int32_t from_typmod,
+                         uint8_t to_code, int32_t to_typmod);
+
 /*
  * Make the live column name of the table oid an identity column,
  * GENERATED ALWAYS ('a') or BY DEFAULT ('d'), whose values come

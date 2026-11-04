@@ -863,29 +863,6 @@ struct retype_t {
   int32_t to_typmod;
 };
 
-/* A by-value type's width in bytes, by its code; 0 if not by value. */
-static size_t byval_width(uint8_t code) {
-  switch (code) {
-  case 1: // bool
-    return 1;
-  case 2: // int2
-    return 2;
-  case 3:  // int4
-  case 5:  // float4
-  case 11: // date
-    return 4;
-  case 4:  // int8
-  case 6:  // float8
-  case 12: // time
-  case 13: // timestamp
-  case 14: // timestamptz
-  case 17: // decimal64
-    return 8;
-  default:
-    return 0;
-  }
-}
-
 /*
  * rel's converter for alter-column-type: the old value printed as
  * its type's canonical text, and that text parsed as the new type,
@@ -914,7 +891,7 @@ static int retype_conv(void *ctx, const sm_datum_t *values, const bool *isnull,
     out = std::move(buf);
     return 0;
   }
-  size_t width = byval_width(r->to_code);
+  size_t width = sm_type_byval_width(sm_type(r->to_code));
   if (0 == width) {
     return sm_seterr(SM_ERR_INVALID, "alter-column-type: a type rel cannot "
                                      "convert to");

@@ -1020,6 +1020,12 @@ const sm_type_t *sm_type(uint8_t code) {
   return reinterpret_cast<const sm_type_t *>(sm2::type_by_code(code));
 }
 
+/* A by-value type's width in bytes; 0 for a by-reference type. */
+size_t sm_type_byval_width(const sm_type_t *type) {
+  const sm2::type_t *t = reinterpret_cast<const sm2::type_t *>(type);
+  return t->byval ? static_cast<size_t>(t->len) : 0;
+}
+
 /* A datum from a statistic value's bytes; see sm.h. */
 sm_datum_t sm_datum_of_bytes(const sm_type_t *type, const std::string &bytes) {
   return sm3::datum_of_bytes(reinterpret_cast<const sm2::type_t *>(type),
@@ -2630,6 +2636,44 @@ int sm_cat_alter_column_type(sm_session_t *session, uint64_t oid,
     };
     return sm3::alter_column_type(session->sm3, oid, name_of(name), t, &fn);
   });
+}
+
+/* What keeps a column's type from changing. */
+int sm_cat_column_use(sm_session_t *session, uint64_t oid, int32_t at,
+                      sm_column_use_t *use, std::string &by) {
+  return guard(session, [&] {
+    sm3::column_use_t kind;
+    if (sm3::column_use(session->sm3, oid, at, kind, by) != 0) {
+      return -1;
+    }
+    switch (kind) {
+    case sm3::column_use_t::none:
+      *use = SM_COLUMN_USE_NONE;
+      break;
+    case sm3::column_use_t::index:
+      *use = SM_COLUMN_USE_INDEX;
+      break;
+    case sm3::column_use_t::fkey:
+      *use = SM_COLUMN_USE_FKEY;
+      break;
+    case sm3::column_use_t::referenced:
+      *use = SM_COLUMN_USE_REFERENCED;
+      break;
+    case sm3::column_use_t::view:
+      *use = SM_COLUMN_USE_VIEW;
+      break;
+    case sm3::column_use_t::identity:
+      *use = SM_COLUMN_USE_IDENTITY;
+      break;
+    }
+    return 0;
+  });
+}
+
+/* Whether a column's values stay with no converter. */
+bool sm_retype_keeps_values(uint8_t from_code, int32_t from_typmod,
+                            uint8_t to_code, int32_t to_typmod) {
+  return sm3::retype_keeps_values(from_code, from_typmod, to_code, to_typmod);
 }
 
 /* Make a column an identity column in the session's transaction. */

@@ -453,6 +453,9 @@ typedef struct sm_collation_t sm_collation_t;
 /* The type with this frozen code (sm2/TYPE.md), or NULL. */
 const sm_type_t* sm_type(uint8_t code);
 
+/* A by-value type's width in bytes; 0 for a by-reference type. */
+size_t sm_type_byval_width(const sm_type_t* type);
+
 /*
  * Open the collation for locale, a BCP 47 tag or "C"/"POSIX" for
  * byte order. With expected_version non-empty, one whose ICU
@@ -1817,6 +1820,36 @@ typedef int (*sm_column_conv_fn)(void* ctx, const sm_datum_t* values,
 int sm_cat_alter_column_type(sm_session_t* session, uint64_t oid,
                              const char* name, const sm_column_type_t& to,
                              sm_column_conv_fn conv, void* ctx);
+
+/* What keeps a column's type from changing (sm_cat_column_use). */
+typedef enum sm_column_use_t {
+    SM_COLUMN_USE_NONE,
+    SM_COLUMN_USE_INDEX,      /* an expression or a partial index reads it */
+    SM_COLUMN_USE_FKEY,       /* a foreign key of the table names it */
+    SM_COLUMN_USE_REFERENCED, /* a foreign key referencing it names it */
+    SM_COLUMN_USE_VIEW,       /* a view reads it */
+    SM_COLUMN_USE_IDENTITY    /* it is an identity column */
+} sm_column_use_t;
+
+/*
+ * What keeps the column at, 0-based, of the table oid from changing
+ * type, in *use, with its name in by: what sm_cat_alter_column_type
+ * refuses, asked first for a host's own words. A view first, then as
+ * sm_column_use_t lists them. The session holds the table's lock.
+ *
+ * Errors: SM_ERR_NOTFOUND, no such table; SM_ERR_INVALID, no such
+ * column.
+ */
+int sm_cat_column_use(sm_session_t* session, uint64_t oid, int32_t at,
+                      sm_column_use_t* use, std::string& by);
+
+/*
+ * Whether every stored value and key of a column stays a value of
+ * the new type: then sm_cat_alter_column_type takes the change with
+ * no converter (sm3::retype_keeps_values).
+ */
+bool sm_retype_keeps_values(uint8_t from_code, int32_t from_typmod,
+                            uint8_t to_code, int32_t to_typmod);
 
 /*
  * Make the column name of the table oid an identity column, 'a' or

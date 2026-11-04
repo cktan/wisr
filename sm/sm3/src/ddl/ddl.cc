@@ -530,28 +530,37 @@ int set_not_null(session_t *session, uint64_t oid, std::string_view name) {
 }
 
 /*
- * Fail with SM_ERR_INUSE if what a type change of rec's column at
- * would leave stale uses it: an expression or a partial index that
- * reads it, a foreign key of the table or one referencing it that
- * names it, or a view that reads it. A plain index takes the new
+ * What keeps rec's column at from changing type, a view first, into
+ * use, with its name in by; see sm3.h. A plain index takes the new
  * type from the column.
  */
-static int column_typed_in(session_t *session, uint64_t oid,
-                           const table_rec_t &rec, int32_t at) {
-  const std::string &name = rec.columns[at].name;
+static int find_column_use(session_t *session, uint64_t oid,
+                           const table_rec_t &rec, int32_t at,
+                           column_use_t &use, std::string &by) {
   auto in = [at](const std::vector<int32_t> &v) {
     return std::find(v.begin(), v.end(), at) != v.end();
   };
+  auto found = [&](column_use_t kind, const std::string &name) {
+    use = kind;
+    by = name;
+    return 0;
+  };
+  // Another session's temporary view among them (../VIEW.md §12.3).
+  for (const view_reader_t &v : cat_view_readers(session, oid)) {
+    for (const view_read_t &r : v.def->reads) {
+      if (r.relation == oid && r.attnum == at) {
+        return found(column_use_t::view, v.def->name);
+      }
+    }
+  }
   for (const index_rec_t &x : rec.indexes) {
     if (!x.eval.empty() && in(x.reads)) {
-      return sm1::seterr(sm1::SM_ERR_INUSE, "alter column type: index " +
-                                                x.name + " evaluates " + name);
+      return found(column_use_t::index, x.name);
     }
   }
   for (const fkey_rec_t &fk : rec.fkeys) {
     if (in(fk.attnums)) {
-      return sm1::seterr(sm1::SM_ERR_INUSE, "alter column type: foreign key " +
-                                                fk.name + " uses " + name);
+      return found(column_use_t::fkey, fk.name);
     }
   }
   for (const fkey_ref_t &ref : rec.referenced_by) {
@@ -561,23 +570,39 @@ static int column_typed_in(session_t *session, uint64_t oid,
     }
     for (const fkey_rec_t &fk : child.fkeys) {
       if (fk.oid == ref.fkey && in(fk.ref_attnums)) {
-        return sm1::seterr(sm1::SM_ERR_INUSE,
-                           "alter column type: foreign key " + fk.name +
-                               " references " + name);
+        return found(column_use_t::referenced, fk.name);
       }
     }
   }
-  // Another session's temporary view among them (../VIEW.md §12.3).
-  for (const view_reader_t &v : cat_view_readers(session, oid)) {
-    for (const view_read_t &r : v.def->reads) {
-      if (r.relation == oid && r.attnum == at) {
-        return sm1::seterr(sm1::SM_ERR_INUSE, "alter column type: view " +
-                                                  v.def->name + " reads " +
-                                                  name);
-      }
-    }
+  return found(0 != rec.columns[at].identity ? column_use_t::identity
+                                             : column_use_t::none,
+               "");
+}
+
+/* What keeps a column from changing type; see sm3.h. */
+int column_use(session_t *session, uint64_t oid, int32_t at, column_use_t &use,
+               std::string &by) {
+  table_rec_t rec;
+  if (cat_get_table_rec(session, oid, rec) != 0) {
+    return -1;
   }
-  return 0;
+  if (at < 0 || static_cast<size_t>(at) >= rec.columns.size()) {
+    return invalid("column use: no such column");
+  }
+  return find_column_use(session, oid, rec, at, use, by);
+}
+
+/* Whether a column's values stay with no converter; see sm3.h. */
+bool retype_keeps_values(uint8_t from_code, int32_t from_typmod,
+                         uint8_t to_code, int32_t to_typmod) {
+  auto text_like = [](uint8_t code) {
+    return code == sm2::type_text.code || code == sm2::type_varchar.code;
+  };
+  // text and varchar store the same bytes and the same key
+  // (../sm2/TYPE.md §3).
+  return (from_code == to_code && from_typmod == to_typmod) ||
+         (text_like(from_code) && text_like(to_code) &&
+          (to_typmod < 0 || (from_typmod >= 0 && to_typmod >= from_typmod)));
 }
 
 /* Whether a value of the type code takes a collation. */
@@ -590,7 +615,7 @@ static bool collatable(uint8_t code) {
  * Change a column's type; see sm3.h.
  * 1. Lock the table exclusive, so no row is read or written meanwhile.
  * 2. Refuse a column that is not there, an identity column, one
- *    something would read stale (column_typed_in()), and a change
+ *    something would read stale (find_column_use()), and a change
  *    with no converter whose values would not stay as they are.
  * 3. Give the record the new type, default and update default.
  * 4. With a converter and rows, rewrite the table, each row's
@@ -618,24 +643,23 @@ int alter_column_type(session_t *session, uint64_t oid, std::string_view name,
     return sm1::seterr(sm1::SM_ERR_NOTFOUND,
                        "alter column type: no column " + std::string(name));
   }
-  if (column_typed_in(session, oid, rec, at) != 0) {
+  column_use_t use;
+  std::string by;
+  if (find_column_use(session, oid, rec, at, use, by) != 0) {
     return -1;
   }
   column_rec_t &c = rec.columns[at];
-  if (0 != c.identity) {
+  if (column_use_t::identity == use) {
     return invalid("alter column type: " + c.name + " is an identity column");
   }
+  if (column_use_t::none != use) {
+    return sm1::seterr(sm1::SM_ERR_INUSE,
+                       "alter column type: " + c.name + " is used by " + by);
+  }
   // Without a converter every stored value must stay a value of the
-  // new type: the same type and typmod; or text and varchar, which
-  // store the same bytes and the same key (../sm2/TYPE.md §3), the
-  // new one no narrower. A typmod of -1 is no limit.
-  auto text_like = [](uint8_t code) {
-    return code == sm2::type_text.code || code == sm2::type_varchar.code;
-  };
-  bool same = c.type_code == to.type_code && c.typmod == to.typmod;
-  bool wider = text_like(c.type_code) && text_like(to.type_code) &&
-               (to.typmod < 0 || (c.typmod >= 0 && to.typmod >= c.typmod));
-  if (!conv && !same && !wider) {
+  // new type.
+  if (!conv &&
+      !retype_keeps_values(c.type_code, c.typmod, to.type_code, to.typmod)) {
     return invalid("alter column type: " + c.name +
                    "'s values may change with its type, and no converter "
                    "was given");
@@ -899,8 +923,7 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
     }
     if (k.collation) {
       uint8_t code = expr ? k.type_code : rec.columns[k.attnum].type_code;
-      if (code != sm2::type_text.code && code != sm2::type_varchar.code &&
-          code != sm2::type_bpchar.code) {
+      if (!collatable(code)) {
         return invalid("create index: a collation on a column not text");
       }
       const sm2::collation_t *c = nullptr;

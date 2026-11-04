@@ -6540,12 +6540,7 @@ int smstore_set_index_evaluator(sm_env_t *env) {
  * entries that are each a key of RocksDB's.
  */
 static bool tree_kind(const IndexStmt *stmt) {
-  bool tree = strcmp(stmt->accessMethod, SMSTORE_INDEX_TREE) == 0;
-
-  if (tree && stmt->primary)
-    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("a primary key is not a tree")));
-  return tree;
+  return strcmp(stmt->accessMethod, SMSTORE_INDEX_TREE) == 0;
 }
 
 /* Refuse what a CREATE INDEX asks that sm's indexes do not have yet. */
@@ -6949,62 +6944,51 @@ static std::string retyped_default(const std::string &expr, Oid typid,
 
 /*
  * Refuse ALTER COLUMN TYPE of the column at, 0-based, of the table relid,
- * whose definition is def, when what reads it would read it stale: a view,
- * in PostgreSQL's words; and, which digres does not make again yet
- * (../ALTERTYPE.md section 8), an expression or a partial index, a foreign
- * key on either side, an identity column.
+ * when what reads it would read it stale: a view, in PostgreSQL's words;
+ * and, which digres does not make again yet (../ALTERTYPE.md section 8), an
+ * expression or a partial index, a foreign key on either side, an identity
+ * column.  sm says what is in the way; this says it as a server does.
  */
-static void check_retype(Oid relid, const sm_table_def_t &def, int32_t at,
-                         const char *colname) {
-  auto in = [at](const std::vector<int32_t> &v) {
-    return std::find(v.begin(), v.end(), at) != v.end();
-  };
-  std::vector<sm_view_reader_t> views;
-  sm_session_t *s = xact_session();
+static void check_retype(Oid relid, int32_t at, const char *colname) {
+  sm_column_use_t use;
+  std::string by;
 
-  if (0 != sm_cat_view_readers(s, relid, views))
-    sm_error("find the views of a table");
-  for (const sm_view_reader_t &v : views)
-    for (const sm_view_read_t &r : v.reads)
-      if ((Oid)r.relation == relid && r.attnum == at)
-        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                        errmsg("cannot alter type of a column used by a view "
-                               "or rule"),
-                        errdetail("rule _RETURN on view %s depends on column "
-                                  "\"%s\"",
-                                  v.name.c_str(), colname)));
-  for (const sm_index_def_t &x : def.indexes)
-    if (!x.eval.empty() && in(x.reads))
-      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      errmsg("ALTER COLUMN TYPE of a column an expression or "
-                             "a partial index reads is not supported yet"),
-                      errdetail("Index \"%s\" reads column \"%s\".",
-                                x.name.c_str(), colname)));
-  for (const sm_fkey_def_t &fk : def.fkeys)
-    if (in(fk.columns))
-      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      errmsg("ALTER COLUMN TYPE of a column a foreign key "
-                             "uses is not supported yet"),
-                      errdetail("Foreign key \"%s\" uses column \"%s\".",
-                                fk.name.c_str(), colname)));
-  for (const sm_fkey_ref_t &ref : def.referenced_by) {
-    sm_table_def_t child;
-
-    if (!table_def_now((Oid)ref.table, child))
-      continue;
-    for (const sm_fkey_def_t &fk : child.fkeys)
-      if (fk.oid == ref.fkey && in(fk.ref_columns))
-        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                        errmsg("ALTER COLUMN TYPE of a column a foreign key "
-                               "references is not supported yet"),
-                        errdetail("Foreign key \"%s\" references column "
-                                  "\"%s\".",
-                                  fk.name.c_str(), colname)));
-  }
-  if (0 != def.columns[at].identity)
+  if (0 != sm_cat_column_use(xact_session(), relid, at, &use, by))
+    sm_error("find what reads a column");
+  switch (use) {
+  case SM_COLUMN_USE_NONE:
+    return;
+  case SM_COLUMN_USE_VIEW:
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("cannot alter type of a column used by a view "
+                           "or rule"),
+                    errdetail("rule _RETURN on view %s depends on column "
+                              "\"%s\"",
+                              by.c_str(), colname)));
+  case SM_COLUMN_USE_INDEX:
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("ALTER COLUMN TYPE of a column an expression or "
+                           "a partial index reads is not supported yet"),
+                    errdetail("Index \"%s\" reads column \"%s\".", by.c_str(),
+                              colname)));
+  case SM_COLUMN_USE_FKEY:
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("ALTER COLUMN TYPE of a column a foreign key "
+                           "uses is not supported yet"),
+                    errdetail("Foreign key \"%s\" uses column \"%s\".",
+                              by.c_str(), colname)));
+  case SM_COLUMN_USE_REFERENCED:
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("ALTER COLUMN TYPE of a column a foreign key "
+                           "references is not supported yet"),
+                    errdetail("Foreign key \"%s\" references column "
+                              "\"%s\".",
+                              by.c_str(), colname)));
+  case SM_COLUMN_USE_IDENTITY:
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("ALTER COLUMN TYPE of an identity column is not "
                            "supported yet")));
+  }
 }
 
 /*
@@ -7112,7 +7096,7 @@ static void alter_column_type(Oid relid, const char *relname,
    * ATExecAlterColumnType() finds it, once the transform and the defaults
    * are made.
    */
-  check_retype(relid, def, attnum - 1, colname);
+  check_retype(relid, attnum - 1, colname);
   /*
    * An interval is never an index key, as smstore_create_index() refuses
    * it: sm orders intervals PostgreSQL calls equal as distinct keys.
@@ -7132,12 +7116,9 @@ static void alter_column_type(Oid relid, const char *relname,
    * and varchar no narrower (../../../../sm/sm2/TYPE.md section 3).  A
    * wider numeric, which PostgreSQL does not rewrite, is converted.
    */
-  bool texts = (TEXTOID == att->atttypid || VARCHAROID == att->atttypid) &&
-               (TEXTOID == typid || VARCHAROID == typid);
-  bool wider = texts && (typmod < 0 || (col.typmod >= 0 && typmod >= col.typmod));
-  bool keep = !transform_changes(transform, attnum) &&
-              ((col.type_code == to.type_code && col.typmod == typmod) ||
-               wider);
+  bool keep =
+      !transform_changes(transform, attnum) &&
+      sm_retype_keeps_values(col.type_code, col.typmod, to.type_code, typmod);
   alter_conv_t conv = {};
 
   if (!keep) {
