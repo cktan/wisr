@@ -6,7 +6,6 @@
 
 #include "sm0_blist.h"
 
-#include <cstring>
 #include <vector>
 
 namespace {
@@ -126,8 +125,8 @@ TEST_CASE("blist reuses the blocks a cut gives up") {
   // 3. Fill eight blocks and clear: four spares kept.
   // 4. reserve() on an empty list makes a spare, which an append
   //    consumes; with room in the last block it makes none.
-  // 5. reserve(n) of bytes makes a spare only when the last block
-  //    lacks n.
+  // 5. reserve(n) makes a spare only when the last block lacks
+  //    room for n.
   sm0::blist_t<item_t, 4> l;
   for (int i = 0; i < 4; i++) {
     l.emplace(i);
@@ -156,45 +155,14 @@ TEST_CASE("blist reuses the blocks a cut gives up") {
   r.reserve();
   CHECK(r.spares() == 0);
 
-  sm0::blist_t<char, 8> k;
-  k.alloc(5);
+  sm0::blist_t<item_t, 8> k;
+  for (int i = 0; i < 5; i++) {
+    k.emplace(i);
+  }
   k.reserve(3);
   CHECK(k.spares() == 0);
   k.reserve(4);
   CHECK(k.spares() == 1);
-}
-
-TEST_CASE("blist alloc never splits a key across blocks") {
-  // Verify the byte arena: contiguous runs, and large ones apart.
-  // 1. Two runs of five in blocks of eight: the second starts a
-  //    new block, and both read back whole.
-  // 2. A run of twenty, above a block, gets a block of its own
-  //    and reads back whole.
-  // 3. A cut past the large block frees it, keeping only the
-  //    block of eight as a spare.
-  sm0::blist_t<char, 8> k;
-  char *a = k.alloc(5);
-  memcpy(a, "abcde", 5);
-  char *b = k.alloc(5);
-  memcpy(b, "fghij", 5);
-  CHECK(b != a + 5);
-  CHECK(0 == memcmp(a, "abcde", 5));
-  CHECK(0 == memcmp(b, "fghij", 5));
-  CHECK(k.size() == 10);
-
-  auto m = k.mark();
-  char *big = k.alloc(20);
-  memcpy(big, "0123456789abcdefghij", 20);
-  char *tail = k.alloc(3);
-  memcpy(tail, "xyz", 3);
-  CHECK(0 == memcmp(big, "0123456789abcdefghij", 20));
-  CHECK(0 == memcmp(tail, "xyz", 3));
-  CHECK(k.size() == 33);
-
-  k.cut(m);
-  CHECK(k.size() == 10);
-  CHECK(k.spares() == 1);
-  CHECK(0 == memcmp(b, "fghij", 5));
 }
 
 TEST_CASE("blist swap exchanges two lists") {

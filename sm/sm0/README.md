@@ -17,6 +17,7 @@ error codes, besides the C++ standard library and POSIX.
 | defer blocks and scope guards | `include/sm0_defer.h` | — |
 | fixed-width big-endian integers | `include/sm0_codec.h` | — |
 | a list of fixed blocks, cut back to a mark, its entries never moving: `blist_t` | `include/sm0_blist.h` | — |
+| a memory area, bytes cut into pieces and freed at once: `arena_t` | `include/sm0_arena.h` | `src/arena.cc` |
 | the vendored doctest test framework, used by every level | `include/doctest.h` | — |
 | interrupting a thread, interruptible waits, and timers that interrupt (`INTERRUPT.md`) | `include/sm_sys.h` | `src/interrupt.cc` |
 | virtual file descriptors over a share of real ones, under one ceiling for the process (`VFD.md`) | `include/sm_vfd.h` | `src/vfd.cc` |

@@ -19,10 +19,7 @@
  * caller takes a lock it must not allocate under.
  *
  * T must be trivially destructible: a cut only moves the top, and
- * runs no destructor. With T = char the list is an arena of
- * bytes as well: alloc(n) takes n contiguous bytes, which never
- * straddle two blocks, and n above N takes a block of its own,
- * freed at the cut rather than kept.
+ * runs no destructor. For bytes, use arena_t (sm0_arena.h).
  *
  * A mark stays good until a cut to an earlier one; a cut to a
  * mark no longer good is undefined.
@@ -44,11 +41,10 @@ template <typename T, uint32_t N> class blist_t {
   static_assert(alignof(T) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
   static_assert(0 < N);
 
-  /* A block: N entries, or more for one alloc() above N. */
+  /* A block: N entries. */
   struct block_t {
     block_t *next;
     uint32_t top; /* entries in use */
-    uint32_t cap; /* entries it has room for */
     alignas(T) char ch[N * sizeof(T)];
   };
 
@@ -73,26 +69,12 @@ public:
 
   /* Construct an entry past the last, and return it. */
   template <class... A> T *emplace(A &&...a) {
-    if (nullptr == m_tail || m_tail->top == m_tail->cap) {
+    if (nullptr == m_tail || N == m_tail->top) {
       append(take());
     }
     T *p = new (&at(m_tail, m_tail->top)) T(std::forward<A>(a)...);
     m_tail->top++;
     m_size++;
-    return p;
-  }
-
-  /* Take n contiguous bytes past the last, uninitialized. */
-  char *alloc(size_t n)
-    requires std::is_same_v<T, char>
-  {
-    assert(n <= UINT32_MAX);
-    if (nullptr == m_tail || m_tail->cap - m_tail->top < n) {
-      append(n > N ? make(static_cast<uint32_t>(n)) : take());
-    }
-    char *p = &at(m_tail, m_tail->top);
-    m_tail->top += static_cast<uint32_t>(n);
-    m_size += n;
     return p;
   }
 
@@ -121,14 +103,15 @@ public:
   /* Drop every entry, keeping the blocks as spares. */
   void clear() { cut(mark_t{}); }
 
-  /* Make sure of room for n more entries, allocating now what
-   * they would need; n above N is allocated by alloc() itself. */
+  /* Make sure of room for n more entries, at most N, allocating
+   * now what they would need. */
   void reserve(size_t n = 1) {
-    if (nullptr != m_tail && m_tail->cap - m_tail->top >= n) {
+    assert(n <= N);
+    if (nullptr != m_tail && N - m_tail->top >= n) {
       return;
     }
-    if (n <= N && nullptr == m_spare) {
-      m_spare = make(N);
+    if (nullptr == m_spare) {
+      m_spare = make();
       m_nspare = 1;
     }
   }
@@ -142,7 +125,7 @@ public:
     std::swap(m_size, o.m_size);
   }
 
-  /* The entries in the list; with T = char, the bytes taken. */
+  /* The entries in the list. */
   size_t size() const { return m_size; }
 
   /* Whether the list has no entry. */
@@ -190,8 +173,8 @@ private:
   /* The most spares a cut keeps. */
   static constexpr int keep = 4;
 
-  /* The newest entry, or nullptr: the last block's last, in a list
-   * emplace() made, whose blocks are never left empty. */
+  /* The newest entry, or nullptr: the last block's last, as a
+   * block is never left empty. */
   T *newest() const {
     return nullptr == m_tail || 0 == m_tail->top ? nullptr
                                                  : &at(m_tail, m_tail->top - 1);
@@ -212,28 +195,23 @@ private:
 
   /* Entry i of block b. */
   static T &at(block_t *b, uint32_t i) {
-    // A block made for a large alloc() runs past ch's declared
-    // size, so the entries are addressed from the block's start.
-    char *base = reinterpret_cast<char *>(b) + offsetof(block_t, ch);
-    return reinterpret_cast<T *>(base)[i];
+    return reinterpret_cast<T *>(b->ch)[i];
   }
 
-  /* A new, empty block with room for cap entries. */
-  static block_t *make(uint32_t cap) {
-    size_t data = static_cast<size_t>(cap > N ? cap : N) * sizeof(T);
+  /* A new, empty block. */
+  static block_t *make() {
     // Out of memory aborts the process, by the new-handler.
-    void *raw = ::operator new(offsetof(block_t, ch) + data);
+    void *raw = ::operator new(sizeof(block_t));
     block_t *b = static_cast<block_t *>(raw);
     b->next = nullptr;
     b->top = 0;
-    b->cap = cap > N ? cap : N;
     return b;
   }
 
   /* A spare if there is one, else a new block of N entries. */
   block_t *take() {
     if (nullptr == m_spare) {
-      return make(N);
+      return make();
     }
     block_t *b = m_spare;
     m_spare = b->next;
@@ -253,12 +231,12 @@ private:
     m_tail = b;
   }
 
-  /* Give up the blocks from b on: as spares, up to keep of those
-   * of N entries, unless all is set; the rest freed. */
+  /* Give up the blocks from b on: up to keep as spares, unless
+   * all is set; the rest freed. */
   void release(block_t *b, bool all) {
     while (nullptr != b) {
       block_t *next = b->next;
-      if (!all && N == b->cap && m_nspare < keep) {
+      if (!all && m_nspare < keep) {
         b->next = m_spare;
         m_spare = b;
         m_nspare++;
