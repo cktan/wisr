@@ -11398,3 +11398,53 @@ them. Each lookup made its row again.
   as a later DDL of one transaction, printed the same as before
   the rows were kept. `make tsan` passes, for aa and for digres.
 
+## Step 382: an MD5 password is refused
+
+A login is by SCRAM alone (`../aa/ROLE.md` §5), so a role with
+an md5 hash as its password cannot log in. Over TCP the hash
+also crossed the network in the clear, and an md5 hash of a
+password and a role name can be checked against a guess
+offline. `ISSUE.md` held it as an open question; the user chose
+to refuse it everywhere. Design: `../aa/ROLE.md` §5.1.
+
+- **user.c**: `check_password_given()`, formerly
+  `check_cleartext_password()`, refuses an md5 hash first, on
+  every connection: `an MD5 password is not supported`.
+- **The settings**: `password_encryption` loses its value `md5`,
+  so no password in cleartext is hashed to one.
+  `md5_password_warnings` goes, with its warning in
+  `encrypt_password()`, as nothing reaches it; so does that
+  function's md5 hashing, now an error.
+- **Left on purpose**: `auth.c`'s md5 login (`CheckMD5Auth()`,
+  `md5_crypt_verify()`) and `RenameRole()`'s clearing of an md5
+  password. No role gets one now. They go in a later cut.
+- **Tests**: `server.sh`: an md5 hash refused at CREATE ROLE
+  over the socket and over TCP, and at ALTER ROLE, and
+  `password_encryption = md5` refused. Shown to fail with the
+  refusal left out. pgregress `password` copied back and trimmed
+  again: the md5 statements are taken out.
+
+## Step 383: a role statement that fails to parse logs no string
+
+A logged statement masks each string after the keyword
+`PASSWORD` (step 380). A statement with `PASSWORD` misspelled,
+such as `ALTER ROLE r PASWORD 'x'`, fails to parse, and its
+`STATEMENT:` line showed the password. `ISSUE.md` held it as an
+open question; the user chose to mask a failed role statement,
+and to leave `pg_stat_activity` as PostgreSQL's. Design:
+`../aa/ROLE.md` §5.1.
+
+- **elog.c**: `mask_query()`, the scan `query_for_log()` was,
+  takes `syntax_error`. With it, every string after `CREATE` or
+  `ALTER` followed by `ROLE`, `USER` or `GROUP` is masked, in a
+  later statement of the query string too. The `STATEMENT:`
+  line passes it for `ERRCODE_SYNTAX_ERROR`. `query_for_log()`
+  is unchanged for `postgres.c`'s lines, which log only a parsed
+  statement.
+- **Left on purpose**: a statement that fails to parse and is no
+  role statement keeps its strings, for debugging.
+  `pg_stat_activity.query` shows a running statement as it is.
+- **Tests**: `server.sh`: ALTER ROLE and, as a query string's
+  second statement, CREATE USER with `PASSWORD` misspelled are
+  masked; `selec 'x'` keeps its string; no password is in the
+  log. Shown to fail with the flag left out.

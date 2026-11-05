@@ -181,6 +181,7 @@ static void log_line_prefix(StringInfo buf, ErrorData *edata);
 static void send_message_to_server_log(ErrorData *edata);
 static void send_message_to_frontend(ErrorData *edata);
 static void append_with_tabs(StringInfo buf, const char *str);
+static const char *mask_query(const char *query, bool syntax_error);
 
 /*
  * is_log_level_output -- is elevel logically >= log_min_level?
@@ -2958,7 +2959,10 @@ static void send_message_to_server_log(ErrorData *edata) {
   if (check_log_of_query(edata)) {
     log_line_prefix(&buf, edata);
     appendStringInfoString(&buf, _("STATEMENT:  "));
-    append_with_tabs(&buf, query_for_log(debug_query_string));
+    /* A statement that failed to parse may have PASSWORD misspelled. */
+    append_with_tabs(&buf,
+                     mask_query(debug_query_string,
+                                ERRCODE_SYNTAX_ERROR == edata->sqlerrcode));
     appendStringInfoChar(&buf, '\n');
   }
 
@@ -3291,26 +3295,38 @@ static const char *dollar_end(const char *p) {
   return p + strlen(p);
 }
 
+/* Whether the word of len bytes at w is the keyword k, in any case. */
+static bool word_is(const char *w, size_t len, const char *k) {
+  return strlen(k) == len && 0 == pg_strncasecmp(w, k, len);
+}
+
 /*
  * query as a log line shows it, so that a password set in cleartext
  * (../aa/ROLE.md section 5.1) never reaches the log: query itself if it has
- * no word "password", else a palloc'd copy with each string literal that
- * follows the keyword PASSWORD replaced by '********'.  It scans quotes and
- * comments itself, raising no error, as an error's own report calls it.
+ * no word "password" and no syntax_error, else a palloc'd copy with each
+ * string literal that follows the keyword PASSWORD replaced by '********'.
+ * With syntax_error, the query failed to parse, and its PASSWORD may be
+ * misspelled: every string after CREATE or ALTER ROLE, USER or GROUP is
+ * masked too.  It scans quotes and comments itself, raising no error, as an
+ * error's own report calls it.
  * 1. Copy white space and comments as they are; they keep what precedes.
  * 2. Copy a quoted name, or a character of punctuation; it ends PASSWORD's
  *    reach.
  * 3. Read a word: PASSWORD opens the reach; a string's prefix, E, N or U&,
- *    keeps it; any other word ends it.
+ *    keeps it; any other word ends it.  With syntax_error, ROLE, USER or
+ *    GROUP right after CREATE or ALTER masks every string from there on.
  * 4. Copy a string literal, '...' or $tag$...$tag$, or mask it if PASSWORD
- *    reaches it, and end the reach.
+ *    reaches it or every string is masked, and end the reach.
  */
-const char *query_for_log(const char *query) {
+static const char *mask_query(const char *query, bool syntax_error) {
   const char *p = query;
   bool reach = false;
+  bool verb = false; /* the last word was CREATE or ALTER */
+  bool all = false;  /* every string from here on is masked */
   StringInfoData buf;
 
-  if (NULL == query || NULL == strcasestr(query, "password"))
+  if (NULL == query ||
+      (!syntax_error && NULL == strcasestr(query, "password")))
     return query;
   initStringInfo(&buf);
   while ('\0' != *p) {
@@ -3339,12 +3355,14 @@ const char *query_for_log(const char *query) {
       if ('\0' != *p)
         p++;
       reach = false;
+      verb = false;
     } else if ('\'' == *p || ('$' == *p && NULL != dollar_end(p))) {
       bool backslash = p > query && ('E' == p[-1] || 'e' == p[-1]) &&
                        (p - 1 == query || !word_char(p[-2]));
 
       p = '\'' == *p ? literal_end(p, backslash) : dollar_end(p);
-      if (reach) {
+      verb = false;
+      if (reach || all) {
         appendStringInfoString(&buf, "'********'");
         reach = false;
         continue;
@@ -3354,6 +3372,11 @@ const char *query_for_log(const char *query) {
         p++;
       size_t len = p - start;
 
+      if (syntax_error && verb &&
+          (word_is(start, len, "role") || word_is(start, len, "user") ||
+           word_is(start, len, "group")))
+        all = true;
+      verb = word_is(start, len, "create") || word_is(start, len, "alter");
       if (8 == len && 0 == pg_strncasecmp(start, "password", 8))
         reach = true;
       else if (!(reach && 1 == len && strchr("EeNnUu", *start)))
@@ -3362,11 +3385,20 @@ const char *query_for_log(const char *query) {
       /* U&'...': the & of a Unicode string's prefix keeps the reach. */
       if (!('&' == *p && p > query && strchr("Uu", p[-1]) && '\'' == p[1]))
         reach = false;
+      verb = false;
       p++;
     }
     appendBinaryStringInfo(&buf, start, p - start);
   }
   return buf.data;
+}
+
+/*
+ * query as a log line shows it: each string after the keyword PASSWORD
+ * masked (mask_query()).
+ */
+const char *query_for_log(const char *query) {
+  return mask_query(query, false);
 }
 
 /*

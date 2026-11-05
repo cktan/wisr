@@ -362,15 +362,25 @@ crosses the network in the clear (`../dg/WORKNOTE.md` step
   and libpq's `PQchangePassword()` make on the client and send
   in place of the password; an empty password, which clears
   it; and any password over the local socket, which crosses no
-  network. Over TLS, when it comes, too. An md5 hash is taken
-  too, as any password not in cleartext is, but no login
-  accepts it: a login is by SCRAM alone (§5).
+  network. Over TLS, when it comes, too.
+- **An md5 hash is refused on every connection**: `an MD5
+  password is not supported`. A login is by SCRAM alone (§5),
+  so no login would accept it. `password_encryption` takes only
+  `scram-sha-256`, so no password in cleartext is hashed to
+  md5. PostgreSQL 18 takes both, with a warning.
 - **No log shows a password**: a statement that a log line
   shows, an error's `STATEMENT:`, `log_statement` and the
   durations, has each string after the keyword `PASSWORD`
   replaced by `'********'` (`query_for_log()` in `elog.c`).
   `UPDATE t SET password = 'x'` is not a role's password, and
-  stays as it is.
+  stays as it is. A statement that fails to parse may have its
+  `PASSWORD` misspelled: its `STATEMENT:` line masks every
+  string after `CREATE` or `ALTER` with `ROLE`, `USER` or
+  `GROUP`. Another statement that fails to parse keeps its
+  strings.
+- **`pg_stat_activity` shows a running statement as it is**, as
+  PostgreSQL does: only to its own role and to a role with
+  `pg_read_all_stats`, and only while it runs.
 
 ---
 

@@ -120,8 +120,12 @@ the two differ, `CLAUDE.md` wins.
   Call it only for a state no caller can act on.
 - **Running out of memory aborts the process.** The
   new-handler `sm1::attach` installs calls `sm0::fatal()` at
-  the failing allocation. Do not catch `std::bad_alloc`, and
-  do not report a failed allocation as `SM_ERR_NOMEM`.
+  the failing allocation. In sm0 to sm3, do not catch
+  `std::bad_alloc`, and do not report a failed allocation as
+  `SM_ERR_NOMEM`. The C wrapper is the one exception: its
+  catch-all maps a `std::bad_alloc` to `SM_ERR_NOMEM`. One
+  reaches it only before `sm1::attach` installs the handler,
+  or under a host's own handler (`DESIGN.md` §5).
 
 ## 6. Names and headers
 

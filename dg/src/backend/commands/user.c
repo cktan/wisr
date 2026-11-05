@@ -134,13 +134,23 @@ static void refuse_replication(DefElem *defel) {
 }
 
 /*
- * Refuse a password in cleartext that came over TCP without TLS
- * (../aa/ROLE.md section 5.1): the statement crossed the network in the
- * clear, so the password is never set.  A SCRAM secret, hashed by the
- * client as psql's \password does, an empty password, which clears it, and
- * a statement over the local socket are taken.
+ * Refuse a password a role cannot be given (../aa/ROLE.md section 5.1):
+ * 1. An md5 hash, on any connection: a login is by SCRAM alone, so no
+ *    login would accept it.
+ * 2. A password in cleartext that came over TCP without TLS: the
+ *    statement crossed the network in the clear, so the password is never
+ *    set.  A SCRAM secret, hashed by the client as psql's \password does,
+ *    an empty password, which clears it, and a statement over the local
+ *    socket are taken.
  */
-static void check_cleartext_password(const char *password) {
+static void check_password_given(const char *password) {
+  if (PASSWORD_TYPE_MD5 == get_password_type(password))
+    ereport(ERROR,
+            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+             errmsg("an MD5 password is not supported"),
+             errdetail("A login is by SCRAM alone, so no login would accept "
+                       "it."),
+             errhint("Use psql's \\password, which sends a SCRAM secret.")));
   if ('\0' == password[0] ||
       PASSWORD_TYPE_PLAINTEXT != get_password_type(password))
     return;
@@ -273,7 +283,7 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
 
   if (dpassword && dpassword->arg) {
     password = strVal(dpassword->arg);
-    check_cleartext_password(password);
+    check_password_given(password);
   }
   if (dissuper)
     issuper = boolVal(dissuper->arg);
@@ -661,7 +671,7 @@ Oid AlterRole(ParseState *pstate, AlterRoleStmt *stmt) {
 
   if (dpassword && dpassword->arg) {
     password = strVal(dpassword->arg);
-    check_cleartext_password(password);
+    check_password_given(password);
   }
   if (dconnlimit) {
     connlimit = intVal(dconnlimit->arg);

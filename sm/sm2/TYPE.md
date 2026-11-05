@@ -202,8 +202,12 @@ integer, shifted left past s itself, little-endian —
 PostgreSQL's numeric typmod, `((p << 16) | s) + 4`, with
 `0 <= s <= p` and `1 <= p <= 17` for `decimal64`, `36` for
 `decimal128`, the digits the bits above the scale hold; `-1`
-is refused. A datum's scale is its column's: `out` refuses one
-whose scale is not the typmod's.
+is refused. A datum's scale is its column's: `out` and the key
+encoder refuse one whose scale is not the typmod's, as its key
+would sort wrongly among the column's. The caller rescales a
+value of another scale first. Only the caller can round a scan
+bound, down for a lower bound and up for an upper one, as dg's
+`numeric_bound()` does.
 
 The key is §3.2's, at the datum's width — sign bit flipped,
 big-endian. Nothing bespoke, which is the point of the whole
