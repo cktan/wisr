@@ -108,22 +108,14 @@ void lock_drop_holder(db_t *db, const lockref_t &l, sm1::session_t *s) {
 /*
  * The session's lock list entry for (storeid, key), or nullptr, in
  * the list of its id's partition. The list is the session's own, so
- * no mutex is taken. The newest first, the lock in question likely
- * just taken, then the rest from the oldest: the list links only
- * forward.
+ * no mutex is taken. The newest first: the lock in question was
+ * likely just taken.
  */
 lockref_t *find_lockref(sm1::session_t *s, uint64_t storeid,
                         rocksdb::Slice key) {
   // The id holds the type, so comparing ids is enough.
   lockid_t k = lock_row_id(storeid, key);
   lock_list_t &list = s->locks.part(locktab_t::part_of(k));
-  lockref_t *last = list.last();
-  if (nullptr == last) {
-    return nullptr;
-  }
-  if (last->id == k) {
-    return last;
-  }
   return list.find([&](const lockref_t &l) { return l.id == k; });
 }
 

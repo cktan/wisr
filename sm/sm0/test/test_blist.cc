@@ -16,24 +16,24 @@ struct item_t {
   int w = 7;
 };
 
-/* The values in l, oldest first. */
+/* The values in l, newest first. */
 template <typename L> std::vector<int> values(const L &l) {
   std::vector<int> out;
   l.each([&](const item_t &x) { out.push_back(x.v); });
   return out;
 }
 
-/* The values in l after m, oldest first. */
+/* The values in l after m, newest first. */
 template <typename L, typename M> std::vector<int> after(const L &l, M m) {
   std::vector<int> out;
   l.each_from(m, [&](const item_t &x) { out.push_back(x.v); });
   return out;
 }
 
-/* The values from 0 to n - 1. */
-std::vector<int> upto(int n) {
+/* The values from n - 1 down to 0. */
+std::vector<int> down(int n) {
   std::vector<int> out;
-  for (int i = 0; i < n; i++) {
+  for (int i = n - 1; i >= 0; i--) {
     out.push_back(i);
   }
   return out;
@@ -46,7 +46,7 @@ TEST_CASE("blist entries never move as the list grows") {
   // 1. Emplace ten entries into blocks of four, keeping each
   //    pointer.
   // 2. Every pointer still reads its own value, and the list
-  //    iterates 0 to 9.
+  //    iterates 9 down to 0.
   // 3. An emplace with no arguments value-initializes; one with
   //    arguments constructs from them.
   sm0::blist_t<item_t, 4> l;
@@ -59,9 +59,8 @@ TEST_CASE("blist entries never move as the list grows") {
     CHECK(p[i]->w == 100 + i);
   }
   CHECK(l.size() == 10);
-  CHECK(values(l) == upto(10));
-  CHECK(l.last() == p[9]);
-  CHECK(l.last()->v == 9);
+  CHECK(values(l) == down(10));
+  CHECK(l.find([](const item_t &) { return true; }) == p[9]);
 
   item_t *d = l.emplace();
   CHECK(d->v == -1);
@@ -82,10 +81,9 @@ TEST_CASE("blist cut drops what followed a mark, at every boundary") {
   for (int i = 0; i < 6; i++) {
     l.emplace(i);
   }
-  CHECK(after(l, m0) == upto(6));
+  CHECK(after(l, m0) == down(6));
   l.cut(m0);
   CHECK(l.empty());
-  CHECK(nullptr == l.last());
   CHECK(nullptr == l.find([](const item_t &) { return true; }));
 
   for (int i = 0; i < 2; i++) {
@@ -95,9 +93,9 @@ TEST_CASE("blist cut drops what followed a mark, at every boundary") {
   for (int i = 2; i < 9; i++) {
     l.emplace(i);
   }
-  CHECK(after(l, m2) == std::vector<int>{2, 3, 4, 5, 6, 7, 8});
+  CHECK(after(l, m2) == std::vector<int>{8, 7, 6, 5, 4, 3, 2});
   l.cut(m2);
-  CHECK(values(l) == upto(2));
+  CHECK(values(l) == down(2));
   CHECK(l.size() == 2);
 
   l.emplace(2);
@@ -106,13 +104,12 @@ TEST_CASE("blist cut drops what followed a mark, at every boundary") {
   for (int i = 4; i < 7; i++) {
     l.emplace(i);
   }
-  CHECK(after(l, m4) == std::vector<int>{4, 5, 6});
+  CHECK(after(l, m4) == std::vector<int>{6, 5, 4});
   l.cut(m4);
-  CHECK(values(l) == upto(4));
+  CHECK(values(l) == down(4));
   CHECK(after(l, m4).empty());
-  CHECK(l.last()->v == 3);
   l.emplace(4);
-  CHECK(values(l) == upto(5));
+  CHECK(values(l) == down(5));
   CHECK(l.size() == 5);
 }
 
@@ -176,24 +173,24 @@ TEST_CASE("blist swap exchanges two lists") {
   }
   b.emplace(0);
   a.swap(b);
-  CHECK(values(a) == upto(1));
-  CHECK(values(b) == upto(6));
+  CHECK(values(a) == down(1));
+  CHECK(values(b) == down(6));
   CHECK(a.size() == 1);
   CHECK(b.size() == 6);
   a.emplace(1);
   b.emplace(6);
-  CHECK(values(a) == upto(2));
-  CHECK(values(b) == upto(7));
+  CHECK(values(a) == down(2));
+  CHECK(values(b) == down(7));
 }
 
 TEST_CASE("blist find returns the first match, from a mark") {
-  // Verify find and find_from: oldest first, across blocks, and
-  // the entry itself, to change in place.
+  // Verify find and find_from: newest first, across blocks, down to
+  // the mark, and the entry itself, to change in place.
   // 1. Ten entries in blocks of four, two of each value mod 5: find
-  //    of v % 5 == 3 returns the first, 3, in the first block.
-  // 2. find_from a mark after six entries returns the next, 8, in
-  //    the third block; find_from a mark at a full block's end
-  //    starts in the next block.
+  //    of v % 5 == 3 returns the newer, 8, in the third block.
+  // 2. find_from a mark after six entries returns 6, the oldest
+  //    after it, mid-block, and none of the entries before it; one
+  //    at a full block's end looks at none of that block.
   // 3. No match is nullptr; a change through the pointer is seen by
   //    each.
   sm0::blist_t<item_t, 4> l;
@@ -210,15 +207,16 @@ TEST_CASE("blist find returns the first match, from a mark") {
   auto is3 = [](const item_t &x) { return 3 == x.v % 5; };
   item_t *f = l.find(is3);
   REQUIRE(nullptr != f);
-  CHECK(f->v == 3);
-  item_t *g = l.find_from(m6, is3);
+  CHECK(f->v == 8);
+  item_t *g = l.find_from(m6, [](const item_t &x) { return 1 == x.v % 5; });
   REQUIRE(nullptr != g);
-  CHECK(g->v == 8);
-  const item_t *h = l.find_from(m4, [](const item_t &) { return true; });
-  REQUIRE(nullptr != h);
-  CHECK(h->v == 4);
+  CHECK(g->v == 6);
+  CHECK(nullptr ==
+        l.find_from(m6, [](const item_t &x) { return 0 == x.v % 5; }));
+  const item_t *h = l.find_from(m4, [](const item_t &x) { return x.v < 4; });
+  CHECK(nullptr == h);
 
   CHECK(nullptr == l.find([](const item_t &x) { return 10 == x.v; }));
-  f->v = 30;
-  CHECK(values(l) == std::vector<int>{0, 1, 2, 30, 4, 5, 6, 7, 8, 9});
+  f->v = 80;
+  CHECK(values(l) == std::vector<int>{9, 80, 7, 6, 5, 4, 3, 2, 1, 0});
 }

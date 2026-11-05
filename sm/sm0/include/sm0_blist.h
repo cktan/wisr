@@ -7,12 +7,13 @@
  *   auto m = locks.mark();                   // a savepoint
  *   ...
  *   locks.cut(m);                            // drop what followed
- *   locks.each([](lockref_t &l) { ... });    // every entry, oldest first
+ *   locks.each([](lockref_t &l) { ... });    // every entry, newest first
  *
  * An entry never moves: a pointer to one stays good until a cut
  * drops it, unlike std::vector's, which a growth moves. Blocks of
- * N entries are linked oldest first; a cut gives the blocks past
- * its mark to a list of spares, keeping up to four, and the
+ * N entries are linked back from the tail, the newest block; a cut
+ * gives the blocks past its mark to a list of spares, keeping up to
+ * four, and the
  * appends that follow take them before allocating, so a list
  * that is filled and emptied again and again settles into
  * allocating nothing. reserve() makes sure of room before a
@@ -43,8 +44,8 @@ template <typename T, uint32_t N> class blist_t {
 
   /* A block: N entries. */
   struct block_t {
-    block_t *next;
-    uint32_t top; /* entries in use */
+    block_t *prev; /* the block before it */
+    uint32_t top;  /* entries in use */
     alignas(T) char ch[N * sizeof(T)];
   };
 
@@ -59,7 +60,7 @@ public:
 
   /* Free every block, the spares too. */
   ~blist_t() {
-    release(m_head, true);
+    release(m_tail, true);
     release(m_spare, true);
   }
 
@@ -81,23 +82,24 @@ public:
   /* The point past the last entry, to cut back to. */
   mark_t mark() const { return {m_tail, nullptr == m_tail ? 0 : m_tail->top}; }
 
-  /* Drop the entries after m, keeping their blocks as spares. */
+  /*
+   * Drop the entries after m, keeping their blocks as spares.
+   * 1. Give up each block from the tail back to m's block.
+   * 2. Cut m's block to m's top, and make it the tail.
+   */
   void cut(mark_t m) {
-    block_t *rest = m_head;
+    while (m.b != m_tail) {
+      block_t *b = m_tail;
+      m_tail = b->prev;
+      m_size -= b->top;
+      b->prev = nullptr;
+      release(b, false);
+    }
     if (nullptr != m.b) {
       assert(m.top <= m.b->top);
-      rest = m.b->next;
       m_size -= m.b->top - m.top;
       m.b->top = m.top;
-      m.b->next = nullptr;
-    } else {
-      m_head = nullptr;
     }
-    m_tail = m.b;
-    for (block_t *b = rest; nullptr != b; b = b->next) {
-      m_size -= b->top;
-    }
-    release(rest, false);
   }
 
   /* Drop every entry, keeping the blocks as spares. */
@@ -118,7 +120,6 @@ public:
 
   /* Exchange two lists' entries and spares. */
   void swap(blist_t &o) {
-    std::swap(m_head, o.m_head);
     std::swap(m_tail, o.m_tail);
     std::swap(m_spare, o.m_spare);
     std::swap(m_nspare, o.m_nspare);
@@ -134,24 +135,20 @@ public:
   /* The spares kept, for the tests. */
   int spares() const { return m_nspare; }
 
-  /* The newest entry, or nullptr if there is none. */
-  T *last() { return newest(); }
-  const T *last() const { return newest(); }
-
-  /* The first entry after m that pred(entry) is true of, oldest
+  /* The first entry after m that pred(entry) is true of, newest
    * first, or nullptr. */
   template <class F> T *find_from(mark_t m, F pred) { return scan(m, pred); }
   template <class F> const T *find_from(mark_t m, F pred) const {
     return scan(m, [&](T &x) { return pred(static_cast<const T &>(x)); });
   }
 
-  /* The first entry pred(entry) is true of, oldest first, or nullptr. */
+  /* The first entry pred(entry) is true of, newest first, or nullptr. */
   template <class F> T *find(F pred) { return find_from(mark_t{}, pred); }
   template <class F> const T *find(F pred) const {
     return find_from(mark_t{}, pred);
   }
 
-  /* Call fn(entry) on each entry after m, oldest first. */
+  /* Call fn(entry) on each entry after m, newest first. */
   template <class F> void each_from(mark_t m, F fn) {
     find_from(m, [&](T &x) {
       fn(x);
@@ -165,7 +162,7 @@ public:
     });
   }
 
-  /* Call fn(entry) on each entry, oldest first. */
+  /* Call fn(entry) on each entry, newest first. */
   template <class F> void each(F fn) { each_from(mark_t{}, fn); }
   template <class F> void each(F fn) const { each_from(mark_t{}, fn); }
 
@@ -173,21 +170,22 @@ private:
   /* The most spares a cut keeps. */
   static constexpr int keep = 4;
 
-  /* The newest entry, or nullptr: the last block's last, as a
-   * block is never left empty. */
-  T *newest() const {
-    return nullptr == m_tail || 0 == m_tail->top ? nullptr
-                                                 : &at(m_tail, m_tail->top - 1);
-  }
-
-  /* The first entry after m that pred is true of, or nullptr. */
+  /*
+   * The first entry after m that pred is true of, or nullptr.
+   * 1. Walk the blocks from the tail back to m's block.
+   * 2. In each, test the entries from the top down, in m's block
+   *    down to m's top only.
+   */
   template <class F> T *scan(mark_t m, F &&pred) const {
-    block_t *b = nullptr == m.b ? m_head : m.b;
-    for (uint32_t i = m.top; nullptr != b; b = b->next, i = 0) {
-      for (; i < b->top; i++) {
-        if (pred(at(b, i))) {
-          return &at(b, i);
+    for (block_t *b = m_tail; nullptr != b; b = b->prev) {
+      uint32_t low = b == m.b ? m.top : 0;
+      for (uint32_t i = b->top; i > low; i--) {
+        if (pred(at(b, i - 1))) {
+          return &at(b, i - 1);
         }
+      }
+      if (b == m.b) {
+        break;
       }
     }
     return nullptr;
@@ -203,7 +201,7 @@ private:
     // Out of memory aborts the process, by the new-handler.
     void *raw = ::operator new(sizeof(block_t));
     block_t *b = static_cast<block_t *>(raw);
-    b->next = nullptr;
+    b->prev = nullptr;
     b->top = 0;
     return b;
   }
@@ -214,40 +212,35 @@ private:
       return make();
     }
     block_t *b = m_spare;
-    m_spare = b->next;
+    m_spare = b->prev;
     m_nspare--;
-    b->next = nullptr;
+    b->prev = nullptr;
     b->top = 0;
     return b;
   }
 
-  /* Link b past the last block. */
+  /* Link b past the last block, as the tail. */
   void append(block_t *b) {
-    if (nullptr == m_tail) {
-      m_head = b;
-    } else {
-      m_tail->next = b;
-    }
+    b->prev = m_tail;
     m_tail = b;
   }
 
-  /* Give up the blocks from b on: up to keep as spares, unless
-   * all is set; the rest freed. */
+  /* Give up b and the blocks before it: up to keep as spares,
+   * unless all is set; the rest freed. */
   void release(block_t *b, bool all) {
     while (nullptr != b) {
-      block_t *next = b->next;
+      block_t *prev = b->prev;
       if (!all && m_nspare < keep) {
-        b->next = m_spare;
+        b->prev = m_spare;
         m_spare = b;
         m_nspare++;
       } else {
         ::operator delete(b);
       }
-      b = next;
+      b = prev;
     }
   }
 
-  block_t *m_head = nullptr;
   block_t *m_tail = nullptr;
   block_t *m_spare = nullptr;
   int m_nspare = 0;
