@@ -1,10 +1,9 @@
 /*
  * sm.h -- wisr's API: the one entry into the stack, for
  * PostgreSQL to call (DESIGN.md sections 1 and 5). It is C in
- * style and compiled as C++: three C++ types may cross it and no
- * others (DESIGN.md section 5). std::string and std::vector
- * carry owned data. std::string_view is bytes that are someone
- * else's, read where they are.
+ * style and compiled as C++: the standard types in it are
+ * std::string and std::vector, which carry owned data, and
+ * std::shared_ptr, in sm_tbl_stats (SM_API.md, Conventions).
  *
  * Every call is the sm1, sm2 or sm3 call of the same name with
  * sm_ in front, given a C signature: sm_commit is sm3::commit,
@@ -19,7 +18,7 @@
  *     then read with sm_errnum() and sm_errmsg(). Where the level
  *     below returns 1 for "no row", so does the call here.
  *   - A call that yields a handle hands it back through its last
- *     parameter, set only on success.
+ *     parameter, sm_attach through its second, set only on success.
  *   - A handle given to a call -- an environment, a session, a
  *     table, a cursor -- must not be NULL: a NULL one is the
  *     caller's error. Some calls check, and fail with
@@ -35,14 +34,15 @@
  *         closed, as the end of its transaction closes it. Calls
  *         on the session, on its tables and on its other cursors
  *         leave it alone: a scan's current row outlives the inner
- *         side of a join, a heap fetch and an insert.
+ *         side of a join, a heap fetch and an insert. Only
+ *         sm_release_all_pins drops an sm_rel_scannxt row.
  *       - from a point read (sm_tbl_read, sm_tbl_read_latest),
  *         until the next call on the same session.
  *       - from a point read into a pin ref, or the old row of
  *         a write into one, until the pin is released: by the
  *         next read into the same ref, by sm_unpin, by
- *         sm_release_all_pins, or at the end of the session's
- *         transaction. Nothing else releases it.
+ *         sm_release_all_pins, by sm_prepare, or at the end of the
+ *         session's transaction. Nothing else releases it.
  *       - from a cursor into a pin ref (sm_rel_scannxt with a
  *         ref), as from the cursor: the ref goes stale with the
  *         row.
@@ -52,13 +52,15 @@
  *   - Anything else handed out is the caller's own: a list is a
  *     std::vector and bytes are a std::string, filled by the call.
  *     Nothing is freed by hand.
- *   - No C++ exception crosses this boundary. Every call catches
- *     everything: std::bad_alloc becomes SM_ERR_NOMEM, anything
- *     else SM_ERR_EXCEPTION, and when the call has a session, the
- *     session's transaction is aborted before -1 is returned, as
- *     it is after SM_ERR_NOMEM from below -- unless it is
- *     prepared: that is the coordinator's to resolve, and is
- *     left in doubt.
+ *   - No C++ exception crosses this boundary. Every call that
+ *     returns int, and sm_tbl_def, catches everything:
+ *     std::bad_alloc becomes SM_ERR_NOMEM, anything else
+ *     SM_ERR_EXCEPTION, and when the call gives its catch-all a
+ *     session, the session's transaction is aborted before -1 is
+ *     returned, as it is after SM_ERR_NOMEM from below -- unless
+ *     it is prepared: that is the coordinator's to resolve, and
+ *     is left in doubt. Cursor, pin and deform calls give it none
+ *     (SM_API.md, Conventions).
  *
  * Threading is sm1's: an environment may be used from any number
  * of threads, a session and its cursors by one thread at a time.
@@ -162,8 +164,8 @@ int sm_init(const char* homedir);
 /*
  * Attach the home directory homedir, recovering every database,
  * with opt's environment options (sm_options.h): the size of the
- * one block cache every database reads through. NULL means the
- * defaults.
+ * one block cache every database reads through, and max_sessions.
+ * NULL means the defaults.
  */
 int sm_attach(const char* homedir, sm_env_t** out,
               const sm_env_options_t* opt = nullptr);
@@ -219,9 +221,10 @@ int sm_begin(sm_session_t* session, sm_xctlevel_t level, int read_only);
 int sm_commit(sm_session_t* session);
 
 /*
- * Abort the active transaction. A transaction the engine has
- * already aborted, after a retryable error or SM_ERR_NOMEM, is
- * not an error: this returns 0 (DESIGN.md section 5).
+ * Abort the active transaction. No active transaction, as after
+ * a retryable error or SM_ERR_NOMEM, is not an error: this returns
+ * 0, and SM_ERR_NOTRANS stays the thread's error (DESIGN.md
+ * section 5).
  */
 int sm_abort(sm_session_t* session);
 
@@ -252,15 +255,16 @@ typedef struct sm_pin_ref_t {
 } sm_pin_ref_t;
 
 /*
- * Release the pin *ref names, if it is still held, and zero *ref.
- * A stale ref, or a zero one, is left alone.
+ * Release the pin *ref names, if it is still held and no cursor's,
+ * and zero *ref, stale or not. NULL is a no-op.
  */
 void sm_unpin(sm_pin_ref_t* ref);
 
 /*
  * Release every pin the session holds, as the end of its
  * transaction does, leaving the transaction open: every ref to
- * them is stale afterwards.
+ * them is stale afterwards. A cursor keeps its pin, but its row
+ * goes, and its refs go stale.
  */
 void sm_release_all_pins(sm_session_t* session);
 
@@ -361,7 +365,7 @@ typedef enum sm_lockname_t {
     SM_LOCKNAME_ROW    = 1, /* a row of a table: FOR SHARE, FOR
                                UPDATE, an index build */
     SM_LOCKNAME_KEY    = 2  /* any other key: one of the catalog's
-                               that DDL locks */
+                               that DDL locks, or an index entry's */
 } sm_lockname_t;
 
 /* A lock held or waited for, as sm_lock_status reports it. */
@@ -459,7 +463,8 @@ size_t sm_type_byval_width(const sm_type_t* type);
 /*
  * Open the collation for locale, a BCP 47 tag or "C"/"POSIX" for
  * byte order. With expected_version non-empty, one whose ICU
- * version differs is refused; NULL means "".
+ * version differs is refused; NULL means "". Byte order refuses
+ * any expected_version, and deterministic false.
  */
 int sm_collation_open(const char* locale, bool deterministic,
                       const char* expected_version, sm_collation_t** out);
@@ -605,8 +610,9 @@ int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* id, const void** tuple,
 /*
  * The next row, as above, in the cursor's pin, which *ref then
  * names, for sm_pin_deform; *ref is zero on 1 or -1. The cursor's
- * next call, its close, and the end of its transaction make the ref
- * stale; sm_unpin leaves the cursor's pin alone.
+ * next call, its close, sm_release_all_pins and the end of its
+ * transaction make the ref stale; sm_unpin leaves the cursor's pin
+ * alone.
  */
 int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* id, sm_pin_ref_t* ref);
 
@@ -676,7 +682,10 @@ typedef struct sm_idx_scan_t sm_idx_scan_t;
 int sm_idx_scannxt(sm_idx_scan_t* scan, uint64_t* id, bool* cut,
                    const void** value, size_t* len);
 
-/* Move the cursor forward to the first entry at or after lo. */
+/*
+ * Move the cursor forward to the first entry at or after lo. Moving
+ * back fails on an LSM index; a tree's cursor does not check.
+ */
 int sm_idx_scan_seek(sm_idx_scan_t* scan, const sm_bound_t* lo);
 
 /*
@@ -684,9 +693,10 @@ int sm_idx_scan_seek(sm_idx_scan_t* scan, const sm_bound_t* lo);
  * values and isnull, n of each, one per key column, as a bound
  * gives them: 0; 1 if the key does not give them back -- it was
  * cut, or a text column is under a non-deterministic collation --
- * so the row must; or -1. An entry the cursor returns is one the
- * transaction sees, as its row is. A by-reference value is valid
- * until the next call on the cursor.
+ * so the row must; or -1. An entry an LSM index's cursor returns
+ * is one the transaction sees, as its row is; a tree's row decides
+ * (SM_API.md, sm_idx_scannxt). A by-reference value is valid until
+ * the next call on the cursor.
  */
 int sm_idx_scan_key(sm_idx_scan_t* scan, sm_datum_t* values, bool* isnull,
                     size_t n);
@@ -1020,8 +1030,9 @@ int sm_cat_sequence_def(sm_session_t* session, uint64_t oid,
                         sm_sequence_def_t* out);
 
 /*
- * The names of the sequences in nspoid, sorted, as the session's
- * transaction, which must be open, sees them, into names.
+ * The names of the sequences in nspoid, sorted, as
+ * sm_cat_sequence_oid finds them, into names. It needs no open
+ * transaction.
  */
 int sm_cat_list_sequences(sm_session_t* session, uint64_t nspoid,
                           std::vector<std::string>& names);
@@ -1154,12 +1165,13 @@ int sm_cat_view_readers(sm_session_t* session, uint64_t oid,
 
 /*
  * Wait until the build of the table's index has ended. An index
- * made on a table that has rows is built in the background, and
- * may not be scanned until it is valid; this is for a caller that
+ * made on a committed table is built in the background, and may
+ * not be scanned until it is valid; this is for a caller that
  * wants it at once. Returns 0 once it is valid. If the build
  * failed it fails with the build's own error, code and message,
  * as the index keeps them; SM_ERR_INTRANS inside a transaction;
- * SM_ERR_NOTFOUND if there is no such table or index.
+ * SM_ERR_NOTFOUND if there is no such table or index;
+ * SM_ERR_INVALID if it is pending and no build of it runs.
  *
  * An interrupt to the calling thread, a bit in its wait mask
  * (sm_sys.h), ends the wait with SM_ERR_INTERRUPTED; the bit stays
@@ -1228,16 +1240,16 @@ int sm_set_index_evaluator(sm_env_t* env, sm_index_eval_fn fn, void* ctx);
  */
 
 /*
- * Turn TOAST on or off for env: once, before any database is
- * opened. Not to be turned off again over tables written with it
- * on.
+ * Turn TOAST on or off for env, before any database is opened.
+ * Not to be turned off again over tables written with it on.
  */
 int sm_set_toast(sm_env_t* env, int on);
 
 /*
- * The btree cleaner's threads a database gets, 4 by default: once,
+ * The btree cleaner's threads a database gets, 4 by default, set
  * before any database is opened (../BTREEINDEX.md §9). 0 runs none: for a
- * test, which runs a pass itself by sm_cleaner_run.
+ * test, which runs a pass itself by sm_cleaner_run. A negative
+ * count is not checked.
  */
 int sm_set_cleaner_workers(sm_env_t* env, int workers);
 
@@ -1261,7 +1273,7 @@ typedef struct sm_tbl_t sm_tbl_t;
 /*
  * Open the table oid in the session's transaction, taking its
  * table-oid lock in mode, held to the end of the transaction:
- * SM_LOCKMODE_IS to read its rows, SM_LOCKMODE_IX
+ * SM_LOCKMODE_IS to read its rows, SM_LOCKMODE_IX, SIX or EX
  * to write them. Its definition cannot change until then. A table
  * dropped while the caller waited is SM_ERR_NOTFOUND. The handle
  * is good for this transaction only; close it before or after the
@@ -1359,13 +1371,14 @@ int sm_tbl_insert_arbiter(sm_tbl_t* tbl, const sm_datum_t* values,
  * Into an EMPTY table -- a new one, a truncated one, any whose
  * store holds no version of a row -- the rows are written to
  * sorted files that the store takes whole when the load ends,
- * past its log and its compactions. For that the table's lock is
- * taken exclusive, to the end of the transaction: no one else
- * reads or writes the table meanwhile. The lock is taken only if
- * it is free when the load begins; the load never waits for it,
- * and with another transaction using the table, even to read,
- * the rows are inserted instead. A duplicate key is then
- * found when the load ends, not at its row. The first row that
+ * past its log and its compactions. A duplicate key among them is
+ * found when the load ends, not at its row. For that the lock of
+ * a table not temporary is taken exclusive, to the end of the
+ * transaction: no one else reads or writes the table meanwhile.
+ * The lock is taken only if it is free when the load begins; the
+ * load never waits for it, and with another transaction using the
+ * table, even to read, the rows are inserted instead. A table with
+ * a unique tree has its rows inserted always. The first row that
  * must be stored out of line (sm_set_toast), or is too long,
  * ends the files: what was handed over goes into the table, and
  * the rest are inserted.
@@ -1373,7 +1386,7 @@ int sm_tbl_insert_arbiter(sm_tbl_t* tbl, const sm_datum_t* values,
  * Into a table that has rows, every row is inserted, as
  * sm_tbl_insert would, and no lock is taken but the table's own.
  *
- * While a load into an empty table is under way the transaction
+ * While a load into files is under way the transaction
  * cannot commit, set a savepoint or roll back to one, and the
  * table's other writes fail with SM_ERR_INVALID. After one the
  * transaction cannot be prepared. After a failed call the
@@ -1454,15 +1467,16 @@ int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t id, sm_pin_ref_t* ref,
                        const void** tuple, size_t* len);
 
 /*
- * Lock the row with _id id in mode without writing it, to the end of
- * the transaction: SM_LOCKMODE_SH, as a foreign key check locks the
- * parent row and SELECT ... FOR SHARE a row it read, which other
- * readers of the key may share and a writer waits for; or
- * SM_LOCKMODE_EX, as SELECT ... FOR UPDATE, which needs the
- * table opened to write. The row need not exist. It waits as a
- * write does. A row the transaction changed after the running
- * statement began is not locked: SM_ERR_SELFMODIFIED, as a write
- * of it, which a FOR UPDATE cursor passes over.
+ * Lock the row with _id id in mode without writing it, to the end
+ * of the transaction: SM_LOCKMODE_SH, as a foreign key check locks
+ * the parent row and SELECT ... FOR SHARE a row it read, which
+ * other readers of the key may share and a writer waits for; or
+ * SM_LOCKMODE_EX, as SELECT ... FOR UPDATE. Any mode but
+ * SM_LOCKMODE_SH needs the table opened to write. The row need not
+ * exist. It waits as a write does. A row the transaction changed
+ * after the running statement began is not locked:
+ * SM_ERR_SELFMODIFIED, as a write of it, which a FOR UPDATE cursor
+ * passes over.
  */
 int sm_tbl_lock(sm_tbl_t* tbl, uint64_t id, sm_lockmode_t mode);
 
@@ -1518,13 +1532,13 @@ int sm_tbl_trylock(sm_tbl_t* tbl, const sm_row_key_t& key,
 /*
  * Empty the table, as SQL's TRUNCATE: its rows and every index's
  * entries go, in the table's transaction, at the same cost however
- * many there are. The table must be opened SM_LOCKMODE_EX,
- * SM_ERR_INVALID if not. Columns, indexes and the row numbering
- * are kept, so new rows go on from the last _id handed out. The
- * handle stays open on the emptied table, and sm_tbl_def gives its
- * new definition. A transaction that began before the truncate
- * committed and first reads the table after finds it empty, as in
- * PostgreSQL.
+ * many there are. The handle must hold the table SM_LOCKMODE_EX,
+ * from its open or a bulk load, SM_ERR_INVALID if not. Columns,
+ * indexes and the row numbering are kept, so new rows go on from
+ * the last _id handed out. The handle stays open on the emptied
+ * table; a definition sm_tbl_def has built changes only its
+ * version. A transaction that began before the truncate committed
+ * and first reads the table after finds it empty, as in PostgreSQL.
  */
 int sm_tbl_truncate(sm_tbl_t* tbl);
 
@@ -1549,7 +1563,8 @@ int sm_tbl_deform(sm_tbl_t* tbl, const void* tuple, size_t len,
  * Attributes from to n - 1 of the row ref pins, into values and
  * isnull at those places, each indexed by attribute and at least n
  * long, as sm3::pin_deform: resuming where the last deform of the
- * row stopped when from is there, and checking only what it reads.
+ * row stopped, or at attribute 0 if from is before that, filling
+ * those places too, and checking only what it reads.
  * A by-reference value points into the row. SM_ERR_INVALID if ref
  * is stale.
  */
@@ -1617,8 +1632,9 @@ int sm_tbl_scan_rows(sm_tbl_t* tbl, sm_rel_scan_t** out);
  * _id, one sorted run (../CLUSTER.md section 5). Or of a tree
  * (../BTREEINDEX.md section 5): each entry's row as the transaction sees
  * it, while it still has the entry's key, in the tree's order; a
- * tree's cursor seeks nothing. SM_ERR_INVALID if index is neither;
- * it seeks no _id.
+ * tree's cursor seeks nothing. SM_ERR_INVALID if index is neither,
+ * or not usable; SM_ERR_NOTFOUND if there is no such index. It
+ * seeks no _id.
  */
 int sm_tbl_idx_scan_rows(sm_tbl_t* tbl, uint64_t index, const sm_bound_t* lo,
                          const sm_bound_t* hi, bool* widened,
@@ -1640,8 +1656,8 @@ bool sm_tbl_index_tree(const sm_tbl_t* tbl, uint64_t index);
 
 /*
  * The number of attributes in an entry's value in that index: the
- * cut flag, the INCLUDE columns, then the row's key (../ROWSTORE.md
- * ../ROWSTORE.md §2.2); 0 if there is no such index.
+ * cut flag, the INCLUDE columns, null in a tree's entry, then the
+ * row's key (../ROWSTORE.md §2.2); 0 if there is no such index.
  */
 size_t sm_tbl_idx_ncols(const sm_tbl_t* tbl, uint64_t index);
 
@@ -1684,9 +1700,11 @@ int sm_tbl_probes(sm_tbl_t* tbl, uint64_t* n);
  * Compact the table's store, its heap and indexes: flush its
  * memtables and merge every level into the bottom one, so a lookup
  * visits one sorted run and old versions no reader needs are
- * dropped. SQL's VACUUM. It waits for the compaction, seconds for
- * a table of hundreds of megabytes, and cannot be cut short; the
- * handle's lock keeps DDL out meanwhile.
+ * dropped. Each tree's dead entries go too, and a leaf with none
+ * in doubt is set all visible (../BTREEINDEX.md §9). SQL's VACUUM.
+ * It waits for the compaction, seconds for a table of hundreds of
+ * megabytes, and cannot be cut short; the handle's lock keeps DDL
+ * out meanwhile.
  */
 int sm_tbl_compact(sm_tbl_t* tbl);
 
@@ -1717,10 +1735,11 @@ int sm_tbl_tryanalyze(sm_tbl_t* tbl, int32_t target);
 
 /*
  * The table oid's statistics, as the session sees them: 0 with them
- * in out, or 1 if it was never analyzed. They are sm3's, shared,
- * read-only, by every caller in the process: held in memory, loaded
- * once on first use, never copied, and taking no lock. A holder
- * keeps the ones it was given, whatever is analyzed since.
+ * in out, or 1 if it was never analyzed, is temporary or is not
+ * there. They are sm3's, shared, read-only, by every caller in the
+ * process: held in memory, loaded once on first use, never copied,
+ * and taking no lock. A holder keeps the ones it was given,
+ * whatever is analyzed since.
  */
 int sm_tbl_stats(sm_session_t* session, uint64_t oid,
                  std::shared_ptr<const sm_stats_t>& out);
@@ -1754,7 +1773,8 @@ int sm_cat_create_temp_table(sm_session_t* session, const char* name,
 
 /*
  * Drop the table oid: its store, rows, indexes and sequence. One a
- * view reads fails with SM_ERR_INUSE.
+ * view reads, or another table's foreign key references, fails
+ * with SM_ERR_INUSE.
  */
 int sm_cat_drop_table(sm_session_t* session, uint64_t oid);
 
@@ -1817,7 +1837,7 @@ typedef int (*sm_column_conv_fn)(void* ctx, const sm_datum_t* values,
  * column is conv's, given ctx, and every index on the column is
  * made under the new type, a key column's rows keyed anew. With
  * conv NULL only the record changes, which is taken only when every
- * value stays as it is: the same type code, or text and varchar.
+ * value stays as it is (sm_retype_keeps_values).
  * The column's statistics go.
  *
  * Errors: SM_ERR_NOTFOUND, no such column; SM_ERR_INUSE, a column an
@@ -1845,7 +1865,7 @@ typedef enum sm_column_use_t {
  * What keeps the column at, 0-based, of the table oid from changing
  * type, in *use, with its name in by: what sm_cat_alter_column_type
  * refuses, asked first for a host's own words. A view first, then as
- * sm_column_use_t lists them. The session holds the table's lock.
+ * sm_column_use_t lists them. It takes the table-oid lock X.
  *
  * Errors: SM_ERR_NOTFOUND, no such table; SM_ERR_INVALID, no such
  * column.
@@ -1875,7 +1895,8 @@ int sm_cat_rename_column(sm_session_t* session, uint64_t oid,
 /*
  * Drop the column name of the table oid: it reads as null from then
  * on, and the sequences it owns go with it (sm3::drop_column). One
- * a view reads fails with SM_ERR_INUSE.
+ * a view reads or a foreign key of the table uses fails with
+ * SM_ERR_INUSE, and one an index uses with SM_ERR_INVALID.
  */
 int sm_cat_drop_column(sm_session_t* session, uint64_t oid,
                        const char* name);
@@ -1883,9 +1904,10 @@ int sm_cat_drop_column(sm_session_t* session, uint64_t oid,
 /*
  * Create the index name on the table, keyed by keys, with the
  * INCLUDE columns includes by 0-based place. On a table this
- * transaction made it is filled and valid at once. On any other
- * it is recorded as pending, and filled in the background once
- * the transaction commits: sm_cat_index_wait waits for that.
+ * transaction made it is filled and valid at once, and so is a
+ * primary index on any table. On any other it is recorded as
+ * pending, and filled in the background once the transaction
+ * commits: sm_cat_index_wait waits for that.
  *
  * A partial or an expression index gives eval, its predicate and
  * its expressions serialized as the host likes -- the stack keeps
@@ -1894,10 +1916,10 @@ int sm_cat_drop_column(sm_session_t* session, uint64_t oid,
  * leave the index alone. A plain index gives both empty.
  *
  * A primary index is the table's primary key: unique, on columns
- * alone, each NOT NULL, and the table's only one, or it fails with
- * SM_ERR_INVALID (sm3::create_index). A constraint index is one a
- * UNIQUE or PRIMARY KEY constraint made, not CREATE UNIQUE INDEX:
- * unique and on columns alone, a mark the host reads.
+ * alone, each NOT NULL, no tree, and the table's only one, or it
+ * fails with SM_ERR_INVALID (sm3::create_index). A constraint index
+ * is one a UNIQUE or PRIMARY KEY constraint made, not CREATE UNIQUE
+ * INDEX: unique and on columns alone, a mark the host reads.
  */
 int sm_cat_create_index(sm_session_t* session, uint64_t table,
                         const char* name,
@@ -1912,17 +1934,18 @@ int sm_cat_create_index(sm_session_t* session, uint64_t table,
 int sm_cat_drop_index(sm_session_t* session, uint64_t table, uint64_t index);
 
 /*
- * Add the foreign key def to the table, its child (FOREIGNKEY.md §5),
- * in the session's transaction, under the child's table-oid lock X
- * and then the parent's; its oid, def.oid ignored, is set in oid. It
- * needs 1 to 32 column pairs, every column live, def.ref_index a
- * valid unique index of the parent with no predicate or expression
- * whose keys are def.ref_columns in any order, both tables temporary
- * or neither, and a name free among the child's foreign keys: else
+ * Add the foreign key def to the table, its child (FOREIGNKEY.md
+ * §5), in the session's transaction, under the child's table-oid
+ * lock X and then the parent's; its oid, def.oid ignored, is set in
+ * oid. It needs known actions and match type, 1 to 32 column pairs,
+ * every column live, def.ref_index a valid unique index of the
+ * parent with no predicate or expression whose keys are
+ * def.ref_columns in any order, both tables temporary or neither,
+ * and a name free among the child's foreign keys: else
  * SM_ERR_INVALID, or SM_ERR_DUPKEY for the name. No row is read:
  * def.validated is the caller's word, after checking them. Once it
- * is there, dropping the parent, its index, or a column of the child
- * it uses is SM_ERR_INUSE.
+ * is there, dropping the parent, its index, or a column of the
+ * child it uses is SM_ERR_INUSE.
  */
 int sm_cat_create_fkey(sm_session_t* session, uint64_t table,
                        const sm_fkey_def_t& def, uint64_t* oid);
