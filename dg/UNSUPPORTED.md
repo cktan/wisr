@@ -248,6 +248,9 @@ regression files are taken out for it (`test/pgregress`,
   hashed password, a SCRAM secret as psql's `\password` sends;
   the local socket takes either (`../aa/ROLE.md` §5.1, step
   380). A password is masked in every logged statement.
+- **An MD5 password** — refused: an md5 hash as a password, on
+  every connection, as no login accepts it; `password_encryption
+  = md5` and `md5_password_warnings` are gone (step 382).
 
 ## 8. Locking and isolation
 

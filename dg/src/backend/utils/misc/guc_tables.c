@@ -261,7 +261,6 @@ static const struct config_enum_entry plan_cache_mode_options[] = {
     {NULL, 0, false}};
 
 static const struct config_enum_entry password_encryption_options[] = {
-    {"md5", PASSWORD_TYPE_MD5, false},
     {"scram-sha-256", PASSWORD_TYPE_SCRAM_SHA_256, false},
     {NULL, 0, false}};
 
@@ -1253,18 +1252,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
                       "applicable statements."),
      },
      &event_triggers,
-     true,
-     NULL,
-     NULL,
-     NULL},
-
-    {{
-         "md5_password_warnings",
-         PGC_USERSET,
-         CONN_AUTH_AUTH,
-         gettext_noop("Enables deprecation warnings for MD5 passwords."),
-     },
-     &md5_password_warnings,
      true,
      NULL,
      NULL,

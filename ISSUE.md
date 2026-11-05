@@ -4,28 +4,6 @@ Open questions found in the reviews of 2026-11-04, kept for a
 decision. Each states what the code does now, why it is a
 question, and the choices.
 
-## 1. An md5 hash is taken as a password over TCP
-
-`CREATE ROLE` and `ALTER ROLE ... PASSWORD` over TCP without TLS
-refuse a password in cleartext (`aa/ROLE.md` §5.1, and
-`check_cleartext_password()` in
-`dg/src/backend/commands/user.c`). They take any password that
-is not cleartext, and an md5 hash is not cleartext, so it is
-taken.
-
-- A role that holds an md5 hash cannot log in: a login is by
-  SCRAM alone (`aa/ROLE.md` §5).
-- The hash still crossed the network in the clear. An md5 hash
-  of a password and a role name is weak: a guess at the password
-  can be checked against it offline.
-
-Choices:
-
-- **Keep it**, as now. The docs say an md5 hash is taken and no
-  login accepts it.
-- **Refuse an md5 hash**, over TCP or everywhere, since no login
-  can use it.
-
 ## 2. A password in cleartext can still be seen
 
 The log masks each string after the keyword `PASSWORD`

@@ -362,9 +362,12 @@ crosses the network in the clear (`../dg/WORKNOTE.md` step
   and libpq's `PQchangePassword()` make on the client and send
   in place of the password; an empty password, which clears
   it; and any password over the local socket, which crosses no
-  network. Over TLS, when it comes, too. An md5 hash is taken
-  too, as any password not in cleartext is, but no login
-  accepts it: a login is by SCRAM alone (§5).
+  network. Over TLS, when it comes, too.
+- **An md5 hash is refused on every connection**: `an MD5
+  password is not supported`. A login is by SCRAM alone (§5),
+  so no login would accept it. `password_encryption` takes only
+  `scram-sha-256`, so no password in cleartext is hashed to
+  md5. PostgreSQL 18 takes both, with a warning.
 - **No log shows a password**: a statement that a log line
   shows, an error's `STATEMENT:`, `log_statement` and the
   durations, has each string after the keyword `PASSWORD`

@@ -293,6 +293,43 @@ grep -q "pwcreate\|pwfirst\|pwsecond\|pwfourth\|pwfifth\|pwsixth" \
 local_psql -c "drop role pw1" > /dev/null 2>&1 ||
   fail "cleartext password: drop the role"
 
+# Verify that an md5 hash is refused as a password on every connection
+# (../aa/ROLE.md section 5.1).
+# 1. Over the local socket, CREATE ROLE with an md5 hash is refused, and
+#    makes no role.
+# 2. Over TCP, the same statement is refused as an md5 hash, not as a
+#    password in cleartext.
+# 3. Over the local socket, ALTER ROLE with an md5 hash is refused: the role
+#    keeps no password.
+# 4. password_encryption takes no md5, so no cleartext is hashed to one.
+# 5. Drop pw2, which the checks after this one do not expect.
+md5=md5e73a4b11df52a6068f8b39f90be36023
+local_psql -c "create role pw2 login password '$md5'" > "$work/pw.out" 2>&1 &&
+  fail "md5 password: created over the socket"
+grep -q "an MD5 password is not supported" "$work/pw.out" ||
+  fail "md5 password: the socket's refusal"
+[ "$(local_psql -c "select count(*) from pg_roles where rolname = 'pw2'")" \
+  = 0 ] || fail "md5 password: no role made"
+tcp_psql sesame -c "create role pw2 login password '$md5'" \
+  > "$work/pw.out" 2>&1 && fail "md5 password: created over TCP"
+grep -q "an MD5 password is not supported" "$work/pw.out" ||
+  fail "md5 password: the TCP refusal"
+local_psql -c "create role pw2 login" > /dev/null 2>&1 ||
+  fail "md5 password: make the role"
+local_psql -c "alter role pw2 password '$md5'" > "$work/pw.out" 2>&1 &&
+  fail "md5 password: altered over the socket"
+grep -q "an MD5 password is not supported" "$work/pw.out" ||
+  fail "md5 password: the alter's refusal"
+[ "$(local_psql -c "select rolpassword is null from pg_authid
+                    where rolname = 'pw2'")" = t ] ||
+  fail "md5 password: the role keeps no password"
+local_psql -c "set password_encryption = md5" > "$work/pw.out" 2>&1 &&
+  fail "md5 password: password_encryption took md5"
+grep -q 'invalid value for parameter "password_encryption"' "$work/pw.out" ||
+  fail "md5 password: password_encryption's refusal"
+local_psql -c "drop role pw2" > /dev/null 2>&1 ||
+  fail "md5 password: drop the role"
+
 # Verify that a change elsewhere replans a prepared statement only if it can
 # matter to one, and that the owners and ACLs other sessions cache still go.
 # 1. A held session prepares a generic plan, and logs each plan it makes.

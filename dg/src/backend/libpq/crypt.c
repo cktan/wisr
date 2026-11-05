@@ -25,9 +25,6 @@
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
 
-/* Enables deprecation warnings for MD5 passwords. */
-thread_local /*LOCAL*/ bool md5_password_warnings = true;
-
 /*
  * Fetch stored password for a user, for authentication.
  *
@@ -79,7 +76,6 @@ char *encrypt_password(PasswordType target_type, const char *role,
                        const char *password) {
   PasswordType guessed_type = get_password_type(password);
   char *encrypted_password = NULL;
-  const char *errstr = NULL;
 
   if (guessed_type != PASSWORD_TYPE_PLAINTEXT) {
     /*
@@ -90,11 +86,8 @@ char *encrypt_password(PasswordType target_type, const char *role,
   } else {
     switch (target_type) {
     case PASSWORD_TYPE_MD5:
-      encrypted_password = (char *)palloc(MD5_PASSWD_LEN + 1);
-
-      if (!pg_md5_encrypt(password, (uint8 *)role, strlen(role),
-                          encrypted_password, &errstr))
-        elog(ERROR, "password encryption failed: %s", errstr);
+      /* password_encryption has no md5: no role gets an MD5 password. */
+      elog(ERROR, "cannot encrypt password with 'md5'");
       break;
 
     case PASSWORD_TYPE_SCRAM_SHA_256:
@@ -130,16 +123,6 @@ char *encrypt_password(PasswordType target_type, const char *role,
              errdetail("Encrypted passwords must be no longer than %d bytes.",
                        MAX_ENCRYPTED_PASSWORD_LEN)));
   }
-
-  if (md5_password_warnings &&
-      get_password_type(encrypted_password) == PASSWORD_TYPE_MD5)
-    ereport(WARNING,
-            (errcode(ERRCODE_WARNING_DEPRECATED_FEATURE),
-             errmsg("setting an MD5-encrypted password"),
-             errdetail("MD5 password support is deprecated and will be removed "
-                       "in a future release of PostgreSQL."),
-             errhint("Refer to the PostgreSQL documentation for details about "
-                     "migrating to another password type.")));
 
   return encrypted_password;
 }
