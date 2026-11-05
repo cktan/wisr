@@ -1,6 +1,6 @@
 /*
  * db.h -- the layout of one database directory: its column
- * families, their options, and CF:meta's keys (SM1_DESIGN.md §3).
+ * families, their options, and CF:meta's keys (../DBMGR.md §6).
  */
 #ifndef WISR_DB_H
 #define WISR_DB_H
@@ -36,7 +36,7 @@
 #include "memcount.h"
 
 /* Database format version, stored in CF:meta. Version 4 added
- * the mode byte on each lock key of a PREPARED record (§8.4);
+ * the mode byte on each lock key of a PREPARED record (../XCTMGR.md §10);
  * version 6 renamed each store's column family from rel.<id>
  * to store.<id>. */
 #define WISR_DB_VERSION 6
@@ -45,14 +45,14 @@
 #define WISR_CF_TXN "txn"
 #define WISR_CF_META "meta"
 
-/* CF:meta keys (SM1_DESIGN.md §3.3, §4.2). */
+/* CF:meta keys (../DBMGR.md §6.7, ../XCTMGR.md §2.3). */
 #define WISR_META_VERSION "version"
 #define WISR_META_NEXT_TS "next_ts"
 #define WISR_META_NEXT_OBJID "next_objid"
 
 /*
  * The first object id handed out: 1 to 999 are reserved for
- * objects a database is made with (SM1_DESIGN.md §4.2).
+ * objects a database is made with (../XCTMGR.md §2.3).
  */
 #define WISR_FIRST_OBJID 1000
 
@@ -82,7 +82,7 @@ struct store_t {
   /* Its sorted files' bytes as last estimated (memcount.h): shared. */
   std::shared_ptr<filesize_t> files;
   /*
-   * Made chained (sm1::mkstore, ../VCHAIN.md §3): its CF is named
+   * Made chained (sm1::mkstore, ../ROWSTORE.md §3.5): its CF is named
    * chain.<storeid>. next_old is the next id of an old version,
    * started at open past the store's last one: shared, as store_t
    * is copied.
@@ -90,7 +90,7 @@ struct store_t {
   bool chained = false;
   std::shared_ptr<std::atomic<uint64_t>> next_old;
   /*
-   * cf's owner, shared by every copy (SM1_DESIGN.md §3.1): the last
+   * cf's owner, shared by every copy (../DBMGR.md §6.2): the last
    * copy destroys the handle, so a copy taken before the store is
    * dropped stays good after it. NULL with cf.
    */
@@ -154,11 +154,11 @@ struct ssi_node_t {
   uint64_t end_ts = 0;    /* once committed: when it ended */
   /* Declared read-only, or committed having written nothing. */
   bool read_only = false;
-  /* Its rw-edges, by the node at the other end (§7.2): readers
+  /* Its rw-edges, by the node at the other end (../XCTMGR.md §7.3): readers
      of what it wrote, and writers of what it read. */
   std::vector<ssi_node_t *> in_edges;
   std::vector<ssi_node_t *> out_edges;
-  /* The safe-snapshot watch (§7.4): a declared read-only node
+  /* The safe-snapshot watch (../XCTMGR.md §7.5): a declared read-only node
      waits on the writers concurrent with its snapshot, each of
      which lists it among its watchers. Once safe, the node holds
      no SIREAD entry and makes no edge; once unsafe, never safe. */
@@ -182,8 +182,8 @@ struct ssi_range_t {
 };
 
 /*
- * An entry of a session's lock list (§5.1): a lock it took, row or
- * OID, by its id alone; no row's key is kept.
+ * An entry of a session's lock list (../LOCKMGR.md §3.2): a lock it took, row
+ * or OID, by its id alone; no row's key is kept.
  */
 struct lockref_t {
   lockid_t id{}; /* its lock table entry's id */
@@ -276,7 +276,7 @@ using lock_mark_t = lock_lists_t::mark_t;
 
 /*
  * One open database, shared by every session on it and held
- * in the environment's registry (SM1_DESIGN.md §1).
+ * in the environment's registry (../DBMGR.md §1).
  */
 /*
  * A commit waiting in line for a WAL sync (db_sync_wal()), on its
@@ -339,23 +339,23 @@ struct db_t {
   /*
    * Raised by one at every change to stores, before a dropped
    * store's handle is destroyed: a session's handles read at
-   * another are read again (STORECACHE.md). Loaded, not locked.
+   * another are read again (../DBMGR.md). Loaded, not locked.
    */
   std::atomic<uint64_t> stores_version{0};
 
-  /* The ts and object-id allocators and their leases (§4.2). */
+  /* The ts and object-id allocators and their leases (../DBMGR.md §17.1). */
   std::mutex alloc_mu;
   /*
    * Signalled, under alloc_mu, when visible_ts rises or the
    * database fails stop: a commit waits on it until its own
-   * commit_ts is visible (db_commit_wait(), COMMITVISIBLE.md).
+   * commit_ts is visible (db_commit_wait(), ../XCTMGR.md).
    */
   std::condition_variable visible_cv;
   uint64_t lease = 0;
   /*
    * The timestamp counter. Values are taken with fetch_add and
    * no lock, except a commit_ts, which is taken under alloc_mu
-   * with its insert into committing (§4.3). ts_limit is written
+   * with its insert into committing (../XCTMGR.md §14). ts_limit is written
    * only under alloc_mu.
    */
   std::atomic<uint64_t> global_ts{0}; /* next ts to hand out */
@@ -364,7 +364,7 @@ struct db_t {
   uint64_t objid_limit = 0;
 
   /*
-   * A sequence in use, by seqid (§11). The state is built on
+   * A sequence in use, by seqid (../DBMGR.md §7). The state is built on
    * the first sm1::nextseq and kept until the database closes;
    * it is guarded by alloc_mu, like the leases above.
    */
@@ -377,36 +377,36 @@ struct db_t {
   std::unordered_map<uint64_t, seq_state_t> seqs;
 
   /*
-   * The commit sequencer (§4.3): commit_ts values claimed and
+   * The commit sequencer (../XCTMGR.md §3.2): commit_ts values claimed and
    * not yet published. Guarded by alloc_mu, the mutex that
    * hands out timestamps, so no commit_ts is ever outside both
    * this set and the advancer's view of global_ts.
    */
   std::set<uint64_t> committing;
 
-  /* Every commit_ts at or below this is published (§4.3). */
+  /* Every commit_ts at or below this is published (../XCTMGR.md §3.2). */
   std::atomic<uint64_t> visible_ts{0};
 
   /*
    * The largest commit_ts of a transaction that made or dropped a
    * store, raised before that commit_ts is published: a session's
-   * store cache trusts an entry only from below it (§11).
+   * store cache trusts an entry only from below it (../DBMGR.md §7).
    */
   std::atomic<uint64_t> last_ddl_ts{0};
 
   /*
-   * The active transaction table and the commit cache (§3.4),
+   * The active transaction table and the commit cache (../DBMGR.md §6.6),
    * under one mutex so a committing xid moves from one to the
    * other atomically. The cache holds commits as they happen
    * and commits read back from CF:txn, in sets of two slots: an
    * xid hashes to a set, and a new entry takes the slot of the
-   * smaller xid (COMMITCACHE.md §2). An empty slot has xid 0,
+   * smaller xid (../XCTMGR.md §9.2). An empty slot has xid 0,
    * which no transaction has.
    */
   std::mutex txn_mu;
   std::unordered_set<uint64_t> active; /* xids in flight */
   /* The transaction object running each xid in flight, for a
-     writer that waits for it (WRITELOCK.md §3.4). */
+     writer that waits for it (../LOCKMGR.md §1.11). */
   std::unordered_map<uint64_t, sm1::session_t *> xid_owner;
   struct cache_slot_t {
     uint64_t xid = 0;
@@ -415,7 +415,7 @@ struct db_t {
   std::vector<cache_slot_t> cache; /* cache_sets sets, two slots each */
   size_t cache_sets = 0;
 
-  /* The most one transaction's undo list may hold (§6.5). */
+  /* The most one transaction's undo list may hold (../LOCKMGR.md §3). */
   size_t undo_max_bytes = 0;
 
   /* A bulk load's sizes (BULKLOAD.md §5; sm_options.h). */
@@ -432,7 +432,7 @@ struct db_t {
 
   /*
    * The commits' WAL sync, outside RocksDB's write queue
-   * (db_sync_wal(), GROUPSYNC.md). Under sync_mu: the last
+   * (db_sync_wal(), ../DBMGR.md). Under sync_mu: the last
    * sequence number a finished sync covers, whether a commit
    * leads a sync now or has been handed the next one, and the
    * line of commits waiting, oldest first.
@@ -452,12 +452,11 @@ struct db_t {
   std::function<rocksdb::Status()> test_before_sync;
 
   /*
-   * The lock table (§5.1): lock key -> the transactions holding it.
-   * Each holder holds it in a mode of its own, and every pair of
-   * holders' modes is compatible (sm1.h, lockmode_t). It is in
-   * partitions, each with its mutex (locktab.h) and here its
-   * condition, lock_cv[i], which a release in the partition and
-   * every doom notify; a waiter for a lock sleeps on its
+   * The lock table (../LOCKMGR.md §3.2): lock key -> the transactions holding
+   * it. Each holder holds it in a mode of its own, and every pair of holders'
+   * modes is compatible (sm1.h, lockmode_t). It is in partitions, each with its
+   * mutex (locktab.h) and here its condition, lock_cv[i], which a release in
+   * the partition and every doom notify; a waiter for a lock sleeps on its
    * partition's. A deadlock walk holds every partition's mutex,
    * then xact_mu (lock_all_t), so it sees a still waits-for graph.
    *
@@ -477,7 +476,7 @@ struct db_t {
   std::condition_variable xact_cv;
   int deadlock_ms = 50;
   /*
-   * The fast path (§5.1): the strong OID locks (S, SIX, X) held
+   * The fast path (../LOCKMGR.md §3.2): the strong OID locks (S, SIX, X) held
    * or being asked, by the hash of their key; a weak one takes a
    * slot of its session's only while its key's count is 0. A
    * strong locker counts itself, then moves every session's
@@ -493,12 +492,12 @@ struct db_t {
   /*
    * Bumped, under xact_mu, by every rollback to a savepoint: it
    * deletes versions, so a writer waiting for the transaction
-   * looks again (WRITELOCK.md §3.4).
+   * looks again (../LOCKMGR.md §1.11).
    */
   uint64_t rollback_epoch = 0;
 
   /*
-   * Write latches (WRITELOCK.md §3.1): a write holds the one its
+   * Write latches (../LOCKMGR.md §3.5): a write holds the one its
    * store and key hash to while it checks the key and puts its
    * version, and never while it waits.
    */
@@ -510,7 +509,7 @@ struct db_t {
 
   /*
    * The begin snapshots of active transactions, whose minimum
-   * is gc_watermark (§8.3). Taking a snapshot and registering
+   * is gc_watermark (../LOCKMGR.md). Taking a snapshot and registering
    * it happen under snap_mu, the mutex the watermark is read
    * under, so no snapshot lands below a watermark in use.
    */
@@ -527,7 +526,7 @@ struct db_t {
   int stuck_warn_secs = 60;
 
   /*
-   * Garbage collection (§8.3). The compaction filter runs only
+   * Garbage collection (../GC.md §1). The compaction filter runs only
    * once gc_ready is set, after the handles above are valid.
    * It cannot write, so it queues tombstones to purge; a
    * committed sm1::rmstore queues its storeids to drop once the
@@ -545,7 +544,7 @@ struct db_t {
   /*
    * Chained keys whose newest version is a dead transaction's (xid),
    * which the compaction filter found, for the worker to put back
-   * (../VCHAIN.md §7). A key queued twice finds nothing to do the
+   * (../GC.md §4.2). A key queued twice finds nothing to do the
    * second time.
    */
   struct repair_t {
@@ -559,7 +558,7 @@ struct db_t {
   std::mutex gc_run_mu; /* one gc_run_once at a time */
 
   /*
-   * Read epochs, for the CF:txn sweep (§8.3 step 3). Every
+   * Read epochs, for the CF:txn sweep (../GC.md §1 step 3). Every
    * reader -- a point read, a write's existence check, a
    * cursor for its whole life -- is counted in the current
    * epoch's slot from before it opens an iterator until it is
@@ -585,7 +584,7 @@ struct db_t {
   uint64_t txn_sweep_records = 1000000; /* CF:txn keys to trigger */
 
   /*
-   * The SSI tracker (§7), for SERIALIZABLE transactions only:
+   * The SSI tracker (../XCTMGR.md §7), for SERIALIZABLE transactions only:
    * their nodes, SIREAD entries on points and ranges, and the
    * map from a writer's xid to its node. One mutex covers all
    * of it. A committed node stays until the GC watermark
@@ -601,7 +600,7 @@ struct db_t {
 
   /*
    * Restored prepared transactions, xid -> commit_ts (0 while
-   * in doubt), for §8.4's rule: a serializable reader that
+   * in doubt), for ../XCTMGR.md §10's rule: a serializable reader that
    * steps past one of their versions is doomed. An entry stays
    * after commit until the watermark passes its commit_ts.
    * Guarded by ssi_mu.
@@ -609,7 +608,7 @@ struct db_t {
   std::unordered_map<uint64_t, uint64_t> ssi_restored;
 
   /*
-   * Prepared transactions by gid (§8.4, §8.5). Each value is a
+   * Prepared transactions by gid (../XCTMGR.md §10, §10.6). Each value is a
    * database-owned sm1::session_t holding the transaction; a
    * null value reserves a gid while sm1::prepare runs.
    */
@@ -628,11 +627,11 @@ struct db_t {
 
 /*
  * Open database dbname at path with every column family it
- * has, and load its allocators from CF:meta (SM1_DESIGN.md §9.1
+ * has, and load its allocators from CF:meta (../DBMGR.md §9.1
  * steps 1-3), every column family reading through cache, the
  * environment's block cache, and its files written through renv,
  * the environment's Env, or RocksDB's default if NULL
- * (WALPREALLOC.md). Returns NULL with the error set.
+ * (../DBMGR.md). Returns NULL with the error set.
  */
 db_t *db_open(const std::string &path, const char *dbname,
               const sm1::options_t *opt,
@@ -644,7 +643,7 @@ int db_alloc_ts(db_t *db, uint64_t *out);
 
 /*
  * Claim a commit_ts: allocate it and enter it into the
- * sequencer, under one lock (§4.3). Returns 0 or -1.
+ * sequencer, under one lock (../DBMGR.md §17.1). Returns 0 or -1.
  */
 int db_claim_commit_ts(db_t *db, uint64_t *out);
 
@@ -656,15 +655,15 @@ void db_commit_done(db_t *db, uint64_t commit_ts);
 
 /*
  * Wait until commit_ts, done, is visible: visible_ts at or past
- * it (COMMITVISIBLE.md).
+ * it (../XCTMGR.md).
  */
 void db_commit_wait(db_t *db, uint64_t commit_ts);
 
 /*
  * Wait until the WAL is synced past every write that returned
  * before the call, one commit syncing for all that wait
- * (GROUPSYNC.md §3). A failed sync aborts the process
- * (SM1_DESIGN.md §8.2).
+ * (../DBMGR.md §8.2). A failed sync aborts the process
+ * (../XCTMGR.md §8.2).
  */
 void db_sync_wal(db_t *db);
 
@@ -708,7 +707,7 @@ inline rocksdb::ColumnFamilyHandle *db_store_cf(db_t *db, uint64_t storeid) {
  * Create the CF for storeid and register it: in the database's
  * instance, or with owner given, a temporary store's in the
  * temporary instance; with chained, a chained store's
- * (../VCHAIN.md §3). Returns 0 or -1.
+ * (../ROWSTORE.md §3.5). Returns 0 or -1.
  */
 int db_create_store_cf(db_t *db, uint64_t storeid,
                        sm1::session_t *owner = nullptr, bool chained = false);
@@ -725,21 +724,21 @@ std::string store_cf_name(uint64_t storeid, bool chained = false);
 /*
  * How many range tombstones a store CF's memtable holds before
  * RocksDB flushes it: the tombstone purge's DeleteRanges cost
- * every overlapping read while they sit there (§8.3).
+ * every overlapping read while they sit there (../GC.md §1).
  */
 constexpr uint32_t store_max_range_deletions = 1000;
 
 /*
  * The size of a store CF's data blocks, as MyRocks sets it: four
  * times RocksDB's 4 KB, so a scan looks up a quarter as many
- * blocks in the block cache, and a point read is no slower (§12.2).
+ * blocks in the block cache, and a point read is no slower (../DBMGR.md §10).
  */
 constexpr size_t store_block_size = 16 << 10;
 
 /*
  * Entries between a store CF's data block restart points, not
  * RocksDB's 16: a Get that the hash index lands on a restart point
- * reads a quarter as many entries to find its key (§12.2).
+ * reads a quarter as many entries to find its key (../DBMGR.md §10).
  */
 constexpr int store_restart_interval = 4;
 
@@ -765,7 +764,7 @@ uint64_t db_read_enter(db_t *db);
 /* Leave the read epoch returned by db_read_enter. */
 void db_read_leave(db_t *db, uint64_t epoch);
 
-/* Take a transaction's begin snapshot and register it (§8.3). */
+/* Take a transaction's begin snapshot and register it (../GC.md §1). */
 uint64_t db_take_snapshot(db_t *db);
 
 /* Register a snapshot taken earlier, such as a restored one's. */
@@ -775,7 +774,7 @@ void db_register_snapshot(db_t *db, uint64_t snapshot_ts);
 void db_release_snapshot(db_t *db, uint64_t snapshot_ts);
 
 /*
- * gc_watermark (§8.3): the oldest registered snapshot, or
+ * gc_watermark (../GC.md §1): the oldest registered snapshot, or
  * visible_ts if none. It never moves backwards.
  */
 uint64_t db_watermark(db_t *db);
@@ -796,7 +795,7 @@ void gc_queue_drops(db_t *db, uint64_t commit_ts,
 
 /*
  * Queue storeid's chained key, whose newest version is xid's, a dead
- * transaction's, for the worker to put back (../VCHAIN.md §7;
+ * transaction's, for the worker to put back (../GC.md §4.2;
  * chain.cc).
  */
 void chain_report(db_t *db, uint64_t storeid, rocksdb::Slice key, uint64_t xid);
@@ -826,7 +825,7 @@ uint64_t chain_next_old(rocksdb::DB *rdb, rocksdb::ColumnFamilyHandle *cf);
 void gc_run_once(db_t *db);
 
 /*
- * Advance the CF:txn sweep (§8.3). With none pending and start
+ * Advance the CF:txn sweep (../GC.md §1). With none pending and start
  * set, run the compaction pass and flip the read epoch. With
  * one pending, delete the swept COMMITTED records once the old
  * epoch's readers are gone. Returns the number of records

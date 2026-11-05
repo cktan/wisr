@@ -3,7 +3,7 @@
  * the errors every type reports.
  *
  * A fixed-width datum is PostgreSQL's representation fixed at
- * little-endian (SM2_DESIGN.md §2.1): a memcpy on a little-endian
+ * little-endian (TYPE.md §5.1): a memcpy on a little-endian
  * host, a byte swap on a big-endian one.
  */
 #ifndef SM2_NATIVE_H

@@ -1,6 +1,6 @@
 /*
- * catalog.h -- sm3's catalog as it is kept (CATALOG_ONDISK.md §2,
- * §3): the keys of its entries, and the blobs they hold. Each
+ * catalog.h -- sm3's catalog as it is kept (../CATALOG.md §3.3,
+ * ../CATALOG.md §3.5): the keys of its entries, and the blobs they hold. Each
  * entry lives in sm2's catalog key-value store; this is the
  * layout only, with no store, no lock and no memory of its own.
  */
@@ -36,7 +36,7 @@ enum class kind_t : int16_t {
      and no key at all; the value stays retired. */
   column = 8,      /* a column, keyed by its table's oid and its attnum */
   index_state = 9, /* an index's state, keyed as its index is */
-  stats = 10,      /* a table's statistics (SM3_DESIGN.md §6.6) */
+  stats = 10,      /* a table's statistics (../STATISTICS.md §9.6) */
   sequence = 11,   /* a sequence: its namespace, name and counter */
   constraint = 12, /* a constraint, keyed by its table's oid and its own */
   view = 13,       /* a view: its namespace, name, query and reads */
@@ -45,7 +45,7 @@ enum class kind_t : int16_t {
 /* The catalog's format version, which META holds. */
 constexpr int32_t format_version = 4;
 
-/* ---- keys (CATALOG_ONDISK.md §2) ---- */
+/* ---- keys (../CATALOG.md §3.3) ---- */
 
 /* META's key. */
 int meta_key(std::string &key);
@@ -75,7 +75,7 @@ int name_nspoid(std::string_view key, uint64_t &nspoid, std::string &name);
 
 /*
  * The key of one of the table table_oid's statistics entries
- * (SM3_DESIGN.md §6.6): (0, 0) its own, the table's counts and
+ * (../STATISTICS.md §9.6): (0, 0) its own, the table's counts and
  * sizes; (0, attnum + 1) a column's; (index oid, place + 1) an
  * index expression's. A table's entries sort in that order.
  */
@@ -94,7 +94,7 @@ int kind_prefix(kind_t kind, std::string &prefix);
  */
 int entity_oid(kind_t kind, std::string_view key, uint64_t &oid);
 
-/* ---- records: what the blobs hold (CATALOG_ONDISK.md §3) ---- */
+/* ---- records: what the blobs hold (../CATALOG.md §3.5) ---- */
 
 /* What a NAME key names. */
 struct name_rec_t {
@@ -164,7 +164,7 @@ int decode_view(std::string_view blob, view_def_t &rec);
 
 /*
  * A table's statistics, as its STATS entries hold them
- * (SM3_DESIGN.md §6.6): the table's own entry, its counts, sizes
+ * (../STATISTICS.md §9.6): the table's own entry, its counts, sizes
  * and indexes, with stats left empty; and one statistic's entry,
  * typed by what it describes, a column or an index expression of
  * def. Encoding a statistic fails with SM_ERR_INVALID if def has no
@@ -181,7 +181,7 @@ int decode_stat(std::string_view blob, const table_def_t &def, stat_t &stat,
 
 /* ---- parts: a blob's tuples, for the codec and its tests ---- */
 
-/* The layout of each part of a blob (CATALOG_ONDISK.md §3). */
+/* The layout of each part of a blob (../CATALOG.md §3.5). */
 enum class part_t {
   meta,
   name,

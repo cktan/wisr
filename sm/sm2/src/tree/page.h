@@ -1,5 +1,5 @@
 /*
- * page.h -- a B+tree page of a secondary index (../BTREE.md §3): its
+ * page.h -- a B+tree page of a secondary index (../BTREEINDEX.md §4): its
  * bytes as RocksDB and the buffer pool hold them, read where they lie,
  * and a page decoded to be changed, an entry inserted or the page
  * split. On bytes alone: no RocksDB, no cache, no latch.
@@ -27,12 +27,27 @@ constexpr uint8_t page_has_high = 0x01;
 /* Split, and its parent's entry for the new page not yet written. */
 constexpr uint8_t page_incomplete = 0x02;
 /*
- * A leaf whose every entry vacuum found settled and live: its row's
+ * A leaf with no entry in doubt: every entry's row was read, its
  * newest version committed at or below the GC watermark with the
- * entry's key, so every snapshot sees it (../BTREE.md §4.1). Set by
- * vacuum alone; an insert into the page clears it.
+ * entry's key, so every snapshot sees it (../BTREEINDEX.md §9). An insert
+ * into the page, or a mark on an entry of it, clears it.
  */
 constexpr uint8_t page_all_visible = 0x04;
+
+/*
+ * The flags in a leaf entry's first value byte. A cut entry's key was
+ * cut to fit, so a scan rechecks it on its row. An entry in doubt
+ * needs a vacuum to read its row (../BTREEINDEX.md §9): the tree reads
+ * this byte, and the rest of a value is the caller's.
+ */
+constexpr uint8_t entry_cut = 0x01;
+constexpr uint8_t entry_indoubt = 0x02;
+
+/* Whether the leaf entry of value is in doubt. */
+constexpr bool entry_in_doubt(std::string_view value) {
+  return !value.empty() &&
+         0 != (static_cast<uint8_t>(value[0]) & entry_indoubt);
+}
 
 /* The bytes an entry adds to a page: its key, its value, its slot. */
 constexpr size_t entry_size(size_t key_len, size_t value_len) {
@@ -64,7 +79,7 @@ constexpr size_t entry_max(size_t limit) {
 /*
  * A page decoded to be changed: its header, and its entries in key
  * order, each a key and a value. A leaf's value is the entry's own
- * (its cut flag); an inner page's is its child's page id.
+ * (its flags first); an inner page's is its child's page id.
  */
 struct page_t {
   uint8_t level = 0; /* 0 a leaf */
@@ -82,7 +97,7 @@ struct page_t {
 /* The bytes page takes, laid out. */
 size_t page_size(const page_t &page);
 
-/* page, laid out as its bytes (../BTREE.md §3). */
+/* page, laid out as its bytes (../BTREEINDEX.md §4). */
 std::string page_bytes(const page_t &page);
 
 /*
@@ -110,13 +125,22 @@ int page_insert_bytes(const page_view_t &v, std::string_view key,
                       std::string_view value, size_t limit, std::string &out);
 
 /*
+ * Mark entry i of the page v views in doubt, i past the last for no
+ * entry, and clear page_all_visible, laid out anew in out with its
+ * version moved: true; false if neither changes anything, out
+ * untouched. No entry is decoded: a bit changes in the page's bytes.
+ */
+bool page_mark_in_doubt(const page_view_t &v, size_t i, std::string &out);
+
+/*
  * Insert key, with value, into page, which page_insert found full,
  * and split it into itself and right, each under limit, their bytes
  * as near half as that allows: right takes the upper entries, page's
  * high key and next link, and page's high key becomes right's first
  * key. key is not on page, and its entry is at most entry_max(limit).
  * The caller gives right its page id, links the two, and sets the
- * flags the split is written with. Neither half is all visible.
+ * flags the split is written with. A leaf's half is all visible if no
+ * entry on it is in doubt (../BTREEINDEX.md §9).
  */
 void page_split(page_t &page, page_t &right, std::string_view key,
                 std::string_view value, size_t limit = page_limit);

@@ -66,7 +66,7 @@ are recorded so the next reader does not re-open them.
    S/S.** `c02`–`c05`, `c13`, `c21`, `c22`, `c24`,
    `c29`–`c31` and `e04` assert write skew that way. `ssi_precommit()` in `src/ssi.cc` now
    fails only the second to commit of a plain write skew
-   (`SM1_DESIGN.md` §7.3), but serializability asks only that
+   (`../XCTMGR.md` §7.4), but serializability asks only that
    one not commit; a more conservative rule would be as
    sound. At most one is the assertion of the property, not
    of the rule.
@@ -84,5 +84,4 @@ are recorded so the next reader does not re-open them.
    rather than a missed detection: `ssi_on_write()` returns
    at once for a writer that is not SERIALIZABLE, so no edge
    forms into T1 and the cycle never closes. Mixed pairings
-   degrade to snapshot isolation by design (`SM1_DESIGN.md`
-   §7.4).
+   degrade to snapshot isolation by design (`../XCTMGR.md` §7.5).

@@ -1,5 +1,5 @@
 # Verify that the rows a secondary index's scan reads ahead, and an IN
-# list's rows on the primary key, many in one call (../../sm/BATCHREAD.md),
+# list's rows on the primary key, many in one call (../sm/ROWSTORE.md),
 # are the rows PostgreSQL 18 reads, in the index's order.
 # 1. A unique index whose order is the reverse of the primary key's, over
 #    rows some updated and some deleted: a range by it gives every row it

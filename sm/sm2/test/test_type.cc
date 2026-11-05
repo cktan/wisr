@@ -1,5 +1,5 @@
 /*
- * test_type.cc -- the type descriptors (SM2_DESIGN.md §2.3) and
+ * test_type.cc -- the type descriptors (TYPE.md §5.3) and
  * the types built so far: bool, int2, int4 and int8 (TYPE.md
  * §3.1, §3.2).
  */
@@ -289,7 +289,7 @@ TEST_CASE("-0 and 0 are distinct datums that compare equal") {
 
 namespace {
 
-/* PostgreSQL's datetime bounds, as datums (TYPE.md §3.7-§3.9). */
+/* PostgreSQL's datetime bounds, as datums (TYPE.md §3.7, §3.9). */
 constexpr int32_t date_min = -2451545;          /* 4714-11-24 BC */
 constexpr int32_t date_max = 2145031948;        /* 5874897-12-31 */
 constexpr int64_t ts_min = -211813488000000000; /* 4714-11-24 BC */

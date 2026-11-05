@@ -1,5 +1,5 @@
 # Verify a session's probes of a tree, which read its root from the
-# session's own copy (../sm/BTREE.md section 4.2), find every key while
+# session's own copy (../sm/BTREEINDEX.md section 5.5), find every key while
 # another session's inserts split the pages under the root and the
 # root itself.
 # 1. Insert 400 rows of long keys, and make a tree on them: its root

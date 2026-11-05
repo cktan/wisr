@@ -137,7 +137,8 @@ std::string get(sm3::table_t *t, uint64_t id) {
   return rc == 1 ? "<none>" : show(t, tuple);
 }
 
-/* The name of the row with id k of a table keyed by id (ROWKEY.md §1). */
+/* The name of the row with id k of a table keyed by id (../ROWSTORE.md §2.1).
+ */
 struct at_t {
   sm2::datum_t d;
   bool null = false;
@@ -323,7 +324,7 @@ TEST_CASE("an update of a primary key moves the row, and its entries") {
 
 TEST_CASE("a writer that meets a row moved since fails with SM_ERR_MOVED") {
   // Verify a write by key at a key another transaction moved the row
-  // from is refused, not followed (../ROWKEY.md §2.3).
+  // from is refused, not followed (../ROWSTORE.md §2.5).
   // 1. a inserts id 1 and commits; b's statement reads it by key.
   // 2. a moves it to id 2 by key and commits.
   // 3. At READ COMMITTED b's update by key meets SM_ERR_UPDATED, and
@@ -481,7 +482,7 @@ TEST_CASE("adding or dropping a primary key rewrites the table") {
 TEST_CASE("adding a primary key takes away the rows' _id") {
   // Verify a table without a primary key has an _id in every row,
   // and that adding one leaves none, nor anything of an _id index
-  // (../../ROWKEY.md §2.1).
+  // (../ROWSTORE.md §2.2).
   // 1. A table without a primary key gets rows with ids 3, 1 and 2:
   //    _ids 1 to 3, each row read by its _id, its key, and its owner
   //    entry naming it by _id.
@@ -624,7 +625,7 @@ TEST_CASE("a table's rows are read by key, and scanned by the primary key") {
 }
 
 TEST_CASE("a row named by its key is read, written and locked") {
-  // Verify the calls by key (../ROWKEY.md §2.2), in a table with a
+  // Verify the calls by key (../ROWSTORE.md §2.4), in a table with a
   // primary key, named by id, and in one without, named by _id.
   // 1. Rows with ids 10, 20 and 30 go in, committed.
   // 2. A read by key gives the row; a key no row has gives 1.

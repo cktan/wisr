@@ -1,5 +1,5 @@
 /*
- * test_pin.cc -- reads into a raw pin (../ROW.md §2): a pinned
+ * test_pin.cc -- reads into a raw pin (../ROWSTORE.md §6.3): a pinned
  * row lasts until its pin is emptied, by the caller, whatever
  * else the session does. sm3 keeps the pool, the refs and their
  * generations (sm3's test_pin.cc).
@@ -289,7 +289,7 @@ TEST_CASE("a pinned row outlives the drop of its store") {
 
 TEST_CASE("a read into a pin never misses what its iterator predates") {
   // Verify a pin's iterator is sought again only when it holds
-  // everything the read may see (SM1_DESIGN.md §10.1).
+  // everything the read may see (../ROWSTORE.md §5.2).
   // 1. Make a second store holding "x" -> "other".
   // 2. Under read committed, read "x" into a pin, then the second
   //    store's "x" into the same pin: "other".

@@ -1,6 +1,6 @@
 /*
  * lockmgr.cc -- the lock table: locks in Gray's modes, the write
- * latches, and deadlock detection (SM1_DESIGN.md §5.1).
+ * latches, and deadlock detection (../LOCKMGR.md §3.2).
  *
  * A lock is keyed by its id, made from (locktype, storeid, userkey)
  * (lockid_t) -- a row lock names a key in a store, an OID lock an
@@ -11,7 +11,7 @@
  * commits or aborts, and a plain read takes none. A write takes
  * no lock: it checks and puts its key under a short latch, and its
  * uncommitted version stands for the lock, a second writer waiting for the
- * transaction that wrote it (WRITELOCK.md).
+ * transaction that wrote it (../LOCKMGR.md).
  *
  * The table is in 16 partitions (locktab.h), each with a mutex
  * and a condition of its own: a lock call takes its partition's
@@ -307,7 +307,7 @@ void fp_move(db_t *db, sm1::session_t *s, int i) {
 
 /*
  * Move every session's slot for k into the lock table, where a
- * strong locker, counted already, meets them (§5.1).
+ * strong locker, counted already, meets them (../LOCKMGR.md §3.2).
  */
 void fp_sweep(db_t *db, const lockid_t &k) {
   // Hold fp_reg_mu, so no session in the list is freed meanwhile.
@@ -422,7 +422,7 @@ int lock_try(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
 /*
  * Take the OID lock (storeid, key) in mode; see session.h.
  *
- * The fast path (SM1_DESIGN.md §5.1) keeps a table's weak locks,
+ * The fast path (../LOCKMGR.md §3.2) keeps a table's weak locks,
  * IS and IX, out of the lock table and its mutexes. IS and IX never
  * conflict with each other, so only a strong lock, S, SIX or X,
  * must see them. A weak lock goes in a slot of the session's own,
@@ -539,7 +539,7 @@ int lock_write_check(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
     return 2;
   }
   // A lock of our own on the key is held exclusive from now on,
-  // as a write converts it (SM1_DESIGN.md §5.1).
+  // as a write converts it (../LOCKMGR.md §3.2).
   if (nullptr != mine) {
     mine->mode = sm1::SM_LOCKMODE_EX;
     static_cast<lockref_t *>(mine->first)->mode = sm1::SM_LOCKMODE_EX;
@@ -745,7 +745,7 @@ void lock_transfer(db_t *db, sm1::session_t *s, sm1::session_t *g) {
   }
 }
 
-/* Put a restored transaction's locks back in the table (§9.1). */
+/* Put a restored transaction's locks back in the table (../DBMGR.md §9.1). */
 void lock_restore(db_t *db, sm1::session_t *g) {
   // Hold every lock mutex while editing the table.
   lock_all_t all(db);

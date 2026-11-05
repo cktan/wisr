@@ -5,7 +5,7 @@
  * RocksDB appends to its log, so each commit's sync would also commit
  * the file's new size to the file system's journal; written over
  * zeros the file already has, the sync leaves the size alone, at a
- * fifth of the cost on ext4 (WALPREALLOC.md section 1). So no write
+ * fifth of the cost on ext4 (../DBMGR.md section 8.4). So no write
  * waits for those zeros, the next log is made ahead, as a spare a
  * thread zeroes, and a new log takes its place (section 2).
  *

@@ -1,5 +1,5 @@
 /*
- * chain.cc -- a chained store's keys (../VCHAIN.md): the codec, the
+ * chain.cc -- a chained store's keys (../ROWSTORE.md): the codec, the
  * chain_ calls, the rollback to a savepoint, and GC's repair.
  *
  * A key's newest version is under its current key; a write moves it
@@ -161,7 +161,7 @@ int get_curr(const store_t &st, rocksdb::Slice key, rocksdb::PinnableSlice *buf,
 
 /*
  * The chained store storeid, the session's handle of it
- * (STORECACHE.md), or a store_t with no CF and the error set.
+ * (../DBMGR.md), or a store_t with no CF and the error set.
  */
 const store_t &chained_store(sm1::session_t *s, uint64_t storeid) {
   static const store_t none;
@@ -178,8 +178,8 @@ const store_t &chained_store(sm1::session_t *s, uint64_t storeid) {
 }
 
 /*
- * What a chained write checks against (§5 step 3): the key's newest
- * version not written by a dead transaction, in CURR or in OLD.
+ * What a chained write checks against (../ROWSTORE.md §4 step 3): the key's
+ * newest version not written by a dead transaction, in CURR or in OLD.
  */
 struct checked_t {
   bool found = false;     /* a version decides: own, committed, or in flight */
@@ -290,7 +290,7 @@ void pin_checked(checked_t &c, sm1::rawpin_t *pin) {
  * Stamp v, a version a write copies, with its own writer's commit_ts if
  * that writer has committed. The copy goes into the memtable now, and a
  * CF:txn sweep may have stamped the original already, to delete the
- * writer's status record next (SM1_DESIGN.md §8.3): unstamped, the copy
+ * writer's status record next (../GC.md §1): unstamped, the copy
  * would then read as aborted. A writer in flight, aborted, or of unknown
  * fate leaves the copy as it was.
  */
@@ -306,7 +306,7 @@ static void stamp_copy(db_t *db, chain_version_t *v) {
 }
 
 /*
- * Check existence, then put one new chained version (../VCHAIN.md §5).
+ * Check existence, then put one new chained version (../ROWSTORE.md §4.2).
  * With pin, the row an update or erase replaces is pinned into it once
  * the write is made; on failure pin keeps what it held.
  */
@@ -327,7 +327,7 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
     return set_error(sm1::SM_ERR_INVALID, "a bulk load is open into the store");
   }
   // Check the key and put the version under its latch, so no other
-  // write of it comes between (WRITELOCK.md §3.2).
+  // write of it comes between (../LOCKMGR.md §1.7).
   std::unique_lock<std::mutex> latch(lock_latch(s->db, storeid, key));
   const bool inserting = op == WRITE_INSERT || op == WRITE_INSERT_NEW;
   const bool erasing = op == WRITE_DELETE || op == WRITE_MOVE;
@@ -373,17 +373,17 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
     latch.lock();
   }
   checked_t &c = *cp;
-  // The running statement changed this row already (§6.2).
+  // The running statement changed this row already (../XCTMGR.md §5).
   if (!inserting && s->stmt_marked && c.own_seq > s->stmt_seq) {
     return set_error(sm1::SM_ERR_SELFMODIFIED,
                      "the row was already changed by this statement");
   }
-  // Something committed after we began (§5.2).
+  // Something committed after we began (../ROWSTORE.md §4.4).
   if (c.commit_ts > s->snapshot_ts) {
     if (s->level == sm1::xctlevel_t::read_committed) {
       if (!inserting && !lock_has_latest(s, storeid, key)) {
         // Keep the key locked until the re-read and the repeated
-        // write (§5.4, WRITELOCK.md §3.5).
+        // write (../ROWSTORE.md §4.6, ../LOCKMGR.md §1.9).
         lock_try(s, lock_row_id(storeid, key), sm1::SM_LOCKMODE_EX);
         return set_error(sm1::SM_ERR_UPDATED,
                          "key was changed by a transaction that committed "
@@ -409,7 +409,7 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   if (s->seq == UINT32_MAX) {
     return set_error(sm1::SM_ERR_INVALID, "too many writes in one transaction");
   }
-  // Allocate the xid at the first write (§4.1).
+  // Allocate the xid at the first write (../XCTMGR.md §2.1).
   if (s->xid == 0 && xct_alloc_xid(s) != 0) {
     return -1;
   }
@@ -442,7 +442,7 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
     // A dead version in CURR is overwritten; the version it hid,
     // if any, is displaced by us now, and the dead ones it passed
     // are no chain's. The ts they leave at keeps them for readers
-    // already on their way (../VCHAIN.md §5).
+    // already on their way (../ROWSTORE.md §4.2).
     uint64_t now = 0;
     if (!c.passed.empty() && db_alloc_ts(s->db, &now) != 0) {
       return -1;
@@ -472,7 +472,7 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
     }
   }
   batch_put(batch, st, curr_key(key), chain_value(nv, false), bytes);
-  // Put the versions eagerly; they are not synced (§5 step 5).
+  // Put the versions eagerly; they are not synced (../ROWSTORE.md §4 step 5).
   rocksdb::Status status = st.rdb->Write(store_write_options(st), &batch);
   if (!status.ok()) {
     return set_status_error(status, "write version");
@@ -487,7 +487,7 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   // The write used the re-read; the next needs its own.
   lock_clear_latest(s, storeid, key);
   // So a rollback to a savepoint can put the chain back
-  // (../VCHAIN.md §6).
+  // (../ROWSTORE.md §4.7).
   access_undo_add(s, {storeid, key.ToString(), wts, seq, true});
   // The row replaced, for the caller's old image.
   if (pin && !inserting) {
@@ -498,7 +498,8 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
     s->temp_touched = true;
     return 0;
   }
-  // After the put, look for readers the write invalidates (§7.2).
+  // After the put, look for readers the write invalidates (../ROWSTORE.md
+  // §3.7).
   ssi_on_write(s, storeid, key);
   return 0;
 }
@@ -563,7 +564,7 @@ int read_latest_chained(sm1::session_t *s, uint64_t storeid,
                      "version of this transaction's own");
   }
   // Something must keep the newest version from changing: a lock on
-  // the key, or a write of our own still in flight (WRITELOCK.md §3.2).
+  // the key, or a write of our own still in flight (../LOCKMGR.md §1.7).
   sm1::lockmode_t mode;
   bool held = lock_held(s, storeid, k, &mode);
   if (!held && c.own_seq == 0 && !st.owner) {
@@ -622,7 +623,7 @@ int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
     uint64_t inflight;
     {
       // Under the key's latch, so no write of it comes between the
-      // check and the lock (WRITELOCK.md §3.3).
+      // check and the lock (../LOCKMGR.md §1.5).
       std::lock_guard<std::mutex> latch(lock_latch(s->db, storeid, k));
       checked_t c;
       if (chain_latest(s, st, k, &c) != 0) {
@@ -657,12 +658,12 @@ int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
   // Read committed runs no check: the lock is held and the call
   // returns 0, never SM_ERR_CONFLICT, however newer the row's last
   // commit than the snapshot. The caller then reads the row with
-  // sm1::chain_read_latest, which needs this lock (LOCK.md §1.1).
+  // sm1::chain_read_latest, which needs this lock (../LOCKMGR.md §1.6).
   if (s->level == sm1::xctlevel_t::read_committed) {
     return 0;
   }
   // The lock held, a version committed after the transaction began
-  // fails it (§5.2).
+  // fails it (../LOCKMGR.md §4.11).
   if (commit_ts > s->snapshot_ts) {
     return xct_fail_retryable(s, sm1::SM_ERR_CONFLICT,
                               "key was changed by a transaction that "
@@ -676,7 +677,7 @@ int chain_resolve(sm1::session_t *s, const store_t &st, const view_t &view,
 
 /*
  * The version of key a reader at view sees, into pin: 0, 1 if it
- * sees none, or -1 (../VCHAIN.md §4).
+ * sees none, or -1 (../ROWSTORE.md §5.3).
  */
 int chain_get(sm1::session_t *s, const store_t &st, uint64_t storeid,
               const view_t &view, rocksdb::Slice key, sm1::rawpin_t *pin) {
@@ -696,7 +697,7 @@ int chain_get(sm1::session_t *s, const store_t &st, uint64_t storeid,
 /*
  * From v, a key's newest version as get_curr() read it with r, to
  * the version a reader at view sees, into pin, following the chain
- * through OLD: 0, 1 if it sees none, or -1 (../VCHAIN.md §4). The
+ * through OLD: 0, 1 if it sees none, or -1 (../ROWSTORE.md §5.3). The
  * caller holds a read epoch.
  */
 int chain_resolve(sm1::session_t *s, const store_t &st, const view_t &view,
@@ -760,7 +761,7 @@ int read_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
 
 /*
  * sm1::chain_read_batch, minus the argument checks' details
- * (../BATCHREAD.md §2.1).
+ * (../ROWSTORE.md §7.2).
  * 1. Make each key's checks and SIREAD entry, as a single read makes
  *    them.
  * 2. Enter a read epoch, held until every key is resolved.
@@ -846,7 +847,7 @@ int read_chained_batch(sm1::session_t *s, uint64_t storeid,
   // Keys in ascending order, as a range of an index names its rows
   // in its key's order and close: one iterator steps from each to the
   // next, seeking only past a gap, where MultiGet searches the index
-  // and a block for every key (../../BATCHREAD.md).
+  // and a block for every key (../ROWSTORE.md).
   bool ascending = n > 1;
   for (size_t i = 1; ascending && i < n; i++) {
     ascending = slices[i - 1].compare(slices[i]) < 0;
@@ -997,15 +998,15 @@ sm1::scan_t *scan_chained(sm1::session_t *s, uint64_t storeid,
   c->chained = true;
   c->cf = st.cf;
   // Under SERIALIZABLE, register the range before the snapshot, so a
-  // write into it after the snapshot finds the SIREAD entry (§10.2).
-  // A temporary store takes none.
+  // write into it after the snapshot finds the SIREAD entry (../ROWSTORE.md
+  // §5.6). A temporary store takes none.
   if (!st.owner) {
     ssi_range_open(c.get(), storeid, has_skey ? skey.data() : nullptr,
                    skey.size(), skey_inclusive,
                    has_ekey ? ekey.data() : nullptr, ekey.size(),
                    ekey_inclusive);
   }
-  // Count the cursor as a reader for its whole life (§8.3), then take
+  // Count the cursor as a reader for its whole life (../GC.md §1), then take
   // the RocksDB snapshot, at which CURR and OLD are both read.
   c->epoch = db_read_enter(s->db);
   c->rdb = st.rdb;
@@ -1013,7 +1014,7 @@ sm1::scan_t *scan_chained(sm1::session_t *s, uint64_t storeid,
   rocksdb::ReadOptions ro;
   ro.snapshot = c->snap;
   // A scan crosses keys: in prefix mode, a current key being its own
-  // prefix, it would stop at the first (../VCHAIN.md §2).
+  // prefix, it would stop at the first (../ROWSTORE.md §3.2).
   ro.auto_prefix_mode = true;
   // The current keys are plain: past ekey, inclusive, is ekey and a
   // 0 byte; with no ekey, the end of the current keys.
@@ -1040,7 +1041,8 @@ sm1::scan_t *scan_chained(sm1::session_t *s, uint64_t storeid,
 
 /*
  * Whether view sees v, as access_visible: a stamped version here,
- * the common case, by its stamps alone (§4.4, access.cc visible()).
+ * the common case, by its stamps alone (../XCTMGR.md §3.3, access.cc
+ * visible()).
  */
 int chain_visible(wisr::db_t *db, const wisr::chain_version_t &v,
                   const wisr::view_t &view) {
@@ -1146,7 +1148,7 @@ int chain_restore(db_t *db, const store_t &st, rocksdb::Slice key, uint64_t xid,
     bytes += k.size();
   }
   // The entries passed are no chain's now; the ts they leave at keeps
-  // them for readers already on their way (../VCHAIN.md §3).
+  // them for readers already on their way (../ROWSTORE.md §3.5).
   if (!passed.empty()) {
     uint64_t now;
     if (db_alloc_ts(db, &now) != 0) {
@@ -1203,7 +1205,7 @@ void chain_repair(db_t *db, const std::vector<db_t::repair_t> &repairs) {
 /* The id after the store's last old version; see db.h. */
 uint64_t chain_next_old(rocksdb::DB *rdb, rocksdb::ColumnFamilyHandle *cf) {
   // The old keys are the store's last versions, below its pages
-  // (../BTREE.md §3): the last key before the pages' class is the
+  // (../BTREEINDEX.md §4): the last key before the pages' class is the
   // highest id, if it has any. In total order, past the CF's prefix
   // extractor.
   rocksdb::ReadOptions ro;

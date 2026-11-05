@@ -365,6 +365,47 @@ local_psql -c 'vacuum no_such_table' 2>&1 |
   fail "vacuum of no such table"
 grep -qx 8 "$work/vacuum.out" || fail "statement after vacuum"
 
+# Verify that indexes stay right while the btree cleaner runs beside the
+# sessions, with no VACUUM (../sm/BTREEINDEX.md section 9). SQL cannot count a
+# tree's dead entries: sm/rel/test/test_tree.rel proves those go.
+# 1. Make a table with a btree index, one on an expression, and a partial
+#    one, whose entries the cleaner judges by digres's evaluator.
+# 2. Insert rows, move half to another state and back, and delete some.
+# 3. Wait out three of the cleaner's ticks.
+# 4. Index scans give what a sequential scan gives, in each index.
+local_psql > "$work/cleaner.out" 2>&1 <<'SQL'
+create table tclean (id int8 primary key, state text, owner text);
+create index tclean_state on tclean using btree (state);
+create index tclean_lower on tclean using btree (lower(owner));
+create index tclean_free on tclean using btree (id) where state = 'free';
+insert into tclean select i, 'free', 'Owner' || i % 10
+  from generate_series(1, 2000) i;
+update tclean set state = 'busy' where id % 2 = 0;
+update tclean set state = 'free' where id % 4 = 0;
+update tclean set owner = 'Moved' where id % 5 = 0;
+delete from tclean where id % 7 = 0;
+SQL
+grep -q "ERROR" "$work/cleaner.out" && fail "cleaner: the writes"
+sleep 3
+local_psql > "$work/cleaner2.out" 2>&1 <<'SQL'
+set enable_seqscan = off;
+set enable_bitmapscan = off;
+select 'state', count(*) from tclean where state = 'free';
+select 'lower', count(*) from tclean where lower(owner) = 'moved';
+select 'partial', count(*) from tclean where state = 'free' and id > 0;
+set enable_seqscan = on;
+set enable_indexscan = off;
+set enable_indexonlyscan = off;
+select 'state', count(*) from tclean where state = 'free';
+select 'lower', count(*) from tclean where lower(owner) = 'moved';
+select 'partial', count(*) from tclean where state = 'free' and id > 0;
+SQL
+grep -q "ERROR" "$work/cleaner2.out" && fail "cleaner: the reads"
+counts=$(grep -E '^(state|lower|partial)\|' "$work/cleaner2.out")
+[ "$(echo "$counts" | wc -l)" = 6 ] || fail "cleaner: six counts"
+[ "$(echo "$counts" | sort -u | wc -l)" = 3 ] ||
+  fail "cleaner: an index scan differs from a sequential scan"
+
 # Verify that CHECKPOINT succeeds and does nothing, since sm keeps what is
 # durable.
 # 1. Run CHECKPOINT, then a statement after it.
@@ -1270,7 +1311,7 @@ held_end lk_c
 
 # Verify that an UPDATE waiting on a row's lock is listed as waiting for that
 # row's tuple lock: sm lists a write, which names no kind of its own, with the
-# kind of the lock it waits on (../sm/sm1/LOCKID.md section 2.5).
+# kind of the lock it waits on (../sm/LOCKMGR.md section 3.10).
 # 1. E, in a transaction, locks lkst's row 2 for update; F updates row 2 and
 #    waits.
 # 2. pg_lock_status() lists E's X on the row, granted, and F's, waited for,
@@ -2411,7 +2452,7 @@ grep -o 'Seq Scan on t38\|Index Scan using t38_b' "$work/st38.out" |
 # 2. Delete every row: it still takes over 2 MB.
 # 3. VACUUM it: the versions no reader needs are gone, and it takes
 #    under a third of what it did -- the rows' tombstones, which sm's
-#    purge takes after (../sm/sm1/SM1_DESIGN.md section 8.3).
+#    purge takes after (../sm/GC.md section 1).
 # 4. VACUUM of a view is passed over with a warning; a bare VACUUM
 #    succeeds.
 local_psql -c 'create table t32 (a int4, b text)' \
@@ -2680,7 +2721,7 @@ OUT
 cmp -s "$work/alter.out" "$work/alter.expected" || fail "ALTER TABLE"
 
 # A unique index over a duplicated key fails with the key in PostgreSQL's
-# words, read from a row sm names by its key (../../sm/ROWKEY.md section
+# words, read from a row sm names by its key (../sm/ROWSTORE.md section
 # 2.5).
 # 1. On a table with rows, the build after the commit meets it.
 # 2. A key of two columns, one quoted, says both.
@@ -3764,7 +3805,7 @@ cmp -s "$work/dp.out" "$work/dp.expected" || fail "\\d+, \\dt+ and \\ds+"
 # in files is an estimate, so no more than that is checked.
 # 1. Put a thousand rows in dp1.t, and index b.
 # 2. The table and its index on b have bytes; its primary key has none of
-#    its own, its entries being the rows (../sm/ROWKEY.md section 2.1);
+#    its own, its entries being the rows (../sm/ROWSTORE.md section 2.2);
 #    the total is the table and its indexes; a fork other than main has
 #    none.
 [ "$(local_psql -c "insert into dp1.t select g, repeat('x', 100)
@@ -4459,7 +4500,7 @@ grep -q 'does not exist, skipping' "$work/drop2.out" || fail "drop if exists"
 #    as PostgreSQL's does, so the second updates the row.
 # 10. The first changes row 3's key: the second's update of it, found by
 #    another column, fails with a serialization failure, as PostgreSQL's
-#    does of a row moved to another partition (../sm/ROWKEY.md section 2.3);
+#    does of a row moved to another partition (../sm/ROWSTORE.md section 2.5);
 #    so does a FOR UPDATE of it.
 local_psql -c 'create table tw1 (a int4 primary key, b int4 not null)' \
   -c 'insert into tw1 values (1, 10), (2, 20), (3, 30), (4, 40)' \
@@ -5327,7 +5368,7 @@ grep -q 'Try "digres[^"]* --help"' "$work/progname.out" ||
 
 # Verify that a session's commit is visible to its next statement, however
 # the commits of other sessions interleave: sm1's commit returns only once
-# its commit_ts is visible (../sm/sm1/COMMITVISIBLE.md). Before, a commit
+# its commit_ts is visible (../sm/XCTMGR.md). Before, a commit
 # behind an older one still syncing returned unseen, and the next statement
 # missed its row, about 1 time in 20.
 # 1. Run 8 sessions at once, each making a temporary table and then, 50

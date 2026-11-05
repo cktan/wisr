@@ -13,5 +13,5 @@ create index usertable_state on usertable (state);
 
 -- Vacuumed, as a server's autovacuum would have: PostgreSQL's
 -- visibility map, and digres's trees' all-visible leaves
--- (../sm/BTREE.md section 4.1), let an index-only scan skip the rows.
+-- (../sm/BTREEINDEX.md section 8), let an index-only scan skip the rows.
 vacuum analyze usertable;

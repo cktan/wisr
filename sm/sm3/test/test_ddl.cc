@@ -1,5 +1,5 @@
 /*
- * test_ddl.cc -- the DDL beyond create_table (CATALOG_INMEM.md §2):
+ * test_ddl.cc -- the DDL beyond create_table (../CATALOG.md §6):
  * each change written, then read back after a restart.
  */
 
@@ -780,7 +780,7 @@ TEST_CASE("the DDL refuses what the catalog cannot hold") {
 }
 
 TEST_CASE("an index's state is recorded, and survives a restart") {
-  // Verify an index's state, kept by index (SM3_DESIGN.md §3.3).
+  // Verify an index's state, kept by index (../INDEXBUILD.md §3).
   // 1. An index made in the transaction that made its table is valid.
   // 2. Two made on a table committed earlier are pending.
   // 3. The states load back after a restart.
@@ -866,7 +866,7 @@ int no_eval(const sm3::table_def_t &, const sm3::index_def_t &,
 
 TEST_CASE("an evaluated index keeps its blob, its columns and its types") {
   // Verify what the catalog records for a partial or expression
-  // index (SM3_DESIGN.md §3).
+  // index (../INDEXBUILD.md §2).
   // 1. On t (a int4, b text), committed, create an index keyed by an
   //    expression of type text, descending, then by column a, with a
   //    blob that holds a NUL byte, reading columns b and a.

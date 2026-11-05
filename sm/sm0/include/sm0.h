@@ -83,7 +83,7 @@ void reseterr();
  * Where an SM_ERR_DUPKEY met its key, as far as the level that
  * raised it knows: the unique index's oid, 0 if not known, and the
  * key of a row that holds it in its table, past the relid, empty
- * if not known (../../ROWKEY.md §2.5): a host reads the row by it
+ * if not known (../ROWSTORE.md §2.7): a host reads the row by it
  * to say the key.
  */
 struct dupkey_t {

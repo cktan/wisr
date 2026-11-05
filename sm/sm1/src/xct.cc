@@ -1,25 +1,25 @@
 /*
  * xct.cc -- sm1::begin, sm1::commit, sm1::abort, and the commit
- * status table CF:txn (SM1_DESIGN.md §3.2, §3.4, §6, §8.2).
+ * status table CF:txn (../DBMGR.md §6.5, §6.6, ../XCTMGR.md §4, §8.2).
  *
  * A transaction enters the active table when it allocates its
  * xid and leaves it at commit or abort. A commit runs in this
- * order (§8.2):
+ * order (../XCTMGR.md §8.2):
  * 1. Claim a commit_ts from the sequencer.
  * 2. Write the status record.
  * 3. Move the xid from the active table into the commit cache.
  * 4. Publish, only after step 3.
  * Abort writes nothing: absence of a record resolves as dead
- * (§3.4).
+ * (../DBMGR.md §6.6).
  *
  * A retryable error (CONFLICT, DEADLOCK) aborts the transaction
- * on the engine's side before it is reported (§12.1).
+ * on the engine's side before it is reported (../DBMGR.md §11).
  *
  * sm1::prepare moves the transaction into a database-owned object
  * registered under its gid, holding its locks, snapshot, and
  * SSI state; any session can then commit or abort it by gid,
  * and recovery rebuilds the same object from the PREPARED
- * record (§8.4, §9.1).
+ * record (../XCTMGR.md §10, ../DBMGR.md §9.1).
  */
 
 #include "error.h"
@@ -44,7 +44,7 @@ using namespace wisr;
 
 namespace {
 
-/* CF:txn states (§3.2). */
+/* CF:txn states (../DBMGR.md §6.5). */
 constexpr uint8_t txn_prepared = 1;
 constexpr uint8_t txn_committed = 2;
 constexpr uint8_t txn_aborted = 3;
@@ -136,7 +136,7 @@ void leave_active(db_t *db, uint64_t xid) {
     db->active.erase(xid);
     db->xid_owner.erase(xid);
   }
-  // Writers waiting for it look again (WRITELOCK.md §3.4).
+  // Writers waiting for it look again (../LOCKMGR.md §1.11).
   lock_wake(db, false);
 }
 
@@ -152,7 +152,7 @@ db_t::cache_slot_t *cache_set(db_t *db, uint64_t xid) {
  * Put xid's commit_ts in the commit cache, with txn_mu held. It
  * takes the slot in its set that holds the smaller xid, so a
  * lookup of an old transaction never pushes out the newer entry
- * of the two (COMMITCACHE.md §3.4). Eviction cannot change an
+ * of the two (../XCTMGR.md §9.3). Eviction cannot change an
  * answer: the status record was written before any entry is made.
  */
 void cache_put_locked(db_t *db, uint64_t xid, uint64_t commit_ts) noexcept {
@@ -194,7 +194,7 @@ void enter_cache(db_t *db, uint64_t xid, uint64_t commit_ts) noexcept {
     // Cache its commit_ts by xid.
     cache_put_locked(db, xid, commit_ts);
   }
-  // Writers waiting for it look again (WRITELOCK.md §3.4).
+  // Writers waiting for it look again (../LOCKMGR.md §1.11).
   lock_wake(db, false);
 }
 
@@ -230,13 +230,13 @@ void reset(sm1::session_t *s) {
   // The savepoints end with the transaction.
   s->savepoints.clear();
   s->lost_marks = 0;
-  // So does the statement snapshot (§6.2).
+  // So does the statement snapshot (../XCTMGR.md §5).
   s->stmt_pinned = false;
   s->stmt_taken = false;
   s->stmt_snapshot_ts = 0;
   s->stmt_marked = false;
   s->stmt_seq = 0;
-  // Its store handles of an older store map go (STORECACHE.md).
+  // Its store handles of an older store map go (../DBMGR.md).
   uint64_t version = s->db->stores_version.load(std::memory_order_acquire);
   std::erase_if(s->store_handles,
                 [&](const auto &kv) { return kv.second.version != version; });
@@ -244,8 +244,8 @@ void reset(sm1::session_t *s) {
 
 /*
  * Drop the column families this transaction created, newest
- * first (§6.6). A failure leaves an orphan CF with no catalog
- * row, which the startup sweep (§9.1 step 6) is meant to catch.
+ * first (../DBMGR.md §7.6). A failure leaves an orphan CF with no catalog
+ * row, which the startup sweep (../DBMGR.md §7.6 step 6) is meant to catch.
  */
 void drop_created(sm1::session_t *s) {
   // Drop each created CF, newest first.
@@ -285,7 +285,7 @@ void drop_temp_seqs_made(sm1::session_t *s, size_t from) {
 }
 
 /*
- * End the transaction without committing (§6.6).
+ * End the transaction without committing (../XCTMGR.md §4.4).
  * 1. Close its cursors.
  * 2. Take it out of the active table, so its versions resolve dead.
  * 3. Drop the stores it created.
@@ -319,7 +319,7 @@ int stmt_begin(sm1::session_t *s) {
   }
   // Turn statement snapshots on, and end any statement running.
   s->stmt_pinned = true;
-  // The next read takes the new statement's snapshot (§6.2).
+  // The next read takes the new statement's snapshot (../XCTMGR.md §5).
   s->stmt_taken = false;
   s->stmt_snapshot_ts = 0;
   // Its reads see the transaction's own writes made before now.
@@ -333,7 +333,7 @@ int stmt_advance(sm1::session_t *s) {
   if (xct_check_active(s) != 0) {
     return -1;
   }
-  // Move the mark only: the snapshot stays the statement's (§6.2).
+  // Move the mark only: the snapshot stays the statement's (../XCTMGR.md §5).
   if (s->stmt_marked) {
     s->stmt_seq = s->seq;
   }
@@ -342,7 +342,7 @@ int stmt_advance(sm1::session_t *s) {
 
 /*
  * The mark at depth, or NULL with the error set. Depth counts
- * from 1 at the outermost savepoint (§6.5).
+ * from 1 at the outermost savepoint (../XCTMGR.md §6).
  */
 sm1::session_t::mark_t *mark_at(sm1::session_t *s, int depth) {
   // Reject a depth outside the stack.
@@ -408,7 +408,7 @@ int forget(sm1::session_t *s, int depth) {
     return -1;
   }
   // Drop it and every mark inside it; the writes stay, and so
-  // do the locks (§6.5).
+  // do the locks (../XCTMGR.md §6).
   s->savepoints.resize(static_cast<size_t>(depth) - 1);
   // A lost mark that is forgotten is no longer counted.
   s->lost_marks = std::min(s->lost_marks, s->savepoints.size());
@@ -422,7 +422,7 @@ int forget(sm1::session_t *s, int depth) {
 
 /*
  * The range [first, end) that holds every version of store, below its
- * pages, which no transaction wrote (../BTREE.md §2): 0, 1 if it
+ * pages, which no transaction wrote (../BTREEINDEX.md §2): 0, 1 if it
  * holds none, or -1 with the error set.
  */
 int store_range(const store_t &store, std::string &first, std::string &end) {
@@ -451,7 +451,7 @@ int store_range(const store_t &store, std::string &first, std::string &end) {
 /*
  * Doom the transaction a rollback failed for, keeping the error set:
  * the writes it was to undo are still there, so every later call but
- * an abort fails (§6.5).
+ * an abort fails (../XCTMGR.md §6).
  */
 int doom(sm1::session_t *s) {
   s->doom_msg = sm1::errmsg();
@@ -554,7 +554,7 @@ int rollback(sm1::session_t *s, int depth) {
   }
 
   // Put back each chained key written after the mark, to the version
-  // in effect at it, under its latch (../VCHAIN.md §6). A key written
+  // in effect at it, under its latch (../ROWSTORE.md §4.7). A key written
   // twice finds nothing left to undo the second time.
   for (const sm1::session_t::undo_t *u : chained) {
     store_t store = db_store(db, u->storeid);
@@ -613,7 +613,7 @@ int rollback(sm1::session_t *s, int depth) {
     s->undo_bytes -= sizeof(sm1::session_t::undo_t) + s->undo[i].key.size();
   }
   // Rewind seq with seq_hwm, so the own versions still in
-  // effect are exactly seqs 1..seq_hwm (§6.5).
+  // effect are exactly seqs 1..seq_hwm (../XCTMGR.md §6).
   s->undo.resize(m.undo);
   // The last write still in effect: the one before the mark,
   // which the list does not hold if no savepoint was set then.
@@ -621,14 +621,14 @@ int rollback(sm1::session_t *s, int depth) {
   // The next write reuses the undone seqs.
   s->seq = s->seq_hwm;
   // A statement's mark must stay below them: they are its own
-  // writes again (§6.2).
+  // writes again (../XCTMGR.md §5).
   s->stmt_seq = std::min(s->stmt_seq, s->seq);
 
   // Give back the locks taken after the mark; nobody saw our
   // intent on those rows.
   lock_release_from(s, m.locks);
   // Writers waiting for this transaction look again: the
-  // versions they waited on may be gone (WRITELOCK.md §3.8).
+  // versions they waited on may be gone (../LOCKMGR.md §1.10).
   lock_wake(db, true);
   // The mark survives, so it can be rolled back to again; the
   // marks set inside it are gone with the work they covered.
@@ -669,9 +669,9 @@ int begin(sm1::session_t *s, sm1::xctlevel_t level, bool read_only) {
   // A new transaction starts undoomed.
   s->doomed = 0;
   s->doom_msg.clear();
-  // Take the snapshot: the current visible_ts (§4.1). Read
+  // Take the snapshot: the current visible_ts (../XCTMGR.md §2.1). Read
   // committed also counts in the watermark at this one, for
-  // its whole life (§8.3).
+  // its whole life (../GC.md §1).
   s->snapshot_ts = db_take_snapshot(s->db);
   // The snapshot now counts in the watermark.
   s->snapshot_registered = true;
@@ -699,7 +699,7 @@ int commit(sm1::session_t *s) {
                      "a transaction with a bulk load open cannot commit");
   }
   // Close cursors first, releasing their snapshots and
-  // narrowing their SIREAD ranges before validation (§8.2).
+  // narrowing their SIREAD ranges before validation (../XCTMGR.md §8.2).
   // The lent row goes with them: the transaction ends here.
   xct_end_scans(s);
   sm1::unpin(&s->readpin);
@@ -708,7 +708,7 @@ int commit(sm1::session_t *s) {
   // No xid: the transaction never wrote.
   if (s->xid == 0) {
     // Read-only: nothing to publish. Under SSI it ended just
-    // after the current visible_ts (§7.3).
+    // after the current visible_ts (../XCTMGR.md §7.4).
     if (ssi_precommit(s, db->visible_ts.load() + 1) != 0) {
       // Not serializable: fail, and the engine aborts it.
       return xct_fail_retryable(s, sm1::SM_ERR_SERIALIZATION,
@@ -718,7 +718,7 @@ int commit(sm1::session_t *s) {
     ssi_end(s);
     // Release its locks: a transaction that never wrote can
     // still hold them, through sm1::lock_row or
-    // sm1::lock_oid (§5.1).
+    // sm1::lock_oid (../LOCKMGR.md §3.2).
     lock_release_all(s);
     // Keep its on_commit functions for the entry point to run.
     committed_fns.swap(s->on_commit);
@@ -737,7 +737,7 @@ int commit(sm1::session_t *s) {
     return -1;
   }
   // Validate under SSI before the commit point; on failure give
-  // the commit_ts back to the sequencer unused (§7.3, §8.2).
+  // the commit_ts back to the sequencer unused (../XCTMGR.md §7.4, §8.2).
   if (ssi_precommit(s, commit_ts) != 0) {
     // Hand the commit_ts back to the sequencer unused.
     db_commit_done(db, commit_ts);
@@ -749,7 +749,7 @@ int commit(sm1::session_t *s) {
 
 /*
  * Commit a transaction that holds a claimed commit_ts and has
- * passed validation (§8.2 steps 3-6). Shared by sm1::commit and
+ * passed validation (../XCTMGR.md §8.2 steps 3-6). Shared by sm1::commit and
  * the commit of a prepared transaction, whose record this
  * overwrites.
  * 1. Write the status record, and sync the WAL past it.
@@ -782,13 +782,13 @@ int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
   if (st.ok()) {
     // Write the status record unsynced: a synced write in RocksDB's
     // queue makes the writes grouped with it wait for its sync
-    // (GROUPSYNC.md).
+    // (../DBMGR.md).
     st = db->rdb->Put(rocksdb::WriteOptions(), db->cf_txn,
                       rocksdb::Slice(key, sizeof(key)),
                       rocksdb::Slice(val, sizeof(val)));
   }
   // The record's fate is unknown: it may have reached the WAL.
-  // Abort, and let WAL replay decide (§8.2).
+  // Abort, and let WAL replay decide (../DBMGR.md §8.2).
   if (!st.ok()) {
     fatal("database {}: commit record write failed, so the outcome of "
           "the commit is unknown: {}. The process is aborting; reopen "
@@ -797,7 +797,7 @@ int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
           db->name.c_str(), st.ToString().c_str());
   }
   // Sync the WAL past it, unless durability was traded away: the
-  // commit point (§8.2). Until then the xid is in the active
+  // commit point (../XCTMGR.md §8.2). Until then the xid is in the active
   // table, so no reader takes the record for a commit. A failed
   // sync aborts the process.
   if (db->durability_sync) {
@@ -811,7 +811,7 @@ int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
 }
 
 /*
- * Everything after the commit point (§8.2 steps 4-6). The record
+ * Everything after the commit point (../XCTMGR.md §8.2 steps 4-6). The record
  * is written, so the transaction has committed whatever happens
  * here: nothing may throw, or sm1::commit would report a failure
  * for a committed transaction and a caller's sm1::abort would drop
@@ -824,8 +824,8 @@ void publish_commit(sm1::session_t *s, uint64_t xid,
   db_t *db = s->db;
   // A commit that made or dropped a store raises last_ddl_ts
   // before its commit_ts is published, so no store cache trusts
-  // an entry across it (§11). A prepared one restored from the
-  // log has both lists from its record (§3.2).
+  // an entry across it (../DBMGR.md §7). A prepared one restored from the
+  // log has both lists from its record (../DBMGR.md §6.5).
   if (!s->created.empty() || !s->dropped.empty()) {
     // Only ever raise it: commits reach here out of order.
     uint64_t ddl_ts = db->last_ddl_ts.load();
@@ -834,18 +834,18 @@ void publish_commit(sm1::session_t *s, uint64_t xid,
     }
   }
   // Resolve before publishing: a reader that misses the xid in
-  // the active table finds it in the cache or CF:txn (§3.4).
+  // the active table finds it in the cache or CF:txn (../DBMGR.md §6.6).
   enter_cache(db, xid, commit_ts);
   // Publish: advance visible_ts past this commit, as far as the
   // older commits still in progress allow.
   db_commit_done(db, commit_ts);
   // And wait until it is visible: until the older commits are done
   // too, so the session's next snapshot sees what it committed
-  // (db_commit_wait(), COMMITVISIBLE.md).
+  // (db_commit_wait(), ../XCTMGR.md).
   db_commit_wait(db, commit_ts);
   // Release the locks only once the commit is visible, and
   // queue dropped stores for removal once no snapshot can
-  // see them (§8.3).
+  // see them (../XCTMGR.md §8.4).
   lock_release_all(s);
   // Drop its dropped temporary stores now; the queue finds them gone.
   drop_temp_dropped(s);
@@ -863,7 +863,7 @@ void publish_commit(sm1::session_t *s, uint64_t xid,
 
 /*
  * sm1::abort, minus the out-of-memory guard. It skips the doomed
- * check: a doomed transaction can still be aborted (§5.1). A
+ * check: a doomed transaction can still be aborted (../LOCKMGR.md §3.2). A
  * session whose transaction is prepared aborts it by gid.
  */
 int abort_xct(sm1::session_t *s) {
@@ -885,7 +885,7 @@ int abort_xct(sm1::session_t *s) {
 }
 
 /*
- * The PREPARED record (§3.2) of t's transaction under gid, prepared
+ * The PREPARED record (../DBMGR.md §6.5) of t's transaction under gid, prepared
  * at prepared_at: state, snapshot_ts, a zero commit_ts, then
  * prepared_at, gid, the write set as lock keys, and the storeids
  * created and dropped. One value, however large the write set;
@@ -907,7 +907,7 @@ std::string encode_prepared(const sm1::session_t *t, const std::string &gid,
   sm0::put_be32(v, static_cast<uint32_t>(gid.size()));
   v.append(gid);
   // The lock set: every lock by its id, with its mode and kind,
-  // counted (§8.4).
+  // counted (../XCTMGR.md §10).
   sm0::put_be32(v, static_cast<uint32_t>(t->locks.size()));
   t->locks.each(
       [&](const sm1::session_t::lockref_t &l) { lock_put_record(&v, l); });
@@ -978,7 +978,7 @@ sm1::session_t *detach_prepared(sm1::session_t *s, const std::string &gid,
 /*
  * Register g under gid, which prepare reserved: the entry exists,
  * so this finds it rather than inserting, and allocates nothing.
- * It runs after the PREPARED record is written (§8.4).
+ * It runs after the PREPARED record is written (../XCTMGR.md §10).
  */
 void register_prepared(db_t *db, sm1::session_t *g,
                        const std::string &gid) noexcept {
@@ -1035,7 +1035,7 @@ int prepare(sm1::session_t *s, const char *gid) {
   });
 
   // Close cursors, then validate: the last moment the engine
-  // may still say no (§8.4). A passed node counts as committed.
+  // may still say no (../XCTMGR.md §10). A passed node counts as committed.
   // The lent row goes with the cursors: the transaction ends.
   xct_end_scans(s);
   sm1::unpin(&s->readpin);
@@ -1066,12 +1066,12 @@ int prepare(sm1::session_t *s, const char *gid) {
   // Write the record unless the hook failed it.
   if (st.ok()) {
     rocksdb::WriteOptions wo;
-    wo.sync = true; // a prepare is always synced (§8.4)
+    wo.sync = true; // a prepare is always synced (../XCTMGR.md §10)
     // Write the PREPARED record: the vote of yes.
     st = db->rdb->Put(wo, db->cf_txn, txnkey, val);
   }
   // The record's fate is unknown: it may have reached the WAL.
-  // Abort, and let WAL replay decide (§8.4).
+  // Abort, and let WAL replay decide (../XCTMGR.md §10).
   if (!st.ok()) {
     fatal("database {}: prepare record write for {} failed, so the "
           "outcome of the prepare is unknown: {}. The process is "
@@ -1086,7 +1086,8 @@ int prepare(sm1::session_t *s, const char *gid) {
   return 0;
 }
 
-/* Commit a prepared transaction g (§8.4: §8.2 from step 2). */
+/* Commit a prepared transaction g (../XCTMGR.md §10: ../XCTMGR.md §8.2 from
+ * step 2). */
 int commit_prepared_txn(sm1::session_t *g) {
   uint64_t commit_ts;
   // Claim commit_ts.
@@ -1127,7 +1128,7 @@ int abort_prepared_txn(sm1::session_t *g) {
     st = db->rdb->Put(wo, db->cf_txn, txn_key(g->xid), val);
   }
   // The record's fate is unknown: it may have reached the WAL.
-  // Abort, and let WAL replay decide (§8.4).
+  // Abort, and let WAL replay decide (../XCTMGR.md §10).
   if (!st.ok()) {
     fatal("database {}: abort record write for {} failed, so the "
           "outcome of the abort is unknown: {}. The process is "
@@ -1171,7 +1172,7 @@ void unhold_prepared(db_t *db, const std::string &gid,
 }
 
 /*
- * Resolve the prepared transaction gid (§8.5).
+ * Resolve the prepared transaction gid (../XCTMGR.md §10.6).
  * 1. Hold its entry null, so a concurrent resolver finds nothing and
  *    no prepare can take the gid.
  * 2. Commit or abort it.
@@ -1239,6 +1240,11 @@ int xct_check_readonly(sm1::session_t *s) {
   return 0;
 }
 
+/* xct_check_active, unless s works with no transaction; see session.h. */
+int xct_check_cleaner(sm1::session_t *s) {
+  return nullptr != s && s->no_transaction ? 0 : xct_check_active(s);
+}
+
 /* NOTRANS unless a transaction is active. */
 int xct_check_active(sm1::session_t *s) {
   // Reject a NULL session.
@@ -1297,7 +1303,7 @@ view_t xct_view(sm1::session_t *s) {
 
 /*
  * The view a read runs at, taking the statement's snapshot if
- * the statement has not read yet (§6.2). Only reads take it:
+ * the statement has not read yet (../XCTMGR.md §5). Only reads take it:
  * a write consults its view to validate the storeid and key, and
  * pinning there would hold a statement's later reads at a
  * snapshot from before the write waited for another writer.
@@ -1330,13 +1336,13 @@ int xct_alloc_xid(sm1::session_t *s) {
   // Record the xid.
   s->xid = xid;
   // Map the xid to the SSI node before any version carries it,
-  // so a reader that steps past one finds the writer (§7.2).
+  // so a reader that steps past one finds the writer (../XCTMGR.md §7.3).
   ssi_on_xid(s);
   return 0;
 }
 
 /*
- * The status of xid (§3.4 steps 1-4).
+ * The status of xid (../DBMGR.md §6.6 steps 1-4).
  * 1. Look in the active table: in flight if there.
  * 2. Look in the commit cache: committed if there.
  * 3. Look up its record in CF:txn. A record in any state but
@@ -1384,7 +1390,7 @@ xct_state_t xct_status(db_t *db, uint64_t xid, uint64_t *commit_ts) {
     std::lock_guard<std::mutex> guard(db->txn_mu);
     // Remember it: the transaction's other versions, and the
     // next reader's, then cost no read of CF:txn. A commit is
-    // final, so the entry can never become wrong (§3.4).
+    // final, so the entry can never become wrong (../DBMGR.md §6.6).
     cache_put_locked(db, xid, *commit_ts);
     return XCT_COMMITTED;
   }
@@ -1580,7 +1586,7 @@ int sm1::stmt_end(sm1::session_t *session, const sm1::stmt_t &outer) {
   session->stmt_snapshot_ts = outer.snapshot_ts;
   session->stmt_marked = outer.marked;
   // Never above the writes still in effect: a rollback since may
-  // have rewound seq below the outer mark (§6.2).
+  // have rewound seq below the outer mark (../XCTMGR.md §5).
   session->stmt_seq = std::min(outer.seq, session->seq);
   return 0;
 }

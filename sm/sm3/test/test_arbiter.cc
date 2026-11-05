@@ -1,5 +1,5 @@
 /*
- * test_arbiter.cc -- tbl_insert_arbiter (SM3_DESIGN.md §3): an
+ * test_arbiter.cc -- tbl_insert_arbiter (../INDEXBUILD.md §2): an
  * insert that finds a row with its key before it writes, as SQL's
  * INSERT ... ON CONFLICT needs.
  */

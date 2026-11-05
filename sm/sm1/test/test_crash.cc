@@ -1,7 +1,7 @@
 /*
  * test_crash.cc -- kill a committing process with SIGKILL and
  * check that recovery leaves exactly a prefix of its commits,
- * including every commit it acknowledged (SM1_DESIGN.md §9, §12.5).
+ * including every commit it acknowledged (../DBMGR.md §9, §17.2).
  */
 
 #include "doctest.h"
@@ -248,7 +248,7 @@ void prealloc_keep(sm1::env_t *env, uint64_t bytes) {
 } // namespace
 
 TEST_CASE("a home's first attach decides whether new logs are zero-filled") {
-  // Verify the decision of WALPREALLOC.md: made once, kept, obeyed.
+  // Verify the decision of ../DBMGR.md: made once, kept, obeyed.
   // 1. A new home's first attach times its syncs and keeps the
   //    answer, 0 or 64 MB; a second attach keeps it unchanged.
   // 2. With 4 MB kept, a database made after the next attach has its
@@ -289,7 +289,7 @@ TEST_CASE("a home's first attach decides whether new logs are zero-filled") {
 }
 
 TEST_CASE("zero-filling pays where a sync that grows a file costs more") {
-  // Verify the probe and its rule (WALPREALLOC.md).
+  // Verify the probe and its rule (../DBMGR.md).
   // 1. The probe times both syncs in a directory, and leaves no file.
   // 2. A sync half again as dear after an append zero-fills; one
   //    about as dear, or none timed at all, does not.
@@ -307,7 +307,7 @@ TEST_CASE("zero-filling pays where a sync that grows a file costs more") {
 
 TEST_CASE(
     "a new log takes the spare a thread zeroed, and the next spare starts") {
-  // Verify walfs's spare (WALPREALLOC.md section 2): each log after a
+  // Verify walfs's spare (../DBMGR.md section 8.4): each log after a
   // directory's first starts a thread that zeroes the next log ahead,
   // the next log takes it, and the Env's end removes what is left.
   // 1. The first log is zero-filled in place, and starts no spare.
@@ -358,7 +358,7 @@ TEST_CASE(
 }
 
 TEST_CASE("only WSL's kernels zero-fill new logs") {
-  // Verify the first gate of a home's decision (WALPREALLOC.md §2).
+  // Verify the first gate of a home's decision (../DBMGR.md §8.4).
   // 1. WSL's two kernels' releases are known as WSL's.
   // 2. A cloud's kernel, and a desktop's, are not.
   // 3. Off WSL, a new home keeps 0 without timing a sync.
@@ -377,7 +377,7 @@ TEST_CASE("only WSL's kernels zero-fill new logs") {
 }
 
 TEST_CASE("a new log is the spare a background thread zeroed") {
-  // Verify the next log made ahead (WALPREALLOC.md §2).
+  // Verify the next log made ahead (../DBMGR.md §8.4).
   // 1. A directory's first log is zeroed in place, and makes no spare:
   //    a database that never switches logs pays for none.
   // 2. Its second log starts a spare, zeroed beside it.
@@ -490,7 +490,7 @@ TEST_CASE("logs made from spares replay after a crash") {
 }
 
 TEST_CASE("a record torn in a zero-filled log's tail is the end of the log") {
-  // Verify recovery past a torn record in the zeros (WALPREALLOC.md).
+  // Verify recovery past a torn record in the zeros (../DBMGR.md).
   // 1. Create database "db" with a store; a child commits keys
   //    until killed, as the test above, its log zero-filled to 4 MB,
   //    kept by hand as a home off WSL keeps 0.

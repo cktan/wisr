@@ -1,6 +1,6 @@
 /*
  * test_savepoint.cc -- sm1::savepoint and sm1::rollback (SM1_DESIGN.md
- * §6.5, §12.5 "Own writes").
+ * ../XCTMGR.md §6, ../DBMGR.md §17.2 "Own writes").
  *
  * The lock rule these calls obey is a timeline between two
  * sessions, so it lives in mvcc/in/b25_savepoint_releases_lock.t
@@ -293,7 +293,7 @@ TEST_CASE("the savepoint stack is bounded, and forgetting makes room") {
 
 TEST_CASE(
     "cursors before the mark survive rollback; cursors after it are closed") {
-  // Verify §6.5's cursor rule and the seq rewind.
+  // Verify ../XCTMGR.md §6's cursor rule and the seq rewind.
   // 1. Insert "b"; open cursor C1; set the savepoint.
   // 2. Insert "c"; open cursor C2.
   // 3. Roll back: C2 is closed, failing each read and seek with
@@ -350,7 +350,7 @@ TEST_CASE("a cursor a rollback closed is freed by the transaction's end") {
 }
 
 TEST_CASE("rollback undoes sm1_mkstore and sm1_rmstore made after the mark") {
-  // Verify DDL follows the savepoint (§6.5, §11).
+  // Verify DDL follows the savepoint (../XCTMGR.md §6, ../DBMGR.md §7).
   // 1. Create store P before the mark; set the savepoint.
   // 2. Create store Q and write to it; drop the fixture's.
   // 3. Roll back: P exists, Q does not, and the fixture's

@@ -199,12 +199,12 @@ instead of being told.
   changes in the DDL's own transaction: sm3's count of the
   catalog's publishes at which the table's definition or its
   statistics were last published, or an index of it made valid
-  (`sm_table_def_t::version`, `../sm/sm3/CATALOG_INMEM.md` §1;
+  (`sm_table_def_t::version`, `../sm/CATALOG.md` §4;
   `WORKNOTE.md` step 143). A version is read as the transaction
   sees it: `SM_VERSION_OWN` while its own DDL or ANALYZE of the
   table is uncommitted, else the newest committed, never one at
   its snapshot, since the catalog is not versioned
-  (`../sm/sm3/SM3_DESIGN.md` §2). A DDL that aborts leaves it
+  (`../sm/CATALOG.md` §1). A DDL that aborts leaves it
   as it was. An index has no version of its own: it takes no
   lock in sm (`WORKNOTE.md` step 111), so its entry is checked
   under its table's lock, by its table's version.
@@ -226,15 +226,14 @@ instead of being told.
   waits for every IS and IX and is let go only after the DDL
   commits. So a version checked under IS or IX is the table's
   until the transaction ends, and one a DDL changed under X is
-  committed by the time the lock is granted. Two changes are
-  made without X. ANALYZE opens the table IS and takes only its
-  statistics' own lock (`cat_lock_stats()`), and an index's
-  build marks it valid under IX (`../sm/sm3/SM3_DESIGN.md`
-  §3.3): a session holding the table can pass its check and
-  then miss either until its next lock, planning with the old
-  statistics, or without the new index. sm maintains every
-  index and enforces every unique one itself, so this costs a
-  plan, never a row.
+  committed by the time the lock is granted. Two changes are made
+  without X. ANALYZE opens the table IS and takes only its
+  statistics' own lock (`cat_lock_stats()`), and an index's build
+  marks it valid under IX (`../sm/INDEXBUILD.md` §3): a session
+  holding the table can pass its check and then miss either until
+  its next lock, planning with the old statistics, or without the
+  new index. sm maintains every index and enforces every unique
+  one itself, so this costs a plan, never a row.
 - **A mismatch is the message that was not sent.** The entry's
   invalidation is processed locally, as utils/cache `inval.c`'s
   `LocalExecuteInvalidationMessage()` processes a session's

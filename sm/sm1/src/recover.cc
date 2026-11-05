@@ -1,11 +1,11 @@
 /*
  * recover.cc -- what opening a database does beyond RocksDB's
- * own WAL replay (SM1_DESIGN.md §9.1 steps 4-6): restore prepared
+ * own WAL replay (../DBMGR.md §9.1 steps 4-6): restore prepared
  * transactions in doubt, and drop orphaned store CFs.
  *
  * There is no redo or undo pass. A transaction running at the
  * crash has no status record and is absent from the fresh
- * active table, so it resolves as dead (§3.4); GC drops its
+ * active table, so it resolves as dead (../DBMGR.md §6.6); GC drops its
  * versions.
  */
 
@@ -24,8 +24,8 @@ using namespace wisr;
 namespace {
 
 /*
- * Rebuild each PREPARED record as an in-doubt transaction (§8.4,
- * §9.1 step 5).
+ * Rebuild each PREPARED record as an in-doubt transaction (../XCTMGR.md §10,
+ * ../DBMGR.md §9.1 step 5).
  * 1. Put it in the active table.
  * 2. Take the row locks of its write set.
  * 3. Pin the watermark at its snapshot.
@@ -48,7 +48,7 @@ int restore_prepared(db_t *db) {
     if (!xct_decode_prepared(db, xid, it->value(), &g)) {
       continue; // not a PREPARED record
     }
-    // Mark it restored, for §8.4's SSI rule.
+    // Mark it restored, for ../XCTMGR.md §10's SSI rule.
     g->restored = true;
     // Give it a begin order, for deadlock victim choice.
     g->begin_seq = ++db->begin_seq;
@@ -139,7 +139,7 @@ int live_storeids(db_t *db, std::unordered_set<uint64_t> *live) {
 
 /*
  * Drop every store CF that neither the catalog nor a prepared
- * transaction's created list names (§9.1 step 6): a crash inside
+ * transaction's created list names (../DBMGR.md §9.1 step 6): a crash inside
  * an uncommitted sm1::mkstore, or a committed sm1::rmstore whose CF GC
  * had not yet dropped.
  */

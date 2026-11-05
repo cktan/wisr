@@ -109,7 +109,7 @@ int finish_file(stream_t &t) {
 
 /*
  * The store key stream t puts key under: the load's version of it,
- * or for a chained stream its current key (../VCHAIN.md §8).
+ * or for a chained stream its current key (../ROWSTORE.md §3.8).
  */
 std::string stream_key(const sm1::loader_t *l, const stream_t &t,
                        const std::string &key) {
@@ -362,7 +362,7 @@ int check_disjoint(const sm1::loader_t *l) {
 /*
  * Whether the store holds any key, a version of any kind: 1, 0, or
  * -1 on error. One seek. Its pages are no versions, and are left out
- * (../BTREE.md §8, bulk load).
+ * (../BTREEINDEX.md §13, bulk load).
  */
 int holds_a_key(const store_t &st) {
   rocksdb::ReadOptions ro;

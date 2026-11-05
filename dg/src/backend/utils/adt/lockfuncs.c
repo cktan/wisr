@@ -92,7 +92,7 @@ Datum pg_lock_status(PG_FUNCTION_ARGS) {
     } else if (l.name == DATADIR_LOCK_ROW) {
       /*
        * A row's table, but not its page or tuple: sm keeps a lock's id, not
-       * the row's key (../sm/sm1/LOCKID.md section 4.1).
+       * the row's key (../sm/LOCKMGR.md section 1.3).
        */
       locktype = "tuple";
       if (l.oid != 0) {

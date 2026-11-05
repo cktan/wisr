@@ -1,6 +1,6 @@
 /*
  * session.cc -- sm1::opendb and sm1::closedb, and the environment's
- * registry of open databases (SM1_DESIGN.md §1).
+ * registry of open databases (../DBMGR.md §1).
  */
 
 #include "session.h"
@@ -123,7 +123,7 @@ sm1::session_t *open_session(sm1::env_t *env, const char *dbname,
   db->nsessions++;
   // Register the session for sm1::detach.
   env->sessions.insert(s.get());
-  // And with its database, for a strong lock's sweep (§5.1).
+  // And with its database, for a strong lock's sweep (../LOCKMGR.md §3.2).
   lock_register(s.get());
   return s.release();
 }

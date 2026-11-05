@@ -4,10 +4,14 @@ The fork keeps PostgreSQL's planner (`PART4.md` §4), and the
 planner costs every plan from statistics that PostgreSQL's
 storage has always supplied. This file is the strategy for
 supplying the same, or near enough, from a stack that has no
-pages, no heap files and no vacuum.
+heap files and no vacuum, and pages only in a B-tree Index. The
+code is in `sm3/src/analyze/` (the sampler, the estimators and
+`tbl_analyze`), `sm3/src/catalog/ddl.cc` (the `STATS` entries),
+`sm1/src/stats.cc` (sizes and probes), `include/sm_stats.h` (the
+format) and `../dg/src/backend/access/sm/smstore.c` (digres).
 
-It is a strategy, and the design is `sm3/SM3_DESIGN.md` §6,
-which makes the choices left open here.
+It is a strategy, and §9 is the design, which makes the choices
+left open here.
 
 **§6 has now been measured and §7 checked**, against RocksDB
 9.11.2 through sm1 (the stack builds on 8.9.1 now) and against
@@ -20,7 +24,7 @@ planner's size conversion lives (§3.7).
 **Since then a table is clustered on its primary key**
 (`CLUSTER.md`), `rowno` is `_id` in sm, and a table with a
 primary key is sampled by ranges of its key, not by runs of
-`_id`s (`ROWKEY.md` §2.4, `sm3/SM3_DESIGN.md` §6.4). §6
+`_id`s (`ROWSTORE.md` §2.6, `STATISTICS.md` §9.4). §6
 measured the heap keyed by `rowno`; what it found holds for a
 table without a primary key, which is sampled as then.
 
@@ -30,8 +34,9 @@ table without a primary key, which is sampled as then.
 
 **Who does what**
 
-- The stack analyzes. `sm_tbl_analyze(tbl)` draws a sample,
-  computes the statistics, and writes them to sm3's catalog.
+- The stack analyzes. `sm_tbl_analyze(tbl, target)` draws a
+  sample, computes the statistics, and writes them to sm3's
+  catalog.
 - What it writes describes an LSM keyed by a table's primary
   key, or by `_id` in a table without one: bytes, rows, `_id`s
   handed out, levels. It has no pages, no tree height and no
@@ -39,14 +44,16 @@ table without a primary key, which is sampled as then.
 - The host reads them and derives what PostgreSQL's planner
   wants: pages, `reltuples`, `pg_statistic`'s slots. That
   conversion is the fork's code.
-- The fork has no `pg_class` and no `pg_statistic`. Its
-  `ANALYZE` is a call to `sm_tbl_analyze`.
+- The fork stores no `pg_class` and no `pg_statistic`: its
+  `pg_class` rows are made from sm3's catalog
+  (`../dg/SYSCATALOG.md`). Its `ANALYZE` is a call to
+  `sm_tbl_analyze`.
 
 **What `sm_tbl_analyze` records**
 
 - **A table:** bytes on disk, live rows, the `_id` limit, 0
   for a table with a primary key, whose rows have no `_id`
-  (`ROWKEY.md` §2.1), and the average bytes of a row.
+  (`ROWSTORE.md` §2.2), and the average bytes of a row.
 - **An index:** bytes on disk and entries.
 - **A column, and an expression of an index:** null fraction,
   average bytes, distinct count, most common values, histogram
@@ -55,8 +62,8 @@ table without a primary key, which is sampled as then.
 **What the stack answers live, at plan time**
 
 - The bytes of a table or an index now, the `_id` limit now,
-  and the LSM's level count now. None is stored, and none
-  needs an `ANALYZE`.
+  and the sorted runs a lookup may visit now (`sm_tbl_probes`).
+  None is stored, and none needs an `ANALYZE`.
 
 **Why the stack can compute them**
 
@@ -71,7 +78,7 @@ table without a primary key, which is sampled as then.
 **What stays the host's**
 
 - Turning the stack's numbers into the planner's (§3.7).
-- The cost of an index lookup, from the level count; not yet
+- The cost of an index lookup, from the sorted runs; not yet
   done, as digres leaves the tree height unknown (§3.7).
 - Deciding when to analyze again.
 - Extended statistics over groups of columns, if ever wanted.
@@ -79,7 +86,7 @@ table without a primary key, which is sampled as then.
 **What has to be built in the stack**
 
 - sm1: the bytes of a key range, a sequence's last value
-  without drawing one, and the LSM's level count.
+  without drawing one, and the sorted runs of a store.
 - sm2 and sm3: the same for a table and for an index, the
   `_id` limit of a table, and the keys at fractions of a
   table's bytes.
@@ -121,13 +128,16 @@ Four kinds of thing, from three different places. The middle
 column is stock PostgreSQL, to say what the planner is used
 to being given.
 
-**None of those catalogs exists in the fork.** `pg_class`,
+**None of those catalogs is stored in the fork.** `pg_class`,
 `pg_statistic` and the rest are heap tables in PostgreSQL, and
-the fork has no heap: its catalog is sm3's (`PART4.md` §4).
-There is no `pg_class` row to update and no `pg_statistic`
-row to insert. The numbers below keep PostgreSQL's names in
-this file, `relpages` and `reltuples`, only because those are
-the names the planner's code knows them by. Where they are
+the fork has no heap: its catalog is sm3's (`PART4.md` §4). The
+fork makes `pg_class`'s rows from sm3's catalog when they are
+read (`../dg/SYSCATALOG.md`), and a `pg_statistic` row when the
+planner asks (§3.7). There is no `pg_class` row to update and
+no `pg_statistic` row to insert. The numbers below keep
+PostgreSQL's names in this file, `relpages` and `reltuples`,
+only because those are the names the planner's code knows them
+by. Where they are
 kept is §3.6, and how the fork's planner gets them is §3.7.
 
 | What | Where stock PostgreSQL keeps it | Who produces it there |
@@ -175,7 +185,7 @@ Three properties of how they are used shape everything below.
    an error the planner already tolerates, not exactness.
 5. **No new hot key.** Nothing here may make every writer
    update one shared row. The table-oid lock is already the
-   contended key of a table (`sm3/SM3_DESIGN.md` §3).
+   contended key of a table (`INDEXBUILD.md` §2).
 6. **Forward only.** A sample is taken with forward seeks, as
    every scan in the stack is (`sm1/SM1_OBJECTIVE.md`).
 
@@ -191,7 +201,7 @@ plan.
 
 **How:** a table is one sm1 store, a RocksDB column family,
 and its heap and each index sit under a 2-byte relid of their
-own (`sm3/SM3_DESIGN.md` §4). RocksDB estimates the bytes in a
+own (`CATALOG.md` §2). RocksDB estimates the bytes in a
 key range without reading it. Asked of a relid's range, with
 the memtables counted, that is the object's size.
 
@@ -222,7 +232,7 @@ which is sm2's relid, for the active memtable and for each sealed
 one until RocksDB flushes it, and answers a relid's range from
 that (`sm1/API.md`, `sm1::approxsize`). A chained row's writes
 count under its own key's relid, the OLD entries they put too,
-which carry no relid (`VCHAIN.md`). The bytes in files are
+which carry no relid (`ROWSTORE.md`). The bytes in files are
 still RocksDB's estimate.
 
 **A range's file bytes are estimated once a version of the
@@ -235,10 +245,10 @@ answers from it until a flush, a compaction or an ingest moves
 the version (`sm1/API.md`, `sm1::approxsize`). The answer is
 the one RocksDB would give. `sm1::chain_approxsize`, which
 gives the file bytes of a chained store's rows, keeps no such
-cache and asks RocksDB each time. digres also keeps the bytes
-it read for a table and its indexes per session, for 10
-seconds, so it asks sm far less often than at every plan
-(`../dg/STATISTICS.md` §2.2).
+cache and asks RocksDB each time. digres also keeps its estimate
+of a table and of each index per session, for 10 seconds while
+the catalog's epoch stands, so it asks sm far less often than at
+every plan (`size_cache_age`, `../dg/STATISTICS.md` §2.2).
 
 `sm_tbl_analyze` records the size it saw, beside the row count
 it estimated at the same moment. The size is also answered
@@ -252,7 +262,7 @@ live, so a caller can tell how far a table has moved since.
 facts the stack has exactly.
 
 - A row's key is its `_id`, drawn from a per-table sequence
-  and never reused (`sm2/SM2_DESIGN.md` §5). So the sequence's
+  and never reused (`ROWSTORE.md` §8). So the sequence's
   last value, `N`, is how many `_id`s were ever handed out,
   and the live rows are some fraction of them.
 - A sample of `_id`s, each looked for, says what fraction.
@@ -293,7 +303,7 @@ target that the caller passes. PostgreSQL's default target of
 **How, without a primary key:** the sampling unit is a run of
 consecutive `_id`s, of a fixed length `B`.
 
-- Runs are chosen at random over `0` to `N`, and visited in
+- Runs are chosen at random over `1` to `N`, and visited in
   ascending order: one forward cursor over the rows, moved
   with `scan_seek` to each run's first `_id`, reads the live
   rows of the run and moves on.
@@ -322,7 +332,7 @@ page's worth, as PostgreSQL's block is.
   slots, BERNOULLI's 256 rows of a scan in key order
   (`../dg/WORKNOTE.md` step 290).
 
-The design is `sm3/SM3_DESIGN.md` §6.4.
+The design is `STATISTICS.md` §9.4.
 
 **The length of a run is a trade.** A short run is nearly a
 uniform sample of rows and costs a seek for each row or two.
@@ -374,9 +384,9 @@ crosses the API.
 | histogram bounds over the rest | order |
 | correlation of the column's order with the rows' order | order |
 
-Equality and order are sm2's `cmp` for the column's type,
-under the column's collation: the same one index keys are
-ordered by (`sm2/TYPE.md`).
+Equality and order are the column's key encoding, under the
+column's collation: the same bytes index keys are ordered by
+(§9.5).
 
 **The estimators are PostgreSQL's, ported.** How many distinct
 values a sample implies, which values are common enough to
@@ -418,7 +428,7 @@ sorted into that order before correlation is measured.
 
 **Expressions and predicates.** For an expression index,
 `sm_tbl_analyze` calls the host's evaluator on each sampled row
-(`sm3/SM3_DESIGN.md` §3). The evaluator returns the
+(`INDEXBUILD.md` §2). The evaluator returns the
 expression's value and whether the row belongs to the index,
 so the same statistics are computed for each expression, and
 the fraction of rows a partial index takes comes with them.
@@ -436,22 +446,25 @@ the fraction of rows a partial index takes comes with them.
 
 ### 3.5 Indexes
 
-**Size:** as §3.1, over the index's relid.
+**Size:** as §3.1, over the index's relid. A B-tree Index's size
+is the bytes of its pages (`sm2::idx_tree_size`).
 
 **Entries:** the table's row count, times the fraction of
 sampled rows that belong to the index, which is 1 unless it
 is partial.
 
-**Levels:** how many levels the store's LSM has now, answered
-live. An LSM has no tree height. A lookup costs a probe of the
-memtables and of some number of sorted files, cut down by
-bloom filters, and the level count is what the stack knows of
-that.
+**Probes:** how many sorted runs a lookup in the store may visit
+now, answered live (`sm1::probes`, `sm_tbl_probes`): the active
+memtable if it holds anything, each immutable memtable, each file
+of level 0, and each lower level with a file. An LSM has no tree
+height. A lookup costs a probe of the memtables and of some
+number of sorted files, cut down by bloom filters, and this count
+is what the stack knows of that.
 
 ### 3.6 What is recorded, and where
 
-`sm_tbl_analyze(tbl)` runs in the caller's transaction, reads
-at its snapshot, and writes these to sm3's catalog.
+`sm_tbl_analyze(tbl, target)` runs in the caller's transaction,
+reads at its snapshot, and writes these to sm3's catalog.
 
 | Of | Recorded |
 | --- | --- |
@@ -464,7 +477,8 @@ Values among them, the common ones and the histogram bounds,
 are kept in sm2's own encoding of the column's type.
 
 Unlike an index's evaluator blob, sm3 reads and writes this
-format, and it is declared in `sm3/include/sm3.h`.
+format. It is declared in `include/sm_stats.h`, and
+`sm3/include/sm3.h` names its types.
 
 Heap bytes on disk beside rows times average row bytes says
 how much of the table is compression, old versions and
@@ -478,12 +492,12 @@ histogram is a worse plan and nothing else. The catalog pays
 for correctness with the table-oid lock and a session overlay;
 statistics take the overlay only to show a transaction its own,
 and a lock only on their own entry, to queue two analyzes
-(`sm3/SM3_DESIGN.md` §6.7); most of what follows is the
+(`STATISTICS.md` §9.7); most of what follows is the
 saving.
 
 **On disk: store 0, under a key kind of their own.** The
 catalog is a key-value map in store 0 under the prefix `"U"`,
-reached through sm2's `catkv_*` (`sm3/CATALOG_ONDISK.md` §1),
+reached through sm2's `catkv_*` (`CATALOG.md` §3.1),
 and statistics go there like everything else — written in the
 caller's transaction, so they commit, roll back and survive a
 crash with it, and sm3 writes no undo of its own.
@@ -492,7 +506,7 @@ crash with it, and sm3 writes no undo of its own.
   one catalog entry and every DDL rewrites it, so writing
   statistics into it would make `sm_tbl_analyze` contend with DDL
   for the same key under first-committer-wins, and mutate the
-  definition its readers hold. `sm3/CATALOG_ONDISK.md` §2's
+  definition its readers hold. `CATALOG.md` §3.3's
   kinds run to 13 and are frozen because they are on disk;
   statistics are kind 10, `STATS`.
 - **One entry a table** was the first plan, as `sm_tbl_analyze`
@@ -500,7 +514,7 @@ crash with it, and sm3 writes no undo of its own.
   It became one a statistic, with one for the table: an sm1
   value holds 64 MB, and a wide table's statistics, or a few
   columns' at a high target, do not fit in one
-  (`sm3/SM3_DESIGN.md` §6.6). They are still read together,
+  (`STATISTICS.md` §9.6). They are still read together,
   by one scan of the table's entries.
 - **Gone with what they describe.** Dropping a table drops its
   statistics; dropping a column, or an index, drops that one's.
@@ -515,16 +529,15 @@ This is PostgreSQL's own shape, and for its reasons. Relation-
 level numbers ride in the relcache with the `pg_class` row;
 column distributions sit in a *different* cache, the syscache
 `STATRELATTINH`, populated per column on first use and not
-loaded with the relation. The fork sets
-`get_relation_stats_hook` anyway, so its statistics lookup is
-already a separate path from its definition lookup.
+loaded with the relation. The fork's `get_statistic_tuple()` is
+such a path too, separate from its definition lookup.
 
 Lazily, because the sizes differ by two orders of magnitude.
 At the default target a column's statistics run about 1.2 KB —
 101 histogram bounds, up to 100 common values, their
 frequencies — so a twenty-column table is some 24 KB and a
 thousand tables some 24 MB, against definitions that are
-bytes. `sm3/CATALOG_INMEM.md` §4 lists startup cost for
+bytes. `CATALOG.md` §11 lists startup cost for
 thousands of tables as unmeasured and open; loading statistics
 eagerly would be most of it, and none of it is wanted until
 something plans against that table. The definition must be there
@@ -567,18 +580,18 @@ catalog behaves. Two reasons not to.
   waiting to happen. `catkv_get_latest` is worse, being
   `sm1::read_latest`, which holds a lock — one lock on one key
   per plan, which is principle 5's hot key. The catalog
-  already avoids this class of thing on purpose: the schema
+  already avoids this class of thing on purpose: the table-oid
   lock is an `sm1::LOCKTYPE_OID` lock, which writes
   nothing, so that taking it "never fails on a newer commit,
   at any level"
-  (`sm3/SM3_DESIGN.md` §2). Reading statistics per plan through
+  (`CATALOG.md` §1). Reading statistics per plan through
   sm1 would put the snapshot sensitivity back.
 
 **What a `TRUNCATE` does, and why it needs no versioning.**
 `truncate_table` makes a new empty store, writes the new
 storeid into the table's record, publishes the rebuilt
 definition to the session's overlay, and drops the old store
-at commit (`sm3/src/ddl/ddl.cc`, `sm3/SM3_DESIGN.md` §4). A
+at commit (`sm3/src/ddl/ddl.cc`, `CATALOG.md` §2). A
 table's oid is stable but the store holding its rows is a
 field of its definition, and the definition is already
 overlay-versioned. So after an uncommitted truncate the
@@ -622,7 +635,7 @@ planned as one never analyzed (`../dg/STATISTICS.md` §2.2).
 **The cost of keeping them separate.** Statistics inside the
 catalog entry would go when it went. A side structure has to
 be swept on `DROP`, which is code. sm3's oids come from a
-sequence and are not reused (`sm3/CATALOG_ONDISK.md` §1), so
+sequence and are not reused (`CATALOG.md` §3.1), so
 an entry left behind is never mistaken for another table's —
 it is wasted memory until the sweep, not a wrong answer.
 
@@ -647,26 +660,27 @@ index through `smstore_estimate_index_size` from
 `allvisfrac` from sm3's numbers directly. There is no
 `pg_class` row to fake and no density to store: the "scaled by
 bytes now over bytes recorded" of the row below happens inside
-them, at each plan, from bytes a session keeps for 10 seconds.
+them, from an estimate a session keeps for up to 10 seconds.
 
 For column statistics the shape is firmer than "the same
 shape". `examine_variable` reaches them through
-`get_relation_stats_hook`, which the fork sets, but what it
-must hand back is a **`pg_statistic`-shaped `HeapTuple`**: the
-planner does `GETSTRUCT` on it and reads the slots with
-`get_attstatsslot`. So the fork builds that tuple in memory
-from sm3's statistics; it does not hand over loose numbers.
+`get_statistic_tuple()` (`lsyscache.c`); the fork sets no
+`get_relation_stats_hook`. What it must hand back is a
+**`pg_statistic`-shaped `HeapTuple`**: the planner does
+`GETSTRUCT` on it and reads the slots with `get_attstatsslot`.
+So `smstore_statistic_tuple()` builds that tuple in memory from
+sm3's statistics; it does not hand over loose numbers.
 
 | The planner wants | The host makes it from |
 | --- | --- |
 | `pages` | bytes now, over 8 KB, and never less than 1 for an object with a row, so that the page cost constants keep their meaning. Returned from `smstore_estimate_size`, not stored |
 | `tuples` | recorded live rows, scaled by bytes now over bytes recorded, or, for a table without a primary key that had nothing on disk, moved by the `_id`s handed out since. Also from `smstore_estimate_size` |
-| `allvisfrac` | 1. An index entry carries versions of its own (`sm3/SM3_DESIGN.md` §3), so an index-only scan never visits the heap, and §7 measured that this is exactly what removes the heap-fetch charge |
+| `allvisfrac` | 1. An LSM Index's entry carries versions of its own (`INDEXBUILD.md` §2), so an index-only scan never visits the heap, and §7 measured that this is exactly what removes the heap-fetch charge. A B-tree Index's entry carries none, and its index-only scan reads the row (`BTREEINDEX.md` §4), yet digres gives 1 for it too |
 | null fraction, most common values, histogram | the same, values decoded to PostgreSQL's datums |
 | average width | average bytes as stored |
 | distinct count | the count, negated as a multiplier of **total** rows, nulls included, when it grows with the table. That is PostgreSQL's convention, and §7 found the reason it exists: the row count is refreshed more often than the statistics, so a multiplier stays right as the count drifts — which is exactly what §3.2 does between runs |
-| correlation | correlation with the rows' stored order, the key's, which a sequential scan reads in. The fork has no `ctid` (`ROWKEY.md` §3). PostgreSQL computes its own from the sample in physical order, and relies on the sample being returned that way; sm3 sorts its sample so |
-| a B-tree's height | nothing yet. digres's index access method costs a lookup with PostgreSQL's `btcostestimate` and leaves `tree_height` at -1 (`../dg/STATISTICS.md` §2.2), so the descent charge, `(height + 1)` times 50 `cpu_operator_cost`, a CPU charge and not page I/O, is 0. Costing a lookup from the level count, the index's bytes and its entries needs weights calibrated (§6), and is left for later |
+| correlation | correlation with the rows' stored order, the key's, which a sequential scan reads in. The fork has no `ctid` (`ROWSTORE.md` §10). PostgreSQL computes its own from the sample in physical order, and relies on the sample being returned that way; sm3 sorts its sample so |
+| a B-tree's height | nothing yet. digres's index access method costs a lookup with PostgreSQL's `btcostestimate` and leaves `tree_height` at -1 (`../dg/STATISTICS.md` §2.2), so the descent charge, `(height + 1)` times 50 `cpu_operator_cost`, a CPU charge and not page I/O, is 0. Costing a lookup from the sorted runs, the index's bytes and its entries needs weights calibrated (§6), and is left for later |
 | dead rows | none. Vacuum is gone (`PART4.md` §4) |
 
 Each row of that table is a choice the host can change
@@ -695,7 +709,7 @@ would need the stack to decide when, and nothing here does.
 | --- | --- | --- |
 | sm1 | the approximate bytes of a key range in a store | §3.1 |
 | sm1 | a sequence's last value, read without drawing one | §3.2, §3.3 |
-| sm1 | the number of LSM levels a store has now | §3.5 |
+| sm1 | the sorted runs a lookup in a store may visit now (`sm1::probes`) | §3.5 |
 | sm2 | the same sizes for a heap or an index, by its relid | §3.1 |
 | sm2 | the keys at fractions of a rel's bytes, and the bytes of a key range (`rel_keys_at`, `rel_range_size`) | §3.2, §3.3 |
 | sm3 | on an open table: the table's size, an index's size, and the `_id` limit `N` | §3.1, §3.2 |
@@ -718,7 +732,7 @@ would need the stack to decide when, and nothing here does.
 | bytes, unflushed | a memtable is uncompressed, and the estimate adds it at that size | 7x over, until the rows are flushed (§6). The worst number here, and the one §3.1 now warns about |
 | bytes, mid-update | new versions in the memtable, old ones not yet collected | 6.6x over at the peak of a burst that changed no row count, back to exact after a compaction (§6) |
 | row count at `sm_tbl_analyze`, no primary key | sampling | exact on a dense table; 0.26% low on one with nine rownos in ten dead, at every run length (§6) |
-| row count at `sm_tbl_analyze`, a primary key | sampling, scaled by the store's size estimates | as good as the bytes: a few percent in sorted files, an order of magnitude in memtables (`sm3/SM3_DESIGN.md` §6.4) |
+| row count at `sm_tbl_analyze`, a primary key | sampling, scaled by the store's size estimates | as good as the bytes: a few percent in sorted files, an order of magnitude in memtables (`STATISTICS.md` §9.4) |
 | row count between runs | whatever the host scales it by: bytes inherit their error and count a burst of updates as growth; `_id`s see no delete | not measured. PostgreSQL's own version of this was 3.9% low over a tenfold growth (§7) |
 | distinct count | sampling, and the likeness of neighbouring rows in a run | the run length decides it, over a 30x range for a column whose neighbours are alike (§6) |
 | other column statistics | sampling | as PostgreSQL's on a heap, whose sampler clusters the same way (§3.3) |
@@ -914,10 +928,8 @@ would put the sample's shape under PostgreSQL's control rather
 than the stack's, against principle 2, and leave sm3 unable to
 analyze anything without a host.
 
-This file keeps the stack analyzing. The point of recording
-the alternative is that the choice is real and was not made
-knowingly before: whoever writes `sm3/SM3_DESIGN.md` §6 should
-make it on purpose.
+This file keeps the stack analyzing. The choice is real, and
+§9.1 makes it on purpose.
 
 ---
 
@@ -928,12 +940,12 @@ make it on purpose.
    the design: what to report for a table whose rows are still
    unflushed (§6, experiment 2), and what run length to sample
    at (§6, experiment 4, and §3.3).
-2. ~~`sm3/SM3_DESIGN.md` §6, from this file and what was
+2. ~~`STATISTICS.md` §9, from this file and what was
    measured, with the format of §3.6 written out, and with
    §7.1's choice made on purpose.~~ **Done**: the stack
    analyzes (§6.1 there), and §6.9 there has steps 3 to 7
    with what it settled.
-Steps 3 to 7 are built, as `sm3/SM3_DESIGN.md` §6.9 records.
+Steps 3 to 7 are built, as `STATISTICS.md` §9.9 records.
 
 3. The sm1 primitives of §4, with sm2 and sm3 over them.
    → verify: a table's and an index's size follow the rows
@@ -954,11 +966,421 @@ Steps 3 to 7 are built, as `sm3/SM3_DESIGN.md` §6.9 records.
    → verify: a `rel` script analyzes a table with a partial
    and an expression index and prints what it expects.
 8. ~~A table with a primary key sampled by key ranges~~
-   **Built** (`ROWKEY.md` §2.4): slots of its bytes, the row
+   **Built** (`ROWSTORE.md` §2.6): slots of its bytes, the row
    count per byte, correlation in key order; TABLESAMPLE the
    same. A table with a primary key has no `_id` limit, 0 in
-   its statistics, and grows by its bytes (`ROWKEY.md` §5,
+   its statistics, and grows by its bytes (`ROWSTORE.md` §2,
    step 4).
 
 The fork's own work in §4 is digres's, in `../dg/`, and built
-(`../dg/STATISTICS.md`, `../dg/WORKNOTE.md` steps 74 to 78).
+(`../dg/STATISTICS.md`, `../dg/WORKNOTE.md` steps 74 to 78), but
+for something to launch `ANALYZE`: nothing analyzes automatically
+(`../dg/STATISTICS.md` §4).
+
+---
+
+## 9. The design
+
+This section makes the choices the strategy leaves open, and
+writes out the format. All of it is built. The host's part, the
+planner's use of these statistics, is in `../dg/STATISTICS.md`.
+
+In brief: `tbl_analyze` samples a table by runs of `_id`s, or a
+table with a primary key by slots of its bytes in key order. It
+computes PostgreSQL's statistics from the sample with
+PostgreSQL's estimators. It writes them to catalog entries of
+kind `STATS`. A map beside the Catalog holds them in memory for
+the planner. Sizes, the `_id` limit and the probes are answered
+live and are not stored.
+
+### 9.1 The stack analyzes
+
+**Decision: sm3 samples and estimates, and digres does not
+implement the table access method's analyze callbacks**
+(`scan_analyze_next_block`, `scan_analyze_next_tuple`). §7.1
+gives that alternative.
+
+- **Half the callback route must go anyway.** Its results go to
+  `update_attstats`, which writes `pg_statistic`, and digres has
+  no `pg_statistic`. §9.6's storage is needed on either route.
+- **The sample's shape stays the stack's.** The measurements
+  turned on the run length and the sparse-table rule of §9.4.
+  Through the callbacks, PostgreSQL's block arithmetic would
+  decide them, against principle 2.
+- **sm3 is tested without a host** (principle 3). Each estimate
+  is checked against a full scan of generated data.
+- **The cost is a port.** `compute_scalar_stats` and its helpers
+  are copied and adapted into sm3 (§9.5). An upstream fix to them
+  is ported by hand, as every upstream fix is (`PART4.md` §10).
+
+### 9.2 Sizes, and the unflushed rows
+
+**Decision: a size is two numbers, never one.** sm1 answers, for
+a key range of a store:
+
+| Part | What it is | From |
+| --- | --- | --- |
+| `disk` | bytes in sorted files, compressed | RocksDB's `GetApproximateSizes`, files only |
+| `mem` | bytes in the memtables, uncompressed | sm1's own count of the writes under the relid (`sm1/src/memcount.h`) |
+
+sm2 asks this of a relid's range, and sm3 of the heap and of each
+index. The stack corrects neither part, and does not add them.
+
+- **Why not the sum.** §6 measured the sum at 7.2x the flushed
+  size for a table not yet flushed, and at 6.6x mid-burst. `disk`
+  alone answers 0 for the same table. Each part is true of what
+  it measures. Only the sum is wrong. So the stack reports the
+  parts (principle 2), and the host decides what a memtable byte
+  is worth.
+- **What the host makes of them.** Bytes for the planner are
+  `disk + mem × c`. `c` is the table's compression as last
+  recorded: its heap `disk` over live rows times average row
+  bytes, at most 1, and 1 when nothing was on disk at the last
+  analyze (`smstore.c`). So a table never flushed costs its
+  uncompressed size, which it occupies. A flushed table's rows in
+  memory cost its own compression.
+- **`mem` is counted exactly for a relid** (§3.1). A range that
+  is not whole relids, as the bisection of §9.4 asks, still gets
+  RocksDB's sample.
+- **A chained heap has more than one kind of key.** `tbl_size`
+  adds `sm1::chain_approxsize`'s file bytes, older versions
+  included, to `disk`. `mem` already counts them under the row's
+  relid.
+- **An index's size follows its kind.** A primary key adds 0,
+  because its entries are the rows. A B-tree Index gives its
+  pages' bytes (`sm2::idx_tree_size`).
+
+### 9.3 The `_id` limit and the probes
+
+- **`N`, the `_id` limit**, is the last value the table's `_id`
+  sequence `sm3.id.<oid>` handed out, read without drawing one
+  (`sm1::lastseq`). It is 0 for a table that never had a row, and
+  `_id`s start at 1. A value lost to a crash, or drawn by a
+  transaction that aborted, is an `_id` with no row. That costs
+  the row count nothing, because §9.4 measures the live fraction
+  over the same `1..N` it multiplies, gaps included. A table with
+  a primary key draws no `_id`: its `N` is 0, its sample is by
+  its bytes, and digres grows its row count with its bytes.
+- **Probes** are §3.5's count: the sorted runs a point lookup of
+  the store may visit. The heap and the indexes share it, because
+  it is the store's. Level 0's files overlap, so each file is a
+  probe. A lower level is one probe.
+
+Sizes, `N` and probes are answered live on an open table and are
+never stored. So they need no analyze.
+
+### 9.4 The sample
+
+`tbl_analyze(table, target)` wants `300 × target` rows, 30,000 at
+PostgreSQL's default of 100. It reads through forward cursors on
+the rows, in the caller's transaction, at its snapshot. The code
+is `sm3/src/analyze/sample.cc`.
+
+A table without a primary key is sampled so:
+
+1. **Read a pilot.** Read `min(300, N)` single `_id`s, drawn
+   uniformly from `1..N`, through a cursor of its own. It gives a
+   live fraction `f0` and an average row bytes `w0`. It costs
+   some 4 ms on ten million `_id`s (§6, experiment 4), and is not
+   part of the sample.
+2. **Set the run length.** `B = max(1, 8192 / w0)`, at most `N`:
+   the rows of an 8 KB page at that width. This matches the
+   clustering of PostgreSQL's own sampler (§3.3), so a distinct
+   count here is biased as PostgreSQL's is and no more. `w0` is
+   the stored row as sm2 encodes it, uncompressed, as a heap page
+   holds it.
+3. **Set the run count.** `k = ⌈1.2 × 300 × target / (B × f0)⌉`.
+   Dividing by `f0` is the sparse-table rule: a table with nine
+   `_id`s in ten dead gets ten times the runs. The 1.2 is margin
+   for the pilot's error. A pilot that finds nothing live counts
+   as one live row in one more than it read, with `B = 1`.
+4. **Apply the budget.** The runs cover at most `10 × 300 ×
+   target` `_id`s, 300,000 at the default target, whatever the
+   table's size. So `k` is capped at that over `B`. Nothing walks
+   a larger table. A table emptied by deletes gives fewer rows
+   than wanted, and the estimators take any sample size. A table
+   no larger than the budget is read whole, by the runs taking
+   every slot, even when fewer runs would give the rows wanted.
+   The reservoir then draws from every row, so a column that
+   follows the `_id`s is not estimated from a few runs.
+   PostgreSQL reads a table under its sample whole too. The row
+   count is then exact.
+5. **Read the runs.** `1..N` is cut into `⌈N / B⌉` aligned slots
+   of `B` `_id`s. **Floyd's algorithm** draws `k` of them without
+   replacement and looks at no other slot, so the work is `O(k
+   log k)` whatever `N` is. They are read in ascending order
+   through one forward cursor, moved to each slot's first `_id`
+   with `scan_seek`. A row the cursor returns past a slot is held
+   for the next, so every seek is forward (principle 6).
+6. **Draw more if short.** If the runs give fewer rows than
+   wanted, draw more slots among those not read, as many as the
+   live fraction so far says, while the budget lasts. Each round
+   uses a cursor of its own.
+7. **Count the rows.** The row count is the live rows found over
+   the `_id`s the runs covered, times `N`.
+8. **Keep a reservoir.** Algorithm R keeps a uniform `300 ×
+   target` of the rows found, each with its `_id`. Every row in a
+   run is read anyway, so Vitter's algorithm Z, which saves
+   random draws by skipping rows, would save nothing.
+9. **Sort.** The kept rows go back into `_id` order, for the
+   correlation of §9.5.
+
+A table with a primary key is sampled so:
+
+1. **Cut it into slots** of 8 KB of its bytes, `tbl_size`'s disk
+   and memtables together. A slot's rows are those between the
+   keys at its two ends, `tbl_keys_at`: positions found by
+   bisecting the key range with sm1's size estimates, to a data
+   block or so, with no row read.
+2. **Read a pilot** of up to 30 slots, drawn by Floyd's
+   algorithm. It gives the rows a slot.
+3. **Apply the budget**: the same `10 × 300 × target` rows, in
+   slots. A table the budget covers is read whole, by one scan
+   that keeps every row in the reservoir's draw, and counted
+   exactly.
+4. **Draw more slots** while the rows fall short and the budget
+   lasts, as for runs. They are read through one forward cursor
+   in key order, which seeks each slot's start.
+5. **Count the rows.** The row count is the rows read per byte
+   the slots span, by the same estimate, times the table's bytes.
+   With no byte spanned, it is the rows a slot, times the slots.
+   It is good to a few percent in sorted files, and to an order
+   of magnitude in memtables.
+6. **Sort.** The kept rows go into key order, the rows' own, for
+   the correlation of §9.5.
+
+**The rows read are the caller's snapshot.** The cursors see what
+the caller's transaction sees, its own writes among them. So a
+table loaded and analyzed in one transaction is analyzed loaded.
+
+**Under SERIALIZABLE the runs leave SIREADs**, as any scan does
+(XCTMGR.md), and a writer into a run makes an rw-edge to the
+analyze. PostgreSQL's `ANALYZE` takes no predicate locks. This is
+accepted, because only the host launches an analyze, and the host
+can run it at READ COMMITTED. If an analyze inside a serializable
+transaction is wanted, the fix is a cursor that records no
+SIREAD: a new sm1 flag, justified because statistics are
+approximate (principle 4).
+
+### 9.5 The estimators
+
+**They are ported from PostgreSQL 18.6's `analyze.c`**, not
+reinvented, so the numbers mean what the selectivity code assumes
+(§3.4). The code is `sm3/src/analyze/estimate.cc`. For each
+column, and for each expression of an expression index, the
+routine is `compute_scalar_stats`, with `analyze_mcv_list`. It
+gives all six statistics.
+
+It is the only routine ported. Every type sm2 has today has an
+order, a key encoding. So `compute_distinct_stats`, for equality
+without order, and `compute_trivial_stats`, for neither, have no
+case yet. Each comes with the first type that needs it. The
+analyze routines for arrays, ranges and tsvectors are not ported
+either, and §3.4 gives the cost.
+
+**Equality and order are the column's key encoding**, compared
+with `memcmp`. `cmp` takes no collation, and `key_encode` does.
+Its bytes order as the type does under the collation, and are
+equal where PostgreSQL calls the values equal, a
+non-deterministic collation included (`sm2/TYPE.md` §3). So each
+sampled value is encoded once, and the port sorts and groups the
+keys.
+
+- **Sort by key, then by place in the sample.** Equal values come
+  together, so PostgreSQL's `tupnoLink` is not needed.
+- **The catalog keeps the datum, not its key.** A common value or
+  a histogram bound is a datum, since a key under a
+  non-deterministic collation keeps no datum. Within an equal
+  group, the first datum seen is kept.
+- **A datum out of line is never fetched.** It counts as too wide
+  to sort, and as wide as its TOAST pointer says, plus 4.
+
+**These carry over unchanged:**
+
+- the distinct estimator, Haas and Stokes' `Duj1`, and the rule
+  that stores a distinct count as a negated multiplier of total
+  rows above 10% of them;
+- which values are common enough to list;
+- histogram bounds over the rest, target + 1 of them;
+- the correlation of each column's order with the sample's order;
+- `WIDTH_THRESHOLD`: a value over 1 KB counts as distinct and
+  stays out of the lists.
+
+A column's own statistics target is not here: one target a call.
+
+**Expressions and predicates.** For an index with an eval, each
+sampled row goes to the catalog's evaluator (`index_eval_fn`), on
+the analyzing thread. What the evaluator reads is fetched first,
+if out of line. The evaluator gives whether the row belongs to
+the index, and each expression's value. An expression's values
+get the six statistics. For a partial index, the expressions are
+over the rows that belong, and the fraction of sampled rows that
+belong is recorded beside them. An index's entries are then
+estimated, not counted: live rows times that fraction. With no
+evaluator in the catalog, the analyze fails with
+`SM_ERR_INVALID`.
+
+### 9.6 What is recorded
+
+**A table has one catalog entry of kind `STATS`, value 10, and
+one more for each statistic.** They are outside the `TABLE` entry
+and its DDL (§3.6). The key after the kind is (table oid, index
+oid, n):
+
+| Key | Entry |
+| --- | --- |
+| (t, 0, 0) | the table's own |
+| (t, 0, attnum + 1) | a column's, the attnum 0-based |
+| (t, index oid, place + 1) | an index expression's |
+
+So a table's entries are together, its own first. Each value is
+parts. A part is an sm2 tuple under a fixed schema, with its
+length as a varint, as in every catalog value (CATALOG.md):
+
+```
+the table's entry     = table | index × nindex
+a statistic's entry   = statistic | mcv × nmcv | bound × nbound
+```
+
+| Part | Fields |
+| --- | --- |
+| table | format `int4`, target `int4`, run length `int4`, rows sampled `int8`, `_id` limit `int8`, live rows `float8`, heap disk `int8`, heap mem `int8`, average row bytes `int4`, nindex `int4`, nstat `int4` |
+| index | index oid `int8`, disk `int8`, mem `int8`, entries `float8`, fraction that belongs `float4` |
+| statistic | index oid `int8` or null, position `int4`, null fraction `float4`, width `int4`, distinct `float4`, correlation `float4` or null, nmcv `int4`, nbound `int4` |
+| mcv | value, frequency `float4` |
+| bound | value |
+
+- **Why an entry a statistic, not one a table.** An sm1 value is
+  at most 64 MB (`sm1::max_datalen`). A statistic keeps up to
+  `target` common values and `target + 1` bounds of up to 1 KB
+  each: some 200 KB a column at the default target, and 20 MB at
+  the largest, 10,000. One entry a table would not hold a wide
+  table, nor three columns at that target, and its analyze would
+  fail. An entry a statistic holds the largest with room to
+  spare, and lets one column be analyzed alone later.
+- **A statistic is a column's or an expression's.** A null index
+  oid makes `position` the column's attnum. An index oid makes it
+  the expression's place among that index's key columns. The two
+  share one schema, because they carry the same six things.
+- **A value has the type of what it describes**, in sm2's
+  encoding of it: its bytes as `sm2::datum_bytes` gives them. So
+  the schema of an `mcv` or a `bound` part is built from the
+  definition at read time. A value is read by the definition it
+  was written under. That holds because `ALTER COLUMN TYPE`
+  erases the column's entry (§9.7), and an index's expressions
+  are fixed when it is made.
+- **Sizes are kept as recorded**, `disk` and `mem` apart. So the
+  host has the compression of §9.2 and the growth since (§3.2)
+  from one entry.
+- **`run length`** is `B`, or the rows a slot in a table with a
+  primary key. **`rows sampled`** is the rows the reservoir kept.
+- **The format field** starts at 1. The kind's value is on disk
+  and frozen with the rest. The field versions the parts'
+  schemas.
+
+The format is declared in `include/sm_stats.h`, and `sm3.h` names
+it `stats_t`. sm3 reads and writes it: unlike an index's eval, it
+is no blob to sm3. The codec is in `sm3/src/catalog/blob.cc`, and
+the puts and the load in `sm3/src/catalog/ddl.cc`.
+
+### 9.7 Writing, reading, and DDL
+
+**Statistics are written in the caller's transaction.** So they
+commit, roll back and survive a crash with it, with no undo of
+sm3's own.
+
+- **Locks.** `tbl_analyze` runs on a table opened IS, the
+  table-oid lock of a reader. It blocks no reader, no writer and
+  no index build, and DDL waits for it, so the definition does
+  not change while it samples. Before sampling, it takes
+  `catkv_lock` X on the table's own `STATS` key. So two analyzes
+  of one table queue, rather than both sampling and one losing at
+  commit. At REPEATABLE READ and above the second then fails on
+  the first's newer version, which is retryable. The host's
+  analyze runs at READ COMMITTED.
+- **`tbl_tryanalyze` does not wait.** It returns 1, having
+  sampled and recorded nothing, if another transaction's analyze
+  holds that lock. SQL's `ANALYZE (SKIP_LOCKED)` asks so.
+- **A temporary table has no statistics yet.** The analyze fails
+  with `SM_ERR_INVALID`, and `cat_get_stats` gives none.
+- **Publishing is after commit.** The commit swaps the map entry,
+  from table oid to `std::shared_ptr<const stats_t>` (§3.6).
+  Until then a planner reads the old ones, a stale read, which is
+  allowed. A crash between the two loses nothing, because the map
+  is rebuilt from store 0.
+- **Reading is lazy, and never through sm1 at plan time.**
+  `cat_get_stats` gives the transaction's own, then the map's.
+  Only the first call for a table reads store 0, in a READ
+  COMMITTED transaction of the Catalog's own, so the caller's
+  takes no lock and records no SIREAD (§3.6). The map remembers a
+  table never analyzed as such. What is loaded under a definition
+  the transaction changed stays out of the map, as that
+  definition may abort.
+- **A table never analyzed** has no entry. The host plans it as
+  PostgreSQL plans `reltuples` -1.
+
+**What DDL does.** A stale statistic is a worse plan, and never a
+wrong answer:
+
+| DDL | Its statistics |
+| --- | --- |
+| `DROP TABLE` | every entry it may have is erased with the table's others, and its map entry dropped after commit |
+| `DROP INDEX`, `DROP COLUMN` | the index's expressions' entries, or the column's, are erased with it; the table's own entry stays, and a reader skips its part for an index gone |
+| `ADD COLUMN`, `CREATE INDEX` | none until the next analyze; the planner's defaults meanwhile |
+| `ALTER COLUMN TYPE` | the column's entries are erased; the table's in memory are forgotten at commit and loaded again, and its transaction reads none |
+| `TRUNCATE` | left, as PostgreSQL leaves `pg_statistic` |
+
+Dropping a column or an index erases only that one's entries,
+never the table's own, which `tbl_analyze` locks. DDL holds the
+table-oid lock X, so no analyze writes meanwhile. An analyze
+writes each entry the definition allows, or erases it if it has
+no statistic for it. It reads each as of the newest commit under
+its lock, so it needs no scan. `DROP TABLE` erases them the same
+way. An attnum is never reused, nor is an index oid (CATALOG.md).
+So an index part left behind is never read as another's.
+
+**After a `TRUNCATE`.** §3.6 asks for a choice of floor on rows.
+**Decision: a heap of 0 bytes, `disk` and `mem` both, whose
+sample reads no row, is not analyzed**, and keeps the statistics
+it had. The host plans it as PostgreSQL plans a truncated table,
+`reltuples` -1 and its ten-page guess, not as empty. Only a new
+store is 0 bytes: a table emptied by `DELETE` keeps its
+tombstones until compaction, and is planned from its statistics.
+The bytes in sorted files are an estimate, so mid-flush a heap
+with rows may read 0. The sample then has the last word: rows
+read are recorded, whatever the bytes. This needs nothing of the
+truncate itself.
+
+### 9.8 The calls
+
+| Level | Call | Gives |
+| --- | --- | --- |
+| sm1 | `approxsize(store, lo, hi, disk, mem)` | §9.2's two parts for a key range |
+| sm1 | `lastseq(name, out)` | a sequence's last value, drawing none |
+| sm1 | `probes(store, out)` | §9.3's probe count |
+| sm2 | `relid_size(session, store, relid, disk, mem, old)`, the same by a rel's relid; `idx_tree_size` for a tree | §9.2 |
+| sm2, sm3 | `rel_keys_at`, `rel_range_size`, `rel_scan_seek_key`; `tbl_keys_at`, `tbl_range_size`, `tbl_scan_seek_key` | §9.4's slots: the keys at fractions of a table's bytes, a range's bytes, a seek forward by key |
+| sm3 | `tbl_size`, `tbl_idx_size`, `tbl_id_limit`, `tbl_probes` | live, on an open table |
+| sm3 | `tbl_analyze(table, target)`, `tbl_tryanalyze` | §9.4 to §9.7 |
+| sm3 | `cat_put_stats(session, table oid, stats)` | records a `stats_t` in the session's transaction, published at its commit |
+| sm3 | `cat_get_stats(session, table oid, out)` | §9.7's read; null if never analyzed |
+| top | `sm_tbl_analyze`, `sm_tbl_tryanalyze`, `sm_tbl_stats` | the same, in `include/sm.h`; `sm_tbl_stats` hands out `cat_get_stats`'s object itself, `stats_t` being the root's `sm_stats_t` |
+| top | `sm_tbl_size`, `sm_tbl_idx_size`, `sm_tbl_rowno_limit`, `sm_tbl_probes` | the four live calls |
+| top | `sm_tbl_keys_at`, `sm_rel_scan_seek_key` | for digres's TABLESAMPLE |
+| top | `sm_datum_of_bytes` | a kept value as a datum |
+| `rel` | `analyze`, `stats` | testing |
+
+A statistic's `position` is a column's attnum 0-based, as sm3's
+positions are everywhere.
+
+### 9.9 Tests
+
+Paths are relative to each level.
+
+| Test | What it proves |
+| --- | --- |
+| `sm1/test/test_stats.cc` | `disk` and `mem` follow a load before and after a flush; probes rise with level-0 files and fall after compaction |
+| `sm3/test/test_sample.cc` | Floyd's draws; the row count against a full count, dense and sparse; a small table read whole by its runs; an emptied table read no further than the budget; a table with a primary key sampled by slots |
+| `sm3/test/test_estimate.cc` | each statistic against known truth on uniform, skewed, clustered and mostly-null data; text under a non-deterministic collation groups as it compares; `tbl_analyze` end to end, with an evaluator |
+| `sm3/test/test_stats.cc` | statistics survive a restart; an aborted analyze leaves the old; a planner holding one is unaffected by the next publish; an entry is loaded on first use and not at startup; §9.7's DDL table |
+| `rel/test/test_stats.rel` | a script analyzes a table with a partial and an expression index, and prints what it expects |

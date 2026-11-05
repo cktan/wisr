@@ -1,7 +1,7 @@
 /*
  * test_version.cc -- the version codec, the wisr.store.v2
- * comparator and its prefix extractor (SM1_DESIGN.md §3.1,
- * ../VCHAIN.md §2).
+ * comparator and its prefix extractor (../DBMGR.md §6.2,
+ * ../ROWSTORE.md §3.2).
  */
 
 #include "doctest.h"

@@ -1,6 +1,6 @@
 /*
  * page.cc -- a B+tree page's bytes, laid out and read where they lie
- * (../BTREE.md §3), and a decoded page's insert and split.
+ * (../BTREEINDEX.md §4), and a decoded page's insert and split.
  *
  *   header = level (1B) | flags (1B) | max (2B) | top (2B) | version (8B)
  *          | prev (8B) | next (8B) | high key's length (2B) | high key
@@ -56,6 +56,19 @@ bool key_less(const std::pair<std::string, std::string> &e,
 
 /* The bytes n entries' slots leave unused. */
 size_t unused_slots(size_t n) { return 2 * (page_slots(n) - n); }
+
+/*
+ * Set page's page_all_visible by its entries: a leaf is all visible if
+ * no entry on it is in doubt (../BTREEINDEX.md §9). An inner page never is.
+ */
+void set_all_visible(page_t &page) {
+  bool set = 0 == page.level;
+  for (size_t i = 0; set && i < page.entries.size(); i++) {
+    set = !entry_in_doubt(page.entries[i].second);
+  }
+  page.flags = static_cast<uint8_t>(set ? page.flags | page_all_visible
+                                        : page.flags & ~page_all_visible);
+}
 
 } // namespace
 
@@ -179,6 +192,26 @@ int page_insert_bytes(const page_view_t &v, std::string_view key,
   return 0;
 }
 
+/* Mark an entry in doubt in a page's bytes; see page.h. */
+bool page_mark_in_doubt(const page_view_t &v, size_t i, std::string &out) {
+  std::string_view value = i < v.count() ? v.value(i) : std::string_view();
+  bool mark = !value.empty() && !entry_in_doubt(value);
+  if (!mark && 0 == (v.flags() & page_all_visible)) {
+    return false;
+  }
+  std::string_view old = v.bytes();
+  out.assign(old);
+  char *p = out.data();
+  p[1] = static_cast<char>(v.flags() & ~page_all_visible);
+  for (size_t b = 0; b < 8; b++) {
+    p[6 + b] = static_cast<char>(((v.version() + 1) >> (8 * b)) & 0xFF);
+  }
+  if (mark) {
+    p[value.data() - old.data()] |= static_cast<char>(entry_indoubt);
+  }
+  return true;
+}
+
 /* Insert an entry into a full page and split it; see page.h. */
 void page_split(page_t &page, page_t &right, std::string_view key,
                 std::string_view value, size_t limit) {
@@ -223,9 +256,10 @@ void page_split(page_t &page, page_t &right, std::string_view key,
                        std::make_move_iterator(page.entries.end()));
   page.entries.resize(at);
   page.flags |= page_has_high;
-  page.flags &= static_cast<uint8_t>(~page_all_visible);
   page.high = right.entries.front().first;
   page.next = 0;
+  set_all_visible(page);
+  set_all_visible(right);
 }
 
 /* Check bytes, a page's, and view them; see page.h. */

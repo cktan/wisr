@@ -1,5 +1,5 @@
 # Verify a cursor over a tree, whose rows are read in batches through
-# one kept iterator (../sm/BATCHREAD.md section 2.1), gives the rows
+# one kept iterator (../sm/ROWSTORE.md section 7.2), gives the rows
 # PostgreSQL's cursor gives, across statements, across a rollback to
 # a savepoint, which lets go of the iterator, and across the
 # transaction's own update, which a cursor opened before it does not

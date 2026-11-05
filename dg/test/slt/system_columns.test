@@ -1,7 +1,7 @@
 # Verify the system columns a query can name in digres: _id, a row's key
 # in sm in a table without a primary key, and tableoid; and that
 # PostgreSQL's ctid, xmin, xmax, cmin and cmax are columns no relation
-# has (../sm/ROWKEY.md section 3.1).
+# has (../sm/ROWSTORE.md section 10.1).
 # 1. Make a table of three rows, with no primary key.
 # 2. Read each row's _id, plain and qualified: 1 to 3, an int8.
 # 3. Find one row by its _id.

@@ -1,5 +1,5 @@
 /*
- * test_toast.cc -- TOAST (SM2_DESIGN.md §4.2): a row's long datums
+ * test_toast.cc -- TOAST (../TOAST.md §2): a row's long datums
  * out of line, in the table's own store, under the row's
  * transaction.
  */
@@ -201,6 +201,43 @@ TEST_CASE("a long datum is moved out of line, and read back") {
   REQUIRE(sm1::commit(t) == 0);
   sm2::rel_close(rel);
   sm2::rel_close(other);
+}
+
+TEST_CASE("a settled read of a datum a writer erased is no corruption") {
+  // Verify toast_fetch_settled reads a datum by settled reads, and says
+  // SM_ERR_NOTFOUND once it is erased (../BTREEINDEX.md §9).
+  // 1. Insert a row with a datum out of line, and keep its pointer.
+  // 2. A settled fetch gives the bytes, with no transaction.
+  // 3. Delete the row in a transaction left open: its chunks are not
+  //    settled, and the fetch says SM_ERR_NOTFOUND, not SM_ERR_CORRUPT.
+  // 4. Commit: the chunks are gone, and it says the same.
+  db_t db;
+  sm1::session_t *s = db.open();
+  sm1::session_t *c = db.open();
+  sm1::set_no_transaction(c);
+  sm2::rel_t *rel = open_rel(db, s);
+  sm2::rel_t *cleaner = open_rel(db, c);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  std::string big = text_of(20000);
+  uint64_t id = insert(rel, {1, big, "short"});
+  std::string ptr = *held(read(rel, id), 1);
+  REQUIRE(sm2::varlena_is_toast(ptr));
+  REQUIRE(sm1::commit(s) == 0);
+
+  std::string out;
+  REQUIRE_MESSAGE(sm2::toast_fetch_settled(cleaner, ptr, out) == 0,
+                  sm1::errmsg());
+  CHECK(big == out);
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE_MESSAGE(sm2::rel_delete(rel, sm2::id_key(id)) == 0, sm1::errmsg());
+  CHECK(-1 == sm2::toast_fetch_settled(cleaner, ptr, out));
+  CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+  REQUIRE(sm1::commit(s) == 0);
+  CHECK(-1 == sm2::toast_fetch_settled(cleaner, ptr, out));
+  CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+  sm2::rel_close(cleaner);
+  sm2::rel_close(rel);
 }
 
 TEST_CASE("a pointer is read by its store alone, with no rel") {
@@ -590,7 +627,7 @@ TEST_CASE("a snapshot reads the datum it saw, and a later one finds it gone") {
 
 TEST_CASE("an update sm1 refuses writes no chunk") {
   // Verify the row is written before its chunks (SM2_DESIGN.md
-  // §4.2), so SM_ERR_UPDATED leaves nothing to roll back.
+  // ../TOAST.md §2), so SM_ERR_UPDATED leaves nothing to roll back.
   // 1. A short row is committed. Session A begins at READ COMMITTED
   //    and reads it; session B updates it and commits.
   // 2. A's update to a long datum fails with SM_ERR_UPDATED, and A

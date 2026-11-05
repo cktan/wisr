@@ -1,5 +1,5 @@
 /*
- * table.cc -- an open table and its writes (SM3_DESIGN.md §3): the
+ * table.cc -- an open table and its writes (../INDEXBUILD.md §2): the
  * row's write, then each index the write changes, with the old
  * entries computed from the image the row's write hands back. A
  * row is named by its _id, and found at its key, its primary key
@@ -40,6 +40,7 @@ struct sm3::table_t {
   bool writable;                          /* the lock covers intent_exclusive */
   bool exclusive;                         /* the lock is exclusive */
   bool fresh;                             /* made by this transaction */
+  bool settled = false; /* the cleaner's: no transaction, no lock */
   sm2::rel_t *rel = nullptr;
   std::vector<sm2::index_t *> indexes; /* one per def->indexes, in order */
   /*
@@ -136,7 +137,7 @@ int need_writable(const sm3::table_t *t) {
 /*
  * Fail with SM_ERR_NOTNULL if the row of t has a NULL in a column
  * declared NOT NULL: the one constraint sm3 enforces, before the
- * row is written, so nothing is half done (SM3_DESIGN.md §3).
+ * row is written, so nothing is half done (../INDEXBUILD.md §2).
  */
 int need_not_null(const sm3::table_t *t, std::span<const bool> isnull) {
   const std::vector<sm3::column_def_t> &cols = t->def->columns;
@@ -290,7 +291,7 @@ int ask_evaluator(const sm3::index_eval_fn &eval, const sm3::table_def_t &def,
  * Index i's entry for a row of values r. A plain key column is
  * read from r; whether the row belongs, and each key column that
  * is an expression, are the evaluator's, which is shown r
- * (SM3_DESIGN.md §3).
+ * (../INDEXBUILD.md §2).
  */
 int make_entry(const sm3::table_t *t, size_t i, const vals_t &r, entry_t &e) {
   const sm3::index_def_t &x = t->def->indexes[i];
@@ -418,7 +419,7 @@ int add_entry(sm3::table_t *t, size_t i, const entry_t &e, const vals_t &r,
 /*
  * Remove index i's entry e for the row with key row.
  * While the index is pending, an entry that is not there is no
- * error: the build has not reached the row (SM3_DESIGN.md §3).
+ * error: the build has not reached the row (../INDEXBUILD.md §2).
  */
 int remove_entry(sm3::table_t *t, size_t i, const entry_t &e,
                  std::string_view row) {
@@ -443,7 +444,9 @@ int fetch_cols(sm3::table_t *t, image_t &row,
       continue;
     }
     std::string value;
-    if (sm2::toast_fetch(t->rel, pointer_of(row.row(), att), value) != 0) {
+    std::string_view ptr = pointer_of(row.row(), att);
+    if ((t->settled ? sm2::toast_fetch_settled(t->rel, ptr, value)
+                    : sm2::toast_fetch(t->rel, ptr, value)) != 0) {
       return -1;
     }
     row.own.push_back(sm2::make_varlena(value));
@@ -456,7 +459,7 @@ int fetch_cols(sm3::table_t *t, image_t &row,
  * Fetch what index x needs of row: its key columns, whose values
  * make the key; its INCLUDE columns, so that an entry never holds
  * a pointer; and the columns its evaluator reads, which is shown
- * values (SM3_DESIGN.md §3).
+ * values (../INDEXBUILD.md §2).
  */
 int fetch_for(sm3::table_t *t, const sm3::index_def_t &x, image_t &row) {
   return fetch_cols(t, row, x.key_attnums) != 0 ||
@@ -503,6 +506,12 @@ int open_rels(table_t *table) {
                                           x.unique, *x.layout, pk != nullptr,
                                           ix, x.tree)) != 0) {
       return -1;
+    }
+    // A leaf that needs cleaning is queued by whoever finds it. A
+    // temporary table's cannot be: the cleaner cannot read its rows.
+    cleaner_t *cleaner = table->session->cat->cleaner.get();
+    if (nullptr != cleaner && x.tree && nsp_temp != def.nspoid) {
+      sm2::idx_set_leaf_note(ix, cleaner_note, cleaner);
     }
     table->indexes.push_back(ix);
   }
@@ -629,7 +638,7 @@ int insert_row(table_t *table, std::span<const sm2::datum_t> values,
 
 /*
  * The key of a keyless table's row with _id id, its _id encoded
- * (../ROWKEY.md §1), into key; a table with a primary key names its
+ * (../ROWSTORE.md §2.1), into key; a table with a primary key names its
  * row by the key's values, not by _id: SM_ERR_INVALID.
  */
 int id_key(table_t *t, uint64_t id, std::string &key) {
@@ -919,7 +928,7 @@ static int update_row(table_t *table, uint64_t id, std::string_view key,
   // A row whose primary key changes moves, and every entry of it,
   // naming it by its key, moves with it (../CLUSTER.md §4). A row
   // a concurrent transaction moved is SM_ERR_MOVED, not followed
-  // (../ROWKEY.md §2.3).
+  // (../ROWSTORE.md §2.5).
   std::string_view image;
   std::string at;
   if (0 != sm2::rel_update(table->rel, key, id, values, isnull, p->raw, image,
@@ -1395,7 +1404,7 @@ int tbl_trylock(table_t *table, uint64_t id, sm1::lockmode_t mode) {
 /*
  * The row key names: its key, encoded, into k, and its _id into id,
  * a keyless table's from the key, 0 for a keyed row, which has none
- * (../ROWKEY.md §2.1). Nothing is read.
+ * (../ROWSTORE.md §2.2). Nothing is read.
  */
 static int named(table_t *table, const row_key_t &key, std::string &k,
                  uint64_t &id) {
@@ -1593,7 +1602,7 @@ int tbl_scan_rows(table_t *table, scan_t *&out) {
 /*
  * Whether the row tuple, at key row, still has the tree entry key in
  * the table's index i: its entry, made of the row as a write would
- * make it, is key, and the row is in the index (../BTREE.md §4).
+ * make it, is key, and the row is in the index (../BTREEINDEX.md §5).
  * 1, 0, or -1 on error.
  */
 static int still_has(table_t *t, size_t i, std::string_view tuple,
@@ -1673,8 +1682,8 @@ constexpr size_t tree_batch_max = 64;
 
 /*
  * Below this, the absolute correlation of a tree's leading key with
- * the rows' order says its rows are scattered (../../BATCHREAD.md
- * §2.1).
+ * the rows' order says its rows are scattered (../ROWSTORE.md
+ * ../ROWSTORE.md §7.2).
  */
 constexpr float tree_scattered_below = 0.5f;
 
@@ -1708,7 +1717,7 @@ static bool tree_scattered(table_t *t, size_t i) {
 /*
  * Read a tree's cursor's next entries, scan->batch of them or what is
  * left, and their rows at the transaction's snapshot, in one call
- * (../../BATCHREAD.md); the batch doubles for the next.
+ * (../ROWSTORE.md); the batch doubles for the next.
  */
 static int tree_fill(scan_t *scan) {
   table_t *t = scan->table;
@@ -1777,7 +1786,7 @@ static int tree_fill(scan_t *scan) {
     scan->cuts[scan->n] = cut;
     // An index-only scan's entry on a leaf all visible is every
     // snapshot's: its row goes unread where the key gives its
-    // columns back (../BTREE.md §4.1).
+    // columns back (../BTREEINDEX.md §8).
     scan->unread[scan->n] = scan->entries_only && !cut &&
                             sm2::idx_scan_visible(scan->entries) &&
                             sm2::idx_decodable(t->indexes[scan->index]);
@@ -1888,7 +1897,7 @@ namespace {
 
 /*
  * Add a unique tree's entry e, of index i, for the row with key row
- * (../BTREE.md §6).
+ * (../BTREEINDEX.md §7).
  * 1. Judge each other entry of its key by its row's newest version,
  *    past the snapshot.
  * 2. A row committed, or this transaction's own, that still has the
@@ -1940,7 +1949,7 @@ int unique_tree_insert(sm3::table_t *t, size_t i, const entry_t &e,
 }
 
 /*
- * The row a unique tree's key e names (../BTREE.md §6), as idx_find
+ * The row a unique tree's key e names (../BTREEINDEX.md §7), as idx_find
  * and idx_find_latest give a unique index's: 0 with its _id and key
  * in row, 1 if no row has the key, -1.
  * 1. Return 1 for a key with a null column, which is no row's.
@@ -2238,15 +2247,79 @@ int tbl_probes(table_t *table, uint64_t &n) {
   return sm1::probes(table->session->sm1, table->def->storeid, n);
 }
 
+/*
+ * Judge index i's tree entry key by its row: 1 dead, the row settled
+ * and gone or of another key; 2 settled and live; 0 not settled; or
+ * -1 (../BTREEINDEX.md §9).
+ */
+static int judge_entry(table_t *table, size_t i, sm1::rawpin_t *pin,
+                       std::string_view row, std::string_view key) {
+  std::string_view tuple;
+  int r = sm2::rel_read_settled(table->rel, row, pin, tuple);
+  if (r != 0) {
+    return r < 0 ? -1 : r == 1 ? 1 : 0;
+  }
+  std::string k;
+  r = still_has(table, i, tuple, row, key, k);
+  return r < 0 ? -1 : r == 0 ? 1 : 2;
+}
+
+/*
+ * Clean a leaf with no transaction and no lock; see sm3.h.
+ * 1. Make the table's rel and indexes from def, which reads nothing.
+ * 2. Find the index by its relid. Gone, there is nothing to clean.
+ * 3. Clean the leaf. After each row is read, compare the catalog's
+ *    publishes with those noted before def was fetched. If they moved,
+ *    def may be stale for that row, so leave its entry in doubt. A
+ *    commit publishes before any later commit, so a row written under
+ *    a newer definition is read only after the count moved.
+ */
+int tbl_clean_leaf(session_t *session, std::shared_ptr<const table_def_t> def,
+                   uint64_t publishes, uint16_t relid, uint64_t pageid,
+                   bool &doubt) {
+  std::unique_ptr<table_t, void (*)(table_t *)> t(new table_t, tbl_close);
+  t->session = session;
+  t->def = std::move(def);
+  t->writable = false;
+  t->exclusive = false;
+  t->fresh = false;
+  t->settled = true;
+  load_states(t.get());
+  if (open_rels(t.get()) != 0) {
+    return -1;
+  }
+  const table_def_t &d = *t->def;
+  size_t i = 0;
+  while (i < d.indexes.size() &&
+         (d.indexes[i].relid != relid || !d.indexes[i].tree)) {
+    i++;
+  }
+  if (i == d.indexes.size()) {
+    return 1;
+  }
+  pin_t *p = pin_take(session);
+  defer { pin_put(p); };
+  size_t removed = 0;
+  return sm2::idx_clean_leaf(
+      t->indexes[i], pageid,
+      [&](std::string_view row, std::string_view key) {
+        int r = judge_entry(t.get(), i, p->raw, row, key);
+        sm1::unpin(p->raw);
+        return r > 0 && cat_publishes(session) != publishes ? 0 : r;
+      },
+      removed, doubt);
+}
+
 /* Compact the table's store into one sorted run. */
 int tbl_compact(table_t *table) {
   if (sm1::compact(table->session->sm1, table->def->storeid) != 0) {
     return -1;
   }
   // Each tree's dead entries go: an entry whose row, settled, is gone
-  // or has another key (../BTREE.md §7). One whose row a snapshot may
-  // still see otherwise stays, for a later vacuum. A leaf whose every
-  // entry left is settled is set all visible (§4.1).
+  // or has another key (../BTREEINDEX.md §9). One whose row a snapshot may
+  // still see otherwise stays, for a later vacuum. Only an entry in
+  // doubt is read, and a leaf with none left is set all visible
+  // (../BTREEINDEX.md §9).
   const table_def_t &def = *table->def;
   for (size_t i = 0; i < def.indexes.size(); i++) {
     if (!def.indexes[i].tree) {
@@ -2257,16 +2330,7 @@ int tbl_compact(table_t *table) {
     int rc = sm2::idx_vacuum(
         table->indexes[i],
         [&](std::string_view row, std::string_view key) {
-          std::string_view tuple;
-          int r = sm2::rel_read_settled(table->rel, row, p->raw, tuple);
-          if (r != 0) {
-            return r < 0 ? -1 : r == 1 ? 1 : 0;
-          }
-          std::string k;
-          r = still_has(table, i, tuple, row, key, k);
-          // Settled, and still the row's: one the leaf may be set all
-          // visible for (../BTREE.md §4.1).
-          return r < 0 ? -1 : r == 0 ? 1 : 2;
+          return judge_entry(table, i, p->raw, row, key);
         },
         removed);
     sm1::unpin(p->raw);
@@ -2332,7 +2396,7 @@ int tbl_index_backfill(table_t *table, uint64_t index, std::string_view from,
     } else {
       // Hold the row shared to the end of the batch: a writer
       // changes the row first, so it and the build never work on
-      // one row at once (SM3_DESIGN.md §3). A row moved since the
+      // one row at once (../INDEXBUILD.md §2). A row moved since the
       // scan is gone from its key; its mover made its entry.
       if (sm2::rel_lock(table->rel, row_key, sm1::SM_LOCKMODE_SH) != 0) {
         return -1;
@@ -2462,7 +2526,7 @@ static int convert_value(const table_t *to, const column_conv_t &conv,
  * store, and its entries in every index to maintains
  * (../CLUSTER.md §8): a keyless row keeps its _id, a keyed row has
  * none, and the rows of a table that lost its primary key draw
- * theirs in key order (../ROWKEY.md §2.4). With conv, each row's
+ * theirs in key order (../ROWSTORE.md §2.6). With conv, each row's
  * value of its column is the converter's.
  */
 static int copy_rows(table_t *from, table_t *to, const column_conv_t *conv) {
@@ -2537,7 +2601,7 @@ int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec,
                                         const sm2::collation_t *&out) {
     return session_collation(session, c, out);
   };
-  // Its rows chained, a temporary table's too (../VCHAIN.md §3).
+  // Its rows chained, a temporary table's too (../ROWSTORE.md §3.5).
   // The running statement's mark is moved past the store's making,
   // so the copy below may write it (sm1::stmt_advance()).
   const bool temp = rec.nspoid == nsp_temp;
@@ -2567,7 +2631,7 @@ int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec,
     return -1;
   }
   // The old store goes at commit, with the rows and entries in it,
-  // as a truncate's does (CATALOG_INMEM.md §2.2).
+  // as a truncate's does (../CATALOG.md §8).
   return sm1::rmstore(session->sm1, old_store);
 }
 

@@ -152,7 +152,7 @@ TEST_CASE("with no hook nothing is reported, and a hook can be replaced") {
 }
 
 TEST_CASE("recovery reports restored transactions and dropped orphans") {
-  // Verify §9.1's recovery events reach the hook.
+  // Verify ../DBMGR.md §9.1's recovery events reach the hook.
   // 1. Prepare "g-log"; create a store CF no catalog row
   //    names, as a crash inside sm1::mkstore would leave.
   // 2. Restart: the attach's recovery logs an INFO message naming

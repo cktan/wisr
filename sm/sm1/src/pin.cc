@@ -1,5 +1,5 @@
 /*
- * pin.cc -- raw pins (../ROW.md §2): a raw pin keeps the iterator
+ * pin.cc -- raw pins (../ROWSTORE.md §6.3): a raw pin keeps the iterator
  * that found a row, so the row is handed out without a copy, until
  * the pin is emptied. The caller owns each one; sm1 keeps no list
  * of them, and sm3 keeps the pool its clients' pins come from.

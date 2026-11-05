@@ -40,9 +40,6 @@ the wrapper through the `rel/` test suite.
 
 - `CODE.md` — the rules and practices for changing `sm/`:
   levels, errors, exceptions, names, tests
-- `LOCK.md` — what gets locked and how: the two mechanisms,
-  the lock subjects, and the scenarios that are easy to get
-  wrong
 - `GLOSSARY.md` — the words this stack uses, the ones that
   mean more than one thing first, and the identifiers side
   by side
@@ -61,24 +58,6 @@ the wrapper through the `rel/` test suite.
 - `sm1/SM1_DESIGN.md` — how level 1 works; the design of record
 - `sm1/API.md` — sm1's C++ API, call by call, in
   `namespace sm1`
-- `sm1/WRITELOCK.md` — writes that keep no row lock: the
-  uncommitted version stands for the lock, as in PostgreSQL
-- `sm1/COMMITCACHE.md` — the commit cache: what it holds,
-  the life of an entry, and that it starts empty after a
-  restart
-- `sm1/COMMITVISIBLE.md` — a commit returns once it is
-  visible, to any snapshot taken after; built
-- `sm1/STORECACHE.md` — a session's handles of the stores it
-  reads, kept so a read by key copies no shared counter; built
-- `sm1/WALPREALLOC.md` — RocksDB's log in files already their
-  size, so a commit's sync writes no journal entry; built
-- `sm1/SAVEPOINT.md` — a rollback to a savepoint that
-  deletes nothing: rolled-back writes marked dead by their
-  `seq`; designed, not built, and leaning towards not
-  building it
-- `sm1/SIREAD.md` — SSI's SIREAD locks and rw-edges, explained
-- `sm1/RCOMPACT.md` — whether compaction can run on another
-  machine; research, not built
 - `sm1/mvcc/MVCC.md` — the isolation rules, as a table of
   scenarios that are executed on every build
 - `sm1/mvcc/POSTGRES.md` — PostgreSQL's isolation test suite,
@@ -97,43 +76,10 @@ the wrapper through the `rel/` test suite.
 - `sm3/SM3_OBJECTIVE.md` — what level 3 is for
 - `sm3/SM3_DESIGN.md` — the catalog, index maintenance and
   builds, scans and statistics
-- `sm3/CATALOG_INMEM.md` — the catalog in memory: definitions,
-  a session's overlay, publishing, and the calls
-- `sm3/CATALOG_ONDISK.md` — the catalog on disk: its store, keys
-  and values
 - `rel/REL_DESIGN.md` and `rel/REL.md` — `rel`, the test
   driver over `include/sm.h`: its design and its verbs
 - `sm0/VFD.md` — virtual file descriptors, under one ceiling
   for the process
-- `STATISTICS.md` — the strategy for statistics: the stack
-  analyzes a table and records what is true of an LSM, and
-  the host fits that to PostgreSQL's planner
-- `BULKLOAD.md` — the design of a bulk load: one
-  transaction in one of three modes, mini-batch, batch and
-  file, the last writing sorted files that RocksDB ingests
-- `VIEW.md` — the design of views, which is built: sm3 keeps
-  a view's query and what it reads, and the host expands it
-- `FOREIGNKEY.md` — the design of foreign keys, which is
-  built: sm3 keeps them, and the host checks them
-- `CLUSTER.md` — a table clustered on its primary key, its
-  rows keyed by it, or by a hidden `_id` without one; built
-- `ROWKEY.md` — a row named by its key in sm and digres alike:
-  no `ctid`, and no `_id` in a table with a primary key; built
-- `VCHAIN.md` — a table row's newest version under its plain
-  key and the older ones chained behind it, in a chained
-  store's one column family, `chain.<storeid>`; built
-- `PIN.md` and `ROW.md` — a row read without a copy, as a pin,
-  and deformed only as far as it is read; built
-- `BATCHREAD.md` — rows read by key, many in one call, at
-  every level; built
-- `BTREE.md` — secondary indexes as B+trees of their own
-  pages; proposed, not built
-- `LOGICALDECODE.md` — a change feed for replication: a
-  change log committed with the data, drained in commit order
-  into files of `pgoutput` messages; proposed, not built
-- `TEMPTABLE.md` — the design of temporary tables, which is
-  built: their rows in one unlogged RocksDB instance of their
-  own, under the database's transactions, with no locks
 - `FEATURELIST.md` — the PostgreSQL subset wisr targets,
   decided feature by feature; not all of it is built
 - `PART4.md` — what it would take to put PostgreSQL on this
@@ -141,3 +87,39 @@ the wrapper through the `rel/` test suite.
 
 Paths inside a level's documents are relative to that level, so
 `src/db.cc` in `sm1/SM1_DESIGN.md` means `sm1/src/db.cc`.
+
+### The modules
+
+One document for each module, with its design and implementation.
+`GLOSSARY.md` holds the same names, with the code of each.
+
+- `DBMGR.md` — Database Manager: environments, databases, stores,
+  the WAL, recovery
+- `XCTMGR.md` — Transaction Manager: snapshots, commit,
+  savepoints, SSI, 2PC
+- `LOCKMGR.md` — Lock Manager: row and object locks, deadlocks,
+  write latches
+- `BUFMGR.md` — Buffer Manager: sm's buffer pool: frames, pins,
+  the clock
+- `GC.md` — Garbage Collector: the watermark, the compaction
+  filter, the `CF:txn` sweep
+- `ROWSTORE.md` — Row Store: row keys, versions, chains, the read
+  and write paths
+- `TOAST.md` — TOAST: a datum stored out of line
+- `LSMINDEX.md` — LSM Index: an index whose entries are sm1 keys
+- `BTREEINDEX.md` — B-tree Index: an index of its own pages, its
+  in-doubt bit, the cleaner
+- `INDEXBUILD.md` — Index Builder: concurrent index builds
+- `CATALOG.md` — Catalog: definitions in memory and on disk, DDL
+- `NAMESPACE.md` — Namespace: a schema, and name lookup
+- `SEQUENCE.md` — Sequence: counters and their leases
+- `TEMPTABLE.md` — Temporary Table: a table of one session
+- `VIEW.md` — View: a stored query's definition
+- `STATISTICS.md` — Statistics: what ANALYZE records
+- `BULKLOAD.md` — Bulk Load: loading an empty table from sorted
+  files
+- `CLUSTER.md` — Clustered Table: rows stored in primary-key
+  order
+- `FOREIGNKEY.md` — Foreign Key: a table's references to another
+- `LOGICALDECODE.md` — Logical Decoding: a design, not built
+

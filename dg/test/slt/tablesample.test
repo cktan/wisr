@@ -1,7 +1,7 @@
 # Verify that TABLESAMPLE reads a sample of a table in sm, as PostgreSQL's
 # reads one of a heap's pages: a table with a primary key's blocks slots of
 # its bytes in key order, of which SYSTEM reads only those it picks
-# (../../../sm/ROWKEY.md section 2.4), and BERNOULLI every row in blocks of
+# (../sm/ROWSTORE.md section 2.6), and BERNOULLI every row in blocks of
 # 256; a keyless table's a tid's, 256 rownos each (dg/WORKNOTE.md step 244).
 # 1. A table with a primary key of 10000 rows: BERNOULLI and SYSTEM at 100
 #    take every row, at 0 none.

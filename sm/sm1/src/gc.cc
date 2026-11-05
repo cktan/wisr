@@ -1,10 +1,10 @@
 /*
- * gc.cc -- garbage collection of dead versions (SM1_DESIGN.md §8.3):
+ * gc.cc -- garbage collection of dead versions (../GC.md §1):
  * gc_watermark, the compaction filter, tombstone purge, and the
  * removal of dropped stores' column families.
  *
  * The filter sees each store CF's versions during ordinary
- * compaction, newest first within a userkey, and applies §8.3's
+ * compaction, newest first within a userkey, and applies ../GC.md §1's
  * rules against the watermark taken when the compaction starts.
  * What it cannot do itself -- range-delete a purged key, drop a
  * column family -- it leaves to one worker thread per database.
@@ -55,7 +55,7 @@ public:
   const char *Name() const override { return "wisr.gc.v1"; }
 
   /*
-   * Apply §8.3 to one version: true drops it; false keeps it,
+   * Apply ../GC.md §1 to one version: true drops it; false keeps it,
    * with *new_value set when it gains a commit_ts stamp. On
    * any doubt -- an undecodable value, a failed status lookup
    * -- keep the version untouched.
@@ -63,12 +63,12 @@ public:
   bool Filter(int, const rocksdb::Slice &key, const rocksdb::Slice &value,
               std::string *new_value, bool *value_changed) const override {
     // A page is no version: it is the level above's, and kept as it
-    // is (../BTREE.md §7).
+    // is (../BTREEINDEX.md §9).
     if (!key.empty() && key[0] == key_class_page) {
       return false;
     }
-    // A chained key's versions have rules of their own (../VCHAIN.md
-    // §7).
+    // A chained key's versions have rules of their own (../ROWSTORE.md
+    // ../GC.md §4.2).
     if (!key.empty() && key[0] != key_class_versioned) {
       return filter_chained(key, value, key[0] == key_class_old, new_value,
                             value_changed);
@@ -145,7 +145,7 @@ public:
 private:
   /*
    * Judge a chained key's version, a current one or with old an old
-   * one (../VCHAIN.md §7): true drops it (RocksDB writes a delete
+   * one (../GC.md §4.2): true drops it (RocksDB writes a delete
    * over the key, so no older entry of it comes back); false keeps
    * it, with *new_value set when it gains a stamp.
    */
@@ -357,7 +357,7 @@ void purge_one(db_t *db, const db_t::purge_t &p) {
 }
 
 /*
- * The CF:txn sweep (§8.3), with gc_run_mu held: the records deleted
+ * The CF:txn sweep (../GC.md §1), with gc_run_mu held: the records deleted
  * when the sweep completes, 0 if it is pending, -1 if the pass failed
  * or could not be trusted.
  * 1. With no sweep pending: return 0 unless start is set.
@@ -395,7 +395,7 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
     // Build the pass's compaction options.
     rocksdb::CompactRangeOptions opt;
     // Reach the bottommost level explicitly rather than by the
-    // default that happens to cover a filtered CF (§8.3).
+    // default that happens to cover a filtered CF (../GC.md §1).
     opt.bottommost_level_compaction =
         rocksdb::BottommostLevelCompaction::kForce;
     // Keep automatic compactions from running alongside.
@@ -662,7 +662,7 @@ void gc_run_once(db_t *db) {
     db_drop_store_cf(db, storeid);
   }
 
-  // Free SSI nodes the watermark has passed (§7.1).
+  // Free SSI nodes the watermark has passed (../XCTMGR.md §7.2).
   ssi_cleanup(db);
 
   // Warn about snapshots holding back GC for too long.

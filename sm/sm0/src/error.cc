@@ -6,7 +6,7 @@
  *
  * The message is formatted eagerly, with std::format, straight
  * into a thread-local buffer: nothing is allocated, so the SSI
- * retry loops of sm1/SM1_DESIGN.md §12.1 stay cheap. Formatting
+ * retry loops of ../DBMGR.md §11 stay cheap. Formatting
  * lazily waits until a profile says it matters.
  */
 

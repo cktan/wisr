@@ -1,10 +1,10 @@
 /*
  * sample.cc -- the sample an analyze estimates from
- * (SM3_DESIGN.md §6.4): a pilot of single _ids, then runs of
+ * (../STATISTICS.md §9.4): a pilot of single _ids, then runs of
  * _ids whose slots Floyd's algorithm draws, read through forward
  * cursors, with a reservoir keeping a uniform share of the rows
  * found; in a table with a primary key, slots of its bytes in key
- * order instead (../ROWKEY.md §2.4). Nothing walks the table:
+ * order instead (../ROWSTORE.md §2.6). Nothing walks the table:
  * what is read is bounded by the rows wanted, whatever the table's
  * size.
  */
@@ -339,7 +339,7 @@ int sample_table(table_t *table, int32_t target, std::mt19937_64 &rng,
   }
   const uint64_t want = rows_per_target * static_cast<uint64_t>(target);
   const table_def_t &def = tbl_def(table);
-  // A table with a primary key has no _ids (../ROWKEY.md §2.1).
+  // A table with a primary key has no _ids (../ROWSTORE.md §2.2).
   if (std::any_of(def.indexes.begin(), def.indexes.end(),
                   [](const index_def_t &x) { return x.primary; })) {
     return sample_by_key(table, want, rng, out);

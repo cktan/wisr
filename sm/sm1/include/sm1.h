@@ -81,7 +81,7 @@ inline constexpr int    max_savepoints  = 256;
  * Store 0 is sm1's catalog. Callers may read, write, scan and
  * lock the keys in it that begin with upper_prefix, which sm1
  * keeps for the catalog of the level above and never reads
- * itself (SM1_DESIGN.md §11); any other key in store 0 is
+ * itself (../DBMGR.md §7); any other key in store 0 is
  * SM_ERR_INVALID. A scan of store 0 must stay inside the
  * prefix: its start key begins with it, and its end key does
  * too, or is its successor, "V", exclusive.
@@ -133,7 +133,7 @@ struct loader_t;
 
 /*
  * A raw pin: keeps one row read or replaced in memory, where
- * RocksDB has it, until it is emptied (../ROW.md §2). The caller
+ * RocksDB has it, until it is emptied (../ROWSTORE.md §6.3). The caller
  * makes it with sm1::rawpin_new, keeps it, and frees it; sm1
  * keeps no list of them.
  */
@@ -188,7 +188,7 @@ int init(std::string_view homedir);
 /*
  * Create an environment on a home directory sm1::init() has
  * already prepared. Recovers every database (SM1_DESIGN.md
- * §9.1), with the default options, and closes each again; one
+ * ../DBMGR.md §9.1), with the default options, and closes each again; one
  * that cannot be recovered fails the attach. The caller must ensure
  * no other environment, in this process or another, has the
  * home directory attached (see "Processes" above).
@@ -280,7 +280,7 @@ int lsdb(env_t* env, std::vector<std::string>& out);
 /*
  * The dbid of the database dbname into *out: the number sm1::mkdb
  * gave it, which no other database in this home directory has had
- * or will have (SM1_DESIGN.md §3.5). It is the name of the
+ * or will have (../DBMGR.md §4). It is the name of the
  * database's directory, and a caller may use it as the database's
  * id for as long as the database exists.
  *
@@ -441,7 +441,7 @@ int closedb(session_t* session);
  * SQL's READ ONLY: a write, mkstore, rmstore, mkseq or rmseq
  * then fails with SM_ERR_READONLY. At SERIALIZABLE, SSI treats
  * it as read-only from here on, and releases its SIREAD entries
- * once its snapshot is safe (SM1_DESIGN.md §7.4).
+ * once its snapshot is safe (../XCTMGR.md §7.5).
  *
  * Errors: SM_ERR_INTRANS, SM_ERR_INVALID (unknown level).
  */
@@ -540,7 +540,7 @@ using lockmode_t = ::sm_lockmode_t;
 using enum ::sm_lockmode_t;
 
 /*
- * What a lock names, as sm1::lock_status reports it (LOCK.md).
+ * What a lock names, as sm1::lock_status reports it (../LOCKMGR.md).
  * The values are persisted in a prepared transaction's lock
  * set, so they never change.
  *
@@ -646,7 +646,7 @@ int trylock_row(session_t* session, uint64_t storeid,
  * draws its oid from one sequence, so one oid names one object.
  * No store is read and no version is checked, at any isolation
  * level; taken IS or IX, the lock is a slot of the session's own
- * (SM1_DESIGN.md section 5.1, the fast path).
+ * (../LOCKMGR.md section 3.2, the fast path).
  *
  * It blocks, converts, is held and survives a prepare as
  * sm1::lock_row's lock does. An oid lock and a row lock never
@@ -679,7 +679,7 @@ int trylock_oid(session_t* session, uint64_t oid, lockmode_t mode);
  * writer can change, as an insert's arbiter reads a key its own
  * statement took. Under an exclusive lock it also lets the next
  * write of the key through, after SM_ERR_UPDATED (SM1_DESIGN.md
- * §5.4).
+ * ../LOCKMGR.md §1.9).
  *
  * Errors: SM_ERR_INVALID (above read committed with no version of
  * this transaction's own, or neither a lock held nor a write of
@@ -735,7 +735,7 @@ int stmt_begin(session_t* session);
 
 /* What a statement replaces, for sm1::stmt_end() to put back. */
 struct stmt_t {
-    bool pinned = false;      /* statement snapshots on (§6.2) */
+    bool pinned = false;      /* statement snapshots on (../XCTMGR.md §5) */
     bool taken = false;       /* snapshot_ts is the one to read at */
     uint64_t snapshot_ts = 0; /* the statement's snapshot */
     bool marked = false;      /* reads see own writes up to seq */
@@ -789,7 +789,7 @@ int stmt_advance(session_t* session);
  * A session that polls waits on nobody as far as the lock table
  * knows, so it is never a deadlock victim, and sessions polling
  * each other's locks poll for ever: breaking that cycle is the
- * caller's (SM1_DESIGN.md §5.1).
+ * caller's (../LOCKMGR.md §3.2).
  *
  * Errors: SM_ERR_INVALID.
  */
@@ -806,7 +806,7 @@ int set_tag(session_t* session, uint64_t tag);
 
 /*
  * Set how long the session waits for a lock or a writer before it
- * looks for a cycle of waits through itself (SM1_DESIGN.md §5.1):
+ * looks for a cycle of waits through itself (../LOCKMGR.md §3.2):
  * ms > 0, or 0 for its database's deadlock_ms, the default. As
  * PostgreSQL's deadlock_timeout, a session with a shorter one finds
  * a cycle first; the victim is still the cycle's youngest.
@@ -819,7 +819,7 @@ int set_deadlock_ms(session_t* session, int ms);
  * The numbers of the sessions the open session numbered tag
  * waits for now, into *out, cleared first: the holders of the
  * lock it waits on, or the transaction whose uncommitted version
- * it waits behind (SM1_DESIGN.md §5.1). Empty if it waits for
+ * it waits behind (../LOCKMGR.md §3.2). Empty if it waits for
  * none, or no open session has the number; a session it waits
  * for that has no number, or is a prepared transaction, is left
  * out. Any thread may ask about any session of env: for
@@ -1044,7 +1044,7 @@ int abort_prepared(session_t* session, std::string_view gid);
  * that has done any of the three cannot sm1::prepare().
  *
  * A CHAINED STORE, asked for with chained, also holds chained keys
- * (the chain_ calls, ../VCHAIN.md): each key's newest version under
+ * (the chain_ calls, ../ROWSTORE.md): each key's newest version under
  * the plain key, the older ones chained behind it. Today's calls
  * reach its versioned keys as any store's. A temporary store may be
  * chained too.
@@ -1154,7 +1154,7 @@ int compact(session_t* session, uint64_t storeid);
  * sm1::lock_row(), until that transaction ends; a blocked call can
  * return SM_ERR_DEADLOCK if it is chosen as the victim of a
  * deadlock cycle. A write itself keeps no lock: its uncommitted
- * version is what the next writer waits for (WRITELOCK.md).
+ * version is what the next writer waits for (../LOCKMGR.md).
  *
  *   sm1::insert  requires that the key not exist (SM_ERR_DUPKEY)
  *   sm1::update  requires that it exist (SM_ERR_NOTFOUND), and
@@ -1173,7 +1173,7 @@ int compact(session_t* session, uint64_t storeid);
  * produced. Leave it nullptr, the default, to skip it. The
  * write already reads that row to check the key exists, so
  * asking for it costs no seek, and no copy: the row is pinned
- * where RocksDB has it (../PIN.md).
+ * where RocksDB has it (../ROWSTORE.md).
  *
  * *old is valid only until the next call on this session -- the
  * same rule as sm1::read(), and the same pin, so either call
@@ -1217,8 +1217,8 @@ int erase(session_t* session, uint64_t storeid,
           std::string_view key, rawpin_t* pin, std::string_view& old);
 
 /*
- * sm1::erase of a row that moved to another key (../ROWKEY.md
- * §2.3): its tombstone is marked a move's. A reader sees it as any
+ * sm1::erase of a row that moved to another key (../ROWSTORE.md
+ * ../ROWSTORE.md §2.5): its tombstone is marked a move's. A reader sees it as any
  * tombstone. A writer that meets it as the key's newest version,
  * an sm1::update or sm1::erase, fails with SM_ERR_MOVED where a
  * plain tombstone is SM_ERR_NOTFOUND, and so does sm1::read_latest
@@ -1399,7 +1399,7 @@ void scanend(scan_t* scan);
 bool scan_rolled_back(const scan_t* scan);
 
 /*
- * CHAINED KEYS (../VCHAIN.md), in a store sm1::mkstore made chained.
+ * CHAINED KEYS (../ROWSTORE.md), in a store sm1::mkstore made chained.
  *
  * A chained key keeps its newest version under the plain key and
  * the older ones chained behind it, so a read is a Get, and one
@@ -1458,7 +1458,7 @@ int chain_read_latest(session_t* session, uint64_t storeid,
 /*
  * A batch read's iterator, kept by its caller from one
  * sm1::chain_read_batch to the next, as a cursor reads its rows in
- * batches (../BATCHREAD.md §2.1). The caller makes it, keeps it, and
+ * batches (../ROWSTORE.md §7.2). The caller makes it, keeps it, and
  * frees it. sm1 lets go of the iterator it holds at the end of the
  * transaction, at a rollback to a savepoint, and as the session
  * closes, so one left unfreed holds no RocksDB files.
@@ -1480,7 +1480,7 @@ void batch_iter_free(batch_iter_t* iter);
 bool batch_iter_held(const batch_iter_t* iter);
 
 /*
- * sm1::chain_read of n keys in one call (../BATCHREAD.md): key i's
+ * sm1::chain_read of n keys in one call (../ROWSTORE.md): key i's
  * row into pins[i] and data[i], rc[i] 0, or rc[i] 1 if the read sees
  * none, its pin then empty. The keys' newest versions are read
  * together, in RocksDB's MultiGet, in any order; each key is checked,
@@ -1628,8 +1628,8 @@ int load_close(loader_t* loader);
 
 /*
  * The newest version of key in storeid, whether or not the snapshot
- * sees it, as vacuum judges a tree's entry by its row (../BTREE.md
- * §7): 0 with its row in pin and data, or 1 if it is gone, deleted or
+ * sees it, as vacuum judges a tree's entry by its row (../BTREEINDEX.md
+ * ../BTREEINDEX.md §9): 0 with its row in pin and data, or 1 if it is gone, deleted or
  * never written, when the version is settled -- committed at or below
  * the GC watermark, so every snapshot sees it and no other; 2 when it
  * is not: written by a transaction still running, this one included,
@@ -1643,9 +1643,36 @@ int read_settled(session_t* session, uint64_t storeid, std::string_view key,
                  rawpin_t* pin, std::string_view& data);
 
 /*
+ * sm1::read_settled of a key written by sm1::insert in any store, a
+ * chained one too: a TOAST chunk's, which is versioned in every store.
+ */
+int read_settled_versioned(session_t* session, uint64_t storeid,
+                           std::string_view key, rawpin_t* pin,
+                           std::string_view& data);
+
+/*
+ * Let session call sm1::read_settled, sm1::read_settled_versioned,
+ * sm1::pin_page, sm1::page_enter
+ * and sm1::page_write with no transaction, for good: a background
+ * cleaner's session (../BTREEINDEX.md §9), which judges a row by its
+ * newest version, and so needs no snapshot and holds no watermark
+ * back. A store is looked up at the newest state. Every other call
+ * still needs a transaction. A store's handle stays with the session
+ * until it closes, so open one for a short pass.
+ */
+void set_no_transaction(session_t* session);
+
+/*
+ * The GC watermark of session's database: the oldest snapshot still
+ * registered, or everything published if none. A version committed at
+ * or below it is seen by every snapshot.
+ */
+uint64_t gc_watermark(session_t* session);
+
+/*
  * The newest version of key in storeid, past the snapshot, as a
  * unique tree checks a key against the rows its equal entries name
- * (../BTREE.md §6): 0 with its row in pin and data, committed or
+ * (../BTREEINDEX.md §7): 0 with its row in pin and data, committed or
  * this transaction's own; 1 if it is gone, deleted or never written;
  * 2 if another transaction still running wrote it, writer set to
  * that transaction, for sm1::wait_writer. A chained store's key is
@@ -1672,9 +1699,9 @@ int wait_writer(session_t* session, uint64_t writer);
  * Under serializable, an SIREAD on the keys of storeid from lo to hi,
  * either nullptr for no bound, each inclusive or not, read by no scan
  * of sm1's: a range of a tree's entries, read through its pages
- * (../BTREE.md §8, SSI). A write of a key in it by a concurrent
+ * (../BTREEINDEX.md §13, SSI). A write of a key in it by a concurrent
  * transaction makes an rw-edge, as a scan's range does
- * (SM1_DESIGN.md §7.1); the range is not narrowed. Below
+ * (../XCTMGR.md §7.2); the range is not narrowed. Below
  * serializable, and in a safe snapshot, nothing.
  *
  * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED.
@@ -1687,14 +1714,14 @@ int ssi_read_range(session_t* session, uint64_t storeid, const char* lo,
  * Under serializable, a write of key in storeid that is no version of
  * sm1's: a tree's entry, written to its pages. An rw-edge from every
  * concurrent reader whose SIREAD covers it, as a write of a version
- * makes (SM1_DESIGN.md §7.2). Below serializable, nothing.
+ * makes (../XCTMGR.md §7.3). Below serializable, nothing.
  *
  * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED.
  */
 int ssi_write_key(session_t* session, uint64_t storeid, std::string_view key);
 
 /*
- * Pages (../BTREE.md §2): keys of a store the level above lays out
+ * Pages (../BTREEINDEX.md §2): keys of a store the level above lays out
  * as B+tree pages, apart from its versions, and none of a
  * transaction's. A page is written outside every transaction, in one
  * RocksDB write batch that commits when it is made, whatever the
@@ -1714,7 +1741,7 @@ constexpr size_t page_key_max = 16;
 /* A page pinned in the buffer pool, by sm1::pin_page. */
 struct page_t;
 
-/* How a page is pinned: a pin is a latch (../BUFFERPOOL.md). */
+/* How a page is pinned: a pin is a latch (../BUFMGR.md). */
 enum class page_mode_t { sh, ex };
 
 /* An inner page of a tree, which the clock ages after the others. */
@@ -1748,7 +1775,7 @@ struct page_put_t {
  * under a pin. A pin that waits may be interrupted. Pages are pinned
  * exclusive in one order, so no two pins wait on each other: a
  * level's left before right, a child before its parent
- * (../BTREE.md §16). A thread may pin a page shared again, but no
+ * (../BUFMGR.md §1.3). A thread may pin a page shared again, but no
  * other second pin of a page is allowed.
  *
  * Errors: SM_ERR_INVALID (store 0, a key over page_key_max),
@@ -1782,7 +1809,7 @@ void unpin_page(session_t* session, page_t* page);
 /*
  * A session's copy of a page, read with no pin while the page's frame
  * is as it was when copied: for a page every descent of a tree reads,
- * whose pin would be a word every core writes (../BTREE.md §4.2). The
+ * whose pin would be a word every core writes (../BTREEINDEX.md §5.5). The
  * sessions that read a page at one version share one copy. A copy is
  * as fresh as a page pinned, read and unpinned.
  */

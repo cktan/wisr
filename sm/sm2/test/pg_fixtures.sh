@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # pg_fixtures.sh -- regenerate test/pg_fixtures.h from PostgreSQL
-# (SM2_DESIGN.md §8.3).
+# (TYPE.md §9).
 #
 # For each type, a one-column table holds the fixture values, and
 # pageinspect reads back the bytes PostgreSQL stored for each. The
@@ -12,7 +12,7 @@
 #   test/pg_fixtures.sh > test/pg_fixtures.h
 #
 # PGHOST, PGPORT and PGUSER pick the server; the defaults are the
-# development server described in SM2_DESIGN.md §8.3.
+# development server described in TYPE.md §9.
 set -euo pipefail
 
 export PGHOST=${PGHOST:-$HOME/pg18}

@@ -3109,7 +3109,7 @@ typedef SetConstraintStateData *SetConstraintState;
  * associated AfterTriggerSharedData that is shared across all instances of
  * similar events within a "chunk".
  *
- * digres: no row has a ctid to fetch it again by (../sm/ROWKEY.md), so a
+ * digres: no row has a ctid to fetch it again by (../sm/ROWSTORE.md), so a
  * row-level trigger's tuples are saved to a tuplestore, as PostgreSQL saves
  * a foreign table's (trigger_tuples_stored()).  AFTER_TRIGGER_FDW_FETCH
  * directs AfterTriggerExecute() to retrieve a fresh tuple or pair of tuples

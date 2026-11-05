@@ -1,5 +1,5 @@
 /*
- * test_page.cc -- pages (../BTREE.md §2): keys of class 0x04, written
+ * test_page.cc -- pages (../BTREEINDEX.md §2): keys of class 0x04, written
  * outside every transaction and read through the buffer pool, apart
  * from every version of the store.
  */
@@ -113,6 +113,92 @@ TEST_CASE("page: written outside the transaction, read through the pool") {
   CHECK("<none>" == read_page(s, store, "b"));
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::closedb(s) == 0);
+}
+
+TEST_CASE("page: a session with no transaction reads rows and writes pages") {
+  // Verify a session set for no transaction reads settled rows and
+  // pins and writes pages, sees the watermark, and can do nothing else
+  // (../BTREEINDEX.md §9).
+  // 1. Before it is set, each call fails with SM_ERR_NOTRANS.
+  // 2. Set, it reads a row committed, gone, and in flight.
+  // 3. It writes a page another session reads, and pins it exclusive.
+  // 4. A plain read still fails: only these calls take no transaction.
+  // 5. gc_watermark holds at an open snapshot, and moves once it ends.
+  // 6. Once the store is dropped, each call fails with SM_ERR_NOTFOUND,
+  //    and a page it holds pinned is not written.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  sm1::session_t *w = opendb(home.env(), "db");
+  sm1::session_t *c = opendb(home.env(), "db");
+  REQUIRE(w);
+  REQUIRE(c);
+  REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t store = mkstore(w);
+  REQUIRE(sm1::insert(w, store, "row", "v1") == 0);
+  REQUIRE(sm1::commit(w) == 0);
+  REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
+  write_page(w, store, "p", "one");
+  REQUIRE(sm1::commit(w) == 0);
+
+  sm1::rawpin_t *pin = sm1::rawpin_new();
+  std::string_view data;
+  sm1::page_t *page = nullptr;
+  std::string_view bytes;
+  CHECK(-1 == sm1::read_settled(c, store, "row", pin, data));
+  CHECK(sm1::SM_ERR_NOTRANS == sm1::errnum());
+  CHECK(-1 ==
+        sm1::pin_page(c, store, "p", sm1::page_mode_t::sh, 0, page, bytes));
+  CHECK(sm1::SM_ERR_NOTRANS == sm1::errnum());
+
+  sm1::set_no_transaction(c);
+  CHECK(0 == sm1::read_settled(c, store, "row", pin, data));
+  CHECK("v1" == data);
+  sm1::unpin(pin);
+  CHECK(1 == sm1::read_settled(c, store, "never", pin, data));
+  REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::insert(w, store, "running", "v") == 0);
+  CHECK(2 == sm1::read_settled(c, store, "running", pin, data));
+  REQUIRE(sm1::abort(w) == 0);
+
+  write_page(c, store, "p", "two");
+  CHECK("two" == read_page(c, store, "p"));
+  REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
+  CHECK("two" == read_page(w, store, "p"));
+  REQUIRE(sm1::commit(w) == 0);
+
+  CHECK(-1 == sm1::read(c, store, "row", data));
+  CHECK(sm1::SM_ERR_NOTRANS == sm1::errnum());
+
+  sm1::session_t *old = opendb(home.env(), "db");
+  REQUIRE(old);
+  REQUIRE(sm1::begin(old, sm1::xctlevel_t::repeatable_read) == 0);
+  uint64_t held = sm1::gc_watermark(c);
+  REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::insert(w, store, "more", "v") == 0);
+  REQUIRE(sm1::commit(w) == 0);
+  CHECK(held == sm1::gc_watermark(c));
+  REQUIRE(sm1::commit(old) == 0);
+  REQUIRE(sm1::closedb(old) == 0);
+  CHECK(held < sm1::gc_watermark(c));
+
+  REQUIRE(0 ==
+          sm1::pin_page(c, store, "p", sm1::page_mode_t::ex, 0, page, bytes));
+  REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::rmstore(w, store) == 0);
+  REQUIRE(sm1::commit(w) == 0);
+  std::vector<sm1::page_put_t> puts{{page, "p", "three"}};
+  CHECK(-1 == sm1::page_write(c, store, puts));
+  CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+  sm1::unpin_page(c, page);
+  CHECK(-1 == sm1::read_settled(c, store, "row", pin, data));
+  CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+  CHECK(-1 ==
+        sm1::pin_page(c, store, "p", sm1::page_mode_t::sh, 0, page, bytes));
+  CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+
+  sm1::rawpin_free(pin);
+  REQUIRE(sm1::closedb(w) == 0);
+  REQUIRE(sm1::closedb(c) == 0);
 }
 
 TEST_CASE("page: a pin of one page shuts out a writer of it") {

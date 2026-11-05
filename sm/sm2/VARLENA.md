@@ -2,7 +2,7 @@
 
 The reference for how a variable-width datum — `text`,
 `varchar`, `bpchar`, `bytea` — is stored inside a tuple and
-handed across the tuple codec. `SM2_DESIGN.md` §4.1 argues
+handed across the tuple codec. `TUPLE.md` §11 argues
 *why*; `TUPLE.md` is the tuple around it; this file is the
 bytes.
 
@@ -50,7 +50,7 @@ Told apart by the first byte, least significant bits first:
   3 and 18 are taken; sm2's is `0x40`, and its pointer is 22
   bytes in all: after the two bytes, the datum's length as 4
   bytes, the store's id as 8 and the datum's id as 8, all
-  little-endian (`SM2_DESIGN.md` §4.2). It is stored as it is.
+  little-endian (`../TOAST.md` §2). It is stored as it is.
   A pointer with any other vartag is refused.
 
 ## 3. Writing: the shortest form
@@ -93,7 +93,7 @@ PostgreSQL reads a 1-byte header anywhere, but a 4-byte header
 only where it knows the varlena is 4-byte aligned, and pads
 its heap tuples to make it so. An sm2 tuple is a RocksDB
 value, which starts at no particular alignment, so sm2 never
-pads (`SM2_DESIGN.md` §4.1):
+pads (`TUPLE.md` §11):
 
 - a **short** varlena can be handed to PostgreSQL in place;
 - a **long** one is handed to PostgreSQL in place too,

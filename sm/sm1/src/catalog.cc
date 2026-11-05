@@ -1,6 +1,6 @@
 /*
  * catalog.cc -- stores: lookup, sm1::mkstore, sm1::rmstore,
- * sm1::lsstore (SM1_DESIGN.md §11).
+ * sm1::lsstore (../DBMGR.md §7).
  *
  * The catalog is storeid 0, an ordinary MVCC store keyed
  * "R" | be64(storeid) with an empty value, so DDL is
@@ -10,14 +10,15 @@
  * field is left out: nothing reads it.
  *
  * sm1::mkstore allocates the storeid from the lease in CF:meta
- * (§4.2), so a storeid is never reused and never names two
+ * (../XCTMGR.md §2.3), so a storeid is never reused and never names two
  * stores.
  *
  * A session caches what each lookup found, trusted at the snapshot
  * it was found at, and at another while no store was made or dropped
- * between the two (last_ddl_ts, §11). A committed sm1::rmstore leaves its
- * column family in place until the watermark passes the drop and GC removes it
- * (§8.3).
+ * between the two (last_ddl_ts, ../DBMGR.md §7). A committed sm1::rmstore
+ * leaves its column family in place until the watermark passes the drop and GC
+ * removes it
+ * (../GC.md §1).
  */
 
 #include "error.h"
@@ -63,7 +64,7 @@ int mkstore(sm1::session_t *s, uint64_t *out, bool temporary, bool chained) {
   }
 
   // Create the column family eagerly, before the catalog row,
-  // so this transaction can write into it at once (§11).
+  // so this transaction can write into it at once (../DBMGR.md §7).
   if (db_create_store_cf(s->db, storeid, temporary ? s : nullptr, chained) !=
       0) {
     return -1;
@@ -127,7 +128,7 @@ int rmstore(sm1::session_t *s, uint64_t storeid) {
     return 0;
   }
   // Delete the catalog row; the column family stays until no
-  // snapshot can still read the store (§8.3).
+  // snapshot can still read the store (../GC.md §1).
   if (access_write(s, 0, WRITE_DELETE, catalog_key(storeid), rocksdb::Slice(),
                    nullptr) != 0) {
     return -1;
@@ -180,7 +181,7 @@ namespace wisr {
 /*
  * A point read of the catalog row at view, or the session's store
  * cache when no store was made or dropped since the entry's
- * snapshot nor the view's (§11). A temporary store has none: it
+ * snapshot nor the view's (../DBMGR.md §7). A temporary store has none: it
  * is live to the session that holds it, until that session drops
  * it.
  */

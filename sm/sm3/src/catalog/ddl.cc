@@ -1,5 +1,5 @@
 /*
- * ddl.cc -- the catalog's writes (CATALOG_INMEM.md §2): cat_init, and
+ * ddl.cc -- the catalog's writes (../CATALOG.md §6): cat_init, and
  * the puts and dels of its records. Each writes its entries
  * through sm2's catalog key-value store, in the session's
  * transaction, so it commits and rolls back with the transaction's
@@ -16,7 +16,7 @@
 
 namespace {
 
-/* The sequence oids come from; they start at first_oid (CATALOG_ONDISK.md §1).
+/* The sequence oids come from; they start at first_oid (../CATALOG.md §3.1).
  */
 constexpr const char *oid_seq = "sm3.oid";
 
@@ -73,7 +73,7 @@ int taken(const std::string &name) {
  * creator takes it shared and a drop exclusive, so a drop waits
  * out the creators and they it; and the check reads the catalog
  * in memory, which has every commit by then, where the
- * transaction's snapshot may not (CATALOG_INMEM.md §2). name is set to
+ * transaction's snapshot may not (../CATALOG.md §6). name is set to
  * the namespace's.
  */
 int use_nspace(sm3::session_t *session, uint64_t nspoid, sm1::lockmode_t mode,
@@ -99,7 +99,7 @@ int use_nspace(sm3::session_t *session, uint64_t nspoid, sm1::lockmode_t mode,
  * session sees it. The record is read from the catalog in memory:
  * under the lock no other DDL can change it, and memory has every
  * commit by the time the lock is granted, where the transaction's
- * snapshot may be older (CATALOG_INMEM.md §2).
+ * snapshot may be older (../CATALOG.md §6).
  */
 int latest_table(sm3::session_t *session, uint64_t oid, sm3::table_rec_t &rec) {
   std::shared_ptr<const sm3::table_def_t> d = sm3::cat_get_table(session, oid);
@@ -684,7 +684,7 @@ int cat_put_index_state(session_t *session, uint64_t table_oid,
                        "index state: no index " + std::to_string(index_oid));
   }
   // A state only ever leaves pending: that is what makes one seen
-  // late safe (SM3_DESIGN.md §3.3). Setting a pending index
+  // late safe (../INDEXBUILD.md §3). Setting a pending index
   // pending changes nothing.
   index_state_t now = cat_get_index_state(session, index_oid).state;
   if (now != index_state_t::pending) {
@@ -1270,7 +1270,7 @@ int lock_table(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode) {
    * so the lock never fails on a version newer than the caller's
    * snapshot and a reader that waited out DDL gets the new
    * definition. Held to the end of the transaction, so DDL waits
-   * out its users (SM3_DESIGN.md §2).
+   * out its users (../CATALOG.md §1).
    */
   return sm1::lock_oid(s, oid, mode);
 }

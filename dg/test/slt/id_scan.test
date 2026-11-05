@@ -14,7 +14,7 @@
 # 7. Join on _id in a nested loop, the inner side a TID scan rescanned
 #    for each outer row, plain and left, with _ids missing and NULL.
 # 8. Name a range of _ids: still a sequential scan, and right.
-# 9. A table with a primary key has no _id (../sm/ROWKEY.md section
+# 9. A table with a primary key has no _id (../sm/ROWSTORE.md section
 #    3.1): _id = n and a join on _id fail, the column not there.
 
 onlyif digres

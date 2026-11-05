@@ -35,7 +35,7 @@ regression files are taken out for it (`test/pgregress`,
   (step 198).
 - **TIDs and `ctid`** — never. No row has a TID: a row is
   named by its key, the values of its primary key's columns, or
-  a keyless table's `_id` (`../sm/ROWKEY.md`, step 292).
+  a keyless table's `_id` (`../sm/ROWSTORE.md`, step 292).
   `ctid` is no system column, so a table may have a column of
   that name (step 295); `xmin`, `xmax`, `cmin` and `cmax` are
   "column does not exist" (step 200); the `tid` type cannot be
@@ -185,7 +185,7 @@ regression files are taken out for it (`test/pgregress`,
 - **A row whose primary key another transaction changed** —
   differs: the writer that meets it fails with a serialization
   failure, at every level, where PostgreSQL follows an update
-  chain (`../sm/ROWKEY.md` §2.3).
+  chain (`../sm/ROWSTORE.md` §2.5).
 - **A scan begun after a savepoint** ends at a rollback to it
   — differs (`README.md`, known incompatibilities).
 
@@ -257,9 +257,9 @@ regression files are taken out for it (`test/pgregress`,
   five, so some conflict more (step 49).
 - **Lock wait queues** — differs: none, so a soft deadlock
   aborts a transaction where PostgreSQL reorders the waiters
-  (`../sm/sm1/SM1_DESIGN.md` §5.1).
+  (`../sm/LOCKMGR.md` §3.2).
 - **SERIALIZABLE** — differs: sm's own, not PostgreSQL's SSI
-  (`../sm/sm1/SM1_DESIGN.md` §7).
+  (`../sm/XCTMGR.md` §7).
 - **pg_locks** — differs: sm's mode names; a keyed row's page
   and tuple are NULL (step 193).
 

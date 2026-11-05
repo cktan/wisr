@@ -1,7 +1,7 @@
 /*
- * analyze.h -- what tbl_analyze is built from (SM3_DESIGN.md §6.4,
- * §6.5): the sample of a table's rows, and the estimators run over
- * it. Internal to sm3.
+ * analyze.h -- what tbl_analyze is built from (../STATISTICS.md §9.4,
+ * ../STATISTICS.md §9.5): the sample of a table's rows, and the estimators run
+ * over it. Internal to sm3.
  */
 #ifndef SM3_ANALYZE_H
 #define SM3_ANALYZE_H
@@ -58,7 +58,7 @@ struct sample_t {
  * a sparse table may then give fewer rows. rng makes the draws.
  *
  * A table with a primary key has its slots in key order instead
- * (../ROWKEY.md §2.4): each a page's share of its bytes, the
+ * (../ROWSTORE.md §2.6): each a page's share of its bytes, the
  * rows between the keys at its two ends (tbl_keys_at), chosen by
  * Floyd's algorithm as runs are, after a pilot of a few that
  * measures the rows a slot. Its rows are estimated as the rows
@@ -79,7 +79,7 @@ std::vector<uint64_t> floyd(uint64_t n, uint64_t k, std::mt19937_64 &rng);
  * The statistics of one column or expression, from its values over a
  * sample, in the sample's order -- _id order, or key order in a
  * table with a primary key -- with their null
- * flags (SM3_DESIGN.md §6.5): PostgreSQL's compute_scalar_stats,
+ * flags (../STATISTICS.md §9.5): PostgreSQL's compute_scalar_stats,
  * comparing values by their key under col. totalrows is the table's
  * estimated live rows. valid is false if the sample had no rows, and
  * out then says nothing; out's index and position are the caller's

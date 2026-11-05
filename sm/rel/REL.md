@@ -544,13 +544,13 @@ Clauses:
 - `:where (col value)` -- a partial index: only the rows whose
   `col` prints as `value` are in it. A null equals nothing.
 - `:tree bool` -- a B+tree of the index's own pages
-  (`../BTREE.md`), not sm1's entries. Its entries carry no
+  (`../BTREEINDEX.md`), not sm1's entries. Its entries carry no
   visibility: a scan of it is `(idx-rows)`, which reads each
   entry's row and gives it only while the row has the entry's
   key, and its dead entries stay until `(compact)` removes
   them (`(idx-entries)` counts them). A unique tree checks a key
   against the rows its equal entries name, waiting for a
-  running writer (`../BTREE.md` §6).
+  running writer (`../BTREEINDEX.md` §7).
 
 The storage manager evaluates neither form. It calls `rel`'s
 own evaluator, as it would call PostgreSQL's in the fork.
@@ -578,7 +578,7 @@ Drops the secondary index named `name`.
 ### `(index-wait name)`
 Waits until the build of the index named `name` has ended. An
 index created on a table that already holds committed rows is
-built in the background (`sm3/SM3_DESIGN.md` §3): writers and
+built in the background (`../INDEXBUILD.md` §2): writers and
 readers go on meanwhile, but the index may not be scanned
 until it is valid. One created in the same transaction as its
 table is valid at once and needs no wait. Call it outside a
@@ -694,7 +694,7 @@ Returns a tuple of values `[val1 val2 ...]` or `nil` if absent.
 ### `(read-keys table keys)`
 Reads the rows of a table with a primary key named by `keys`,
 an array or tuple of key tuples, in one `sm_tbl_read_keys`
-call (`../BATCHREAD.md`). Returns an array of the rows, each
+call (`../ROWSTORE.md`). Returns an array of the rows, each
 as `read` gives it, `nil` for a key with none, in the order of
 `keys`. A table without a primary key panics.
 
@@ -754,12 +754,23 @@ Compacts the table's store through GC (`sm_tbl_compact`), as
 `VACUUM`: versions no reader needs are dropped, and a newest
 version an aborted writer left is queued for GC's worker, which
 puts the version before it back within a second or so
-(`../VCHAIN.md` §7). It takes the table's lock as a reader. A
+(`../GC.md` §4.2). It takes the table's lock as a reader. A
 tree's entries whose rows are settled without them go too
-(`../BTREE.md` §7).
+(`../BTREEINDEX.md` §9).
 
 ```janet
 (compact jobs)
+```
+
+### `(cleaner-pass)`
+Runs one pass of the btree cleaner of the session's database, on
+this thread (`sm_cleaner_run`, `../BTREEINDEX.md` §9). A script
+gets no cleaner thread, so a tree's entries change only by this
+and by `(compact)`. A pass cleans the leaves that readers and
+writers queued, with no transaction of its own.
+
+```janet
+(cleaner-pass)
 ```
 
 ### `(table-size table)`
@@ -773,7 +784,7 @@ counted too.
 
 ### `(analyze table [target])`
 Analyzes the table in the current transaction
-(`sm3/SM3_DESIGN.md` §6): samples up to 300 × `target` rows,
+(`../STATISTICS.md` §9): samples up to 300 × `target` rows,
 100 if none is given, reading no more than ten times that in
 `_id`s whatever the table's size, and records each
 column's statistics, each partial or expression index's from
@@ -866,7 +877,7 @@ expose them.
 The rows a scan of the index's rows gives between the bounds,
 as `(idx-scan)` takes them, in the index's order: a tree's,
 each entry's row as the transaction sees it while it still has
-the entry's key (`../sm3/SM3_DESIGN.md` §3), or a primary
+the entry's key (`../INDEXBUILD.md` §2), or a primary
 key's, its rows. Returns `[id row]` pairs as `(scan)` does,
 `[key row]` in a table with a primary key.
 

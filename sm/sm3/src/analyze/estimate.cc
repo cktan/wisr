@@ -1,6 +1,6 @@
 /*
  * estimate.cc -- the estimators an analyze runs over its sample
- * (SM3_DESIGN.md §6.5): compute_scalar_stats and analyze_mcv_list,
+ * (../STATISTICS.md §9.5): compute_scalar_stats and analyze_mcv_list,
  * ported from PostgreSQL 18's analyze.c.
  *
  * What changes in the port is how values compare: by their key

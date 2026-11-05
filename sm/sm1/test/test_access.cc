@@ -319,7 +319,7 @@ TEST_CASE("repeatable read keeps its snapshot; read committed does not") {
 
 TEST_CASE("sm1_stmt_begin gives read committed one snapshot per statement") {
   // Verify a statement spanning several calls sees one committed
-  // state, the anomaly SM1_DESIGN.md §6.2 describes.
+  // state, the anomaly ../XCTMGR.md §5 describes.
   // 1. Two rows each hold 50; an RC session begins a statement
   //    and reads the first.
   // 2. Another session moves 30 from the first row to the
@@ -359,7 +359,7 @@ TEST_CASE("sm1_stmt_begin gives read committed one snapshot per statement") {
 
 TEST_CASE("the statement snapshot is taken by the first read, not the call") {
   // Verify a statement that waits before reading still sees what
-  // committed while it waited (sm3/SM3_DESIGN.md §3's build protocol).
+  // committed while it waited (../INDEXBUILD.md §2's build protocol).
   // 1. An RC session begins a statement and does not read.
   // 2. Another session commits a row.
   // 3. The first read of the statement sees it.
@@ -429,7 +429,7 @@ TEST_CASE("sm1_stmt_begin needs a transaction and does nothing above RC") {
 }
 
 TEST_CASE("a scan returns userkeys in memcmp order within its bounds") {
-  // Verify key order and bound handling (SM1_DESIGN.md §12.5 key order).
+  // Verify key order and bound handling (../DBMGR.md §17.2 key order).
   // 1. Insert keys that prefix one another, each updated so it
   //    has several versions.
   // 2. A full scan returns each key once, newest value, in
@@ -477,7 +477,7 @@ TEST_CASE("a scan returns userkeys in memcmp order within its bounds") {
 }
 
 TEST_CASE("a cursor does not see writes made after it opened") {
-  // Verify Halloween protection (SM1_DESIGN.md §10.2).
+  // Verify Halloween protection (../ROWSTORE.md §5.6).
   // 1. Insert "a" and "b", then open a cursor.
   // 2. Insert "c" and update "a" in the same transaction.
   // 3. The cursor returns exactly the rows as of its opening.
@@ -582,7 +582,8 @@ TEST_CASE("a cursor lends its row until its next call, and passes over the "
 }
 
 TEST_CASE("a scan from an absent key crosses many userkeys in SSTs") {
-  // Regression for inheriting RocksDB's prefix seek mode (§10.2, §12.5).
+  // Regression for inheriting RocksDB's prefix seek mode (../ROWSTORE.md §5.6,
+  // ../DBMGR.md §17.2).
   // 1. Insert 5000 keys "k00000".."k04999" (every other number
   //    is skipped, so start keys can be absent) and commit.
   // 2. Reattach, which flushes the memtable into SSTs.
@@ -615,7 +616,7 @@ TEST_CASE("a scan from an absent key crosses many userkeys in SSTs") {
 TEST_CASE("a store's handle copied before its drop is good to its last copy") {
   // Verify a column family's handle outlives the drop of its store
   // while a copy of the store is held, as the GC's sweep and the
-  // statistics hold one with no lock (SM1_DESIGN.md §3.1).
+  // statistics hold one with no lock (../DBMGR.md §6.2).
   // 1. Make a store and commit; copy its store_t, as db_store() hands
   //    one out.
   // 2. Drop the store's column family, as a rolled-back CREATE does.
@@ -646,7 +647,7 @@ TEST_CASE("a store's handle copied before its drop is good to its last copy") {
 
 TEST_CASE("current keys in SSTs scan whole in total order, apart from the "
           "versioned ones") {
-  // Verify the class byte's key spaces (../VCHAIN.md §2) in one store
+  // Verify the class byte's key spaces (../ROWSTORE.md §3.2) in one store
   // CF, under its prefix extractor and bloom filter.
   // 1. Put 5000 current keys "k00000".."k09998" (every other number)
   //    raw into a store's CF, and one versioned key by sm1::insert;
@@ -700,7 +701,7 @@ TEST_CASE("current keys in SSTs scan whole in total order, apart from the "
 }
 
 TEST_CASE("sm1_scan_seek repositions a cursor without reopening it") {
-  // Verify the reposition keeps bounds, view and order (§10.2).
+  // Verify the reposition keeps bounds, view and order (../ROWSTORE.md §5.6).
   // 1. Scan k1..k9 and read one row.
   // 2. Seek to k5 inclusive: the next rows start at k5.
   // 3. Seek to k7 exclusive: the next row is k8.
@@ -741,7 +742,7 @@ TEST_CASE("sm1_scan_seek repositions a cursor without reopening it") {
 }
 
 TEST_CASE("sm1_scan_seek refuses to move backwards or out of range") {
-  // Verify the forward-only rule and the bounds check (§10.2).
+  // Verify the forward-only rule and the bounds check (../ROWSTORE.md §5.6).
   // 1. Open a cursor over k3..k7 and read k3.
   // 2. A seek to k2, below the start key, fails.
   // 3. A seek back to k3 after reading k5 fails.
@@ -789,7 +790,7 @@ TEST_CASE("sm1_scan_seek refuses to move backwards or out of range") {
 
 TEST_CASE("keys skipped by sm1_scan_seek still count as read under SSI") {
   // Verify the predicate covers the gap a seek jumps over
-  // (§7.1): an over-approximation, never a missed conflict.
+  // (../XCTMGR.md §7.2): an over-approximation, never a missed conflict.
   // 1. T1, SERIALIZABLE, opens a cursor over k1..k9 and reads
   //    k1. T2 reads "own", which only T1 writes, and writes
   //    k5; T1 writes "own". That is a write skew, but it
@@ -854,7 +855,7 @@ TEST_CASE("keys skipped by sm1_scan_seek still count as read under SSI") {
 }
 
 TEST_CASE("sm1_update and sm1_delete hand back the row they replaced") {
-  // Verify the old-image return (SM1_DESIGN.md §5.3).
+  // Verify the old-image return (../ROWSTORE.md §4.5).
   // 1. Update a row: the old value is the one committed before.
   // 2. Update it again: the old value is this transaction's own
   //    previous write, not the committed one.
@@ -1030,7 +1031,7 @@ TEST_CASE("a snapshot's answer about a store outlasts later DDL") {
 
 TEST_CASE("a transaction's own drop hides the store it looked up") {
   // Verify the session's store cache never answers for a
-  // transaction's own drop (§11).
+  // transaction's own drop (../DBMGR.md §7).
   // 1. Create a store with "k" -> "v" and commit.
   // 2. A transaction reads "k", which caches the store as live.
   // 3. It drops the store: reading "k" now fails NOTFOUND.
@@ -1057,7 +1058,7 @@ TEST_CASE("a transaction's own drop hides the store it looked up") {
 
 TEST_CASE("read committed's next statement misses a store dropped since") {
   // Verify a store cache entry from one statement does not
-  // outlive a drop committed before the next (§11).
+  // outlive a drop committed before the next (../DBMGR.md §7).
   // 1. Create a store with "k" -> "v" and commit.
   // 2. A read committed statement reads "k", which caches the
   //    store as live at its snapshot.
@@ -1090,7 +1091,7 @@ TEST_CASE("read committed's next statement misses a store dropped since") {
 }
 
 TEST_CASE("object ids start at 1000, below which none is handed out") {
-  // Verify the reserved range of object ids (SM1_DESIGN.md §4.2).
+  // Verify the reserved range of object ids (../XCTMGR.md §2.3).
   // 1. The first store a new database makes is 1000.
   // 2. A sequence made next takes an object id too, so the store
   //    after it skips one: 1002.
@@ -1110,7 +1111,7 @@ TEST_CASE("object ids start at 1000, below which none is handed out") {
 
 TEST_CASE("store 0 takes the level above's keys, under its prefix only") {
   // Verify callers' access to store 0, the catalog (SM1_DESIGN.md
-  // §11), under sm1::upper_prefix.
+  // ../DBMGR.md §7), under sm1::upper_prefix.
   // 1. In a transaction, "U" keys in store 0 insert, read, update,
   //    lock, and scan over ["U", "V"), in key order.
   // 2. An abort undoes the writes.

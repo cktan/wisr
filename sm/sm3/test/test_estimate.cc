@@ -1,6 +1,6 @@
 /*
  * test_estimate.cc -- the estimators an analyze runs over its sample
- * (SM3_DESIGN.md §6.5), on values whose truth is known: uniform,
+ * (../STATISTICS.md §9.5), on values whose truth is known: uniform,
  * skewed, clustered and mostly null, and text under a collation that
  * calls two spellings one value; then tbl_analyze end to end.
  */

@@ -1,5 +1,5 @@
 /*
- * test_index.cc -- the index rel over sm1 (SM2_DESIGN.md §5):
+ * test_index.cc -- the index rel over sm1 (../ROWSTORE.md §8):
  * entries in key order, scans between bounds, uniqueness, keys
  * cut to fit, and keys decoded back.
  */
@@ -8,6 +8,8 @@
 #include "db.h"
 #include "doctest.h"
 #include "gen.h"
+
+#include "../src/tree/tree.h"
 
 #include "sm1.h"
 #include "sm2.h"
@@ -393,7 +395,7 @@ TEST_CASE("under a non-deterministic collation, equal is ICU's equal") {
 
 TEST_CASE("a key too long for sm1 is cut, flagged, and kept apart") {
   // Verify an over-long key in a non-unique index (SM2_DESIGN.md
-  // §3.2).
+  // ../LSMINDEX.md §2.4).
   // 1. Two 5000-byte texts that share their first 4500 bytes both
   //    insert: each is cut to fit and carries its rowno, so the two
   //    stay apart though their cut bytes are the same.
@@ -447,6 +449,61 @@ TEST_CASE("a key too long for sm1 is cut, flagged, and kept apart") {
   bool widened = false;
   CHECK(scan_all(ix, &lo, &lo, &widened) == std::vector<uint64_t>{1, 2});
   CHECK(widened);
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::idx_close(ix);
+}
+
+TEST_CASE(
+    "a tree's entry is in doubt from its insert, and cut by its own bit") {
+  // Verify the in-doubt bit shares value[0] with the cut flag, and
+  // that neither reads as the other (../BTREEINDEX.md §9).
+  // 1. Insert a short text and a text past the tree's key budget.
+  // 2. The leaf holds each entry in doubt, and only the long one cut.
+  // 3. A scan reports the short entry as not cut, and the long one as
+  //    cut, though both have a bit set in value[0].
+  db_t db;
+  sm1::session_t *s = db.open();
+  std::vector<sm2::key_column_t> cols = {
+      {&sm2::type_text, -1, nullptr, false, false}};
+  sm2::index_t *ix = nullptr;
+  REQUIRE_MESSAGE(
+      sm2::idx_open(s, db.store(), 1, cols, false, {}, false, ix, true) == 0,
+      sm1::errmsg());
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE_MESSAGE(sm2::idx_create(ix) == 0, sm1::errmsg());
+  std::vector<std::string> texts = {"short", std::string(5000, 'k')};
+  for (size_t i = 0; i < texts.size(); i++) {
+    std::vector<std::optional<std::string>> key = {texts[i]};
+    values_t d = datums_of(cols, key);
+    REQUIRE_MESSAGE(
+        sm2::idx_insert(ix, d.d(), d.null(), sm2::id_key(i + 1), {}, {}) == 0,
+        sm1::errmsg());
+  }
+
+  sm2::tree::tree_t tree;
+  sm2::tree::tree_open(tree, s, db.store(), 1);
+  sm2::tree::cursor_t c;
+  sm2::tree::cursor_open(tree, c, nullptr, true, nullptr, true);
+  std::string_view k, v;
+  std::vector<bool> leaf_cut;
+  while (0 == sm2::tree::cursor_next(c, k, v)) {
+    REQUIRE(3u == v.size());
+    CHECK(sm2::tree::entry_in_doubt(v));
+    leaf_cut.push_back(0 != (v[0] & sm2::tree::entry_cut));
+  }
+  CHECK(leaf_cut == std::vector<bool>{true, false});
+
+  sm2::index_scan_t *scan = nullptr;
+  REQUIRE(sm2::idx_scan(ix, nullptr, nullptr, scan) == 0);
+  uint64_t rowno;
+  bool cut;
+  std::string_view value;
+  std::vector<std::pair<uint64_t, bool>> got;
+  while (sm2::idx_scannxt(scan, rowno, cut, value) == 0) {
+    got.emplace_back(rowno, cut);
+  }
+  sm2::idx_scanend(scan);
+  CHECK(got == std::vector<std::pair<uint64_t, bool>>{{2, true}, {1, false}});
   REQUIRE(sm1::commit(s) == 0);
   sm2::idx_close(ix);
 }
@@ -534,7 +591,7 @@ TEST_CASE("an index opened on a layout made once is the index idx_open "
 }
 
 TEST_CASE("a key too long for sm1 is refused in a unique index") {
-  // Verify a unique index never holds a cut key (SM2_DESIGN.md §3.2).
+  // Verify a unique index never holds a cut key (../LSMINDEX.md §2.4).
   // 1. Inserting a 5000-byte text fails with SM_ERR_KEYTOOLONG.
   // 2. So does one beside a null column, though that entry would
   //    carry its rowno and meet no other as a duplicate.
@@ -578,7 +635,7 @@ TEST_CASE("a key too long for sm1 is refused in a unique index") {
 }
 
 TEST_CASE("at read committed an entry committed since begin is still deleted") {
-  // Verify idx_delete resolves SM_ERR_UPDATED itself (SM2_DESIGN.md §5).
+  // Verify idx_delete resolves SM_ERR_UPDATED itself (../ROWSTORE.md §8).
   // 1. A begins at READ COMMITTED.
   // 2. B inserts the entry for row 1 and commits, after A began.
   // 3. A deletes that entry: sm1 refuses the erase of a key committed

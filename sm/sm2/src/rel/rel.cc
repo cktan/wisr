@@ -1,12 +1,12 @@
 /*
- * rel.cc -- the rel (../CLUSTER.md §2, ../ROWKEY.md §2.1): a table's
+ * rel.cc -- the rel (../CLUSTER.md §2, ../ROWSTORE.md §2.2): a table's
  * rows in one sm1 store, keyed by relid and their primary key, or
  * in a rel without one by their _id, each holding its tuple alone.
  * It is a codec in front of sm1, not a state machine: a durable
  * effect is an sm1 call in the caller's transaction, sm1's errors
  * pass through as they are, and the tuples it hands out are sm1's
  * views. A row with a datum out of line (TOAST, SM2_DESIGN.md
- * §4.2) is more than one sm1 call: the row, then the datum's chunks
+ * ../TOAST.md §2) is more than one sm1 call: the row, then the datum's chunks
  * (toast.cc).
  */
 
@@ -161,7 +161,7 @@ struct moved_t {
 };
 
 /*
- * A row made ready to write (SM2_DESIGN.md §4.2): its tuple, the
+ * A row made ready to write (../TOAST.md §2): its tuple, the
  * datums it moves out of line, and the pointers it was given and
  * keeps, by attribute. own holds what the tuple's datums point at
  * that the caller does not: a pointer made here, a value fetched.
@@ -466,7 +466,7 @@ int insert_row(sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
 /*
  * Move the row at key to new_key, with tuple (../CLUSTER.md §4).
  * 1. Erase it with a move's tombstone, which a writer at key then
- *    meets as SM_ERR_MOVED (../ROWKEY.md §2.3). Its old row is pinned
+ *    meets as SM_ERR_MOVED (../ROWSTORE.md §2.5). Its old row is pinned
  *    into p and viewed by was.
  * 2. Insert it under new_key.
  */
@@ -1048,6 +1048,16 @@ int toast_fetch(rel_t *rel, std::string_view ptr, std::string &out) {
                        "toast: not a TOAST pointer of this rel's store");
   }
   return toast_read(rel->session, p, out);
+}
+
+/* Read the datum of a settled row's TOAST pointer; see sm2.h. */
+int toast_fetch_settled(rel_t *rel, std::string_view ptr, std::string &out) {
+  toast_ptr_t p;
+  if (!parse_toast_ptr(ptr, p) || p.storeid != rel->storeid) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "toast: not a TOAST pointer of this rel's store");
+  }
+  return toast_read_settled(rel->session, p, out);
 }
 
 /* Read the datum a TOAST pointer names, from its store; see sm2.h. */

@@ -74,7 +74,7 @@ typedef enum sm_errnum_t {
     /* NOT retryable, and not an abort */
     SM_ERR_UPDATED       = 19,  /* newer commit; sm1::read_latest, then retry */
 
-    /* sm2's: types and tuples (sm2/SM2_DESIGN.md §3.2, §4, §5) */
+    /* sm2's: types and tuples (../LSMINDEX.md §2.4, ../sm2/TUPLE.md §10, ../ROWSTORE.md §8) */
     SM_ERR_KEYTOOLONG    = 20,  /* a key that may not be cut is too long */
     SM_ERR_ROWTOOLONG    = 22,  /* a tuple past sm2::max_tup_len */
 
@@ -174,7 +174,7 @@ struct dupkey_t {
 ```
 
 `row` is the key of a row that holds the duplicate key in its
-table, past the relid (`../ROWKEY.md` §2.5): a host reads the
+table, past the relid (`../ROWSTORE.md` §2.7): a host reads the
 row by it to say the key. `sm1::setdup(d)` records it
 with the error just set, and a level above may call it again
 to add what it knows; setting the next error, or
@@ -378,12 +378,12 @@ waiting on followers.
 `commit_cache_entries` is the number of slots, rounded up to
 even, in the in-memory cache from transaction id to commit
 timestamp that spares readers a status-table lookup
-(SM1_DESIGN.md §3.4, COMMITCACHE.md). A slot is 16 bytes. It
+(../DBMGR.md §6.6, ../XCTMGR.md). A slot is 16 bytes. It
 must be at least 1; a smaller cache costs lookups, never
 correctness.
 
 `savepoint_undo_bytes` caps what one transaction keeps in
-memory to roll back to its savepoints (SM1_DESIGN.md §6.5).
+memory to roll back to its savepoints (../XCTMGR.md §6).
 Past it the transaction keeps writing, a warning is logged,
 and the savepoints then set can no longer be rolled back to.
 It must be at least 1.
@@ -480,7 +480,7 @@ the transaction is aborted, and the caller retries. At
 `sm1::xctlevel_t::read_committed` an update or delete fails with
 `SM_ERR_UPDATED`, which does not abort: the transaction stays
 active, holding the key's row lock, which the refused write
-takes (`WRITELOCK.md` §3.5). The caller calls
+takes (`../LOCKMGR.md` §1.9). The caller calls
 `sm1::read_latest`, re-evaluates the row, and writes again, as
 PostgreSQL's executor does at its default level. The engine
 never applies the write to the newer row on its own: a write
@@ -557,7 +557,7 @@ version, and destroys any directory under `base` the root
 db does not name — what a crash during `sm1::mkdb` or
 `sm1::rmdb` leaves behind. It then opens each database the
 root db names, with the default options, which recovers it
-(`SM1_DESIGN.md` §9.1): RocksDB replays its WAL, prepared
+(`../DBMGR.md` §9.1): RocksDB replays its WAL, prepared
 transactions are restored and orphaned column families
 dropped. It closes each again, so a prepared transaction
 stays in doubt until the next `sm1::opendb` restores it. A
@@ -628,12 +628,11 @@ PostgreSQL's `NAMEDATALEN - 1`, so every name PostgreSQL
 accepts for a database is a name wisr accepts. A name
 outside those bounds fails with `SM_ERR_INVALID`.
 
-A `dbname` is never a path. It is a key in the
-environment's root db, which maps it to the number naming
-the directory the database actually lives in (`SM1_DESIGN.md`
-§3.5). `sm1::mkdb(env, "a/../b")` creates a database called
-`a/../b`, not a directory, and reaches nothing outside
-`homedir`.
+A `dbname` is never a path. It is a key in the environment's root
+db, which maps it to the number naming the directory the database
+actually lives in (`../DBMGR.md` §4). `sm1::mkdb(env, "a/../b")`
+creates a database called `a/../b`, not a directory, and reaches
+nothing outside `homedir`.
 
 Two divergences from PostgreSQL, both deliberate:
 
@@ -690,7 +689,7 @@ Errors: `SM_ERR_NOMEM`, `SM_ERR_IO`.
 
 Set `*out` to the `dbid` of the database `dbname`: the number
 `sm1::mkdb` gave it, which no other database in `homedir` has
-had or will have (`SM1_DESIGN.md` §3.5). It names the
+had or will have (`../DBMGR.md` §4). It names the
 database's directory, and a caller may use it as the
 database's id for as long as the database exists; a SQL
 layer's database oid, say.
@@ -767,7 +766,7 @@ refusing `SELECT FOR UPDATE` and `nextval` is the host's.
 At SERIALIZABLE the declaration costs SSI less: the
 read-only rule applies from here on, and the transaction's
 SIREAD entries go once its snapshot is safe
-(`SM1_DESIGN.md` §7.4). At the other levels it changes
+(`../XCTMGR.md` §7.5). At the other levels it changes
 nothing else.
 
 Errors: `SM_ERR_INTRANS` (a transaction is already active),
@@ -919,7 +918,7 @@ reads at one snapshot.
 **A statement does not see its own writes**, at any level. Its
 reads, point reads and cursors alike, see the transaction's
 own writes made before it began, as PostgreSQL's command id
-does (SM1_DESIGN.md §6.2).
+does (../XCTMGR.md §5).
 
 Writes still check for a newer commit against the snapshot
 taken by `sm1::begin`, so `SM_ERR_UPDATED` can still arrive on
@@ -995,7 +994,7 @@ Errors: `SM_ERR_INVALID`.
 
 Sets how long the session waits for a lock, or behind another
 transaction's version, before it looks for a cycle of waits
-through itself (`SM1_DESIGN.md` §5.1): `ms` > 0, or 0 for its
+through itself (`../LOCKMGR.md` §3.2): `ms` > 0, or 0 for its
 database's `deadlock_ms`, the default. It is PostgreSQL's
 `deadlock_timeout`: of the sessions on a cycle, the one with the
 shortest finds it first. Which transaction is ended does not
@@ -1008,7 +1007,7 @@ Errors: `SM_ERR_INVALID`, for a negative `ms`.
 
 The numbers of the sessions that the open session numbered
 `tag` waits for now, into `*out`, cleared first: its edges in
-the waits-for graph (`SM1_DESIGN.md` §5.1). That is the holders
+the waits-for graph (`../LOCKMGR.md` §3.2). That is the holders
 of the lock it waits on, or the transaction whose uncommitted
 version of a key it waits behind. Empty if it waits for none,
 or no open session has the number. A session it waits for
@@ -1087,7 +1086,7 @@ A write meets a lock on its key as an exclusive one would, so
 every mode stops others writing the key. The write itself
 keeps no lock: a lock the transaction already holds on the key
 it converts to exclusive, and otherwise it takes none
-(`WRITELOCK.md`).
+(`../LOCKMGR.md`).
 
 The call **blocks** while another transaction holds the row
 in a conflicting mode, exactly as a write does, or has written
@@ -1166,7 +1165,7 @@ Lock an object id in no store, which nothing ever writes:
 what a level above locks to stand for an object of its own.
 sm3 locks a table's definition this way. No store is read and
 no version is checked, at any isolation level; taken IS or IX,
-the lock is a slot of the session's own (`SM1_DESIGN.md` §5.1,
+the lock is a slot of the session's own (`../LOCKMGR.md` §3.2,
 the fast path). It blocks, converts, is held and survives a
 prepare as `sm1::lock_row`'s lock does, in the same modes. An
 oid lock and a row lock never conflict; `sm1::lock_status`
@@ -1411,7 +1410,7 @@ read-only may make, write and drop one. A transaction that
 has done any of the three cannot `sm1::prepare`.
 
 With `chained`, the store is a **chained store**
-(`../VCHAIN.md`): it also holds chained keys, reached by the
+(`../ROWSTORE.md`): it also holds chained keys, reached by the
 `chain_` calls below, each key's newest version under the
 plain key and the older ones chained behind it. Its column
 family is `chain.<storeid>` rather than `store.<storeid>`. The
@@ -1647,7 +1646,7 @@ same key and not ended, or holds a lock on it taken with
 `sm1::lock_row`, until that transaction ends. A blocked call can
 return `SM_ERR_DEADLOCK` if it is selected as the victim of a
 deadlock cycle. A write itself keeps no lock: its uncommitted
-version is what the next writer waits for (`WRITELOCK.md`).
+version is what the next writer waits for (`../LOCKMGR.md`).
 
 ```cpp
 int insert(session_t* session, uint64_t storeid,
@@ -1722,16 +1721,15 @@ no version. Errors as `sm1::insert`'s.
 
 ### int sm1::erase_moved(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::rawpin_t* pin, std::string_view& old)
 
-`sm1::erase` of a row that moved to another key (`../ROWKEY.md`
-§2.3): its tombstone is marked a move's, flags bit 2
-(`SM1_DESIGN.md` §3.1). A reader sees it as any tombstone. A
-writer that meets it as the key's newest version, an
-`sm1::update` or `sm1::erase`, fails with `SM_ERR_MOVED` where a
-plain tombstone is `SM_ERR_NOTFOUND`, and so does
-`sm1::read_latest` where a plain one returns 1: at READ
-COMMITTED, after `SM_ERR_UPDATED`, the writer learns the row
-lives on elsewhere. The row erased is pinned into `pin`, as
-`sm1::erase`'s. Errors as `sm1::erase`'s.
+`sm1::erase` of a row that moved to another key (`../ROWSTORE.md`
+§2.5): its tombstone is marked a move's, flags bit 2
+(`../DBMGR.md` §6.2). A reader sees it as any tombstone. A writer
+that meets it as the key's newest version, an `sm1::update` or
+`sm1::erase`, fails with `SM_ERR_MOVED` where a plain tombstone
+is `SM_ERR_NOTFOUND`, and so does `sm1::read_latest` where a
+plain one returns 1: at READ COMMITTED, after `SM_ERR_UPDATED`,
+the writer learns the row lives on elsewhere. The row erased is
+pinned into `pin`, as `sm1::erase`'s. Errors as `sm1::erase`'s.
 
 ---
 
@@ -1888,14 +1886,14 @@ own, or neither a lock held nor a write of the key),
 
 ### Raw pins
 
-A read into a raw pin hands out the row without copying it:
-the pin keeps the iterator that found it, and the row's bytes
-stay where RocksDB has them (`../ROW.md` §2). The caller owns
+A read into a raw pin hands out the row without copying it: the
+pin keeps the iterator that found it, and the row's bytes stay
+where RocksDB has them (`../ROWSTORE.md` §6.3). The caller owns
 the pin: it makes it with `sm1::rawpin_new`, keeps it where it
-likes, and frees it with `sm1::rawpin_free`. sm1 keeps no list
-of them; sm3 keeps the pool, the refs and their generations
-that its clients use (`../ROW.md` §4). The row stays valid
-until the pin is emptied, which happens at the first of:
+likes, and frees it with `sm1::rawpin_free`. sm1 keeps no list of
+them; sm3 keeps the pool, the refs and their generations that its
+clients use (`../ROWSTORE.md` §6.4). The row stays valid until
+the pin is emptied, which happens at the first of:
 
 - the next read or write into the same pin;
 - `sm1::unpin(pin)`;
@@ -2046,11 +2044,11 @@ useful recovery from a failure to release resources.
 Whether a rollback to a savepoint set before the cursor
 opened has closed it: its last row is then gone, and it reads
 no more. sm3 asks it after a rollback, to make the refs to
-such a cursor's row stale (`../ROW.md` §4.5).
+such a cursor's row stale (`../ROWSTORE.md` §6.9).
 
 ## Chained keys API
 
-Chained keys (`../VCHAIN.md`) are kept in a store
+Chained keys (`../ROWSTORE.md`) are kept in a store
 `sm1::mkstore` made chained. A chained key keeps its newest
 version under the plain key and the older ones chained behind
 it, so a read is a Get, and one that does not see the newest
@@ -2107,7 +2105,7 @@ int chain_trylock_row(session_t* session, uint64_t storeid,
 ```
 
 `sm1::chain_read_batch` is `sm1::chain_read` of `n` keys in one
-call (`../BATCHREAD.md`): key `i`'s row into `pins[i]` and
+call (`../ROWSTORE.md`): key `i`'s row into `pins[i]` and
 `data[i]`, `rc[i]` 0, or `rc[i]` 1 if the read sees none, its
 pin then empty. The keys' newest versions are read together,
 in RocksDB's MultiGet, in any order; each key is checked,
@@ -2138,20 +2136,41 @@ stood when the cursor opened.
 
 ### int sm1::read_settled(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::rawpin_t* pin, std::string_view& data)
 
-The newest version of `key`, whether or not the snapshot sees
-it, as vacuum judges a tree's entry by its row (`../BTREE.md`
-§7): 0 with its row in `pin` and `data`, or 1 if it is gone,
-when the version is settled, committed at or below the GC
-watermark; 2 when it is not: written by a transaction still
-running, this one included, or committed past the watermark.
-A chained store's key is read as `sm1::chain_read` reads one.
-It locks nothing and waits for no one.
+The newest version of `key`, whether or not the snapshot sees it,
+as vacuum judges a tree's entry by its row (`../BTREEINDEX.md`
+§9): 0 with its row in `pin` and `data`, or 1 if it is gone, when
+the version is settled, committed at or below the GC watermark; 2
+when it is not: written by a transaction still running, this one
+included, or committed past the watermark. A chained store's key
+is read as `sm1::chain_read` reads one. It locks nothing and
+waits for no one.
+
+### int sm1::read_settled_versioned(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::rawpin_t* pin, std::string_view& data)
+
+`sm1::read_settled` of a key written by `sm1::insert` in any
+store, a chained one too: a TOAST chunk's, which is versioned in
+every store.
+
+### void sm1::set_no_transaction(sm1::session_t* session)
+
+Lets `session` call `sm1::read_settled`,
+`sm1::read_settled_versioned`, `sm1::pin_page`,
+`sm1::page_enter` and `sm1::page_write` with no transaction, for
+good: a background cleaner's session (`../BTREEINDEX.md` §9). It
+judges a row by its newest version, so it needs no snapshot and
+holds no watermark back. Every other call still needs a
+transaction.
+
+### uint64_t sm1::gc_watermark(sm1::session_t* session)
+
+The GC watermark of the session's database: the oldest snapshot
+still registered, or everything published if none.
 
 ### int sm1::read_newest(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::rawpin_t* pin, std::string_view& data, uint64_t& writer)
 
 The newest version of `key`, past the snapshot, as a unique
 tree checks a key against the rows its equal entries name
-(`../BTREE.md` §6): 0 with its row in `pin` and `data`,
+(`../BTREEINDEX.md` §7): 0 with its row in `pin` and `data`,
 committed or this transaction's own; 1 if it is gone; 2 if
 another transaction still running wrote it, `writer` set to
 it. Locks nothing.
@@ -2167,7 +2186,7 @@ deadlock check. The caller reads the key again after.
 
 Under serializable, an SIREAD on a range of keys no scan of
 sm1's reads: a tree's entries, read through its pages
-(`../BTREE.md` §8). A concurrent write of a key in it, a
+(`../BTREEINDEX.md` §13). A concurrent write of a key in it, a
 version's or `sm1::ssi_write_key`'s, makes an rw-edge, as a
 scan's range does. It is not narrowed. Below serializable,
 nothing.
@@ -2180,16 +2199,16 @@ SIREAD covers it. Below serializable, nothing.
 
 ## Page API
 
-Pages (`../BTREE.md` §2): keys of a store the level above lays
-out as B+tree pages, apart from its versions and none of a
+Pages (`../BTREEINDEX.md` §2): keys of a store the level above
+lays out as B+tree pages, apart from its versions and none of a
 transaction's. A page is written outside every transaction, in
 one RocksDB write batch that commits when it is made, whatever
 the caller's transaction then does, and read as it is, through
-the environment's buffer pool (`../BUFFERPOOL.md`), which every
+the environment's buffer pool (`../BUFMGR.md`), which every
 session shares. Its key is the caller's, at most
 `sm1::page_key_max` bytes, under the class byte `0x04`
-(`SM1_DESIGN.md` §3.1), so no scan, read or write of versions
-meets it; the GC filter keeps it as it is. Its bytes are at most
+(`../DBMGR.md` §6.2), so no scan, read or write of versions meets
+it; the GC filter keeps it as it is. Its bytes are at most
 `sm1::page_size`. Each call needs an active transaction, only to
 name the store.
 
@@ -2276,7 +2295,7 @@ build.
 ## Divergences from the earlier sketch
 
 These changes were made against the earlier sketch.
-Each is a decision, not a detail, and `SM1_DESIGN.md` §10.3 and
+Each is a decision, not a detail, and `../ROWSTORE.md` §5.8 and
 §12.1 should be reconciled with the ones marked (D).
 
 They were made while the API was C. The conversion to C++
@@ -2318,7 +2337,7 @@ ones.
    `sm1::commit_prepared` / `sm1::abort_prepared`. Without
    them a prepared transaction that survives a restart is
    unreachable forever.
-7. **`sm1::options_t` added.** `SM1_DESIGN.md` §12.2 specifies
+7. **`sm1::options_t` added.** `../DBMGR.md` §10 specifies
    configuration knobs, including one (`durability_sync`)
    that changes the durability guarantee, and there was no
    surface to set any of them.
@@ -2402,14 +2421,14 @@ ones.
     then offer SQL savepoints to its caller, since the two
     uses collide on the single mark. `sm1::savepoint` now
     returns a depth, `sm1::rollback` takes one, and
-    `sm1::forget` is `RELEASE SAVEPOINT`. `SM1_DESIGN.md` §6.5
+    `sm1::forget` is `RELEASE SAVEPOINT`. `../XCTMGR.md` §6
     has the case that asked for it.
 
 20. **`sm1::lock` added.** (D) Locking a row without writing it
     is how a layer does `SELECT ... FOR UPDATE`, and its
     shared mode is what lets a secondary-index builder wait
     out the writers that cannot yet know the index exists.
-    The index build (`../sm3/SM3_DESIGN.md` §3) is the case that
+    The index build (`../INDEXBUILD.md` §2) is the case that
     asked for it; it was the only missing primitive whose
     absence made correct behaviour impossible rather than
     merely awkward.
@@ -2418,10 +2437,10 @@ ones.
     what an index nested-loop join, an IN-list, and a skip
     scan all need; without it each probe closes and reopens
     a cursor, and under READ COMMITTED every reopen takes a
-    new snapshot as well. `SM1_DESIGN.md` §10.2.
+    new snapshot as well. `../ROWSTORE.md` §5.6.
 
 22. **`sm1::update` and `sm1::erase` return the row they
     replaced.** (D) The write already reads it to check the
     key exists, so a layer maintaining secondary indexes
     would otherwise pay a second seek and a copy for
-    something the engine had in hand. `SM1_DESIGN.md` §5.3.
+    something the engine had in hand. `../ROWSTORE.md` §4.5.

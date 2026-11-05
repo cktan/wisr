@@ -2,7 +2,7 @@
 
 The reference for the tuple format: the bytes `tup_encode`
 writes and `tup_decode` and `tup_deform` read, which a heap
-`rel` stores as an sm1 value. `SM2_DESIGN.md` §4 argues *why*;
+`rel` stores as an sm1 value. `TUPLE.md` §10 argues *why*;
 `VARLENA.md` is a variable-width datum's bytes inside it; this
 file is the rest.
 
@@ -10,7 +10,7 @@ file is the rest.
 examples of §7 in `test/test_tuple.cc`. A datum is inline, or
 out of line with one of sm2's TOAST pointers in its place,
 which the codec stores as it is; the heap `rel` decides which
-(`SM2_DESIGN.md` §4.2).
+(`../TOAST.md` §2).
 
 ---
 
@@ -214,10 +214,10 @@ entry and varlena of each attribute it reads.
     one at most, in one pass into the caller's arrays; fewer
     than every one are checked as `tup_decode` checks (§8).
     It allocates only the schema's widths, not its output.
-  - `tup_read_begin(desc, tuple, r)` and `tup_read(r, n,
-    datums, isnull)` read a tuple attribute by attribute
-    (`../ROW.md` §3): the header and bitmap parsed once, then
-    each call decodes the attributes from where the last
+  - `tup_read_begin(desc, tuple, r)` and `tup_read(r, n, datums,
+    isnull)` read a tuple attribute by attribute
+    (`../ROWSTORE.md` §6.8): the header and bitmap parsed once,
+    then each call decodes the attributes from where the last
     stopped up to `n`, checking only what it reads.
   - `tup_size(desc, datums, isnull, len)` gives the length
     `tup_encode` would make, a length past `max_tup_len`
@@ -235,4 +235,191 @@ entry and varlena of each attribute it reads.
 `tup_encode` could have written: well formed (§8), with
 every attribute of the schema, and none dropped that is not
 null. A heap `rel` checks a pre-encoded tuple against it
-before writing it (`SM2_DESIGN.md` §5).
+before writing it (`../ROWSTORE.md` §8).
+
+---
+
+## 10. Why the codec is an API of its own
+
+**Decision: the tuple codec is a separate component with its own
+calls and its own tests**, not a private detail of the tuple
+relation.
+
+- **It is the part with a permanent on-disk format.** It deserves
+  golden-bytes fixtures of its own, not tests that reach it
+  through a relation, a session and a transaction.
+- **It has several callers.** A heap `rel` stores a row with it.
+  An index `rel` stores the entry's value with it, the INCLUDE
+  columns among them, with no base relation in sight. The Catalog
+  stores each part of a value with it (`../CATALOG.md`).
+- **It needs no database.** It calls none of sm1's storage
+  functions, only sm1's error state. So a unit test exercises it
+  with no database in it.
+
+**The datums are PostgreSQL's, and the framing is sm2's.**
+`TYPE.md` fixes what each column's bytes are, and stops there.
+The tuple around them owes `HeapTupleHeader` nothing. So sm2's
+TOAST is in sm2's own format: a TOASTed datum is sm2's pointer,
+in PostgreSQL's external form with a tag of sm2's own
+(`VARLENA.md` §2, `../TOAST.md`).
+
+## 11. Why the format is so
+
+### 11.1 What the format must do
+
+- **Find a column without decoding every column before it**, with
+  a null bitmap and a split of fixed-width from variable-width
+  data.
+- **Keep an attribute count in each row, as PostgreSQL's
+  `natts`**, so `ADD COLUMN` is O(1). Columns are only appended.
+  A row holds the first `natts` of them, and a column past a
+  row's count reads as its missing value: null, or a default kept
+  once in the catalog, PostgreSQL's `attmissingval`.
+- **Keep no schema version.** A change to a column's stored
+  bytes, such as a new type, rewrites the table, as in
+  PostgreSQL. So every row reads under the one current schema,
+  which sm2 is handed.
+- **Keep a dropped column's place**, marked dropped, as
+  PostgreSQL's `attisdropped` does. An old row's bytes for it are
+  skipped, a new row stores it as null, and the columns after it
+  do not move.
+- **Be cheap to turn into a PostgreSQL tuple.** The executor
+  works in tuple slots, so a bespoke encoding pays a conversion
+  on every row, in both directions. The threaded fork removes the
+  IPC boundary, not the conversion.
+- **Decide TOAST per tuple, not per datum.** Many columns, each
+  under a threshold for one datum, can still pass the limit.
+  `../TOAST.md` has the rule.
+
+### 11.2 The layout
+
+**Decision: the datums are serial, in schema order, split into a
+fixed part and a variable part, with no padding.**
+
+- **No alignment.** PostgreSQL pads each attribute to its
+  `typalign`, because its tuples start MAXALIGNed on aligned
+  pages, so padding buys aligned loads. An sm2 tuple is a RocksDB
+  value, which starts wherever it lies in a block. Padding inside
+  it would align offsets relative to an unaligned start, and buy
+  nothing. A fixed-width datum is read with `memcpy`, which on
+  the targets, x86-64 and ARMv8, is one unaligned load (checked:
+  `ldr` on aarch64).
+- **Schema order, not permuted.** The tuple reads in the order
+  the schema declares, so there is no map, and an appended column
+  follows the same rule.
+- **A null takes no space**, as in PostgreSQL, in either part. A
+  column's entry is then at the sum of the entry widths of the
+  non-null columns before it, computed from the bitmap and the
+  schema's widths (§6). PostgreSQL walks the bytes once an
+  earlier column is null or variable-width.
+- **Every column is found the same way.** A variable-width column
+  has a fixed-width slot in the table, so its entry is found by
+  the same arithmetic, and its varlena is one step further. When
+  no column is null, which is the common case, every entry's
+  position is a constant of the schema, and the row reads like a
+  C struct.
+- **A variable-width datum is a PostgreSQL varlena**, its bytes
+  as PostgreSQL's `varatt.h` lays them out, so the host can hand
+  PostgreSQL a `Datum` pointing into the tuple. The header says
+  what the datum is. So a TOAST pointer travels through the
+  executor's slot as itself, and is fetched only when a function
+  needs the value. An `UPDATE` that leaves the column alone
+  writes it back without a fetch. A `Datum` is one pointer, so
+  the length must be in the bytes it points at.
+- **Every varlena stays in place, in its shortest form,
+  unpadded.** Up to 126 bytes of data takes the 1-byte header,
+  which PostgreSQL reads unaligned. A longer one takes the 4-byte
+  header, which the host hands to the executor in place too,
+  unaligned: its header is one 4-byte load, which on the targets
+  takes any address. A TOASTed datum is copied when fetched. The
+  codec takes either header on input, because PostgreSQL makes
+  4-byte headers for short data after it detoasts, and it writes
+  the shortest (`VARLENA.md` §3, §5).
+- **A slot holds where its varlena starts, and nothing else.**
+  The varlena's header holds its length, so the slot does not
+  repeat it. A position from the tuple's start goes straight to
+  the bytes. A slot is always 2 bytes.
+- **A tuple is at most 65535 bytes, TOAST aside.** It is the
+  furthest a 2-byte slot reaches. The writer refuses a longer row
+  with `SM_ERR_ROWTOOLONG`, which the host maps to PostgreSQL's
+  `program_limit_exceeded`, as for an over-long key. Every slot
+  is then 2 bytes and every entry's width a constant of the
+  schema, so a column's position is computed per schema, not per
+  tuple. It is eight times PostgreSQL's 8 KB page, which bounds
+  its tuples.
+- **TOAST does not make every row fit.** Fixed-width datums never
+  move out of line. 1600 columns of 16 bytes take 25,600 bytes,
+  and 1600 TOAST pointers take 38,400 with their slots, so these
+  fit. A `name` is 64 bytes, so a row of over 1,000 non-null
+  `name` columns does not, and the writer refuses it.
+- **The header is a flag byte and `natts`**, two bytes for a row
+  of up to 127 columns. The has-nulls flag plays the part of
+  PostgreSQL's `HEAP_HASNULL`. Reserved bits are refused, not
+  ignored, so a tuple written with a later feature is never
+  misread by an older reader. PostgreSQL packs `natts` into 11
+  bits of `t_infomask2`. A varint costs one byte to 127 columns
+  and has no ceiling.
+- **The null bitmap follows, when present**: a bit for each of
+  the row's `natts` columns, set for a null, rounded up to whole
+  bytes.
+
+**Open:** whether sm2 ever compresses a datum inline, as
+PostgreSQL does. The compressed 4-byte form already provides for
+it.
+
+## 12. Costs accepted
+
+- **A tuple is not a PostgreSQL tuple, but its columns are
+  PostgreSQL datums.** The conversion at the executor boundary is
+  per tuple, not per datum: the framing is rebuilt, and the
+  column bytes are copied. The threaded fork removed the IPC
+  boundary, not this (`../PART4.md` §2).
+- **A null column costs arithmetic.** Reading a column is one
+  step for each null before it, where an entry kept for a null
+  would make every position a constant. The space was preferred.
+
+## 13. Rejected
+
+- **A version stamp in each row, in place of `natts`.** It would
+  let a type change skip the rewrite. The price is sm3 keeping
+  every schema a table ever had, and sm2 resolving a stamp on
+  every read.
+- **Packing by alignment**, 8-byte columns first, then 4, 2 and
+  1. Its one gain, aligned loads, is the one it cannot deliver
+  here, and it costs a permutation from schema order to the
+  tuple's.
+- **A mark for TOAST in a bitmap beside the null bitmap.** The
+  executor would have to carry a flag with every datum. The mark
+  is in the datum.
+- **A tag byte with no length.** A `Datum` is one pointer, so
+  such a datum could not be handed out alone.
+- **Copying every tuple into an aligned buffer**, and padding
+  within it. It would copy every row for loads the targets do
+  unaligned anyway.
+- **4-byte slots, under a header flag, in a tuple past 64 KB.**
+  It let the TOAST threshold be set on its own merits. But the
+  slot width, and every position after a variable-width column,
+  depended on the tuple.
+- **A separate table of end offsets after the fixed part.** It
+  stored each length twice once the varlena had its own header.
+- **No positions at all, walking the varlena headers**, as
+  PostgreSQL does. It saves the 2 bytes, but a variable-width
+  column costs a walk over those before it. The slot buys O(1)
+  access to every column.
+
+## 14. Tests
+
+Run on the debug build (`../../CLAUDE.md`).
+`test/test_tuple.cc` needs no database, since the codec touches
+no storage.
+
+- **Golden bytes.** §7's tuples are pinned, so a tuple written
+  today decodes tomorrow.
+- **A row read after DDL.** A row written with N attributes reads
+  correctly after columns are added, each missing one as null or
+  its default, and after a column is dropped.
+- **Round trips.** Every tuple round trips, any one column
+  decodes alone, and a wide row does so across bitmap words.
+- **Refusals.** A tuple past 65535 bytes, a malformed tuple (§8),
+  and arguments that do not fit the schema are refused.
+  `tup_check` accepts what the codec writes, and nothing else.

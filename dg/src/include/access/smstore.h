@@ -84,7 +84,7 @@ typedef struct smstore_column_t {
 
 /*
  * The names CREATE INDEX ... USING gives sm's two kinds of index
- * (../sm/BTREE.md section 12).  Both are pg_am's btree; the name chooses
+ * (../sm/LSMINDEX.md section 8).  Both are pg_am's btree; the name chooses
  * the kind, which sm keeps.
  *  - lsm, the default: each entry a key of RocksDB's.
  *  - btree: a B+tree of the index's own pages.

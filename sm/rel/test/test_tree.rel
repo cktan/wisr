@@ -1,4 +1,4 @@
-# test_tree.rel -- secondary indexes made trees (../BTREE.md), through sm.h:
+# test_tree.rel -- secondary indexes made trees (../BTREEINDEX.md), through sm.h:
 # a scan of a tree's rows gives each row while it has its entry's key; its
 # dead entries stay until (compact) removes them.
 
@@ -134,7 +134,7 @@
 (assert-eq (ids (idx-rows accounts_owner)) @[40])
 (commit)
 
-# Verify a unique tree refuses a key a live row has (../BTREE.md §6).
+# Verify a unique tree refuses a key a live row has (../BTREEINDEX.md §7).
 # 1. Make a unique tree on a new owner column's values: a second
 #    owner y is refused, and leaves nothing.
 # 2. Delete y's row and insert y again: taken, its old entry dead.
@@ -188,7 +188,7 @@
 (commit)
 
 # Verify a tree's index-only scan reads no row on a leaf (compact) set all
-# visible, and reads the rows of a leaf a write cleared (../BTREE.md §4.1).
+# visible, and reads the rows of a leaf a write cleared (../BTREEINDEX.md §8).
 # 1. Make a keyless table of 300 rows of state "s", a tree on state, and
 #    compact: an index-only scan of "s" gives 300 keys, no row read.
 # 2. Take a repeatable read snapshot in "snap"; delete a row and move
@@ -315,6 +315,54 @@
 (commit)
 (session-close "rdr")
 (session-use "default")
+
+# Verify the btree cleaner removes dead entries through sm.h, with no
+# (compact) (../BTREEINDEX.md §9).
+# 1. Make a table and a tree, insert rows, move one and delete one.
+# 2. The tree holds their dead entries.
+# 3. While an older snapshot is open, a pass leaves them: it may read them.
+# 4. Once it ends, a pass removes them, and the rows are as written.
+# 5. A pass with nothing queued changes nothing.
+(begin :rc)
+(table-create clean (columns (id :int4 :not-null) (state :text)))
+(index-create clean_state (table clean) (key (state :asc)) :tree true)
+(commit)
+(index-wait clean_state)
+(begin :rc)
+(def clean-a (insert clean [1 "a"]))
+(def clean-b (insert clean [2 "a"]))
+(insert clean [3 "a"])
+(commit)
+(session-open "old" "treedb")
+(session-use "old")
+(begin :rr)
+(assert-eq (ids (idx-rows clean_state)) @[1 2 3])
+(session-use "default")
+(begin :rc)
+(update clean clean-a [1 "b"])
+(delete clean clean-b)
+(commit)
+(begin :rc)
+(assert-eq (idx-entries clean_state) 4)
+(commit)
+(cleaner-pass)
+(begin :rc)
+(assert-eq (idx-entries clean_state) 4)
+(commit)
+(session-use "old")
+(assert-eq (ids (idx-rows clean_state)) @[1 2 3])
+(commit)
+(session-close "old")
+(session-use "default")
+(cleaner-pass)
+(begin :rc)
+(assert-eq (idx-entries clean_state) 2)
+(assert-eq (ids (idx-rows clean_state)) @[3 1])
+(commit)
+(cleaner-pass)
+(begin :rc)
+(assert-eq (idx-entries clean_state) 2)
+(commit)
 
 (db-close)
 (env-detach)

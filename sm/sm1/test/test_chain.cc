@@ -1,5 +1,5 @@
 /*
- * test_chain.cc -- chained stores (../VCHAIN.md): their column
+ * test_chain.cc -- chained stores (../ROWSTORE.md): their column
  * family, and the chain_ calls on them.
  */
 
@@ -267,7 +267,7 @@ TEST_CASE("a committed version copied by a write carries its commit_ts") {
   // Verify a write that copies a committed version stamps the copy with
   // its writer's commit_ts, so a CF:txn sweep that stamped the original
   // and deleted the writer's record leaves the copy readable
-  // (SM1_DESIGN.md §8.3).
+  // (../GC.md §1).
   // 1. Insert "k" as "v1" and commit: its version is unstamped, in the
   //    memtable, as nothing has compacted it.
   // 2. Update "k" to "v2" and commit: "v1" moves to OLD; its copy there
@@ -632,7 +632,7 @@ void compact_chain(sm1::session_t *s, uint64_t storeid) {
 } // namespace
 
 TEST_CASE("compaction reports a dead chained version, and GC puts it back") {
-  // Verify the repair (../VCHAIN.md §7): an abort leaves its versions,
+  // Verify the repair (../GC.md §4.2): an abort leaves its versions,
   // readers pass them, and the compaction filter queues the key for
   // the GC worker, which puts the version before them back.
   // 1. Insert k = v1 and n = n1 and commit; update k to v2 and v3,
@@ -735,10 +735,10 @@ TEST_CASE("a chained cursor does not see an old version stamped after its "
           "snapshot") {
   // Verify that a stamped version written before a cursor's snapshot,
   // but committed after it, is not seen: its stamp, not its write
-  // timestamp, decides (§4.4).
+  // timestamp, decides (../XCTMGR.md §3.3).
   // 1. Insert k = v1 and commit.
   // 2. Update k to v2 in a transaction w, and leave it open; insert j
-  //    and commit, so visible_ts passes v2's write (§4.3).
+  //    and commit, so visible_ts passes v2's write (../XCTMGR.md §3.2).
   // 3. Begin a repeatable read reader t and read k: its snapshot is past
   //    v2's write, and before its commit.
   // 4. Commit w, then update k to v3, so v2 goes to OLD; compact, which
@@ -951,7 +951,7 @@ TEST_CASE("a bulk load puts chained keys in CURR, as a batch and as files") {
 
 TEST_CASE("a session's handle of a store is read again once the store map "
           "changes") {
-  // Verify that a session's store handles (STORECACHE.md) follow
+  // Verify that a session's store handles (../DBMGR.md) follow
   // the database's stores: a dropped store's handle has no CF, a new
   // store's is read, and handles of an older map go at the
   // transaction's end.
@@ -1059,7 +1059,7 @@ std::vector<std::string> batch_reads(sm1::session_t *s, uint64_t storeid,
 
 TEST_CASE("a batch read gives each key's row as a single read does") {
   // Verify sm1::chain_read_batch against sm1::chain_read
-  // (../BATCHREAD.md).
+  // (../ROWSTORE.md).
   // 1. Write k0..k9; update k1 twice and k2 once, so older versions
   //    are in OLD; erase k5. Session C takes a snapshot before the
   //    updates, R a snapshot after.

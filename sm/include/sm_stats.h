@@ -3,7 +3,7 @@
  *
  * sm3.h names these types stats_t, stats_index_t and stat_t, and
  * sm.h hands them out as they are: sm3 keeps each table's
- * statistics in memory once loaded (sm3/SM3_DESIGN.md section 6),
+ * statistics in memory once loaded (../STATISTICS.md section 9),
  * and every client reads that one copy, never a translation of
  * it (OBJECTIVE.md). It belongs to no level, so it lives at the
  * root, as sm_options.h does.

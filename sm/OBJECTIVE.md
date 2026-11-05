@@ -136,16 +136,16 @@ These are settled; they bind every level below.
   (`PART4.md` §4), so sm1's status record is the one commit
   point. The catalog is loaded into memory at startup and
   written through to sm2 for persistence
-  (`sm3/SM3_DESIGN.md` §2).
+  (`CATALOG.md` §1).
 - **sm serves any database system, not only digres.** The
   stack is a library of its own: digres is the first client,
   and another, MySQL say, may come later. Every client reaches
   it through `include/sm.h` and nothing else. So what any
   client would need from its storage is built into sm, once,
   not into the client: holding a row read without copying it
-  and deforming it only as far as it is read (`ROW.md`), or
+  and deforming it only as far as it is read (`ROWSTORE.md`), or
   keeping each table's statistics in memory, handed out
-  without a copy (`sm3/SM3_DESIGN.md` §6). It goes in the
+  without a copy (`STATISTICS.md` §9). It goes in the
   level it belongs to, or in the wrapper when it belongs to
   no level, as the map of each database's open catalog does.
   A client keeps only what is its own: its SQL, its planner,

@@ -1,5 +1,5 @@
 # Verify an index-only scan of a tree, its rows unread on a leaf VACUUM
-# set all visible (../sm/BTREE.md section 4.1), counts as PostgreSQL's
+# set all visible (../sm/BTREEINDEX.md section 8), counts as PostgreSQL's
 # does, before and after writes clear some of its leaves.
 # 1. Make a table of 3,000 rows, a tree on c2, and VACUUM it.
 # 2. Confirm count(*) by c2 plans an index-only scan, and its counts.

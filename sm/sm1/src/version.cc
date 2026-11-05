@@ -1,6 +1,6 @@
 /*
  * version.cc -- the row-version codec, the wisr.store.v2
- * comparator, and the userkey prefix extractor (SM1_DESIGN.md §3.1).
+ * comparator, and the userkey prefix extractor (../DBMGR.md §6.2).
  */
 
 #include "version.h"
@@ -15,8 +15,8 @@ namespace {
  * Order by class first. Versioned keys by userkey with memcmp,
  * shorter first on a tie, then by tail, newest version first: the
  * default bytewise comparator would compare one key's tail against
- * a longer key's extra bytes (SM1_DESIGN.md §3.1). Current and old
- * keys bytewise (../VCHAIN.md §2).
+ * a longer key's extra bytes (../DBMGR.md §6.2). Current and old
+ * keys bytewise (../ROWSTORE.md §3.2).
  */
 class version_comparator_t : public rocksdb::Comparator {
 public:
@@ -53,7 +53,7 @@ public:
   /*
    * Two keys compare equal only when their bytes are: a userkey is
    * split from its tail by length alone. RocksDB builds a data
-   * block's hash index only for a comparator that says so (§12.2).
+   * block's hash index only for a comparator that says so (../DBMGR.md §10).
    */
   bool CanKeysWithDifferentByteContentsBeEqual() const override {
     return false;
@@ -70,7 +70,7 @@ public:
 /*
  * The bloom filter's prefix: a version key's class and userkey, its
  * tail stripped; a current or old key whole, which a Get looks up.
- * Variable-length, so FullLengthEnabled stays false (§10.2).
+ * Variable-length, so FullLengthEnabled stays false (../ROWSTORE.md §5.6).
  */
 class version_prefix_t : public rocksdb::SliceTransform {
 public:

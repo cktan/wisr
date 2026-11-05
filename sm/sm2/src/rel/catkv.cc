@@ -1,5 +1,5 @@
 /*
- * catkv.cc -- the catalog key-value store (sm3/CATALOG_ONDISK.md §1):
+ * catkv.cc -- the catalog key-value store (../CATALOG.md §3.1):
  * the level above's catalog, kept in sm1's store 0 under
  * sm1::upper_prefix. Every call is one sm1 call in the session's
  * transaction; this file adds the prefix to a key and strips it

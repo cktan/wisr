@@ -1,5 +1,5 @@
 /*
- * test_tree_index.cc -- an index rel over a tree (../BTREE.md §13
+ * test_tree_index.cc -- an index rel over a tree (../BTREEINDEX.md §11.3
  * step 6): the same scans as an index of sm1's entries, over the
  * same entries, and what a tree does apart from them.
  */

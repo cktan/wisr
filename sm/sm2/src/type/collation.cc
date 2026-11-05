@@ -1,6 +1,6 @@
 /*
  * collation.cc -- collations for text and varchar keys, through
- * ICU (SM2_DESIGN.md §3.3): opened by locale, carrying ICU's
+ * ICU (../LSMINDEX.md §2.3): opened by locale, carrying ICU's
  * collator version, and refused when that version is not the one
  * the caller recorded, since keys built under another version may
  * not sort the same.

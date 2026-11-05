@@ -229,7 +229,7 @@ the transaction changed after the statement began answers
 `selfmodified`, and is not locked (`a18`). **`lockoid`** takes
 the OID lock on the number `n`, as sm3 locks a table by its
 oid: no row and no store, and no check against a snapshot.
-IS and IX take the fast path of `SM1_DESIGN.md` §5.1 while no
+IS and IX take the fast path of `../LOCKMGR.md` §3.2 while no
 stronger mode is held or asked on the name (`h01` to `h06`).
 
 **`seek`** moves an open cursor forward to a key, that key
@@ -497,7 +497,7 @@ outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=seria
 ## 7. Chained mode
 
 `driver --chained script.t` runs a script against chained stores
-(`../../VCHAIN.md`): the two stores it makes are made chained, and
+(`../ROWSTORE.md`): the two stores it makes are made chained, and
 every row verb calls the `chain_` counterpart of its call
 (`sm1::chain_read`, `chain_read_latest`, `chain_insert`,
 `chain_update`, `chain_erase`, `chain_erase_moved`, `chain_scan`,

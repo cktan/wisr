@@ -380,7 +380,7 @@ static void sm_error(const char *what) {
                        what)));
   /*
    * A row a concurrent update moved to another key, its primary key
-   * changed: it is not followed there (../sm/ROWKEY.md section 2.3), as
+   * changed: it is not followed there (../sm/ROWSTORE.md section 2.5), as
    * PostgreSQL follows no row moved to another partition.
    */
   if (sm_errnum() == SM_ERR_MOVED)
@@ -682,7 +682,7 @@ void smstore_statement_start(void) {
  * as no row the statement pinned is wanted after it, so that one an error
  * left behind lasts no longer than its statement.  Not while a cursor is
  * open: a FETCH leaves its plan's slots holding rows the next FETCH may
- * read, a nested loop's outer row (../sm/PIN.md section 6.4).
+ * read, a nested loop's outer row (../sm/ROWSTORE.md section 10.5).
  */
 void smstore_statement_end(void) {
   sm_session_t *s = datadir_sm_session();
@@ -2637,7 +2637,7 @@ void smstore_load_end(Relation rel) {
 }
 
 /*
- * The most rows a scan reads ahead in one call (../sm/BATCHREAD.md): enough
+ * The most rows a scan reads ahead in one call (../sm/ROWSTORE.md): enough
  * to share a data block's lookups among rows next to each other, few enough
  * that a scan stopped early has read little it did not use.
  */
@@ -2686,7 +2686,7 @@ struct smstore_scan_t {
   /*
    * An index or a fetch scan's pin on the row it read last by rowno, which
    * its slot holds: released by the next read into it, the scan's end, or
-   * the transaction's (../sm/ROW.md section 4).
+   * the transaction's (../sm/ROWSTORE.md section 6.4).
    */
   sm_pin_ref_t ref;
   /*
@@ -2747,7 +2747,7 @@ struct smstore_scan_t {
   Datum **elems;
   int *nelems;
   /*
-   * Rows read ahead, many by one sm_tbl_read_keys() (../sm/BATCHREAD.md): a
+   * Rows read ahead, many by one sm_tbl_read_keys() (../sm/ROWSTORE.md): a
    * secondary index's entries' rows (ra_rows), or the rows of a primary
    * key's probes (ra_point); ra_done once the entries or probes ended.  ra_n of them, ra_at
    * the next to hand out, each its rowno, its key, copied, its pin and
@@ -2756,13 +2756,13 @@ struct smstore_scan_t {
    * cur_key, the row the scan is on.
    */
   bool ra_rows;
-  /* A tree's (../sm/BTREE.md): its rows come by a cursor, as a primary
+  /* A tree's (../sm/BTREEINDEX.md): its rows come by a cursor, as a primary
    * key's, each rechecked against its entry by sm. */
   bool tree;
   /*
    * An index-only scan's tree of key columns alone: its cursor hands out
    * an entry with its row unread where vacuum found its leaf all visible
-   * (../sm/BTREE.md section 4.1, sm_rel_scan_entries()).
+   * (../sm/BTREEINDEX.md section 8, sm_rel_scan_entries()).
    */
   bool entries_only;
   bool ra_point;
@@ -2781,7 +2781,7 @@ struct smstore_scan_t {
 };
 
 /*
- * A slot holding a row of a table in sm (../sm/ROW.md section 6): the ref
+ * A slot holding a row of a table in sm (../sm/ROWSTORE.md section 10.4): the ref
  * of the pin the row is in, deformed only as far as the executor reads it.
  * With no ref it is a virtual slot, its columns filled by whoever stored
  * them.  Not being virtual, it gets the executor's fetch steps
@@ -3100,7 +3100,7 @@ uint64 smstore_rowno_limit(Relation rel) {
 /*
  * The slots a sample scan of rel, a table with a primary key, cuts it
  * into: a block's bytes each, by sm's estimate of its bytes in sorted files
- * and memtables together (../sm/ROWKEY.md section 2.4); 0 if it has none.
+ * and memtables together (../sm/ROWSTORE.md section 2.6); 0 if it has none.
  */
 uint64 smstore_sample_slots(Relation rel) {
   sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
@@ -5398,7 +5398,7 @@ static void keep_estimate(Oid oid, uint64_t index, uint64_t epoch,
  *    a flush since would read as a shrink.  Row numbers count inserts and
  *    not deletes (STATISTICS.md section 2.2).
  * 3. Else return its bytes now over then.  A table with a primary key draws
- *    no row numbers (../sm/ROWKEY.md section 2.1), and its bytes say all the
+ *    no row numbers (../sm/ROWSTORE.md section 2.2), and its bytes say all the
  *    same.
  */
 static double growth(sm_tbl_t *tbl, const sm_stats_t &st, double *now) {
@@ -6498,7 +6498,7 @@ static int smstore_index_eval(void *ctx, uint64_t table, uint64_t index,
   MemoryContext old;
   int rc = 0;
 
-  /* One of sm's index builders, at its first call: made able to evaluate. */
+  /* One of sm's builders or cleaners, at its first call: made able to run. */
   session_thread_adopt();
   old = CurrentMemoryContext;
   PG_TRY();
@@ -6536,7 +6536,7 @@ int smstore_set_index_evaluator(sm_env_t *env) {
 
 /*
  * Whether a CREATE INDEX asks for a tree, USING btree: a B+tree of the
- * index's own pages (../sm/BTREE.md).  USING lsm, the default, asks for
+ * index's own pages (../sm/BTREEINDEX.md).  USING lsm, the default, asks for
  * entries that are each a key of RocksDB's.
  */
 static bool tree_kind(const IndexStmt *stmt) {
@@ -7761,7 +7761,7 @@ static bool next_probe(smstore_scan_t *scan) {
  * key, so a key that bounds nothing still holds; but not a key the bounds
  * hold exactly, one of a primary key's or a tree's integer columns: its
  * rows, keyed by those columns, are read only between the bounds
- * (../sm/sm2/SM2_DESIGN.md section 5, a scan's bounds), and none is null.
+ * (../sm/ROWSTORE.md section 8, a scan's bounds), and none is null.
  */
 smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
                                         ScanKey keys, int nkeys) {
@@ -7981,7 +7981,7 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   /* An equality on each of the primary key's columns: a read by key. */
   scan->point = form->indisprimary && ncols == neq;
   /*
-   * Rows read ahead, many a call (../sm/BATCHREAD.md): a secondary index's
+   * Rows read ahead, many a call (../sm/ROWSTORE.md): a secondary index's
    * entries' rows, and an array's probes of the whole primary key, whose
    * first probe is read with the rest.
    */
@@ -8058,7 +8058,7 @@ static bool ra_next(smstore_scan_t *scan) {
 /*
  * A secondary index's scan's next row that meets its keys into slot, by its
  * pin, its tid its rowno; false at the end.  Its entries' rows are read
- * ahead, many in one call (../sm/BATCHREAD.md), their keys copied as the
+ * ahead, many in one call (../sm/ROWSTORE.md), their keys copied as the
  * cursor moves on.  Out of line, so a primary key's scan pays for none of it.
  */
 static pg_noinline bool next_read_row(smstore_scan_t *scan,
@@ -8102,7 +8102,7 @@ static pg_noinline bool next_read_row(smstore_scan_t *scan,
  * An array's probes of the whole primary key: the next row they name that
  * the transaction sees, made the row the scan is on; false after the last.
  * The probes' keys are made from their bounds and their rows read ahead,
- * many in one call (../sm/BATCHREAD.md).
+ * many in one call (../sm/ROWSTORE.md).
  */
 static pg_noinline bool next_point_row(smstore_scan_t *scan) {
   for (;;) {

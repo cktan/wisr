@@ -1,5 +1,5 @@
 /*
- * locktab.h -- the lock table (SM1_DESIGN.md §5.1): a lock's id ->
+ * locktab.h -- the lock table (../LOCKMGR.md §3.2): a lock's id ->
  * the owners holding it, each in a mode of its own.
  *
  * It knows ids, Gray's modes and opaque owners; nothing of

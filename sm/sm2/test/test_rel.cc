@@ -1,5 +1,5 @@
 /*
- * test_rel.cc -- the heap rel over sm1 (SM2_DESIGN.md §5, §8.2 step
+ * test_rel.cc -- the heap rel over sm1 (../ROWSTORE.md §8, TYPE.md §9 step
  * 4): rows in, rows out, under every isolation level, with sm1's
  * behaviour showing through untranslated.
  */
@@ -295,7 +295,7 @@ TEST_CASE("relid_size charges each rel of a store its own bytes") {
 
 TEST_CASE("sm1's SM_ERR_UPDATED passes through, and rel_read_latest "
           "answers it") {
-  // Verify the READ COMMITTED path of SM2_DESIGN.md §5.
+  // Verify the READ COMMITTED path of ../ROWSTORE.md §8.
   // 1. A row is committed. Session A begins at READ COMMITTED and
   //    reads it; session B updates it and commits.
   // 2. A's update fails with SM_ERR_UPDATED, untranslated, and its

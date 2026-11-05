@@ -2,7 +2,7 @@
  * test_2pc.cc -- two-phase commit and recovery: sm1::prepare,
  * resolution by gid, in-doubt transactions across a restart, the
  * restored-transaction SSI rule, and the orphan CF sweep
- * (SM1_DESIGN.md §8.4, §8.5, §9, §12.5 "2PC").
+ * (../XCTMGR.md §10, §10.6, ../DBMGR.md §9, §17.2 "2PC").
  */
 
 #include "doctest.h"
@@ -197,7 +197,7 @@ int orphan_child_main(const char *homedir) {
 }
 
 TEST_CASE("prepare, then commit or abort on the preparing session") {
-  // Verify the basic 2PC lifecycle (§8.4).
+  // Verify the basic 2PC lifecycle (../XCTMGR.md §10).
   // 1. Update "a" and prepare as "g1": the change is not yet
   //    visible, and "g1" is listed.
   // 2. sm1::commit resolves it: the change is visible, nothing
@@ -259,7 +259,7 @@ TEST_CASE("sm1::in_doubt holds from prepare until the gid is resolved") {
 }
 
 TEST_CASE("a prepared transaction accepts only commit and abort") {
-  // Verify the PREPARED state's rules (§8.4, API.md).
+  // Verify the PREPARED state's rules (../XCTMGR.md §10, API.md).
   // 1. Preparing without a transaction fails with NOTRANS; an
   //    empty or over-long gid fails with INVALID.
   // 2. After prepare, data calls, savepoint, and rollback fail
@@ -316,7 +316,7 @@ TEST_CASE("a prepare that fails validation releases its gid") {
   // 1. T1 and T2 (SERIALIZABLE) begin. T2 reads "b", updates
   //    "a", and commits.
   // 2. T1 reads "a", stepping past T2's version, and updates
-  //    "b", which T2 read: T1 is doomed (§7.3).
+  //    "b", which T2 read: T1 is doomed (../XCTMGR.md §7.4).
   // 3. T1's prepare under "g" fails with SM_ERR_SERIALIZATION,
   //    and "g" is not listed.
   // 4. A new transaction prepares and commits under "g".
@@ -344,7 +344,7 @@ TEST_CASE("a prepare that fails validation releases its gid") {
 }
 
 TEST_CASE("another session can resolve a prepared transaction by gid") {
-  // Verify resolution from any session (§8.5) and what the
+  // Verify resolution from any session (../XCTMGR.md §10.6) and what the
   // preparing session sees afterwards.
   // 1. S prepares "g"; U commits it by gid.
   // 2. S has no transaction: sm1::commit fails with NOTRANS, and
@@ -371,7 +371,8 @@ TEST_CASE("another session can resolve a prepared transaction by gid") {
 }
 
 TEST_CASE("a prepared transaction keeps its locks after its session closes") {
-  // Verify an in-doubt transaction blocks writers (§8.4, §9.3).
+  // Verify an in-doubt transaction blocks writers (../XCTMGR.md §10,
+  // ../DBMGR.md §9.3).
   // 1. S updates "a", prepares "g", and closes: "g" stays in
   //    doubt and is listed with a sane prepared_at.
   // 2. U's update of "a" blocks.
@@ -414,7 +415,7 @@ TEST_CASE("a prepared transaction keeps its locks after its session closes") {
 
 TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
   // Verify sm1::lock_row's shared locks reach the PREPARED record and
-  // come back with it (§8.4, §9.1).
+  // come back with it (../XCTMGR.md §10, ../DBMGR.md §9.1).
   // 1. S locks "b" shared, writes "a", and prepares "g".
   // 2. Restart the environment, so "g" is rebuilt from its record.
   // 3. A writer of "b" blocks on the restored shared lock, and
@@ -452,7 +453,7 @@ TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
 TEST_CASE("row locks whose keys hash alike are one lock after a restart") {
   // Verify a prepared transaction's record keeps the one lock two row
   // keys whose ids are one make, by its id, with its mode and kind
-  // (§8.4, §9.1).
+  // (../XCTMGR.md §10, ../DBMGR.md §9.1).
   // 1. Make every row key hash alike; S locks "a" shared, of kind 7,
   //    and "b" exclusive, one lock, writes nothing, and prepares "g":
   //    S keeps no lock, and lock_status lists g's one lock, its word
@@ -514,7 +515,8 @@ TEST_CASE("row locks whose keys hash alike are one lock after a restart") {
 TEST_CASE("a prepared transaction's table locks keep DDL out, across a "
           "restart") {
   // Verify the fast path's locks reach the PREPARED record, and a
-  // strong one's count comes back with it (§5.1, §8.4, §9.1).
+  // strong one's count comes back with it (../LOCKMGR.md §3.2, ../XCTMGR.md
+  // §10, ../DBMGR.md §9.1).
   // 1. S locks oid 1 IS, in a slot, and oid 2 X, and prepares "g".
   // 2. V's trylock of oid 1 X fails, the IS gone to the table with
   //    the prepare, and of oid 2 IS fails, X counted.
@@ -560,7 +562,8 @@ TEST_CASE("a prepared transaction's table locks keep DDL out, across a "
 TEST_CASE("a prepared transaction keeps its intention locks across a "
           "restart") {
   // Verify a mode beyond shared and exclusive reaches the PREPARED
-  // record's mode byte and comes back with it (§8.4, §9.1).
+  // record's mode byte and comes back with it (../XCTMGR.md §10, ../DBMGR.md
+  // §9.1).
   // 1. S locks "b" IX, writes "a", and prepares "g".
   // 2. Restart, so "g" is rebuilt from its record.
   // 3. An IX on "b" is granted at once beside the restored one; an
@@ -598,7 +601,7 @@ TEST_CASE("a prepared transaction keeps its intention locks across a "
 
 TEST_CASE(
     "an in-doubt transaction survives a restart, then commits or aborts") {
-  // Verify restore (§9.1 step 5) and both resolutions after it.
+  // Verify restore (../DBMGR.md §9.1 step 5) and both resolutions after it.
   // 1. Prepare "gc" (a = 1) and "ga" (b = 1); a forced detach
   //    leaves both in doubt.
   // 2. After reattaching both are listed with their original
@@ -650,7 +653,7 @@ TEST_CASE(
 }
 
 TEST_CASE("read-only prepares survive a restart and resolve") {
-  // Verify read-only prepares get distinct records (§8.4).
+  // Verify read-only prepares get distinct records (../XCTMGR.md §10).
   // 1. Two read-only transactions prepare as "r1" and "r2".
   // 2. After a restart both are listed and both commit.
   tpc_fixture_t f;
@@ -674,7 +677,7 @@ TEST_CASE("read-only prepares survive a restart and resolve") {
 }
 
 TEST_CASE("a prepared drop commits after a restart and its CF goes") {
-  // Verify T.dropped survives in the record (§3.2, §12.5).
+  // Verify T.dropped survives in the record (../DBMGR.md §6.5, §17.2).
   // 1. Create a second store; prepare its drop as "gd";
   //    restart.
   // 2. Commit "gd" by gid; the store is gone.
@@ -703,7 +706,7 @@ TEST_CASE("a prepared drop commits after a restart and its CF goes") {
 }
 
 TEST_CASE("write skew with a transaction restored in doubt is still caught") {
-  // Verify §8.4's restored rule: its SIREAD entries are lost.
+  // Verify ../XCTMGR.md §10's restored rule: its SIREAD entries are lost.
   // 1. T_prep (SERIALIZABLE) reads "a", updates "b", prepares.
   // 2. Restart: T_prep is restored without its SSI state.
   // 3. T_new (SERIALIZABLE) reads "b", stepping past T_prep's
@@ -730,7 +733,7 @@ TEST_CASE("write skew with a transaction restored in doubt is still caught") {
 }
 
 TEST_CASE("a transaction prepared when the process is killed is restored") {
-  // Verify the PREPARED record is durable against SIGKILL (§12.5).
+  // Verify the PREPARED record is durable against SIGKILL (../DBMGR.md §17.2).
   // 1. A child process inserts "c", prepares "g-crash", reports,
   //    and is killed.
   // 2. Reattach: "g-crash" is listed and "c" is invisible.
@@ -753,7 +756,7 @@ TEST_CASE("a transaction prepared when the process is killed is restored") {
 }
 
 TEST_CASE("startup drops store CFs that nothing names") {
-  // Verify the orphan CF sweep (§9.1 step 6).
+  // Verify the orphan CF sweep (../DBMGR.md §9.1 step 6).
   // 1. Create a second store and commit. A child drops it
   //    and commits, then creates one without committing, and
   //    is killed.
@@ -809,7 +812,7 @@ int prepare_fail_child_main(const char *homedir) {
 
 TEST_CASE("a failed prepare write aborts the process") {
   // Verify a prepare whose PREPARED record write fails ends the
-  // process, and the reopen decides it from the WAL (§8.4).
+  // process, and the reopen decides it from the WAL (../XCTMGR.md §10).
   // 1. Leave the home directory to a child, which updates "a"
   //    and fails the prepare write of "gx": it dies of SIGABRT,
   //    having said *** FATAL *** on stderr.
@@ -861,7 +864,7 @@ int abort_fail_child_main(const char *homedir) {
 TEST_CASE("a failed abort record write aborts the process") {
   // Verify an abort of a prepared transaction whose ABORTED record
   // write fails ends the process, and the reopen finds the
-  // transaction still prepared (§8.4).
+  // transaction still prepared (../XCTMGR.md §10).
   // 1. Leave the home directory to a child, which prepares "gx"
   //    and fails its abort record write: it dies of SIGABRT,
   //    having said *** FATAL *** on stderr.

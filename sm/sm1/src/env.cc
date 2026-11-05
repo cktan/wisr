@@ -1,7 +1,7 @@
 /*
  * env.cc -- sm1::init, sm1::attach, sm1::detach: the home directory,
  * its root db, and the sweep of unnamed database directories
- * (SM1_DESIGN.md §3.5).
+ * (../DBMGR.md §4).
  *
  * At most one process, and one environment in it, may attach a
  * home directory at a time. The library does not enforce this:
@@ -102,7 +102,7 @@ bool parse_dbid(const char *name, uint64_t *dbid) {
 
 /*
  * Decide how every database of the home writes its new logs, and make
- * env->wal_env if they are zero-filled (WALPREALLOC.md).
+ * env->wal_env if they are zero-filled (../DBMGR.md).
  * 1. Read the answer from the root db. If it is there, go to step 5.
  * 2. Else, off WSL, the answer is that they are not zero-filled.
  * 3. On WSL, time a sync that grows a file against one that does not,
@@ -222,7 +222,7 @@ int sweep_base(sm1::env_t *env) {
 /*
  * Recover every database the root db names: open it, which
  * replays its WAL and runs the rest of startup (SM1_DESIGN.md
- * §9.1), then close it again. A prepared transaction stays in
+ * ../DBMGR.md §9.1), then close it again. A prepared transaction stays in
  * doubt, restored again by the next sm1::opendb. Returns 0, or
  * -1 with the error set by the first database that fails.
  */
@@ -247,7 +247,7 @@ int recover_dbs(sm1::env_t *env) {
     log_msg(sm1::loglevel_t::info, "recovering database {} in {}", name.c_str(),
             path.c_str());
     // Open the database with the defaults: this is its recovery,
-    // done when db_open returns (WAL replay, then §9.1 steps 2-6).
+    // done when db_open returns (WAL replay, then ../DBMGR.md §9.1 steps 2-6).
     db_t *db = db_open(path, name.c_str(), nullptr, env->block_cache,
                        env->wal_env.get());
     // Fail the attach: a database that cannot recover.
@@ -333,7 +333,7 @@ sm1::env_t *attach(const char *homedir, const sm1::env_options_t *opt) {
   std::unique_ptr<sm1::env_t> env(new sm1::env_t);
   env->homedir = homedir;
   // One budget, two users: a quarter to the buffer pool's pages, the
-  // rest to the block cache's rows (../../BUFFERPOOL.md §4.5). The pool
+  // rest to the block cache's rows (../BUFMGR.md §1.8). The pool
   // keeps a floor, as a thread's pins must find frames.
   size_t budget = static_cast<size_t>(opt->block_cache_bytes);
   size_t sessions = static_cast<size_t>(std::max(opt->max_sessions, 0));

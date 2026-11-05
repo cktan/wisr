@@ -15,9 +15,9 @@ operations on a row, every read-write shape known to produce
 an anomaly under snapshot isolation, and, for each one, the
 answer at every level pairing.
 
-`SM1_DESIGN.md` §5 to §7 defines the mechanisms; `SIREAD.md`
-explains the serializable theory they implement. This
-document is about behaviour: given a history, which calls
+`../LOCKMGR.md` §1.7, `../XCTMGR.md` §7 defines the mechanisms;
+`../XCTMGR.md` explains the serializable theory they implement.
+This document is about behaviour: given a history, which calls
 fail and which commit.
 
 ## 1. The model
@@ -38,7 +38,7 @@ writer of the same row waits for that transaction, rather
 than producing a version nobody asked for. This is what
 makes a dirty write impossible. No lock is recorded for it:
 the uncommitted version is what the second writer waits on
-(`../WRITELOCK.md`). Two writers that wait on each other's rows
+(`../LOCKMGR.md`). Two writers that wait on each other's rows
 would wait forever, so the engine breaks the cycle itself:
 the youngest transaction on it fails with
 `SM_ERR_DEADLOCK`, and the others go on.
@@ -394,7 +394,7 @@ Four of the rest say more than their row can:
 
 - **c26 and c27**: the pivot commits whichever neighbour
   aborts, because an abort takes its edges with it
-  (`SM1_DESIGN.md` §7.3). Under Cahill's two flags both
+  (`../XCTMGR.md` §7.4). Under Cahill's two flags both
   failed T2; they pin that the refinement withdraws an edge.
 - **c29**: a read taken before a savepoint still constrains
   the transaction after a rollback past it (§6.5). Were it
@@ -433,7 +433,7 @@ Every script here pins its sessions with `rc`, since `pairings
 all` runs only RR and SERIALIZABLE. A write that meets a row
 committed after the transaction began fails with `updated`,
 which does not abort; the caller reads the newest version with
-`readlatest` and goes on (`SM1_DESIGN.md` §5.4).
+`readlatest` and goes on (`../LOCKMGR.md` §1.9).
 
 | # | Schedule | Outcome | File |
 |---|---|---|---|
@@ -470,7 +470,7 @@ outcome PostgreSQL's expected output gives.
 | p10 | `multiple-row-versions` | 1 | 0 | 1 | `in/p10_multiple_row_versions.t` |
 
 sm1 applies Ports and Grittner's commit-order and read-only
-refinements, as PostgreSQL does (`SM1_DESIGN.md` §7.3), and a
+refinements, as PostgreSQL does (`../XCTMGR.md` §7.4), and a
 session declared `READ ONLY` in PostgreSQL's setup, as p02's
 s3, is declared read-only here (`session s3 ser ro`), so 383
 of the 390 permutations end as PostgreSQL's do. The rest:
@@ -497,7 +497,7 @@ by an abort and then written over.
 ## 7d. Family H — table locks
 
 A table's IS or IX is kept in a slot of its session, not in
-the lock table (`SM1_DESIGN.md` §5.1); S, SIX and X on the oid
+the lock table (`../LOCKMGR.md` §3.2); S, SIX and X on the oid
 move every session's slot for it into the table first. These
 show a slot still meets what conflicts with it.
 
@@ -532,7 +532,7 @@ At every level, wisr **does not** detect:
   each other (a08, a09, c15).
 
 It also does not detect anything across **processes**: one
-process attaches a home directory (`SM1_DESIGN.md` §3.5), so all
+process attaches a home directory (`../DBMGR.md` §4), so all
 of the above is within-process concurrency.
 
 ## 9. What this coverage is, and what it is not

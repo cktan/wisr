@@ -1,5 +1,5 @@
 /*
- * test_page.cc -- a B+tree page (../BTREE.md §3, §13 step 1): its
+ * test_page.cc -- a B+tree page (../BTREEINDEX.md §4, §11.3 step 1): its
  * bytes laid out and read where they lie, an entry's insert, a
  * split's halves, and a page that is not one refused.
  */
@@ -105,6 +105,49 @@ TEST_CASE(
     view.load(again);
     CHECK(bytes == page_bytes(again));
   }
+}
+
+TEST_CASE("tree page: a split sets each half by its own entries") {
+  // Verify a leaf's halves are all visible only if no entry on them is
+  // in doubt, whatever the page's flag was (../BTREEINDEX.md §9).
+  // 1. Split a full leaf of settled entries by an entry in doubt: the
+  //    half that takes it is unset, the other set.
+  // 2. A leaf with an entry in doubt in each half: neither is set.
+  // 3. An inner page's halves are never set.
+  auto full = [](uint8_t level, std::string_view value) {
+    page_t page;
+    page.level = level;
+    for (int n = 100; 2 != page_insert(page, std::to_string(n), value, 512);
+         n += 2) {
+    }
+    return page;
+  };
+  const std::string clear(1, '\0');
+  const std::string doubt(1, static_cast<char>(entry_indoubt));
+  auto set = [](const page_t &p) { return 0 != (p.flags & page_all_visible); };
+
+  page_t page = full(0, clear);
+  page_t right;
+  page_split(page, right, "101", doubt, 512);
+  CHECK_FALSE(set(page));
+  CHECK(set(right));
+
+  page = full(0, clear);
+  std::string top = page.entries.back().first + "5";
+  page_split(page, right, top, doubt, 512);
+  CHECK(set(page));
+  CHECK_FALSE(set(right));
+
+  page = full(0, clear);
+  page.entries.front().second = doubt;
+  page_split(page, right, top, doubt, 512);
+  CHECK_FALSE(set(page));
+  CHECK_FALSE(set(right));
+
+  page = full(1, clear);
+  page_split(page, right, top, clear, 512);
+  CHECK_FALSE(set(page));
+  CHECK_FALSE(set(right));
 }
 
 TEST_CASE("tree page: a split's halves are the whole, in order, each under the "

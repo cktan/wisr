@@ -1,5 +1,5 @@
 /*
- * blob.cc -- the catalog's values (CATALOG_ONDISK.md §3). A value is a
+ * blob.cc -- the catalog's values (../CATALOG.md §3.5). A value is a
  * sequence of parts, each an sm2 tuple under a schema this file
  * fixes, framed by its length as a varint. A part evolves as any
  * tuple does: an attribute appended to its schema reads as its
@@ -228,7 +228,7 @@ private:
   sm3::row_t m_row;
 };
 
-/* The schema of each part, in part_t order (CATALOG_ONDISK.md §3). */
+/* The schema of each part, in part_t order (../CATALOG.md §3.5). */
 const std::vector<attribute_t> &schema_of(sm3::part_t part) {
   using namespace sm2;
   static const std::vector<attribute_t> schemas[] = {
@@ -487,7 +487,7 @@ int encode_index(const index_rec_t &x, std::string &blob) {
   if (x.constraint) {
     w.b(12, true);
   }
-  // A tree's mark (../BTREE.md); null, as an index written before
+  // A tree's mark (../BTREEINDEX.md); null, as an index written before
   // trees has it, for any other.
   if (x.tree) {
     w.b(13, true);
@@ -794,7 +794,7 @@ int decode_constraint(std::string_view blob, fkey_rec_t &rec) {
 
 /*
  * The most of a view's query one part holds: a part is an sm2 tuple, at
- * most 65535 bytes, and a query may be longer (CATALOG_ONDISK.md §3).
+ * most 65535 bytes, and a query may be longer (../CATALOG.md §3.5).
  */
 constexpr size_t view_query_piece = 60000;
 

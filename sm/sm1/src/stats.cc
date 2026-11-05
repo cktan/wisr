@@ -1,6 +1,6 @@
 /*
  * stats.cc -- what a store's LSM looks like now: sm1::approxsize
- * and sm1::probes (sm3/SM3_DESIGN.md §6.2, §6.3 at the stack's
+ * and sm1::probes (../STATISTICS.md §9.2, §9.3 at the stack's
  * root); and sm1::compact, which merges it into one level.
  *
  * Each works on RocksDB's column family of a store, and none

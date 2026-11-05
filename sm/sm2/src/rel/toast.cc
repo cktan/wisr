@@ -1,5 +1,5 @@
 /*
- * toast.cc -- a datum out of line (SM2_DESIGN.md §4.2). A datum is
+ * toast.cc -- a datum out of line (../TOAST.md §2). A datum is
  * cut into chunks of toast_chunk bytes, each an sm1 row of the
  * table's own store, keyed by the TOAST relid, the datum's id and
  * the chunk's number: a datum's chunks are next to one another and
@@ -111,6 +111,39 @@ int toast_read(sm1::session_t *session, const toast_ptr_t &p,
     return sm1::seterr(sm1::SM_ERR_NOTFOUND, "toast: datum " +
                                                  std::to_string(p.id) +
                                                  " is not there");
+  }
+  if (data.size() != p.len) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT,
+                       "toast: datum " + std::to_string(p.id) + " is " +
+                           std::to_string(data.size()) + " bytes, not " +
+                           std::to_string(p.len));
+  }
+  out = std::move(data);
+  return 0;
+}
+
+/* Read a settled row's datum from its chunks; see toast.h. */
+int toast_read_settled(sm1::session_t *session, const toast_ptr_t &p,
+                       std::string &out) {
+  sm1::rawpin_t *pin = sm1::rawpin_new();
+  defer { sm1::rawpin_free(pin); };
+  std::string data;
+  data.reserve(p.len);
+  for (uint32_t seq = 0; seq < chunk_count(p.len); seq++) {
+    std::string_view chunk;
+    int rc = sm1::read_settled_versioned(session, p.storeid,
+                                         chunk_key(p.id, seq), pin, chunk);
+    if (rc < 0) {
+      return -1;
+    }
+    // No lock keeps a writer out: it may have erased the datum since
+    // the row was read. That is no corruption.
+    if (0 != rc) {
+      return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                         "toast: a chunk of datum " + std::to_string(p.id) +
+                             " is erased, or being erased");
+    }
+    data += chunk;
   }
   if (data.size() != p.len) {
     return sm1::seterr(sm1::SM_ERR_CORRUPT,

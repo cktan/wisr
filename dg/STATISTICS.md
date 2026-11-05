@@ -3,7 +3,7 @@
 How digres's ANALYZE and planner use the statistics sm keeps.
 The strategy is `../sm/STATISTICS.md` (§3.7 is the host's
 part); what sm records, and how, is
-`../sm/sm3/SM3_DESIGN.md` §6, and its calls are in
+`../sm/STATISTICS.md` §9, and its calls are in
 `../sm/include/sm.h`: `sm_tbl_analyze`, `sm_tbl_stats` and the
 four live calls. All of §3 is built (`WORKNOTE.md` steps 74 to
 78).
@@ -76,7 +76,7 @@ Where it stood before §3 was built.
     `rec.live_rows × N now / N then`, by the row numbers (its
     `_id`s) handed out, which counts inserts exactly and not
     deletes. A table with a primary key draws no row numbers
-    (`../sm/ROWKEY.md` §2.1), and its bytes scale it still;
+    (`../sm/ROWSTORE.md` §2.2), and its bytes scale it still;
   - pages are `⌈now / 8192⌉`, at least 1; `allvisfrac` 1, as
     there is no visibility map.
 - **An index** gets the same from its own entry

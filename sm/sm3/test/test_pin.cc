@@ -1,5 +1,5 @@
 /*
- * test_pin.cc -- sm3's pins (../ROW.md §4): the pool and its refs,
+ * test_pin.cc -- sm3's pins (../ROWSTORE.md §6.4): the pool and its refs,
  * which a release makes stale; when the session releases them; a
  * cursor's pin, which each row moves on; and a row deformed through
  * a ref, as far as its caller reads.

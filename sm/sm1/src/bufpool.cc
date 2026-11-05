@@ -1,6 +1,6 @@
 /*
  * bufpool.cc -- the buffer pool of a tree's pages (bufpool.h,
- * ../../BUFFERPOOL.md §3).
+ * ../BUFMGR.md §1).
  *
  * A frame's state word is its pin: a count of shared pins, an
  * exclusive bit, and a bit saying a thread sleeps on it. Its tag lies
@@ -248,7 +248,7 @@ int bufpool_t::acquire(frame_t *f, bool ex, const tag_t &tag) {
     }
   }
   // Step 2. A pin's wait may last through a write that stalls
-  // (BUFFERPOOL.md §4.4), so it sleeps, and can be cut short.
+  // (../BUFMGR.md §1.3), so it sleeps, and can be cut short.
   waitq_t &q = waitq_of(f);
   std::unique_lock<std::mutex> guard(q.mu);
   for (;;) {

@@ -26,7 +26,7 @@
 #include <rocksdb/db.h>
 
 /*
- * A raw pin: keeps one row's bytes in memory (../ROW.md §2). Its
+ * A raw pin: keeps one row's bytes in memory (../ROWSTORE.md §6.3). Its
  * caller owns it; empty, both members are.
  */
 struct sm1::rawpin_t {
@@ -37,7 +37,7 @@ struct sm1::rawpin_t {
   /*
    * For an iterator a point read opened (access_read), what
    * decides whether the next read into the pin may seek it again
-   * instead of opening another (SM1_DESIGN.md §10.1). No session
+   * instead of opening another (../ROWSTORE.md §5.2). No session
    * for any other.
    */
   struct reuse_t {
@@ -72,14 +72,17 @@ struct sm1::session_t {
   sm1::env_t *env = nullptr;
   wisr::db_t *db = nullptr;
 
+  /* sm1::set_no_transaction: settled reads and pages need none. */
+  bool no_transaction = false;
+
   /* The transaction; meaningful only while active. */
   bool active = false;
   /* What sm1::on_commit added, in the order added; run from the back. */
   std::vector<std::function<void()>> on_commit;
   sm1::xctlevel_t level = sm1::xctlevel_t::read_committed;
-  bool read_only = false; /* declared at sm1::begin (§7.4) */
+  bool read_only = false; /* declared at sm1::begin (../XCTMGR.md §7.5) */
   uint64_t snapshot_ts = 0;
-  uint64_t xid = 0;     /* 0 until the first write (§4.1) */
+  uint64_t xid = 0;     /* 0 until the first write (../XCTMGR.md §2.1) */
   uint32_t seq = 0;     /* last write's seq; the next is seq + 1 */
   uint32_t seq_hwm = 0; /* own versions above this are invisible */
   uint64_t wts_hi = 0;  /* largest wts written; bounds own seeks */
@@ -141,13 +144,13 @@ struct sm1::session_t {
   uint64_t begin_seq = 0;           /* begin order; larger is younger */
 
   /*
-   * The statement snapshot under read committed (§6.2). Off
+   * The statement snapshot under read committed (../XCTMGR.md §5). Off
    * until sm1::stmt_begin, which turns it on for the rest of the
    * transaction; the snapshot itself is taken by the first
    * read of each statement, not by the boundary call.
    */
   bool stmt_pinned = false; /* sm1::stmt_begin was called */
-  bool qa_nowait = false;   /* QA only: fail, do not wait (§5.1) */
+  bool qa_nowait = false; /* QA only: fail, do not wait (../LOCKMGR.md §3.2) */
   /* The host's number for the session, 0 for none (sm1::set_tag). */
   std::atomic<uint64_t> tag{0};
   /* How long a wait lasts before a deadlock check, 0 for the db's. */
@@ -155,7 +158,7 @@ struct sm1::session_t {
   bool stmt_taken = false; /* stmt_snapshot_ts is the one to use */
   uint64_t stmt_snapshot_ts = 0;
   /*
-   * The statement mark (§6.2): once a statement has begun, its
+   * The statement mark (../XCTMGR.md §5): once a statement has begun, its
    * reads see the transaction's own writes up to stmt_seq, those
    * made before it began, as PostgreSQL's command id does.
    */
@@ -163,7 +166,7 @@ struct sm1::session_t {
   uint32_t stmt_seq = 0;
 
   /*
-   * The undo list (§6.5): every version written while a
+   * The undo list (../XCTMGR.md §6): every version written while a
    * savepoint is set, in write order, as (storeid, userkey,
    * wts, seq), so a rollback can delete exactly the versions
    * written since the savepoint. Empty while no savepoint is
@@ -174,13 +177,13 @@ struct sm1::session_t {
     std::string key;
     uint64_t wts;
     uint32_t seq;
-    bool chained = false; /* a chained key's write (../VCHAIN.md §6) */
+    bool chained = false; /* a chained key's write (../ROWSTORE.md §4.7) */
   };
   std::vector<undo_t> undo;
   size_t undo_bytes = 0; /* what undo holds, keys included */
 
   /*
-   * The savepoint stack (§6.5): one mark per savepoint, in
+   * The savepoint stack (../ROWSTORE.md §4.7): one mark per savepoint, in
    * push order, so savepoints[d - 1] is the mark at depth d.
    */
   struct mark_t {
@@ -200,21 +203,21 @@ struct sm1::session_t {
   /*
    * The marks at depth 1..lost_marks can no longer be rolled
    * back to: the undo list passed savepoint_undo_bytes while
-   * they were set, and was dropped (§6.5).
+   * they were set, and was dropped (../XCTMGR.md §6).
    */
   size_t lost_marks = 0;
 
   /*
-   * Why the transaction must fail at its next call (§5.1):
+   * Why the transaction must fail at its next call (../LOCKMGR.md §3.2):
    * SM_ERR_DEADLOCK once chosen as a deadlock victim,
-   * SM_ERR_DOOMED once a rollback failed (§6.5), else 0.
+   * SM_ERR_DOOMED once a rollback failed (../XCTMGR.md §6), else 0.
    */
   std::atomic<int> doomed{0};
   /* The failed rollback's message, while doomed is SM_ERR_DOOMED. */
   std::string doom_msg;
 
   /*
-   * Locks, row and OID (§5.1); changed only by the session's own
+   * Locks, row and OID (../LOCKMGR.md §3.2); changed only by the session's own
    * thread, an entry's fields under its partition's mutex, or by
    * fp_mu for an entry in a slot. lockref_t is db.h's.
    */
@@ -223,7 +226,7 @@ struct sm1::session_t {
   size_t latest_marks = 0;  /* locks with latest set; 0 skips scans */
 
   /*
-   * The fast path (§5.1): an OID lock taken IS or IX, while no
+   * The fast path (../LOCKMGR.md §3.2): an OID lock taken IS or IX, while no
    * strong lock is held or asked on a key that hashes with it,
    * is in a slot here and not in the lock table. Guarded by
    * fp_mu, which only the session and a strong locker's sweep
@@ -265,10 +268,10 @@ struct sm1::session_t {
   uint64_t waiting_xid = 0;
   uint64_t waiting_epoch = 0;
 
-  wisr::ssi_node_t *ssi = nullptr; /* SERIALIZABLE only (§7) */
+  wisr::ssi_node_t *ssi = nullptr; /* SERIALIZABLE only (../XCTMGR.md §7) */
 
   /*
-   * Two-phase commit (§8.4). sm1::prepare moves the transaction
+   * Two-phase commit (../XCTMGR.md §10). sm1::prepare moves the transaction
    * out of the session into a database-owned sm1::session_t
    * with `prepared` set, registered under its gid; the
    * preparing session keeps only prepared_gid, and has no
@@ -277,10 +280,11 @@ struct sm1::session_t {
   std::string prepared_gid;
   bool prepared = false;     /* this object is a prepared transaction */
   long long prepared_at = 0; /* wall-clock seconds of sm1::prepare */
-  bool restored = false;     /* rebuilt from its record at open (§9.1) */
+  bool restored =
+      false; /* rebuilt from its record at open (../DBMGR.md §9.1) */
 
   /*
-   * The session's store cache (§11): whether each storeid it
+   * The session's store cache (../DBMGR.md §7): whether each storeid it
    * looked up was live, at the snapshot it was read at, by the
    * transaction (its begin_seq) that read it.
    */
@@ -293,7 +297,7 @@ struct sm1::session_t {
 
   /*
    * The handles of the stores the session looked up, each with the
-   * database's stores_version it was read at (STORECACHE.md):
+   * database's stores_version it was read at (../DBMGR.md):
    * refreshed in place, and erased only at a transaction's end, so
    * a reference to one stays good through a call.
    */
@@ -332,7 +336,7 @@ struct sm1::scan_t {
    * scan has no lower bound. sm1::scan_seek refuses a target
    * below it: the iterator carries no lower bound, so a seek
    * under it would leave the range the cursor registered
-   * (§10.2).
+   * (../ROWSTORE.md §5.6).
    */
   std::string lower;
   uint64_t snapshot_ts = 0; /* the logical view, fixed at open */
@@ -341,12 +345,12 @@ struct sm1::scan_t {
   int state = 0; /* 0 open, 1 at end, -1 failed */
   /*
    * Closed by a rollback to a savepoint set before it opened
-   * (§6.5): what it held is released, and it waits only for
+   * (../XCTMGR.md §6): what it held is released, and it waits only for
    * sm1::scanend to free it.
    */
   bool rolled_back = false;
 
-  /* The scan's SIREAD range and how far it read (§7.1). */
+  /* The scan's SIREAD range and how far it read (../XCTMGR.md §7.2). */
   bool has_ssi_range = false;
   uint64_t ssi_storeid = 0;
   std::list<wisr::ssi_range_t>::iterator ssi_range;
@@ -395,10 +399,16 @@ enum write_op_t {
 /* Fail with NOTRANS unless session has an active transaction. */
 int xct_check_active(sm1::session_t *session);
 
+/*
+ * xct_check_active, but for a session set for no transaction, which
+ * has none to check: a settled read's and a page call's check.
+ */
+int xct_check_cleaner(sm1::session_t *session);
+
 /* Fail with READONLY if session's transaction was declared read-only. */
 int xct_check_readonly(sm1::session_t *session);
 
-/* Whether the commit cache holds xid (COMMITCACHE.md); for tests. */
+/* Whether the commit cache holds xid (../XCTMGR.md); for tests. */
 bool xct_cache_has(wisr::db_t *db, uint64_t xid);
 
 /* How many entries the commit cache holds; for tests. */
@@ -407,13 +417,13 @@ size_t xct_cache_used(wisr::db_t *db);
 /* Drop session's undo list, which passed the cap; its marks are lost. */
 void xct_undo_overflow(sm1::session_t *session);
 
-/* The view a statement starting now reads at (§6.2, §10.1). */
+/* The view a statement starting now reads at (../XCTMGR.md §9.5, §9). */
 view_t xct_view(sm1::session_t *session);
 
 /*
  * The same, for sm1::read and sm1::scan: under a statement
  * boundary it also TAKES the statement's snapshot, if this is
- * the statement's first read (§6.2).
+ * the statement's first read (../XCTMGR.md §5).
  */
 view_t xct_read_view(sm1::session_t *session);
 
@@ -425,7 +435,7 @@ view_t xct_read_view(sm1::session_t *session);
 int xct_fail_retryable(sm1::session_t *session, sm1::errnum_t e,
                        const char *msg);
 
-/* The write latch (storeid, key) hashes to (WRITELOCK.md §3.1). */
+/* The write latch (storeid, key) hashes to (../LOCKMGR.md §3.5). */
 std::mutex &lock_latch(db_t *db, uint64_t storeid, rocksdb::Slice key);
 
 /*
@@ -458,7 +468,7 @@ private:
 
 /*
  * Take the lock on oid in mode, by the fast path when it can
- * (§5.1): 0 once held; with nowait, 1 if another holder
+ * (../LOCKMGR.md §3.2): 0 once held; with nowait, 1 if another holder
  * conflicts, taking nothing; else, a wait that failed, -1 with
  * the error set (lock_wait_error).
  */
@@ -481,7 +491,7 @@ int lock_try(sm1::session_t *session, const lockid_t &id, sm1::lockmode_t mode,
              uint16_t kind = 0);
 
 /*
- * For a write (WRITELOCK.md §3.2): 2 if another transaction holds
+ * For a write (../LOCKMGR.md §1.7): 2 if another transaction holds
  * a lock on (storeid, key) that a write conflicts with, else 0,
  * converting the session's own lock on the key, if it holds one,
  * to exclusive. A write without a lock of its own takes none.
@@ -492,7 +502,7 @@ int lock_write_check(sm1::session_t *session, uint64_t storeid,
 /*
  * Block until no other transaction holds the lock id in a mode
  * that conflicts with mode, taking nothing, and checking for
- * deadlock (§5.1); kind is the lock's, for lock_status of the
+ * deadlock (../LOCKMGR.md §5); kind is the lock's, for lock_status of the
  * wait, 0 for a write's, which reports its holder's. Returns 0; -1
  * without an error set if the
  * transaction was doomed while waiting, the caller then failing
@@ -506,8 +516,8 @@ int lock_wait(sm1::session_t *session, const lockid_t &id, sm1::lockmode_t mode,
 
 /*
  * Block until the transaction xid ends, or rolls back to a
- * savepoint, which may delete the version waited on (WRITELOCK.md
- * §3.4). Returns as lock_wait does.
+ * savepoint, which may delete the version waited on (../LOCKMGR.md
+ * ../LOCKMGR.md §1.11). Returns as lock_wait does.
  */
 int lock_wait_xact(sm1::session_t *session, uint64_t xid);
 
@@ -517,7 +527,7 @@ int lock_wait_xact(sm1::session_t *session, uint64_t xid);
  */
 void lock_wake(db_t *db, bool rollback);
 
-/* §5.2's first-committer-wins check alone, for sm1::lock_row. */
+/* ../LOCKMGR.md §5's first-committer-wins check alone, for sm1::lock_row. */
 int access_check_current(sm1::session_t *session, uint64_t storeid,
                          rocksdb::Slice key);
 
@@ -548,7 +558,7 @@ extern std::atomic<bool> lock_test_rows_collide;
 
 /*
  * The 64-bit hash of a row lock's key, its lockid_t's lo: fixed,
- * not std::hash, so it is the same in every build (LOCKID.md §2.4).
+ * not std::hash, so it is the same in every build (../LOCKMGR.md §3.9).
  */
 uint64_t lock_row_hash(rocksdb::Slice key);
 
@@ -565,7 +575,7 @@ uint64_t lock_storeid(const lockid_t &id);
 constexpr size_t lock_record_size = 20;
 
 /*
- * Append lock l to a prepared transaction's record (§8.4): its type
+ * Append lock l to a prepared transaction's record (../XCTMGR.md §10): its type
  * byte, be64 of each of its id's words, its mode byte, then be16 of
  * its kind, lock_record_size bytes in all.
  */
@@ -579,11 +589,11 @@ bool lock_from_record(const char *p, sm1::session_t::lockref_t *l);
 
 /*
  * Move every lock s holds, and its lock list, to g, the prepared
- * object (§8.4).
+ * object (../XCTMGR.md §10).
  */
 void lock_transfer(db_t *db, sm1::session_t *s, sm1::session_t *g);
 
-/* Put a restored transaction's locks back in the table (§9.1). */
+/* Put a restored transaction's locks back in the table (../DBMGR.md §9.1). */
 void lock_restore(db_t *db, sm1::session_t *g);
 
 /*
@@ -596,7 +606,7 @@ int lock_wait_error(sm1::session_t *session, int waited);
 /*
  * Refuse a row lock on a row whose newest version is the
  * transaction's own, own_seq, written after the running statement
- * began, as a write of it is refused (SM1_DESIGN.md §6.2): the
+ * began, as a write of it is refused (../XCTMGR.md §5): the
  * statement does not see that version, so may not lock it as the
  * row it read. PostgreSQL's TM_SelfModified, which a FOR UPDATE
  * cursor passes over. 0 if not, else -1 with SM_ERR_SELFMODIFIED.
@@ -608,42 +618,44 @@ void lock_release_all(sm1::session_t *session);
 
 /*
  * Release the locks the session took after m, the ones a rollback
- * to a savepoint gives back (§6.5).
+ * to a savepoint gives back (../XCTMGR.md §6).
  */
 void lock_release_from(sm1::session_t *session, const lock_mark_t &m);
 
 /*
  * Delete the COMMITTED status records with commit_ts <= w0, for
- * the CF:txn sweep (§8.3). Returns the number deleted, or -1.
+ * the CF:txn sweep (../GC.md §1). Returns the number deleted, or -1.
  */
 int64_t xct_drop_committed_records(wisr::db_t *db, uint64_t w0);
 
-/* Give a SERIALIZABLE transaction its SSI node (§7). */
+/* Give a SERIALIZABLE transaction its SSI node (../XCTMGR.md §7). */
 void ssi_begin(sm1::session_t *session);
 
 /* Map the transaction's new xid to its SSI node. */
 void ssi_on_xid(sm1::session_t *session);
 
-/* Leave a SIREAD entry on (storeid, key) (§7.1). */
+/* Leave a SIREAD entry on (storeid, key) (../XCTMGR.md §7.2). */
 void ssi_on_read(sm1::session_t *session, uint64_t storeid, rocksdb::Slice key);
 
-/* A read stepped past a version of concurrent writer xid (§7.2). */
+/* A read stepped past a version of concurrent writer xid (../XCTMGR.md §7.3).
+ */
 void ssi_on_skip(sm1::session_t *session, uint64_t writer_xid);
 
-/* A write of (storeid, key): edges from its concurrent readers (§7.2). */
+/* A write of (storeid, key): edges from its concurrent readers (../XCTMGR.md
+ * §7.3). */
 void ssi_on_write(sm1::session_t *session, uint64_t storeid,
                   rocksdb::Slice key);
 
-/* Register a scan's requested range as a SIREAD entry (§10.2). */
+/* Register a scan's requested range as a SIREAD entry (../ROWSTORE.md §5.6). */
 void ssi_range_open(sm1::scan_t *scan, uint64_t storeid, const char *skey,
                     size_t sklen, int skey_inclusive, const char *ekey,
                     size_t eklen, int ekey_inclusive);
 
-/* Narrow a closing scan's range to what it traversed (§7.1). */
+/* Narrow a closing scan's range to what it traversed (../XCTMGR.md §7.2). */
 void ssi_range_close(sm1::scan_t *scan);
 
 /*
- * The SSI commit check (§7.3) for a transaction ending at
+ * The SSI commit check (../XCTMGR.md §7.4) for a transaction ending at
  * end_ts. Returns 0, or -1 if it must fail with
  * SM_ERR_SERIALIZATION.
  */
@@ -652,16 +664,17 @@ int ssi_precommit(sm1::session_t *session, uint64_t end_ts);
 /* Detach the session from its SSI node at transaction end. */
 void ssi_end(sm1::session_t *session);
 
-/* A prepared transaction committed at end_ts (§8.4). */
+/* A prepared transaction committed at end_ts (../XCTMGR.md §10). */
 void ssi_prepared_committed(sm1::session_t *session, uint64_t end_ts);
 
 /* A prepared transaction aborted: free its SSI state. */
 void ssi_prepared_aborted(sm1::session_t *session);
 
-/* Record xid as a transaction restored in doubt (§8.4, §9.1). */
+/* Record xid as a transaction restored in doubt (../XCTMGR.md §10, ../DBMGR.md
+ * §9.1). */
 void ssi_restore(wisr::db_t *db, uint64_t xid);
 
-/* Free SSI nodes no active transaction overlaps (§7.1). */
+/* Free SSI nodes no active transaction overlaps (../XCTMGR.md §7.2). */
 void ssi_cleanup(wisr::db_t *db);
 
 /*
@@ -673,12 +686,12 @@ bool xct_decode_prepared(wisr::db_t *db, uint64_t xid, rocksdb::Slice val,
 
 /*
  * Restore every prepared transaction from CF:txn, then drop the
- * store CFs nothing needs (§9.1 steps 4-6). Returns 0 or -1.
+ * store CFs nothing needs (../DBMGR.md §9.1 steps 4-6). Returns 0 or -1.
  */
 int recover(wisr::db_t *db);
 
 /*
- * Give the session's transaction its xid (§4.1) and enter it
+ * Give the session's transaction its xid (../XCTMGR.md §2.1) and enter it
  * into the active table. Returns 0 or -1.
  */
 int xct_alloc_xid(sm1::session_t *session);
@@ -692,18 +705,18 @@ void load_discard(sm1::session_t *session);
 /* Whether the session has a bulk load open into storeid. */
 bool load_open_on(const sm1::session_t *session, uint64_t storeid);
 
-/* The fate of a version's writer (§3.4). */
+/* The fate of a version's writer (../DBMGR.md §6.6). */
 enum xct_state_t { XCT_DEAD, XCT_IN_FLIGHT, XCT_COMMITTED, XCT_ERROR };
 
 /*
- * Resolve the writer of xid (§3.4), setting *commit_ts if it
+ * Resolve the writer of xid (../DBMGR.md §6.6), setting *commit_ts if it
  * committed. XCT_ERROR sets the error. Callers check the stamp
  * and their own xid first.
  */
 xct_state_t xct_status(wisr::db_t *db, uint64_t xid, uint64_t *commit_ts);
 
 /*
- * Resolve the writer of xid (§3.4): 1 and *commit_ts if it
+ * Resolve the writer of xid (../DBMGR.md §6.6): 1 and *commit_ts if it
  * committed, 0 if it is in flight or dead, -1 on error.
  */
 int xct_resolve(wisr::db_t *db, uint64_t xid, uint64_t *commit_ts);
@@ -733,7 +746,7 @@ int catalog_lookup(sm1::session_t *session, const view_t &view,
 
 /*
  * The store storeid's handle, as db_store() gives it, from the
- * session's own (STORECACHE.md): one with no CF if there is no
+ * session's own (../DBMGR.md): one with no CF if there is no
  * such store. Good until the session's transaction ends.
  */
 const store_t &session_store(sm1::session_t *s, uint64_t storeid);
@@ -767,7 +780,7 @@ sm1::scan_t *access_scan(sm1::session_t *session, uint64_t storeid,
 int access_write(sm1::session_t *session, uint64_t storeid, write_op_t op,
                  rocksdb::Slice key, rocksdb::Slice data, sm1::rawpin_t *pin);
 
-/* 1 if v is visible at view, 0 if not, -1 on error (§4.4). */
+/* 1 if v is visible at view, 0 if not, -1 on error (../XCTMGR.md §3.3). */
 int access_visible(db_t *db, const version_t &v, const view_t &view);
 
 /* Step past v, invisible at view: under SSI, owe its writer an edge. */

@@ -1,7 +1,7 @@
 /*
  * sm3.h -- level 3: schema and index maintenance (SM3_DESIGN.md).
  *
- * So far, the catalog (CATALOG_INMEM.md): made in a database with
+ * So far, the catalog (../CATALOG.md): made in a database with
  * cat_init, loaded into memory with cat_open, and changed by DDL
  * through a session, whose transaction sees its own changes and
  * publishes them at commit. Every call reports failure as sm1
@@ -55,7 +55,7 @@ constexpr uint64_t last_oid = UINT32_MAX;
 constexpr uint64_t nsp_temp = 0;
 
 /*
- * The relids of a table's rels in its store (SM3_DESIGN.md §4):
+ * The relids of a table's rels in its store (../CATALOG.md §2):
  * the heap takes 1 and its indexes the ones above, 0xFFFF being
  * TOAST's. 0 is left unused, so an unset relid is never a live
  * rel.
@@ -99,7 +99,7 @@ struct index_key_spec_t {
 };
 
 /*
- * Where an index's build stands (SM3_DESIGN.md §3). A pending
+ * Where an index's build stands (../INDEXBUILD.md §2). A pending
  * index is maintained by every write but not yet filled from the
  * rows that were there before it: it waits for the builder, or is
  * being built by it (builder_building). A failed one is not
@@ -132,7 +132,7 @@ struct index_status_t {
  *
  * A record is stored as a key and a value for the table's own
  * fields, one for each column, by its place, and one for each
- * index, by its oid (CATALOG_ONDISK.md §2); a put writes only the ones
+ * index, by its oid (../CATALOG.md §3.3); a put writes only the ones
  * that changed. A column keeps its place for good, and the
  * indexes are in the order of their oids, which is the order they
  * were made in.
@@ -259,7 +259,7 @@ struct index_def_t {
     /* Its entries' value laid out, once, for every open of it. */
     std::shared_ptr<const sm2::idx_layout_t> layout;
     /*
-     * A partial or an expression index (SM3_DESIGN.md §3): eval is
+     * A partial or an expression index (../INDEXBUILD.md §2): eval is
      * its predicate and its expressions as the host serialized
      * them, bytes sm3 does not read, empty for a plain index; reads
      * is the columns they read, 0-based.
@@ -268,7 +268,7 @@ struct index_def_t {
     std::vector<int32_t>              reads;
     bool                              primary = false; /* the table's primary key */
     bool                              constraint = false; /* a UNIQUE or PRIMARY KEY's */
-    /* A B+tree of its own pages (../BTREE.md), not sm1's entries. */
+    /* A B+tree of its own pages (../BTREEINDEX.md), not sm1's entries. */
     bool                              tree = false;
 };
 
@@ -494,7 +494,7 @@ bool cat_get_index(const session_t* s, uint64_t nspoid,
 /*
  * Take the table-oid lock of the table oid in mode, held to the end
  * of s's transaction, then set out to its definition as s sees
- * it (SM3_DESIGN.md §2). A transaction reading the table takes
+ * it (../CATALOG.md §1). A transaction reading the table takes
  * it intent_shared, one writing it intent_exclusive; DDL takes it
  * exclusive itself, so it waits for them, and they for it. Once
  * held, the definition cannot change under s. A table dropped
@@ -649,7 +649,7 @@ int cat_put_namespace(session_t* s, uint64_t namespace_oid,
  * in, pg_catalog and public, with SM_ERR_INVALID. It waits for
  * every transaction that is putting something in the namespace,
  * and one that tries after it has committed finds no namespace
- * (CATALOG_INMEM.md §2).
+ * (../CATALOG.md §6).
  */
 int cat_del_namespace(session_t* s, uint64_t namespace_oid);
 
@@ -926,7 +926,7 @@ int rename_column(session_t* session, uint64_t oid,
 
 /*
  * Drop the column name of the table oid. It keeps its place, read
- * as null from then on (sm2/SM2_DESIGN.md §4); one an index uses
+ * as null from then on (../sm2/TUPLE.md §10); one an index uses
  * is refused, and one a view reads with SM_ERR_INUSE. The
  * sequences it owns are dropped with it.
  */
@@ -950,7 +950,7 @@ int create_namespace(session_t* session, std::string_view name,
  * pg_catalog and public, with SM_ERR_INVALID. It waits for every
  * transaction that is creating something in the namespace, and
  * one that tries after it has committed finds no namespace
- * (CATALOG_INMEM.md §2).
+ * (../CATALOG.md §6).
  */
 int drop_namespace(session_t* session, uint64_t oid);
 
@@ -959,7 +959,7 @@ int drop_namespace(session_t* session, uint64_t oid);
  * INCLUDE columns includes, taking the table's next relid; its
  * oid is set in oid. It records the index as pending, for the
  * build to fill from the table's rows and then mark valid
- * (SM3_DESIGN.md §3). On a table this transaction created, which
+ * (../INDEXBUILD.md §2). On a table this transaction created, which
  * no other can see, it fills the index itself, from the rows the
  * transaction has written, and records it valid; two of those
  * rows with one key fail a unique index with SM_ERR_DUPKEY.
@@ -985,7 +985,7 @@ int create_index(session_t* session, uint64_t table,
 
 /*
  * As create_index, for a partial or an expression index
- * (SM3_DESIGN.md §3). eval is its predicate and its expressions,
+ * (../INDEXBUILD.md §2). eval is its predicate and its expressions,
  * serialized as the host likes: sm3 keeps the bytes and hands them
  * to the catalog's evaluator, which decides whether a row belongs
  * in the index and computes each key column that is an expression,
@@ -1005,7 +1005,7 @@ int create_index(session_t* session, uint64_t table,
 
 /*
  * The host's evaluator of partial and expression indexes
- * (SM3_DESIGN.md §3). Given a table, one of its indexes that has
+ * (../INDEXBUILD.md §2). Given a table, one of its indexes that has
  * an eval, and a row image as its values and null flags, one per
  * attribute of the table's schema, it sets belongs to whether the
  * row is in the index, and for each key column that is an
@@ -1038,7 +1038,7 @@ int cat_set_evaluator(catalog_t* cat, index_eval_fn eval);
 
 /*
  * Say whether the catalog's host reads TOAST pointers
- * (sm2/SM2_DESIGN.md §4.2): once, before any session uses the
+ * (../TOAST.md §2): once, before any session uses the
  * catalog. On, a table's long datums are stored out of line: a
  * tuple a table hands out may hold a pointer where a datum was,
  * which sm2::varlena_is_toast tells and tbl_fetch reads. Off, the
@@ -1248,7 +1248,7 @@ struct view_reader_t {
 std::vector<view_reader_t> cat_view_readers(const session_t* s, uint64_t oid);
 
 /*
- * ---- tables: a row and its index entries (SM3_DESIGN.md §3) ----
+ * ---- tables: a row and its index entries (../INDEXBUILD.md §2) ----
  *
  * An open table: its definition under the table-oid lock, its heap,
  * and its indexes. It is the one way to write a row, and each
@@ -1258,7 +1258,7 @@ struct table_t;
 
 /*
  * ---- pins: a row kept in memory, deformed as far as it is read
- * (../ROW.md §4) ----
+ * (../ROWSTORE.md §6.4) ----
  *
  * A pin keeps one row's bytes where RocksDB has them, read by
  * tbl_read or replaced by a write into a ref, or a cursor's current
@@ -1298,7 +1298,7 @@ void release_all_pins(session_t* s);
  * long. It resumes where the last deform stopped when from is
  * there; otherwise it reads from the row's header again, and may
  * write attributes before from again, with the values they had.
- * Each attribute checks only what it reads (../ROW.md §4.6). A
+ * Each attribute checks only what it reads (../ROWSTORE.md §6.8). A
  * by-reference datum points into the row, and lasts as long as the
  * pin. SM_ERR_INVALID if ref is stale, or n is past the schema.
  */
@@ -1345,7 +1345,7 @@ session_t* tbl_session(const table_t* table);
 
 /*
  * Whether the table's index oid may be scanned now by the table's
- * session (SM3_DESIGN.md §3). A valid index may not be, if it
+ * session (../INDEXBUILD.md §2). A valid index may not be, if it
  * became valid after the session's snapshot: its entries are
  * versioned as rows are, and that snapshot would see it partly
  * filled. A pending or a failed index never may. An index the
@@ -1370,19 +1370,19 @@ index_state_t tbl_index_state(const table_t* table, uint64_t index);
  * before going on. SM_ERR_UPDATED is the exception: it comes from
  * the heap write, which is the first step, so nothing is half done
  * and the transaction goes on as sm1 says (sm1/SM1_DESIGN.md
- * §5.4).
+ * ../LOCKMGR.md §1.9).
  * A table opened in a mode that does not cover intent_exclusive
  * fails with SM_ERR_INVALID, and a row with a NULL in a NOT NULL
  * column with SM_ERR_NOTNULL; both before anything is written. A
  * key a unique index holds already is SM_ERR_DUPKEY, the index in
  * sm1::errdup(): the host has the row, to say the key.
  *
- * A row is named by its key (../ROWKEY.md §1). A keyless table's
+ * A row is named by its key (../ROWSTORE.md §2.1). A keyless table's
  * row is named by its _id, which is its key; a table with a primary
  * key names its row by the key's values (row_key_t, below), and its
  * calls by _id fail with SM_ERR_INVALID. A row another transaction
  * moved since, its primary key changed, is not followed
- * (../CLUSTER.md §4, ../ROWKEY.md §2.3): a write at its old key meets
+ * (../CLUSTER.md §4, ../ROWSTORE.md §2.5): a write at its old key meets
  * SM_ERR_UPDATED, and tbl_read_latest there SM_ERR_MOVED, which the
  * host raises as a serialization failure. Above READ COMMITTED a
  * moved row is SM_ERR_CONFLICT, as any row changed since the
@@ -1403,7 +1403,7 @@ int tbl_insert(table_t* table, std::span<const sm2::datum_t> values,
  * INSERT ... ON CONFLICT. Returns 0 with the new row's _id; 1,
  * with nothing written, with the _id of the row that has the
  * key, and its tuple in tuple if wanted, as the call found it,
- * from which the caller takes its key (../ROWKEY.md §3.3); or -1.
+ * from which the caller takes its key (../ROWSTORE.md §10.3); or -1.
  *
  * How it finds the conflict:
  * 1. Look each arbiter's key up (sm2::idx_find, or a tree's lookup).
@@ -1562,7 +1562,7 @@ int tbl_read_key(table_t* table, std::string_view key, pin_ref_t& ref,
                  std::string_view& tuple);
 
 /*
- * tbl_read_key of n keys in one call (../BATCHREAD.md): key i's row
+ * tbl_read_key of n keys in one call (../ROWSTORE.md): key i's row
  * into a pin, refs[i] and tuples[i], rc[i] 0, or rc[i] 1 with refs[i]
  * zero if there is none. A ref that holds a pin is read into again,
  * as tbl_read's is. Returns 0, or -1 on an error, every ref then
@@ -1608,14 +1608,14 @@ int tbl_lock(table_t* table, uint64_t id, sm1::lockmode_t mode);
 int tbl_trylock(table_t* table, uint64_t id, sm1::lockmode_t mode);
 
 /*
- * A row's name (../ROWKEY.md §1): the values of its table's primary
+ * A row's name (../ROWSTORE.md §2.1): the values of its table's primary
  * key's columns, in the key's order, with their null flags; in a
  * table without one, its _id alone, an int8. Both borrowed for the
  * call. Each call below that takes one is the call of its name by
  * _id, the row named by its key, which sm2::rel_key encodes: a null,
  * or a count that is not the key's, fails with SM_ERR_INVALID. A
  * write follows no row that moved. Until a row of a table with a
- * primary key leaves its _id (../ROWKEY.md §5, step 4), an update or
+ * primary key leaves its _id (../ROWSTORE.md §2, step 4), an update or
  * delete of one reads the row first for it, as the snapshot shows
  * it, or at READ COMMITTED the newest version when the snapshot
  * shows none.
@@ -1660,7 +1660,7 @@ int tbl_trylock(table_t* table, const row_key_t& key, sm1::lockmode_t mode);
 int tbl_truncate(table_t* table);
 
 /*
- * A cursor over a table's rows, in _id order (../ROW.md §4.3):
+ * A cursor over a table's rows, in _id order (../ROWSTORE.md §6.7):
  * an sm2 rel scan, and one pin, which holds the cursor's current
  * row.
  */
@@ -1714,9 +1714,48 @@ int tbl_scan_rebound(scan_t* scan, const sm2::bound_t* lo,
                      const sm2::bound_t* hi, bool* widened = nullptr);
 
 /*
+ * Attach the btree cleaner to cat (../BTREEINDEX.md §9): whoever finds a
+ * tree's leaf not all visible queues it, and workers clean what is
+ * queued, each pass on a session open() makes, with no transaction.
+ * The first worker runs when the system is not busy, or the queue is
+ * full; the others only when it is full. Call before the catalog's
+ * tables are opened. A test gives no workers, and calls
+ * cleaner_run_once. open may be called from any worker.
+ */
+int cleaner_attach(catalog_t* cat, std::function<sm1::session_t*()> open,
+                   size_t workers = 4);
+
+/*
+ * Stop and join cat's workers; a no-op with none. The queue stays until
+ * the catalog closes, as an open index holds it.
+ */
+void cleaner_detach(catalog_t* cat);
+
+/*
+ * One pass of the cleaner, on the calling thread, of at most budget
+ * pages: 0, or -1. For tests.
+ */
+int cleaner_run_once(catalog_t* cat, size_t budget = SIZE_MAX);
+
+/* The pages on cat's queue: for tests. */
+size_t cleaner_queued(const catalog_t* cat);
+
+/*
+ * Clean page pageid of the tree relid of the table def describes, as
+ * VACUUM cleans a leaf, on a session whose sm1 session is set for no
+ * transaction (sm1::set_no_transaction): no lock, no transaction
+ * (../BTREEINDEX.md §9). publishes is cat_publishes, read before def was
+ * fetched. 0, doubt set if an entry is left in doubt; 1 if there is
+ * nothing to clean, the index gone or the page no leaf; or -1.
+ */
+int tbl_clean_leaf(session_t* session, std::shared_ptr<const table_def_t> def,
+                   uint64_t publishes, uint16_t relid, uint64_t pageid,
+                   bool& doubt);
+
+/*
  * Make a tree's cursor of rows (tbl_idx_scan_rows) an index-only
  * scan's: an entry on a leaf all visible, whose key gives its columns
- * back, is handed out with its row unread (../BTREE.md §4.1), its
+ * back, is handed out with its row unread (../BTREEINDEX.md §8), its
  * tuple empty and ref naming no row, tbl_scan_cols to give its
  * columns. SM_ERR_INVALID on any other cursor.
  */
@@ -1760,7 +1799,7 @@ int tbl_idx_scan(table_t* table, uint64_t index, const sm2::bound_t* lo,
                  bool* widened = nullptr);
 
 /*
- * What the table's LSM looks like now (SM3_DESIGN.md §6.2, §6.3),
+ * What the table's LSM looks like now (../STATISTICS.md §9.2, §9.3),
  * read live, through whichever store the handle's definition
  * names, so a transaction that truncated the table sizes the new
  * one. None reads a row.
@@ -1781,7 +1820,7 @@ int tbl_id_limit(table_t* table, uint64_t& n);
 /*
  * The keys at fractions fs of the bytes of the table's rows, as
  * sm2::rel_keys_at gives them: positions in key order, to read the
- * rows between, which no row need have (../ROWKEY.md §2.4).
+ * rows between, which no row need have (../ROWSTORE.md §2.6).
  */
 int tbl_keys_at(table_t* table, std::span<const double> fs,
                 std::vector<std::string>& keys);
@@ -1802,7 +1841,7 @@ int tbl_probes(table_t* table, uint64_t& n);
 int tbl_compact(table_t* table);
 
 /*
- * ---- statistics (SM3_DESIGN.md §6.6, §6.7) ----
+ * ---- statistics (../STATISTICS.md §9.6, §9.7) ----
  *
  * What an analyze of a table records, in one catalog entry of kind
  * STATS, for the host's planner. A value -- a common value or a
@@ -1853,8 +1892,8 @@ int cat_get_stats(session_t* session, uint64_t oid,
                   std::shared_ptr<const stats_t>& out);
 
 /*
- * Analyze the table, opened in a transaction (SM3_DESIGN.md §6.4 to
- * §6.7). A target below 1 is SM_ERR_INVALID.
+ * Analyze the table, opened in a transaction (../STATISTICS.md §9.4 to
+ * ../STATISTICS.md §9.7). A target below 1 is SM_ERR_INVALID.
  * 1. Wait for the transaction of another analyze of the table, if
  *    one runs, before sampling.
  * 2. Sample up to 300 x target of its rows, reading no more than ten
@@ -1878,7 +1917,7 @@ int tbl_tryanalyze(table_t* table, int32_t target);
 
 /*
  * One batch of the build of the table's index oid, which must be
- * pending (SM3_DESIGN.md §3). The caller commits the batch, and
+ * pending (../INDEXBUILD.md §2). The caller commits the batch, and
  * marks the index valid after the last.
  * 1. Cover up to max_rows rows in key order from the key from on,
  *    the table's first for "".
@@ -1910,7 +1949,7 @@ std::span<const sm2::attribute_t> tbl_idx_value_schema(const table_t* table,
                                                        uint64_t index);
 
 /*
- * ---- the builder: pending indexes, filled (SM3_DESIGN.md §3) ----
+ * ---- the builder: pending indexes, filled (../INDEXBUILD.md §2) ----
  *
  * One per process: a queue of pending indexes and the workers
  * that fill them. It is no part of the catalog, which it reads

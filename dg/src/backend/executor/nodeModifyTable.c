@@ -4318,7 +4318,7 @@ ModifyTableState *ExecInitModifyTable(ModifyTable *node, EState *estate,
           relkind == RELKIND_PARTITIONED_TABLE) {
         /*
          * A row of a table in sm is named by its key, whose columns the
-         * plan carries as junk (../../../../sm/ROWKEY.md section 3.2).
+         * plan carries as junk (../sm/ROWSTORE.md section 10.2).
          * Partitioned tables should only appear here when all leaf
          * partitions were pruned, in which case no rows can be produced
          * and no key is needed.

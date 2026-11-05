@@ -1,5 +1,5 @@
 /*
- * session.cc -- a session and its overlay (CATALOG_INMEM.md §1): the
+ * session.cc -- a session and its overlay (../CATALOG.md §4): the
  * DDL a transaction makes is kept here, tagged with the savepoint
  * depth it was made at, seen by its own lookups first, undone by
  * rollback and abort, and published into the shared catalog when
@@ -381,6 +381,7 @@ int begin(session_t *s, sm1::xctlevel_t level, bool read_only) {
   if (sm1::begin(s->sm1, level, read_only) != 0) {
     return -1;
   }
+  s->cat->begins.fetch_add(1, std::memory_order_relaxed);
   drop_from(s, 0);
   if (s->has_doomed.load()) {
     drop_doomed(s);
@@ -534,7 +535,7 @@ int forget(session_t *s, int depth) {
 /*
  * Commit in sm1 and publish the overlay; a failed commit drops it.
  * With DDL to publish, the shared catalog's mutex is held across
- * both (CATALOG_INMEM.md §1):
+ * both (../CATALOG.md §4):
  * 1. Take the shared catalog's mutex.
  * 2. Commit in sm1, which releases the table-oid locks.
  * 3. Publish the overlay.

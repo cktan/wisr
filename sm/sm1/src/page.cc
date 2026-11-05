@@ -1,5 +1,5 @@
 /*
- * page.cc -- pages (../BTREE.md §2, ../../BUFFERPOOL.md): keys of
+ * page.cc -- pages (../BTREEINDEX.md §2, ../BUFMGR.md): keys of
  * class 0x04 in a store, whose values the level above lays out as
  * B+tree pages. They are not versioned: a page is written outside
  * every transaction, in one RocksDB write batch, and read as it is.
@@ -40,12 +40,13 @@ std::string page_key(std::string_view key) {
 }
 
 /*
- * Check a call on pages of storeid: an active transaction, a key the
- * size of one, a live store other than the catalog. 0 with its
- * handle in st, or -1 with the error set.
+ * Check a call on pages of storeid: an active transaction, unless
+ * the session works with none, a key the size of one, a live store
+ * other than the catalog. 0 with its handle in st, or -1 with the
+ * error set.
  */
 int enter_pages(sm1::session_t *s, uint64_t storeid, const store_t *&st) {
-  if (xct_check_active(s) != 0) {
+  if (xct_check_cleaner(s) != 0) {
     return -1;
   }
   if (storeid == 0) {
@@ -82,7 +83,7 @@ struct page_read_t {
 
 /*
  * Read a page into a frame, for a miss (bufpool_load_t). The frame is
- * its copy, so RocksDB's block cache keeps none (BUFFERPOOL.md §1.3).
+ * its copy, so RocksDB's block cache keeps none (../BUFMGR.md §1.11).
  */
 int load_page(void *arg, char *buf, size_t &len) {
   const auto *r = static_cast<const page_read_t *>(arg);

@@ -1,5 +1,5 @@
 /*
- * test_tree.cc -- a B+tree over sm1's pages (../BTREE.md §13 step 5):
+ * test_tree.cc -- a B+tree over sm1's pages (../BTREEINDEX.md §11.3 step 5):
  * inserts against a sorted map, cursors over the whole and ranges,
  * a split's post cut short and finished later, and writers on many
  * threads with cursors running.
@@ -134,7 +134,9 @@ TEST_CASE("tree: inserts at random, read back in order") {
     std::mt19937_64 rng(5);
     for (int i = 0; i < 20000; i++) {
       std::string key = random_key(rng, 24);
-      std::string value = std::to_string(i);
+      // A value's first byte holds flags: 'v' is in doubt already, so a
+      // key found again changes nothing.
+      std::string value = "v" + std::to_string(i);
       int rc = tree_insert(t.tree, key, value);
       REQUIRE_MESSAGE(rc >= 0, sm1::errmsg());
       if (expected.count(key) > 0) {
@@ -1374,7 +1376,7 @@ uint64_t leaf_of(sm1::session_t *s, uint64_t store, uint16_t relid,
 
 TEST_CASE(
     "tree: vacuum sets leaves all visible, and each write clears its own") {
-  // Verify the all-visible bit (../BTREE.md §4.1): vacuum sets it on a
+  // Verify the all-visible bit (../BTREEINDEX.md §8): vacuum sets it on a
   // leaf of settled entries, a cursor reports it, a set leaf is not
   // judged again, and an insert, a key found there, or a delete's
   // clear unsets only its own leaf.
@@ -1384,7 +1386,7 @@ TEST_CASE(
   // 3. Prune again: no entry is asked of.
   // 4. Insert a new key: its leaf alone is unset.
   // 5. Insert a key there already: its leaf is unset, no entry added.
-  // 6. tree_unset_visible on a third leaf unsets it; again, on the
+  // 6. tree_mark_in_doubt on a third leaf unsets it; again, on the
   //    same leaf, writes nothing: its version stays.
   // 7. The tree checks whole.
   db_t d;
@@ -1453,12 +1455,234 @@ TEST_CASE(
                    removed));
   const std::string gone = std::to_string(100000 + 2900);
   uint64_t gone_leaf = leaf_of(t.s, d.store(), 13, gone);
-  REQUIRE(0 == tree_unset_visible(t.tree, gone));
+  REQUIRE(0 == tree_mark_in_doubt(t.tree, gone));
   unset_only(gone_leaf);
   uint64_t version = read_decoded(t.s, d.store(), 13, gone_leaf).version;
-  REQUIRE(0 == tree_unset_visible(t.tree, gone));
+  REQUIRE(0 == tree_mark_in_doubt(t.tree, gone));
   CHECK(version == read_decoded(t.s, d.store(), 13, gone_leaf).version);
 
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+}
+
+TEST_CASE("tree: vacuum reads only the entries in doubt") {
+  // Verify vacuum asks of an entry only while it is in doubt, clears
+  // the mark once it is settled, and sets a leaf when no mark is left
+  // (../BTREEINDEX.md §9).
+  // 1. Fill a leaf of 10 entries, three of them in doubt.
+  // 2. Prune, all settled: only those three are asked, the marks go,
+  //    and the leaf is set.
+  // 3. Mark one, and prune with it not settled: it alone is asked,
+  //    once; its mark stays and the leaf stays unset.
+  // 4. Prune with it settled: its mark goes, and the leaf is set.
+  // 5. A leaf unset with no entry in doubt is set, and no entry asked.
+  db_t d;
+  open_tree_t t(d, 13, 4096);
+  REQUIRE(0 == tree_create(t.tree));
+  const std::string clear(1, '\0');
+  for (int n = 0; n < 10; n++) {
+    bool doubt = 2 == n || 5 == n || 8 == n;
+    REQUIRE(0 ==
+            tree_insert(t.tree, std::to_string(100 + n), doubt ? "v" : clear));
+  }
+  std::map<std::string, int> asked;
+  int answer = 2;
+  auto prune = [&] {
+    asked.clear();
+    size_t removed = 0;
+    REQUIRE(0 == tree_prune(
+                     t.tree,
+                     [&](std::string_view key, std::string_view) {
+                       asked[std::string(key)]++;
+                       return answer;
+                     },
+                     removed));
+    CHECK(0u == removed);
+  };
+  auto marks = [&] {
+    size_t n = 0;
+    for (const auto &[k, v] : read_decoded(t.s, d.store(), 13, 0).entries) {
+      n += entry_in_doubt(v) ? 1 : 0;
+    }
+    return n;
+  };
+  auto set = [&] { return all_visible(read_decoded(t.s, d.store(), 13, 0)); };
+  using asks_t = std::map<std::string, int>;
+
+  prune();
+  CHECK(asked == asks_t{{"102", 2}, {"105", 2}, {"108", 2}});
+  CHECK(0u == marks());
+  CHECK(set());
+
+  REQUIRE(0 == tree_mark_in_doubt(t.tree, "104"));
+  answer = 0;
+  prune();
+  CHECK(asked == asks_t{{"104", 1}});
+  CHECK(1u == marks());
+  CHECK_FALSE(set());
+
+  answer = 2;
+  prune();
+  CHECK(asked == asks_t{{"104", 2}});
+  CHECK(0u == marks());
+  CHECK(set());
+
+  REQUIRE(0 == tree_mark_in_doubt(t.tree, "1045"));
+  CHECK_FALSE(set());
+  prune();
+  CHECK(asked.empty());
+  CHECK(set());
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+}
+
+TEST_CASE("tree: a split keeps all visible the half with no entry in doubt") {
+  // Verify a split recomputes both halves' flags, through a tree, for
+  // the root's split and a leaf's, and with its post cut short.
+  // 1. Fill page 0 and settle it, so it is one leaf, set.
+  // 2. Insert until the root splits: the half with the new entry is
+  //    unset, the other set.
+  // 3. Settle every leaf, then split a leaf with its post made to
+  //    fail: the flags are written with the split, and the next insert
+  //    finishes it. The tree checks whole.
+  // 4. A leaf set all visible with an entry in doubt fails tree_check.
+  db_t d;
+  open_tree_t t(d, 13, 512);
+  REQUIRE(0 == tree_create(t.tree));
+  const std::string clear(1, '\0');
+  auto settle = [&] {
+    size_t removed = 0;
+    REQUIRE(0 == tree_prune(
+                     t.tree,
+                     [](std::string_view, std::string_view) { return 2; },
+                     removed));
+  };
+  int n = 100000;
+  auto count_set = [&] {
+    size_t set = 0;
+    for (const auto &[id, page] : leaves(t.s, d.store(), 13)) {
+      set += all_visible(page) ? 1 : 0;
+    }
+    return set;
+  };
+  size_t height = 0;
+  auto fill_page0 = [&] {
+    for (;;) {
+      REQUIRE(0 == tree_height(t.tree, height));
+      if (height > 1) {
+        return;
+      }
+      settle();
+      REQUIRE(0 == tree_insert(t.tree, std::to_string(n), "v"));
+      n += 2;
+    }
+  };
+  fill_page0();
+  auto halves = leaves(t.s, d.store(), 13);
+  REQUIRE(2u == halves.size());
+  CHECK(1u == count_set());
+  CHECK(all_visible(halves.front().second));
+  CHECK_FALSE(all_visible(halves.back().second));
+
+  size_t before = 0;
+  for (;;) {
+    settle();
+    before = leaves(t.s, d.store(), 13).size();
+    REQUIRE(before == count_set());
+    detail::fail_posts = 1;
+    int rc = tree_insert(t.tree, std::to_string(n), "v");
+    n += 2;
+    detail::fail_posts = 0;
+    if (0 != rc) {
+      break;
+    }
+  }
+  std::vector<std::pair<uint64_t, page_t>> split = leaves(t.s, d.store(), 13);
+  CHECK(before + 1 == split.size());
+  CHECK(before == count_set());
+  // Into the left half, flagged incomplete: its writer finishes it.
+  const std::string &low = split[split.size() - 2].second.entries.front().first;
+  REQUIRE(0 == tree_insert(t.tree, low + "5", "v"));
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+
+  settle();
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+  uint64_t lid = first_leaf(t.s, d.store(), 13);
+  page_t bad = read_decoded(t.s, d.store(), 13, lid);
+  REQUIRE(all_visible(bad));
+  bad.entries.front().second = "v";
+  write_raw(t.s, d.store(), page_name(13, lid), page_bytes(bad));
+  CHECK(-1 == tree_check(t.tree));
+  CHECK(sm1::SM_ERR_CORRUPT == sm1::errnum());
+}
+
+TEST_CASE("tree: a write marks its entry in doubt, once") {
+  // Verify a writer sets an entry's in-doubt bit and clears its leaf's
+  // flag in one write, and writes nothing when neither changes
+  // (../BTREEINDEX.md §9).
+  // 1. Fill a leaf with entries not in doubt; prune sets it all visible.
+  // 2. Mark one: it alone is in doubt, the leaf unset, written once.
+  // 3. Mark it again: no write.
+  // 4. Mark another: in doubt too, by one more write.
+  // 5. An insert that finds a third key marks it.
+  // 6. A key not on the leaf changes no entry, and writes nothing, the
+  //    leaf unset already.
+  // 7. A key not on a leaf set all visible clears the flag alone.
+  db_t d;
+  open_tree_t t(d, 13, 4096);
+  REQUIRE(0 == tree_create(t.tree));
+  const std::string clear(1, '\0');
+  for (int n = 0; n < 10; n++) {
+    REQUIRE(0 == tree_insert(t.tree, std::to_string(100 + n), clear));
+  }
+  auto settle = [&] {
+    size_t removed = 0;
+    REQUIRE(0 == tree_prune(
+                     t.tree,
+                     [](std::string_view, std::string_view) { return 2; },
+                     removed));
+  };
+  auto in_doubt = [&] {
+    std::set<std::string> out;
+    for (const auto &[k, v] : read_decoded(t.s, d.store(), 13, 0).entries) {
+      if (entry_in_doubt(v)) {
+        out.insert(k);
+      }
+    }
+    return out;
+  };
+  auto version = [&] { return read_decoded(t.s, d.store(), 13, 0).version; };
+  settle();
+  REQUIRE(all_visible(read_decoded(t.s, d.store(), 13, 0)));
+  uint64_t v0 = version();
+
+  REQUIRE(0 == tree_mark_in_doubt(t.tree, "103"));
+  CHECK(in_doubt() == std::set<std::string>{"103"});
+  CHECK_FALSE(all_visible(read_decoded(t.s, d.store(), 13, 0)));
+  CHECK(v0 + 1 == version());
+
+  REQUIRE(0 == tree_mark_in_doubt(t.tree, "103"));
+  CHECK(v0 + 1 == version());
+
+  REQUIRE(0 == tree_mark_in_doubt(t.tree, "104"));
+  CHECK(in_doubt() == std::set<std::string>{"103", "104"});
+  CHECK(v0 + 2 == version());
+
+  CHECK(1 == tree_insert(t.tree, "105", clear));
+  CHECK(in_doubt() == std::set<std::string>{"103", "104", "105"});
+  CHECK(v0 + 3 == version());
+
+  REQUIRE(0 == tree_mark_in_doubt(t.tree, "1035"));
+  CHECK(in_doubt().size() == 3u);
+  CHECK(v0 + 3 == version());
+
+  page_t page = read_decoded(t.s, d.store(), 13, 0);
+  for (auto &[k, v] : page.entries) {
+    v = clear;
+  }
+  page.flags |= page_all_visible;
+  write_raw(t.s, d.store(), page_name(13, 0), page_bytes(page));
+  REQUIRE(0 == tree_mark_in_doubt(t.tree, "1035"));
+  CHECK(in_doubt().empty());
+  CHECK_FALSE(all_visible(read_decoded(t.s, d.store(), 13, 0)));
   REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
 }
 

@@ -1,7 +1,7 @@
 /*
  * db.cc -- sm1::mkdb, sm1::rmdb, sm1::lsdb, and the
- * column family layout every database shares (SM1_DESIGN.md §3,
- * §3.5, §11).
+ * column family layout every database shares (../DBMGR.md §6,
+ * ../DBMGR.md §4, §7).
  */
 
 #include "db.h"
@@ -72,7 +72,7 @@ int create_db(const std::string &path, rocksdb::DBOptions dbo) {
   };
 
   // Seed CF:meta: format version and the allocators' leases. A
-  // persisted lease of 0 resumes both allocators at 1 (§4.2),
+  // persisted lease of 0 resumes both allocators at 1 (../XCTMGR.md §2.3),
   // so storeid 0 stays the catalog's.
   std::string version, zero;
   sm0::put_be64(version, WISR_DB_VERSION);
@@ -108,7 +108,7 @@ int mkdb(sm1::env_t *env, const char *dbname, const sm1::options_t *opt) {
   if (db_options(opt, &dbo) != 0) {
     return -1;
   }
-  // Its logs through the environment's file system (WALPREALLOC.md).
+  // Its logs through the environment's file system (../DBMGR.md).
   if (env->wal_env) {
     dbo.env = env->wal_env.get();
   }
@@ -129,7 +129,7 @@ int mkdb(sm1::env_t *env, const char *dbname, const sm1::options_t *opt) {
   }
 
   // Allocate a dbid, durably, before its directory exists, so
-  // a dbid is never reused (§3.5).
+  // a dbid is never reused (../DBMGR.md §4).
   s = env->root->Get(rocksdb::ReadOptions(), WISR_ROOT_NEXT_DBID, &val);
   // Fail if the root db has no usable next_dbid.
   if (!s.ok() || val.size() != 8) {
@@ -155,7 +155,7 @@ int mkdb(sm1::env_t *env, const char *dbname, const sm1::options_t *opt) {
     return -1;
   }
 
-  // Name the database last: the mapping is the truth (§3.5).
+  // Name the database last: the mapping is the truth (../DBMGR.md §4).
   std::string dbid_val;
   // Encode the dbid as the name's value.
   sm0::put_be64(dbid_val, dbid);
@@ -212,7 +212,7 @@ int rmdb(sm1::env_t *env, const char *dbname) {
   // Decode the dbid.
   uint64_t dbid = sm0::get_be64(val.data());
 
-  // Drop the name first: the mapping is the truth (§3.5).
+  // Drop the name first: the mapping is the truth (../DBMGR.md §4).
   rocksdb::WriteOptions wo;
   wo.sync = true;
   // Delete the name, synced.
@@ -306,7 +306,7 @@ std::string store_cf_name(uint64_t storeid, bool chained) {
 /*
  * RocksDB's default options with LZ4 compression, at every
  * level: a block takes less disk, and a read from disk pays its
- * decompression before the block cache holds it (§12.2).
+ * decompression before the block cache holds it (../DBMGR.md §10).
  * With cache, the CF's blocks are read through it, the one block
  * cache of the environment, not a cache of the CF's own.
  */
@@ -325,12 +325,12 @@ fixed_cf_options(const std::shared_ptr<rocksdb::Cache> &cache) {
 
 /*
  * The comparator and prefix extractor are part of the format
- * (§3.1). The bloom filter keys on the userkey prefix; whole
+ * (../DBMGR.md §6.2). The bloom filter keys on the userkey prefix; whole
  * version keys are never looked up, so no whole-key filter. No
  * row_cache: DeleteRange, which the tombstone purge uses, is not
  * supported with one; and a memtable holding
  * store_max_range_deletions of the purge's range tombstones is
- * flushed, so reads stop re-examining them (§8.3).
+ * flushed, so reads stop re-examining them (../GC.md §1).
  */
 rocksdb::ColumnFamilyOptions store_cf_options(db_t *db, uint64_t storeid) {
   // Start from a fixed CF's options: LZ4.
@@ -352,7 +352,7 @@ rocksdb::ColumnFamilyOptions store_cf_options(db_t *db, uint64_t storeid) {
   // Blocks larger than RocksDB's 4 KB (store_block_size).
   bbto.block_size = store_block_size;
   // A hash index in each data block, so a Get jumps to its key's
-  // restart interval instead of searching the block (§12.2).
+  // restart interval instead of searching the block (../DBMGR.md §10).
   bbto.data_block_index_type =
       rocksdb::BlockBasedTableOptions::kDataBlockBinaryAndHash;
   // A restart point every few entries, where that index lands.
@@ -363,7 +363,7 @@ rocksdb::ColumnFamilyOptions store_cf_options(db_t *db, uint64_t storeid) {
   bbto.whole_key_filtering = false;
   // Install the table factory.
   cfo.table_factory.reset(rocksdb::NewBlockBasedTableFactory(bbto));
-  // Flush once the purge's range tombstones pile up (§8.3).
+  // Flush once the purge's range tombstones pile up (../GC.md §1).
   cfo.memtable_max_range_deletions = store_max_range_deletions;
   return cfo;
 }
@@ -504,7 +504,7 @@ db_t *db_open(const std::string &path, const char *dbname,
   // Count each store's memtable bytes as RocksDB seals and flushes them.
   db->listener = std::make_shared<memcount_listener_t>();
   dbo.listeners.push_back(db->listener);
-  // Its logs through the environment's file system (WALPREALLOC.md).
+  // Its logs through the environment's file system (../DBMGR.md).
   if (renv) {
     dbo.env = renv;
   }
@@ -575,7 +575,7 @@ db_t *db_open(const std::string &path, const char *dbname,
   }
 
   // Resume the allocators one past their persisted leases, and
-  // publish everything below the ts lease (§4.2).
+  // publish everything below the ts lease (../XCTMGR.md §2.3).
   db->lease = opt->ts_lease;
   db->durability_sync = opt->durability_sync;
   // Resume ts one past the lease; that value is never handed out.
@@ -601,7 +601,7 @@ db_t *db_open(const std::string &path, const char *dbname,
   db->deadlock_ms = opt->deadlock_ms;
 
   // Restore prepared transactions and sweep orphaned CFs
-  // before any session or compaction filter can look (§9.1).
+  // before any session or compaction filter can look (../DBMGR.md §9.1).
   if (recover(db.get()) != 0) {
     return nullptr;
   }
@@ -633,7 +633,7 @@ static int persist_lease(db_t *db, const char *key, uint64_t new_limit) {
 
 /*
  * Hand out *next from a lease, with db->alloc_mu held: 0, or -1. No
- * value is handed out twice across a restart (§4.2).
+ * value is handed out twice across a restart (../XCTMGR.md §2.3).
  * 1. If the lease is used up, persist a new limit, *next plus
  *    db->lease, before any value under it is handed out.
  * 2. Hand out *next, and advance it.
@@ -749,7 +749,7 @@ void db_commit_done(db_t *db, uint64_t commit_ts) {
  *
  * A commit must be visible when sm1::commit returns: every snapshot
  * taken after, in this session or any other, must see it, as
- * PostgreSQL's COMMIT promises (COMMITVISIBLE.md).
+ * PostgreSQL's COMMIT promises (../XCTMGR.md).
  *
  * Commits are NOT serialized. Only their two ends take alloc_mu: the
  * claim of commit_ts (db_claim_commit_ts()) and its done
@@ -790,7 +790,7 @@ void db_commit_wait(db_t *db, uint64_t commit_ts) {
 
 /*
  * Sync the WAL past the caller's writes, outside RocksDB's write
- * queue, as PostgreSQL's XLogFlush() does (GROUPSYNC.md §3). A
+ * queue, as PostgreSQL's XLogFlush() does (../DBMGR.md §8.2). A
  * synced write in the queue makes every write grouped with it wait
  * for its sync; here only the commits wait.
  * 1. Take the target: the last sequence number. RocksDB sets it
@@ -804,7 +804,7 @@ void db_commit_wait(db_t *db, uint64_t commit_ts) {
  * 5. Lead: take upto, the last sequence number again. Every write
  *    at or below it is in the WAL file now.
  * 6. Sync the WAL with sync_mu let go; writers go on meanwhile.
- * 7. If the sync failed, abort the process (SM1_DESIGN.md §8.2).
+ * 7. If the sync failed, abort the process (../XCTMGR.md §8.2).
  * 8. Record upto as synced. Take the covered commits out of the
  *    line, and hand the next sync to the oldest left, if any.
  * 9. Let sync_mu go, and wake the next leader first, then the
@@ -1113,7 +1113,7 @@ int db_create_store_cf(db_t *db, uint64_t storeid, sm1::session_t *owner,
               chained ? std::make_shared<std::atomic<uint64_t>>(1) : nullptr,
               hold_cf(rdb, h)};
   db->had_temp = db->had_temp || owner;
-  // Sessions read their handles again (STORECACHE.md).
+  // Sessions read their handles again (../DBMGR.md).
   db->stores_version.fetch_add(1, std::memory_order_release);
   return 0;
 }
