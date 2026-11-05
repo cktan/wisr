@@ -118,7 +118,7 @@ A role is the whole server's: one connects to any database,
 and owns objects in several. PostgreSQL keeps roles in shared
 catalogs, which every database's transaction reads and writes.
 In sm a database is a RocksDB of its own
-(`../sm/sm1/SM1_DESIGN.md` §3.5), and no transaction spans
+(`../sm/DBMGR.md` §4), and no transaction spans
 two.
 
 **Decision: a database for what is shared, `pg_global`.**
@@ -152,9 +152,9 @@ nothing else; it stays so. The superuser is the role of oid
 10, and the `superuser` file goes.
 
 **Keys that are never reused.** A `dbid` is never reused
-(`../sm/sm1/SM1_DESIGN.md` §3.5), nor an object's oid in its
+(`../sm/DBMGR.md` §4), nor an object's oid in its
 database, which comes from the sequence `sm3.oid`
-(`../sm/sm3/CATALOG_INMEM.md`). So an entry left behind for a
+(`../sm/CATALOG.md`). So an entry left behind for a
 dropped object or database, by a crash between its two
 commits, names nothing and can never name a new one; it is
 swept, not trusted.

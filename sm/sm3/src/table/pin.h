@@ -1,5 +1,5 @@
 /*
- * pin.h -- the session's pool of pins (../../../ROW.md §4): what a
+ * pin.h -- the session's pool of pins (../ROWSTORE.md §6.4): what a
  * pin and a cursor hold, and the calls table.cc takes, holds and
  * releases them with.
  */
@@ -33,7 +33,7 @@ struct sm3::pin_t {
 
 /*
  * A cursor over a table's rows: its rel scan, and the pin of its row;
- * or, over a tree (../BTREE.md §4), the tree's entries, each row read
+ * or, over a tree (../BTREEINDEX.md §5), the tree's entries, each row read
  * into the pin and kept if it still has its entry's key.
  */
 struct sm3::scan_t {
@@ -45,7 +45,7 @@ struct sm3::scan_t {
   session_t *session = nullptr; /* whose pool its batch's raw pins are */
   /*
    * A tree's entries read ahead, their rows read in one call
-   * (../../BATCHREAD.md): each entry's key, its row's key and _id,
+   * (../ROWSTORE.md): each entry's key, its row's key and _id,
    * and the row in a raw pin of the batch's; batch the next read's
    * size, doubling to tree_batch_max, as digres's read-ahead does.
    * The keys lie end to end in bytes, which each batch fills anew;
@@ -66,13 +66,13 @@ struct sm3::scan_t {
   /*
    * Each entry's cut flag, and whether its row goes unread: an
    * index-only scan's (entries_only) entry, on a leaf all visible,
-   * whose key gives its columns back (../BTREE.md §4.1).
+   * whose key gives its columns back (../BTREEINDEX.md §8).
    */
   std::vector<uint8_t> cuts, unread;
   /*
    * The iterator its batches' rows are read by, made at the first
    * batch of two or more and kept to the cursor's end, not made again
-   * for each (../../BATCHREAD.md §2.1).
+   * for each (../ROWSTORE.md §7.2).
    */
   sm1::batch_iter_t *iter = nullptr;
   size_t at = 0, n = 0, batch = 1;
@@ -110,7 +110,7 @@ pin_t *pin_take(session_t *s);
  * The pin ref holds a read's row in, taken back to read another
  * row into: off its list, refs to it stale, its row let go, but
  * its raw pin's iterator kept for sm1 to seek again (sm1's
- * SM1_DESIGN.md §10.1). nullptr if ref names no held pin; ref is
+ * ../ROWSTORE.md §5.2). nullptr if ref names no held pin; ref is
  * left naming none.
  */
 pin_t *pin_reread(pin_ref_t &ref);

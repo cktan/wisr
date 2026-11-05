@@ -415,4 +415,4 @@ bench/run.sh dg                # one system, for a look; no report
 | `DG-vs-PG.md` | how digres differs from PostgreSQL 18 |
 | `dg/README.md`, `dg/DESIGN.md` | what digres is, and its decisions of record |
 | `dg/WORKNOTE.md` | every step taken in digres, and why |
-| `sm/BTREE.md` and the other notes in `sm/` | designs of a feature each, built or proposed |
+| `sm/BTREEINDEX.md` and the other notes in `sm/` | designs of a feature each, built or proposed |

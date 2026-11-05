@@ -45,7 +45,7 @@ until step 311.
   index's predicate and expressions as bytes it does not read,
   and asks the host's **evaluator**, a callback, whether a row
   belongs and what its expression keys are, on every write,
-  build and ANALYZE (`../sm/sm3/SM3_DESIGN.md` §3,
+  build and ANALYZE (`../sm/INDEXBUILD.md` §2,
   `sm_set_index_evaluator` in `../sm/include/sm.h`). `rel` has
   an evaluator of its own and tests it
   (`../sm/rel/test/test_partial.rel`).
@@ -333,7 +333,7 @@ digres's own. The evaluation after it runs in none.
 | Non-unique / unique | sm3's own write paths, with `belongs` and the computed key |
 | Primary key | cannot be partial or an expression (§2) |
 | INCLUDE | plain columns, as now |
-| Cut keys | a long expression key in a unique index is refused as a long column key is (`SM3_DESIGN.md` §7) |
+| Cut keys | a long expression key in a unique index is refused as a long column key is (`sm/sm3/SM3_DESIGN.md` §6) |
 | Update A→B→A | sm3 compares the `reads` columns' bytes; equal images leave the index alone |
 | INCLUDE-only update | as now: entry rewritten, evaluator called only if `reads` changed |
 | Update into, out of, the predicate | sm3 evaluates both images: entry removed if the old belonged, added if the new does |
@@ -421,7 +421,7 @@ Steps:
 - **C: build such an index on the session's thread.** No worker
   evaluates. It needs sm3 to build in the caller, a second
   build path, and a CREATE INDEX that holds its session for the
-  build, as sm3's design chose not to (`SM3_DESIGN.md` §3).
+  build, as sm3's design chose not to (`../sm/INDEXBUILD.md` §2).
 - **D: an evaluator in sm** over a subset of expressions. sm3's
   design refused it: a second implementation of PostgreSQL's
   functions, which must agree row for row.

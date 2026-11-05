@@ -176,7 +176,7 @@ layer.
 - **Two secondary index types (`lsm` and `btree`).** Hash, GIN,
   GiST, SP-GiST, and BRIN access methods are removed; DG
   supports `UNIQUE`, partial (`WHERE`), covering (`INCLUDE`),
-  and expression indexes in two formats (`sm/BTREE.md`):
+  and expression indexes in two formats (`sm/BTREEINDEX.md`):
   - **`lsm` (default, `USING lsm`):** Stores each secondary
     index entry as an individual MVCC key-value record in
     RocksDB's LSM tree.

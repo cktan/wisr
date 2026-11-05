@@ -28,7 +28,7 @@
 #     inside a statement, as digres runs them: the rewrite writes a
 #     store the statement made.
 # 13. read-keys reads many rows by key in one call
-#     (../BATCHREAD.md), each as read reads it: over keys out of
+#     (../ROWSTORE.md), each as read reads it: over keys out of
 #     order, repeated and not there, a row updated, one deleted,
 #     another session's uncommitted insert and update, and this
 #     transaction's own update and delete.

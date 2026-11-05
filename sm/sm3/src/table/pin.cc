@@ -1,5 +1,5 @@
 /*
- * pin.cc -- the session's pool of pins (../../../ROW.md §4), moved
+ * pin.cc -- the session's pool of pins (../ROWSTORE.md §6.4), moved
  * from sm1 with its rules: a pin ref names a pin and the generation
  * it was taken at; releasing the pin increases its generation, so
  * every ref to it goes stale, and the pin goes back to the pool for
@@ -139,7 +139,7 @@ void pins_rolled_back(session_t *s) {
   for (pin_t *p = s->pins_scan; p; p = p->next) {
     // A tree's cursor has no rel scan for the rollback to close: its
     // rows are in its own raw pins, each batch read at the view of
-    // its call, so it goes on (../../BATCHREAD.md §2.1).
+    // its call, so it goes on (../ROWSTORE.md §7.2).
     if (p->scan->rel && sm2::rel_scan_rolled_back(p->scan->rel)) {
       drop(p);
     }

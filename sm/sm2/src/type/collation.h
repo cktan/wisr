@@ -1,6 +1,6 @@
 /*
  * collation.h -- a collation's insides, for the text types' keys
- * (SM2_DESIGN.md §3.3, TYPE.md §3.5).
+ * (../LSMINDEX.md §2.3, TYPE.md §3.5).
  */
 #ifndef SM2_COLLATION_H
 #define SM2_COLLATION_H

@@ -45,10 +45,10 @@ typedef enum sm_errnum_t {
     SM_ERR_PERMISSION    = 17,
     SM_ERR_VERSION       = 18,  /* home dir format not supported */
 
-    /* Not an abort: the transaction stays active (sm1/SM1_DESIGN.md §5.4). */
+    /* Not an abort: the transaction stays active (../LOCKMGR.md §1.9). */
     SM_ERR_UPDATED       = 19,  /* newer commit; sm1::read_latest, then retry */
 
-    /* sm2's: types and tuples (sm2/SM2_DESIGN.md §3.2, §4, §5) */
+    /* sm2's: types and tuples (../LSMINDEX.md §2.4, ../sm2/TUPLE.md §10, ../ROWSTORE.md §8) */
     SM_ERR_KEYTOOLONG    = 20,  /* a key that may not be cut is too long */
     SM_ERR_ROWTOOLONG    = 22,  /* a tuple past sm2::max_tup_len */
 
@@ -61,37 +61,37 @@ typedef enum sm_errnum_t {
 
     /*
      * sm1's, and not an abort either: a lock another transaction
-     * holds, met by a session set qa_nowait (sm1/SM1_DESIGN.md §5.1).
+     * holds, met by a session set qa_nowait (../LOCKMGR.md §3.2).
      */
     SM_ERR_BLOCKED       = 23,  /* would wait for a lock; repeat the call */
 
-    /* sm3's: constraints (sm3/SM3_DESIGN.md §3) */
+    /* sm3's: constraints (../INDEXBUILD.md §2) */
     SM_ERR_NOTNULL       = 24,  /* a NULL in a NOT NULL column */
 
     /*
      * sm1's: a rollback to a savepoint whose undo list was
-     * dropped at savepoint_undo_bytes (sm1/SM1_DESIGN.md §6.5). The
+     * dropped at savepoint_undo_bytes (../XCTMGR.md §6). The
      * transaction can only be aborted.
      */
     SM_ERR_UNDOLIMIT     = 25,  /* the savepoint can no longer be rolled back to */
 
     /*
      * sm1's, and not an abort: an update or delete of a row the
-     * running statement has already changed (sm1/SM1_DESIGN.md §6.2).
+     * running statement has already changed (../XCTMGR.md §5).
      * Nothing is written; the caller skips the row.
      */
     SM_ERR_SELFMODIFIED  = 26,  /* the statement already changed this row */
 
     /*
      * sm1's, and not an abort: a write in a transaction begun
-     * read-only (sm1/SM1_DESIGN.md §7.4). Nothing is written.
+     * read-only (../XCTMGR.md §7.5). Nothing is written.
      */
     SM_ERR_READONLY      = 27,  /* the transaction was declared read-only */
 
     /*
      * sm1's, and not an abort: a wait for another transaction that
      * an interrupt to the calling thread ended (sm_sys.h, through its
-     * wait mask; sm1/SM1_DESIGN.md §5.1). The transaction stays active
+     * wait mask; ../LOCKMGR.md §3.2). The transaction stays active
      * and holds what it held.
      */
     SM_ERR_INTERRUPTED   = 28,  /* the wait was interrupted */
@@ -105,7 +105,7 @@ typedef enum sm_errnum_t {
 
     /*
      * sm1's: a rollback to a savepoint failed, leaving the writes
-     * it was to undo (sm1/SM1_DESIGN.md §6.5). Every call on the
+     * it was to undo (../XCTMGR.md §6). Every call on the
      * transaction but an abort then fails with it.
      */
     SM_ERR_DOOMED        = 30,  /* the transaction can only be aborted */
@@ -113,7 +113,7 @@ typedef enum sm_errnum_t {
     /*
      * sm1's, and not an abort: a read or seek on a cursor a
      * rollback to a savepoint set before it opened has closed
-     * (sm1/SM1_DESIGN.md §6.5). Its old view cannot be recreated.
+     * (../XCTMGR.md §6). Its old view cannot be recreated.
      */
     SM_ERR_SCANCLOSED    = 31,  /* a rollback closed the cursor */
 
@@ -121,7 +121,7 @@ typedef enum sm_errnum_t {
      * sm1's, and not an abort: an update, a delete or a newest
      * read of a key whose newest version is a move's tombstone
      * (sm1::erase_moved), the row living on under another key
-     * (../ROWKEY.md §2.3).
+     * (../ROWSTORE.md §2.5).
      */
     SM_ERR_MOVED         = 32,  /* the row moved to another key */
 

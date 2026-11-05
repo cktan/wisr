@@ -9,7 +9,11 @@ design of a loader that does not, in three modes:
 writers go on; **batch mode**, which writes rows a chunk at a
 time through RocksDB's ordinary write path with other writers
 kept out; and **file mode**, which writes them to sorted files
-that RocksDB ingests whole.
+that RocksDB ingests whole. Only file mode into an empty table
+is built; §13 says how it differs from the design. The code is
+in `sm1/src/load.cc`, `rel_load` and `idx_load` in sm2, and
+`tbl_load_open`, `tbl_load_add` and `tbl_load_close` in
+`sm3/src/table/table.cc`.
 
 **Status.** File mode into an empty table is built, at every
 level and in digres, whose `COPY` uses it (§13 below;
@@ -37,7 +41,7 @@ mode**
   none is taken.
 - Mini-batch holds the table IX, as any writer does, so other
   writers go on. It keeps no row lock either: since
-  `sm1/WRITELOCK.md`, no write does (§4.5).
+  `LOCKMGR.md`, no write does (§4.5).
 - All are one transaction. Every version carries its `xid`,
   and the load commits or aborts whole, by the one status
   record every transaction has.
@@ -96,7 +100,7 @@ defaults chosen here, to be tuned in use.
 ## 1. The problem
 
 `tbl_insert` on a table with `k` indexes writes `1 + k` keys.
-For each key sm1 does this (`sm1/SM1_DESIGN.md` §5):
+For each key sm1 does this (`LOCKMGR.md` §1.7):
 
 | Step | Cost |
 | --- | --- |
@@ -106,14 +110,14 @@ For each key sm1 does this (`sm1/SM1_DESIGN.md` §5):
 | remember it for a savepoint, if one is set | an entry in `T.undo`, with the key inline, kept to the end |
 | tell SSI | one lookup |
 
-Since `sm1/WRITELOCK.md`, a write keeps no lock: the first
+Since `LOCKMGR.md`, a write keeps no lock: the first
 step is the key's write latch, held for the write alone, and
 the lock entries below are gone. The rest stands.
 
 **Memory.** The undo entries are kept for the life of the
 transaction when a savepoint is set, so a load of `n` rows
 holds `n × (1 + k)` entries; the lock entries did too.
-`sm1/SM1_DESIGN.md` §13 records it: a transaction writing tens
+`XCTMGR.md` §11.4 records it: a transaction writing tens
 of millions of keys costs gigabytes, and "bulk loads want
 batching into many transactions."
 
@@ -153,7 +157,7 @@ it will stay.
 ### 3.1 A table lock stands in for the row locks
 
 A writer holds its table's oid lock IX, and a reader IS
-(`sm3/SM3_DESIGN.md` §2). A loader in batch or file mode takes
+(`CATALOG.md` §1). A loader in batch or file mode takes
 it **SIX**. One in file mode filling an empty table holds it
 **X** already (§5.1); X covers SIX, so all that follows holds
 for it too. Mini-batch takes it **IX**, as a writer does, and
@@ -197,7 +201,7 @@ by the same routines (requirement 3):
 
 1. `NOT NULL` is checked.
 2. An `_id` is taken, by a row of a table without a primary
-   key; a keyed row has none (`ROWKEY.md` §2.1). The loader
+   key; a keyed row has none (`ROWSTORE.md` §2.2). The loader
    takes `_id`s from the
    table's sequence a hundred at a time, ahead of need, and
    hands them out as rows arrive. It needs nothing else: a
@@ -215,14 +219,13 @@ is checked.
 
 ### 3.3 Timestamps and `seq`
 
-A version's key is `userkey | ~wts | ~seq`
-(`sm1/SM1_DESIGN.md` §3.1). A loaded row is instead a chained
-key's current version, keyed by the row's key alone, whose
-value carries the same `wts` and `seq` (`VCHAIN.md` §3, §8);
-an index entry is a version as above. An ordinary write takes
-one `wts` and one `seq` for each key. A load takes one of each
-for many keys: for 100 rows in mini-batch, for a chunk in batch
-mode, for the whole load in file mode.
+A version's key is `userkey | ~wts | ~seq` (`DBMGR.md` §6.2). A
+loaded row is instead a chained key's current version, keyed by
+the row's key alone, whose value carries the same `wts` and `seq`
+(`ROWSTORE.md` §3.5, §3.8); an index entry is a version as above.
+An ordinary write takes one `wts` and one `seq` for each key. A
+load takes one of each for many keys: for 100 rows in mini-batch,
+for a chunk in batch mode, for the whole load in file mode.
 
 - **One `wts` is enough** because of the lock. The rule `wts`
   serves is that a key's versions sort in commit order. Every
@@ -241,7 +244,7 @@ writes, and sm1 refuses the 2^32nd.
 ### 3.4 Serializable readers
 
 A serializable reader's SIREAD locks are checked by every
-write, a key at a time (`sm1/SM1_DESIGN.md` §7.1). The loader
+write, a key at a time (`XCTMGR.md` §7.2). The loader
 makes the same call for every key it writes. It keeps nothing
 in the loader's transaction, so it does not grow, and a store
 no serializable reader has touched pays one lookup a key.
@@ -256,7 +259,7 @@ COMMITTED is the level to load at.
 
 An ordinary write made while a savepoint is set is listed in
 `T.undo`, so that a rollback can delete it
-(`sm1/SM1_DESIGN.md` §6.5). A load lists nothing, in any
+(`XCTMGR.md` §6). A load lists nothing, in any
 mode.
 
 - **With no savepoint set** nothing is listed by any write,
@@ -270,14 +273,14 @@ mode.
   kept every other transaction out since, so all it holds is
   this transaction's since then: the load, and any write
   after it. A store made after the mark is dropped by the
-  rollback instead (`sm1/SM1_DESIGN.md` §6.5).
+  rollback instead (`XCTMGR.md` §6).
 - **A load into a store with rows**, batch mode and
   mini-batch (§4, §4.5), not built, cannot be undone that
   way. Opening one would mark the savepoints then set lost,
   by the mechanism that marks them lost at the undo list's
   cap: a rollback to one fails with `SM_ERR_UNDOLIMIT`, and
   the transaction is aborted.
-- **Once `sm1/SAVEPOINT.md` is built**, a rollback marks a
+- **Once `XCTMGR.md` is built**, a rollback marks a
   range of `seq` dead, and a load's versions are covered by it
   like any other, in every mode.
 - **While a load is open**, between `load_open` and
@@ -308,7 +311,7 @@ Why the rollback deletes at all, and why with `DeleteRange`:
   not a transactional one, and a load's files are in its
   manifest once ingested. An abort deletes nothing because
   the `xid` dies; a rollback to a savepoint has no such
-  marker until `sm1/SAVEPOINT.md`.
+  marker until `XCTMGR.md`.
 
 The rejected ways to empty the store:
 
@@ -350,7 +353,7 @@ writer maintains it.
 A restore does not need that. `pg_dump` loads a table's rows
 before it creates the indexes and the primary key, so the
 load there writes the heap alone, and the indexes are the
-concurrent build's (`sm3/SM3_DESIGN.md` §3). That build goes
+concurrent build's (`INDEXBUILD.md` §2). That build goes
 a row at a time through the ordinary path, and how fast it is
 has not been measured (`NEXT.md` §2). For a restore it is the
 larger half of the work, and sorting an index into files is
@@ -365,7 +368,7 @@ transaction is the other common way to fill a table. File
 mode needs only an empty table (§5.1), but the truncate makes
 sure of it: it gives the table a new store, holding no
 version of any kind, under the table-oid lock X
-(`sm3/SM3_DESIGN.md` §4).
+(`CATALOG.md` §2).
 
 ---
 
@@ -392,7 +395,7 @@ A chunk is written when the buffer fills, inside the call that
 hands over a row, and the last one when the loader closes.
 There is no call to write it sooner. The loading statement
 does not see its own rows in any case, as no statement sees
-its own writes (`sm1/SM1_DESIGN.md` §6.2), and the next statement
+its own writes (`XCTMGR.md` §5), and the next statement
 begins after the loader has closed.
 
 The transaction may also write the table the ordinary way
@@ -414,7 +417,7 @@ can collide.
 | a row already in the table | the same read |
 
 The read is the check `sm1::insert` does today
-(`sm1/SM1_DESIGN.md` §5, step 3), with the same outcomes: a
+(`LOCKMGR.md` §1.7, step 3), with the same outcomes: a
 live version is `SM_ERR_DUPKEY`, and a version committed after
 the snapshot of a transaction above READ COMMITTED is
 `SM_ERR_CONFLICT`. It costs one seek a unique key, which a
@@ -464,7 +467,7 @@ writers go on, as PostgreSQL's `COPY` and `INSERT` let them.
   in an `_id` from the reserved block, which no one else can
   draw, so no other transaction can write the same key.
 - **Each unique key is checked as any write checks it**
-  (`sm1/WRITELOCK.md` §3.2): under its latch, waiting for
+  (`LOCKMGR.md` §1.7): under its latch, waiting for
   another transaction's uncommitted version of it, or for an
   explicit lock on it, and then read as §4.2 reads it. No lock
   is kept. The batch takes its `wts` only once every unique key
@@ -554,11 +557,11 @@ comparator's order, which is the whole of the difficulty.
 What goes into a file is exactly what a write would have put
 into RocksDB: for an index entry a version, keyed
 `userkey | ~wts | ~seq`, with the transaction's `xid` in its
-value (`sm1/SM1_DESIGN.md` §3.1); for a row, from a stream
+value (`DBMGR.md` §6.2); for a row, from a stream
 `load_stream` declares chained, as sm3 declares a table's rows,
 a current version under the row's key with nothing chained
 behind it, `prev` `0`, as `chain_insert` puts one
-(`VCHAIN.md` §8). A version in an ingested file is no
+(`ROWSTORE.md` §3.8). A version in an ingested file is no
 different from one in a memtable. It is uncommitted until
 the transaction's status record says otherwise, so the files
 can be handed to RocksDB before the commit.
@@ -576,7 +579,7 @@ ascending or not, and unique or not.
 **`_id` is ascending for free.** A load's `_id`s ascend
 (§3.2), so the rows of a table without a primary key, keyed by
 `_id`, arrive in order. A table with one has no `_id` index,
-and its load no stream for one (`ROWKEY.md` §2.1).
+and its load no stream for one (`ROWSTORE.md` §2.2).
 Such a file is started, filled as rows arrive, and closed at a
 size limit, 256 MB by default, and the next one started. A
 table with a primary key gets its rows in no order, and sorts
@@ -677,7 +680,7 @@ before it.
 
 **Garbage collection is unchanged, and has one cost here.** A
 loaded version carries its `xid` until compaction stamps the
-commit timestamp into it (`sm1/SM1_DESIGN.md` §8.3). Files at
+commit timestamp into it (`GC.md` §1). Files at
 the bottom of the tree are not visited by ordinary
 compaction, so a load's versions are stamped by the periodic
 sweep, which rewrites every store. Until then each read of
@@ -788,13 +791,13 @@ By statement, that is usually:
 
 ### 6.1 The row locks each path holds
 
-Since `sm1/WRITELOCK.md`, a write keeps no row lock: its
+Since `LOCKMGR.md`, a write keeps no row lock: its
 uncommitted version stands for the lock, and another writer of
 the key waits for its transaction. Locks held for 1,000 rows
 into a table with two unique indexes and one non-unique one,
 to the end of the transaction:
 
-| Path | Row locks, before `sm1/WRITELOCK.md` | Row locks, now |
+| Path | Row locks, before `LOCKMGR.md` | Row locks, now |
 | --- | --- | --- |
 | `tbl_insert` | 4,000: the heap row, both unique keys and the non-unique entry, for each row | 0 |
 | mini-batch | 2,000: the two unique keys, for each row | 0 |
@@ -839,7 +842,7 @@ keeps A and B from both checking before either writes, and,
 held to commit, what makes B wait for A.
 
 **How sm1 does the same.** It splits the row lock into
-PostgreSQL's two roles (`sm1/WRITELOCK.md`):
+PostgreSQL's two roles (`LOCKMGR.md`):
 
 1. A short latch on the key, held only across check-then-write
    and then released: the page latch's part.
@@ -855,6 +858,12 @@ No write keeps a lock once it returns, in any path.
 ---
 
 ## 7. The interface
+
+This section is the design of all three modes. The built calls
+are narrower, and §13 lists them: `tbl_load_open(table, out)`
+takes no mode, `sm1::load_open(session, storeid, out)` takes no
+covering lock, and `sm1::load_put`, `rel_load` and `idx_load`
+take a stream, with no `check`.
 
 ### 7.1 sm3, on an open table
 
@@ -895,7 +904,7 @@ in the row: a NULL in a `NOT NULL` column, a key too long for
 a unique index, an evaluator that fails. A duplicate key fails
 the call that writes it: a later `add` or the `close`; in file
 mode in an empty table, the `close`. `sm1::errdup()` names the
-index (`ROWKEY.md` §2.5). After any failure the transaction is
+index (`ROWSTORE.md` §2.7). After any failure the transaction is
 to be aborted.
 
 ### 7.2 sm1 and sm2, underneath
@@ -952,7 +961,7 @@ Every mode:
   transaction does.
 - **No savepoint set or rolled back to while a load is
   open**, and in batch and mini-batch mode none rolled back to
-  that was set before the load, until `sm1/SAVEPOINT.md` is
+  that was set before the load, until `XCTMGR.md` is
   built (§3.5).
 - **A second way to write in sm1.** It shares the version
   format, the visibility rules and the commit with the
@@ -1007,7 +1016,7 @@ used:
 - **`CreateColumnFamilyWithImport`**, which makes a column
   family from finished files. It would suit a table made and
   loaded in one step, but the store exists before the load
-  does (`sm1/SM1_DESIGN.md` §11.2), and plain ingestion into
+  does (`DBMGR.md` §7.3), and plain ingestion into
   an empty store ends in the same place.
 
 ---
@@ -1109,7 +1118,9 @@ and the interface in place.
    → verify: step 3's and step 4's checks again in file mode,
    for a load on each side of the threshold.
 
-The fork's own work in §11 is outside this repository.
+The fork's own work in §11 is in `../dg/`. Built: `COPY` loads
+through the table access method's `multi_insert`
+(`smstore_load()`).
 
 ---
 
@@ -1160,6 +1171,13 @@ narrowed, with these differences.
   its entries made as `tbl_insert` makes them. The heap's is
   ascending in a keyless table, by `_id`, and unsorted in one
   with a primary key, sorted at the close as an index's is.
+- **A B-tree Index has a stream and puts nothing in it.** Its
+  pages are no versions to load, so `idx_load` inserts the entry
+  as a writer does, and the entry is dead if the load rolls
+  back. A rollback leaves the tree's pages: the store's range
+  stops at them. A unique tree's key with no NULL fails with
+  `SM_ERR_INVALID`, as `idx_insert` takes no such key. So a load
+  into an empty table with a unique B-tree Index fails.
 - **No stream is declared unique.** With the store empty and
   no one else in it, two equal keys are both the load's, in a
   unique index or not, so every stream is checked alike: a

@@ -1,8 +1,8 @@
 /*
- * analyze.cc -- tbl_analyze (SM3_DESIGN.md §6.4 to §6.7): the
- * sample, each column's estimates over it, each partial or
- * expression index's from the host's evaluator, and the sizes,
- * recorded as the table's statistics.
+ * analyze.cc -- tbl_analyze (../STATISTICS.md §9.4 to ../STATISTICS.md §9.7):
+ * the sample, each column's estimates over it, each partial or expression
+ * index's from the host's evaluator, and the sizes, recorded as the table's
+ * statistics.
  */
 
 #include "analyze.h"
@@ -28,7 +28,7 @@ int ask_evaluator(const sm3::index_eval_fn &eval, const sm3::table_def_t &def,
 
 /*
  * The statistics of a partial or an expression index x over the
- * sample s (SM3_DESIGN.md §6.5): the fraction of the rows that
+ * sample s (../STATISTICS.md §9.5): the fraction of the rows that
  * belong to it, into ix, and each expression's statistics over
  * those rows, appended to stats.
  */
@@ -146,7 +146,7 @@ int analyze_table(table_t *table, int32_t target, std::mt19937_64 &rng,
   }
   // A heap of no bytes and no row read is a new store, a new or
   // truncated table's: the host plans it as PostgreSQL plans one
-  // truncated (§6.7). The bytes in sorted files are RocksDB's
+  // truncated (../STATISTICS.md §9.7). The bytes in sorted files are RocksDB's
   // estimate, so the sample decides.
   if (st.heap_disk == 0 && st.heap_mem == 0 && s.rows_read == 0) {
     return 0;

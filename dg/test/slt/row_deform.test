@@ -1,5 +1,5 @@
 # Verify a row of a table in sm, deformed only as far as the executor
-# reads it (../sm/ROW.md section 6), gives what deforming it whole does,
+# reads it (../sm/ROWSTORE.md section 10.4), gives what deforming it whole does,
 # wherever the executor keeps or copies it.
 # 1. Make a table of eight columns, nulls among them, and an index.
 # 2. Filter on a late column and read every one; filter on an early

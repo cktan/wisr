@@ -2262,7 +2262,7 @@ RowMarkType select_rowmark_type(RangeTblEntry *rte,
        * We don't need a tuple lock, only the row as it was read: a
        * table in sm's is copied, as it is named by its key, not a TID
        * that would fetch the very version again
-       * (../../../../../sm/ROWKEY.md section 3.2).
+       * (../sm/ROWSTORE.md section 10.2).
        */
       return ROW_MARK_COPY;
       break;

@@ -1,13 +1,13 @@
 /*
  * sm2.h -- the wisr type and tuple level's public C++ API, in
  * namespace sm2 (SM2_DESIGN.md): the four steps of SM2_DESIGN.md
- * §8.2, the types, their keys, the tuple codec and the rels.
+ * TYPE.md §9, the types, their keys, the tuple codec and the rels.
  *
  * Conventions that hold throughout, as in sm1.h:
  *
  *   - A datum is its native bytes: PostgreSQL's representation
  *     of the value, little-endian, passed as a std::string_view
- *     (SM2_DESIGN.md §2.1). A variable-length datum is its payload
+ *     (TYPE.md §5.1). A variable-length datum is its payload
  *     alone, with no varlena header.
  *   - A call that can fail returns 0 or -1, and records the error
  *     in sm1's error state: sm1::errnum() and sm1::errmsg() report
@@ -33,7 +33,7 @@ namespace sm2 {
 
 /*
  * A collation, for the keys of text and varchar (SM2_DESIGN.md
- * §3.3): ICU's order for a locale, or byte order. nullptr is byte
+ * ../LSMINDEX.md §2.3): ICU's order for a locale, or byte order. nullptr is byte
  * order too, PostgreSQL's C collation.
  */
 struct collation_t;
@@ -44,7 +44,7 @@ struct collation_t;
  * Non-deterministic, strings ICU calls equal are equal, and share a
  * key; byte order cannot be. A locale ICU has no data for is
  * refused. With expected_version non-empty, a collation whose
- * ICU version differs is refused (SM2_DESIGN.md §3.3); byte order
+ * ICU version differs is refused (../LSMINDEX.md §2.3); byte order
  * has no version. Returns 0 with the collation in out, or -1.
  */
 int collation_open(std::string_view locale, bool deterministic,
@@ -58,7 +58,7 @@ std::string_view collation_version(const collation_t* collation);
 
 /*
  * A type, as a descriptor of functions in pg_type's shape
- * (SM2_DESIGN.md §2.3). Adding a type is adding a descriptor.
+ * (TYPE.md §5.3). Adding a type is adding a descriptor.
  */
 struct type_t {
     uint8_t     code;   /* frozen on-disk type code (TYPE.md §3) */
@@ -73,7 +73,7 @@ struct type_t {
      * datum, or fail with SM_ERR_INVALID. Only the canonical form
      * -- what PostgreSQL prints, with DateStyle ISO, IntervalStyle
      * iso_8601 and, for timestamptz, TimeZone UTC -- is accepted
-     * (SM2_DESIGN.md §8.2 step 1). A precision typmod bounds the fraction
+     * (TYPE.md §9 step 1). A precision typmod bounds the fraction
      * digits a time or timestamp may carry (TYPE.md §3.8).
      */
     int (*in)(std::string_view text, int32_t typmod, std::string& datum);
@@ -114,7 +114,7 @@ struct type_t {
     bool (*typmod_valid)(int32_t typmod) = nullptr;
 
     /*
-     * Not filled yet (SM2_DESIGN.md §2.3): nullptr until the step
+     * Not filled yet (TYPE.md §5.3): nullptr until the step
      * that needs each one.
      */
     uint64_t (*hash)(std::string_view datum, int32_t typmod) = nullptr;
@@ -285,7 +285,7 @@ int encode_key(std::span<const key_column_t> cols,
 
 /*
  * The share of sm1::max_keylen a key's columns may use
- * (SM2_DESIGN.md §3.2): every sm1 key starts with a 2-byte object
+ * (../LSMINDEX.md §2.4): every sm1 key starts with a 2-byte object
  * relid, and an index entry that names its row in its key ends
  * with the row's key, at most suffix bytes: id_len in a table
  * keyed by _id, max_pk_len in one keyed by a primary key.
@@ -300,7 +300,7 @@ constexpr size_t key_budget(size_t suffix) {
  * What encode_key does with a key longer than its budget: refuse
  * it, as a unique index's key must be exact, or cut it to the
  * budget, as a non-unique index's may be, for sm3 to flag and
- * recheck (SM2_DESIGN.md §3.2).
+ * recheck (../LSMINDEX.md §2.4).
  */
 enum class overflow_t { refuse, truncate };
 
@@ -316,7 +316,7 @@ int encode_key(std::span<const key_column_t> cols,
                bool& cut);
 
 /*
- * One attribute of a table's schema (SM2_DESIGN.md §4): its type,
+ * One attribute of a table's schema (TUPLE.md §10): its type,
  * whether it has been dropped, and what a row written before it
  * was added reads it as -- std::nullopt for null, or the value
  * PostgreSQL keeps as attmissingval, a varlena if the type's width
@@ -375,7 +375,7 @@ bool varlena_is_toast(std::string_view v);
 std::string_view varlena_payload(std::string_view v);
 
 /*
- * sm2's TOAST pointer (SM2_DESIGN.md §4.2): what a tuple holds in
+ * sm2's TOAST pointer (../TOAST.md §2): what a tuple holds in
  * place of a datum stored out of line. It is a varlena of
  * toast_ptr_len bytes: varlena_toast, the vartag toast_tag --
  * PostgreSQL's own are 1, 2, 3 and 18 -- then len, storeid and id,
@@ -400,7 +400,7 @@ std::string make_toast_ptr(const toast_ptr_t& p);
 bool parse_toast_ptr(std::string_view v, toast_ptr_t& out);
 
 /*
- * When a row is moved out of line, and how (SM2_DESIGN.md §4.2). A
+ * When a row is moved out of line, and how (../TOAST.md §2). A
  * tuple longer than toast_threshold has its longest datums moved
  * out, longest first, until it is not, but none shorter than
  * toast_min. A datum out of line is cut into chunks of
@@ -489,7 +489,7 @@ int tup_deform(const tup_desc_t& desc, std::string_view tuple,
                std::span<datum_t> datums, std::span<bool> isnull);
 
 /*
- * A tuple being read attribute by attribute (../ROW.md §3): its
+ * A tuple being read attribute by attribute (../ROWSTORE.md §6.8): its
  * header and null bitmap, parsed once by tup_read_begin, and
  * where the next attribute's entry is. It views the tuple and
  * desc, so it lasts as long as both.
@@ -535,7 +535,7 @@ int tup_check(const tup_desc_t& desc, std::string_view tuple);
  * clustering key: the encoded columns of the table's primary key,
  * or, for a table without one, its _id, big-endian, a number from
  * the table's sequence that never changes. A row of a table with a
- * primary key has no _id (../ROWKEY.md §2.1). A row's value is its
+ * primary key has no _id (../ROWSTORE.md §2.2). A row's value is its
  * tuple alone.
  *
  * A row's key, as the calls below take and give it, is its sm1 key
@@ -553,7 +553,7 @@ int tup_check(const tup_desc_t& desc, std::string_view tuple);
  * valid until the next call on the rel's session.
  *
  * Errors from sm1 pass through untranslated, SM_ERR_UPDATED among
- * them (SM2_DESIGN.md §5).
+ * them (../ROWSTORE.md §8).
  */
 struct rel_t;
 
@@ -563,7 +563,7 @@ struct rel_scan_t;
 /*
  * A relid no index takes, in every store: once a rel's _id index's
  * (../CLUSTER.md §3), which went with a keyed row's _id
- * (../ROWKEY.md §2.1).
+ * (../ROWSTORE.md §2.2).
  */
 constexpr uint16_t id_relid = 0xFFFE;
 
@@ -625,7 +625,7 @@ bool rel_keyed(const rel_t* rel);
 
 /*
  * Whether a rel's rows are a chained store's keys (sm1::mkstore,
- * ../../VCHAIN.md): read and written with sm1's chain_ calls, and
+ * ../ROWSTORE.md): read and written with sm1's chain_ calls, and
  * loaded into a stream declared chained (sm1::load_stream).
  */
 bool rel_chained(const rel_t* rel);
@@ -643,7 +643,7 @@ int rel_row_key(rel_t* rel, uint64_t id, std::span<const datum_t> datums,
 /*
  * The key of the row named by datums and isnull, the values of its
  * primary key's columns in the key's order, or in a rel keyed by
- * _id its _id alone, an int8 (../ROWKEY.md §1), into key. A null,
+ * _id its _id alone, an int8 (../ROWSTORE.md §2.1), into key. A null,
  * a count that is not the key's, or an encoding past max_pk_len
  * fails with SM_ERR_INVALID or SM_ERR_KEYTOOLONG. A column out of
  * line is fetched to be encoded.
@@ -694,7 +694,7 @@ int rel_read(rel_t* rel, std::string_view key, std::string_view& tuple,
 /*
  * Read the row at key into a raw pin, as sm1::read into one: the
  * tuple, and the by-reference datum_t decoded from it, last until
- * the pin is emptied (../ROW.md §2).
+ * the pin is emptied (../ROWSTORE.md §6.3).
  */
 int rel_read(rel_t* rel, std::string_view key, sm1::rawpin_t* pin,
              std::string_view& tuple, uint64_t* id = nullptr);
@@ -703,7 +703,7 @@ int rel_read(rel_t* rel, std::string_view key, sm1::rawpin_t* pin,
  * The row at key at its newest version, past the snapshot
  * (sm1::read_newest): 0 with its tuple in pin, committed or this
  * transaction's own; 1 gone; 2 written by another still running,
- * writer set; or -1. As a unique tree checks a key (../BTREE.md §6).
+ * writer set; or -1. As a unique tree checks a key (../BTREEINDEX.md §7).
  */
 int rel_read_newest(rel_t* rel, std::string_view key, sm1::rawpin_t* pin,
                     std::string_view& tuple, uint64_t& writer);
@@ -711,14 +711,14 @@ int rel_read_newest(rel_t* rel, std::string_view key, sm1::rawpin_t* pin,
 /*
  * The row at key at its newest version, if settled (sm1::read_settled):
  * 0 with its tuple in pin, 1 gone, 2 not settled, or -1. As vacuum
- * judges a tree's entry by its row (../BTREE.md §7).
+ * judges a tree's entry by its row (../BTREEINDEX.md §9).
  */
 int rel_read_settled(rel_t* rel, std::string_view key, sm1::rawpin_t* pin,
                      std::string_view& tuple);
 
 /*
  * rel_read into a raw pin of the rows at n keys, in one call
- * (../BATCHREAD.md): key i's tuple into pins[i] and tuples[i], rc[i]
+ * (../ROWSTORE.md): key i's tuple into pins[i] and tuples[i], rc[i]
  * 0, or rc[i] 1 if there is none. A chained store's are read by
  * sm1::chain_read_batch, through iter if given, a versioned store's
  * one by one. Returns 0, or -1 on an error.
@@ -744,7 +744,7 @@ int rel_read_latest(rel_t* rel, std::string_view key, sm1::rawpin_t* pin,
  * Lock the row at key in mode without writing it, as sm1::lock_row
  * does: SQL's SELECT ... FOR SHARE and FOR UPDATE, and what an
  * index build holds on a row while it adds the row's entry
- * (sm3/SM3_DESIGN.md §3). The row need not exist. as_read, as
+ * (../INDEXBUILD.md §2). The row need not exist. as_read, as
  * sm1::lock_row's: a row the running statement read, which fails
  * with SM_ERR_SELFMODIFIED if the transaction changed it since.
  */
@@ -762,7 +762,7 @@ int rel_trylock(rel_t* rel, std::string_view key, sm1::lockmode_t mode,
  * Replace the row at key, whose _id is id in a keyless rel, 0 in a
  * keyed one, with tuple, which must pass tup_check. A row whose
  * primary key the new values change moves (../CLUSTER.md §4): its
- * old key is erased, with a move's tombstone (../ROWKEY.md §2.3),
+ * old key is erased, with a move's tombstone (../ROWSTORE.md §2.5),
  * and it is inserted under the new one; a key another row has fails
  * with SM_ERR_DUPKEY. moved_to, if wanted, is set to the row's key
  * after.
@@ -828,7 +828,7 @@ int rel_release(rel_t* rel);
 void rel_forget(rel_t* rel);
 
 /*
- * TOAST (SM2_DESIGN.md §4.2). A rel opened with a toast_seq keeps
+ * TOAST (../TOAST.md §2). A rel opened with a toast_seq keeps
  * a tuple to toast_threshold bytes where it can: the row's longest
  * variable-width datums are written to the store's TOAST relid,
  * 0xFFFF, in chunks, and the tuple holds a toast_ptr_t for each.
@@ -871,7 +871,7 @@ int toast_fetch(rel_t* rel, std::string_view ptr, std::string& out);
 
 /*
  * toast_fetch of a pointer in a settled row, with no transaction: the
- * cleaner's (../BTREE.md §7.1).
+ * cleaner's (../BTREEINDEX.md §9).
  */
 int toast_fetch_settled(rel_t* rel, std::string_view ptr, std::string& out);
 
@@ -938,7 +938,7 @@ int relid_size(sm1::session_t* session, uint64_t storeid, uint16_t relid,
 
 /*
  * The keys at fractions fs of the rel's bytes, each in [0, 1), in
- * ascending order, into keys, one for each (../ROWKEY.md §2.4): a
+ * ascending order, into keys, one for each (../ROWSTORE.md §2.6): a
  * key k past the relid, in the rel's key order, below which about f
  * of the rel's bytes lie, as sm1::approxsize() estimates them, disk
  * and memtables together, with its caveats. A key is a position, the
@@ -959,7 +959,7 @@ int rel_range_size(rel_t* rel, std::string_view lo, const std::string* hi,
                    uint64_t& out);
 
 /*
- * An index rel (SM2_DESIGN.md §5, ../CLUSTER.md §3): a table's
+ * An index rel (../ROWSTORE.md §8, ../CLUSTER.md §3): a table's
  * index entries in the table's sm1 store, under the index's 2-byte
  * relid, keyed by the encoded key columns it is opened with. An
  * entry's key is
@@ -968,11 +968,11 @@ int rel_range_size(rel_t* rel, std::string_view lo, const std::string* hi,
  *
  * with the key of its row in the table's rel always in a
  * non-unique index, and in a unique one only for an entry whose
- * key has a null column (sm3/SM3_DESIGN.md §3), so nulls stay
+ * key has a null column (../INDEXBUILD.md §2), so nulls stay
  * distinct and a unique key without one is sm1's uniqueness unit:
  * a duplicate fails with sm1's SM_ERR_DUPKEY. A key's columns past
  * their budget are cut, at key_budget of the longest row key, and
- * a unique index's key is never cut (SM2_DESIGN.md §3.2). An
+ * a unique index's key is never cut (../LSMINDEX.md §2.4). An
  * entry's value is a tuple, idx_value_schema's: whether the key
  * was cut, bool; the INCLUDE columns; and the row's key, bytea.
  *
@@ -1004,7 +1004,7 @@ struct bound_t {
 
 /*
  * An index entry's value laid out: cut, the INCLUDE columns, then
- * the row's key, as a bytea (../ROWKEY.md §2.1), and the desc over
+ * the row's key, as a bytea (../ROWSTORE.md §2.2), and the desc over
  * it, whose bad is past the cut flag if an INCLUDE column cannot be
  * laid out. Made once, it serves every open of the index
  * (idx_open_layout); never copied, as desc views value.
@@ -1056,7 +1056,7 @@ int idx_open_primary_layout(rel_t* rel, const idx_layout_t& layout,
 void idx_close(index_t* index);
 
 /*
- * A tree (../BTREE.md), opened with tree set: its entries are a
+ * A tree (../BTREEINDEX.md), opened with tree set: its entries are a
  * B+tree of its own pages under its relid, written outside every
  * transaction and never versioned. An entry is its key alone,
  * always ending with its row's key, unique index or not, and holds
@@ -1074,7 +1074,7 @@ void idx_close(index_t* index);
 
 /*
  * Add a unique tree's entry for the row with key row, as idx_insert,
- * unless another entry of its key conflicts (../BTREE.md §6): check
+ * unless another entry of its key conflicts (../BTREEINDEX.md §7): check
  * (row, entry key) judges each other entry of the key by its row, 0
  * none, 1 a duplicate, with SM_ERR_DUPKEY set, 2 a writer to wait
  * for, -1 an error. Returns 0; 2, every latch let go, for the caller
@@ -1112,13 +1112,13 @@ int idx_drop_tree(sm1::session_t* session, uint64_t storeid, uint16_t relid);
 bool idx_is_tree(const index_t* index);
 
 /*
- * Remove a tree's dead entries (../BTREE.md §7): dead(row, key), given
+ * Remove a tree's dead entries (../BTREEINDEX.md §9): dead(row, key), given
  * an entry's row key and its whole key, is 1 to remove it, 0 to keep
  * it, 2 to keep it as settled and live -- its row's newest version
  * committed at or below the GC watermark with the entry's key -- or -1
  * to stop with its error. It is asked under the entry's leaf's latch,
  * which an insert of the entry waits for. Only an entry in doubt is
- * asked of (§7.1). A leaf left with none in doubt is set all visible,
+ * asked of (../BTREEINDEX.md §9). A leaf left with none in doubt is set all visible,
  * and skipped by the next. removed counts them; an index not a tree
  * has none.
  */
@@ -1128,7 +1128,7 @@ int idx_vacuum(index_t* index,
 
 /*
  * Told of a tree's leaf not all visible, with no latch held, by the
- * reader or writer that finds it (../BTREE.md §7.1). It does not fail.
+ * reader or writer that finds it (../BTREEINDEX.md §9). It does not fail.
  */
 using leaf_note_fn = void (*)(void* ctx, uint64_t storeid, uint16_t relid,
                               uint64_t pageid);
@@ -1139,7 +1139,7 @@ void idx_set_leaf_note(index_t* index, leaf_note_fn fn, void* ctx);
 /*
  * idx_vacuum of one leaf of a tree, page pageid: 0, doubt set if an
  * entry is left in doubt; 1 if the page is no longer a leaf; or -1.
- * The cleaner's (../BTREE.md §7.1). removed counts the entries gone.
+ * The cleaner's (../BTREEINDEX.md §9). removed counts the entries gone.
  */
 int idx_clean_leaf(index_t* index, uint64_t pageid,
                    const std::function<int(std::string_view, std::string_view)>& dead,
@@ -1156,7 +1156,7 @@ int idx_entry_key(const index_t* index, std::span<const datum_t> key,
 
 /*
  * The schema of an entry's value: cut, the INCLUDE columns, then the
- * row's key, as a bytea (../ROWKEY.md §2.1).
+ * row's key, as a bytea (../ROWSTORE.md §2.2).
  */
 std::span<const attribute_t> idx_value_schema(const index_t* index);
 
@@ -1220,7 +1220,7 @@ int idx_load(index_t* index, sm1::loader_t* loader, size_t stream,
  * transaction began is removed all the same: where sm1 answers
  * SM_ERR_UPDATED, this reads the entry's newest version and
  * repeats the erase, an entry having no filter to re-check
- * (SM2_DESIGN.md §5).
+ * (../ROWSTORE.md §8).
  */
 int idx_delete(index_t* index, std::span<const datum_t> key,
                std::span<const bool> key_isnull, std::string_view row);
@@ -1293,7 +1293,7 @@ bool idx_decodable(const index_t* index);
  * Whether the leaf of the entry a tree's cursor last gave
  * (idx_scan_entry) was all visible as the cursor read it: every entry
  * on it seen by every snapshot, so its row need not be read
- * (../BTREE.md §4.1). false for a cursor not a tree's.
+ * (../BTREEINDEX.md §8). false for a cursor not a tree's.
  */
 bool idx_scan_visible(const index_scan_t* scan);
 
@@ -1348,7 +1348,7 @@ int decode_key_front(std::span<const key_column_t> cols,
 bool key_decodable(std::span<const key_column_t> cols);
 
 /*
- * The catalog key-value store (sm3/CATALOG_ONDISK.md §1): the level
+ * The catalog key-value store (../CATALOG.md §3.1): the level
  * above's catalog, kept as sm1's store 0 under sm1::upper_prefix.
  * Every call is one sm1 call in the session's transaction, so the
  * catalog is transactional with the DDL that writes it; sm1's

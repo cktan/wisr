@@ -7,7 +7,7 @@
 #   make clean        remove build/
 #
 # sm2 builds against sm1's headers and links sm1's library: sm1's
-# error state reports sm2's failures too (SM2_DESIGN.md §5). The
+# error state reports sm2's failures too (../ROWSTORE.md §8). The
 # library is built through sm1's own Makefile when it is missing
 # or out of date.
 #

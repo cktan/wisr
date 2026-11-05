@@ -126,7 +126,7 @@ int sm_seterr(sm_errnum_t code, const char* msg);
  * key, as far as the stack knows: the unique index's oid in
  * *index, 0 if not known, and in *row, if wanted, the key of a row
  * that holds it in its table, past the relid, as
- * sm_tbl_read_key() takes one (../ROWKEY.md §2.5). Returns 1 with
+ * sm_tbl_read_key() takes one (../ROWSTORE.md §2.7). Returns 1 with
  * a row's key, else 0; *index is 0 after any other error.
  */
 int sm_errdup(uint64_t* index, std::string* row = nullptr);
@@ -211,7 +211,7 @@ enum sm_xctlevel_t {
 /*
  * Begin a transaction at level. A nonzero read_only declares it
  * READ ONLY: a write fails with SM_ERR_READONLY, and at
- * SERIALIZABLE it costs SSI less (sm1/SM1_DESIGN.md §7.4).
+ * SERIALIZABLE it costs SSI less (../XCTMGR.md §7.5).
  */
 int sm_begin(sm_session_t* session, sm_xctlevel_t level, int read_only);
 
@@ -244,7 +244,7 @@ int sm_stmt_begin(sm_session_t* session);
  * cursor's row hands back, naming the pin the session keeps the
  * row in and the pin's generation. A plain value, zero for none,
  * which the caller keeps where it likes and never frees; once its
- * pin is released it is stale, and names nothing (../ROW.md §4).
+ * pin is released it is stale, and names nothing (../ROWSTORE.md §6.4).
  */
 typedef struct sm_pin_ref_t {
     void*    pin;
@@ -584,7 +584,7 @@ struct sm_bound_t {
  * A row and an index entry are read and written through an open
  * table (sm_tbl_*, below), never through a heap or an index rel of
  * their own, so no caller can change a row and leave its index
- * entries behind (sm3/SM3_DESIGN.md section 3).
+ * entries behind (../INDEXBUILD.md section 2).
  */
 
 /*
@@ -616,7 +616,7 @@ int sm_rel_scan_seek(sm_rel_scan_t* scan, uint64_t id);
 /*
  * Make a cursor of a tree's rows (sm_tbl_idx_scan_rows) an index-only
  * scan's: an entry on a leaf vacuum found all visible, whose key gives
- * its columns back, comes with its row unread (../BTREE.md section 4.1).
+ * its columns back, comes with its row unread (../BTREEINDEX.md section 8).
  * sm_rel_scannxt's *ref then names no row; sm_rel_scan_cols gives the
  * entry's columns. 0, or -1 with SM_ERR_INVALID on any other cursor.
  */
@@ -790,7 +790,7 @@ struct sm_index_def_t {
     std::vector<int32_t>         reads;
     bool                         primary = false; /* the primary key */
     bool                         constraint = false; /* of a UNIQUE or PRIMARY KEY constraint */
-    bool                         tree = false; /* a B+tree of its own pages (BTREE.md) */
+    bool                         tree = false; /* a B+tree of its own pages (../BTREEINDEX.md) */
 };
 
 /*
@@ -1169,7 +1169,7 @@ int sm_cat_index_wait(sm_session_t* session, uint64_t table, uint64_t index);
 
 /*
  * The host's evaluator of partial and expression indexes
- * (sm3/SM3_DESIGN.md section 3). The stack evaluates nothing
+ * (../INDEXBUILD.md section 2). The stack evaluates nothing
  * itself: where it must know whether a row belongs in such an
  * index, and what its expression key columns are, it calls this.
  *
@@ -1209,7 +1209,7 @@ int sm_set_index_evaluator(sm_env_t* env, sm_index_eval_fn fn, void* ctx);
 
 /*
  * TOAST: a row's long values stored out of line
- * (sm2/SM2_DESIGN.md section 4.2).
+ * (../TOAST.md section 2).
  *
  * Off, the default, every value is in its row's tuple, and a row
  * is at most 65535 bytes. A host turns it on to say it reads TOAST
@@ -1236,7 +1236,7 @@ int sm_set_toast(sm_env_t* env, int on);
 
 /*
  * The btree cleaner's threads a database gets, 4 by default: once,
- * before any database is opened (../BTREE.md §7.1). 0 runs none: for a
+ * before any database is opened (../BTREEINDEX.md §9). 0 runs none: for a
  * test, which runs a pass itself by sm_cleaner_run.
  */
 int sm_set_cleaner_workers(sm_env_t* env, int workers);
@@ -1254,7 +1254,7 @@ static inline bool sm_datum_is_toast(sm_datum_t val) {
  *
  * An open table: its definition under the table-oid lock, its heap
  * and its indexes. A write through it keeps every index of the
- * table in step with the heap (sm3/SM3_DESIGN.md section 3).
+ * table in step with the heap (../INDEXBUILD.md section 2).
  */
 typedef struct sm_tbl_t sm_tbl_t;
 
@@ -1315,7 +1315,7 @@ uint64_t sm_tbl_version(const sm_tbl_t* tbl);
 
 /*
  * Insert a row of n values and null flags; *id is its _id, 0 in a
- * table with a primary key, whose rows have none (../ROWKEY.md §2.1).
+ * table with a primary key, whose rows have none (../ROWSTORE.md §2.2).
  */
 int sm_tbl_insert(sm_tbl_t* tbl, const sm_datum_t* values,
                   const bool* isnull, size_t n, uint64_t* id);
@@ -1425,7 +1425,7 @@ int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t id, const void** tuple,
 
 /*
  * Read the rows at n keys, as index entries name them, each into a
- * pin as sm_tbl_read_key does, in one call (../BATCHREAD.md): key
+ * pin as sm_tbl_read_key does, in one call (../ROWSTORE.md): key
  * i's row in refs[i], tuples[i] and tuple_lens[i], rc[i] 0, or rc[i]
  * 1 with refs[i] zero if there is none. Returns 0, or -1 on an
  * error, every ref then zero.
@@ -1476,7 +1476,7 @@ int sm_tbl_lock(sm_tbl_t* tbl, uint64_t id, sm_lockmode_t mode);
 int sm_tbl_trylock(sm_tbl_t* tbl, uint64_t id, sm_lockmode_t mode);
 
 /*
- * A row's name (../ROWKEY.md §1): values and isnull, n of each, the
+ * A row's name (../ROWSTORE.md §2.1): values and isnull, n of each, the
  * values of its table's primary key's columns in the key's order; in
  * a table without one, its _id alone, an int8. Each call below that
  * takes one is the call of its name by _id, the row named by its
@@ -1615,7 +1615,7 @@ int sm_tbl_scan_rows(sm_tbl_t* tbl, sm_rel_scan_t** out);
  * between lo and hi as sm_tbl_idx_scan takes them, in key order:
  * the rows themselves, as sm_rel_scannxt hands them out, with their
  * _id, one sorted run (../CLUSTER.md section 5). Or of a tree
- * (BTREE.md section 4): each entry's row as the transaction sees
+ * (../BTREEINDEX.md section 5): each entry's row as the transaction sees
  * it, while it still has the entry's key, in the tree's order; a
  * tree's cursor seeks nothing. SM_ERR_INVALID if index is neither;
  * it seeks no _id.
@@ -1633,15 +1633,15 @@ int sm_tbl_idx_scan_rows(sm_tbl_t* tbl, uint64_t index, const sm_bound_t* lo,
 bool sm_tbl_index_usable(const sm_tbl_t* tbl, uint64_t index);
 
 /*
- * Whether the table's index is a tree (BTREE.md), whose rows a scan
+ * Whether the table's index is a tree (../BTREEINDEX.md), whose rows a scan
  * reads as sm_tbl_idx_scan_rows gives them; false for no such index.
  */
 bool sm_tbl_index_tree(const sm_tbl_t* tbl, uint64_t index);
 
 /*
  * The number of attributes in an entry's value in that index: the
- * cut flag, the INCLUDE columns, then the row's key (../ROWKEY.md
- * §2.1); 0 if there is no such index.
+ * cut flag, the INCLUDE columns, then the row's key (../ROWSTORE.md
+ * ../ROWSTORE.md §2.2); 0 if there is no such index.
  */
 size_t sm_tbl_idx_ncols(const sm_tbl_t* tbl, uint64_t index);
 
@@ -1654,7 +1654,7 @@ int sm_tbl_idx_deform(sm_tbl_t* tbl, uint64_t index, const void* value,
                       size_t n);
 
 /*
- * ---- statistics, for the host's planner (sm3/SM3_DESIGN.md §6) ----
+ * ---- statistics, for the host's planner (../STATISTICS.md §9) ----
  *
  * What the table's LSM looks like now, read live and stored
  * nowhere: the heap's bytes and the index's, in sorted files
@@ -1670,7 +1670,7 @@ int sm_tbl_size(sm_tbl_t* tbl, uint64_t* disk, uint64_t* mem);
  * each in [0, 1), ascending, into keys, one each: positions in key
  * order, past the relid, below which about that share of the bytes
  * lie, by sm's estimates, to a data block or so; no row is read,
- * and none need have the key (../ROWKEY.md §2.4). What a sample
+ * and none need have the key (../ROWSTORE.md §2.6). What a sample
  * scan of a table with a primary key cuts it into blocks by.
  */
 int sm_tbl_keys_at(sm_tbl_t* tbl, const double* fs, size_t n,

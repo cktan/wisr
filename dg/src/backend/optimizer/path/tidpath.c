@@ -55,7 +55,7 @@
  * Does this Var represent the _id column of the specified baserel?  A
  * table in sm without a primary key names a row by its _id, so "_id = n"
  * fetches the row as PostgreSQL's "CTID = tid" does; digres has no CTID
- * (../../../../sm/ROWKEY.md section 3.1).
+ * (../sm/ROWSTORE.md section 10.1).
  */
 static inline bool IsRownoVar(Var *var, RelOptInfo *rel) {
   return var->varattno == RownoAttributeNumber && var->vartype == INT8OID &&
@@ -406,7 +406,7 @@ static bool ec_member_matches_ctid(PlannerInfo *root, RelOptInfo *rel,
  *	  Candidate paths are added to the rel's pathlist (using add_path).
  *
  * A table with a primary key gets no TID scan but CURRENT OF's: it has no
- * _id to name (../../../../sm/ROWKEY.md section 3.1).
+ * _id to name (../sm/ROWSTORE.md section 10.1).
  */
 bool create_tidscan_paths(PlannerInfo *root, RelOptInfo *rel) {
   List *tidquals;

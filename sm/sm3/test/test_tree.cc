@@ -1,5 +1,5 @@
 /*
- * test_tree.cc -- a table's index made a tree (../BTREE.md §13 step
+ * test_tree.cc -- a table's index made a tree (../BTREEINDEX.md §11.3 step
  * 7): writes maintain it as any index, and its scan of rows hands out
  * each row, as the snapshot shows it, only while the row still has
  * its entry's key.
@@ -1140,7 +1140,7 @@ TEST_CASE("tree: a cursor of rows skips the iterator when ANALYZE found "
   // Verify a tree's cursor reads its batches of rows without a RocksDB
   // iterator when the statistics give its leading key a correlation
   // near 0 with the rows' order, and with one otherwise, whatever the
-  // rows' own order (../BATCHREAD.md §2.1).
+  // rows' own order (../ROWSTORE.md §7.2).
   // 1. Insert 200 rows, 20 of each state, each state's rows together.
   // 2. With no statistics, a cursor on one state keeps its iterator:
   //    the rows are close.
@@ -1417,7 +1417,7 @@ only_t entries_only(sm3::table_t *t, uint64_t index, std::string lo,
 TEST_CASE("tree: an index-only scan reads no row on a leaf vacuum set") {
   // Verify an index-only scan of a tree skips the rows of entries on
   // leaves vacuum set all visible, and still gives what the snapshot
-  // sees (../BTREE.md §4.1).
+  // sees (../BTREEINDEX.md §8).
   // 1. Insert 2,000 rows of state "old", over many leaves; before a
   //    vacuum, every row is read.
   // 2. Vacuum: the scan of "old" gives 2,000 entries, none read.
@@ -1502,8 +1502,8 @@ TEST_CASE("tree: an index-only scan reads no row on a leaf vacuum set") {
 
 TEST_CASE("tree: a leaf is cleaned with no transaction and no lock") {
   // Verify tbl_clean_leaf judges rows as VACUUM does, with no
-  // transaction, no table lock, and no snapshot held (../BTREE.md
-  // §7.1).
+  // transaction, no table lock, and no snapshot held (../BTREEINDEX.md
+  // ../BTREEINDEX.md §9).
   // 1. Insert rows, move one to another state, and delete one.
   // 2. With a writer's table lock held exclusive, clean page 0 of
   //    by_state and by_owner: the dead entries go, no entry is left in
@@ -1597,7 +1597,7 @@ TEST_CASE("tree: a leaf is cleaned with no transaction and no lock") {
 TEST_CASE("tree: whoever finds a leaf not all visible queues it") {
   // Verify a reader and each kind of writer queue a leaf that needs
   // cleaning, once, and that a leaf set all visible queues nothing
-  // (../BTREE.md §7.1).
+  // (../BTREEINDEX.md §9).
   // 1. Insert rows with no cleaner attached: nothing can be queued.
   // 2. Attach it. A scan finds the leaf unset, and queues it, once.
   // 3. A pass cleans it: the queue is empty, and a scan queues nothing.
@@ -1655,7 +1655,7 @@ TEST_CASE("tree: whoever finds a leaf not all visible queues it") {
 
 TEST_CASE("tree: a temporary table's leaf is not queued") {
   // Verify the cleaner is told nothing of a temporary table: it cannot
-  // read that session's instance (../BTREE.md §7.1).
+  // read that session's instance (../BTREEINDEX.md §9).
   // 1. Make a temporary table and a tree on it, with the cleaner on.
   // 2. Insert, scan and update: nothing is queued.
   trees_t f;
@@ -1685,7 +1685,7 @@ TEST_CASE("tree: a temporary table's leaf is not queued") {
 
 TEST_CASE("tree: a pass cleans no more pages than its budget") {
   // Verify a busy system's pass stops at its budget, and the rest stay
-  // queued (../BTREE.md §7.1).
+  // queued (../BTREEINDEX.md §9).
   // 1. Insert enough rows to queue many leaves.
   // 2. A pass with a budget of 2 takes two pages off the queue.
   // 3. A pass with no budget takes the rest.
@@ -1710,7 +1710,7 @@ TEST_CASE("tree: a pass cleans no more pages than its budget") {
 
 TEST_CASE("tree: a pass removes dead entries, and sets the leaf") {
   // Verify the cleaner does VACUUM's work on a queued leaf, with no
-  // VACUUM (../BTREE.md §7.1).
+  // VACUUM (../BTREEINDEX.md §9).
   // 1. Insert rows, then move one and delete one, and abort an insert.
   // 2. A pass removes the three dead entries; the queue is empty.
   // 3. An index-only scan gives the rows left, none read.
@@ -1754,7 +1754,7 @@ TEST_CASE("tree: a pass removes dead entries, and sets the leaf") {
 
 TEST_CASE("tree: a page waits for the watermark, then is cleaned") {
   // Verify a leaf an old snapshot keeps in doubt stays queued, unread,
-  // until the watermark moves (../BTREE.md §7.1).
+  // until the watermark moves (../BTREEINDEX.md §9).
   // 1. b takes a repeatable read snapshot; a moves a row and commits.
   // 2. A pass cleans nothing: the page stays on the queue, and the
   //    entry is there for b.
@@ -1805,7 +1805,7 @@ TEST_CASE("tree: a page waits for the watermark, then is cleaned") {
 TEST_CASE(
     "tree: a queued page of a tree gone, or no longer a leaf, is dropped") {
   // Verify what DDL and a split leave on the queue costs nothing
-  // (../BTREE.md §7.1).
+  // (../BTREEINDEX.md §9).
   // 1. Queue a leaf of by_owner, then drop the index: a pass drops it.
   // 2. Queue a leaf of by_state, then truncate the table: the old store
   //    finds no table, and a pass drops it.
@@ -2003,7 +2003,7 @@ TEST_CASE("tree: scans agree with the rows while the cleaner runs") {
 
 TEST_CASE("tree: a cut entry leaves its leaf set, and its row read") {
   // Verify a cut entry does not keep its leaf from being all visible,
-  // and that an index-only scan still reads its row (../BTREE.md §7.1).
+  // and that an index-only scan still reads its row (../BTREEINDEX.md §9).
   // 1. Insert five short rows and one past the tree's key budget.
   // 2. Vacuum: an index-only scan gives all six, the five unread, as
   //    the leaf is set, the cut one read.

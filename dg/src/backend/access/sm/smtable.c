@@ -57,7 +57,7 @@ static const TupleTableSlotOps *smtable_slot_callbacks(Relation rel) {
  * In a table with a primary key, keyed, a sampling method that picks its
  * blocks, as SYSTEM does, has them as slots of the table's bytes in key
  * order, and reads only those, every row of each, as SYSTEM takes them
- * (../sm/ROWKEY.md section 2.4): a slot may hold more rows than a page
+ * (../sm/ROWSTORE.md section 2.6): a slot may hold more rows than a page
  * has offsets.  One that reads every block, as BERNOULLI does, has them as
  * SMSTORE_ROWS_PER_BLOCK rows each of a scan in key order, the rows taken
  * by their place in it.

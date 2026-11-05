@@ -1,5 +1,5 @@
 /*
- * internal.h -- the catalog in memory (CATALOG_INMEM.md §1, §4): the
+ * internal.h -- the catalog in memory (../CATALOG.md §4, §11): the
  * shared catalog, a session's overlay on it, and what load.cc,
  * ddl.cc and session.cc share. Internal to sm3.
  */
@@ -113,7 +113,7 @@ struct sm3::catalog_t {
   /*
    * How many times a transaction's DDL has been published, and, for
    * an index that became valid since the catalog was loaded, the
-   * count at which it did (SM3_DESIGN.md §3). A session notes the
+   * count at which it did (../INDEXBUILD.md §2). A session notes the
    * count before it takes a snapshot; an index valid at or before
    * that count is filled as far as that snapshot can see.
    */
@@ -250,7 +250,7 @@ struct sm3::session_t {
   uint64_t temp_seq = 0;
 
   /*
-   * The pool of pins (../ROW.md §4.1): every pin made, freed at
+   * The pool of pins (../ROWSTORE.md §6.4): every pin made, freed at
    * session_close, so a stale ref always points to a pin; those
    * released, ready to take; those holding a read's or a write's
    * row; and the cursors'.
@@ -320,7 +320,7 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
 
 /*
  * Take the table-oid lock of the table oid in mode (SM3_DESIGN.md
- * §2): sm1's OID lock on the table's oid, a name nothing writes,
+ * ../CATALOG.md §1): sm1's OID lock on the table's oid, a name nothing writes,
  * so the lock waits on DDL but never fails as a stale read would.
  * A namespace's lock is taken the same way, on its oid.
  */
@@ -413,7 +413,7 @@ struct column_conv_t {
  * copied, and every index's entries made, under the table-oid lock
  * exclusive. A keyless row keeps its _id, a keyed row has none, and
  * the rows of a table that lost its primary key draw theirs in key
- * order (../ROWKEY.md §2.4). With conv, each row's value of its
+ * order (../ROWSTORE.md §2.6). With conv, each row's value of its
  * column is conv's, of the column's type in rec. The record is put,
  * and the old store goes at commit. Two rows with one key in a
  * unique index fail with SM_ERR_DUPKEY, the index and the later
@@ -483,8 +483,8 @@ int cat_del_view(session_t *s, uint64_t oid, const view_def_t &def);
  * set in name; and whether a table, a collation, a sequence or a
  * view is in it. Both
  * read the catalog in memory, which holds every commit published
- * so far, not what the transaction's snapshot shows (CATALOG_INMEM.md
- * §2).
+ * so far, not what the transaction's snapshot shows (../CATALOG.md
+ * ../CATALOG.md §6).
  */
 bool nspace_in_use(const session_t *s, uint64_t oid);
 

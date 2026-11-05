@@ -1,5 +1,5 @@
 /*
- * ssi.cc -- serializable snapshot isolation (SM1_DESIGN.md §7),
+ * ssi.cc -- serializable snapshot isolation (../XCTMGR.md §7),
  * after Cahill, Röhm and Fekete, "Serializable Isolation for
  * Snapshot Databases" (SIGMOD 2008), with the refinements of
  * Ports and Grittner, "Serializable Snapshot Isolation in
@@ -20,20 +20,20 @@
  *   dangerous structure, T1 being the one still running.
  *
  * A doomed transaction keeps running and fails with
- * SM_ERR_SERIALIZATION at its commit (§7.3), so reads and writes
+ * SM_ERR_SERIALIZATION at its commit (../XCTMGR.md §7.4), so reads and writes
  * never fail for SSI. The rules are still conservative: a
  * structure fails a transaction whether or not it closes a
  * cycle. A prepared transaction's node is marked committed at
  * prepare, with no end until its commit. A transaction restored
  * in doubt after a restart has no node at all: a reader stepping
- * past its versions is doomed (§8.4).
+ * past its versions is doomed (../XCTMGR.md §10).
  *
  * A transaction declared read-only at sm1::begin is read-only
  * to the rules from its begin, and its SIREAD entries go once its
  * snapshot is safe: when every writer concurrent with it has
  * ended without an edge out to a transaction committed before
- * its snapshot (§7.4). Not yet: the ssi_max_entries summary
- * (§7.5).
+ * its snapshot (../XCTMGR.md §7.5). Not yet: the ssi_max_entries summary
+ * (../XCTMGR.md §7.7).
  */
 
 #include "session.h"
@@ -107,7 +107,7 @@ uint64_t commit_late(const ssi_node_t *n) {
 
 /*
  * Whether t1 -> t2 -> t3 is dangerous, for some t2 that commits
- * after t3 (§7.3): t3 committed first, before t1 too, and, if t1
+ * after t3 (../XCTMGR.md §7.4): t3 committed first, before t1 too, and, if t1
  * committed having written nothing, before t1's snapshot. Where
  * t1 is t3, the two-edge cycle, t3's commit is enough.
  */
@@ -143,7 +143,7 @@ bool add_once(std::vector<ssi_node_t *> &v, ssi_node_t *n) {
 
 /*
  * Record the edge reader -> writer made by `self`, which is one
- * of the two (§7.2), on both ends. If the writer has committed,
+ * of the two (../XCTMGR.md §7.3), on both ends. If the writer has committed,
  * it is the middle of any structure the edge makes, and self,
  * the reader, still running, is doomed if one is dangerous.
  */
@@ -199,7 +199,7 @@ void drop_reads(db_t *db, ssi_node_t *n) {
 
 /*
  * Whether writer w has an edge out to a transaction committed
- * before ro's snapshot: what makes ro's snapshot unsafe (§7.4).
+ * before ro's snapshot: what makes ro's snapshot unsafe (../XCTMGR.md §7.5).
  * A prepared one counts as committed first.
  */
 bool out_to_earlier(const ssi_node_t *w, const ssi_node_t *ro) {
@@ -213,7 +213,7 @@ bool out_to_earlier(const ssi_node_t *w, const ssi_node_t *ro) {
 
 /*
  * ro's snapshot is safe: drop its SIREAD entries and its edges,
- * none of which can complete a dangerous structure now (§7.4).
+ * none of which can complete a dangerous structure now (../XCTMGR.md §7.5).
  */
 void release(db_t *db, ssi_node_t *ro) {
   // Its SIREAD entries constrain no writer any more.
@@ -256,7 +256,7 @@ void settle(db_t *db, ssi_node_t *w, bool committed) {
 }
 
 /*
- * Start ro's safe-snapshot watch at its begin (§7.4).
+ * Start ro's safe-snapshot watch at its begin (../XCTMGR.md §7.5).
  * 1. If a restored transaction is about, mark ro unsafe at once, and
  *    return.
  * 2. If a writer already committed after its snapshot has an edge out
@@ -265,7 +265,7 @@ void settle(db_t *db, ssi_node_t *w, bool committed) {
  * 4. If there is none, release ro: it is safe at once.
  */
 void watch_writers(db_t *db, ssi_node_t *ro) {
-  // A restored transaction's edges are unknown (§8.4).
+  // A restored transaction's edges are unknown (../XCTMGR.md §10).
   for (auto &kv : db->ssi_restored) {
     if (kv.second == 0 || kv.second > ro->snapshot_ts) {
       ro->unsafe = true;
@@ -366,7 +366,7 @@ void ssi_on_xid(sm1::session_t *s) {
   s->db->ssi_by_xid[s->xid] = s->ssi;
 }
 
-/* Leave a SIREAD entry on (storeid, key), found or not (§7.1). */
+/* Leave a SIREAD entry on (storeid, key), found or not (../XCTMGR.md §7.2). */
 void ssi_on_read(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   // Non-SERIALIZABLE readers leave no entry.
   if (!s->ssi) {
@@ -391,7 +391,8 @@ void ssi_on_read(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   }
 }
 
-/* A read stepped past a version of concurrent writer xid (§7.2). */
+/* A read stepped past a version of concurrent writer xid (../XCTMGR.md §7.3).
+ */
 void ssi_on_skip(sm1::session_t *s, uint64_t writer_xid) {
   // Non-SERIALIZABLE readers make no edges.
   if (!s->ssi) {
@@ -406,7 +407,7 @@ void ssi_on_skip(sm1::session_t *s, uint64_t writer_xid) {
   // Stepping past a restored transaction's version dooms the reader.
   if (s->db->ssi_restored.count(writer_xid)) {
     // A transaction restored in doubt lost its SIREAD entries
-    // and flags, so its edges out are unknowable (§8.4).
+    // and flags, so its edges out are unknowable (../XCTMGR.md §10).
     s->ssi->doomed = true;
     return;
   }
@@ -458,7 +459,8 @@ void ssi_on_write(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   }
 }
 
-/* Register a scan's requested range, before its snapshot (§10.2). */
+/* Register a scan's requested range, before its snapshot (../ROWSTORE.md §5.6).
+ */
 void ssi_range_open(sm1::scan_t *c, uint64_t storeid, const char *skey,
                     size_t sklen, int skey_inclusive, const char *ekey,
                     size_t eklen, int ekey_inclusive) {
@@ -555,7 +557,7 @@ namespace wisr {
 
 /*
  * Narrow a closing scan's range to what it actually traversed
- * (§7.1): through the last key it examined, all of it if it
+ * (../XCTMGR.md §7.2): through the last key it examined, all of it if it
  * reached the end, nothing if it examined no key.
  */
 void ssi_range_close(sm1::scan_t *c) {
@@ -603,7 +605,7 @@ void ssi_range_close(sm1::scan_t *c) {
 }
 
 /*
- * The commit check (§7.3). Returns 0 or -1.
+ * The commit check (../XCTMGR.md §7.4). Returns 0 or -1.
  * 1. Fail if the node is doomed.
  * 2. Fail if the node is a pivot.
  * 3. Otherwise mark the node committed at end_ts. From then on the
@@ -706,7 +708,7 @@ void ssi_prepared_aborted(sm1::session_t *s) {
   s->db->ssi_restored.erase(s->xid);
 }
 
-/* Record xid as restored in doubt (§9.1). */
+/* Record xid as restored in doubt (../DBMGR.md §9.1). */
 void ssi_restore(db_t *db, uint64_t xid) {
   // Hold ssi_mu while updating the restored map.
   std::lock_guard<std::mutex> guard(db->ssi_mu);

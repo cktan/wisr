@@ -1,5 +1,12 @@
 # VIEW — views: sm3 keeps the query, the host expands it
 
+A view is a named query. sm3 keeps the query and what it reads,
+and the host expands it. The code is in `sm3/src/ddl/ddl.cc`
+(DDL), `sm3/src/catalog/` (the entry, the session's views and
+the register of §12.3), `src/sm.cc` (the calls of §6), and
+`../dg/src/backend/commands/view.c` and
+`../dg/src/backend/access/sm/smstore.c` (digres).
+
 **Status: sm3's part and `sm.h`'s are built** (§3 to §7,
 `sm3/test/test_view.cc`), as proposed in §11, and digres's
 CREATE, query and DROP (§8, `../dg/WORKNOTE.md` step 238),
@@ -34,7 +41,7 @@ calls in `sm.h`, and what digres builds on them.
   column or a view a view reads cannot be dropped from under
   it (§5). This is the one dependency check sm3 must make;
   the others wait for a dependency index (§9,
-  `sm3/CATALOG_INMEM.md` §4).
+  `CATALOG.md` §11).
 - **The host expands it.** In digres that is PostgreSQL's
   rewriter, unchanged: the view's relation cache entry carries
   its `_RETURN` rule, made from the query sm3 keeps, and
@@ -68,7 +75,7 @@ calls in `sm.h`, and what digres builds on them.
 
 ## 3. The entry
 
-A new kind in `sm3/CATALOG_ONDISK.md` §2, and a part in §3:
+A new kind in `CATALOG.md` §3.3, and a part in §3:
 
 | Kind | Value | Key after the kind | Holds |
 | --- | --- | --- | --- |
@@ -147,6 +154,8 @@ VIEW value = view | read × nread | query × npiece
   PostgreSQL's does.
 - **`drop_namespace`** of one holding a view is
   `SM_ERR_INUSE`.
+- **`alter_column_type`** of a column a view reads is
+  `SM_ERR_INUSE`.
 - **`add_column`, `rename_table`, `rename_column`,
   `truncate_table`** change nothing of a view.
 
@@ -194,7 +203,7 @@ struct sm_view_def_t {
 ## 7. Locks
 
 - **A view has an oid lock**, sm1's `LOCKTYPE_OID` on its oid,
-  as a table has (`sm3/SM3_DESIGN.md` §2). A query takes it IS,
+  as a table has (`CATALOG.md` §1). A query takes it IS,
   DDL on the view X: a `DROP VIEW` or `CREATE OR REPLACE`
   waits for the transactions reading it, and they for it, as
   PostgreSQL's `AccessShareLock` and `AccessExclusiveLock` do.
@@ -283,12 +292,13 @@ struct sm_view_def_t {
   updatable refuses DML, as PostgreSQL does with neither.
 - **Dependencies on what is not a relation**: a sequence a
   view's `nextval('s')` names, a user's collation. They wait
-  for a dependency index (`sm3/CATALOG_INMEM.md` §4), as the
+  for a dependency index (`CATALOG.md` §11), as the
   same checks for tables do (`NEXT.md` §3).
 - **A view's row type**: a view's whole-row value is a
   record, as a table's in sm is, not a named composite type.
-- **`ALTER VIEW ... ALTER COLUMN SET DEFAULT`, `OWNER TO`,
-  `SET SCHEMA`**: refused until asked for.
+- **`ALTER VIEW ... ALTER COLUMN SET DEFAULT` and `SET
+  SCHEMA`**: refused until asked for. `OWNER TO` is built:
+  `smstore_alter_table()` changes a view's owner as a table's.
 - **One lookup for a relation's name**: `NAME` already says
   which kind a name is, and `smstore_relation_oid()` asks for
   each kind in turn. A call that reads the key once would
@@ -430,7 +440,7 @@ the drop; for that, the other session must learn of the view.
 - **It changes at commit**, with the temporary catalog: a
   commit that makes, replaces or drops a temporary view
   changes the register under the shared catalog's mutex, as
-  a commit of shared DDL does (`sm3/CATALOG_INMEM.md` §1). Such a
+  a commit of shared DDL does (`CATALOG.md` §4). Such a
   commit counts as shared DDL.
 - **A session's close takes its entries out**, under the
   same mutex, as it drops its temporary catalog.

@@ -1,6 +1,6 @@
 /*
  * test_cluster.cc -- a rel keyed by its primary key (../CLUSTER.md
- * §2 to §5, ../ROWKEY.md §2): rows in key order, with no _id, moved
+ * §2 to §5, ../ROWSTORE.md §2): rows in key order, with no _id, moved
  * when their key changes, and named by their key in an index.
  */
 
@@ -78,7 +78,7 @@ uint64_t insert(sm2::rel_t *rel, int32_t a, const std::string &b) {
 } // namespace
 
 TEST_CASE("a keyed rel keeps its rows by key, with no _id") {
-  // Verify a rel keyed by a primary key (../../ROWKEY.md §2.1): rows
+  // Verify a rel keyed by a primary key (../ROWSTORE.md §2.2): rows
   // found by key, none with an _id, and a duplicate key refused.
   // 1. Insert rows with keys 30, 10 and 20: none draws an _id.
   // 2. Each row is read by its key, its _id 0.
@@ -166,7 +166,7 @@ TEST_CASE("a keyed rel moves a row whose key changes") {
 
 TEST_CASE("a writer at READ COMMITTED meets a row another moved") {
   // Verify a move leaves a moved tombstone at the old key, which a
-  // writer there meets (../../ROWKEY.md §2.3).
+  // writer there meets (../ROWSTORE.md §2.5).
   // 1. Session a inserts key 1 and commits.
   // 2. Session b begins at READ COMMITTED and reads the row at 1.
   // 3. a moves the row to key 2 and commits.
@@ -421,7 +421,7 @@ TEST_CASE("a primary key's scan hands out its rows, in key order") {
 }
 
 TEST_CASE("a rel's keys at fractions of its bytes split its rows so") {
-  // Verify rel_keys_at and rel_scan_seek_key (../ROWKEY.md §2.4).
+  // Verify rel_keys_at and rel_scan_seek_key (../ROWSTORE.md §2.6).
   // 1. 20,000 rows of equal width go in, keys 0 to 19,999, and are
   //    committed; in memtables, the keys found ascend.
   // 2. Compacted into sorted files, the keys at 0, 1/4, 1/2 and 3/4

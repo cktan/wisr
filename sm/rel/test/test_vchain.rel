@@ -1,6 +1,6 @@
-# test_vchain.rel -- chained rows (../../VCHAIN.md) through the C
+# test_vchain.rel -- chained rows (../ROWSTORE.md) through the C
 # API: every table's rows are chained keys, and each case of
-# VCHAIN.md §10 the scenarios do not reach is checked here, as it
+# ../ROWSTORE.md §11.1 the scenarios do not reach is checked here, as it
 # should go and as it should fail.
 #
 # 0. Past the undo cap a savepoint is lost: on a database whose cap

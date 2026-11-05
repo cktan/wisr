@@ -201,7 +201,7 @@ static const FormData_pg_attribute a6 = {
 
 /*
  * digres: a row's _id in sm, its key in a table without a primary key
- * (../sm/ROWKEY.md section 3.1), the rowno of RownoAttributeNumber.
+ * (../sm/ROWSTORE.md section 10.1), the rowno of RownoAttributeNumber.
  */
 static const FormData_pg_attribute a7 = {
     .attname = {"_id"},

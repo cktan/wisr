@@ -19,7 +19,7 @@ document is what it is for.
   memory and persisted through sm2 in the same transactions as
   the data. The aim was sm2 relations; they are kept instead
   in sm1's catalog store, store 0, under `"U"`, through sm2's
-  `catkv` (`CATALOG_ONDISK.md` §1).
+  `catkv` (`../CATALOG.md` §3.1).
   It also replaces PostgreSQL's heap catalogs and sequences,
   which the fork can no longer keep on heap (`PART4.md` §4).
 - **Secondary indexes.** Unique and non-unique, maintained
@@ -33,7 +33,7 @@ document is what it is for.
   indexes, between key bounds. It began as one that takes a
   predicate and derives the key range from it; deriving the
   range is the planner's, and sm3 evaluates nothing
-  (`SM3_DESIGN.md` §3, §5).
+  (`../INDEXBUILD.md` §2, `../LSMINDEX.md` §5).
 - **Statistics** good enough for a cost-based planner above.
   They are not optional: the planner is kept, so it needs row
   counts, sizes, histograms and correlations, and `ANALYZE`
@@ -74,7 +74,7 @@ These are settled and drive `SM3_DESIGN.md`.
   (`sm2/SM2_OBJECTIVE.md`). The table is now clustered: a row
   is keyed by its primary key, or by its `_id` without one,
   and the primary key has no entries of its own
-  (`../CLUSTER.md`, `../ROWKEY.md`). A lookup is an index scan
+  (`../CLUSTER.md`, `../ROWSTORE.md`). A lookup is an index scan
   followed by a read by the row's key.
 - **sm2's encoder is the only encoder.** sm3 builds index keys
   from the same function, with the same per-column arguments
@@ -86,14 +86,14 @@ These are settled and drive `SM3_DESIGN.md`.
 - **Schema changes are lock-based, as in PostgreSQL.** The
   catalog is not versioned; a transaction is kept away from a
   concurrent DDL with an sm1 lock on the table's oid, not
-  given an old definition (`SM3_DESIGN.md` §2).
+  given an old definition (`../CATALOG.md` §1).
 - **One sm1 store per table.** A table's heap, its indexes
   and its TOAST data are rels in one sm1 store, told apart by
   sm2's 2-byte relid (§4), so `DROP TABLE` is
   sm1's O(1) column family drop. sm1 targets "hundreds to low
-  thousands of stores per database" (`sm1/SM1_DESIGN.md` §13),
+  thousands of stores per database" (`../XCTMGR.md` §11.4),
   so tables, partitions included, are bounded by that;
-  accepted for v1 (`SM3_DESIGN.md` §4).
+  accepted for v1 (`../CATALOG.md` §2).
 - **The eventual consumer is a forked PostgreSQL**, keeping
   its parser, planner and executor and replacing its storage
   and transaction layers. The fork is **threaded**
@@ -108,7 +108,7 @@ These are settled and drive `SM3_DESIGN.md`.
   without resolving it, so sm3 reads the newest image with
   `rel_read_latest`, re-checks the statement's filter, and
   only then repeats the write (`PART4.md` §5a,
-  `sm1/SM1_DESIGN.md` §5.4). Index entries are computed from that
+  `../LOCKMGR.md` §1.9). Index entries are computed from that
   newest image.
 
 ## Open questions
@@ -119,18 +119,18 @@ These are settled and drive `SM3_DESIGN.md`.
   unsalvageable. The fork is now threaded, so the boundary
   between the executor and sm3 is a function call and the
   shape is no longer forced (`PART4.md` §2). Settled in
-  `SM3_DESIGN.md` §5: tuple at a time. Filter pushdown, the
+  `../LSMINDEX.md` §5: tuple at a time. Filter pushdown, the
   other reason for sets of rows, went when sm3 was given no
   evaluator. Rows read by key, many in one call, are built
-  (`../BATCHREAD.md`); a scan stays tuple at a time.
+  (`../ROWSTORE.md`); a scan stays tuple at a time.
 - **Privacy of a catalog change until commit** — settled and
   built: a session's overlay keeps its transaction's DDL to
   itself, undone on abort and savepoint rollback, and publishes
-  it at commit (`CATALOG_INMEM.md` §1, §2).
+  it at commit (`../CATALOG.md` §4, §6).
 - **How good RocksDB's approximate statistics are** for
   `reltuples` and `relpages` — unmeasured when this was
-  written, with `SM3_DESIGN.md` §6 depending on the answer.
+  written, with `../STATISTICS.md` §9 depending on the answer.
   Settled: measured (`../STATISTICS.md` §6): exact at rest,
   within 8% by relid, and 7x over for rows not yet flushed;
   so sm1 now counts a relid's memtable bytes exactly itself
-  (`SM3_DESIGN.md` §6.2).
+  (`../STATISTICS.md` §9.2).

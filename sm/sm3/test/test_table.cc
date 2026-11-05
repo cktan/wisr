@@ -1,6 +1,6 @@
 /*
  * test_table.cc -- a table's writes and its indexes (SM3_DESIGN.md
- * §3): every write keeps each index in step with the heap, an
+ * ../INDEXBUILD.md §2): every write keeps each index in step with the heap, an
  * update leaves an unchanged index alone, and at READ COMMITTED
  * the entries removed are the newest image's.
  */
@@ -562,7 +562,7 @@ TEST_CASE("a write that fails partway is the caller's to roll back") {
 }
 
 TEST_CASE("read committed: the entry removed is the newest image's") {
-  // Verify the index fix-up after SM_ERR_UPDATED (SM3_DESIGN.md §3).
+  // Verify the index fix-up after SM_ERR_UPDATED (../INDEXBUILD.md §2).
   // 1. Row 7 is free. A and B both read it.
   // 2. A sets it taken and holds the row; B, set qa_nowait, sets it
   //    done: SM_ERR_BLOCKED.
@@ -1101,7 +1101,7 @@ TEST_CASE("an index cursor begun after a savepoint fails once rolled back "
 }
 
 TEST_CASE("while an index is pending, rows it has not reached are written") {
-  // Verify maintenance of a pending index (SM3_DESIGN.md §3).
+  // Verify maintenance of a pending index (../INDEXBUILD.md §2).
   // 1. Rows 7, 8 and 10 are committed; then an index on owner is
   //    made, on a table committed earlier, so it is pending and
   //    holds no entry for them.
@@ -1155,7 +1155,7 @@ TEST_CASE("while an index is pending, rows it has not reached are written") {
 }
 
 TEST_CASE("a failed index is not maintained, and cannot be scanned") {
-  // Verify what a failed build leaves behind (SM3_DESIGN.md §3).
+  // Verify what a failed build leaves behind (../INDEXBUILD.md §2).
   // 1. Row 7 is committed, owned by "a"; a unique index on owner is
   //    made, pending, and is marked failed.
   // 2. A second row owned by "a" inserts: the index no longer
@@ -2776,7 +2776,7 @@ TEST_CASE("writers go on while evaluated indexes are built, and they agree") {
 
 TEST_CASE(
     "a NULL in a NOT NULL column is refused, before anything is written") {
-  // Verify the one constraint sm3 enforces (SM3_DESIGN.md §3):
+  // Verify the one constraint sm3 enforces (../INDEXBUILD.md §2):
   // jobs.id is NOT NULL, jobs.owner is not.
   // 1. Inserting a row with a NULL id fails with SM_ERR_NOTNULL, in
   //    a message that names the column. Nothing was written, so the

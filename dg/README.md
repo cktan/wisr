@@ -205,7 +205,7 @@ Where digres behaves otherwise than PostgreSQL, by choice;
   0A000), where PostgreSQL goes on. sm closes every scan
   begun after a savepoint at a rollback to it, as its view,
   fixed when it began, would still show the rows the rollback
-  undid (`../sm/sm1/SM1_DESIGN.md` §6.5), and does not
+  undid (`../sm/XCTMGR.md` §6), and does not
   recreate it. A cursor whose scans all began before the
   savepoint goes on. `test/slt/point_read.test` shows both.
 

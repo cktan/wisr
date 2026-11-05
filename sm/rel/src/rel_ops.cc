@@ -1033,7 +1033,7 @@ static Janet cfun_index_create(int32_t argc, Janet *argv) {
   index_def_t idef;
   idef.name = idx_name;
   idef.unique = false;
-  // :tree bool: a B+tree of its own pages (../BTREE.md).
+  // :tree bool: a B+tree of its own pages (../BTREEINDEX.md).
   bool tree = false;
   // :where (column value): a partial index of the rows whose
   // column prints as value.
@@ -1870,7 +1870,7 @@ static void key_values_of(const table_def_t *p_tdef, const index_def_t *p_idef,
 /*
  * A row's name, as a verb is given it: in a table without a primary
  * key its _id; in one with, its key's values, in vals, which key
- * points at (../ROWKEY.md section 1).
+ * points at (../ROWSTORE.md section 2.1).
  */
 struct row_name_t {
   const index_def_t *pk = nullptr;
@@ -2016,7 +2016,7 @@ static Janet cfun_read(int32_t argc, Janet *argv) {
 /*
  * (read-keys table [key ...]) in a table with a primary key: each
  * key's row as (read) gives it, nil for none, read in one
- * sm_tbl_read_keys (../BATCHREAD.md).
+ * sm_tbl_read_keys (../ROWSTORE.md).
  */
 static Janet cfun_read_keys(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 2);
@@ -2858,7 +2858,7 @@ static Janet cfun_idx_rows(int32_t argc, Janet *argv) {
  * (idx-only idx_name [:ge lo] [:gt lo] [:le hi] [:lt hi]): a tree's
  * index-only scan, as digres's (sm_rel_scan_entries): {:keys, each
  * entry's key columns, decoded from its key, :unread, how many came
- * with no row read, their leaves all visible (../BTREE.md §4.1)}.
+ * with no row read, their leaves all visible (../BTREEINDEX.md §8)}.
  */
 static Janet cfun_idx_only(int32_t argc, Janet *argv) {
   janet_arity(argc, 1, -1);

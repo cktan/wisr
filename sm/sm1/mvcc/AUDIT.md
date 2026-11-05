@@ -26,7 +26,7 @@ The counts below are as of those dates, 109 scripts. There are
 re-derived them.
 
 **Method.** Every expected outcome was re-derived from
-`MVCC.md` §1 and `SM1_DESIGN.md` §7.3 by hand — the edge set
+`MVCC.md` §1 and `../XCTMGR.md` §7.4 by hand — the edge set
 of each history, then the abort rule applied to it — and
 compared with the transcript. The derivation was done on
 paper, deliberately independent of what the engine does:

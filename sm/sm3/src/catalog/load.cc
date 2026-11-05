@@ -1,6 +1,6 @@
 /*
  * load.cc -- cat_open: the catalog read into memory with one scan
- * of each kind (CATALOG_INMEM.md §1, §2). Every definition is built
+ * of each kind (../CATALOG.md §4, §6). Every definition is built
  * whole, its sm2 schema and layout with it, so a reader never lays
  * out a row itself.
  */

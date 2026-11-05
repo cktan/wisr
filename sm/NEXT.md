@@ -2,7 +2,7 @@
 
 This file holds only what is still to do, across levels. What
 is built or settled is in the design documents: `DESIGN.md`
-§3 has where each level stands, and `sm3/SM3_DESIGN.md` §8
+§3 has where each level stands, and `sm3/SM3_DESIGN.md` §4
 has sm3's own order of work.
 
 ---
@@ -72,7 +72,7 @@ and so are the catalog tables psql reads
    PostgreSQL does not have, so it is not made.
 
 3. **A secondary index's scan, within 1.5 times PostgreSQL's**
-   (`BTREE.md`, `../dg/WORKNOTE.md` steps 333 to 336). An
+   (`BTREEINDEX.md`, `../dg/WORKNOTE.md` steps 333 to 336). An
    index scan may cost digres no more than 1.5 times what it
    costs PostgreSQL; a sequential scan may, as OLTP runs none.
    Instructions a statement, servers pinned, on 2026-10-29:
@@ -94,14 +94,13 @@ and so are the catalog tables psql reads
    PostgreSQL's 695, RocksDB's `Next` alone 1,110 of it.
    In order:
 
-   1. **Secondary indexes as B+trees** (`BTREE.md`): built on
-      the `wip-btree` branch, unique ones and `ON CONFLICT`
-      arbiters among them, asked for by
-      `CREATE INDEX ... USING btree` (`lsm`, today's kind,
-      is the default); its steps in
+   1. **Secondary indexes as B+trees** (`BTREEINDEX.md`): built
+      on the `wip-btree` branch, unique ones and `ON CONFLICT`
+      arbiters among them, asked for by `CREATE INDEX ... USING
+      btree` (`lsm`, today's kind, is the default); its steps in
       `../dg/WORKNOTE.md` 345 to 349.
    2. **Rows of sorted, close keys read by one cursor**: built,
-      inside sm1's `chain_read_batch` (`BATCHREAD.md` §2.1).
+      inside sm1's `chain_read_batch` (`ROWSTORE.md` §7.2).
       Measured with `perf stat`, user instructions of the whole
       server a statement, not pinned, on 2026-10-30:
 
@@ -111,20 +110,21 @@ and so are the catalog tables psql reads
       | today's entries | 1,344k (3.4) | 3,670k (4.8) |
       | a tree | 955k (2.4) | 1,562k (2.0) |
 
-      Under 16 clients, Q11 and a write moving `c2`'s key one
-      in ten, a tree runs 19,721 and 18,196 tps, today's
-      entries 12,250 and 10,874, PostgreSQL 33,512 and 26,904
+      Under 16 clients, Q11 and a write moving `c2`'s key one in
+      ten, a tree runs 19,721 and 18,196 tps, today's entries
+      12,250 and 10,874, PostgreSQL 33,512 and 26,904
       (`../dg/WORKNOTE.md` step 353). Neither is under 1.5 yet.
       Measured again on 2026-10-31, the root at page 0, no meta
       page, `prev` (step 359): Q9 and Q10 moved under 1%, so
       neither the sibling's write nor the meta page's absence
-      shows; a load is 5.6 times today's entries' on this machine,
-      the same before the change, where it was 1.5 (BTREE.md §10),
-      and why is not known. What a tree's Q9 spends now:
-      malloc and free a fifth, the executor's own share, each
-      row's recheck; Q10's, a descent a probe and its row.
+      shows; a load is 5.6 times today's entries' on this
+      machine, the same before the change, where it was 1.5
+      (BTREEINDEX.md §10), and why is not known. What a tree's Q9
+      spends now: malloc and free a fifth, the executor's own
+      share, each row's recheck; Q10's, a descent a probe and its
+      row.
    3. **Then measure** the grid again, on both kinds of index
-      (`BTREE.md` §12): measured on 2026-11-03
+      (`LSMINDEX.md` §8): measured on 2026-11-03
       (`../dg/WORKNOTE.md` step 379). A tree wins every read
       and mix, Q9 2.39 and Q10 2.14 times PostgreSQL's;
       `lsm` loads faster, 25 s to 34 s. The gap is a row's
@@ -134,7 +134,7 @@ and so are the catalog tables psql reads
       iteration, the recheck of the entry, and the copies,
       about 750, 700 and 460 a row.
 
-   For today's entries (`BTREE.md` §12):
+   For today's entries (`LSMINDEX.md` §8):
    one cursor a scan, moved from probe to probe, not one
    opened a probe (`open_probe()` in
    `../dg/src/backend/access/sm/smstore.c`), with each
@@ -143,7 +143,7 @@ and so are the catalog tables psql reads
    `entry_row()` in `sm2/src/rel/index.cc`), about 540 an
    entry; and an entry that is all key, as MyRocks's.
 4. **sm1's lock table, a hash table of its own**
-   (`sm1/SM1_DESIGN.md` §5.1). `../bench/roles.sh`'s t16,
+   (`LOCKMGR.md` §3.2). `../bench/roles.sh`'s t16,
    sixteen tables a statement, scaled 2.8× from 1 to 16
    clients, every table lock taken and released under the one
    `lock_mu`. Keyed by two words (`../dg/WORKNOTE.md` step 337)
@@ -183,7 +183,7 @@ and so are the catalog tables psql reads
    module of its own, `sm1/src/locktab.h` and `.cc`, holding
    today's `std::unordered_map` unchanged, with its own unit
    tests (`sm1/test/test_locktab.cc`); `lockmgr.cc` calls it
-   (`sm1/SM1_DESIGN.md` §5.1). Its benchmark,
+   (`LOCKMGR.md` §3.2). Its benchmark,
    `sm1/bench/locktab_bench.cc`, runs threads calling it
    directly, a transaction taking N locks, then releasing them
    all as commit does: `distinct`, 100 row keys at random, X;
@@ -244,7 +244,7 @@ and so are the catalog tables psql reads
 
    **Partitions**: built. The table is in 16, as PostgreSQL's,
    each with a mutex and a condition of its own
-   (`sm1/SM1_DESIGN.md` §5.1). A session keeps a lock list for
+   (`LOCKMGR.md` §3.2). A session keeps a lock list for
    each partition, as PostgreSQL's `myProcLocks`, and a release
    walks each under its partition's mutex, taken once, as
    `LockReleaseAll` does. A wait for a transaction sleeps under
@@ -282,11 +282,11 @@ and so are the catalog tables psql reads
    IS and IX are in fast-path slots, and a child's insert locks
    one parent row.
 
-   **The hand-written partition**: built (`sm1/SM1_DESIGN.md`
-   §5.1). A power-of-two bucket array indexed by the hash's low
-   bits; an entry with its id, its hash and three holders inline;
-   dropped entries kept on a free list, up to 1,024 a partition;
-   the array doubled or quartered into a new one a few buckets at
+   **The hand-written partition**: built (`LOCKMGR.md` §3.2). A
+   power-of-two bucket array indexed by the hash's low bits; an
+   entry with its id, its hash and three holders inline; dropped
+   entries kept on a free list, up to 1,024 a partition; the
+   array doubled or quartered into a new one a few buckets at
    each add and drop. Counted in instructions on one thread, a
    lock and its release cost 383 to 453 in `hot`, `mixed` and
    `distinct`, against 615 to 970 in the map's partitions and 528
@@ -362,7 +362,7 @@ and so are the catalog tables psql reads
      record makes durable what the log holds before it, the
      transaction's versions with it. A design change; a note
      first.
-   - **sm1's own group sync**: built (`sm1/GROUPSYNC.md`,
+   - **sm1's own group sync**: built (`DBMGR.md`,
      `../dg/WORKNOTE.md` step 374). The commit record is written
      unsynced, and one commit syncs the WAL for every commit
      waiting, outside the queue, so no version write waits for a
@@ -390,7 +390,7 @@ and so are the catalog tables psql reads
    key. What else the value holds saves about 15 bytes an
    entry and a decode, not worth a change of format.
 7. **A GUC for the frames of sm1's buffer pool** (`bufpool_t`,
-   `BUFFERPOOL.md`). Today nothing sets the count: sm1 gives
+   `BUFMGR.md`). Today nothing sets the count: sm1 gives
    the pool a quarter of `block_cache_bytes`, in frames of
    4 KB, at least 64 and at least 6 a session
    (`sm1/src/env.cc`, `attach()`). digres sets
@@ -403,7 +403,7 @@ and so are the catalog tables psql reads
    - an option in `sm_options_t` that digres's GUC sets, as
      `block_cache_bytes` is set now.
 8. **A list of the btree leaves that need vacuum**
-   (`BTREE.md` §4.1). A leaf's `page_all_visible` flag is
+   (`BTREEINDEX.md` §8). A leaf's `page_all_visible` flag is
    cleared by an insert into it, and by an update or a delete
    of one of its entries. VACUUM finds such leaves by reading
    every leaf, left to right, and skipping each leaf whose flag
@@ -411,7 +411,7 @@ and so are the catalog tables psql reads
    cleared, an `sm0::blist_t` (`sm0/include/sm0_blist.h`), with
    a 1-bit Bloom filter in front of it, so a leaf already
    listed is not appended again. VACUUM then reads only the
-   leaves on the list. `BTREE.md` §7.1, built 2026-11-05, does
+   leaves on the list. `BTREEINDEX.md` §9, built 2026-11-05, does
    this as the cleaner's queue of pages, with an in-doubt bit on
    each entry. Readers and writers queue a leaf not all visible.
    VACUUM still reads every leaf not set. What follows is the
@@ -422,7 +422,7 @@ and so are the catalog tables psql reads
      leaf once, or the list is kept;
    - when VACUUM empties the list and the filter, and a flag
      cleared while VACUUM runs.
-9. **Smaller btree leaf entries** (`BTREE.md` §3.3 and §11).
+9. **Smaller btree leaf entries** (`BTREEINDEX.md` §4.3, §12).
    A leaf entry is its key, its value and 6 bytes of lengths
    and slot (`sm2/src/tree/page.h`, `entry_size()`). An index on
    `status` with `'open'` in many rows, keyed by an `int8`
@@ -508,7 +508,7 @@ Owed, and blocking nothing above:
   compaction would move them. Next: repeat those checks
   alone, and print the table's bytes in files and memtables
   beside each estimate.
-- **The commit cache's size** (`sm1/COMMITCACHE.md` §7).
+- **The commit cache's size** (`XCTMGR.md` §9.5).
   65,536 entries reaches back under a second at 100,000
   transactions a second, while a version needs a lookup until
   compaction stamps it. Size the cache by memory with a larger
@@ -530,7 +530,7 @@ Owed, and blocking nothing above:
   168), counted from the call, as sm does not say when a call
   begins to wait. Not built: a write that does not wait, which
   nothing in SQL asks for. sm1's `set_qa_nowait` is still for
-  QA only (`sm1/SM1_DESIGN.md` §5.1).
+  QA only (`LOCKMGR.md` §3.2).
 - **The evaluator's cost is unmeasured**: what a call a row
   adds to a write on a table with a partial or an expression
   index.
@@ -541,15 +541,15 @@ Owed, and blocking nothing above:
   fill both.
 - **Nothing reads a range at its newest version.** An
   over-long key in a unique index is refused instead
-  (`sm3/SM3_DESIGN.md` §7). The primitive is built when a
+  (`sm3/SM3_DESIGN.md` §6). The primitive is built when a
   workload asks.
 
 - **A key scan and a DELETE's RETURNING copy their rows**
-  (`ROW.md`). Every other scan hands digres's slot a pin ref,
-  deformed as far as it is read. The key scan, which replaced
-  the TID scan (`ROWKEY.md` §3.3), and RETURNING read a lent
-  copy by the row's key, their first columns up to the last
-  the plan names (`smstore_scan_natts()`,
+  (`ROWSTORE.md`). Every other scan hands digres's slot a pin
+  ref, deformed as far as it is read. The key scan, which
+  replaced the TID scan (`ROWSTORE.md` §10.3), and RETURNING read
+  a lent copy by the row's key, their first columns up to the
+  last the plan names (`smstore_scan_natts()`,
   `smstore_expr_natts()`); they would read into a pin of their
   own.
 
@@ -594,12 +594,12 @@ Owed, and blocking nothing above:
 
 - **Explore dropping a chained store's OLD entries at
   startup.** After a restart no snapshot is older than the
-  start, so an old entry (class `0x02`, `VCHAIN.md` §2) whose
+  start, so an old entry (class `0x02`, `ROWSTORE.md` §3.2) whose
   displacer committed is garbage then; today each waits for
-  the compaction filter to pass it (`VCHAIN.md` §7). To find
+  the compaction filter to pass it (`GC.md` §4.2). To find
   out: whether the whole `0x02` range of a store can go at
   once, by `DeleteRange` (allowed: stores have no
-  `row_cache`, `sm1/SM1_DESIGN.md` §12.2), or must be swept
+  `row_cache`, `DBMGR.md` §10), or must be swept
   entry by entry; what a prepared transaction kept across the
   restart needs, as its version in CURR is in flight and the
   one it displaced, in OLD, is what readers see; what it
@@ -631,14 +631,14 @@ Owed, and blocking nothing above:
   SEQUENCE`.
 - **Dependency checks**, such as refusing `DROP COLLATION` in
   use and `DROP SCHEMA … CASCADE`: low priority. They wait
-  for a dependency index (`sm3/CATALOG_INMEM.md` §4), and
+  for a dependency index (`CATALOG.md` §11), and
   nothing is waiting for them.
 - **The unmeasured startup cost for thousands of tables** —
-  open in `sm3/CATALOG_INMEM.md` §4.
+  open in `CATALOG.md` §11.
 - **A table in a namespace other than `public`, from `rel`.**
   `rel` creates and drops namespaces but has no way to name
   one for a table.
-- **Savepoints without an undo list** (`sm1/SAVEPOINT.md`):
+- **Savepoints without an undo list** (`XCTMGR.md`):
   a rollback would mark the `seq` range it undid as dead and
   delete nothing. Designed, and not to be built for now: we
   lean towards the capped undo list, for the reasons at the
@@ -648,7 +648,7 @@ Owed, and blocking nothing above:
 
 ## 4. What this file is not
 
-Not a replacement for `sm3/SM3_DESIGN.md` §8, which holds
+Not a replacement for `sm3/SM3_DESIGN.md` §4, which holds
 sm3's order of work and the reasoning behind it, nor for the
 design documents, where a protocol is argued before it is
 built and recorded once it is. A decision settled here moves

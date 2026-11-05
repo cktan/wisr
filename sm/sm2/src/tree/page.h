@@ -1,5 +1,5 @@
 /*
- * page.h -- a B+tree page of a secondary index (../BTREE.md §3): its
+ * page.h -- a B+tree page of a secondary index (../BTREEINDEX.md §4): its
  * bytes as RocksDB and the buffer pool hold them, read where they lie,
  * and a page decoded to be changed, an entry inserted or the page
  * split. On bytes alone: no RocksDB, no cache, no latch.
@@ -29,7 +29,7 @@ constexpr uint8_t page_incomplete = 0x02;
 /*
  * A leaf with no entry in doubt: every entry's row was read, its
  * newest version committed at or below the GC watermark with the
- * entry's key, so every snapshot sees it (../BTREE.md §7.1). An insert
+ * entry's key, so every snapshot sees it (../BTREEINDEX.md §9). An insert
  * into the page, or a mark on an entry of it, clears it.
  */
 constexpr uint8_t page_all_visible = 0x04;
@@ -37,7 +37,7 @@ constexpr uint8_t page_all_visible = 0x04;
 /*
  * The flags in a leaf entry's first value byte. A cut entry's key was
  * cut to fit, so a scan rechecks it on its row. An entry in doubt
- * needs a vacuum to read its row (../BTREE.md §7.1): the tree reads
+ * needs a vacuum to read its row (../BTREEINDEX.md §9): the tree reads
  * this byte, and the rest of a value is the caller's.
  */
 constexpr uint8_t entry_cut = 0x01;
@@ -97,7 +97,7 @@ struct page_t {
 /* The bytes page takes, laid out. */
 size_t page_size(const page_t &page);
 
-/* page, laid out as its bytes (../BTREE.md §3). */
+/* page, laid out as its bytes (../BTREEINDEX.md §4). */
 std::string page_bytes(const page_t &page);
 
 /*
@@ -140,7 +140,7 @@ bool page_mark_in_doubt(const page_view_t &v, size_t i, std::string &out);
  * key. key is not on page, and its entry is at most entry_max(limit).
  * The caller gives right its page id, links the two, and sets the
  * flags the split is written with. A leaf's half is all visible if no
- * entry on it is in doubt (../BTREE.md §7.1).
+ * entry on it is in doubt (../BTREEINDEX.md §9).
  */
 void page_split(page_t &page, page_t &right, std::string_view key,
                 std::string_view value, size_t limit = page_limit);

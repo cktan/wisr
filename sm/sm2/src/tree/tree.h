@@ -1,5 +1,5 @@
 /*
- * tree.h -- a B+tree of an index's own pages (../BTREE.md), a
+ * tree.h -- a B+tree of an index's own pages (../BTREEINDEX.md), a
  * Lehman and Yao B-link tree: each page has a high key and a right
  * link, so a reader pins one page at a time, and a split that moves a
  * key leaves it reachable. Its pages are sm1's (sm1::pin_page,
@@ -36,7 +36,7 @@ static_assert(page_limit <= sm1::page_size);
 
 /*
  * Told of a leaf not all visible, with no latch held, by whoever finds
- * one, reader or writer (../BTREE.md §7.1). It does not fail.
+ * one, reader or writer (../BTREEINDEX.md §9). It does not fail.
  */
 using leaf_note_fn = void (*)(void *ctx, uint64_t storeid, uint16_t relid,
                               uint64_t pageid);
@@ -83,7 +83,7 @@ int tree_insert(tree_t &tree, std::string_view key, std::string_view value);
 
 /*
  * Insert key, which begins with prefix, with value, unless an entry
- * beginning with prefix conflicts (../BTREE.md §6). Returns 0
+ * beginning with prefix conflicts (../BTREEINDEX.md §7). Returns 0
  * inserted; 1 if key was there already, unchanged; 2, every latch let
  * go, for the caller to wait as check found and call again; -1 on an
  * error or a duplicate, its error check's to set.
@@ -106,7 +106,7 @@ int tree_insert_unique(
  * that covers key, under its latch, writing the leaf only if either
  * changes: 0, or -1. An entry not there, a pending index's, leaves
  * only the bit cleared. A delete's at its old key, and an update's that
- * changes a key, after the row's write (../BTREE.md §7.1): the latch
+ * changes a key, after the row's write (../BTREEINDEX.md §9): the latch
  * orders it against vacuum, which judges a leaf latched before it
  * clears an entry's mark or sets the bit.
  */
@@ -180,7 +180,7 @@ void cursor_seek(cursor_t &cursor, const std::string &lo, bool inclusive);
  * Walk every leaf, left to right, and judge its entries in doubt: dead
  * (key, value) is 1 to remove an entry, 0 to keep it in doubt, 2 to
  * keep it as settled and live, -1 to stop with its error. For each
- * leaf (../BTREE.md §7.1):
+ * leaf (../BTREEINDEX.md §9):
  * 1. Skip a leaf set all visible (page_all_visible) already.
  * 2. Judge the leaf's entries in doubt with no latch. No other entry
  *    is asked of.
@@ -204,7 +204,7 @@ int tree_prune(
 /*
  * tree_prune of one page, by its id, from step 1 for a leaf: 0, doubt
  * set if an entry is left in doubt; 1 if the page is no leaf; or -1.
- * The cleaner's (../BTREE.md §7.1), whose queued page id may be stale:
+ * The cleaner's (../BTREEINDEX.md §9), whose queued page id may be stale:
  * pages are never freed, so it names a page still. removed counts the
  * entries removed.
  */

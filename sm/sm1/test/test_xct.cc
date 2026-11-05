@@ -1,7 +1,7 @@
 /*
  * test_xct.cc -- the commit sequencer, the active-transaction
  * table and commit cache, and the abort on a failed commit record
- * (SM1_DESIGN.md §3.4, §4.3, §8.2).
+ * (../DBMGR.md §6.6, ../XCTMGR.md §3.2, §8.2).
  */
 
 #include "doctest.h"
@@ -146,8 +146,8 @@ TEST_CASE("on_commit functions run after the commit, newest first, once") {
 }
 
 TEST_CASE("a stalled commit holds back every later commit's visibility") {
-  // Verify the sequencer publishes in commit_ts order (§4.3), and a
-  // later commit returns only once it is visible (COMMITVISIBLE.md).
+  // Verify the sequencer publishes in commit_ts order (../XCTMGR.md §3.2), and
+  // a later commit returns only once it is visible (../XCTMGR.md).
   // 1. Session A commits "a" but stalls after claiming its
   //    commit_ts, before its status record is written.
   // 2. Session B commits "b" meanwhile: its commit does not return
@@ -237,7 +237,7 @@ int commit_fail_child_main(const char *homedir) {
 
 TEST_CASE("a failed status write aborts the process") {
   // Verify a commit whose record write fails ends the process, and
-  // the reopen decides it from the WAL (§8.2).
+  // the reopen decides it from the WAL (../XCTMGR.md §8.2).
   // 1. Make "db", and leave the home directory to a child.
   // 2. The child commits "old", then fails the status write of
   //    "x": it dies of SIGABRT, having said *** FATAL *** on
@@ -270,7 +270,7 @@ TEST_CASE("a failed status write aborts the process") {
 }
 
 TEST_CASE("the smallest commit cache gives the same answers") {
-  // Verify eviction never changes visibility (§3.4, §12.5).
+  // Verify eviction never changes visibility (../DBMGR.md §6.6, §17.2).
   // 1. Open "db" with commit_cache_entries = 1: one set of two
   //    slots, the smallest there is.
   // 2. Session A takes an RR snapshot.
@@ -363,7 +363,7 @@ uint64_t commit_key(sm1::session_t *s, uint64_t store, const std::string &key) {
 }
 
 TEST_CASE("a commit cache set holds two, and a third evicts the smaller xid") {
-  // Verify the two-slot set (COMMITCACHE.md §3.4).
+  // Verify the two-slot set (../XCTMGR.md §9.3).
   // 1. Open "db" with commit_cache_entries = 2: one set of two
   //    slots, which every transaction shares.
   // 2. Commit k1, then k2: both are cached.

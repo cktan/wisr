@@ -122,7 +122,7 @@ typedef enum TU_UpdateIndexes
  * succeed, the contents of this struct should not be relied upon, except for
  * `traversed`, which may be set in both success and failure cases.
  *
- * digres: no row has a ctid to link to its replacement (../sm/ROWKEY.md).
+ * digres: no row has a ctid to link to its replacement (../sm/ROWSTORE.md).
  *
  * xmax is the outdating transaction's XID.  If the caller wants to visit the
  * replacement tuple, it must check that this matches before believing the

@@ -1,6 +1,6 @@
 /*
  * test_sample.cc -- the sample an analyze estimates from
- * (SM3_DESIGN.md §6.4): Floyd's draws, the runs, the row count
+ * (../STATISTICS.md §9.4): Floyd's draws, the runs, the row count
  * against a full count, and the budget that bounds every read.
  */
 
@@ -278,7 +278,7 @@ TEST_CASE("a small table is read whole and counted exactly") {
 }
 
 TEST_CASE("a table with a primary key is sampled by slots of its bytes") {
-  // Verify the keyed sample (../../ROWKEY.md §2.4), an estimate.
+  // Verify the keyed sample (../ROWSTORE.md §2.6), an estimate.
   // 1. A small table the budget covers is read whole: every row,
   //    counted exactly, kept in key order.
   // 2. Fill 100,000 rows, in memtables: a sample for target 10

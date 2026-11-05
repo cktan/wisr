@@ -1,7 +1,7 @@
 /*
  * test_gc.cc -- garbage collection: the watermark, the
  * compaction filter, tombstone purge, and dropped stores
- * (SM1_DESIGN.md §8.3, §12.5 "GC").
+ * (../GC.md §1, ../DBMGR.md §17.2 "GC").
  */
 
 #include "doctest.h"
@@ -184,7 +184,8 @@ TEST_CASE("a key's versions are stored in commit order, by write timestamp") {
 }
 
 TEST_CASE("a read committed write past a newer commit survives compaction") {
-  // Verify the newer commit is not dropped as superseded (§6.2, f07).
+  // Verify the newer commit is not dropped as superseded (../XCTMGR.md §5,
+  // f07).
   // 1. Commit "k" = v0 and "j" = x.
   // 2. L (read committed) begins and writes "j", so its xid is early.
   // 3. Commit "k" = v1 from another session.
@@ -260,7 +261,7 @@ TEST_CASE("a long-running reader keeps the versions it can see") {
 }
 
 TEST_CASE("a running transaction's versions survive compaction unstamped") {
-  // Verify the in-flight rule comes before every other (§8.3).
+  // Verify the in-flight rule comes before every other (../GC.md §1).
   // 1. T inserts "k" and stays open; compact.
   // 2. T's version is stored and unstamped; another session
   //    does not see it; T still reads it.
@@ -376,7 +377,7 @@ uint64_t l0_files(gc_fixture_t &f) {
 
 TEST_CASE("the purge's range tombstones are flushed by count, not per run") {
   // Verify GC leaves flushing to RocksDB's range-deletion limit
-  // (§8.3, store_max_range_deletions).
+  // (../GC.md §1, store_max_range_deletions).
   // 1. Queue a few purges and run GC: no flush, so level 0 stays
   //    empty after the compaction.
   // 2. Queue more purges than the limit and run GC: RocksDB
@@ -405,7 +406,8 @@ TEST_CASE("the purge's range tombstones are flushed by count, not per run") {
 }
 
 TEST_CASE("an idle read-committed transaction holds back the tombstone purge") {
-  // Verify RC counts in the watermark at its begin snapshot (§8.3, §12.5).
+  // Verify RC counts in the watermark at its begin snapshot (../GC.md §1,
+  // ../DBMGR.md §17.2).
   // 1. T begins at read committed and stays idle.
   // 2. U deletes "k" and commits.
   // 3. Compact and run GC: the tombstone must survive.
@@ -498,7 +500,7 @@ std::vector<std::string> scan_keys(sm1::session_t *s) {
 
 TEST_CASE(
     "the CF:txn sweep deletes records only once every version is stamped") {
-  // Verify committed rows stay committed after their records go (§8.3).
+  // Verify committed rows stay committed after their records go (../GC.md §1).
   // 1. Commit 30 transactions, one key each; CF:txn holds a
   //    record per writing commit.
   // 2. Sweep: the pass stamps every version, then the records
@@ -537,7 +539,7 @@ TEST_CASE(
 
 TEST_CASE(
     "a cursor opened before the sweep's pass holds back record deletion") {
-  // Verify the sweep waits out pre-pass readers (§8.3 step 3).
+  // Verify the sweep waits out pre-pass readers (../GC.md §1 step 3).
   // 1. Commit 10 keys; open cursor C, which pins the unstamped,
   //    pre-pass versions.
   // 2. Start the sweep: the pass runs, but deletion waits on C,
@@ -582,7 +584,7 @@ TEST_CASE(
 TEST_CASE("a pin's iterator from before the sweep's pass is not sought "
           "again") {
   // Verify a read into a pin opens a new iterator once the read
-  // epoch has moved on (§8.3 step 3, §10.1).
+  // epoch has moved on (../GC.md §1 step 3, ../ROWSTORE.md §5.2).
   // 1. Commit "k", then "j", so the one-entry commit cache no
   //    longer holds "k"'s writer.
   // 2. R reads "k" into a pin, whose iterator holds "k"'s
@@ -641,7 +643,7 @@ TEST_CASE("the sweep keeps records a live snapshot may still need") {
 }
 
 TEST_CASE("the GC run sweeps CF:txn once it grows past its threshold") {
-  // Verify the size trigger (§8.3: by CF:txn size, not by timer).
+  // Verify the size trigger (../GC.md §1: by CF:txn size, not by timer).
   // 1. Lower the threshold to 5 records; commit 20 keys.
   // 2. Run GC: CF:txn is swept down to nothing.
   // 3. All 20 keys still read back.

@@ -1,5 +1,5 @@
 /*
- * page.cc -- pages (../BTREE.md §2, ../../BUFFERPOOL.md): keys of
+ * page.cc -- pages (../BTREEINDEX.md §2, ../BUFMGR.md): keys of
  * class 0x04 in a store, whose values the level above lays out as
  * B+tree pages. They are not versioned: a page is written outside
  * every transaction, in one RocksDB write batch, and read as it is.
@@ -83,7 +83,7 @@ struct page_read_t {
 
 /*
  * Read a page into a frame, for a miss (bufpool_load_t). The frame is
- * its copy, so RocksDB's block cache keeps none (BUFFERPOOL.md §1.3).
+ * its copy, so RocksDB's block cache keeps none (../BUFMGR.md §1.11).
  */
 int load_page(void *arg, char *buf, size_t &len) {
   const auto *r = static_cast<const page_read_t *>(arg);

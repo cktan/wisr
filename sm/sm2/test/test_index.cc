@@ -1,5 +1,5 @@
 /*
- * test_index.cc -- the index rel over sm1 (SM2_DESIGN.md §5):
+ * test_index.cc -- the index rel over sm1 (../ROWSTORE.md §8):
  * entries in key order, scans between bounds, uniqueness, keys
  * cut to fit, and keys decoded back.
  */
@@ -395,7 +395,7 @@ TEST_CASE("under a non-deterministic collation, equal is ICU's equal") {
 
 TEST_CASE("a key too long for sm1 is cut, flagged, and kept apart") {
   // Verify an over-long key in a non-unique index (SM2_DESIGN.md
-  // §3.2).
+  // ../LSMINDEX.md §2.4).
   // 1. Two 5000-byte texts that share their first 4500 bytes both
   //    insert: each is cut to fit and carries its rowno, so the two
   //    stay apart though their cut bytes are the same.
@@ -456,7 +456,7 @@ TEST_CASE("a key too long for sm1 is cut, flagged, and kept apart") {
 TEST_CASE(
     "a tree's entry is in doubt from its insert, and cut by its own bit") {
   // Verify the in-doubt bit shares value[0] with the cut flag, and
-  // that neither reads as the other (../BTREE.md §7.1).
+  // that neither reads as the other (../BTREEINDEX.md §9).
   // 1. Insert a short text and a text past the tree's key budget.
   // 2. The leaf holds each entry in doubt, and only the long one cut.
   // 3. A scan reports the short entry as not cut, and the long one as
@@ -591,7 +591,7 @@ TEST_CASE("an index opened on a layout made once is the index idx_open "
 }
 
 TEST_CASE("a key too long for sm1 is refused in a unique index") {
-  // Verify a unique index never holds a cut key (SM2_DESIGN.md §3.2).
+  // Verify a unique index never holds a cut key (../LSMINDEX.md §2.4).
   // 1. Inserting a 5000-byte text fails with SM_ERR_KEYTOOLONG.
   // 2. So does one beside a null column, though that entry would
   //    carry its rowno and meet no other as a duplicate.
@@ -635,7 +635,7 @@ TEST_CASE("a key too long for sm1 is refused in a unique index") {
 }
 
 TEST_CASE("at read committed an entry committed since begin is still deleted") {
-  // Verify idx_delete resolves SM_ERR_UPDATED itself (SM2_DESIGN.md §5).
+  // Verify idx_delete resolves SM_ERR_UPDATED itself (../ROWSTORE.md §8).
   // 1. A begins at READ COMMITTED.
   // 2. B inserts the entry for row 1 and commits, after A began.
   // 3. A deletes that entry: sm1 refuses the erase of a key committed

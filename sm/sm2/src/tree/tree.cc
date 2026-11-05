@@ -1,7 +1,7 @@
 /*
- * tree.cc -- a B-link tree over sm1's pages (../BTREE.md §4, §5).
+ * tree.cc -- a B-link tree over sm1's pages (../BTREEINDEX.md §5, §6).
  *
- * A pin is a latch (../../BUFFERPOOL.md). A reader descends from page
+ * A pin is a latch (../BUFMGR.md). A reader descends from page
  * 0, the root, pinning one page at a time, shared, and moves right
  * past a page whose high key its key is at or past: B-link needs no
  * coupling, so a reader holds no page while it waits for another. A
@@ -199,7 +199,7 @@ out_t out_of(uint64_t pageid, page_t &page, sm1::page_t *pin) {
  * pinned at a time. leaf, if given, takes the page found, still
  * pinned, so it is not read again.
  * 1. If page 0 is above level, read it from the session's own copy of
- *    it, with no pin, while the copy is the page (../../BTREE.md §4.2).
+ *    it, with no pin, while the copy is the page (../BTREEINDEX.md §5.5).
  * 2. Else pin the page shared. Keep a copy of page 0 if it is above
  *    level.
  * 3. If key is at or past the page's high key, move right to the next
@@ -210,7 +210,7 @@ out_t out_of(uint64_t pageid, page_t &page, sm1::page_t *pin) {
 int descend(tree_t &tree, std::string_view key, uint8_t level, uint64_t &out,
             pinned_t *leaf = nullptr) {
   // The store's checks once a descent, not once a page: a probe's
-  // pins are its cost (../../BUFFERPOOL.md §4.6).
+  // pins are its cost (../BUFMGR.md §2.9).
   const sm1::page_store_t *store = nullptr;
   if (0 != sm1::page_enter(tree.session, tree.storeid, store)) {
     return -1;
@@ -631,7 +631,7 @@ int insert_into(tree_t &tree, detail::latched_t &l, std::string_view key,
   }
   if (1 == rc) {
     // Found there, as an update A to B and back finds A's: the row has
-    // just changed, so a vacuum must read it again (../BTREE.md §7.1).
+    // just changed, so a vacuum must read it again (../BTREEINDEX.md §9).
     return 0 == mark_in_doubt(tree, l, key) ? 1 : -1;
   }
   if (0 == rc) {
@@ -692,7 +692,7 @@ int tree_mark_in_doubt(tree_t &tree, std::string_view key) {
   // Latched even to read the bit: a vacuum judging the leaf holds the
   // latch from its first row read to its write, so this writer, whose
   // row is written already, either sees the bit vacuum set or had its
-  // row seen by vacuum, unsettled (../BTREE.md §4.1).
+  // row seen by vacuum, unsettled (../BTREEINDEX.md §8).
   if (0 != detail::latch_leaf(tree, key, l)) {
     return -1;
   }
@@ -892,9 +892,9 @@ int fill(cursor_t &c) {
     c.leaf = pageid;
     c.visible = 0 != (v.flags() & page_all_visible);
     if (j > i) {
-      // The leaf is let go before the caller reads rows (../BTREE.md
-      // §4): the entries in range are copied end to end, in key order,
-      // and read from the copy.
+      // The leaf is let go before the caller reads rows (../BTREEINDEX.md
+      // ../BTREEINDEX.md §5): the entries in range are copied end to end, in
+      // key order, and read from the copy.
       c.bytes.clear();
       for (size_t k = i; k < j; k++) {
         std::string_view e = v.entry(k);
@@ -987,8 +987,8 @@ namespace {
  * 5. Write the leaf once, if anything changed.
  * A writer whose row changed takes this latch to mark its entry, so it
  * either waits for the write and marks what this cleared, or wrote its
- * row before the judging, which then finds it unsettled (../BTREE.md
- * §7.1).
+ * row before the judging, which then finds it unsettled (../BTREEINDEX.md
+ * ../BTREEINDEX.md §9).
  */
 int clean_leaf(
     tree_t &tree, uint64_t pageid, const std::vector<std::string> &judged,

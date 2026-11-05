@@ -1,5 +1,5 @@
 # test_build.rel -- an index made on a table that already has rows is
-# built in the background (sm3/SM3_DESIGN.md section 3): writers and
+# built in the background (../INDEXBUILD.md section 2): writers and
 # readers go on meanwhile, and (index-wait ...) waits for it to end.
 #
 # 1. An index on a table with committed rows is pending, then valid;

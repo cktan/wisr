@@ -1,6 +1,6 @@
 /*
  * locktab.cc -- the lock table and Gray's modes (locktab.h,
- * SM1_DESIGN.md §5.1).
+ * ../LOCKMGR.md §3.2).
  */
 
 #include "locktab.h"

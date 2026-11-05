@@ -1,11 +1,11 @@
 /*
  * test_ssi.cc -- SSI's abort rule with the refinements of Ports
- * and Grittner (SM1_DESIGN.md §7.3): a dangerous structure
+ * and Grittner (../XCTMGR.md §7.4): a dangerous structure
  * T1 -> T2 -> T3 fails a transaction only if T3 committed first,
  * and, where T1 is read-only, only if T3 committed before T1's
  * snapshot; and a transaction declared read-only at sm1::begin,
  * which may not write and drops its tracking once its snapshot
- * is safe (§7.4).
+ * is safe (../XCTMGR.md §7.5).
  */
 
 #include "doctest.h"
@@ -139,7 +139,7 @@ TEST_CASE("a chain whose last link commits first fails the pivot") {
 
 TEST_CASE("a read-only T1 whose snapshot precedes T3's commit makes no "
           "anomaly") {
-  // Verify the read-only rule (Ports and Grittner §4).
+  // Verify the read-only rule (Ports and Grittner ../XCTMGR.md §2).
   // 1. A reads x, and B writes it: A -> B. B reads y, and C writes
   //    it: B -> C.
   // 2. C commits, then A commits having written nothing.
@@ -367,7 +367,8 @@ TEST_CASE("an unsafe read-only snapshot stays tracked and still fails") {
 }
 
 TEST_CASE("an SIREAD on keys not stored makes edges as a scan's range") {
-  // Verify ssi_read_range and ssi_write_key, a tree's SSI (BTREE.md §8).
+  // Verify ssi_read_range and ssi_write_key, a tree's SSI (../BTREEINDEX.md
+  // §13).
   // 1. A reads the range [e, m) of keys no version holds, and writes x.
   // 2. B reads x, and writes the key g, in A's range, that is no
   //    version either: A -> B and B -> A, a write skew.

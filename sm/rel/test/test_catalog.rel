@@ -195,7 +195,7 @@
 (commit)
 
 # 9. A table one session read, dropped and made again by another, or
-#    truncated, is the new one to the first (../sm1/STORECACHE.md).
+#    truncated, is the new one to the first (../DBMGR.md).
 # 9.1 s1 makes r with one row and commits; s2 reads it.
 # 9.2 s1 drops r and makes it again with two rows: s2 reads two.
 # 9.3 s1 truncates r and adds three rows: s2 reads three.

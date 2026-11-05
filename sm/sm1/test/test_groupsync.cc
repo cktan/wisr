@@ -1,7 +1,7 @@
 /*
  * test_groupsync.cc -- a commit's WAL sync, made by sm1 outside
  * RocksDB's write queue, one commit syncing for all that wait
- * (GROUPSYNC.md, SM1_DESIGN.md §8.2).
+ * (../DBMGR.md, ../XCTMGR.md §8.2).
  */
 
 #include "doctest.h"
@@ -239,7 +239,7 @@ bool wait_for_waiters(wisr::db_t *db, int n) {
 
 TEST_CASE("a commit survives a power cut once sm1::commit returns") {
   // Verify the commit's WAL sync makes what sm1::commit returned for
-  // durable, its version with its record (GROUPSYNC.md §3).
+  // durable, its version with its record (../DBMGR.md §8.2).
   // 1. Make "db" on a file system that loses unsynced data at a
   //    power cut.
   // 2. Commit "a" in a new store.
@@ -317,7 +317,7 @@ TEST_CASE("a commit survives a power cut under manual_wal_flush") {
 
 TEST_CASE("a commit is visible only once the WAL is synced past it") {
   // Verify a commit publishes after its sync, not before: until then
-  // its xid is in flight (GROUPSYNC.md §3).
+  // its xid is in flight (../DBMGR.md §8.2).
   // 1. Session A commits "a"; its sync stalls.
   // 2. A's commit has not returned, and a new snapshot of B's does
   //    not see "a".
@@ -393,7 +393,7 @@ int sync_fail_child_main(const char *homedir) {
 TEST_CASE("a failed sync aborts the process") {
   // Verify a failed WAL sync ends the process, so no commit it was
   // to cover returns, and the reopen decides them from the WAL
-  // (SM1_DESIGN.md §8.2).
+  // (../XCTMGR.md §8.2).
   // 1. Make "db", and leave the home directory to a child.
   // 2. The child commits "a", and its sync fails: it dies of
   //    SIGABRT, having said *** FATAL *** on stderr.
@@ -424,7 +424,7 @@ TEST_CASE("a failed sync aborts the process") {
 
 TEST_CASE("one sync serves the commits that wait while another runs") {
   // Verify the commits waiting behind a sync share the next one, as
-  // PostgreSQL's XLogFlush() does (GROUPSYNC.md §3).
+  // PostgreSQL's XLogFlush() does (../DBMGR.md §8.2).
   // 1. Session A commits "a"; its sync stalls.
   // 2. Fifteen sessions commit meanwhile: each writes its record
   //    and waits for A's sync.
@@ -485,7 +485,7 @@ TEST_CASE("one sync serves the commits that wait while another runs") {
 
 TEST_CASE("the next sync goes to the oldest commit waiting") {
   // Verify the leader that ends a sync hands the next one to the
-  // oldest commit in line, and wakes no other (GROUPSYNC.md §3).
+  // oldest commit in line, and wakes no other (../DBMGR.md §8.2).
   // 1. Session A commits "a"; its sync stalls.
   // 2. Five sessions commit in turn, each in line before the next
   //    starts.
@@ -566,7 +566,7 @@ TEST_CASE("the next sync goes to the oldest commit waiting") {
 }
 
 TEST_CASE("a commit without durability_sync does not sync") {
-  // Verify durability_sync = 0 skips the commit's sync (§12.2).
+  // Verify durability_sync = 0 skips the commit's sync (../DBMGR.md §10).
   // 1. Open "db" with durability_sync = 0.
   // 2. Commit "a": no sync is made, and "a" is visible.
   sm1::options_t opt;

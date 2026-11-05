@@ -1,6 +1,6 @@
 /*
  * seq.cc -- named sequences: sm1::mkseq, sm1::rmseq, sm1::nextseq,
- * sm1::lastseq (SM1_DESIGN.md §11).
+ * sm1::lastseq (../DBMGR.md §7).
  *
  * A sequence's definition is a catalog row, keyed "S" | name in
  * CF:store.0 and holding { seqid, start, increment }, so creating
@@ -11,7 +11,7 @@
  *
  * The sequence's position is NOT in that row: sm1::nextseq takes
  * no locks, never blocks, and is not undone by an abort, so its
- * state lives in CF:meta under a lease (§4.2), outside MVCC.
+ * state lives in CF:meta under a lease (../XCTMGR.md §2.3), outside MVCC.
  */
 
 #include "error.h"
@@ -192,7 +192,7 @@ int may_draw(sm1::session_t *s) {
     return set_error(sm1::SM_ERR_PREPARED, "the transaction is prepared as {}",
                      s->prepared_gid.c_str());
   }
-  // Nor does one a rollback doomed (§6.5).
+  // Nor does one a rollback doomed (../XCTMGR.md §6).
   if (s->active && s->doomed == sm1::SM_ERR_DOOMED) {
     return xct_check_active(s);
   }
@@ -288,7 +288,7 @@ int lastseq(sm1::session_t *s, const char *name, uint64_t *out) {
     return set_error(sm1::SM_ERR_PREPARED, "the transaction is prepared as {}",
                      s->prepared_gid.c_str());
   }
-  // Nor does one a rollback doomed (§6.5).
+  // Nor does one a rollback doomed (../XCTMGR.md §6).
   if (s->active && s->doomed == sm1::SM_ERR_DOOMED) {
     return xct_check_active(s);
   }

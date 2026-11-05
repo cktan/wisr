@@ -1,5 +1,5 @@
 /*
- * test_cleaner.cc -- the btree cleaner (../BTREE.md §7.1): its queue
+ * test_cleaner.cc -- the btree cleaner (../BTREEINDEX.md §9): its queue
  * of pages and their filter.
  */
 
@@ -168,7 +168,7 @@ TEST_CASE("cleaner queue: writers and cleaners on many threads lose no page") {
 }
 
 TEST_CASE("cleaner: a busy system is still cleaned, at a low rate") {
-  // Verify the first worker's budget (../BTREE.md §7.1).
+  // Verify the first worker's budget (../BTREEINDEX.md §9).
   // 1. An empty queue has no pass, however idle.
   // 2. A queue with room is cleaned whole below the limit.
   // 3. Above the limit it gets the busy budget, not none: steady load

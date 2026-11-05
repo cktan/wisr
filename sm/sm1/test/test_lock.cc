@@ -1,6 +1,7 @@
 /*
  * test_lock.cc -- locks and waits, first-committer-wins, retryable
- * errors, and deadlock detection (SM1_DESIGN.md §5, §6.2, §12.1).
+ * errors, and deadlock detection (../LOCKMGR.md §1.7, ../XCTMGR.md §5,
+ * ../DBMGR.md §11).
  *
  * The timelines two sessions play out against each other live
  * in mvcc/in/ as scenario scripts, where blocking is one word
@@ -93,7 +94,7 @@ TEST_CASE("first-committer-wins prevents lost updates at every level") {
   // 2. A updates "x" and commits.
   // 3. B's update of "x" fails at once. At repeatable read and
   //    serializable that is SM_ERR_CONFLICT, retryable; at read
-  //    committed it is SM_ERR_UPDATED, which is not (SM1_DESIGN.md §5.4).
+  //    committed it is SM_ERR_UPDATED, which is not (../LOCKMGR.md §1.9).
   for (sm1::xctlevel_t level :
        {sm1::xctlevel_t::read_committed, sm1::xctlevel_t::repeatable_read,
         sm1::xctlevel_t::serializable}) {
@@ -117,11 +118,11 @@ TEST_CASE("first-committer-wins prevents lost updates at every level") {
 }
 
 TEST_CASE("read committed sees a newer commit and re-reads it to overwrite") {
-  // Verify §6.2: RC reads at a statement snapshot; a write over a newer
-  // commit needs sm1::read_latest first.
+  // Verify ../XCTMGR.md §5: RC reads at a statement snapshot; a write over a
+  // newer commit needs sm1::read_latest first.
   // 1. T (read committed) writes "y", so it has an xid.
   // 2. U commits a new value of "x".
-  // 3. T reads "x" and sees U's value (§10.1).
+  // 3. T reads "x" and sees U's value (../ROWSTORE.md §5.2).
   // 4. T's update of "x" fails with SM_ERR_UPDATED, and T stays active.
   // 5. After sm1::read_latest of "x", the update goes ahead.
   lock_fixture_t f;
@@ -147,7 +148,7 @@ TEST_CASE("read committed sees a newer commit and re-reads it to overwrite") {
 }
 
 TEST_CASE("a retryable error aborts the transaction and releases everything") {
-  // Verify the engine-side abort on SM_ERR_CONFLICT (§12.1).
+  // Verify the engine-side abort on SM_ERR_CONFLICT (../DBMGR.md §11).
   // 1. T creates a store, inserts into it, and locks "y".
   // 2. U commits a change to "x"; T's update of "x" conflicts.
   // 3. T's store is gone, and another session can lock "y"
@@ -199,7 +200,8 @@ TEST_CASE("concurrent sm1_mkstore hands out a storeid of its own to each") {
 }
 
 TEST_CASE("a doomed transaction fails its next call and changes nothing") {
-  // Verify the doomed flag stops a transaction that is not waiting (§5.1).
+  // Verify the doomed flag stops a transaction that is not waiting
+  // (../LOCKMGR.md §3.2).
   // 1. T updates "x", then is marked doomed as a deadlock victim
   //    would be while running.
   // 2. T's next call, a read, fails with SM_ERR_DEADLOCK.
@@ -286,7 +288,7 @@ TEST_CASE("concurrent increments with retry never lose an update") {
 }
 
 TEST_CASE("two upgraders on one row deadlock, and the younger one loses") {
-  // Verify the cycle a shared lock makes possible (SM1_DESIGN.md §5.1).
+  // Verify the cycle a shared lock makes possible (../LOCKMGR.md §3.2).
   // 1. A (older) and B (younger) both hold "x" shared.
   // 2. Both try to write "x"; each waits for the other.
   // 3. The younger, B, is doomed with SM_ERR_DEADLOCK, and A
@@ -317,7 +319,7 @@ TEST_CASE("two upgraders on one row deadlock, and the younger one loses") {
 
 TEST_CASE(
     "sm1_lock fails with CONFLICT on a row committed after the snapshot") {
-  // Verify §5.2's check runs once the lock is held, so what the
+  // Verify ../LOCKMGR.md §1.8's check runs once the lock is held, so what the
   // caller reads under it is current.
   // 1. A begins and takes its snapshot.
   // 2. B updates "x" and commits.
@@ -347,7 +349,7 @@ TEST_CASE(
 
 TEST_CASE(
     "the index-build protocol blocks writers, then shows them the new schema") {
-  // Verify sm3/SM3_DESIGN.md §3's build protocol end to end: a builder
+  // Verify ../INDEXBUILD.md §2's build protocol end to end: a builder
   // cannot miss a concurrent writer's rows.
   // 1. A catalog store holds a schema row saying "no index".
   // 2. Writer W takes it shared, reads it, writes a base row,
@@ -412,11 +414,11 @@ TEST_CASE(
 
 TEST_CASE(
     "reads take no locks, so readers and writers never block each other") {
-  // Verify sm1 stays MVCC for plain reads and writes (§5.1), at
+  // Verify sm1 stays MVCC for plain reads and writes (../LOCKMGR.md §3.2), at
   // every isolation level.
   // 1. W writes "x" and does not commit: its uncommitted version
   //    is its lock, so it holds no lock entry on "x", nor on "y"
-  //    (WRITELOCK.md §3.2).
+  //    (../LOCKMGR.md §1.7).
   // 2. R reads "x" and scans the store: neither waits on W's
   //    write, both see "x" as it was, and R holds no lock
   //    afterwards.
@@ -764,7 +766,7 @@ TEST_CASE(
 }
 
 TEST_CASE("a transaction's writes leave no lock entries") {
-  // Verify WRITELOCK.md: memory for locks does not grow with writes.
+  // Verify ../LOCKMGR.md: memory for locks does not grow with writes.
   // 1. W inserts a thousand keys and updates and deletes the two
   //    seeded rows, without committing.
   // 2. W's lock list is empty, and the shared lock table holds
@@ -804,7 +806,7 @@ TEST_CASE("a transaction's writes leave no lock entries") {
 
 TEST_CASE("a write refused with SM_ERR_UPDATED keeps the row locked until "
           "the re-read") {
-  // Verify the one write that leaves a lock behind (WRITELOCK.md §3.5).
+  // Verify the one write that leaves a lock behind (../LOCKMGR.md §1.9).
   // 1. T begins at READ COMMITTED; U commits a new "x".
   // 2. T's update of "x" fails with SM_ERR_UPDATED, and T now
   //    holds "x" exclusive.
@@ -925,7 +927,7 @@ TEST_CASE("trylock takes a row's lock unless it would wait") {
 }
 
 TEST_CASE("waits_for names the sessions a waiting session waits for") {
-  // Verify the edges a host reads for pg_blocking_pids() (§5.1).
+  // Verify the edges a host reads for pg_blocking_pids() (../LOCKMGR.md §3.2).
   // 1. Number A, B and C; A writes "x" and locks "y" exclusive.
   // 2. B writes "x" and waits behind A's version; C locks "y" and
   //    waits on A's lock.
@@ -977,7 +979,7 @@ TEST_CASE("waits_for names the sessions a waiting session waits for") {
 }
 
 TEST_CASE("lock_status lists each lock held, and each waited for in lock") {
-  // Verify the rows a host reads for pg_locks (§5.1).
+  // Verify the rows a host reads for pg_locks (../LOCKMGR.md §3.2).
   // 1. Number A to D; A writes "x", locks oid 7 IS and "y" exclusive,
   //    of kind 5; B locks oid 7 IX.
   // 2. C waits for "y" shared, of kind 6, on A's lock; D writes "x" and
@@ -1055,7 +1057,8 @@ TEST_CASE("lock_status lists each lock held, and each waited for in lock") {
 
 TEST_CASE("a write waiting on a row's lock is listed with the lock's kind") {
   // Verify a write, which gives no kind, waits listed with the kind of
-  // the lock it waits on, so a host still sees a row's lock (§5.1).
+  // the lock it waits on, so a host still sees a row's lock (../LOCKMGR.md
+  // §3.2).
   // 1. A locks "y" exclusive, of kind 5; B writes "y" and waits.
   // 2. lock_status lists A's hold and B's wait, both of kind 5.
   // 3. A commits: B's write goes through, and nothing is listed.
@@ -1163,7 +1166,7 @@ TEST_CASE("a lock list across blocks keeps each lock exact past a savepoint") {
 
 TEST_CASE("row keys that hash alike are one lock") {
   // Verify two row keys whose ids are one (lockid_t) are one lock:
-  // one table entry, one list entry, one mode (LOCKID.md §2.3).
+  // one table entry, one list entry, one mode (../LOCKMGR.md §3.2).
   // 1. Make every row key hash alike; A locks "x" shared, of kind 1,
   //    then "y" exclusive, of kind 2, which converts the lock "x" took
   //    and keeps its kind.
@@ -1257,7 +1260,7 @@ TEST_CASE("a row key's lock hash is the same in every build") {
 }
 
 TEST_CASE("a weak table lock takes a slot, and a strong one moves it") {
-  // Verify the fast path (§5.1): IS and IX on an oid are in the
+  // Verify the fast path (../LOCKMGR.md §3.2): IS and IX on an oid are in the
   // session's slots, and a strong lock meets them in the table.
   // 1. A locks oid 1 IS and oid 2 IX: two slots, an empty table.
   // 2. B's trylock of oid 1 X fails: A's IS moved to the table,
@@ -1383,7 +1386,7 @@ TEST_CASE("a slot's entry is its own, wherever it is in the list") {
 }
 
 TEST_CASE("table locks past the slots go to the table, and all are held") {
-  // Verify a transaction with more table locks than slots (§5.1).
+  // Verify a transaction with more table locks than slots (../LOCKMGR.md §3.2).
   // 1. A locks 40 oids IS: 32 in slots, 8 in the table.
   // 2. lock_status lists all 40, held.
   // 3. B's trylock X fails on the first oid, in a slot, and on the

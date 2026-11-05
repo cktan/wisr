@@ -1,5 +1,5 @@
 /*
- * chain.h -- a chained key's layout (../VCHAIN.md §3), in its store's
+ * chain.h -- a chained key's layout (../ROWSTORE.md §3.5), in its store's
  * one column family: the newest version under a current key, the
  * older ones under old keys, each pointing to the one before it.
  *
@@ -39,7 +39,7 @@ constexpr uint8_t chain_unlinked = 0x10;
 /*
  * An old version whose displaced holds its displacer's commit_ts, not
  * its xid: GC stamped it, as the displacer's status record may be
- * swept (SM1_DESIGN.md §3.4).
+ * swept (../DBMGR.md §6.6).
  */
 constexpr uint8_t chain_displaced_stamped = 0x20;
 

@@ -87,7 +87,7 @@ struct sm_env_t {
 /*
  * A session as the wrapper holds it: an sm3 session, over the sm1
  * one, whose transaction calls go through sm3 so its overlay of
- * DDL stays in step (sm3/CATALOG_INMEM.md §1).
+ * DDL stays in step (../CATALOG.md §4).
  */
 struct sm_session_t {
   sm_env_t *env;
@@ -946,7 +946,7 @@ int sm_lock_status(sm_env_t *env, std::vector<sm_lock_status_t> &out) {
                           0,      static_cast<sm_lockmode_t>(r.mode),
                           r.tag,  r.granted};
       if (r.type == sm1::LOCKTYPE_OID) {
-        // An oid's lock: its id's word is the oid (LOCK.md §1).
+        // An oid's lock: its id's word is the oid (../LOCKMGR.md §1.5).
         st.name = SM_LOCKNAME_OBJECT;
         st.oid = r.word;
       } else if (r.type == sm1::LOCKTYPE_ROW && r.storeid != 0 &&

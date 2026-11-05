@@ -1,6 +1,6 @@
 /*
  * env.h -- the environment: one process's handle on a home
- * directory (SM1_DESIGN.md §3.5).
+ * directory (../DBMGR.md §4).
  */
 #ifndef WISR_ENV_H
 #define WISR_ENV_H
@@ -30,14 +30,14 @@ struct db_t;
 /* Home directory format version, stored as "M" | "version". */
 #define WISR_HOME_VERSION 1
 
-/* Root db keys (SM1_DESIGN.md §3.5). */
+/* Root db keys (../DBMGR.md §4). */
 #define WISR_ROOT_DBNAME_PREFIX "D"
 #define WISR_ROOT_NEXT_DBID "Mnext_dbid"
 #define WISR_ROOT_VERSION "Mversion"
 /*
  * The size each database's new log is zero-filled to, 0 for none: 8
  * bytes big-endian, decided by the home's first attach
- * (WALPREALLOC.md).
+ * (../DBMGR.md).
  */
 #define WISR_ROOT_WAL_PREALLOC "Mwal_prealloc"
 
@@ -49,13 +49,13 @@ struct sm1::env_t {
    */
   std::shared_ptr<rocksdb::Cache> block_cache;
   /*
-   * The pages of every database's trees (../../BUFFERPOOL.md), a
+   * The pages of every database's trees (../BUFMGR.md), a
    * quarter of block_cache_bytes, made by attach.
    */
   std::unique_ptr<wisr::bufpool_t> bufpool;
   /*
    * The Env every database's instance writes through, its new logs
-   * zero-filled (walfs.h, WALPREALLOC.md); none, RocksDB's own, where
+   * zero-filled (walfs.h, ../DBMGR.md); none, RocksDB's own, where
    * the home's first attach found zero-filling does not pay.
    */
   std::unique_ptr<rocksdb::Env> wal_env;

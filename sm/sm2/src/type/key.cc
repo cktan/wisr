@@ -60,7 +60,7 @@ int encode_key(std::span<const key_column_t> cols,
     } else {
       // The type's key is over the bytes the datum_t stands for: a
       // variable-width type's payload, past its varlena header,
-      // as every type function takes it (SM2_DESIGN.md §2).
+      // as every type function takes it (TYPE.md §5).
       std::string_view bytes;
       if (datum_bytes(col.type, col.typmod, datums[i], bytes) != 0) {
         key.resize(start);

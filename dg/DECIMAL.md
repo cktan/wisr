@@ -121,10 +121,10 @@ typedef struct decimal_t {  /* decimal128's, in two halves */
 ### 2.3 Stored as sm2's decimal, at the column's scale
 
 - **A column is `numeric(p, s)`**, and dg, not sm, chooses
-  its width (`../sm/sm3/SM3_DESIGN.md` §2.1): `p <= 17` is
+  its width (`../sm/CATALOG.md` §8.4): `p <= 17` is
   sm2's `decimal64`, `p <= 36` its `decimal128`, whose datums
   carry their scale below their value
-  (`../sm/sm2/SM2_DESIGN.md` §2.2).
+  (`sm/sm2/TYPE.md` §5.2).
   Its typmod is PostgreSQL's, which sm2 takes as is; a column
   past 36 digits is refused.
 - **Writing rescales to the column's scale**, rounding half
@@ -307,7 +307,7 @@ path.
 
 1. **An unconstrained `numeric` column** is given a default,
    DuckDB's `DECIMAL(18, 3)`; `(17, 3)` since sm's decimals
-   carry their scale (`../sm/sm2/SM2_DESIGN.md` §2.2).
+   carry their scale (`sm/sm2/TYPE.md` §5.2).
 2. **A literal past 36 digits** was to be an error; building
    it showed that this refuses `1e300` as a float, so it is a
    `float8`, as in DuckDB. Text cast to numeric past 36 digits
@@ -363,7 +363,7 @@ A `decimal128` laid out as sm's makes the wide case a pointer
 into sm's tuple, with no conversion either.
 
 It keeps the scale in the datum, as sm keeps it
-(`../sm/sm2/SM2_DESIGN.md` §2.2), which costs a digit of
+(`sm/sm2/TYPE.md` §5.2), which costs a digit of
 `decimal64` and two of `decimal128`. Carrying `(p, s)` through
 every expression, as DuckDB does, and an abbreviated sort key
 were the other options. §2 is what it made, and §4's answers 6

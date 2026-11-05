@@ -1,5 +1,5 @@
 /*
- * cleaner.cc -- the btree cleaner (../../../BTREE.md §7.1).
+ * cleaner.cc -- the btree cleaner (../BTREEINDEX.md §9).
  */
 
 #include "../catalog/internal.h"
@@ -144,7 +144,7 @@ namespace {
 
 /*
  * Clean the pages on the queue when the pass begins, one at a time, at
- * most budget of them (../../../BTREE.md §7.1): 0, or -1 with no session
+ * most budget of them (../BTREEINDEX.md §9): 0, or -1 with no session
  * to do it with.
  * 1. Open a session with no transaction, and read the watermark, made
  *    above 0, as a slot's 0 is a page that does not wait.

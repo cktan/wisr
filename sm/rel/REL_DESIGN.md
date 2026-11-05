@@ -251,7 +251,7 @@ Isolation levels map directly to `sm_xctlevel_t`:
 ### 4.3 High-Level Table and Index Operations
 
 Tables and indexes live in sm3's catalog
-(`sm3/CATALOG_INMEM.md`), through the C API's `sm_cat_*` calls,
+(`../CATALOG.md`), through the C API's `sm_cat_*` calls,
 in the `public` namespace. DDL is transactional -- undone by
 abort and by rollback to a savepoint, private to its session
 until commit -- and a table outlives a restart. `rel` keeps no
@@ -279,10 +279,10 @@ catalog of its own.
    transaction the index is filled and valid at once. On any
    other it is recorded as pending, and filled in the
    background after the transaction commits
-   (`sm3/SM3_DESIGN.md` §3).
+   (`../INDEXBUILD.md` §2).
 
 A partial or an expression index is evaluated by the host, not
-by the storage manager (`sm3/SM3_DESIGN.md` §3), and `rel` is
+by the storage manager (`../INDEXBUILD.md` §2), and `rel` is
 the host. It gives the storage manager its evaluator with
 `sm_set_index_evaluator` when a home is attached. The
 evaluator is C++ and touches nothing of Janet's, because the
@@ -349,7 +349,7 @@ and its indexes under it. `sm_tbl_def` gives its definition.
 The handle is closed when the session's next statement begins.
 
 A write is one call. sm3 writes the row and then every
-index the write changes (`sm3/SM3_DESIGN.md` §3); `rel` names
+index the write changes (`../INDEXBUILD.md` §2); `rel` names
 no index and computes no key. The call sets no savepoint, so a
 write that fails partway, on a duplicate in a unique index for
 one, has left its earlier steps done. `rel` then aborts the
@@ -368,7 +368,7 @@ take the key's values and call the same function's
 `sm_row_key_t` overload; `scan`'s bounds are key values, and it
 calls `sm_tbl_idx_scan_rows` on the primary key, giving
 `[key row]` pairs; `(read-keys <table> [key ...])` reads many
-rows in one `sm_tbl_read_keys` (`BATCHREAD.md`).
+rows in one `sm_tbl_read_keys` (`../ROWSTORE.md`).
 
 #### `(insert <table> <row-tuple>)`
 1. Validates that `<row-tuple>` matches column count and types.
@@ -482,12 +482,12 @@ that would wait for another session's lock would hang the
 script. `(qa-nowait true)` makes such a step fail with
 `ERR_BLOCKED` instead, the transaction left active, and the
 script repeats the step once the other session has let go
-(`sm1/SM1_DESIGN.md` §5.1). That is how a script says "this
+(`../LOCKMGR.md` §3.2). That is how a script says "this
 step blocks", with no thread and no sleep. A session polling
 this way is never a deadlock victim, so deadlocks are tested
 in C++ instead. `test/test_blocking.rel` and
 `test/test_recheck.rel` are written this way; the second runs
-the worked examples of `sm3/SM3_DESIGN.md` §3.1 step for step.
+the worked examples of `../LSMINDEX.md` §7.7 step for step.
 
 
 Concurrency anomalies and isolation verification are the entire

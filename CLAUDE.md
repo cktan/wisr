@@ -15,7 +15,9 @@ the design document of the level you are working in —
 `sm/sm0/README.md` for the error state, helpers and sm_sys.h,
 `sm/sm1/SM1_DESIGN.md` for the MVCC storage manager,
 `sm/sm2/SM2_DESIGN.md` for types and tuples,
-`sm/sm3/SM3_DESIGN.md` for schema and index maintenance.
+`sm/sm3/SM3_DESIGN.md` for schema and index maintenance. Those
+are overviews: each module has its own document in `sm/`, and
+`sm/GLOSSARY.md` lists the modules and their standard names.
 
 Before changing code in `sm/`, read `sm/CODE.md`, and before
 changing code in `dg/`, read `dg/CODE.md`: the rules and
@@ -37,6 +39,10 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
 
 - Be extremely concise. Lead directly with the result.
 - Use bullet points instead of long paragraphs whenever possible.
+- Never refer to a step, item or section by its number alone: the
+  user does not remember what it is. Say what it does each time,
+  e.g. "step 5: write pages to RocksDB with no transaction", not
+  "step 5". Give each step in a plan a name that says what it does.
 
 ## C++/C Coding Style
 

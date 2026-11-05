@@ -6,7 +6,7 @@
  * text and varchar are the same bytes under two codes: valid
  * UTF-8 with no NUL, as a PostgreSQL UTF8 database holds, and
  * their own text. varchar(n)'s limit is a coercion the host applies
- * (SM2_DESIGN.md §2), so its typmod does nothing here. Until the
+ * (TYPE.md §5), so its typmod does nothing here. Until the
  * collation work of step 2, cmp orders them bytewise, which is
  * codepoint order.
  *

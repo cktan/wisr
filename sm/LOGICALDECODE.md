@@ -4,8 +4,9 @@ A database's committed changes, in commit order, as a stream a
 replica or any other consumer reads to stay in step with it:
 change data capture. `FEATURELIST.md` §7 wants logical
 replication and CDC decoding; `PART4.md` §4 and
-`sm3/SM3_DESIGN.md` §2 note that sm1 has no commit-ordered
+`CATALOG.md` §1 note that sm1 has no commit-ordered
 change feed to build it on. This file is the design of one.
+Nothing here is built, so it has no code yet.
 
 **Status: proposed.** Nothing here is built. §12 is what is
 to be decided first.
@@ -89,45 +90,49 @@ Five facts of sm1 and sm3 shape the design:
   taken from the one counter, and commits are published in
   `commit_ts` order: `visible_ts` stays below a commit still in
   progress, so nothing at or below it can still appear
-  (`sm1/SM1_DESIGN.md` §4.3). A snapshot is one integer, and
+  (`XCTMGR.md` §3.2). A snapshot is one integer, and
   sees exactly the commits at or below it (§4.4 there).
   `commit_ts` is the LSN of this design, with no log behind
   it.
 - **The commit point is one synced batch.** A commit is the
   status record written in one `WriteBatch` to `CF:txn`,
-  synced and group-committed (`sm1/SM1_DESIGN.md` §8.2).
+  synced and group-committed (`XCTMGR.md` §8.2).
   Anything else written in that batch commits with it, at no
   extra sync.
 - **Writes are eager, and undone by key.** A version is in
   RocksDB from the moment it is written, under its writer's
   `xid`, with no record of the transaction's writes kept in
   memory but, while a savepoint is set, the keys written under
-  it (`sm1/SM1_DESIGN.md` §5, §6.5). A row is named by its
+  it (`LOCKMGR.md` §1.7, `XCTMGR.md` §6). A row is named by its
   key, the values of its primary key's columns, or a keyless
-  table's `_id` (`ROWKEY.md`). Every table's store is chained,
+  table's `_id` (`ROWSTORE.md`). Every table's store is chained,
   CF `chain.<storeid>`: a row's key holds its newest version,
-  the older ones chained behind it, while TOAST and index
-  entries stay versioned keys (`VCHAIN.md` §3). A rollback
+  the older ones chained behind it, while TOAST and an LSM
+  Index's entries stay versioned keys (`ROWSTORE.md` §3.5), and a
+  B-tree Index's entries are in pages. A rollback
   deletes the versioned keys written since its mark, puts back
   each chained key it wrote to the version in effect at the
-  mark (`VCHAIN.md` §6), and rewinds `seq`; an abort writes
+  mark (`ROWSTORE.md` §4.7), and rewinds `seq`; an abort writes
   nothing, its versions dead by the status lookup, and a crash
   leaves versions no status record covers, which are dead
-  (`sm1/SM1_DESIGN.md` §3.4).
+  (`DBMGR.md` §6.6).
 - **The WAL is RocksDB's, and not all of a write goes
   through it.** A bulk load in file mode ingests sorted files
   past the WAL (`BULKLOAD.md`), a dropped store is a column
   family drop, and a range delete is one record for many
   keys. Decoding the WAL would meet each.
-- **The catalog is not versioned, but a column's type never
-  changes.** sm3 keeps one definition of a table, replaced
-  whole at commit (`sm3/SM3_DESIGN.md` §2); it adds and drops
-  columns, and changes no column's type, so a table's newest
-  definition reads every tuple the table ever held: a dropped
-  column keeps its place, an added one reads as its missing
-  value (`sm2/TUPLE.md` §2). A tuple can be read later without
-  the catalog's history, provided the definition travels with
-  the stream.
+- **The catalog is not versioned, and a change of a stored
+  column's bytes rewrites the table.** sm3 keeps one definition
+  of a table, replaced whole at commit (`CATALOG.md` §1). Adding
+  and dropping a column change no stored tuple: a dropped column
+  keeps its place, an added one reads as its missing value
+  (`sm2/TUPLE.md` §2). `ALTER COLUMN TYPE` with a conversion, and
+  adding or dropping a primary key, copy the table into a new
+  store (`CLUSTER.md` §8). So a table's newest definition reads
+  every tuple of its store. A tuple can be read later without the
+  catalog's history, provided the definition travels with the
+  stream, in order. How a rewrite reaches a consumer is open
+  (§12).
 
 ## 4. The options
 
@@ -145,7 +150,7 @@ Five facts of sm1 and sm3 shape the design:
   changes in memory and write them in the commit's batch.
   Simple, and one write a change, but the memory is linear in
   the transaction's writes, which sm1 avoided everywhere
-  (`sm1/SM1_DESIGN.md` §6.5), and a bulk load of a billion
+  (`XCTMGR.md` §6), and a bulk load of a billion
   rows has no commit batch that holds them.
 - **C. Write a change record beside each write, committed by
   the status record.** sm3 writes one record for each row it
@@ -161,7 +166,7 @@ Five facts of sm1 and sm3 shape the design:
   thing to make durable at each commit: either a second sync,
   or a window where a commit is durable and its changes are
   not. Two logs that must agree are what sm1 was built
-  without (`sm1/SM1_DESIGN.md` §8.1).
+  without (`DBMGR.md` §8.1).
 - **E. As C, with each record naming its version** instead of
   copying its row, the row read back when the record is
   drained. No row is written twice, but the version must
@@ -169,7 +174,7 @@ Five facts of sm1 and sm3 shape the design:
   that garbage collection and store drops wait for, which is
   PostgreSQL's slot problem in another place, and a TOAST
   datum an update replaced is erased with it
-  (`sm2/SM2_DESIGN.md` §4.2).
+  (`TOAST.md` §2).
 
 **Choice: C, drained into files.** The change log in RocksDB
 is the truth, committed with the data; it is short-lived, a
@@ -304,7 +309,7 @@ sweep at open asks `CF:txn`.
 sm3 knows which rel a write is to, which table that is, and
 what the row holds, so it is sm3 that writes the records.
 Each is a header, an sm2 tuple framed as the catalog's parts
-are (`sm3/CATALOG_ONDISK.md` §3), so that its schema evolves as a
+are (`CATALOG.md` §3.5), so that its schema evolves as a
 part's does, then the row's values, each its bytes with their
 length. A long value is in it whole (§6.3), so a record is
 held to an sm1 value's 64 MB, not to a tuple's 64 KB; a row
@@ -324,7 +329,7 @@ past that is split over records of one `seq`, told apart by
 
 - **Only the rows are logged.** A table's index entries and
   TOAST chunks are writes to its store too (relids
-  `0x0002`–`0xFFFF`, `sm3/SM3_DESIGN.md` §4), but they follow
+  `0x0002`–`0xFFFF`, `CATALOG.md` §2), but they follow
   from the row and from the definition, and a consumer has no
   use for them. A row write is logged once, after its index
   entries are written, so a write refused partway logs
@@ -343,7 +348,7 @@ columns the old row's identity holds; or `FULL`, every
 column of the old row. A table with neither, published, has
 its updates and deletes refused, as PostgreSQL refuses them.
 The old row is at hand: `tbl_update` and `tbl_delete` pin it
-for the host already (`ROW.md`), and the record takes the
+for the host already (`ROWSTORE.md`), and the record takes the
 identity's columns from it. An update that changes none of
 the key's columns carries no old identity, as PostgreSQL's
 does not: the new row's key is it.
@@ -355,7 +360,7 @@ A datum the host gave in full is in the record in full, not
 as the TOAST pointer the version holds, so a record needs no
 chunk to be read. An update that keeps a TOAST pointer
 unchanged, which it does for an attribute it does not change
-(`sm2/SM2_DESIGN.md` §4.2), marks that column **unchanged**
+(`TOAST.md` §2), marks that column **unchanged**
 instead, as PostgreSQL's `pgoutput` does: the value was not
 written, and copying it into the log would be the cost of a
 long value for each update of a short one. A replica keeps
@@ -367,9 +372,9 @@ the old row.
 The catalog is not versioned (§3), so the stream carries the
 definitions itself: a schema record at the commit of each DDL
 that changed a logged object, holding the object's record as
-the catalog keeps it (`sm3/CATALOG_ONDISK.md` §3). sm3 knows what
+the catalog keeps it (`CATALOG.md` §3.5). sm3 knows what
 changed from the overlay it publishes at commit
-(`sm3/CATALOG_INMEM.md` §1), and writes the records just before
+(`CATALOG.md` §4), and writes the records just before
 `sm1::commit`, in the same transaction. A reader keeps the
 definitions the stream has given it, and decodes each row by
 its table's newest one (§3); it never asks the live catalog,
@@ -382,7 +387,7 @@ record too.
 there is no change to log. What a replica needs to take over
 is a value past any the primary handed out, and sm1 already
 writes one: a sequence's lease, the first value it has not
-covered (`sm1/SM1_DESIGN.md` §4.2). A lease renewal of a
+covered (`XCTMGR.md` §2.3). A lease renewal of a
 logged sequence logs a sequence record, in a transaction of
 its own, so a replica that sets each sequence to the last
 lease it saw never hands out a value the primary did. The
@@ -541,7 +546,7 @@ way a feed can cost the primary space.
   transaction's changes in the order it made them (`seq`).
   Applied in that order, they leave each row as the primary
   has it: committed versions of a key are in `commit_ts`
-  order (`sm1/SM1_DESIGN.md` §4.1), the
+  order (`XCTMGR.md` §2.1), the
   READ COMMITTED writes that pass a newer commit included.
 - **Consistency.** The stream up to `commit_ts` `T`, applied
   to an empty copy, or to a copy at snapshot `S` from `S` on,
@@ -626,6 +631,11 @@ way a feed can cost the primary space.
 
 ## 12. For review
 
+- **A table rewrite.** `ALTER COLUMN TYPE` with a conversion,
+  and adding or dropping a primary key, write every row again.
+  §6.1 has no record for that, and this design predates it.
+  Open: a schema record alone, with the consumer copying the
+  table again, or the rows as records.
 - **C over E (§4).** Writing each logged row twice, against a
   drain horizon that holds back garbage collection and store
   drops. Proposed: C, and E only if a profile asks.

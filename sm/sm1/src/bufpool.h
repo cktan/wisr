@@ -1,5 +1,5 @@
 /*
- * bufpool.h -- the buffer pool of a tree's pages (../../BUFFERPOOL.md):
+ * bufpool.h -- the buffer pool of a tree's pages (../BUFMGR.md):
  * frames of 4 KB, each holding one page, found by a page's tag.
  *
  * A pin is a latch, shared or exclusive, held only as long as a latch
@@ -94,7 +94,7 @@ public:
    * unpin, the frame goes back unused.
    *
    * A thread may pin several pages; writers keep to one order
-   * (../../BTREE.md §16). A thread holding a page shared may pin it
+   * (../BUFMGR.md §1.3). A thread holding a page shared may pin it
    * shared again; no other second pin of a page is allowed.
    */
   int pin(const bufpool_page_t &page, bool ex, unsigned flags,

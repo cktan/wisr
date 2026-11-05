@@ -4,11 +4,14 @@ A temporary table belongs to one session: no other session
 sees it, it is gone when the session ends, and nothing of it
 survives a crash. This file is the design of temporary tables
 across the levels: where their rows live, what a write to one
-skips, and what it keeps.
+skips, and what it keeps. The code is in `sm1/src/env.cc` and
+`sm1/src/db.cc` (the instance), `sm1/src/xct.cc` (the session's
+stores), `sm3/src/catalog/session.cc` (the temporary catalog)
+and `sm3/src/ddl/ddl.cc`.
 
 It is built, at every level and in digres: §11 has the steps,
 and §9 what was left for later. It replaced the mechanism
-first proposed in `sm1/SM1_DESIGN.md` §11.3, which put a
+first proposed in `DBMGR.md` §7.8, which put a
 temporary store's column family in the database's own
 RocksDB. §10 is the list drawn up before the work, of what to
 check first, kept as it was written.
@@ -27,10 +30,10 @@ check first, kept as it was written.
 - **A temporary table is a temporary store**, as decided
   (`DESIGN.md` §5): one column family of X for its rows, its
   indexes and its TOAST data, its rows chained as any table's
-  (`VCHAIN.md`).
+  (`ROWSTORE.md`).
 - **Its definition is in the session's memory**, in a
   temporary catalog of its own, never in store 0
-  (`sm3/CATALOG_INMEM.md` §1).
+  (`CATALOG.md` §4).
 - **Its transactions are the database's.** A row version in
   X carries the `xid` and timestamps of the session's
   transaction in its own database, and is resolved against
@@ -57,7 +60,7 @@ check first, kept as it was written.
 
 ## 1. Why not in the database's RocksDB
 
-`sm1/SM1_DESIGN.md` §11.3 proposed a column family in the
+`DBMGR.md` §7.8 proposed a column family in the
 database's own RocksDB, written with `disableWAL`. Two things
 decided against it.
 
@@ -88,7 +91,7 @@ database: a store is in the database's instance or in X (§3).
   database; `sm1::attach` makes it if the host has not, and X
   is the one name in it that is sm's. The sweep of `base` at
   attach already leaves alone an entry that is not a number
-  (`sm1/SM1_DESIGN.md` §3.5).
+  (`DBMGR.md` §4).
 - **Whose.** The environment's: `sm1::attach` opens it and
   `sm1::detach` closes it. It is shared between databases,
   as the host's temporary files are, and for the same reason:
@@ -101,12 +104,13 @@ database: a store is in the database's instance or in X (§3).
   named `<dbid>.<storeid>`: a `storeid` is a database's own,
   and two databases hand out the same ones. The comparator,
   the prefix extractor and the GC compaction filter are a
-  store's, as in a database (`sm1/SM1_DESIGN.md` §3.1).
+  store's, as in a database (`DBMGR.md` §6.2).
 - **What it does not hold.** No `CF:txn`, no `CF:meta`, no
   catalog. X is a place to put versions and nothing else.
-- **Every write is unlogged.** One function writes to a
-  store, and it takes the write options from the store's
-  instance: `disableWAL` for X.
+- **Every write is unlogged.** Each write to a store takes
+  `disableWAL` for X: `store_write_options()` gives a row's
+  options, and a rollback's batch and a page's write
+  (`sm1/src/page.cc`) test for X themselves.
 
 ---
 
@@ -128,7 +132,7 @@ store goes through the pair.
   anything, and a version left behind by a failure is dead
   with its transaction.
 - **The commit needs no change.** Row versions and the commit
-  record were never one write (`sm1/SM1_DESIGN.md` §8.2): the
+  record were never one write (`XCTMGR.md` §8.2): the
   versions are in the stores, and the record goes to the
   database's `CF:txn`, logged and synced.
 
@@ -157,14 +161,15 @@ store goes through the pair.
 
 Everything that makes a transaction a transaction, unchanged:
 
-- **The version format** (`sm1/SM1_DESIGN.md` §3.1) and the
+- **The version format** (`DBMGR.md` §6.2) and the
   visibility test (§4.4 there).
 - **Status resolution** (§3.4 there), against the session's
   database. A version in X written by a transaction with no
   commit record is dead; so abort still writes nothing.
 - **Savepoints** (§6.5 there): a write to a temporary store
   while a mark is set is listed in the undo list like any
-  other, under the same cap, and a rollback deletes it.
+  other, under the same cap, and a rollback undoes it, a
+  chained row by putting back its version (`ROWSTORE.md` §6).
 - **A statement does not see its own writes**, and a cursor
   keeps the view it opened with.
 - **Garbage collection.** An update or a delete leaves an old
@@ -216,7 +221,7 @@ transaction at a time. So, for a temporary store:
 
 - **A second overlay, which commit does not publish.** A
   session has an overlay of its open transaction's DDL
-  (`sm3/CATALOG_INMEM.md` §1). The temporary catalog is the same
+  (`CATALOG.md` §4). The temporary catalog is the same
   structure with a longer life: definitions of the session's
   temporary tables, kept from commit to commit, and dropped
   when the session closes.
@@ -257,7 +262,7 @@ transaction at a time. So, for a temporary store:
   it is chosen by the table's absence from the shared
   catalog, and a temporary table is never in it.
 - **TRUNCATE** is a new temporary store and a drop of the
-  old, as for a table (`sm3/SM3_DESIGN.md` §4).
+  old, as for a table (`CATALOG.md` §2).
 - **A temporary view is kept there too** (`VIEW.md` §12.2),
   its name among the session's temporary names, and in the
   shared catalog's register of temporary readers (§12.3),
@@ -309,7 +314,7 @@ that no longer exist, and are swept with the rest.
 
 - **The `CF:txn` sweep must cover X.** A `COMMITTED` record
   is deleted only once every version it covers is stamped
-  with its `commit_ts` (`sm1/SM1_DESIGN.md` §8.3). The pass
+  with its `commit_ts` (`GC.md` §1). The pass
   that stamps them walks the database's stores. If it skipped
   the database's stores in X, a temporary version would lose
   its record and read as aborted. It does not skip them: a
@@ -324,8 +329,9 @@ that no longer exist, and are swept with the rest.
   what is running, and lets it go on at once.
 - **Many column families.** A session with a hundred
   temporary tables is a hundred column families of X, each
-  with a memtable. X gets one write buffer budget for all of
-  them, so the count costs handles and not memory.
+  with a memtable. X has no write buffer budget across them:
+  each memtable fills to RocksDB's default size, so the count
+  costs handles and memory.
 - **Creating and dropping a column family is a MANIFEST
   write** under X's mutex. Sessions that make and drop
   temporary tables at a high rate meet there.
@@ -335,7 +341,7 @@ that no longer exist, and are swept with the rest.
 ## 8. Alternatives considered
 
 - **A column family in the database's RocksDB**
-  (`sm1/SM1_DESIGN.md` §11.3). §1.
+  (`DBMGR.md` §7.8). §1.
 - **An instance per database, or per session.** No name
   prefix, and a database's temporary rows go with one
   `DestroyDB`. It costs an open and a close of RocksDB for
@@ -349,8 +355,8 @@ that no longer exist, and are swept with the rest.
   `ON_ERROR_ROLLBACK`.
 - **A cheaper rollback for temporary rows.** A savepoint
   costs an undo entry for each write made under it, for
-  every table (`sm1/SM1_DESIGN.md` §6.5). Temporary tables
-  are treated the same; `sm1/SAVEPOINT.md` is the design
+  every table (`XCTMGR.md` §6). Temporary tables
+  are treated the same; `XCTMGR.md` is the design
   that removes the cost for both.
 
 ---

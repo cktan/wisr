@@ -1,4 +1,4 @@
-# Verify that an index made a tree, USING btree (../sm/BTREE.md),
+# Verify that an index made a tree, USING btree (../sm/BTREEINDEX.md),
 # answers as any index does, on digres; PostgreSQL 18 makes its own
 # B-tree and gives the same answers.
 # 1. Make a table of rows, and a tree on its column c2.

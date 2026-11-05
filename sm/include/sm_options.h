@@ -84,7 +84,7 @@ static inline void sm_options_init(sm_options_t* opt) {
  * through, every column family of each, as PostgreSQL's
  * shared_buffers is the one pool of a cluster (sm1/SM1_DESIGN.md
  * section 12.2). It must be at least 1. A quarter of it goes to
- * the buffer pool of a tree's pages (BUFFERPOOL.md).
+ * the buffer pool of a tree's pages (../BUFMGR.md).
  *
  * max_sessions, if above 0, is the most sessions the environment
  * will have at once. The pool is made with frames enough that each

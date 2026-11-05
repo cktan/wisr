@@ -1,5 +1,5 @@
 # test_partial.rel -- partial and expression indexes
-# (sm3/SM3_DESIGN.md section 3). The storage manager evaluates
+# (../INDEXBUILD.md section 2). The storage manager evaluates
 # nothing itself: it calls the host's evaluator, which here is rel's
 # own, over two forms: :where (column value), a partial index of the
 # rows whose column equals the value, and a key column written

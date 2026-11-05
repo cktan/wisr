@@ -1,6 +1,6 @@
 /*
  * decimal.cc -- decimal64 and decimal128 (TYPE.md §3.4,
- * SM2_DESIGN.md §2.2): a two's complement integer, little-endian,
+ * TYPE.md §5.2): a two's complement integer, little-endian,
  * 8 bytes for decimal64 and 16 for decimal128, holding the value
  * scaled by 10^s shifted left past the scale s itself: (value << 5)
  * | s for decimal64, (value << 6) | s for decimal128. The host maps

@@ -1,7 +1,7 @@
 /*
  * walfs.h -- the Env a database's RocksDB instance writes through
  * when its new write-ahead logs are zero-filled first, so a commit's
- * sync never grows a file (WALPREALLOC.md).
+ * sync never grows a file (../DBMGR.md).
  */
 #ifndef WISR_WALFS_H
 #define WISR_WALFS_H

@@ -1,6 +1,6 @@
 /*
  * tuple.cc -- the tuple codec (TUPLE.md, VARLENA.md; why in
- * SM2_DESIGN.md §4, §4.1):
+ * TUPLE.md §10, §11):
  *
  *   [ header | null bitmap | fixed part | var data ]
  *
@@ -774,7 +774,7 @@ int tup_read_begin(const tup_desc_t &desc, std::string_view tuple,
                    tup_reader_t &r) {
   parsed_t t;
   // Only the header and bitmap: each attribute is checked as it
-  // is read (../ROW.md §4.6).
+  // is read (../ROWSTORE.md §6.8).
   if (check_desc(desc) != 0 || parse_head(desc, tuple, t) != 0) {
     return -1;
   }

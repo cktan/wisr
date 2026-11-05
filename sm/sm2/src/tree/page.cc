@@ -1,6 +1,6 @@
 /*
  * page.cc -- a B+tree page's bytes, laid out and read where they lie
- * (../BTREE.md §3), and a decoded page's insert and split.
+ * (../BTREEINDEX.md §4), and a decoded page's insert and split.
  *
  *   header = level (1B) | flags (1B) | max (2B) | top (2B) | version (8B)
  *          | prev (8B) | next (8B) | high key's length (2B) | high key
@@ -59,7 +59,7 @@ size_t unused_slots(size_t n) { return 2 * (page_slots(n) - n); }
 
 /*
  * Set page's page_all_visible by its entries: a leaf is all visible if
- * no entry on it is in doubt (../BTREE.md §7.1). An inner page never is.
+ * no entry on it is in doubt (../BTREEINDEX.md §9). An inner page never is.
  */
 void set_all_visible(page_t &page) {
   bool set = 0 == page.level;

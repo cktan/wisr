@@ -1,5 +1,5 @@
 /*
- * toast.cc -- a datum out of line (SM2_DESIGN.md §4.2). A datum is
+ * toast.cc -- a datum out of line (../TOAST.md §2). A datum is
  * cut into chunks of toast_chunk bytes, each an sm1 row of the
  * table's own store, keyed by the TOAST relid, the datum's id and
  * the chunk's number: a datum's chunks are next to one another and
@@ -136,10 +136,12 @@ int toast_read_settled(sm1::session_t *session, const toast_ptr_t &p,
     if (rc < 0) {
       return -1;
     }
+    // No lock keeps a writer out: it may have erased the datum since
+    // the row was read. That is no corruption.
     if (0 != rc) {
-      return sm1::seterr(sm1::SM_ERR_CORRUPT,
-                         "toast: a settled row's chunk of datum " +
-                             std::to_string(p.id) + " is not settled");
+      return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                         "toast: a chunk of datum " + std::to_string(p.id) +
+                             " is erased, or being erased");
     }
     data += chunk;
   }

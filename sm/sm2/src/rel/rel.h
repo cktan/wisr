@@ -38,7 +38,7 @@ struct sm2::rel_t {
   sm1::seqref_t id_ref;
   bool has_id_ref = false;
   /*
-   * The store is chained (../../../VCHAIN.md): its rows are sm1's
+   * The store is chained (../ROWSTORE.md): its rows are sm1's
    * chained keys, read and written with the chain_ calls. TOAST
    * stays on the versioned ones.
    */

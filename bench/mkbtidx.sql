@@ -3,7 +3,7 @@
 --
 --   psql -d bench -f mkbtidx.sql
 --
--- On digres USING btree makes a tree (../sm/BTREE.md); its default
+-- On digres USING btree makes a tree (../sm/BTREEINDEX.md); its default
 -- kind is lsm. PostgreSQL makes its B-tree, as mkregidx.sql does.
 
 drop index if exists usertable_lastname;
@@ -16,5 +16,5 @@ create index usertable_state_tree on usertable using btree (state);
 
 -- Vacuumed, as a server's autovacuum would have: PostgreSQL's
 -- visibility map, and digres's trees' all-visible leaves
--- (../sm/BTREE.md section 4.1), let an index-only scan skip the rows.
+-- (../sm/BTREEINDEX.md section 8), let an index-only scan skip the rows.
 vacuum analyze usertable;

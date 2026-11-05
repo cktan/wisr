@@ -1,5 +1,12 @@
 # FOREIGNKEY — foreign keys: sm3 keeps them, the host checks them
 
+A foreign key says that a child table's columns name a row of a
+parent table. sm3 keeps the constraint, and the host checks the
+rows. The code is in `sm3/src/ddl/ddl.cc` (DDL),
+`sm3/src/catalog/` (the entry and `cat_get_fkey`), `src/sm.cc`
+(the calls of §6) and `../dg/src/backend/access/sm/smstore.c`
+(digres).
+
 **Status: built**: sm3's part and `sm.h`'s (§3 to §6,
 `sm3/test/test_fkey.cc`), digres's (§8, `../dg/WORKNOTE.md`
 step 177), and `rel`'s verbs (`rel/REL.md`,
@@ -65,7 +72,7 @@ the constraint and keeps none (§8).
 
 **A new kind, `CONSTRAINT`, 12**, keyed by the child table's oid
 and the constraint's oid, as an index is keyed by its table's
-(`sm3/CATALOG_ONDISK.md` §2):
+(`CATALOG.md` §3.3):
 
 | Kind | Value | Key after the kind | Holds |
 | --- | --- | --- | --- |
@@ -94,7 +101,7 @@ CONSTRAINT value = constraint | fkey | pair × npairs
   against the child's constraints, under the child's lock X,
   and refuses a taken one with `SM_ERR_DUPKEY`.
 - **A new kind changes no key's layout**, so `META` stays at 4
-  (`sm3/CATALOG_ONDISK.md` §3).
+  (`CATALOG.md` §3.5).
 - **Its oid** is from `cat_new_oid()`, as a table's and an
   index's.
 
@@ -109,7 +116,7 @@ CONSTRAINT value = constraint | fkey | pair × npairs
   each DDL that adds or drops a foreign key puts the parent's
   definition back with it changed. This is the reverse lookup a
   `DROP TABLE` of a parent and the host's parent-side triggers
-  need, with no dependency index (`sm3/CATALOG_INMEM.md` §4: a
+  need, with no dependency index (`CATALOG.md` §11: a
   dependency is derived, and the catalog is in memory).
 - **A constraint is found by its oid alone**, as PostgreSQL's
   `CONSTROID` syscache finds one. There is no map from
@@ -161,6 +168,8 @@ CONSTRAINT value = constraint | fkey | pair × npairs
   `SM_ERR_INUSE`; the host drops the constraint first for
   `CASCADE`. A parent's is a key of the parent index, which
   `drop_column` already refuses.
+- **`alter_column_type`** of a column a foreign key names, at
+  either end, is `SM_ERR_INUSE`.
 - **`truncate_table`** is unchanged. PostgreSQL refuses to
   truncate a referenced table unless its referencing tables are
   truncated in the same statement; that is the host's to
@@ -252,7 +261,7 @@ Outlined here; designed with the work, in `../dg`.
 ## 9. Not here
 
 - **`CHECK`**: the same kind, another type (§3).
-- **A dependency index** (`sm3/CATALOG_INMEM.md` §4):
+- **A dependency index** (`CATALOG.md` §11):
   `referenced_by` is the one reverse lookup foreign keys need,
   and it is derived in memory.
 - **`FOR KEY SHARE` and `FOR NO KEY UPDATE`** in sm1: they would

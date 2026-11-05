@@ -1,13 +1,13 @@
 /*
  * version.h -- the row-version codec and the store column
- * families' comparator and prefix extractor (SM1_DESIGN.md §3.1).
+ * families' comparator and prefix extractor (../DBMGR.md §6.2).
  *
  *   key   = class (1B, key_class_versioned) | userkey |
  *           ~wts (8B BE) | ~seq (4B BE)
  *   value = flags (1B) | xid (8B, unstamped) or commit_ts (8B,
  *           stamped) | payload
  *
- * Every key of a store opens with a class byte (../VCHAIN.md §2):
+ * Every key of a store opens with a class byte (../ROWSTORE.md §3.2):
  * versioned keys are ordered by userkey, then newest version
  * first; current and old keys bytewise. No caller of sm1 sees it.
  */
@@ -28,7 +28,7 @@ namespace wisr {
 /* Bytes after the userkey in every version key. */
 constexpr size_t version_tail_size = 12;
 
-/* The class byte that opens every key of a store (../VCHAIN.md §2). */
+/* The class byte that opens every key of a store (../ROWSTORE.md §3.2). */
 constexpr char key_class_versioned = 0x00; /* userkey | ~wts | ~seq */
 constexpr char key_class_current = 0x01;   /* a chained key's newest */
 constexpr char key_class_old = 0x02;       /* be64(id): an older one */

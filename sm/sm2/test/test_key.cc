@@ -1,5 +1,5 @@
 /*
- * test_key.cc -- key encoding (TYPE.md §1-§3, SM2_DESIGN.md §8.2 step 2):
+ * test_key.cc -- key encoding (TYPE.md §1, §3, §9 step 2):
  * each type's key against its own order, and keys of several
  * columns against the order of their columns.
  */
@@ -348,7 +348,7 @@ sm2::collation_t *open_collation(std::string_view locale) {
 } // namespace
 
 TEST_CASE("a collation opens by locale, and holds to its ICU version") {
-  // Verify collation_open's checks (SM2_DESIGN.md §3.3).
+  // Verify collation_open's checks (../LSMINDEX.md §2.3).
   // 1. en-US, fr-CA, a keyword tag and the root locale open, each
   //    with ICU's collator version; C and POSIX open as byte
   //    order, with no version.
@@ -546,7 +546,7 @@ TEST_CASE("a collated column keys and decodes among others") {
 }
 
 TEST_CASE("a key over its budget is refused or cut, as asked") {
-  // Verify encode_key's length limit (SM2_DESIGN.md §3.2).
+  // Verify encode_key's length limit (../LSMINDEX.md §2.4).
   // 1. The columns' budget is 4094 bytes, 4086 with a rowno.
   // 2. A text key of exactly the budget fits; one byte more is
   //    SM_ERR_KEYTOOLONG under refuse, and leaves key as it was.

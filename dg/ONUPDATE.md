@@ -151,7 +151,7 @@ std::string on_update_expr;             /* def: "" if none */
 
 - **Stored** in the column's catalog record as an appended
   `bytea` field (`../sm/sm3/src/catalog/blob.cc`,
-  `../sm/sm3/CATALOG_ONDISK.md`); a record written before reads
+  `../sm/CATALOG.md`); a record written before reads
   it null.
 - **Opaque.** sm keeps the text and gives it back, as it keeps
   the insert default: it runs neither, and checks neither's

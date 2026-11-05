@@ -87,3 +87,43 @@ Choices:
   the value to the column's scale first.
 - **Rescale in `decimal_key`**: a key at the column's scale,
   where the value fits it exactly; refuse it otherwise.
+
+## 5. COPY fails into an empty table with a unique B-tree Index
+
+`COPY` into an empty table fails on its first row if the table
+has a unique index `USING btree`. Found 2026-11-05, and
+reproduced on digres:
+
+```sql
+create table u (id int8 primary key, k int8);
+create unique index u_k on u using btree (k);
+\copy u from 'rows.csv' with (format csv)
+-- ERROR:  could not load a row: index: a unique tree's key is
+--         inserted by idx_insert_unique
+```
+
+The same `COPY` with a default unique index, an LSM Index, loads
+every row. No test covers this.
+
+`COPY` into an empty table is a bulk load:
+
+1. `tbl_load_add()` calls `idx_load()` for each index.
+2. A tree has nothing to stream, so `idx_load()` calls
+   `idx_insert()`.
+3. `idx_insert()` refuses a unique tree's non-null key: only
+   `idx_insert_unique()` can check a key against its rows.
+
+To avoid it, create the index after the `COPY`, or use a default
+index. This workaround is from the code, and was not run.
+
+Choices:
+
+- **Do not bulk load such a table.** `tbl_load_open()` declines a
+  table with a unique tree, and `COPY` inserts its rows one at a
+  time. The change is small, and keeps the duplicate-key errors.
+  Such a load is slower, but a tree writes its entries one at a
+  time already. Proposed.
+- **Check the key in `idx_load()`.** It would call
+  `idx_insert_unique()`, but that check reads rows, and the rows
+  are still in the loader's files. It is much harder, for little
+  gain.

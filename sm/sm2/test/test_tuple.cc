@@ -1,5 +1,5 @@
 /*
- * test_tuple.cc -- the tuple codec (SM2_DESIGN.md §4, §8.2
+ * test_tuple.cc -- the tuple codec (TUPLE.md §10, TYPE.md §9
  * step 3): its bytes, its round trip, the schema changes it must
  * survive, and the tuples it must refuse. No database is involved:
  * the codec touches sm1 nowhere.
@@ -92,7 +92,7 @@ std::string hex(std::string_view s) {
 
 } // namespace
 
-TEST_CASE("a tuple's bytes are the layout SM2_DESIGN.md §4.1 fixes") {
+TEST_CASE("a tuple's bytes are the layout TUPLE.md §11 fixes") {
   // Pin the format with two golden tuples, so a change to it is a
   // change to this test.
   // 1. (int4 7, text "hi", int8 null, bool true): flags 0x01 for a

@@ -1,5 +1,5 @@
 /*
- * ddl.cc -- DDL (SM3_DESIGN.md §2, CATALOG_INMEM.md §2): what a CREATE,
+ * ddl.cc -- DDL (../CATALOG.md §1, §6): what a CREATE,
  * a DROP or an ALTER does. Each call makes or drops what its
  * object needs outside the catalog -- a store, a sequence, an
  * index's entries -- and puts the object's record in the catalog
@@ -235,7 +235,7 @@ static int make_table(session_t *session, uint64_t nspoid,
   // temporary table, both temporary, and so the session's alone
   // (../TEMPTABLE.md §4).
   const bool temp = nspoid == nsp_temp;
-  // Its rows chained, a temporary table's too (../VCHAIN.md §3).
+  // Its rows chained, a temporary table's too (../ROWSTORE.md §3.5).
   if (sm1::mkstore(session->sm1, rec.storeid, temp, true) != 0) {
     return -1;
   }
@@ -943,7 +943,7 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
     x.includes.push_back(a);
   }
   // 0xFFFF is TOAST's and 0xFFFE reserved, once the _id index's
-  // (../sm2/SM2_DESIGN.md §5); relids are never reused.
+  // (../ROWSTORE.md §8); relids are never reused.
   if (rec.next_relid >= sm2::id_relid) {
     return invalid("create index: the table has no index relid left");
   }
@@ -971,7 +971,7 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
   }
   // A tree's pages, empty, before any writer or the build adds to
   // them; written outside the transaction, they are left by a
-  // rollback, under a relid never given again (../BTREE.md §2).
+  // rollback, under a relid never given again (../BTREEINDEX.md §2).
   if (tree && sm2::idx_create_tree(session->sm1, rec.storeid,
                                    rec.indexes.back().relid) != 0) {
     return -1;

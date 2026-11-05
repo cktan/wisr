@@ -12,7 +12,7 @@ full MVCC, for OLTP workloads.
   key, and the key is the only access path.
 - Keys are ordered **bytewise (`memcmp`)**; there is no custom
   comparator of user keys (a store CF's, `wisr.store.v2`, only
-  orders each key's versions, `SM1_DESIGN.md` §3.1). Callers
+  orders each key's versions, `../DBMGR.md` §6.2). Callers
   encode composite or typed keys into byte strings whose
   `memcmp` order is the order they want.
 - **Secondary indexes are not provided.** They can be built by
@@ -71,10 +71,10 @@ These were open; they are now settled and drive `SM1_DESIGN.md`.
   (first-committer-wins), with no lock kept for a write: a second
   writer of a key waits for the transaction whose uncommitted
   version it meets, and fails if that one commits
-  (`WRITELOCK.md`). At read committed a write that meets a newer
+  (`../LOCKMGR.md`). At read committed a write that meets a newer
   commit fails with `SM_ERR_UPDATED` instead, which does not
   abort: the caller reads the newest version with
-  `sm1::read_latest` and writes again (`SM1_DESIGN.md` §5.4).
+  `sm1::read_latest` and writes again (`../LOCKMGR.md` §1.9).
 - **Uncommitted writes go eagerly into RocksDB**, stamped with the
   writing transaction's id, and are made visible through a durable
   commit-status table. This keeps transaction size unbounded by RAM,
@@ -86,11 +86,11 @@ These were open; they are now settled and drive `SM1_DESIGN.md`.
   can be committed or aborted after restart by an external
   coordinator. Recovery must restore prepared transactions and
   re-acquire their explicit locks (a write keeps none,
-  `WRITELOCK.md`).
+  `../LOCKMGR.md`).
 - **Deployment is a single process, multi-threaded.** All
   sessions on a database in a process share its one open
   RocksDB instance (the root db and temporary tables have one
-  each, `SM1_DESIGN.md` §3.5); the transaction table,
+  each, `../DBMGR.md` §4); the transaction table,
   lock manager, and SSI structures are ordinary in-process data
   structures. This is what RocksDB's single-writer-process rule
   effectively forces.

@@ -1,5 +1,5 @@
 /*
- * test_page.cc -- a B+tree page (../BTREE.md §3, §13 step 1): its
+ * test_page.cc -- a B+tree page (../BTREEINDEX.md §4, §11.3 step 1): its
  * bytes laid out and read where they lie, an entry's insert, a
  * split's halves, and a page that is not one refused.
  */
@@ -109,7 +109,7 @@ TEST_CASE(
 
 TEST_CASE("tree page: a split sets each half by its own entries") {
   // Verify a leaf's halves are all visible only if no entry on them is
-  // in doubt, whatever the page's flag was (../BTREE.md §7.1).
+  // in doubt, whatever the page's flag was (../BTREEINDEX.md §9).
   // 1. Split a full leaf of settled entries by an entry in doubt: the
   //    half that takes it is unset, the other set.
   // 2. A leaf with an entry in doubt in each half: neither is set.

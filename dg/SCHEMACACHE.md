@@ -90,7 +90,7 @@ uint64_t sm_cat_epoch(sm_session_t* session);
 
 - **It moves with every publish the session can see.** sm3's
   catalog counts its publishes (`cat->seq`,
-  `../sm/sm3/CATALOG_INMEM.md` §1); every commit of shared DDL,
+  `../sm/CATALOG.md` §4); every commit of shared DDL,
   an ANALYZE's statistics and an index made valid are publishes.
   A session's temporary catalog changes without one
   (`publish_temp`), so the session counts those itself. The epoch
@@ -149,7 +149,7 @@ version.
 
 Not a cache in digres, but the same idea in sm3: what an open
 learns from the definition's generation is learned once with it
-(as its layouts are, `../sm/sm3/CATALOG_INMEM.md` §1). Whether
+(as its layouts are, `../sm/CATALOG.md` §4). Whether
 the store is chained is fixed when the store is made, so it is
 read once into the definition instead of from sm1 at every open;
 whether this transaction made the table comes from the lock's own

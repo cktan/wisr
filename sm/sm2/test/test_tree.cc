@@ -1,5 +1,5 @@
 /*
- * test_tree.cc -- a B+tree over sm1's pages (../BTREE.md §13 step 5):
+ * test_tree.cc -- a B+tree over sm1's pages (../BTREEINDEX.md §11.3 step 5):
  * inserts against a sorted map, cursors over the whole and ranges,
  * a split's post cut short and finished later, and writers on many
  * threads with cursors running.
@@ -1376,7 +1376,7 @@ uint64_t leaf_of(sm1::session_t *s, uint64_t store, uint16_t relid,
 
 TEST_CASE(
     "tree: vacuum sets leaves all visible, and each write clears its own") {
-  // Verify the all-visible bit (../BTREE.md §4.1): vacuum sets it on a
+  // Verify the all-visible bit (../BTREEINDEX.md §8): vacuum sets it on a
   // leaf of settled entries, a cursor reports it, a set leaf is not
   // judged again, and an insert, a key found there, or a delete's
   // clear unsets only its own leaf.
@@ -1467,7 +1467,7 @@ TEST_CASE(
 TEST_CASE("tree: vacuum reads only the entries in doubt") {
   // Verify vacuum asks of an entry only while it is in doubt, clears
   // the mark once it is settled, and sets a leaf when no mark is left
-  // (../BTREE.md §7.1).
+  // (../BTREEINDEX.md §9).
   // 1. Fill a leaf of 10 entries, three of them in doubt.
   // 2. Prune, all settled: only those three are asked, the marks go,
   //    and the leaf is set.
@@ -1617,7 +1617,7 @@ TEST_CASE("tree: a split keeps all visible the half with no entry in doubt") {
 TEST_CASE("tree: a write marks its entry in doubt, once") {
   // Verify a writer sets an entry's in-doubt bit and clears its leaf's
   // flag in one write, and writes nothing when neither changes
-  // (../BTREE.md §7.1).
+  // (../BTREEINDEX.md §9).
   // 1. Fill a leaf with entries not in doubt; prune sets it all visible.
   // 2. Mark one: it alone is in doubt, the leaf unset, written once.
   // 3. Mark it again: no write.

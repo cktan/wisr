@@ -1,5 +1,5 @@
 /*
- * test_page.cc -- pages (../BTREE.md §2): keys of class 0x04, written
+ * test_page.cc -- pages (../BTREEINDEX.md §2): keys of class 0x04, written
  * outside every transaction and read through the buffer pool, apart
  * from every version of the store.
  */
@@ -118,7 +118,7 @@ TEST_CASE("page: written outside the transaction, read through the pool") {
 TEST_CASE("page: a session with no transaction reads rows and writes pages") {
   // Verify a session set for no transaction reads settled rows and
   // pins and writes pages, sees the watermark, and can do nothing else
-  // (../../BTREE.md §7.1).
+  // (../BTREEINDEX.md §9).
   // 1. Before it is set, each call fails with SM_ERR_NOTRANS.
   // 2. Set, it reads a row committed, gone, and in flight.
   // 3. It writes a page another session reads, and pins it exclusive.

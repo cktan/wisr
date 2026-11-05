@@ -1,6 +1,6 @@
 /*
  * test_stats.cc -- a table's statistics in the catalog
- * (SM3_DESIGN.md §6.6, §6.7): recorded in a transaction, published
+ * (../STATISTICS.md §9.6, §9.7): recorded in a transaction, published
  * at its commit, loaded on first use, and what DDL does to them.
  */
 
@@ -284,7 +284,7 @@ TEST_CASE("an aborted analyze leaves the old, and a held one is kept") {
 }
 
 TEST_CASE("what DDL does to statistics") {
-  // Verify the table of SM3_DESIGN.md §6.7.
+  // Verify the table of ../STATISTICS.md §9.7.
   // 1. Statistics of no column, of a column out of range, or whose
   //    values do not fit the type, are SM_ERR_INVALID; of a table
   //    that is not there, SM_ERR_NOTFOUND.

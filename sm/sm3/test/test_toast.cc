@@ -1,6 +1,6 @@
 /*
- * test_toast.cc -- TOAST through a table (SM3_DESIGN.md §3,
- * sm2/SM2_DESIGN.md §4.2): a row's long datums out of line once
+ * test_toast.cc -- TOAST through a table (../INDEXBUILD.md §2,
+ * ../TOAST.md §2): a row's long datums out of line once
  * the host reads pointers, and every index still made of values.
  */
 
@@ -364,7 +364,7 @@ TEST_CASE("an index of a column out of line is made of its value") {
 
 TEST_CASE("the cleaner fetches a tree's key out of line by settled reads") {
   // Verify tbl_clean_leaf reads a value out of line with no transaction,
-  // in a chained store, whose chunks are versioned (../BTREE.md §7.1).
+  // in a chained store, whose chunks are versioned (../BTREEINDEX.md §9).
   // 1. Make a tree on body, and insert a row with a body out of line.
   // 2. Clean its leaf: the entry is live, by the fetched value.
   // 3. Change the body: the old entry is dead, and goes.

@@ -2,7 +2,7 @@
  *
  * rowkey.h
  *	  A row's name in a table in sm, where PostgreSQL named it by its TID
- *	  (../../../../sm/ROWKEY.md section 1).
+ *	  (../sm/ROWSTORE.md section 2.1).
  *
  * A row is named by its key: the values of its table's primary key's
  * columns, in the key's order, or in a table without one its `_id` alone.

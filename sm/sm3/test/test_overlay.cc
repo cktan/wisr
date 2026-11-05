@@ -1,5 +1,5 @@
 /*
- * test_overlay.cc -- a session's overlay (CATALOG_INMEM.md §1): its
+ * test_overlay.cc -- a session's overlay (../CATALOG.md §4): its
  * transaction's DDL, seen by it alone until commit, undone by
  * rollback and abort.
  */

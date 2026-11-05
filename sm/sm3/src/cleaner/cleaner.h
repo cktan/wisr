@@ -1,6 +1,6 @@
 /*
  * cleaner.h -- the queue of btree leaves that need cleaning
- * (../../../BTREE.md §7.1). A hint: a leaf's in-doubt bits are in the
+ * (../BTREEINDEX.md §9). A hint: a leaf's in-doubt bits are in the
  * page, so a page lost here is queued again by its next reader or
  * writer. A catalog has one queue.
  */
@@ -135,7 +135,7 @@ constexpr size_t cleaner_busy_pages = 100;
 
 /*
  * The most pages the first worker's next pass cleans
- * (../../../BTREE.md §7.1), given the transactions begun since its last
+ * (../BTREEINDEX.md §9), given the transactions begun since its last
  * look, at most limit if the system is not busy.
  * 1. An empty queue: 0.
  * 2. Every slot waiting, and no transaction begun: 0. Opening a session

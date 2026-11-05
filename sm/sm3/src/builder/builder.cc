@@ -1,5 +1,5 @@
 /*
- * builder.cc -- the builder (SM3_DESIGN.md §3): one queue of
+ * builder.cc -- the builder (../INDEXBUILD.md §2): one queue of
  * pending indexes for the process, the workers that fill them a
  * batch at a time, and the wait for a build to end. It does not
  * look for work: it is given a table and an index, checks the
