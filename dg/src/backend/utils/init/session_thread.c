@@ -164,8 +164,9 @@ adopted_thread_t::~adopted_thread_t() {
 }
 
 /*
- * Make this thread, one digres did not start -- one of sm's index builders,
- * which runs digres's evaluator (smstore_index_eval()) -- able to run
+ * Make this thread, one digres did not start -- one of sm's index builders
+ * or btree cleaners, which runs digres's evaluator (smstore_index_eval()) --
+ * able to run
  * PostgreSQL's executor and read the compiled-in catalogs, with no session:
  * set up as session_thread_main() sets a session up, with the settings at
  * their defaults, the database's collation and the superuser, and freed as

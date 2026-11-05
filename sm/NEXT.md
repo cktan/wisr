@@ -411,10 +411,11 @@ and so are the catalog tables psql reads
    cleared, an `sm0::blist_t` (`sm0/include/sm0_blist.h`), with
    a 1-bit Bloom filter in front of it, so a leaf already
    listed is not appended again. VACUUM then reads only the
-   leaves on the list. `BTREE.md` §7.1, proposed 2026-11-05,
-   designs this as the cleaner's queue of pages, with a check
-   bit on each entry. Readers and writers queue a leaf not all
-   visible. What follows is the question as it first stood:
+   leaves on the list. `BTREE.md` §7.1, built 2026-11-05, does
+   this as the cleaner's queue of pages, with an in-doubt bit on
+   each entry. Readers and writers queue a leaf not all visible.
+   VACUUM still reads every leaf not set. What follows is the
+   question as it first stood:
    - a false positive of the filter leaves a cleared leaf off
      the list: when VACUUM reads it, if ever;
    - the list is in memory: after a restart, VACUUM reads every

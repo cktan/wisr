@@ -31,7 +31,8 @@ CXXFLAGS ?= $(OPTFLAGS)
 CXXFLAGS += -std=c++20 -fno-rtti -Wall -Wextra -Iinclude -Isrc/catalog \
             -Isrc/analyze -I$(SM2)/include -I$(SM1)/include \
             -I$(SM0)/include -I../include -MMD -MP
-LDLIBS   += -lrocksdb -licui18n -licuuc -licudata -lpthread
+ROCKSDB  ?= -lrocksdb
+LDLIBS   += $(ROCKSDB) -licui18n -licuuc -licudata -lpthread
 
 BUILD := build
 
@@ -50,14 +51,14 @@ TEST_SRCS := $(wildcard test/*.cc)
 TEST_OBJS := $(TEST_SRCS:test/%.cc=$(BUILD)/test/%.o)
 
 LIB      := $(BUILD)/libsm3.a
-SM0_LIB  := $(SM0)/build/libsm0.a
-SM1_LIB  := $(SM1)/build/libsm1.a
-SM2_LIB  := $(SM2)/build/libsm2.a
+SM0_LIB  := $(SM0)/$(BUILD)/libsm0.a
+SM1_LIB  := $(SM1)/$(BUILD)/libsm1.a
+SM2_LIB  := $(SM2)/$(BUILD)/libsm2.a
 TEST_BIN := $(BUILD)/test_sm3
 
 FORMAT_FILES := $(wildcard src/*/*.cc src/*/*.h test/*.cc test/*.h)
 
-.PHONY: all test format clean $(SM0_LIB) $(SM1_LIB) $(SM2_LIB)
+.PHONY: all test tsan format clean $(SM0_LIB) $(SM1_LIB) $(SM2_LIB)
 
 all: $(LIB) $(TEST_BIN)
 
@@ -69,13 +70,13 @@ $(LIB): $(LIB_OBJS)
 # The lower levels' Makefiles decide whether their libraries are
 # up to date.
 $(SM0_LIB):
-	$(MAKE) -C $(SM0) build/libsm0.a
+	$(MAKE) -C $(SM0) BUILD=$(BUILD) OPTFLAGS='$(OPTFLAGS)' $(BUILD)/libsm0.a
 
 $(SM1_LIB):
-	$(MAKE) -C $(SM1) build/libsm1.a
+	$(MAKE) -C $(SM1) BUILD=$(BUILD) OPTFLAGS='$(OPTFLAGS)' $(BUILD)/libsm1.a
 
 $(SM2_LIB):
-	$(MAKE) -C $(SM2) build/libsm2.a
+	$(MAKE) -C $(SM2) BUILD=$(BUILD) OPTFLAGS='$(OPTFLAGS)' $(BUILD)/libsm2.a
 
 $(TEST_BIN): $(TEST_OBJS) $(LIB) $(SM2_LIB) $(SM1_LIB) $(SM0_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(TEST_OBJS) $(LIB) $(SM2_LIB) $(SM1_LIB) \
@@ -93,7 +94,17 @@ $(BUILD)/test/%.o: test/%.cc $(FLAGS_FILE)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 test: all
-	$(TEST_BIN)
+	$(RUN) $(TEST_BIN) $(TEST_ARGS)
+
+# The cleaner's tests under the thread sanitizer, on a RocksDB built
+# with it, as sm2's tree tests are.
+TSAN_ROCKSDB := $(abspath ../../rocksdb/tsan/librocksdb.a) \
+    -lsnappy -llz4 -lzstd -lz -lbz2
+tsan:
+	../../dg/test/rocksdb.sh tsan
+	$(MAKE) BUILD=$(BUILD)/tsan OPTFLAGS="-O1 -g -fsanitize=thread" \
+	    ROCKSDB="$(TSAN_ROCKSDB)" RUN="setarch $$(uname -m) -R" \
+	    TEST_ARGS='-tc="cleaner*,tree: scans agree with the rows while*,tree: the cleaner*"' test
 
 format:
 	clang-format -i $(FORMAT_FILES)

@@ -762,6 +762,17 @@ tree's entries whose rows are settled without them go too
 (compact jobs)
 ```
 
+### `(cleaner-pass)`
+Runs one pass of the btree cleaner of the session's database, on
+this thread (`sm_cleaner_run`, `../BTREE.md` §7.1). A script gets
+no cleaner thread, so a tree's entries change only by this and by
+`(compact)`. A pass cleans the leaves that readers and writers
+queued, with no transaction of its own.
+
+```janet
+(cleaner-pass)
+```
+
 ### `(table-size table)`
 The bytes of the table's rows, in sorted files and in memtables,
 summed (`sm_tbl_size`): a chained table's older versions are

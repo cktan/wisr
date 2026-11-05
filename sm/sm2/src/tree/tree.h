@@ -35,6 +35,13 @@ namespace sm2::tree {
 static_assert(page_limit <= sm1::page_size);
 
 /*
+ * Told of a leaf not all visible, with no latch held, by whoever finds
+ * one, reader or writer (../BTREE.md §7.1). It does not fail.
+ */
+using leaf_note_fn = void (*)(void *ctx, uint64_t storeid, uint16_t relid,
+                              uint64_t pageid);
+
+/*
  * A tree, as a session opens it. It holds no page: a pin lasts as long
  * as a latch, inside one call.
  */
@@ -43,6 +50,9 @@ struct tree_t {
   uint64_t storeid = 0;
   uint16_t relid = 0;
   size_t limit = page_limit;
+  /* Told of a leaf that needs cleaning; none by default. */
+  leaf_note_fn note = nullptr;
+  void *note_ctx = nullptr;
   /* The sequence of page ids, looked up at the tree's first split. */
   sm1::seqref_t seq;
   bool has_seq = false;
@@ -62,8 +72,8 @@ int tree_create(tree_t &tree);
 int tree_drop(sm1::session_t *session, uint64_t storeid, uint16_t relid);
 
 /*
- * Insert key with value: 0; 1 if the tree has the key already, and
- * nothing but its leaf's all-visible bit is changed; -1 with
+ * Insert key with value: 0; 1 if the tree has the key already, its
+ * entry marked in doubt and nothing else changed; -1 with
  * SM_ERR_KEYTOOLONG if its entry, or the key's as an inner entry, with
  * a page id, is over entry_max of the tree's limit, or another error.
  * Either way the key's leaf is no longer all visible (page_all_visible):
@@ -92,13 +102,15 @@ int tree_insert_unique(
     const std::function<int(std::string_view, std::string_view)> &check);
 
 /*
- * Clear the all-visible bit of the leaf that covers key, under its
- * latch, writing the leaf only if the bit was set: 0, or -1. A delete's
- * at its old key, and an update's that changes a key, after the row's
- * write (../BTREE.md §4.1): the latch orders it against vacuum, which
- * judges a leaf latched before it sets the bit.
+ * Mark key's entry in doubt, and clear the all-visible bit of the leaf
+ * that covers key, under its latch, writing the leaf only if either
+ * changes: 0, or -1. An entry not there, a pending index's, leaves
+ * only the bit cleared. A delete's at its old key, and an update's that
+ * changes a key, after the row's write (../BTREE.md §7.1): the latch
+ * orders it against vacuum, which judges a leaf latched before it
+ * clears an entry's mark or sets the bit.
  */
-int tree_unset_visible(tree_t &tree, std::string_view key);
+int tree_mark_in_doubt(tree_t &tree, std::string_view key);
 
 /*
  * Remove key, if the tree has it and keep(key, value) says no, under
@@ -165,22 +177,20 @@ void cursor_rebound(cursor_t &cursor, const std::string *lo, bool lo_inclusive,
 void cursor_seek(cursor_t &cursor, const std::string &lo, bool inclusive);
 
 /*
- * Walk every leaf, left to right, and remove each entry dead says to:
- * dead(key, value) is 1 to remove it, 0 to keep it, 2 to keep it as
- * settled and live, -1 to stop with its error. For each leaf:
- * 1. Skip a leaf set all visible (page_all_visible) already: its
- *    entries are not asked of.
- * 2. Judge the leaf's entries with no latch.
- * 3. If every entry is dead or settled at this first judging, latch the
- *    leaf and judge it again whole. Remove the dead, and set the leaf
- *    all visible if each entry left is settled still: so a writer's
- *    row, written before its latch is taken, is seen (../BTREE.md
- *    §4.1).
- * 4. Else, if dead says to remove any, latch the leaf and judge those
- *    again. So dead reads what a writer wrote meanwhile: it may be
- *    called twice for an entry, and only that second answer removes it.
- * 5. Write the leaf once, if any went or step 3 set its bit
- *    (../BTREE.md §7).
+ * Walk every leaf, left to right, and judge its entries in doubt: dead
+ * (key, value) is 1 to remove an entry, 0 to keep it in doubt, 2 to
+ * keep it as settled and live, -1 to stop with its error. For each
+ * leaf (../BTREE.md §7.1):
+ * 1. Skip a leaf set all visible (page_all_visible) already.
+ * 2. Judge the leaf's entries in doubt with no latch. No other entry
+ *    is asked of.
+ * 3. If any is dead or settled, or none is in doubt, latch the leaf.
+ * 4. Judge those entries again. So dead reads what a writer wrote
+ *    meanwhile: it may be called twice for an entry, and only that
+ *    second answer counts.
+ * 5. Remove the dead, and clear the mark of the settled.
+ * 6. Set the leaf all visible if no entry is left in doubt.
+ * 7. Write the leaf once, if anything changed.
  *
  * A leaf that splits while it is judged keeps its right half's entries
  * until the next prune. removed counts the entries removed. Pages are
@@ -191,13 +201,26 @@ int tree_prune(
     const std::function<int(std::string_view, std::string_view)> &dead,
     size_t &removed);
 
+/*
+ * tree_prune of one page, by its id, from step 1 for a leaf: 0, doubt
+ * set if an entry is left in doubt; 1 if the page is no leaf; or -1.
+ * The cleaner's (../BTREE.md §7.1), whose queued page id may be stale:
+ * pages are never freed, so it names a page still. removed counts the
+ * entries removed.
+ */
+int tree_clean_leaf(
+    tree_t &tree, uint64_t pageid,
+    const std::function<int(std::string_view, std::string_view)> &dead,
+    size_t &removed, bool &doubt);
+
 /* The tree's height, from its root: for tests. */
 int tree_height(tree_t &tree, size_t &height);
 
 /*
  * Check the whole tree: every level's pages in order, linked, each key
  * under its page's high key and at or past its parent's entry, every
- * leaf at one depth. 0, or -1 with SM_ERR_CORRUPT: for tests.
+ * leaf at one depth, no entry in doubt on an all-visible leaf. 0, or
+ * -1 with SM_ERR_CORRUPT: for tests.
  */
 int tree_check(tree_t &tree);
 

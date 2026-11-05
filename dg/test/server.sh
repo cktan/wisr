@@ -365,6 +365,47 @@ local_psql -c 'vacuum no_such_table' 2>&1 |
   fail "vacuum of no such table"
 grep -qx 8 "$work/vacuum.out" || fail "statement after vacuum"
 
+# Verify that indexes stay right while the btree cleaner runs beside the
+# sessions, with no VACUUM (../sm/BTREE.md section 7.1). SQL cannot count a
+# tree's dead entries: sm/rel/test/test_tree.rel proves those go.
+# 1. Make a table with a btree index, one on an expression, and a partial
+#    one, whose entries the cleaner judges by digres's evaluator.
+# 2. Insert rows, move half to another state and back, and delete some.
+# 3. Wait out three of the cleaner's ticks.
+# 4. Index scans give what a sequential scan gives, in each index.
+local_psql > "$work/cleaner.out" 2>&1 <<'SQL'
+create table tclean (id int8 primary key, state text, owner text);
+create index tclean_state on tclean using btree (state);
+create index tclean_lower on tclean using btree (lower(owner));
+create index tclean_free on tclean using btree (id) where state = 'free';
+insert into tclean select i, 'free', 'Owner' || i % 10
+  from generate_series(1, 2000) i;
+update tclean set state = 'busy' where id % 2 = 0;
+update tclean set state = 'free' where id % 4 = 0;
+update tclean set owner = 'Moved' where id % 5 = 0;
+delete from tclean where id % 7 = 0;
+SQL
+grep -q "ERROR" "$work/cleaner.out" && fail "cleaner: the writes"
+sleep 3
+local_psql > "$work/cleaner2.out" 2>&1 <<'SQL'
+set enable_seqscan = off;
+set enable_bitmapscan = off;
+select 'state', count(*) from tclean where state = 'free';
+select 'lower', count(*) from tclean where lower(owner) = 'moved';
+select 'partial', count(*) from tclean where state = 'free' and id > 0;
+set enable_seqscan = on;
+set enable_indexscan = off;
+set enable_indexonlyscan = off;
+select 'state', count(*) from tclean where state = 'free';
+select 'lower', count(*) from tclean where lower(owner) = 'moved';
+select 'partial', count(*) from tclean where state = 'free' and id > 0;
+SQL
+grep -q "ERROR" "$work/cleaner2.out" && fail "cleaner: the reads"
+counts=$(grep -E '^(state|lower|partial)\|' "$work/cleaner2.out")
+[ "$(echo "$counts" | wc -l)" = 6 ] || fail "cleaner: six counts"
+[ "$(echo "$counts" | sort -u | wc -l)" = 3 ] ||
+  fail "cleaner: an index scan differs from a sequential scan"
+
 # Verify that CHECKPOINT succeeds and does nothing, since sm keeps what is
 # durable.
 # 1. Run CHECKPOINT, then a statement after it.

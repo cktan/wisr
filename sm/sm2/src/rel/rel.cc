@@ -1050,6 +1050,16 @@ int toast_fetch(rel_t *rel, std::string_view ptr, std::string &out) {
   return toast_read(rel->session, p, out);
 }
 
+/* Read the datum of a settled row's TOAST pointer; see sm2.h. */
+int toast_fetch_settled(rel_t *rel, std::string_view ptr, std::string &out) {
+  toast_ptr_t p;
+  if (!parse_toast_ptr(ptr, p) || p.storeid != rel->storeid) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "toast: not a TOAST pointer of this rel's store");
+  }
+  return toast_read_settled(rel->session, p, out);
+}
+
 /* Read the datum a TOAST pointer names, from its store; see sm2.h. */
 int toast_fetch(sm1::session_t *session, std::string_view ptr,
                 std::string &out) {

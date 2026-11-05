@@ -590,6 +590,33 @@ int check_entry(const tree_t &tree, std::string_view key,
   return 0;
 }
 
+/* Tell the tree's owner of leaf pageid, not all visible. */
+void note_leaf(const tree_t &tree, uint64_t pageid) {
+  if (nullptr != tree.note) {
+    tree.note(tree.note_ctx, tree.storeid, tree.relid, pageid);
+  }
+}
+
+/*
+ * Mark key's entry in doubt on the leaf l latches, if it is there, and
+ * clear the leaf's all-visible bit, writing the leaf only if either
+ * changes: 0, or -1.
+ */
+int mark_in_doubt(tree_t &tree, detail::latched_t &l, std::string_view key) {
+  const page_view_t &v = l.pin.view;
+  size_t i = v.lower_bound(key);
+  if (i < v.count() && v.key(i) != key) {
+    i = v.count();
+  }
+  std::vector<out_t> outs(1);
+  if (!page_mark_in_doubt(v, i, outs[0].bytes)) {
+    return 0;
+  }
+  outs[0].pageid = l.pageid;
+  outs[0].pin = l.pin.pin;
+  return write_pages(tree, outs);
+}
+
 /*
  * Insert key with value into the leaf l latches, which covers it,
  * splitting it if full: 0, 1 if the key is there already, or -1.
@@ -604,13 +631,8 @@ int insert_into(tree_t &tree, detail::latched_t &l, std::string_view key,
   }
   if (1 == rc) {
     // Found there, as an update A to B and back finds A's: the row has
-    // just changed, so its leaf is not all visible (../BTREE.md §4.1).
-    if (0 == (l.pin.view.flags() & page_all_visible)) {
-      return 1;
-    }
-    l.decode();
-    l.page.flags &= static_cast<uint8_t>(~page_all_visible);
-    return 0 == detail::write_back(tree, l) ? 1 : -1;
+    // just changed, so a vacuum must read it again (../BTREE.md §7.1).
+    return 0 == mark_in_doubt(tree, l, key) ? 1 : -1;
   }
   if (0 == rc) {
     outs[0].pageid = l.pageid;
@@ -632,6 +654,18 @@ int insert_into(tree_t &tree, detail::latched_t &l, std::string_view key,
   return post(tree, l.pageid, l.page, l.pin, sep, rightid);
 }
 
+/* Insert into the leaf l latches, let it go, and note it: as insert_into. */
+int insert_and_note(tree_t &tree, detail::latched_t &l, std::string_view key,
+                    std::string_view value) {
+  int rc = insert_into(tree, l, key, value);
+  // Noted with no latch held: the note may wait on the queue's mutex.
+  l.pin.release();
+  if (rc >= 0) {
+    note_leaf(tree, l.pageid);
+  }
+  return rc;
+}
+
 /* Whether key begins with prefix. */
 bool begins(std::string_view key, std::string_view prefix) {
   return key.size() >= prefix.size() &&
@@ -649,11 +683,11 @@ int tree_insert(tree_t &tree, std::string_view key, std::string_view value) {
   if (0 != detail::latch_leaf(tree, key, l)) {
     return -1;
   }
-  return insert_into(tree, l, key, value);
+  return insert_and_note(tree, l, key, value);
 }
 
-/* Clear the all-visible bit of key's leaf; see tree.h. */
-int tree_unset_visible(tree_t &tree, std::string_view key) {
+/* Mark key's entry in doubt; see tree.h. */
+int tree_mark_in_doubt(tree_t &tree, std::string_view key) {
   detail::latched_t l;
   // Latched even to read the bit: a vacuum judging the leaf holds the
   // latch from its first row read to its write, so this writer, whose
@@ -662,12 +696,13 @@ int tree_unset_visible(tree_t &tree, std::string_view key) {
   if (0 != detail::latch_leaf(tree, key, l)) {
     return -1;
   }
-  if (0 == (l.pin.view.flags() & page_all_visible)) {
-    return 0;
+  int rc = mark_in_doubt(tree, l, key);
+  // Noted with no latch held: the note may wait on the queue's mutex.
+  l.pin.release();
+  if (0 == rc) {
+    note_leaf(tree, l.pageid);
   }
-  l.decode();
-  l.page.flags &= static_cast<uint8_t>(~page_all_visible);
-  return detail::write_back(tree, l);
+  return rc;
 }
 
 /* Insert a key unless an entry of its prefix conflicts; see tree.h. */
@@ -737,10 +772,9 @@ int tree_insert_unique(
     p.release();
     // The key goes on the first leaf, or on one to its right, latched
     // left to right, the first still held; a key there already is
-    // found there by insert_into, which clears its leaf's all-visible
-    // bit.
+    // found there by insert_into, which marks it in doubt.
     if (!fv.has_high() || key < fv.high()) {
-      return insert_into(tree, first, key, value);
+      return insert_and_note(tree, first, key, value);
     }
     detail::latched_t cur;
     cur.pageid = fv.next();
@@ -769,7 +803,7 @@ int tree_insert_unique(
     if (restart) {
       continue;
     }
-    return insert_into(tree, cur, key, value);
+    return insert_and_note(tree, cur, key, value);
   }
 }
 
@@ -905,6 +939,9 @@ int cursor_next(cursor_t &cursor, std::string_view &key,
     if (0 != fill(cursor)) {
       return -1;
     }
+    if (!cursor.visible) {
+      note_leaf(*cursor.tree, cursor.leaf);
+    }
     if (cursor.at == cursor.end) {
       return 1;
     }
@@ -935,19 +972,31 @@ int cursor_next(cursor_t &cursor, std::string_view &key,
 namespace {
 
 /*
- * Remove from leaf pageid each entry of gone, sorted, that dead says
- * again is dead, the leaf latched: an insert that found its entry there
- * changed nothing and moved no version, but it wrote its row first, so
- * only asking again sees it. next takes the leaf's next link. 0; 1 if
- * pageid is page 0, a leaf no longer; or -1.
+ * Clean leaf pageid by the judging of judged, sorted, the entries in
+ * doubt that a first judging, with no latch, found dead or settled: 0;
+ * 1 if pageid is page 0, a leaf no longer; or -1. next takes the leaf's
+ * next link, and doubt whether an entry is left in doubt.
+ * 1. Latch the leaf. The latch is held from the first row read to the
+ *    write.
+ * 2. Judge again each entry of judged still in doubt. Only this answer
+ *    counts: an insert that found its entry there moved no version, but
+ *    it wrote its row first, so only asking again sees it.
+ * 3. Remove each dead entry, and clear the mark of each settled and
+ *    live. Any other in doubt keeps its mark.
+ * 4. Set the leaf all visible if no entry is left in doubt.
+ * 5. Write the leaf once, if anything changed.
+ * A writer whose row changed takes this latch to mark its entry, so it
+ * either waits for the write and marks what this cleared, or wrote its
+ * row before the judging, which then finds it unsettled (../BTREE.md
+ * §7.1).
  */
-int prune_leaf(
-    tree_t &tree, uint64_t pageid, const std::vector<std::string> &gone,
+int clean_leaf(
+    tree_t &tree, uint64_t pageid, const std::vector<std::string> &judged,
     const std::function<int(std::string_view, std::string_view)> &dead,
-    size_t &removed, uint64_t &next) {
+    size_t &removed, uint64_t &next, bool &doubt) {
   detail::latched_t l;
   l.pageid = pageid;
-  // The leaf's writers wait while what is to go is judged again.
+  // The leaf's readers and writers wait while it is judged again.
   if (0 != pin_ex(tree, pageid, false, l.pin) || 0 != l.pin.view.check()) {
     return -1;
   }
@@ -958,25 +1007,40 @@ int prune_leaf(
   next = l.page.next;
   auto &entries = l.page.entries;
   size_t kept = 0;
+  bool cleared = false;
+  doubt = false;
   for (size_t i = 0; i < entries.size(); i++) {
-    int d = 0;
-    if (std::binary_search(gone.begin(), gone.end(), entries[i].first)) {
-      d = dead(entries[i].first, entries[i].second);
-    }
-    if (d < 0) {
-      return -1;
-    }
-    // Kept unless dead: 0 or 2, settled or not.
-    if (1 != d) {
-      if (kept != i) {
-        entries[kept] = std::move(entries[i]);
+    auto &[key, value] = entries[i];
+    if (entry_in_doubt(value)) {
+      int d = 0;
+      if (std::binary_search(judged.begin(), judged.end(), key)) {
+        d = dead(key, value);
       }
-      kept++;
+      if (d < 0) {
+        return -1;
+      }
+      if (1 == d) {
+        continue;
+      }
+      if (2 == d) {
+        value[0] = static_cast<char>(value[0] & ~entry_indoubt);
+        cleared = true;
+      } else {
+        doubt = true;
+      }
     }
+    if (kept != i) {
+      entries[kept] = std::move(entries[i]);
+    }
+    kept++;
   }
   size_t went = entries.size() - kept;
   entries.resize(kept);
-  if (0 != went) {
+  bool set = !doubt && 0 == (l.page.flags & page_all_visible);
+  if (set) {
+    l.page.flags |= page_all_visible;
+  }
+  if (0 != went || cleared || set) {
     if (0 != detail::write_back(tree, l)) {
       return -1;
     }
@@ -986,63 +1050,55 @@ int prune_leaf(
 }
 
 /*
- * Judge every entry of leaf pageid again: 0; 1 if pageid is page 0, a
- * leaf no longer; or -1. next takes the leaf's next link.
- * 1. Latch the leaf. The latch is held from the first row read to the
- *    write.
- * 2. Remove the entries dead says are dead.
- * 3. Set the leaf all visible if every one left is settled (2).
- * 4. Write the leaf if an entry went, or if step 3 set the bit.
- * A writer whose row changed takes this latch before it clears the
- * bit, so it either waits for the write and clears what it set, or
- * wrote its row before the judging, which then finds it unsettled
- * (../BTREE.md §4.1).
+ * Clean page pageid: judge its entries in doubt with no latch, and
+ * clean_leaf it if that may change it. 0; 1 if it is no leaf; or -1.
+ * next takes its next link, and doubt whether an entry is left in
+ * doubt.
  */
-int settle_leaf(
+int clean_page(
     tree_t &tree, uint64_t pageid,
     const std::function<int(std::string_view, std::string_view)> &dead,
-    size_t &removed, uint64_t &next) {
-  detail::latched_t l;
-  l.pageid = pageid;
-  // The leaf's readers and writers wait while it is judged whole.
-  if (0 != pin_ex(tree, pageid, false, l.pin) || 0 != l.pin.view.check()) {
-    return -1;
+    size_t &removed, uint64_t &next, bool &doubt) {
+  page_t copy;
+  {
+    pinned_t p;
+    if (0 != read_page(tree, pageid, false, p) || 0 != p.view.check()) {
+      return -1;
+    }
+    if (0 != p.view.level()) {
+      return 1;
+    }
+    p.view.load(copy);
   }
-  if (0 != l.pin.view.level()) {
-    return 1;
+  next = copy.next;
+  doubt = false;
+  // A leaf all visible has no entry in doubt: every write since the
+  // bit was set would have cleared it.
+  if (0 != (copy.flags & page_all_visible)) {
+    return 0;
   }
-  l.decode();
-  next = l.page.next;
-  auto &entries = l.page.entries;
-  size_t kept = 0;
-  bool settled = true;
-  for (size_t i = 0; i < entries.size(); i++) {
-    int d = dead(entries[i].first, entries[i].second);
+  // Rows are read with no latch held, so a leaf's readers and writers
+  // wait only for what is to change.
+  std::vector<std::string> judged;
+  for (const auto &[key, value] : copy.entries) {
+    if (!entry_in_doubt(value)) {
+      continue;
+    }
+    doubt = true;
+    int d = dead(key, value);
     if (d < 0) {
       return -1;
     }
-    if (1 == d) {
-      continue;
+    if (0 != d) {
+      judged.push_back(key);
     }
-    settled = settled && 2 == d;
-    if (kept != i) {
-      entries[kept] = std::move(entries[i]);
-    }
-    kept++;
   }
-  size_t went = entries.size() - kept;
-  entries.resize(kept);
-  bool set = settled && 0 == (l.page.flags & page_all_visible);
-  if (set) {
-    l.page.flags |= page_all_visible;
+  // Latched only if something may change: an entry to go or to clear,
+  // or no entry in doubt, so the leaf can be set.
+  if (doubt && judged.empty()) {
+    return 0;
   }
-  if (0 != went || set) {
-    if (0 != detail::write_back(tree, l)) {
-      return -1;
-    }
-    removed += went;
-  }
-  return 0;
+  return clean_leaf(tree, pageid, judged, dead, removed, next, doubt);
 }
 
 } // namespace
@@ -1058,46 +1114,9 @@ int tree_prune(
     return -1;
   }
   for (;;) {
-    page_t copy;
-    bool leaf = false;
-    {
-      pinned_t p;
-      if (0 != read_page(tree, pageid, false, p) || 0 != p.view.check()) {
-        return -1;
-      }
-      leaf = 0 == p.view.level();
-      if (leaf) {
-        p.view.load(copy);
-      }
-    }
-    // Rows are read with no latch held, so a clean leaf's readers and
-    // writers never wait on a vacuum.
-    int rc = leaf ? 0 : 1;
-    uint64_t next = copy.next;
-    // A leaf all visible holds no dead entry: every write since the
-    // bit was set would have cleared it.
-    if (leaf && 0 == (copy.flags & page_all_visible)) {
-      std::vector<std::string> gone;
-      bool settled = true;
-      for (const auto &[key, value] : copy.entries) {
-        int d = dead(key, value);
-        if (d < 0) {
-          return -1;
-        }
-        if (1 == d) {
-          gone.push_back(key);
-        } else {
-          settled = settled && 2 == d;
-        }
-      }
-      // Only a leaf that may be set is judged whole under its latch:
-      // the others' readers and writers do not wait on its rows.
-      if (settled) {
-        rc = settle_leaf(tree, pageid, dead, removed, next);
-      } else if (!gone.empty()) {
-        rc = prune_leaf(tree, pageid, gone, dead, removed, next);
-      }
-    }
+    uint64_t next = 0;
+    bool doubt = false;
+    int rc = clean_page(tree, pageid, dead, removed, next, doubt);
     if (rc < 0) {
       return -1;
     }
@@ -1113,6 +1132,16 @@ int tree_prune(
       return 0;
     }
   }
+}
+
+/* Clean one leaf; see tree.h. */
+int tree_clean_leaf(
+    tree_t &tree, uint64_t pageid,
+    const std::function<int(std::string_view, std::string_view)> &dead,
+    size_t &removed, bool &doubt) {
+  removed = 0;
+  uint64_t next = 0;
+  return clean_page(tree, pageid, dead, removed, next, doubt);
 }
 
 /* The tree's height; see tree.h. */
@@ -1164,6 +1193,11 @@ int tree_check(tree_t &tree) {
       for (size_t i = 0; i < v.count(); i++) {
         if (i > 0 && !(v.key(i - 1) < v.key(i))) {
           return corrupt("keys out of order on page " + std::to_string(pageid));
+        }
+        if (0 == level && 0 != (v.flags() & page_all_visible) &&
+            entry_in_doubt(v.value(i))) {
+          return corrupt("an entry in doubt on all-visible page " +
+                         std::to_string(pageid));
         }
         if (v.key(i) < low || (v.has_high() && v.key(i) >= v.high())) {
           return corrupt("a key out of its page's range on page " +

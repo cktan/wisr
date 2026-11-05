@@ -304,7 +304,7 @@ or without a pool. On WSL, 5.6 times is not yet accounted for.
 
 Four functions latch a page and then read it, in one call each,
 `pin_ex()` in `sm2/src/tree/tree.cc`: `latch_covering()`,
-`write_split()`, `tree_insert_unique()`'s walk, `prune_leaf()`.
+`write_split()`, `tree_insert_unique()`'s walk, `clean_leaf()`.
 With a pin that is a latch, a second pin would deadlock with the
 first, so step 7 makes `pin_ex()` one EX pin. The latch
 order stays: child before parent, left before right. A

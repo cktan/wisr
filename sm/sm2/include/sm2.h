@@ -870,6 +870,12 @@ void rel_forget(rel_t* rel);
 int toast_fetch(rel_t* rel, std::string_view ptr, std::string& out);
 
 /*
+ * toast_fetch of a pointer in a settled row, with no transaction: the
+ * cleaner's (../BTREE.md §7.1).
+ */
+int toast_fetch_settled(rel_t* rel, std::string_view ptr, std::string& out);
+
+/*
  * Read the datum the TOAST pointer ptr names as the rel overload
  * does, with no rel: the pointer names its store, and a store's
  * datums out of line are under its TOAST relid, 0xFFFF, whatever
@@ -1111,14 +1117,33 @@ bool idx_is_tree(const index_t* index);
  * it, 2 to keep it as settled and live -- its row's newest version
  * committed at or below the GC watermark with the entry's key -- or -1
  * to stop with its error. It is asked under the entry's leaf's latch,
- * which an insert of the entry waits for. A leaf whose every entry is
- * dead or settled, none of them cut, is set all visible (§4.1), and
- * skipped by the next. removed counts them; an index not a tree has
- * none.
+ * which an insert of the entry waits for. Only an entry in doubt is
+ * asked of (§7.1). A leaf left with none in doubt is set all visible,
+ * and skipped by the next. removed counts them; an index not a tree
+ * has none.
  */
 int idx_vacuum(index_t* index,
                const std::function<int(std::string_view, std::string_view)>& dead,
                size_t& removed);
+
+/*
+ * Told of a tree's leaf not all visible, with no latch held, by the
+ * reader or writer that finds it (../BTREE.md §7.1). It does not fail.
+ */
+using leaf_note_fn = void (*)(void* ctx, uint64_t storeid, uint16_t relid,
+                              uint64_t pageid);
+
+/* Give index's tree fn to call, with ctx, for such a leaf. */
+void idx_set_leaf_note(index_t* index, leaf_note_fn fn, void* ctx);
+
+/*
+ * idx_vacuum of one leaf of a tree, page pageid: 0, doubt set if an
+ * entry is left in doubt; 1 if the page is no longer a leaf; or -1.
+ * The cleaner's (../BTREE.md §7.1). removed counts the entries gone.
+ */
+int idx_clean_leaf(index_t* index, uint64_t pageid,
+                   const std::function<int(std::string_view, std::string_view)>& dead,
+                   size_t& removed, bool& doubt);
 
 /*
  * The key the entry of the row with key row, whose index key

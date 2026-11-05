@@ -1239,6 +1239,11 @@ int xct_check_readonly(sm1::session_t *s) {
   return 0;
 }
 
+/* xct_check_active, unless s works with no transaction; see session.h. */
+int xct_check_cleaner(sm1::session_t *s) {
+  return nullptr != s && s->no_transaction ? 0 : xct_check_active(s);
+}
+
 /* NOTRANS unless a transaction is active. */
 int xct_check_active(sm1::session_t *s) {
   // Reject a NULL session.

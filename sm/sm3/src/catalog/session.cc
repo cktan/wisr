@@ -381,6 +381,7 @@ int begin(session_t *s, sm1::xctlevel_t level, bool read_only) {
   if (sm1::begin(s->sm1, level, read_only) != 0) {
     return -1;
   }
+  s->cat->begins.fetch_add(1, std::memory_order_relaxed);
   drop_from(s, 0);
   if (s->has_doomed.load()) {
     drop_doomed(s);

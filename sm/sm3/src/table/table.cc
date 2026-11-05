@@ -40,6 +40,7 @@ struct sm3::table_t {
   bool writable;                          /* the lock covers intent_exclusive */
   bool exclusive;                         /* the lock is exclusive */
   bool fresh;                             /* made by this transaction */
+  bool settled = false; /* the cleaner's: no transaction, no lock */
   sm2::rel_t *rel = nullptr;
   std::vector<sm2::index_t *> indexes; /* one per def->indexes, in order */
   /*
@@ -443,7 +444,9 @@ int fetch_cols(sm3::table_t *t, image_t &row,
       continue;
     }
     std::string value;
-    if (sm2::toast_fetch(t->rel, pointer_of(row.row(), att), value) != 0) {
+    std::string_view ptr = pointer_of(row.row(), att);
+    if ((t->settled ? sm2::toast_fetch_settled(t->rel, ptr, value)
+                    : sm2::toast_fetch(t->rel, ptr, value)) != 0) {
       return -1;
     }
     row.own.push_back(sm2::make_varlena(value));
@@ -503,6 +506,12 @@ int open_rels(table_t *table) {
                                           x.unique, *x.layout, pk != nullptr,
                                           ix, x.tree)) != 0) {
       return -1;
+    }
+    // A leaf that needs cleaning is queued by whoever finds it. A
+    // temporary table's cannot be: the cleaner cannot read its rows.
+    cleaner_t *cleaner = table->session->cat->cleaner.get();
+    if (nullptr != cleaner && x.tree && nsp_temp != def.nspoid) {
+      sm2::idx_set_leaf_note(ix, cleaner_note, cleaner);
     }
     table->indexes.push_back(ix);
   }
@@ -2238,6 +2247,69 @@ int tbl_probes(table_t *table, uint64_t &n) {
   return sm1::probes(table->session->sm1, table->def->storeid, n);
 }
 
+/*
+ * Judge index i's tree entry key by its row: 1 dead, the row settled
+ * and gone or of another key; 2 settled and live; 0 not settled; or
+ * -1 (../BTREE.md §7).
+ */
+static int judge_entry(table_t *table, size_t i, sm1::rawpin_t *pin,
+                       std::string_view row, std::string_view key) {
+  std::string_view tuple;
+  int r = sm2::rel_read_settled(table->rel, row, pin, tuple);
+  if (r != 0) {
+    return r < 0 ? -1 : r == 1 ? 1 : 0;
+  }
+  std::string k;
+  r = still_has(table, i, tuple, row, key, k);
+  return r < 0 ? -1 : r == 0 ? 1 : 2;
+}
+
+/*
+ * Clean a leaf with no transaction and no lock; see sm3.h.
+ * 1. Make the table's rel and indexes from def, which reads nothing.
+ * 2. Find the index by its relid. Gone, there is nothing to clean.
+ * 3. Clean the leaf. After each row is read, compare the catalog's
+ *    publishes with those noted before def was fetched. If they moved,
+ *    def may be stale for that row, so leave its entry in doubt. A
+ *    commit publishes before any later commit, so a row written under
+ *    a newer definition is read only after the count moved.
+ */
+int tbl_clean_leaf(session_t *session, std::shared_ptr<const table_def_t> def,
+                   uint64_t publishes, uint16_t relid, uint64_t pageid,
+                   bool &doubt) {
+  std::unique_ptr<table_t, void (*)(table_t *)> t(new table_t, tbl_close);
+  t->session = session;
+  t->def = std::move(def);
+  t->writable = false;
+  t->exclusive = false;
+  t->fresh = false;
+  t->settled = true;
+  load_states(t.get());
+  if (open_rels(t.get()) != 0) {
+    return -1;
+  }
+  const table_def_t &d = *t->def;
+  size_t i = 0;
+  while (i < d.indexes.size() &&
+         (d.indexes[i].relid != relid || !d.indexes[i].tree)) {
+    i++;
+  }
+  if (i == d.indexes.size()) {
+    return 1;
+  }
+  pin_t *p = pin_take(session);
+  defer { pin_put(p); };
+  size_t removed = 0;
+  return sm2::idx_clean_leaf(
+      t->indexes[i], pageid,
+      [&](std::string_view row, std::string_view key) {
+        int r = judge_entry(t.get(), i, p->raw, row, key);
+        sm1::unpin(p->raw);
+        return r > 0 && cat_publishes(session) != publishes ? 0 : r;
+      },
+      removed, doubt);
+}
+
 /* Compact the table's store into one sorted run. */
 int tbl_compact(table_t *table) {
   if (sm1::compact(table->session->sm1, table->def->storeid) != 0) {
@@ -2245,8 +2317,8 @@ int tbl_compact(table_t *table) {
   }
   // Each tree's dead entries go: an entry whose row, settled, is gone
   // or has another key (../BTREE.md §7). One whose row a snapshot may
-  // still see otherwise stays, for a later vacuum. A leaf whose every
-  // entry left is settled is set all visible (§4.1).
+  // still see otherwise stays, for a later vacuum. Only an entry in
+  // doubt is read, and a leaf with none left is set all visible (§7.1).
   const table_def_t &def = *table->def;
   for (size_t i = 0; i < def.indexes.size(); i++) {
     if (!def.indexes[i].tree) {
@@ -2257,16 +2329,7 @@ int tbl_compact(table_t *table) {
     int rc = sm2::idx_vacuum(
         table->indexes[i],
         [&](std::string_view row, std::string_view key) {
-          std::string_view tuple;
-          int r = sm2::rel_read_settled(table->rel, row, p->raw, tuple);
-          if (r != 0) {
-            return r < 0 ? -1 : r == 1 ? 1 : 0;
-          }
-          std::string k;
-          r = still_has(table, i, tuple, row, key, k);
-          // Settled, and still the row's: one the leaf may be set all
-          // visible for (../BTREE.md §4.1).
-          return r < 0 ? -1 : r == 0 ? 1 : 2;
+          return judge_entry(table, i, p->raw, row, key);
         },
         removed);
     sm1::unpin(p->raw);

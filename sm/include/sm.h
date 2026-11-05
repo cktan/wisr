@@ -1234,6 +1234,16 @@ int sm_set_index_evaluator(sm_env_t* env, sm_index_eval_fn fn, void* ctx);
  */
 int sm_set_toast(sm_env_t* env, int on);
 
+/*
+ * The btree cleaner's threads a database gets, 4 by default: once,
+ * before any database is opened (../BTREE.md §7.1). 0 runs none: for a
+ * test, which runs a pass itself by sm_cleaner_run.
+ */
+int sm_set_cleaner_workers(sm_env_t* env, int workers);
+
+/* One pass of dbname's btree cleaner, on this thread: for tests. */
+int sm_cleaner_run(sm_env_t* env, const char* dbname);
+
 /* Whether val, a non-null variable-width value, is a TOAST pointer. */
 static inline bool sm_datum_is_toast(sm_datum_t val) {
     return *(const char*)val == 1;

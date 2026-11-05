@@ -122,4 +122,35 @@ int toast_read(sm1::session_t *session, const toast_ptr_t &p,
   return 0;
 }
 
+/* Read a settled row's datum from its chunks; see toast.h. */
+int toast_read_settled(sm1::session_t *session, const toast_ptr_t &p,
+                       std::string &out) {
+  sm1::rawpin_t *pin = sm1::rawpin_new();
+  defer { sm1::rawpin_free(pin); };
+  std::string data;
+  data.reserve(p.len);
+  for (uint32_t seq = 0; seq < chunk_count(p.len); seq++) {
+    std::string_view chunk;
+    int rc = sm1::read_settled_versioned(session, p.storeid,
+                                         chunk_key(p.id, seq), pin, chunk);
+    if (rc < 0) {
+      return -1;
+    }
+    if (0 != rc) {
+      return sm1::seterr(sm1::SM_ERR_CORRUPT,
+                         "toast: a settled row's chunk of datum " +
+                             std::to_string(p.id) + " is not settled");
+    }
+    data += chunk;
+  }
+  if (data.size() != p.len) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT,
+                       "toast: datum " + std::to_string(p.id) + " is " +
+                           std::to_string(data.size()) + " bytes, not " +
+                           std::to_string(p.len));
+  }
+  out = std::move(data);
+  return 0;
+}
+
 } // namespace sm2

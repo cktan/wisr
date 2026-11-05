@@ -362,6 +362,60 @@ TEST_CASE("an index of a column out of line is made of its value") {
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
+TEST_CASE("the cleaner fetches a tree's key out of line by settled reads") {
+  // Verify tbl_clean_leaf reads a value out of line with no transaction,
+  // in a chained store, whose chunks are versioned (../BTREE.md §7.1).
+  // 1. Make a tree on body, and insert a row with a body out of line.
+  // 2. Clean its leaf: the entry is live, by the fetched value.
+  // 3. Change the body: the old entry is dead, and goes.
+  docs_t f;
+  std::vector<sm3::index_key_spec_t> by_body = {
+      {2, false, false, std::nullopt}};
+  uint64_t tree = 0;
+  start(f.a);
+  REQUIRE_MESSAGE(sm3::create_index(f.a, f.docs, "docs_body", by_body, {},
+                                    false, tree, false, false, true) == 0,
+                  sm1::errmsg());
+  REQUIRE(sm3::commit(f.a) == 0);
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  std::string one = text_of(5000, "one"), two = text_of(5000, "two");
+  row_t r(1, "t", one);
+  uint64_t id = put(t, r);
+  REQUIRE(sm2::varlena_is_toast(held(t, id, 2)));
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  sm1::session_t *cs = f.open();
+  sm1::set_no_transaction(cs);
+  sm3::session_t *c = nullptr;
+  REQUIRE(sm3::session_open(f.cat, cs, c) == 0);
+  auto def = sm3::cat_get_table(f.cat, f.docs);
+  uint16_t relid = 0;
+  for (const auto &x : def->indexes) {
+    relid = x.oid == tree ? x.relid : relid;
+  }
+  REQUIRE(0 != relid);
+  uint64_t pubs = sm3::cat_publishes(c);
+  bool doubt = true;
+  REQUIRE_MESSAGE(sm3::tbl_clean_leaf(c, def, pubs, relid, 0, doubt) == 0,
+                  sm1::errmsg());
+  CHECK_FALSE(doubt);
+
+  start(f.a);
+  t = f.write(f.a);
+  row_t changed(1, "t", two);
+  REQUIRE(sm3::tbl_update(t, id, changed.d(), changed.null()) == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  doubt = true;
+  REQUIRE_MESSAGE(sm3::tbl_clean_leaf(c, def, pubs, relid, 0, doubt) == 0,
+                  sm1::errmsg());
+  CHECK_FALSE(doubt);
+  sm3::session_close(c);
+  REQUIRE(sm1::closedb(cs) == 0);
+}
+
 TEST_CASE("an index built after its rows reads their values out of line") {
   // Verify the backfill fetches what the index is made of.
   // 1. Three rows with long titles are committed, then an index on

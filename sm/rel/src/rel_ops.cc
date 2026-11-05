@@ -2236,6 +2236,21 @@ static Janet cfun_compact(int32_t argc, Janet *argv) {
 }
 
 /*
+ * (cleaner-pass): one pass of the btree cleaner of the session's
+ * database (sm_cleaner_run), on this thread. A script gets no cleaner
+ * thread.
+ */
+static Janet cfun_cleaner_pass(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 0);
+  (void)argv;
+  session_ctx_t *s = require_session();
+  if (sm_cleaner_run(get_catalog().env(), s->db_name.c_str()) != 0) {
+    panic_sm_error("cleaner-pass sm_cleaner_run");
+  }
+  return janet_wrap_nil();
+}
+
+/*
  * (table-size table): the bytes of the table's rows, older versions
  * included, in sorted files and in memtables, summed (sm_tbl_size).
  */
@@ -3197,6 +3212,7 @@ static const JanetReg s_rel_cfuns[] = {
     {"_lock-row", cfun_lock_row, "internal"},
     {"_truncate", cfun_truncate, "internal"},
     {"_compact", cfun_compact, "internal"},
+    {"cleaner-pass", cfun_cleaner_pass, "one pass of the btree cleaner"},
     {"_load", cfun_load, "internal"},
     {"_table-size", cfun_table_size, "internal"},
     {"_analyze", cfun_analyze, "internal"},

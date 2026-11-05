@@ -166,13 +166,15 @@ int entry_key(const sm2::index_t *ix, std::span<const sm2::datum_t> key,
 }
 
 /*
- * A tree's entry value (../BTREE.md §3): the cut flag, then the
- * columns' length, two bytes little-endian, which tells the row's
- * key, at the entry key's end, from them.
+ * A new tree entry's value (../BTREE.md §3): its flags, in doubt as
+ * no vacuum has read its row (§7.1), then the columns' length, two
+ * bytes little-endian, which tells the row's key, at the entry key's
+ * end, from them.
  */
 std::string tree_value(bool cut, size_t cols_len) {
   std::string v;
-  v.push_back(cut ? 1 : 0);
+  v.push_back(static_cast<char>(sm2::tree::entry_indoubt |
+                                (cut ? sm2::tree::entry_cut : 0)));
   v.push_back(static_cast<char>(cols_len & 0xFF));
   v.push_back(static_cast<char>(cols_len >> 8));
   return v;
@@ -333,6 +335,25 @@ int idx_drop_tree(sm1::session_t *session, uint64_t storeid, uint16_t relid) {
   return tree::tree_drop(session, storeid, relid);
 }
 
+/*
+ * dead of the tree entry key, value: its row's key taken from it. A
+ * cut entry is judged as any other: a scan rechecks it on its row on
+ * any leaf (../BTREE.md §7.1).
+ */
+static int
+judge_entry(const std::function<int(std::string_view, std::string_view)> &dead,
+            std::string_view key, std::string_view value) {
+  if (3 != value.size()) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT, "index: a tree entry's value");
+  }
+  size_t cols_len = static_cast<uint8_t>(value[1]) |
+                    static_cast<size_t>(static_cast<uint8_t>(value[2])) << 8;
+  if (relid_len + cols_len > key.size()) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT, "index: a tree entry's key");
+  }
+  return dead(key.substr(relid_len + cols_len), key);
+}
+
 /* Remove a tree's dead entries; see sm2.h. */
 int idx_vacuum(
     index_t *index,
@@ -345,22 +366,28 @@ int idx_vacuum(
   return tree::tree_prune(
       index->pages,
       [&](std::string_view key, std::string_view value) {
-        if (3 != value.size()) {
-          return sm1::seterr(sm1::SM_ERR_CORRUPT,
-                             "index: a tree entry's value");
-        }
-        size_t cols_len = static_cast<uint8_t>(value[1]) |
-                          static_cast<size_t>(static_cast<uint8_t>(value[2]))
-                              << 8;
-        if (relid_len + cols_len > key.size()) {
-          return sm1::seterr(sm1::SM_ERR_CORRUPT, "index: a tree entry's key");
-        }
-        int d = dead(key.substr(relid_len + cols_len), key);
-        // A cut key is rechecked on its row by every scan: its leaf is
-        // never all visible (../BTREE.md §4.1).
-        return 2 == d && 0 != value[0] ? 0 : d;
+        return judge_entry(dead, key, value);
       },
       removed);
+}
+
+/* Give a tree its leaf note; see sm2.h. */
+void idx_set_leaf_note(index_t *index, leaf_note_fn fn, void *ctx) {
+  index->pages.note = fn;
+  index->pages.note_ctx = ctx;
+}
+
+/* Clean one leaf of a tree; see sm2.h. */
+int idx_clean_leaf(
+    index_t *index, uint64_t pageid,
+    const std::function<int(std::string_view, std::string_view)> &dead,
+    size_t &removed, bool &doubt) {
+  return tree::tree_clean_leaf(
+      index->pages, pageid,
+      [&](std::string_view key, std::string_view value) {
+        return judge_entry(dead, key, value);
+      },
+      removed, doubt);
 }
 
 /* Whether an index is a tree; see sm2.h. */
@@ -701,12 +728,13 @@ int idx_delete(index_t *index, std::span<const datum_t> key,
     return -1;
   }
   // A tree's entry stays: its row, without the key now, makes it
-  // dead, and vacuum removes it (../BTREE.md §5). Its leaf is no
-  // longer all visible, the row written already (§4.1); and the key
+  // dead, and vacuum removes it (../BTREE.md §5). It is in doubt, and
+  // its leaf no longer all visible, the row written already (§7.1);
+  // and the key
   // is a write for SSI, as an insert's is, since a serializable
   // reader whose index-only scan read no row holds only its range.
   if (index->tree) {
-    if (0 != tree::tree_unset_visible(index->pages, k)) {
+    if (0 != tree::tree_mark_in_doubt(index->pages, k)) {
       return -1;
     }
     return sm1::ssi_write_key(index->session, index->storeid, k);
@@ -972,7 +1000,7 @@ int idx_scan_entry(index_scan_t *scan, uint64_t &id, bool &cut,
   }
   const index_t *ix = scan->index;
   scan->key = key;
-  scan->cut = 0 != value[0];
+  scan->cut = 0 != (value[0] & tree::entry_cut);
   row = key.substr(relid_len + cols_len);
   scan->row.assign(row);
   scan->id = 0;

@@ -1643,6 +1643,33 @@ int read_settled(session_t* session, uint64_t storeid, std::string_view key,
                  rawpin_t* pin, std::string_view& data);
 
 /*
+ * sm1::read_settled of a key written by sm1::insert in any store, a
+ * chained one too: a TOAST chunk's, which is versioned in every store.
+ */
+int read_settled_versioned(session_t* session, uint64_t storeid,
+                           std::string_view key, rawpin_t* pin,
+                           std::string_view& data);
+
+/*
+ * Let session call sm1::read_settled, sm1::read_settled_versioned,
+ * sm1::pin_page, sm1::page_enter
+ * and sm1::page_write with no transaction, for good: a background
+ * cleaner's session (../BTREE.md §7.1), which judges a row by its
+ * newest version, and so needs no snapshot and holds no watermark
+ * back. A store is looked up at the newest state. Every other call
+ * still needs a transaction. A store's handle stays with the session
+ * until it closes, so open one for a short pass.
+ */
+void set_no_transaction(session_t* session);
+
+/*
+ * The GC watermark of session's database: the oldest snapshot still
+ * registered, or everything published if none. A version committed at
+ * or below it is seen by every snapshot.
+ */
+uint64_t gc_watermark(session_t* session);
+
+/*
  * The newest version of key in storeid, past the snapshot, as a
  * unique tree checks a key against the rows its equal entries name
  * (../BTREE.md §6): 0 with its row in pin and data, committed or

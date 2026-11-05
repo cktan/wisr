@@ -9,6 +9,8 @@
 #include "doctest.h"
 #include "gen.h"
 
+#include "../src/tree/tree.h"
+
 #include "sm1.h"
 #include "sm2.h"
 
@@ -447,6 +449,61 @@ TEST_CASE("a key too long for sm1 is cut, flagged, and kept apart") {
   bool widened = false;
   CHECK(scan_all(ix, &lo, &lo, &widened) == std::vector<uint64_t>{1, 2});
   CHECK(widened);
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::idx_close(ix);
+}
+
+TEST_CASE(
+    "a tree's entry is in doubt from its insert, and cut by its own bit") {
+  // Verify the in-doubt bit shares value[0] with the cut flag, and
+  // that neither reads as the other (../BTREE.md §7.1).
+  // 1. Insert a short text and a text past the tree's key budget.
+  // 2. The leaf holds each entry in doubt, and only the long one cut.
+  // 3. A scan reports the short entry as not cut, and the long one as
+  //    cut, though both have a bit set in value[0].
+  db_t db;
+  sm1::session_t *s = db.open();
+  std::vector<sm2::key_column_t> cols = {
+      {&sm2::type_text, -1, nullptr, false, false}};
+  sm2::index_t *ix = nullptr;
+  REQUIRE_MESSAGE(
+      sm2::idx_open(s, db.store(), 1, cols, false, {}, false, ix, true) == 0,
+      sm1::errmsg());
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE_MESSAGE(sm2::idx_create(ix) == 0, sm1::errmsg());
+  std::vector<std::string> texts = {"short", std::string(5000, 'k')};
+  for (size_t i = 0; i < texts.size(); i++) {
+    std::vector<std::optional<std::string>> key = {texts[i]};
+    values_t d = datums_of(cols, key);
+    REQUIRE_MESSAGE(
+        sm2::idx_insert(ix, d.d(), d.null(), sm2::id_key(i + 1), {}, {}) == 0,
+        sm1::errmsg());
+  }
+
+  sm2::tree::tree_t tree;
+  sm2::tree::tree_open(tree, s, db.store(), 1);
+  sm2::tree::cursor_t c;
+  sm2::tree::cursor_open(tree, c, nullptr, true, nullptr, true);
+  std::string_view k, v;
+  std::vector<bool> leaf_cut;
+  while (0 == sm2::tree::cursor_next(c, k, v)) {
+    REQUIRE(3u == v.size());
+    CHECK(sm2::tree::entry_in_doubt(v));
+    leaf_cut.push_back(0 != (v[0] & sm2::tree::entry_cut));
+  }
+  CHECK(leaf_cut == std::vector<bool>{true, false});
+
+  sm2::index_scan_t *scan = nullptr;
+  REQUIRE(sm2::idx_scan(ix, nullptr, nullptr, scan) == 0);
+  uint64_t rowno;
+  bool cut;
+  std::string_view value;
+  std::vector<std::pair<uint64_t, bool>> got;
+  while (sm2::idx_scannxt(scan, rowno, cut, value) == 0) {
+    got.emplace_back(rowno, cut);
+  }
+  sm2::idx_scanend(scan);
+  CHECK(got == std::vector<std::pair<uint64_t, bool>>{{2, true}, {1, false}});
   REQUIRE(sm1::commit(s) == 0);
   sm2::idx_close(ix);
 }

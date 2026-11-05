@@ -40,12 +40,13 @@ std::string page_key(std::string_view key) {
 }
 
 /*
- * Check a call on pages of storeid: an active transaction, a key the
- * size of one, a live store other than the catalog. 0 with its
- * handle in st, or -1 with the error set.
+ * Check a call on pages of storeid: an active transaction, unless
+ * the session works with none, a key the size of one, a live store
+ * other than the catalog. 0 with its handle in st, or -1 with the
+ * error set.
  */
 int enter_pages(sm1::session_t *s, uint64_t storeid, const store_t *&st) {
-  if (xct_check_active(s) != 0) {
+  if (xct_check_cleaner(s) != 0) {
     return -1;
   }
   if (storeid == 0) {

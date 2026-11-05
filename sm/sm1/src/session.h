@@ -72,6 +72,9 @@ struct sm1::session_t {
   sm1::env_t *env = nullptr;
   wisr::db_t *db = nullptr;
 
+  /* sm1::set_no_transaction: settled reads and pages need none. */
+  bool no_transaction = false;
+
   /* The transaction; meaningful only while active. */
   bool active = false;
   /* What sm1::on_commit added, in the order added; run from the back. */
@@ -394,6 +397,12 @@ enum write_op_t {
 
 /* Fail with NOTRANS unless session has an active transaction. */
 int xct_check_active(sm1::session_t *session);
+
+/*
+ * xct_check_active, but for a session set for no transaction, which
+ * has none to check: a settled read's and a page call's check.
+ */
+int xct_check_cleaner(sm1::session_t *session);
 
 /* Fail with READONLY if session's transaction was declared read-only. */
 int xct_check_readonly(sm1::session_t *session);

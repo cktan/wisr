@@ -80,7 +80,8 @@ struct sm_env_t {
   std::unordered_set<sm_session_t *> sessions;
   sm_index_eval_fn eval = nullptr; /* the host's evaluator, set once */
   void *eval_ctx = nullptr;
-  bool toast = false; /* the host reads TOAST pointers (sm_set_toast) */
+  bool toast = false;         /* the host reads TOAST pointers (sm_set_toast) */
+  size_t cleaner_workers = 4; /* a catalog's (sm_set_cleaner_workers) */
 };
 
 /*
@@ -426,7 +427,20 @@ static int start_builder(sm_env_t *env, std::string_view dbname,
     keeping_error([&] { sm3::builder_detach(cat); });
     return -1;
   }
-  return 0;
+  // The btree cleaner opens sessions the same way, a pass at a time.
+  return sm3::cleaner_attach(
+      cat,
+      [e, name]() -> sm1::session_t * {
+        sm1::session_t *s = nullptr;
+        return sm1::opendb(e, name, s) == 0 ? s : nullptr;
+      },
+      env->cleaner_workers);
+}
+
+/* Stop a catalog's builder and cleaner, which hold sessions on it. */
+static void stop_workers(sm3::catalog_t *cat) {
+  sm3::cleaner_detach(cat);
+  sm3::builder_detach(cat);
 }
 
 /*
@@ -495,7 +509,7 @@ int sm_detach(sm_env_t *env, int force) {
     // Stop the builders first: their workers hold sm1 sessions,
     // which must be closed before the databases are.
     for (auto &[name, cat] : env->catalogs) {
-      sm3::builder_detach(cat);
+      stop_workers(cat);
     }
     // Detach: closes the databases and stops sm1's threads.
     if (sm1::detach(env->env, force) != 0) {
@@ -552,6 +566,43 @@ int sm_set_toast(sm_env_t *env, int on) {
   });
 }
 
+/* Set a catalog's cleaner threads, before any is opened; see sm.h. */
+int sm_set_cleaner_workers(sm_env_t *env, int workers) {
+  return guard(nullptr, [&] {
+    if (!env) {
+      return null_arg("sm_set_cleaner_workers", "env");
+    }
+    std::lock_guard lock(env->mu);
+    if (!env->catalogs.empty()) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "sm_set_cleaner_workers: a database has been opened");
+    }
+    env->cleaner_workers = static_cast<size_t>(workers);
+    return 0;
+  });
+}
+
+/* Run one pass of dbname's cleaner on this thread; see sm.h. */
+int sm_cleaner_run(sm_env_t *env, const char *dbname) {
+  return guard(nullptr, [&] {
+    if (!env) {
+      return null_arg("sm_cleaner_run", "env");
+    }
+    sm3::catalog_t *cat = nullptr;
+    {
+      std::lock_guard lock(env->mu);
+      auto it = env->catalogs.find(name_of(dbname));
+      if (it == env->catalogs.end()) {
+        return sm1::seterr(
+            sm1::SM_ERR_NOTFOUND,
+            "sm_cleaner_run: no session has opened the database");
+      }
+      cat = it->second;
+    }
+    return sm3::cleaner_run_once(cat);
+  });
+}
+
 /*
  * Create dbname, with opt's options or the defaults, and its
  * catalog; a database whose catalog cannot be made is removed.
@@ -581,7 +632,7 @@ int sm_rmdb(sm_env_t *env, const char *dbname) {
     auto it = env->catalogs.find(name_of(dbname));
     // Its builder's workers hold sessions on it: close them first.
     if (it != env->catalogs.end()) {
-      sm3::builder_detach(it->second);
+      stop_workers(it->second);
     }
     if (sm1::rmdb(env->env, name_of(dbname)) != 0) {
       if (it != env->catalogs.end()) {

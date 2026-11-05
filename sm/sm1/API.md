@@ -2147,6 +2147,27 @@ running, this one included, or committed past the watermark.
 A chained store's key is read as `sm1::chain_read` reads one.
 It locks nothing and waits for no one.
 
+### int sm1::read_settled_versioned(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::rawpin_t* pin, std::string_view& data)
+
+`sm1::read_settled` of a key written by `sm1::insert` in any
+store, a chained one too: a TOAST chunk's, which is versioned in
+every store.
+
+### void sm1::set_no_transaction(sm1::session_t* session)
+
+Lets `session` call `sm1::read_settled`,
+`sm1::read_settled_versioned`, `sm1::pin_page`,
+`sm1::page_enter` and `sm1::page_write` with no transaction, for
+good: a background cleaner's session (`../BTREE.md` §7.1). It
+judges a row by its newest version, so it needs no snapshot and
+holds no watermark back. Every other call still needs a
+transaction.
+
+### uint64_t sm1::gc_watermark(sm1::session_t* session)
+
+The GC watermark of the session's database: the oldest snapshot
+still registered, or everything published if none.
+
 ### int sm1::read_newest(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::rawpin_t* pin, std::string_view& data, uint64_t& writer)
 
 The newest version of `key`, past the snapshot, as a unique

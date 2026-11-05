@@ -26,6 +26,15 @@ int toast_erase(sm1::session_t *session, const toast_ptr_t &p);
  */
 int toast_read(sm1::session_t *session, const toast_ptr_t &p, std::string &out);
 
+/*
+ * toast_read of a datum whose row is settled, by settled reads, with
+ * no transaction (../../BTREE.md §7.1). A row settled has its chunks
+ * settled, written in one transaction with it, so one that is not is
+ * SM_ERR_CORRUPT.
+ */
+int toast_read_settled(sm1::session_t *session, const toast_ptr_t &p,
+                       std::string &out);
+
 } // namespace sm2
 
 #endif
