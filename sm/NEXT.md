@@ -444,12 +444,7 @@ and so are the catalog tables psql reads
    mean fewer pages a range scan reads (item 3) and fewer
    splits; an insert still writes its whole page. Each step
    changes the page's format.
-10. **`SM_API.md`: a document of every function in `sm.h`.** The
-    C wrapper (`include/sm.h`) has no document of its own.
-    `sm1/API.md` covers level 1 only. Write `SM_API.md` in `sm/`,
-    call by call: what each does, its arguments, what it returns,
-    and its errors, as `sm1/API.md` does.
-11. **A bulk load builds a B-tree Index from the bottom up.**
+10. **A bulk load builds a B-tree Index from the bottom up.**
     Today a load into an empty table with a unique B-tree Index
     inserts its rows one at a time, and a non-unique tree takes a
     page write per entry. A unique tree cannot be checked during

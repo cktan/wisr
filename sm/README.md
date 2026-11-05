@@ -56,6 +56,8 @@ the wrapper through the `rel/` test suite.
 - `sm1/SM1_OBJECTIVE.md` — what level 1 is for, and the decisions
   that settled its design
 - `sm1/SM1_DESIGN.md` — how level 1 works; the design of record
+- `SM_API.md` — every function of `include/sm.h`, the interface
+  digres calls
 - `sm1/API.md` — sm1's C++ API, call by call, in
   `namespace sm1`
 - `sm1/mvcc/MVCC.md` — the isolation rules, as a table of
