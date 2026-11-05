@@ -426,6 +426,27 @@ printf '4,20\n' > "$work/copyu.csv"
 local_psql -c "\copy tcopyu from '$work/copyu.csv' with (format csv)" 2>&1 |
   grep -q "duplicate key" || fail "copy, unique btree: a duplicate"
 
+# Verify that a sequence newer than a snapshot neither fails a draw nor a
+# DROP TABLE: a sequence is not transactional.
+# 1. Make a table, and hold a REPEATABLE READ snapshot.
+# 2. Another session makes a sequence and commits.
+# 3. The held session draws from it, and drops the table.
+local_psql -c 'create table tsnap (a int)' > "$work/seqsnap.out" 2>&1
+held_start seqsnap
+held_send seqsnap "begin isolation level repeatable read;
+select count(*) from tsnap;
+select 'snapshot';"
+held_wait seqsnap "snapshot" || fail "sequence, snapshot: taken"
+local_psql -c 'create sequence snapseq' >> "$work/seqsnap.out" 2>&1
+held_send seqsnap "select 'drawn', nextval('snapseq');
+drop table tsnap;
+commit;
+select 'done';"
+held_wait seqsnap "drawn|1" || fail "sequence, snapshot: a draw"
+held_wait seqsnap "done" || fail "sequence, snapshot: the end"
+held_end seqsnap
+grep -q ERROR "$work/seqsnap.out" && fail "sequence, snapshot: an error"
+
 # Verify that CHECKPOINT succeeds and does nothing, since sm keeps what is
 # durable.
 # 1. Run CHECKPOINT, then a statement after it.

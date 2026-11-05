@@ -249,15 +249,10 @@ outer note and gives it back.
 
 ## 5. Batches
 
-**WARNING: a row moved between a batch's scan and its read fails
-the build.** If a primary key update moves a row after the
-batch's scan and before the batch reads the row,
-`rel_read_latest` returns -1 with `SM_ERR_MOVED`.
-`tbl_index_backfill` passes that up, and it is not retryable, so
-the index ends failed. The comment there says the opposite: that
-a moved row is gone from its key and its mover made its entry.
-That argument is right, and the code should skip such a row as it
-skips a deleted one. No test reaches this case.
+A row moved between a batch's scan and its read is gone from its
+key: `rel_read_latest()` gives `SM_ERR_MOVED`, and the build
+treats that as a row deleted. Its mover made the entry for its
+new key.
 
 ### 5.1 The walk
 

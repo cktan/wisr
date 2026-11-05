@@ -944,8 +944,12 @@ int db_next_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
     // A persisted lease means values were handed out before, so
     // resume above it; the rest of that block is skipped, as a
     // crash skips one.
-    st.next = read_meta(db, seq_meta_key(seqid), &limit) ? limit : start;
+    bool leased = read_meta(db, seq_meta_key(seqid), &limit);
+    st.next = leased ? limit : start;
     st.limit = st.next;
+    // The largest lease is the last block's, written before its last
+    // value went out: that value may be gone, so hand out no more.
+    st.exhausted = leased && UINT64_MAX == limit;
     it = db->seqs.emplace(seqid, st).first;
   }
   db_t::seq_state_t &st = it->second;

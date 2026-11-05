@@ -33,6 +33,9 @@ int abort_fail_child_main(const char *homedir);
 /* test_seq.cc's child workload: reports each value, until killed. */
 int seq_child_main(const char *homedir);
 
+/* In test_seq.cc: draw a sequence to its end, then die. */
+int seq_end_child_main(const char *homedir);
+
 /* test_env.cc's child workload: runs out of memory. */
 int oom_child_main(const char *homedir);
 
@@ -61,6 +64,9 @@ int main(int argc, char **argv) {
   }
   if (argc == 3 && strcmp(argv[1], "--seq-child") == 0) {
     return seq_child_main(argv[2]);
+  }
+  if (argc == 3 && strcmp(argv[1], "--seq-end-child") == 0) {
+    return seq_end_child_main(argv[2]);
   }
   if (argc == 3 && strcmp(argv[1], "--oom-child") == 0) {
     return oom_child_main(argv[2]);

@@ -242,8 +242,9 @@ key pays a lookup a row. The arguments for a heap, answered:
      times the table's bytes. With no byte spanned, take the rows
      a slot times the slots.
 
-  The table's bytes (`tbl_size`) count older versions, and a
-  slot's span (`tbl_range_size`) does not.
+  The table's bytes are its newest versions' (`tbl_size` with
+  `old` false), as a slot's span (`tbl_range_size`) counts no
+  older version.
 - **ANALYZE samples a keyless table by runs of `_id`s.** The row
   count is the live fraction times the limit.
 - **Correlation is measured in the rows' own order**, the primary

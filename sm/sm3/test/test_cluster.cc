@@ -9,9 +9,11 @@
 #include "doctest.h"
 #include "sm3.h"
 
+#include <atomic>
 #include <map>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -741,4 +743,147 @@ TEST_CASE("a writer at READ COMMITTED writes by key after a re-read") {
   CHECK(rows(t) == std::vector<std::string>{"0:1|mine|7"});
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("an index build goes on past a row moved meanwhile") {
+  // Verify a row moved between a batch's scan and its read is gone from
+  // its key, as its mover made its entry (../INDEXBUILD.md §5).
+  // 1. Fill a keyed table with 4,000 rows.
+  // 2. Start a build of an index on n, in small batches.
+  // 3. Meanwhile a writer moves each row to another primary key.
+  // 4. The build ends valid, and the index gives each row once.
+  acct_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  const int rows = 4000;
+  for (int i = 1; i <= rows; i++) {
+    put(t, i, "o", i);
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  std::vector<sm3::index_key_spec_t> by_n = {{2, false, false, std::nullopt}};
+  uint64_t ix = 0;
+  start(f.a);
+  REQUIRE_MESSAGE(sm3::create_index(f.a, f.acct, "by_n", by_n, {}, false, ix) ==
+                      0,
+                  sm1::errmsg());
+  REQUIRE(sm3::commit(f.a) == 0);
+  std::atomic<int> moved{0}, failed{0};
+  std::atomic<bool> stop{false};
+  std::thread writer([&] {
+    for (int i = 1; i <= rows && !stop; i++) {
+      if (sm3::begin(f.b, sm1::xctlevel_t::read_committed) != 0) {
+        failed++;
+        return;
+      }
+      sm3::table_t *w = nullptr;
+      if (sm3::tbl_open(f.b, f.acct, sm1::SM_LOCKMODE_IX, w) != 0) {
+        failed++;
+        sm3::abort(f.b);
+        return;
+      }
+      row_t r(i + 1000000, "o", i);
+      bool ok = sm3::tbl_update(w, at_t(i), r.d(), r.null()) == 0;
+      sm3::tbl_close(w);
+      if (ok && sm3::commit(f.b) == 0) {
+        moved++;
+      } else {
+        sm3::abort(f.b);
+        failed++;
+      }
+    }
+  });
+  REQUIRE(sm3::builder_attach(f.cat, [&f] { return f.try_open(); }, 7) == 0);
+  REQUIRE(sm3::enqueue_pending_indexes(f.cat) == 0);
+  int rc = sm3::builder_wait(f.a, f.acct, ix);
+  std::string err = 0 == rc ? "" : std::string(sm1::errmsg());
+  stop = true;
+  writer.join();
+  // The fixture leaves the builder alone: its workers are joined here.
+  sm3::builder_detach(f.cat);
+  CHECK_MESSAGE(0 == rc, err);
+  CHECK(0 == failed);
+  CHECK(moved > 0);
+  start(f.a);
+  t = f.write(f.a);
+  sm2::index_scan_t *scan = nullptr;
+  REQUIRE_MESSAGE(sm3::tbl_idx_scan(t, ix, nullptr, nullptr, scan) == 0,
+                  sm1::errmsg());
+  int seen = 0;
+  uint64_t id = 0;
+  bool cut = false;
+  std::string_view value;
+  while (0 == sm2::idx_scannxt(scan, id, cut, value)) {
+    seen++;
+  }
+  sm2::idx_scanend(scan);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  CHECK(rows == seen);
+}
+
+TEST_CASE(
+    "issue: an arbiter meets a row moved since its statement's snapshot") {
+  // Reproduce: find_now reads the row its snapshot's entry names, and a
+  // row moved since gives SM_ERR_MOVED.
+  // 1. Make a keyed table with a unique index on name, of each kind, and
+  //    a row (1, "x").
+  // 2. a begins a statement at READ COMMITTED, and takes its snapshot.
+  // 3. b moves the row to primary key 2, and commits.
+  // 4. a's insert of (5, "x") by the arbiter must report the conflict,
+  //    not fail.
+  for (bool tree : {false, true}) {
+    CAPTURE(tree);
+    acct_t f;
+    std::vector<sm3::column_spec_t> cols = {
+        {"id", sm2::type_int4.code, -1, true},
+        {"owner", sm2::type_text.code, -1, false},
+        {"n", sm2::type_int4.code, -1, false}};
+    std::vector<sm3::index_key_spec_t> by_id = {
+        {0, false, false, std::nullopt}};
+    std::vector<sm3::index_key_spec_t> by_owner = {
+        {1, false, false, std::nullopt}};
+    uint64_t tb = 0, pk = 0, uq = 0;
+    start(f.a);
+    REQUIRE(sm3::create_table(f.a, sm3::nsp_public, "m", cols, tb) == 0);
+    REQUIRE(sm3::create_index(f.a, tb, "m_pkey", by_id, {}, true, pk, true,
+                              true) == 0);
+    REQUIRE(sm3::create_index(f.a, tb, "m_owner", by_owner, {}, true, uq, false,
+                              false, tree) == 0);
+    REQUIRE(sm3::commit(f.a) == 0);
+    auto open = [&](sm3::session_t *s) {
+      sm3::table_t *t = nullptr;
+      REQUIRE(sm3::tbl_open(s, tb, sm1::SM_LOCKMODE_IX, t) == 0);
+      return t;
+    };
+    start(f.a);
+    sm3::table_t *t = open(f.a);
+    put(t, 1, "x");
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
+
+    start(f.a);
+    t = open(f.a);
+    REQUIRE(sm3::stmt_begin(f.a) == 0);
+    std::vector<uint64_t> arb = {uq};
+    row_t other(50, "y", 0);
+    uint64_t id = 0;
+    REQUIRE(sm3::tbl_insert_arbiter(t, other.d(), other.null(), arb, id) == 0);
+
+    start(f.b);
+    sm3::table_t *w = open(f.b);
+    row_t moved(2, "x", 0);
+    REQUIRE_MESSAGE(sm3::tbl_update(w, at_t(1), moved.d(), moved.null()) == 0,
+                    sm1::errmsg());
+    sm3::tbl_close(w);
+    REQUIRE(sm3::commit(f.b) == 0);
+
+    row_t clash(5, "x", 0);
+    int rc = sm3::tbl_insert_arbiter(t, clash.d(), clash.null(), arb, id);
+    std::string err = rc < 0 ? std::string(sm1::errmsg()) : "";
+    MESSAGE("tree ", tree, ": rc ", rc, " err '", err, "'");
+    CHECK(rc >= 0);
+    sm3::tbl_close(t);
+    sm3::abort(f.a);
+  }
 }

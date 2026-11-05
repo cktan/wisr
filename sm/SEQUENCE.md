@@ -81,8 +81,10 @@ taken the `"S"` row and the Catalog keys with it.
 - **sm3 finds a Sequence as it finds a table**: the transaction's
   own creates and drops, then every committed one, from memory,
   not as of the snapshot, as PostgreSQL finds a name in its
-  latest catalog. Its record and counter are read from the store
-  in the transaction.
+  latest catalog. A draw reads the same way, at the newest
+  committed state and the transaction's own writes: a Sequence is
+  not transactional, and a snapshot could show one whose state is
+  gone. Its record is read from the store in the transaction.
 - **A Sequence has no lock of its own.** Its record is a catalog
   key, written under that key's X lock. Its position is ordered
   by a mutex (`LOCKMGR.md`).
@@ -441,13 +443,13 @@ the host.
 | A statement that made the Sequence | it draws only after `sm1::stmt_advance` |
 | READ ONLY transaction | `sm1::mkseq` and `sm1::rmseq` are refused, a temporary one aside; `sm1::nextseq` is not |
 | SERIALIZABLE | a lookup by name takes a SIREAD entry on the `"S"` row; a draw by a ref takes none; neither waits |
-| Old REPEATABLE READ snapshot, a Sequence committed after it | `cat_get_sequence` finds it from memory, but `nextval` is `SM_ERR_NOTFOUND` and `cat_get_sequence_def` gives 1, as both read at the snapshot |
-| Old REPEATABLE READ snapshot, a Sequence dropped after it | `cat_get_sequence` does not find it; a `nextval` by a held oid finds the row at the snapshot, and with its state and lease gone starts again from `start` |
-| Old snapshot at `drop_table`, a Sequence committed in the Namespace after it | `drop_owned_sequences` lists it from memory, its read at the snapshot finds none, and the drop fails with `SM_ERR_NOTFOUND` |
+| Old REPEATABLE READ snapshot, a Sequence committed after it | `cat_get_sequence` finds it from memory, and `nextval` draws from it, as a draw reads the newest state; `cat_get_sequence_def` gives 1, as it reads at the snapshot |
+| Old REPEATABLE READ snapshot, a Sequence dropped after it | `cat_get_sequence` does not find it, and a `nextval` by a held oid is `SM_ERR_NOTFOUND`, as a draw reads the newest state |
+| Old snapshot at `drop_table`, a Sequence committed in the Namespace after it | `drop_owned_sequences` lists it from memory, finds no record at the snapshot, and passes over it: the table cannot own it |
 | `own_sequence` committed after `drop_table`'s snapshot | the drop waits on the table lock, then its first read, at the snapshot, sees no owner; the Sequence stays, naming a table that is gone |
 | Sequence dropped with a ref held | the ref's draws go on, with new state; a holder must keep the Sequence from being dropped |
 | Last value handed out | the next draw fails with `SM_ERR_INVALID`, and every one after |
-| Exhausted, then a reopen | `exhausted` is in memory only, and the lease holds `UINT64_MAX`, so the first draw hands out `UINT64_MAX`, a repeat at increment 1, and the Sequence is exhausted again |
+| Exhausted, then a reopen | the lease on disk is `UINT64_MAX`, the last block's, so the state is built exhausted: the draw fails, and the last value is not handed out twice |
 | A Namespace's drop | a Sequence in it is `SM_ERR_INUSE` |
 | Temporary table | its counters are in the session, and go with it |
 

@@ -111,6 +111,22 @@ int seq_child_main(const char *homedir) {
   }
 }
 
+/*
+ * Child: draw sequence "end" until it fails, then die with no close, as
+ * a crash does: the leases are all that reaches the disk.
+ */
+int seq_end_child_main(const char *homedir) {
+  sm1::env_t *env = attach(homedir);
+  sm1::session_t *s = env ? opendb(env, "db", nullptr) : nullptr;
+  if (!s) {
+    return 2;
+  }
+  uint64_t v = 0;
+  while (0 == sm1::nextseq(s, "end", v)) {
+  }
+  _exit(0 == write(1, &v, sizeof(v)) ? 3 : 0);
+}
+
 TEST_CASE("a sequence starts at its start and steps by its increment") {
   // Verify the basic contract, and that sequences are separate.
   // 1. The first value of a sequence is its start; each later
@@ -449,4 +465,59 @@ TEST_CASE("sm1_lastseq reports the last value without drawing one") {
   CHECK(next(s) == bound + 1);
   REQUIRE(sm1::lastseq(s, SEQ, out) == 0);
   CHECK(out == bound + 1);
+}
+
+TEST_CASE("an exhausted sequence stays exhausted after a reopen") {
+  // Verify a reopen does not hand out the last value twice: the state
+  // is in memory, and the lease on disk says the last block began.
+  // 1. Draw a sequence to its last value; the next call fails.
+  // 2. Close the database and open it again.
+  // 3. The next call must still fail.
+  seq_fixture_t f;
+  sm1::session_t *s = f.s();
+  commit_mkseq(s, "end", UINT64_MAX - 1, 1);
+  CHECK(next(s, "end") == UINT64_MAX - 1);
+  CHECK(next(s, "end") == UINT64_MAX);
+  uint64_t v = 0;
+  CHECK(sm1::nextseq(s, "end", v) == -1);
+  f.reopen();
+  CHECK(-1 == sm1::nextseq(f.s(), "end", v));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+}
+
+TEST_CASE("a sequence whose last value is below the largest stays exhausted") {
+  // Verify the same with an increment above 1, whose last value is not
+  // UINT64_MAX.
+  // 1. A sequence by 7, from 10 below the largest, gives two values.
+  // 2. The next call fails.
+  // 3. After a reopen it fails still, and gives neither value again.
+  seq_fixture_t f;
+  sm1::session_t *s = f.s();
+  commit_mkseq(s, "end", UINT64_MAX - 10, 7);
+  CHECK(next(s, "end") == UINT64_MAX - 10);
+  CHECK(next(s, "end") == UINT64_MAX - 3);
+  uint64_t v = 0;
+  CHECK(sm1::nextseq(s, "end", v) == -1);
+  f.reopen();
+  CHECK(-1 == sm1::nextseq(f.s(), "end", v));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+}
+
+TEST_CASE("an exhausted sequence stays exhausted after a crash") {
+  // Verify a crash, which keeps no position, repeats no last value.
+  // 1. A child draws a sequence to its end, and dies with no close.
+  // 2. Attach again: the next call fails.
+  seq_fixture_t f;
+  commit_mkseq(f.s(), "end", UINT64_MAX - 1, 1);
+  REQUIRE(sm1::closedb(f.s()) == 0);
+  f.home().detach();
+  std::string out, err;
+  REQUIRE(0 == run_child("--seq-end-child", f.home().path(), out, err));
+  REQUIRE(sizeof(uint64_t) == out.size());
+  f.home().attach();
+  sm1::session_t *s = f.open();
+  uint64_t v = 0;
+  CHECK(-1 == sm1::nextseq(s, "end", v));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  REQUIRE(sm1::closedb(s) == 0);
 }

@@ -340,8 +340,15 @@ static int drop_owned_sequences(session_t *session, uint64_t oid,
   for (const std::string &name : names) {
     uint64_t q;
     sequence_rec_t rec;
-    if (cat_get_sequence(session, nspoid, name, q) != 0 ||
-        cat_get_sequence_rec(session, q, false, rec) != 0) {
+    if (cat_get_sequence(session, nspoid, name, q) != 0) {
+      return -1;
+    }
+    // The names are the shared catalog's: one committed since the
+    // snapshot has no record there, and this table cannot own it.
+    if (cat_get_sequence_rec(session, q, false, rec) != 0) {
+      if (sm1::SM_ERR_NOTFOUND == sm1::errnum()) {
+        continue;
+      }
       return -1;
     }
     if (rec.owner != oid || (attnum >= 0 && rec.owner_attnum != attnum)) {

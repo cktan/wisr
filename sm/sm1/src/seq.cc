@@ -200,13 +200,16 @@ int may_draw(sm1::session_t *s) {
 }
 
 /*
- * The live sequence name, at the transaction's view if there is one,
- * so a sequence this transaction created is found at once; otherwise
- * at the newest committed state. 0 and *def; SM_ERR_NOTFOUND or -1.
+ * The live sequence name at the newest committed state, and with the
+ * transaction's own writes if there is one, so a sequence it created
+ * is found at once. Not at its snapshot: a sequence is not
+ * transactional, and an old snapshot would find one since dropped,
+ * whose state is gone, and restart it. 0 and *def; SM_ERR_NOTFOUND or
+ * -1.
  */
 int seq_find(sm1::session_t *s, const char *name, seqdef_t *def) {
-  view_t view =
-      s->active ? xct_view(s) : view_t{s->db->visible_ts.load(), 0, 0};
+  view_t view = s->active ? xct_view(s) : view_t{0, 0, 0};
+  view.snapshot_ts = s->db->visible_ts.load();
   int r = seq_lookup(s, view, name, def);
   // Fail on a lookup error.
   if (r < 0) {

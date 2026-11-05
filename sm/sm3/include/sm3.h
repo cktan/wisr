@@ -1807,14 +1807,14 @@ int tbl_idx_scan(table_t* table, uint64_t index, const sm2::bound_t* lo,
  * one. None reads a row.
  *
  * tbl_size sets the heap's bytes, a chained heap's older versions
- * included, and tbl_idx_size the index
+ * included unless old is false, and tbl_idx_size the index
  * oid's, as sm2::relid_size gives them: in sorted files and in
  * memtables, apart (SM_ERR_NOTFOUND if the table has no such
  * index). tbl_id_limit sets N, the last _id handed out, 0
  * if none, as sm1::lastseq gives it. tbl_probes sets the sorted
  * runs a lookup in the table's store may visit, as sm1::probes.
  */
-int tbl_size(table_t* table, uint64_t& disk, uint64_t& mem);
+int tbl_size(table_t* table, uint64_t& disk, uint64_t& mem, bool old = true);
 int tbl_idx_size(table_t* table, uint64_t index, uint64_t& disk,
                  uint64_t& mem);
 int tbl_id_limit(table_t* table, uint64_t& n);

@@ -305,3 +305,42 @@ TEST_CASE("a table with a primary key is sampled by slots of its bytes") {
   CHECK(std::abs(s.live_rows - 100000.0) < 25000.0);
   CHECK(s.runs * s.run_length <= budget(10) + s.run_length);
 }
+
+TEST_CASE("a keyed table's row count leaves out older versions") {
+  // Verify sample_by_key sets the newest versions' bytes against the
+  // bytes its slots spanned, so old versions do not inflate the count.
+  // 1. Fill a keyed table, compact it: the estimate is near the count.
+  // 2. Hold a snapshot, so old versions stay; update every row three times.
+  // 3. Compact, and estimate again: still near the count.
+  sample_db_t db(true);
+  const int rows = 50000;
+  db.fill(rows);
+  db.compact();
+  sm3::sample_t s = db.sample(10);
+  CHECK(std::abs(s.live_rows - rows) < rows * 0.25);
+  sm3::session_t *old = nullptr;
+  REQUIRE(sm3::session_open(db.cat, db.open(), old) == 0);
+  REQUIRE(sm3::begin(old, sm1::xctlevel_t::repeatable_read) == 0);
+  std::string text = sm2::make_varlena(std::string(20, 'y'));
+  for (int round = 0; round < 3; round++) {
+    db.begin();
+    sm3::table_t *t = nullptr;
+    REQUIRE(sm3::tbl_open(db.ss, db.oid, sm1::SM_LOCKMODE_IX, t) == 0);
+    for (int i = 1; i <= rows; i++) {
+      sm2::datum_t k = sm2::datum_from_int32(i);
+      bool knull = false;
+      sm3::row_key_t key{{&k, 1}, {&knull, 1}};
+      sm2::datum_t d[2] = {k, sm2::datum_from_ptr(text.data())};
+      bool isnull[2] = {false, false};
+      REQUIRE(sm3::tbl_update(t, key, d, isnull) == 0);
+    }
+    sm3::tbl_close(t);
+    db.commit();
+  }
+  db.compact();
+  s = db.sample(10);
+  CHECK_FALSE(s.whole);
+  CHECK(std::abs(s.live_rows - rows) < rows * 0.25);
+  sm3::abort(old);
+  sm3::session_close(old);
+}

@@ -2193,10 +2193,10 @@ int tbl_idx_scan(table_t *table, uint64_t index, const sm2::bound_t *lo,
                      "table: no index " + std::to_string(index));
 }
 
-/* The rows' bytes, their older versions too, in files and in memtables. */
-int tbl_size(table_t *table, uint64_t &disk, uint64_t &mem) {
+/* The rows' bytes, in files and in memtables; see sm3.h. */
+int tbl_size(table_t *table, uint64_t &disk, uint64_t &mem, bool old) {
   return sm2::relid_size(table->session->sm1, table->def->storeid, heap_relid,
-                         disk, mem, true);
+                         disk, mem, old);
 }
 
 /* One index's bytes, in files and in memtables. */
@@ -2406,11 +2406,14 @@ int tbl_index_backfill(table_t *table, uint64_t index, std::string_view from,
         return -1;
       }
       found = sm2::rel_read_latest(table->rel, row_key, tuple);
+      if (found < 0 && sm1::SM_ERR_MOVED == sm1::errnum()) {
+        found = 1;
+      }
     }
     if (found < 0) {
       return -1;
     }
-    // Deleted since the scan: nothing to cover.
+    // Deleted or moved since the scan: nothing to cover.
     if (found == 1) {
       continue;
     }

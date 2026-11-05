@@ -214,8 +214,10 @@ int read_slots(sm3::table_t *table, uint64_t s,
  */
 int sample_by_key(sm3::table_t *table, uint64_t want, std::mt19937_64 &rng,
                   sm3::sample_t &out) {
+  // The newest versions' bytes alone: step 4 sets them against
+  // tbl_range_size's, which count no older version.
   uint64_t disk, mem;
-  if (0 != sm3::tbl_size(table, disk, mem)) {
+  if (0 != sm3::tbl_size(table, disk, mem, false)) {
     return -1;
   }
   // 1. The slots, a page of the bytes each, and a pilot of a few,
