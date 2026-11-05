@@ -1,32 +1,9 @@
 # Issues
 
-Open questions found in the reviews of 2026-11-04, kept for a
-decision. Each states what the code does now, why it is a
-question, and the choices.
+Open items found in the reviews of 2026-11-04 and 2026-11-05.
+Each states what the code does now, and what closes it.
 
-## 2. A password in cleartext can still be seen
-
-The log masks each string after the keyword `PASSWORD`
-(`query_for_log()` in `dg/src/backend/utils/error/elog.c`). Two
-places still show a password:
-
-- `pg_stat_activity.query` shows the statement's text while it
-  runs, to its own role and to a role with `pg_read_all_stats`,
-  as PostgreSQL does.
-- A statement whose keyword is misspelled, such as
-  `ALTER ROLE r PASWORD 'x'`, is a syntax error. Its
-  `STATEMENT:` line is logged as it is: no keyword `PASSWORD`
-  precedes the string, so nothing is masked.
-
-Choices:
-
-- **Keep both**, as PostgreSQL does.
-- **Mask the activity's text too**, with `query_for_log()` where
-  the backend reports its query.
-- **Mask more of a statement that failed to parse**: every
-  string of it, for example.
-
-## 5. Possible bugs found by reading the code
+## 1. Possible bugs found by reading the code
 
 Found 2026-11-05, while the module documents were written. Each
 comes from reading the code. None was reproduced, and none has a

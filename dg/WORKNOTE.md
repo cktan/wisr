@@ -11423,3 +11423,28 @@ to refuse it everywhere. Design: `../aa/ROLE.md` §5.1.
   `password_encryption = md5` refused. Shown to fail with the
   refusal left out. pgregress `password` copied back and trimmed
   again: the md5 statements are taken out.
+
+## Step 383: a role statement that fails to parse logs no string
+
+A logged statement masks each string after the keyword
+`PASSWORD` (step 380). A statement with `PASSWORD` misspelled,
+such as `ALTER ROLE r PASWORD 'x'`, fails to parse, and its
+`STATEMENT:` line showed the password. `ISSUE.md` held it as an
+open question; the user chose to mask a failed role statement,
+and to leave `pg_stat_activity` as PostgreSQL's. Design:
+`../aa/ROLE.md` §5.1.
+
+- **elog.c**: `mask_query()`, the scan `query_for_log()` was,
+  takes `syntax_error`. With it, every string after `CREATE` or
+  `ALTER` followed by `ROLE`, `USER` or `GROUP` is masked, in a
+  later statement of the query string too. The `STATEMENT:`
+  line passes it for `ERRCODE_SYNTAX_ERROR`. `query_for_log()`
+  is unchanged for `postgres.c`'s lines, which log only a parsed
+  statement.
+- **Left on purpose**: a statement that fails to parse and is no
+  role statement keeps its strings, for debugging.
+  `pg_stat_activity.query` shows a running statement as it is.
+- **Tests**: `server.sh`: ALTER ROLE and, as a query string's
+  second statement, CREATE USER with `PASSWORD` misspelled are
+  masked; `selec 'x'` keeps its string; no password is in the
+  log. Shown to fail with the flag left out.

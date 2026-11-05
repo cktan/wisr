@@ -373,7 +373,14 @@ crosses the network in the clear (`../dg/WORKNOTE.md` step
   durations, has each string after the keyword `PASSWORD`
   replaced by `'********'` (`query_for_log()` in `elog.c`).
   `UPDATE t SET password = 'x'` is not a role's password, and
-  stays as it is.
+  stays as it is. A statement that fails to parse may have its
+  `PASSWORD` misspelled: its `STATEMENT:` line masks every
+  string after `CREATE` or `ALTER` with `ROLE`, `USER` or
+  `GROUP`. Another statement that fails to parse keeps its
+  strings.
+- **`pg_stat_activity` shows a running statement as it is**, as
+  PostgreSQL does: only to its own role and to a role with
+  `pg_read_all_stats`, and only while it runs.
 
 ---
 

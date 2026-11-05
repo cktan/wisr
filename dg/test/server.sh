@@ -330,6 +330,32 @@ grep -q 'invalid value for parameter "password_encryption"' "$work/pw.out" ||
 local_psql -c "drop role pw2" > /dev/null 2>&1 ||
   fail "md5 password: drop the role"
 
+# Verify that a role statement that fails to parse logs none of its strings,
+# as its PASSWORD may be misspelled (../aa/ROLE.md section 5.1).
+# 1. Run ALTER ROLE with PASSWORD misspelled: its STATEMENT: line masks the
+#    string.
+# 2. Run a query string whose second statement is CREATE USER with PASSWORD
+#    misspelled: the string after CREATE USER is masked.
+# 3. Run another statement that fails to parse: its string is kept.
+# 4. No password of these steps is in the server's log.
+local_psql -c "alter role pw3 pasword 'pwseventh'" > /dev/null 2>&1 &&
+  fail "misspelled password: the alter parsed"
+local_psql -c "select 'keepfour'; create user pw3 with pasword 'pweighth'" \
+  > /dev/null 2>&1 && fail "misspelled password: the create parsed"
+local_psql -c "selec 'keepthree'" > /dev/null 2>&1 &&
+  fail "misspelled password: the select parsed"
+for _ in $(seq 50); do
+  grep -q "keepthree" "$work/log" && break
+  sleep 0.1
+done
+grep -q "STATEMENT:  alter role pw3 pasword '\*\*\*\*\*\*\*\*'" "$work/log" &&
+  grep -q "STATEMENT:  select 'keepfour'; create user pw3 with pasword '\*\*\*\*\*\*\*\*'" \
+    "$work/log" &&
+  grep -q "STATEMENT:  selec 'keepthree'" "$work/log" ||
+  fail "misspelled password: masked in the log"
+grep -q "pwseventh\|pweighth" "$work/log" &&
+  fail "misspelled password: a password in the log"
+
 # Verify that a change elsewhere replans a prepared statement only if it can
 # matter to one, and that the owners and ACLs other sessions cache still go.
 # 1. A held session prepares a generic plan, and logs each plan it makes.
