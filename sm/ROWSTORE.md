@@ -135,9 +135,7 @@ version, and makes a second `Get`, of OLD id 7. It sees
 
 Why a table is clustered on its key: on an LSM a heap's key is a
 key like any other, so a heap pays an index's price on every read
-through an index. Q6 of the benchmark, 10,000 rows by a range of
-the primary key, spent 72% of its time fetching rows by a heap
-key (`CLUSTER.md`).
+through an index (`CLUSTER.md`).
 
 Why no TID: an insert writes one key less, a secondary entry is 8
 bytes shorter, nothing reads at random to resolve an `_id`, and
@@ -280,8 +278,8 @@ there is none.
 - **A concurrent key change fails the writer** at READ COMMITTED.
   OLTP keys rarely change.
 - **A key change moves the row** and rewrites all its entries.
-  PostgreSQL rewrites only the changed indexes, unless HOT
-  applies.
+  PostgreSQL's update also adds an entry to every index, unless
+  HOT applies.
 - **A statement that shifts primary keys can collide with
   itself.** `UPDATE t SET k = k + 1` checks each new key at its
   write, so the first row's new key is the second row's old one:

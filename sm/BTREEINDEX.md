@@ -213,9 +213,10 @@ value = the page's bytes, at their own length
 +--------------------------------------------------------+
 ```
 
-Integers are little-endian. The RocksDB key is big-endian so that
-it sorts. These integers are read, never compared. Each change
-moves `version`, and no code decides anything by it.
+Integers in the header are little-endian. The RocksDB key is
+big-endian so that it sorts. These integers are read, never
+compared. `version` counts the page's changes. Only tests read
+it: no code branches on it.
 
 `flags` has three bits:
 
@@ -230,6 +231,45 @@ its second (§6.4). A reader ignores it, as `next` reaches the new
 page. A writer that latches a flagged page finishes the split
 before its own change, which repairs a crash between the two
 writes. Page 0 is never flagged.
+
+**Why the flag exists.** A split writes page P twice: once
+flagged, and once unflagged with its parent's new entry. The flag
+marks the gap between the two writes. A split has two writes
+because a full parent must split too, so one write would need a
+pin on every level up to the root. A pin is a latch, and a
+session may hold five. A root split has no parent to wait for, so
+it is one write, with no flag. A parent with room needs no second
+write either: see §12.1.
+
+**A tree and a leaf, as a picture.** An index on `status`, with
+three leaves and a root:
+
+```
+                 page 0, the root, level 1
+         +----------------------------------------+
+         | ""->17  |  "done"->23  |  "open"->31   |
+         +----------------------------------------+
+              |            |              |
+              v            v              v
+  level 0  page 17 <----> page 23 <----> page 31
+           high "done"    high "open"    no high key
+
+  page 23, a leaf:
+  +-----------------------------------------------------+
+  | header: level 0, top 3, prev 17, next 31            |
+  | high key: "open"                                    |
+  | slots, in key order:  [ 28 ][ 56 ][ 0 ]             |
+  |                          |     |    |               |
+  | entries, in no order:    |     |    v               |
+  |   offset 0:  ("fail", 2) <----------+               |
+  |   offset 28: ("done", 7) <---+                      |
+  |   offset 56: ("done", 9) <---------+                |
+  +-----------------------------------------------------+
+```
+
+An insert appends its entry and shifts only the slots. The
+offsets here are for the picture: a real entry's length depends
+on its key.
 
 **A page has a limit, not a size.** `page_limit` is 4 KB: past it
 an insert splits the page. RocksDB stores a page at its length,
@@ -257,7 +297,16 @@ reads the page's bytes in its frame, with no decode and no copy.
 A full leaf holds about 200 `c2` entries: three levels for a
 million rows.
 
+
 ### 4.3 Entries
+
+**A cut key** is a key whose columns are too long for an entry.
+The entry holds only their leading bytes, then the row's key, and
+its cut flag is set. Two long values can then look equal in the
+tree, so a scan compares the whole value on the row, and an
+index-only scan cannot skip a cut entry's row. A unique index
+never cuts: too long a key fails with `SM_ERR_KEYTOOLONG`. §4.4
+gives the limits.
 
 | Page | Key | Value |
 | --- | --- | --- |
@@ -522,7 +571,10 @@ as it was.
 - **A session holds at most 32** (`page_copies_max`), by store
   and key, and drops them all for the 33rd. They live in the sm1
   session, not the tree: digres opens a table, and its trees,
-  once a transaction.
+  once a transaction. The list is a cache, searched in order, so
+  it keeps no record of use: clearing it needs no eviction
+  policy. A cleared copy costs one pin at the next descent, and a
+  session rarely reads 33 trees' roots.
 - **`descend()`** uses the copy when page 0 is above the level it
   descends to. Otherwise, or with no good copy, it pins page 0,
   and keeps a copy if the page is above that level. So a root
@@ -1367,10 +1419,17 @@ session's own thread. The hot range is 200 rows, by 4 clients.
 
 How `shared_buffers` divides between the pool and the block cache
 is the Buffer Manager's question (BUFMGR.md).
+9. **One write for a split whose parent has room.** A split
+   writes P twice, so a split costs one more 4 KB put than it
+   needs, about one put in 100 inserts. A write batch is atomic
+   across pages, so with the parent pinned first, R, P, S and the
+   parent can go in one write, with no flag. That is four pins of
+   the five a session may hold. A full parent still needs two
+   writes and the flag, as one write would pin every level to the
+   root. Proposed: build this if a bench shows the split's write.
 
 **Not shown to run:** `tree_prune()`'s check of page 0's level
 has no test that reaches it.
-
 ### 12.2 Not planned yet
 
 These are in the order I would take them. None is needed by what

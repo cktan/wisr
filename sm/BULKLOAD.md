@@ -1,7 +1,14 @@
 # BULKLOAD — loading many rows in one transaction
 
-TODO: can we define BULKLOAD as the mode when we are
-doing any insert into an empty table?
+**Is any insert into an empty table a bulk load?** Not a single
+row. A load takes the table exclusive to the end of the
+transaction, keeps readers out, and writes a file. For a one-row
+`INSERT` into a new table, that blocks every other session for a
+gain of nothing. A statement that may insert many rows is the
+right unit: `COPY`, `CREATE TABLE AS`, and `INSERT ... SELECT`,
+into an empty table. digres knows the statement's kind, not its
+row count, so `INSERT ... VALUES` stays a row at a time. Only
+`COPY` is a load today (`NEXT.md`).
 
 `COPY`, `CREATE TABLE AS`, a large `INSERT ... SELECT` and a
 restore all put millions of rows into one table in one
@@ -1176,10 +1183,10 @@ narrowed, with these differences.
   with a primary key, sorted at the close as an index's is.
 - **A B-tree Index has a stream and puts nothing in it.** Its
   pages are no versions to load, so `idx_load` inserts the entry
-  as a writer does, and the entry is dead if the load rolls
-  back. A rollback leaves the tree's pages: the store's range
-  stops at them. A table with a unique B-tree Index is not loaded
-  from files: `tbl_load_open` inserts its rows one at a time, as a
+  as a writer does, and the entry is dead if the load rolls back.
+  A rollback leaves the tree's pages: the store's range stops at
+  them. A table with a unique B-tree Index is not loaded from
+  files: `tbl_load_open` inserts its rows one at a time, as a
   unique tree checks a key against rows, and a file's rows are in
   no store yet.
 - **No stream is declared unique.** With the store empty and
