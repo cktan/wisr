@@ -364,6 +364,23 @@
 (assert-eq (idx-entries clean_state) 2)
 (commit)
 
+# Verify a load into an empty table with a unique tree inserts its rows.
+# 1. Make a table and a unique tree on its key.
+# 2. A load gives each row; the tree finds them.
+# 3. A second load of a key there fails, and the row is not added.
+(begin :rc)
+(table-create uload (columns (id :int4 :not-null) (k :text)))
+(index-create uload_k (table uload) (key (k :asc)) :unique true :tree true)
+(commit)
+(index-wait uload_k)
+(begin :rc)
+(load uload [[1 "a"] [2 "b"] [3 "c"]])
+(commit)
+(begin :rc)
+(assert-eq (ids (idx-rows uload_k)) @[1 2 3])
+(assert-eq (ids (idx-rows uload_k :ge ["b"] :le ["b"])) @[2])
+(commit)
+
 (db-close)
 (env-detach)
 (rm-rf test-dir)

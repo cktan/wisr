@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
   } else {
     // Interactive REPL mode.
     std::cout << "rel -- wisr relational test driver\n";
-    std::cout << "Andy Pavlo's SQL-less relational interpreter\n";
+    std::cout << "CK's SQL-less relational interpreter\n";
     std::cout << "Type (exit) or Ctrl+D to quit.\n\n";
 
     Janet result;

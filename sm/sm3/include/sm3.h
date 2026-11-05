@@ -1493,9 +1493,10 @@ int tbl_delete(table_t* table, uint64_t id, pin_ref_t& ref,
  * too long for a tuple -- ends it: what was handed over goes into
  * the table at once, and that row and every one after it are
  * inserted as tbl_insert would. A load into a table that is not
- * empty inserts every row that way, and takes no lock beyond the
- * table's own. So a caller with many rows to add opens a load
- * whatever the table holds.
+ * empty, or that has a unique B-tree Index, whose check needs rows a
+ * file does not show, inserts every row that way, and takes no lock
+ * beyond the table's own. So a caller with many rows to add opens a
+ * load whatever the table holds.
  *
  * While rows are going to files the transaction cannot commit,
  * set a savepoint or roll back to one, the table's other writes

@@ -1,5 +1,8 @@
 # BULKLOAD — loading many rows in one transaction
 
+TODO: can we define BULKLOAD as the mode when we are
+doing any insert into an empty table?
+
 `COPY`, `CREATE TABLE AS`, a large `INSERT ... SELECT` and a
 restore all put millions of rows into one table in one
 transaction. Row at a time through `tbl_insert` that works,
@@ -1175,9 +1178,10 @@ narrowed, with these differences.
   pages are no versions to load, so `idx_load` inserts the entry
   as a writer does, and the entry is dead if the load rolls
   back. A rollback leaves the tree's pages: the store's range
-  stops at them. A unique tree's key with no NULL fails with
-  `SM_ERR_INVALID`, as `idx_insert` takes no such key. So a load
-  into an empty table with a unique B-tree Index fails.
+  stops at them. A table with a unique B-tree Index is not loaded
+  from files: `tbl_load_open` inserts its rows one at a time, as a
+  unique tree checks a key against rows, and a file's rows are in
+  no store yet.
 - **No stream is declared unique.** With the store empty and
   no one else in it, two equal keys are both the load's, in a
   unique index or not, so every stream is checked alike: a

@@ -406,6 +406,26 @@ counts=$(grep -E '^(state|lower|partial)\|' "$work/cleaner2.out")
 [ "$(echo "$counts" | sort -u | wc -l)" = 3 ] ||
   fail "cleaner: an index scan differs from a sequential scan"
 
+# Verify that COPY into an empty table with a unique btree index inserts
+# its rows, as a bulk load cannot check such a key.
+# 1. Make a table with a unique btree index, and COPY three rows in.
+# 2. The rows are there, and the index finds one.
+# 3. A COPY with a key there already fails with a duplicate key error.
+printf '1,10\n2,20\n3,30\n' > "$work/copyu.csv"
+local_psql > "$work/copyu.out" 2>&1 <<SQL
+create table tcopyu (id int8 primary key, k int8);
+create unique index tcopyu_k on tcopyu using btree (k);
+\copy tcopyu from '$work/copyu.csv' with (format csv)
+set enable_seqscan = off;
+select 'found', id from tcopyu where k = 20;
+select 'rows', count(*) from tcopyu;
+SQL
+grep -qx 'found|2' "$work/copyu.out" || fail "copy, unique btree: found"
+grep -qx 'rows|3' "$work/copyu.out" || fail "copy, unique btree: rows"
+printf '4,20\n' > "$work/copyu.csv"
+local_psql -c "\copy tcopyu from '$work/copyu.csv' with (format csv)" 2>&1 |
+  grep -q "duplicate key" || fail "copy, unique btree: a duplicate"
+
 # Verify that CHECKPOINT succeeds and does nothing, since sm keeps what is
 # durable.
 # 1. Run CHECKPOINT, then a statement after it.

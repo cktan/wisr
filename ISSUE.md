@@ -88,42 +88,52 @@ Choices:
 - **Rescale in `decimal_key`**: a key at the column's scale,
   where the value fits it exactly; refuse it otherwise.
 
-## 5. COPY fails into an empty table with a unique B-tree Index
+## 5. Possible bugs found by reading the code
 
-`COPY` into an empty table fails on its first row if the table
-has a unique index `USING btree`. Found 2026-11-05, and
-reproduced on digres:
+Found 2026-11-05, while the module documents were written. Each
+comes from reading the code. None was reproduced, and none has a
+test. Each needs a test first: a test that does not fail closes
+the item.
 
-```sql
-create table u (id int8 primary key, k int8);
-create unique index u_k on u using btree (k);
-\copy u from 'rows.csv' with (format csv)
--- ERROR:  could not load a row: index: a unique tree's key is
---         inserted by idx_insert_unique
-```
+1. **A row moved during an index build fails the build.**
+   `tbl_index_backfill()` reads a row by `rel_read_latest()`, which
+   gives `SM_ERR_MOVED` for a row moved since the batch's scan. That
+   is no retryable error, so the index ends failed. The comment
+   there says such a row is simply gone from its key, and its mover
+   made its entry.
+2. **`find_now()` has the same shape.** At READ COMMITTED, a moved
+   row would fail an insert with `SM_ERR_MOVED`, where the arbiter
+   should treat the key as free.
+3. **`nextval` on an old snapshot restarts a dropped Sequence.**
+   `nextval()` takes no lock. After a drop commits, a transaction
+   on an older snapshot finds the `"S"` row, with its state and lease
+   gone, and restarts from `start`.
+4. **A Sequence committed after a REPEATABLE READ snapshot.**
+   `cat_get_sequence()` finds it, but `nextval()` gives
+   `SM_ERR_NOTFOUND`.
+5. **`drop_owned_sequences()` reads at the snapshot.** `drop_table()`
+   can fail with `SM_ERR_NOTFOUND` when a Sequence committed in the
+   namespace after the snapshot. It can also miss an `own_sequence`
+   committed after the snapshot, and leave a Sequence that names a
+   dropped table.
+6. **An exhausted Sequence gives its last value again after a
+   reopen.** `exhausted` is in memory only, and the lease holds
+   `UINT64_MAX`, so the first draw gives that value again.
+7. **A failed prepare leaks an SSI node.** A prepare that fails after
+   `ssi_precommit` passed leaves the node committed with `end_ts` at
+   `UINT64_MAX`. `ssi_cleanup` never frees it, and it counts as a
+   first committer for ever, which can cause false failures.
+8. **The `CF:txn` sweep has no back-off** (`GC.md`). An abandoned
+   pass, or a snapshot that keeps `W0` low, leaves the count above
+   the threshold, so the next run starts another full pass.
 
-The same `COPY` with a default unique index, an LSM Index, loads
-every row. No test covers this.
+Smaller points:
 
-`COPY` into an empty table is a bulk load:
-
-1. `tbl_load_add()` calls `idx_load()` for each index.
-2. A tree has nothing to stream, so `idx_load()` calls
-   `idx_insert()`.
-3. `idx_insert()` refuses a unique tree's non-null key: only
-   `idx_insert_unique()` can check a key against its rows.
-
-To avoid it, create the index after the `COPY`, or use a default
-index. This workaround is from the code, and was not run.
-
-Choices:
-
-- **Do not bulk load such a table.** `tbl_load_open()` declines a
-  table with a unique tree, and `COPY` inserts its rows one at a
-  time. The change is small, and keeps the duplicate-key errors.
-  Such a load is slower, but a tree writes its entries one at a
-  time already. Proposed.
-- **Check the key in `idx_load()`.** It would call
-  `idx_insert_unique()`, but that check reads rows, and the rows
-  are still in the loader's files. It is much harder, for little
-  gain.
+- A prepared `sm1::rmseq` leaks its lease row in `CF:meta`. This is
+  harmless, as a seqid is not reused.
+- A Sequence's lease renewal holds `alloc_mu`, the commit
+  sequencer's mutex, across a synced write, once a block.
+- `xct_fail_retryable` runs `discard` with the write latch held. It
+  takes no key latch, so it looks harmless, but it drops stores
+  there, and `LOCKMGR.md` says the latch is held only to check a key
+  and put a version.

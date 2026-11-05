@@ -1128,6 +1128,11 @@ int tbl_load_open(table_t *table, loader_t *&out) {
   if (sm1::store_empty(s, storeid, empty) != 0) {
     return -1;
   }
+  // A unique tree checks a key against its rows, and a file's rows are
+  // in no store yet: such a table's rows are inserted, one at a time.
+  for (const index_def_t &x : table->def->indexes) {
+    empty = empty && !(x.tree && x.unique);
+  }
   // A temporary table is its session's alone: no one to keep out.
   if (empty && !table->exclusive && table->def->nspoid != nsp_temp) {
     // Keep every other transaction out, readers too, to the end of

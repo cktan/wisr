@@ -1,6 +1,5 @@
 # DESIGN — rel, an interactive relational test driver for wisr
 
-Andy Pavlo, Databaseology Division, CMU
 Status: built; the design of record for the `rel` test driver.
 
 ---
@@ -47,7 +46,7 @@ Why Janet over Python or Lua?
 1. **First-Class Tuples:** Janet natively distinguishes array
    brackets `[...]` for data tuples and parentheses `(...)` for
    expressions and commands. A relational row is literally a
-   tuple: `[1 "Andy Pavlo" 44 true]`.
+   tuple: `[1 "Albert Einstein" 44 true]`.
 2. **Keywords as Enums:** Types and options are native keywords
    prefixed with `:` (e.g., `:int4`, `:text`, `:serializable`,
    `:asc`, `:desc`, `:unique`).
@@ -155,24 +154,24 @@ table with one (`table-create`'s `(primary-key ...)`, or
 
 ```lisp
 # 1. Insert a row directly: returns generated _id (e.g. 1)
-(insert users [1 "Andy Pavlo" 44])
+(insert users [1 "Albert Einstein" 44])
 
 # 2. Read row by _id: returns decoded tuple
 (read users 1)
-# => [1 "Andy Pavlo" 44]
+# => [1 "Albert Einstein" 44]
 
 # 3. Read latest committed version of row by _id
 # Useful under READ COMMITTED to inspect newer commits
 (read-latest users 1)
-# => [1 "Andy Pavlo" 44]
+# => [1 "Albert Einstein" 44]
 
 # 4. Update row directly: replaces row at _id, returns old tuple
-(update users 1 [1 "Andy Pavlo" 45])
-# => [1 "Andy Pavlo" 44]
+(update users 1 [1 "Albert Einstein" 45])
+# => [1 "Albert Einstein" 44]
 
 # 5. Delete row directly: removes row at _id, returns old tuple
 (delete users 1)
-# => [1 "Andy Pavlo" 45]
+# => [1 "Albert Einstein" 45]
 ```
 
 ### 3.4 Direct Relational Scans and Queries
