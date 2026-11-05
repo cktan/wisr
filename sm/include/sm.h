@@ -447,7 +447,7 @@ int sm_nextseq(sm_session_t* session, const char* name, uint64_t* out);
 /* A type: sm2::type_t, opaque. */
 typedef struct sm_type_t sm_type_t;
 
-/* A collation for text and varchar keys: sm2::collation_t. */
+/* A collation for text, varchar and bpchar keys: sm2::collation_t. */
 typedef struct sm_collation_t sm_collation_t;
 
 /* The type with this frozen code (sm2/TYPE.md), or NULL. */
@@ -560,7 +560,7 @@ struct sm_attribute_t {
 struct sm_key_column_t {
     const sm_type_t*      type;
     int32_t               typmod;
-    const sm_collation_t* collation;   /* text, varchar; NULL: bytes */
+    const sm_collation_t* collation;   /* text, varchar, bpchar; NULL: bytes */
     bool                  desc;        /* descending */
     bool                  nulls_first; /* nulls before every value */
 };
@@ -889,8 +889,8 @@ int sm_cat_create_namespace(sm_session_t* session, const char* name,
 
 /*
  * Drop the namespace oid. One that still holds a table, a
- * collation or a view fails with SM_ERR_INUSE, and SM_NSP_PG_CATALOG and
- * SM_NSP_PUBLIC with SM_ERR_INVALID.
+ * collation, a sequence or a view fails with SM_ERR_INUSE, and
+ * SM_NSP_PG_CATALOG and SM_NSP_PUBLIC with SM_ERR_INVALID.
  */
 int sm_cat_drop_namespace(sm_session_t* session, uint64_t oid);
 

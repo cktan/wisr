@@ -87,10 +87,11 @@ struct sm1::session_t {
   uint32_t seq_hwm = 0; /* own versions above this are invisible */
   uint64_t wts_hi = 0;  /* largest wts written; bounds own seeks */
   /*
-   * Raised by every write the session makes, and by each bulk
-   * load as it closes, in any transaction, and never lowered as
-   * seq is by a rollback: an iterator opened before it last rose
-   * may lack the session's own versions.
+   * Raised by every write the session makes, by each bulk load
+   * as it closes, and at a rollback to a savepoint, in any
+   * transaction, and never lowered as seq is by a rollback: an
+   * iterator opened before it last rose may lack the session's
+   * own versions.
    */
   uint64_t write_gen = 0;
   std::vector<uint64_t> created;      /* storeids made by sm1::mkstore */
@@ -118,7 +119,7 @@ struct sm1::session_t {
   std::vector<page_copy_t> page_copies;
   /* The bulk load open in the transaction, if any (load.cc). */
   sm1::loader_t *loader = nullptr;
-  /* The transaction bulk loaded: it keeps no write set to prepare. */
+  /* The transaction bulk loaded: it cannot prepare. */
   bool loaded = false;
   /*
    * The stores it loaded while a savepoint was set, in load order
@@ -506,7 +507,7 @@ int lock_write_check(sm1::session_t *session, uint64_t storeid,
  * wait, 0 for a write's, which reports its holder's. Returns 0; -1
  * without an error set if the
  * transaction was doomed while waiting, the caller then failing
- * it with s->doomed; 1 at once for a qa_nowait session, the
+ * it with SM_ERR_DEADLOCK; 1 at once for a qa_nowait session, the
  * caller reporting SM_ERR_BLOCKED; or 2 if an interrupt to the
  * calling thread ended it (sm_sys.h), the caller reporting SM_ERR_INTERRUPTED
  * (lock_wait_error).
@@ -597,8 +598,8 @@ void lock_transfer(db_t *db, sm1::session_t *s, sm1::session_t *g);
 void lock_restore(db_t *db, sm1::session_t *g);
 
 /*
- * Fail the call for a wait that returned waited, not 0: with the
- * transaction's doom, retryable, or with SM_ERR_INTERRUPTED or
+ * Fail the call for a wait that returned waited, not 0: with
+ * SM_ERR_DEADLOCK, retryable, or with SM_ERR_INTERRUPTED or
  * SM_ERR_BLOCKED, which leave the transaction active.
  */
 int lock_wait_error(sm1::session_t *session, int waited);

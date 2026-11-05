@@ -126,6 +126,11 @@ the item.
 8. **The `CF:txn` sweep has no back-off** (`GC.md`). An abandoned
    pass, or a snapshot that keeps `W0` low, leaves the count above
    the threshold, so the next run starts another full pass.
+9. **`sample_by_key` may overestimate `live_rows`.** It multiplies
+   by `tbl_size`, which counts older versions, and divides by
+   `tbl_range_size`, which does not. So `live_rows` may run high on
+   a table with many old versions, and the planner's row counts
+   with it.
 
 Smaller points:
 

@@ -186,8 +186,8 @@ void build_one(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
       break;
     }
   }
-  // In a transaction of its own, holding no row: marking the index
-  // valid waits for every user of the table, who may want a row.
+  // In a transaction of its own: marking the index valid takes the
+  // table-oid lock IX, and waits only for DDL on the table.
   set_state(cat, ws, table, index, index_state_t::valid);
 }
 

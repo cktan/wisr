@@ -1208,9 +1208,8 @@ narrowed, with these differences.
 - **While a load is open**, the transaction cannot commit, and
   its other writes to that store are refused: they could not
   be checked against keys still on their way.
-- **A prepare is refused** after a load, as with one open: a
-  `PREPARED` record names the keys written, and a load keeps
-  none.
+- **A prepare is refused** after a load, as with one open
+  (`XCTMGR.md` §10.1).
 - **An abort after the close** leaves a table that was
   committed empty with the load's versions in it, dead, for
   the sweep to drop (§5.6); to every reader it is empty.

@@ -252,8 +252,8 @@ static int open_index(sm1::session_t *session, uint64_t storeid, uint16_t relid,
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "index: a session and at least one key column");
   }
-  // 0xFFFF is TOAST's and 0xFFFE the _id index's (SM2_DESIGN.md
-  // ../ROWSTORE.md §8); below them, every key has a successor.
+  // 0xFFFF is TOAST's and 0xFFFE reserved (../CLUSTER.md §3); below
+  // them, every key has a successor.
   if (relid >= id_relid) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "index: relid " + std::to_string(relid) +

@@ -451,8 +451,8 @@ int begin(session_t* session, xctlevel_t level, bool read_only = false);
  * Commit the active transaction, making its writes durable and
  * visible. Releases all locks, discards the savepoint, and
  * closes the session's open cursors. For a prepared
- * transaction this is the coordinator's commit decision and
- * always succeeds, validation having happened at prepare.
+ * transaction this is the coordinator's commit decision,
+ * validation having happened at prepare.
  *
  * On SM_ERR_SERIALIZATION the transaction is aborted and its
  * effects discarded; retry.
@@ -465,12 +465,15 @@ int begin(session_t* session, xctlevel_t level, bool read_only = false);
  *
  * On SM_ERR_IO the transaction did not commit: persisting the
  * lease that covers its commit timestamp failed, before its
- * commit record was written, and it is aborted.
+ * commit record was written, and it is aborted, or, if it was
+ * prepared, left in doubt.
  *
  * Once called on an active transaction, the transaction is no
- * longer active whatever the result.
+ * longer active whatever the result, but for SM_ERR_INVALID (a
+ * bulk load is open) and SM_ERR_DOOMED (a rollback failed).
  *
  * Errors: SM_ERR_SERIALIZATION (retryable), SM_ERR_NOTRANS,
+ * SM_ERR_INVALID, SM_ERR_DOOMED,
  * SM_ERR_IO (no commit record was written).
  */
 int commit(session_t* session);
@@ -545,13 +548,13 @@ using enum ::sm_lockmode_t;
  * set, so they never change.
  *
  *   LOCKTYPE_ROW     a key in a store, taken by sm1::lock_row
- *                    or by a write of the key.
+ *                    or by a write refused with SM_ERR_UPDATED.
  *   LOCKTYPE_OID     an object id in no store, taken by
- *                    sm1::lock_oid; its key is the oid,
- *                    big-endian, and its storeid 0.
+ *                    sm1::lock_oid; its word is the oid, and
+ *                    its storeid 0.
  *
  * Two locks of different types never conflict, however equal
- * their storeid and key.
+ * their storeid and word.
  */
 enum locktype_t : uint8_t {
   LOCKTYPE_ROW = 0,
@@ -1726,10 +1729,11 @@ int ssi_write_key(session_t* session, uint64_t storeid, std::string_view key);
  * transaction's. A page is written outside every transaction, in one
  * RocksDB write batch that commits when it is made, whatever the
  * caller's transaction then does, and is read as it is, through the
- * environment's block cache, where its bytes are an entry of their
+ * environment's buffer pool, where its bytes are a frame of their
  * own, shared by every session. A page's key is the caller's, under
  * a class of its own: no scan, read or write of versions meets it.
- * Each call needs an active transaction, only to name the store.
+ * Each call needs an active transaction, only to name the store,
+ * unless sm1::set_no_transaction set the session to need none.
  */
 
 /* The most bytes a page may be: a frame of the buffer pool. */

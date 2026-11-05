@@ -55,7 +55,7 @@ typedef enum sm_errnum_t {
     /* data errors */
     SM_ERR_NOTFOUND      = 6,   /* store or key does not exist */
     SM_ERR_DUPKEY        = 7,   /* insert onto a live key */
-    SM_ERR_EXISTS        = 8,   /* home dir, database, or store exists */
+    SM_ERR_EXISTS        = 8,   /* home dir, database, sequence, gid exists */
     SM_ERR_INUSE         = 9,   /* database or sessions still open */
 
     /* concurrency errors — RETRYABLE */
@@ -210,7 +210,8 @@ All other errors leave the transaction active and
 unchanged, and the caller decides whether to continue or
 abort. There are two exceptions. `sm1::commit`: once it is
 called on an active transaction, the transaction is no
-longer active, whatever the result. `sm1::prepare`: on
+longer active, unless a bulk load is open or it fails with
+`SM_ERR_DOOMED`. `sm1::prepare`: on
 `SM_ERR_IO` the transaction is no longer active (see there).
 
 #### Running out of memory
@@ -370,10 +371,9 @@ committed-transaction loss on power failure for throughput.
 The database remains crash-*consistent*; it is no longer
 crash-*durable*. It does not weaken isolation.
 
-`group_commit_us` is accepted but currently unused:
-concurrent commits already share one synced WAL write
-through RocksDB's write group, which has no knob for
-waiting on followers.
+`group_commit_us` is accepted but currently unused: a leader
+does not wait for followers, as the commits behind a sync
+make the next group (../DBMGR.md §8.2).
 
 `commit_cache_entries` is the number of slots, rounded up to
 even, in the in-memory cache from transaction id to commit
@@ -779,8 +779,8 @@ and visible. Releases all locks, discards the savepoints,
 and closes any open scan cursors on this session.
 
 For a prepared transaction, this is the coordinator's
-commit decision and always succeeds — validation already
-happened at prepare time.
+commit decision: validation already happened at prepare time,
+but `SM_ERR_IO` leaves it in doubt.
 
 On `SM_ERR_SERIALIZATION` the transaction has been aborted
 and its effects discarded; the caller retries.

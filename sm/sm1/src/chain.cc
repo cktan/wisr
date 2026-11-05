@@ -845,9 +845,9 @@ int read_chained_batch(sm1::session_t *s, uint64_t storeid,
     }
   };
   // Keys in ascending order, as a range of an index names its rows
-  // in its key's order and close: one iterator steps from each to the
-  // next, seeking only past a gap, where MultiGet searches the index
-  // and a block for every key (../ROWSTORE.md).
+  // in its key's order and close: one iterator seeks the first and
+  // steps to each next, where MultiGet searches the index and a block
+  // for every key (../ROWSTORE.md).
   bool ascending = n > 1;
   for (size_t i = 1; ascending && i < n; i++) {
     ascending = slices[i - 1].compare(slices[i]) < 0;
@@ -894,7 +894,7 @@ int read_chained_batch(sm1::session_t *s, uint64_t storeid,
     int seeks = 0;
     for (; done < n; done++) {
       size_t i = done;
-      // A few steps forward from the last key, then a seek.
+      // A few steps forward from the last key: a miss goes to MultiGet.
       for (int step = 0; placed && it->Valid() &&
                          it->key().compare(slices[i]) < 0 && step < 4;
            step++) {

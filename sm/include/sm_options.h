@@ -15,9 +15,9 @@
  * database stays crash-CONSISTENT; it is no longer crash-
  * DURABLE. It does not weaken isolation.
  *
- * group_commit_us is accepted but currently unused: concurrent
- * commits already share one synced WAL write through RocksDB's
- * write group. commit_cache_entries is the number of slots,
+ * group_commit_us is accepted but unused: a leader does not wait
+ * for followers, as the commits behind a sync make the next group
+ * (../DBMGR.md §8.2). commit_cache_entries is the number of slots,
  * rounded up to even, in the in-memory cache from transaction
  * id to commit timestamp that spares readers a status-table
  * lookup; a slot is 16 bytes, and it must be at least 1.

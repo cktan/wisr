@@ -465,9 +465,11 @@ int insert_row(sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
 
 /*
  * Move the row at key to new_key, with tuple (../CLUSTER.md §4).
- * 1. Erase it with a move's tombstone, which a writer at key then
- *    meets as SM_ERR_MOVED (../ROWSTORE.md §2.5). Its old row is pinned
- *    into p and viewed by was.
+ * 1. Erase it with a move's tombstone (../ROWSTORE.md §2.5). A writer
+ *    at key that began before the move committed fails as over any
+ *    newer commit, and, at READ COMMITTED, then with SM_ERR_MOVED at
+ *    its re-read; one that began after, with SM_ERR_MOVED at once. The
+ *    old row is pinned into p and viewed by was.
  * 2. Insert it under new_key.
  */
 int move_row(sm2::rel_t *rel, std::string_view key, std::string_view new_key,

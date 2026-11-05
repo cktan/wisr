@@ -27,7 +27,7 @@ namespace {
  * Rebuild each PREPARED record as an in-doubt transaction (../XCTMGR.md §10,
  * ../DBMGR.md §9.1 step 5).
  * 1. Put it in the active table.
- * 2. Take the row locks of its write set.
+ * 2. Take the locks of its lock set.
  * 3. Pin the watermark at its snapshot.
  * 4. Mark it restored for SSI.
  * 5. Register it under its gid.
@@ -59,8 +59,8 @@ int restore_prepared(db_t *db) {
       // Owned by the restored object, for a writer that waits.
       db->xid_owner[xid] = g;
     }
-    // Re-acquire the row locks of its write set, each in the
-    // mode the record carries.
+    // Re-acquire its lock set, each lock in the mode the record
+    // carries.
     lock_restore(db, g);
     // Pin the GC watermark at its snapshot.
     db_register_snapshot(db, g->snapshot_ts);

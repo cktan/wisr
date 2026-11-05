@@ -29,7 +29,7 @@ typedef enum sm_errnum_t {
     /* data errors */
     SM_ERR_NOTFOUND      = 6,   /* store or key does not exist */
     SM_ERR_DUPKEY        = 7,   /* insert onto a live key */
-    SM_ERR_EXISTS        = 8,   /* home dir, database, or store exists */
+    SM_ERR_EXISTS        = 8,   /* home dir, database, sequence, gid exists */
     SM_ERR_INUSE         = 9,   /* database or sessions still open */
 
     /* concurrency errors -- RETRYABLE */

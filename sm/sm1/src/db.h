@@ -346,9 +346,9 @@ struct db_t {
   /* The ts and object-id allocators and their leases (../DBMGR.md §17.1). */
   std::mutex alloc_mu;
   /*
-   * Signalled, under alloc_mu, when visible_ts rises or the
-   * database fails stop: a commit waits on it until its own
-   * commit_ts is visible (db_commit_wait(), ../XCTMGR.md).
+   * Signalled, under alloc_mu, when visible_ts rises: a commit
+   * waits on it until its own commit_ts is visible
+   * (db_commit_wait(), ../XCTMGR.md).
    */
   std::condition_variable visible_cv;
   uint64_t lease = 0;

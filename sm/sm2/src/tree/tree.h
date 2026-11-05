@@ -12,8 +12,9 @@
  * (sm2::tree_page_seq). A tree's keys are distinct byte strings,
  * compared bytewise; a key's value is the caller's. Every change is
  * a top-level write of sm1's, made when it is made, whatever the
- * caller's transaction then does. Nothing is removed but by
- * tree_remove_if and tree_prune, and no page is ever freed.
+ * caller's transaction then does. No entry is removed but by
+ * tree_prune, tree_clean_leaf, and tree_remove_if, which only a test
+ * calls; no page is ever freed.
  */
 #ifndef SM2_TREE_TREE_H
 #define SM2_TREE_TREE_H
@@ -84,9 +85,9 @@ int tree_insert(tree_t &tree, std::string_view key, std::string_view value);
 /*
  * Insert key, which begins with prefix, with value, unless an entry
  * beginning with prefix conflicts (../BTREEINDEX.md §7). Returns 0
- * inserted; 1 if key was there already, unchanged; 2, every latch let
- * go, for the caller to wait as check found and call again; -1 on an
- * error or a duplicate, its error check's to set.
+ * inserted; 1 if key was there already, its entry marked in doubt; 2,
+ * every latch let go, for the caller to wait as check found and call
+ * again; -1 on an error or a duplicate, its error check's to set.
  * 1. Latch the leaf that covers prefix. Every insert of a key
  *    beginning with prefix takes this latch first, and holds it until
  *    it has inserted; so two inserts of one prefix take turns.

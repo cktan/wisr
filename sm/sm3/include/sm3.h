@@ -93,7 +93,7 @@ struct index_key_spec_t {
     int32_t                 attnum;      /* 0-based place; -1: expression */
     bool                    desc;
     bool                    nulls_first;
-    std::optional<uint64_t> collation;   /* text, varchar only */
+    std::optional<uint64_t> collation;   /* text, varchar, bpchar only */
     uint8_t                 type_code = 0;  /* expression's (sm2/TYPE.md §3) */
     int32_t                 typmod = -1;    /* an expression's */
 };
@@ -332,11 +332,11 @@ struct session_t;
 
 /*
  * Make the catalog of the new database dbname of env: its format
- * version, the oid sequence, and the pg_catalog and public
- * namespaces. It needs no session: it opens one of its own, with
- * opt as sm1::opendb takes it, and works in a transaction of its
- * own, so the catalog is made whole or not at all. A database
- * that has one already fails with SM_ERR_EXISTS.
+ * version, the sequences sm3.oid and sm3.tree_page, and the
+ * pg_catalog and public namespaces. It needs no session: it opens
+ * one of its own, with opt as sm1::opendb takes it, and works in a
+ * transaction of its own, so the catalog is made whole or not at
+ * all. A database that has one already fails with SM_ERR_EXISTS.
  */
 int cat_init(sm1::env_t* env, std::string_view dbname,
              const sm1::options_t* opt = nullptr);
@@ -969,9 +969,9 @@ int drop_namespace(session_t* session, uint64_t oid);
  * sm2::max_pk_len, and the table's only one, or it is
  * SM_ERR_INVALID. The table's rows are keyed by it, and are its
  * entries (../CLUSTER.md §2): it is made valid at once, on a table
- * this transaction made with no row yet; on any other the table is
- * rewritten into a new store under its table-oid lock, exclusive,
- * which drop_index of it does too (../CLUSTER.md §8). Two rows
+ * whose store is empty; on any other the table is rewritten into a
+ * new store under its table-oid lock, exclusive, which drop_index
+ * of it does too (../CLUSTER.md §8). Two rows
  * with one key fail it with SM_ERR_DUPKEY. A constraint one is a
  * UNIQUE or PRIMARY KEY constraint's, another mark the host reads:
  * it must be unique and on columns alone.
@@ -1694,12 +1694,13 @@ int tbl_scannxt(scan_t* scan, uint64_t& id, std::string_view& tuple);
 int tbl_scan_rows(table_t* table, scan_t*& out);
 
 /*
- * Open a cursor over the rows of the table's primary key, index,
- * between lo and hi as tbl_idx_scan takes them, in key order: the
- * rows themselves, each in the cursor's pin as tbl_scannxt gives
- * it, one sorted run (../CLUSTER.md §5). SM_ERR_INVALID if index
- * is not the primary key, or not usable; SM_ERR_NOTFOUND if the
- * table has no such index. It seeks no _id.
+ * Open a cursor over the rows of index, the table's primary key or
+ * a tree, between lo and hi as tbl_idx_scan takes them, in key order:
+ * the rows themselves, each in the cursor's pin as tbl_scannxt gives
+ * it. A primary key's are one sorted run, and seek no _id
+ * (../CLUSTER.md §5); a tree's are read through its entries.
+ * SM_ERR_INVALID if index is neither, or not usable; SM_ERR_NOTFOUND
+ * if the table has no such index.
  */
 int tbl_idx_scan_rows(table_t* table, uint64_t index, const sm2::bound_t* lo,
                       const sm2::bound_t* hi, scan_t*& out,
@@ -1844,11 +1845,11 @@ int tbl_compact(table_t* table);
 /*
  * ---- statistics (../STATISTICS.md §9.6, §9.7) ----
  *
- * What an analyze of a table records, in one catalog entry of kind
- * STATS, for the host's planner. A value -- a common value or a
- * histogram bound -- is its bytes as sm2::datum_bytes gives them,
- * a varlena for a variable-width type, of the type of what it
- * describes.
+ * What an analyze of a table records, in catalog entries of kind
+ * STATS, one for the table and one a statistic, for the host's
+ * planner. A value -- a common value or a histogram bound -- is its
+ * bytes as sm2::datum_bytes gives them, a varlena for a
+ * variable-width type, of the type of what it describes.
  */
 
 /*
@@ -1873,8 +1874,9 @@ using stats_t = ::sm_stats_t;
  * Record stats as the table oid's in session's transaction,
  * replacing any it had: they commit, roll back and survive a crash
  * with it, and other sessions see them once it commits. It takes
- * the STATS entry's lock X, so two analyzes of one table queue;
- * at REPEATABLE READ and above the second then fails as retryable.
+ * the table's own STATS entry's lock X, so two analyzes of one
+ * table queue; at REPEATABLE READ and above the second then fails
+ * as retryable.
  * Every stat_t must name a column or an index expression of the
  * table, and its values be of that one's type: SM_ERR_INVALID if
  * not, SM_ERR_NOTFOUND if there is no such table.

@@ -2,11 +2,10 @@
  * table.cc -- an open table and its writes (../INDEXBUILD.md §2): the
  * row's write, then each index the write changes, with the old
  * entries computed from the image the row's write hands back. A
- * row is named by its _id, and found at its key, its primary key
- * in a table that has one, through sm2's _id index (../CLUSTER.md
- * §2). A datum the row holds out of line (sm2's TOAST) is fetched
- * where an index needs its value, and an old row's are erased only
- * once the indexes are fixed.
+ * row is named by its key: its primary key in a table that has
+ * one, else its _id (../CLUSTER.md §2). A datum the row holds out
+ * of line (sm2's TOAST) is fetched where an index needs its value,
+ * and an old row's are erased only once the indexes are fixed.
  */
 
 #include "../catalog/internal.h"
@@ -586,7 +585,6 @@ const table_def_t &tbl_def(const table_t *table) { return *table->def; }
 /* The session the table was opened in. */
 session_t *tbl_session(const table_t *table) { return table->session; }
 
-/* Whether the table's session may scan index now; see sm3.h. */
 /* An index's state as the handle has it; see sm3.h. */
 index_state_t tbl_index_state(const table_t *table, uint64_t index) {
   for (size_t i = 0; i < table->def->indexes.size(); i++) {
@@ -597,6 +595,7 @@ index_state_t tbl_index_state(const table_t *table, uint64_t index) {
   return index_state_t::failed;
 }
 
+/* Whether the table's session may scan index now; see sm3.h. */
 bool tbl_index_usable(const table_t *table, uint64_t index) {
   return index_usable(table->session, *table->def, index);
 }

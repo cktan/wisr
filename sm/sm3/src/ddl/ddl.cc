@@ -410,7 +410,7 @@ int truncate_table(session_t *session, uint64_t oid) {
   }
   const uint64_t old_store = rec.storeid;
   // A new, empty store for the rows and index entries, temporary
-  // if the table is; the index relids and the rowno sequence carry
+  // if the table is; the index relids and the _id sequence carry
   // over.
   const bool temp = rec.nspoid == nsp_temp;
   if (sm1::mkstore(session->sm1, rec.storeid, temp, true) != 0 ||

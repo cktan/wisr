@@ -887,9 +887,9 @@ int abort_xct(sm1::session_t *s) {
 /*
  * The PREPARED record (../DBMGR.md §6.5) of t's transaction under gid, prepared
  * at prepared_at: state, snapshot_ts, a zero commit_ts, then
- * prepared_at, gid, the write set as lock keys, and the storeids
- * created and dropped. One value, however large the write set;
- * RocksDB stores it as a blob.
+ * prepared_at, gid, the lock set, and the storeids created and
+ * dropped. One value, however large the lock set; RocksDB stores
+ * it as a blob.
  */
 std::string encode_prepared(const sm1::session_t *t, const std::string &gid,
                             long long prepared_at) {
@@ -1006,8 +1006,8 @@ int prepare(sm1::session_t *s, const char *gid) {
                      "a transaction that made, dropped or wrote a "
                      "temporary store cannot be prepared");
   }
-  // A PREPARED record names the keys written, and a load keeps
-  // none (BULKLOAD.md §5.6).
+  // A load bars a prepare, though the record lists explicit locks
+  // alone, not the keys written (../XCTMGR.md §10.1).
   if (s->loader || s->loaded) {
     return set_error(sm1::SM_ERR_INVALID,
                      "a transaction that bulk loaded cannot be prepared");
@@ -1481,7 +1481,7 @@ bool xct_decode_prepared(db_t *db, uint64_t xid, rocksdb::Slice val,
   // Take the gid.
   g->prepared_gid.assign(p, len);
   p += len;
-  // Read the write set's size.
+  // Read the lock set's size.
   if (!take32(&count)) {
     return false;
   }

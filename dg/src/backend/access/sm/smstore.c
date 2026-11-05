@@ -2599,7 +2599,7 @@ void smstore_load(Relation rel, TupleTableSlot **slots, int n) {
                     errmsg("relation \"%s\" does not exist",
                            RelationGetRelationName(rel))));
   if (load_oid != oid) {
-    /* Waits for the table's other users, if it is empty. */
+    /* Tries the table's lock X, if it is empty: it never waits for it. */
     if (waiting([&] { return sm_tbl_load_begin(tbl); }) != 0)
       load_error(rel, NULL, "begin a bulk load");
     load_oid = oid;

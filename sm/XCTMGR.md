@@ -1220,10 +1220,9 @@ doubt until a coordinator resolves it.
    store (`SM_ERR_INVALID`). A prepared transaction outlives its
    session, and those stores would not.
 3. Refuse a transaction with a bulk load open or done
-   (`SM_ERR_INVALID`). The code's reason is that the record names
-   the keys written and a load keeps none. The record now names
-   explicit locks alone, so that reason no longer holds, though
-   the refusal stands.
+   (`SM_ERR_INVALID`). The record names explicit locks alone, so
+   a load's keys are no longer a reason. No other reason is
+   recorded, and the refusal stands.
 4. Reserve the gid with a null entry in `db_t::prepared`. A gid
    in use among unresolved transactions fails with
    `SM_ERR_EXISTS`.
