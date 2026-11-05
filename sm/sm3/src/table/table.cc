@@ -2159,8 +2159,12 @@ int tbl_scan_seek_key(scan_t *scan, std::string_view key) {
 
 /* The key of the cursor's last row; see sm3.h. */
 std::string_view tbl_scan_key(const scan_t *scan) {
-  return scan->entries ? std::string_view(scan->rows[scan->at - 1])
-                       : sm2::rel_scan_key(scan->rel);
+  if (scan->entries) {
+    // Before the first row a tree's cursor has no key.
+    return 0 == scan->at ? std::string_view()
+                         : std::string_view(scan->rows[scan->at - 1]);
+  }
+  return sm2::rel_scan_key(scan->rel);
 }
 
 /* Close a cursor, releasing its pin; see sm3.h. */

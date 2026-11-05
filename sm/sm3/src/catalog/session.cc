@@ -544,7 +544,9 @@ int forget(session_t *s, int depth) {
  *    the new one, never the old.
  */
 int commit(session_t *s) {
-  // Committed or not, the transaction is over, and its pins with it.
+  // The transaction is over, and its pins with it. If sm1 refuses, a
+  // load open or the transaction doomed, it stays active with this
+  // side torn down: the caller can only abort it, and abort works.
   s->in_txn = false;
   release_all_pins(s);
   if (!made_shared_ddl(s)) {

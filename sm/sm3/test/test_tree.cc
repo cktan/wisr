@@ -1683,6 +1683,25 @@ TEST_CASE("tree: a temporary table's leaf is not queued") {
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
+TEST_CASE("tree: a cursor has no key before its first row") {
+  // Verify tbl_scan_key before a row gives no key: it indexed the rows
+  // before the first, and crashed.
+  // 1. Open a cursor of rows on a tree, and read no row.
+  // 2. Its key is empty.
+  trees_t f;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  row_t r(1, "old", "O");
+  uint64_t id = 0;
+  REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
+  sm3::scan_t *scan = nullptr;
+  REQUIRE(sm3::tbl_idx_scan_rows(t, f.by_state, nullptr, nullptr, scan) == 0);
+  CHECK(sm3::tbl_scan_key(scan).empty());
+  sm3::tbl_scanend(scan);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
 TEST_CASE("tree: a pass cleans no more pages than its budget") {
   // Verify a busy system's pass stops at its budget, and the rest stay
   // queued (../BTREEINDEX.md §9).

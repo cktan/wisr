@@ -421,6 +421,36 @@ TEST_CASE("a load into an empty table with a unique tree inserts its rows") {
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
+TEST_CASE("a commit refused with a load open can still abort") {
+  // Verify a transaction whose commit a load refused is not left broken:
+  // sm3 tears down its side before sm1 refuses.
+  // 1. Make a table in a transaction, and open a load on another.
+  // 2. Commit fails with SM_ERR_INVALID.
+  // 3. Abort: 0, and the table made in it is gone.
+  // 4. A new transaction works, and items is empty.
+  items_t f(files_options());
+  std::vector<sm3::column_spec_t> cols = {
+      {"x", sm2::type_int4.code, -1, false}};
+  uint64_t made = 0;
+  start(f.a);
+  REQUIRE(sm3::create_table(f.a, sm3::nsp_public, "made", cols, made) == 0);
+  sm3::table_t *t = f.open_items(f.a);
+  sm3::loader_t *l = open_load(t);
+  add_rows(l, 1, 3);
+  CHECK(-1 == sm3::commit(f.a));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  sm3::tbl_load_free(l);
+  sm3::tbl_close(t);
+  CHECK_MESSAGE(0 == sm3::abort(f.a), sm1::errmsg());
+
+  start(f.a);
+  CHECK(nullptr == sm3::cat_get_table(f.cat, made));
+  t = f.open_items(f.a);
+  CHECK(0 == count(t));
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
 TEST_CASE("a load does not wait for an empty table another is using") {
   // Verify the lock a load takes is one it can have at once.
   // 1. Session b reads items, which is empty, and stays in its

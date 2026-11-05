@@ -122,16 +122,15 @@ Smaller points:
 - `drop_owned_sequences()` can miss an `own_sequence` committed
   after the snapshot, and leave a Sequence that names a dropped
   table. Not tested.
-- A cursor ended after its transaction: the end of a transaction
-  frees sm1's cursor, and `sm_rel_scanend` and `sm_idx_scanend`
-  on an LSM-backed handle then call `sm1::scanend` on it. This
-  reads as a double free. `SM_API.md` tells a caller to end
-  cursors first.
-- `sm_commit` with a bulk load open, or doomed: `sm3::commit`
-  releases pins, drops the overlay and clears `in_txn` before sm1
-  refuses, so sm1's transaction stays active without them.
-- `sm_rel_scan_key` before any row: on a tree it indexes
-  `rows[at - 1]` with `at` 0.
+- A cursor ended after its transaction is a double free. The end
+  of a transaction frees sm1's cursor, and `sm_rel_scanend` and
+  `sm_idx_scanend` then use it: valgrind shows it, and the
+  process aborts. digres cannot reach it, as its portals end
+  scans first. `sm.h` and `SM_API.md` state the rule. If sm gets
+  a second host, sm3 could keep a list of each session's open
+  scans, and clear their sm1 cursors at commit and abort: then
+  `tbl_scanend` frees only its wrapper, at the cost of a list
+  update on every scan.
 - `CODE.md` says not to catch `std::bad_alloc`, but `guard()` in
   `sm.cc` catches it and reports `SM_ERR_NOMEM`. Issue 3 is
   related.

@@ -660,7 +660,11 @@ int sm_rel_scan_key(sm_rel_scan_t* scan, const void** key, size_t* len);
  */
 int sm_rel_scan_seek_key(sm_rel_scan_t* scan, const void* key, size_t len);
 
-/* Close a cursor; NULL is a no-op. */
+/*
+ * Close a cursor; NULL is a no-op.
+ * Call it before the transaction ends: the end frees the cursor, and
+ * a call after it is a double free.
+ */
 void sm_rel_scanend(sm_rel_scan_t* scan);
 
 /* Encode values and isnull, one per attribute of schema, into tuple. */
@@ -708,7 +712,11 @@ int sm_idx_scan_key(sm_idx_scan_t* scan, sm_datum_t* values, bool* isnull,
  */
 int sm_idx_scan_row(sm_idx_scan_t* scan, const void** key, size_t* len);
 
-/* Close a cursor; NULL is a no-op. */
+/*
+ * Close a cursor; NULL is a no-op.
+ * Call it before the transaction ends: the end frees the cursor, and
+ * a call after it is a double free.
+ */
 void sm_idx_scanend(sm_idx_scan_t* scan);
 
 /* ---- the catalog: sm3's ---- */
