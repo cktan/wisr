@@ -2318,7 +2318,16 @@ int tbl_clean_leaf(session_t *session, std::shared_ptr<const table_def_t> def,
       removed, doubt);
 }
 
-/* Compact the table's store into one sorted run. */
+/*
+ * Compact the table's store into one sorted run, then clean its trees
+ * (../BTREEINDEX.md §9.2).
+ * 1. Compact the store.
+ * 2. For a temporary table's tree, whose leaves are never queued, walk
+ *    every leaf.
+ * 3. For any other tree, take its pages off the cleaner's queue and
+ *    clean each. A leaf not on the queue is not read.
+ * 4. Put a page left with an entry in doubt back, to wait.
+ */
 int tbl_compact(table_t *table) {
   if (sm1::compact(table->session->sm1, table->def->storeid) != 0) {
     return -1;
@@ -2329,22 +2338,47 @@ int tbl_compact(table_t *table) {
   // doubt is read, and a leaf with none left is set all visible
   // (../BTREEINDEX.md §9).
   const table_def_t &def = *table->def;
+  cleaner_t *cleaner = table->session->cat->cleaner.get();
   for (size_t i = 0; i < def.indexes.size(); i++) {
     if (!def.indexes[i].tree) {
       continue;
     }
     pin_t *p = pin_take(table->session);
+    defer {
+      sm1::unpin(p->raw);
+      pin_put(p);
+    };
+    auto dead = [&](std::string_view row, std::string_view key) {
+      return judge_entry(table, i, p->raw, row, key);
+    };
     size_t removed = 0;
-    int rc = sm2::idx_vacuum(
-        table->indexes[i],
-        [&](std::string_view row, std::string_view key) {
-          return judge_entry(table, i, p->raw, row, key);
-        },
-        removed);
-    sm1::unpin(p->raw);
-    pin_put(p);
-    if (rc != 0) {
-      return -1;
+    if (nullptr == cleaner || nsp_temp == def.nspoid) {
+      if (sm2::idx_vacuum(table->indexes[i], dead, removed) != 0) {
+        return -1;
+      }
+      continue;
+    }
+    // The pages are off the queue and their filter bits clear before
+    // they are read, so a change after queues a page again.
+    std::vector<clean_page_t> pages;
+    cleaner->queue.extract(def.storeid, def.indexes[i].relid, pages);
+    uint64_t watermark = sm1::gc_watermark(table->session->sm1) + 1;
+    for (size_t k = 0; k < pages.size(); k++) {
+      bool doubt = false;
+      size_t n = 0;
+      // 1 is a page that is no leaf now: page 0 split. Nothing to clean.
+      if (sm2::idx_clean_leaf(table->indexes[i], pages[k].pageid, dead, n,
+                              doubt) < 0) {
+        // The pages not yet read go back: the queue is a hint, but
+        // these were found.
+        for (size_t j = k; j < pages.size(); j++) {
+          cleaner->queue.wait(pages[j], 0);
+        }
+        return -1;
+      }
+      if (doubt) {
+        cleaner->queue.wait(pages[k], watermark);
+      }
     }
   }
   return 0;

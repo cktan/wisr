@@ -81,6 +81,17 @@ public:
    */
   void wait(const clean_page_t &page, uint64_t watermark);
 
+  /*
+   * Take every page of tree relid of store storeid off the queue, for
+   * VACUUM, the waiting ones too, into out, in queue order:
+   * 1. Under the mutex, walk the slots head to tail.
+   * 2. Move a page of another tree up, keeping its order.
+   * 3. Put a page of this tree in out, and clear its filter bit, as
+   *    take does, so a change after this queues it again.
+   */
+  void extract(uint64_t storeid, uint16_t relid,
+               std::vector<clean_page_t> &out);
+
   /* The pages on the queue. */
   size_t size() const;
 

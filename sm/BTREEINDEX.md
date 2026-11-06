@@ -939,7 +939,7 @@ A scan needs no latch, for the reason in §5.4.
 
 A cleaning removes dead entries, clears the in-doubt bit of
 settled and live entries, and sets a leaf all visible. `VACUUM`
-walks every leaf that needs it. A cleaner thread cleans the
+cleans the leaves on the queue (§9.2). A cleaner thread cleans the
 leaves that readers and writers queue: all of them when the
 system is not busy, and about 100 pages a second when it is
 (§9.9). digres has no autovacuum (`../dg/UNSUPPORTED.md`), so the
@@ -984,16 +984,50 @@ entries in doubt until the next cleaning.
 ### 9.2 `VACUUM`
 
 `VACUUM` reaches `tbl_compact()`: it compacts the store, then
-`sm2::idx_vacuum` runs `tree_prune()` on each tree. That walks
-the leaves left to right, from the leftmost, and cleans each, as
-PostgreSQL's `btbulkdelete()` does. A change to a leaf is a
-top-level change. A second `VACUUM` with no write between reads
-no row.
+cleans each tree from the cleaner's queue alone. It does not walk
+the leaves.
 
-`VACUUM` stays. It reaches a leaf that no reader or writer has
-touched since a restart, and a temporary table's leaves. It reads
-every leaf not set, but reads rows only for entries with the bit
-set.
+1. Take every page of the tree off the queue
+   (`clean_queue_t::extract()`), the waiting ones too. Each
+   page's filter bit is cleared as it goes, so a change after
+   queues the page again.
+2. Clean each page as the cleaner does (`idx_clean_leaf()`).
+3. Put a page left with an entry in doubt back on the queue, to
+   wait for the watermark.
+
+A change to a leaf is a top-level change. A second `VACUUM` with
+no write between reads no row.
+
+**What `VACUUM` accepts.** The queue is a hint, and `VACUUM`
+works from it alone. So it misses some leaves, and we accept
+that:
+
+- **A false positive of the filter.** A leaf whose filter bit
+  another page set is not queued. It is queued by its next reader
+  or writer, once that page is taken and the bit is clear.
+- **A full queue.** A page that finds no room is dropped, and
+  queued again by its next reader or writer.
+- **A restart.** The queue starts empty. A leaf that no reader or
+  writer has touched since is not cleaned by `VACUUM`. Its
+  in-doubt bits are in the page, so nothing is lost: only the
+  cleaning waits.
+- **A leaf that changes while `VACUUM` runs.** Its page left the
+  queue before it was read, so the change queues it again. The
+  next `VACUUM` or the cleaner finds it.
+
+**Why this is enough.** A leaf with an entry in doubt that
+nobody reads or writes costs nothing: no scan meets its dead
+entries, and it holds back no other work. A leaf in active use is
+met by a reader or a writer, and that one queues it, as soon as
+its page is off the queue. So a miss lasts only until the leaf is
+used. A walk of every leaf would read each leaf's header, one pin
+and one copy a leaf, to find a few. The queue gives the same
+leaves for the cost of the queue.
+
+**The exception.** A temporary table's leaves are never queued
+(§9.5). `VACUUM` walks every leaf of its trees, left to right
+from the leftmost, as PostgreSQL's `btbulkdelete()` does
+(`tree_prune()`). A database opened with no cleaner does the same.
 
 The GC filter does not touch class `0x04`, so GC never removes an
 entry.
@@ -1071,9 +1105,11 @@ Each does this, by the tree's `leaf_note_fn`, with no latch held:
 4. Put the page in at the tail.
 
 A writer queues as well as a reader: an `UPDATE` by primary key
-may leave a dead entry on a leaf that no cursor reads. A split
-queues only its left page. Its right half is queued by its next
-reader or writer.
+may leave a dead entry on a leaf that no cursor reads. An insert
+that splits a leaf queues both halves, as the new entry may be in
+the right one. A split of page 0 queues its two new pages. A
+split made by a post to a parent queues no page, as an inner page
+is no leaf.
 
 A temporary table's pages are not queued: the cleaner cannot read
 that session's instance. They keep their in-doubt bits for

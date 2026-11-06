@@ -192,3 +192,34 @@ TEST_CASE("cleaner: a busy system is still cleaned, at a low rate") {
   CHECK(0u == sm3::cleaner_budget(q, 0, 100));
   CHECK(SIZE_MAX == sm3::cleaner_budget(q, 1, 100));
 }
+
+TEST_CASE("cleaner queue: extract takes one tree's pages and no other") {
+  // Verify VACUUM's extract leaves the other trees' pages, in order,
+  // and lets an extracted page be queued again.
+  // 1. Queue pages of two trees, one of them waiting.
+  // 2. Extract one tree: its pages come out in order, the waiting too.
+  // 3. The other tree's pages stay, in order, and no waiting slot is
+  //    counted for the extracted one.
+  // 4. An extracted page queues again.
+  clean_queue_t q(8, 1 << 16);
+  clean_page_t p;
+  for (uint64_t n = 1; n <= 4; n++) {
+    clean_page_t x = page_of(n);
+    x.relid = 0 == n % 2 ? 3 : 4;
+    REQUIRE(clean_note_t::queued == q.note(x));
+  }
+  REQUIRE(clean_take_t::page == q.take(1, p));
+  q.wait(p, 5);
+  std::vector<clean_page_t> out;
+  q.extract(7, 4, out);
+  REQUIRE(2u == out.size());
+  CHECK(3u == out[0].pageid);
+  CHECK(1u == out[1].pageid);
+  CHECK(2u == q.size());
+  CHECK(!q.all_wait());
+  REQUIRE(clean_take_t::page == q.take(1, p));
+  CHECK(2u == p.pageid);
+  REQUIRE(clean_take_t::page == q.take(1, p));
+  CHECK(4u == p.pageid);
+  CHECK(clean_note_t::queued == q.note(out[0]));
+}

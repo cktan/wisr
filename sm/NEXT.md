@@ -420,26 +420,10 @@ and so are the catalog tables psql reads
    - the floor: the GUC cannot go below the pins' floor;
    - an option in `sm_options_t` that digres's GUC sets, as
      `block_cache_bytes` is set now.
-8. **A list of the btree leaves that need vacuum**
-   (`BTREEINDEX.md` §8). A leaf's `page_all_visible` flag is
-   cleared by an insert into it, and by an update or a delete
-   of one of its entries. VACUUM finds such leaves by reading
-   every leaf, left to right, and skipping each leaf whose flag
-   is set. Instead, keep a list of the leaves whose flag was
-   cleared, an `sm0::blist_t` (`sm0/include/sm0_blist.h`), with
-   a 1-bit Bloom filter in front of it, so a leaf already
-   listed is not appended again. VACUUM then reads only the
-   leaves on the list. `BTREEINDEX.md` §9, built 2026-11-05, does
-   this as the cleaner's queue of pages, with an in-doubt bit on
-   each entry. Readers and writers queue a leaf not all visible.
-   VACUUM still reads every leaf not set. What follows is the
-   question as it first stood:
-   - a false positive of the filter leaves a cleared leaf off
-     the list: when VACUUM reads it, if ever;
-   - the list is in memory: after a restart, VACUUM reads every
-     leaf once, or the list is kept;
-   - when VACUUM empties the list and the filter, and a flag
-     cleared while VACUUM runs.
+8. **A list of the btree leaves that need vacuum**: built.
+   VACUUM cleans the leaves on the cleaner's queue alone, and
+   misses some (`BTREEINDEX.md` §9.2 gives the cases and why
+   that is enough). A temporary table's trees are still walked.
 9. **Smaller btree leaf entries** (`BTREEINDEX.md` §4.3, §12).
    A leaf entry is its key, its value and 6 bytes of lengths
    and slot (`sm2/src/tree/page.h`, `entry_size()`). An index on

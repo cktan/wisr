@@ -103,6 +103,27 @@ void clean_queue_t::wait(const clean_page_t &page, uint64_t watermark) {
   push({page, watermark});
 }
 
+/* Take a tree's pages off the queue; see cleaner.h. */
+void clean_queue_t::extract(uint64_t storeid, uint16_t relid,
+                            std::vector<clean_page_t> &out) {
+  // Held for the whole walk: VACUUM is rare and the queue is an array.
+  std::lock_guard lock(m_mu);
+  size_t kept = 0;
+  for (size_t i = 0; i < m_count; i++) {
+    slot_t slot = m_slots[(m_head + i) % m_cap];
+    if (slot.page.storeid != storeid || slot.page.relid != relid) {
+      m_slots[(m_head + kept) % m_cap] = slot;
+      kept++;
+      continue;
+    }
+    uint64_t mask = 0;
+    filter_word(slot.page, mask).fetch_and(~mask);
+    m_waiting -= 0 != slot.watermark ? 1 : 0;
+    out.push_back(slot.page);
+  }
+  m_count = kept;
+}
+
 /* The most pages the first worker's next pass cleans; see cleaner.h. */
 size_t cleaner_budget(const clean_queue_t &queue, uint64_t begun,
                       uint64_t limit) {

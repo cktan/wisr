@@ -370,10 +370,14 @@ int write_split(tree_t &tree, uint64_t leftid, page_t &left,
  *    write.
  */
 int split_root(tree_t &tree, sm1::page_t *rootpin, page_t &left, page_t &right,
-               std::vector<out_t> more = {}) {
+               std::vector<out_t> more = {}, uint64_t *halves = nullptr) {
   uint64_t leftid = 0, rightid = 0;
   if (0 != next_page(tree, leftid) || 0 != next_page(tree, rightid)) {
     return -1;
+  }
+  if (nullptr != halves) {
+    halves[0] = leftid;
+    halves[1] = rightid;
   }
   pinned_t leftpin, rightpin;
   if (0 != pin_new(tree, leftid, 0 != left.level, leftpin) ||
@@ -620,9 +624,13 @@ int mark_in_doubt(tree_t &tree, detail::latched_t &l, std::string_view key) {
 /*
  * Insert key with value into the leaf l latches, which covers it,
  * splitting it if full: 0, 1 if the key is there already, or -1.
+ * leaves takes the leaves to note: l's page, and the right half of a
+ * split, or the two new pages of a root split.
  */
 int insert_into(tree_t &tree, detail::latched_t &l, std::string_view key,
-                std::string_view value) {
+                std::string_view value, uint64_t (&leaves)[2]) {
+  leaves[0] = l.pageid;
+  leaves[1] = 0;
   // Into the page's bytes, decoding no entry, while it has room.
   std::vector<out_t> outs(1);
   int rc = page_insert_bytes(l.pin.view, key, value, tree.limit, outs[0].bytes);
@@ -644,12 +652,13 @@ int insert_into(tree_t &tree, detail::latched_t &l, std::string_view key,
   page_t right;
   page_split(l.page, right, key, value, tree.limit);
   if (root_id == l.pageid) {
-    return split_root(tree, l.pin.pin, l.page, right);
+    return split_root(tree, l.pin.pin, l.page, right, {}, leaves);
   }
   uint64_t rightid = 0;
   if (0 != write_split(tree, l.pageid, l.page, l.pin.pin, right, rightid)) {
     return -1;
   }
+  leaves[1] = rightid;
   std::string sep = right.entries.front().first;
   return post(tree, l.pageid, l.page, l.pin, sep, rightid);
 }
@@ -657,11 +666,18 @@ int insert_into(tree_t &tree, detail::latched_t &l, std::string_view key,
 /* Insert into the leaf l latches, let it go, and note it: as insert_into. */
 int insert_and_note(tree_t &tree, detail::latched_t &l, std::string_view key,
                     std::string_view value) {
-  int rc = insert_into(tree, l, key, value);
+  uint64_t leaves[2];
+  int rc = insert_into(tree, l, key, value, leaves);
   // Noted with no latch held: the note may wait on the queue's mutex.
   l.pin.release();
   if (rc >= 0) {
-    note_leaf(tree, l.pageid);
+    // A split noted both halves: VACUUM works from the queue alone, and
+    // the half the entry went to may be the right one. Page 0 that
+    // split is no leaf now, so its two new pages are noted.
+    note_leaf(tree, leaves[0]);
+    if (0 != leaves[1]) {
+      note_leaf(tree, leaves[1]);
+    }
   }
   return rc;
 }
