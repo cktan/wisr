@@ -522,6 +522,24 @@ steps behind each entry).
 
 Owed, and blocking nothing above:
 
+- **`VALIDATE CONSTRAINT` of a foreign key holds the referenced
+  table SHARE; PostgreSQL holds `ROW SHARE`.** The check reads
+  newest rows, and `sm1::view_latest` needs a lock that stops
+  writes to every table read (`XCTMGR.md` §5.5;
+  `../dg/WORKNOTE.md` step 397). The referenced table's writers
+  wait for a long validation, and a transaction that wrote it
+  first can deadlock on the stronger lock
+  (`../dg/UNSUPPORTED.md`, "DDL"). To revisit:
+  1. Measure the wait: validate a foreign key of a large child
+     table while a writer runs on the parent.
+  2. Try `ROW SHARE` on the parent. The constraint is enforced
+     on new rows while it is not valid, so a parent row a child
+     row names cannot go during the check. Show that argument
+     holds for the one query `RI_Initial_Check()` runs, or read
+     the parent at one fixed point and the child at the newest.
+  3. If it holds, take the parent's lock back to `ROW SHARE`,
+     and add a two-session test in `dg/test/ddl_current.sh`
+     with a parent writer running through the validation.
 - **A table's size, taken again after 10 s, is at times the
   old one.** dg's `test/server.sh` failed once in four runs
   (2026-10-28, debug build) at "a size taken again after 10

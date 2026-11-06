@@ -140,6 +140,23 @@ regression files are taken out for it (`test/pgregress`,
   (`ALTERTYPE.md` §8, step 378). PostgreSQL makes the index,
   the foreign key or the sequence again, and evaluates every
   USING on the row as it was.
+- **VALIDATE CONSTRAINT of a foreign key locks the referenced
+  table SHARE** — PostgreSQL takes `ROW SHARE` on it (and `SHARE
+  UPDATE EXCLUSIVE` on the table altered, which digres keeps).
+  digres reads both tables at their newest committed rows, so
+  that a row committed after the transaction's snapshot is
+  checked (`../DG_REVIEW.md`, step 397); that read needs a lock
+  that stops writes to both (`../sm/XCTMGR.md` §5.5). So:
+  - Writers to the referenced table wait until the validating
+    transaction ends. Readers do not wait. PostgreSQL lets them
+    write. A long validation of a large child table stalls the
+    parent's writers, which `NOT VALID` followed by `VALIDATE`
+    exists to avoid.
+  - A transaction that wrote the referenced table, and then
+    validates, asks for a stronger lock on a table it holds.
+    Two such transactions can deadlock.
+  - `ADD FOREIGN KEY` is as before: it held both tables X.
+  To revisit: `../sm/NEXT.md`, loose ends.
 - **ALTER INDEX, ALTER TYPE, ALTER MATERIALIZED VIEW** —
   refused; ALTER VIEW takes only options and RENAME.
 - **ALTER SCHEMA ... RENAME** — refused: sm renames no

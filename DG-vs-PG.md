@@ -227,6 +227,11 @@ layer.
   an expression or partial index, a foreign key, or an identity
   sequence uses, a `COLLATE`, and a `USING` that reads another
   column the same statement retypes (`dg/ALTERTYPE.md`).
+- **`VALIDATE CONSTRAINT` of a foreign key.** PostgreSQL holds
+  `ROW SHARE` on the referenced table, so its writers go on.
+  DG holds `SHARE`: they wait until the validating transaction
+  ends, as DG reads both tables at their newest rows
+  (`dg/UNSUPPORTED.md`, "DDL").
 - **Sequences.** A sequence takes `START`, `INCREMENT`, and
   `AS`. `MINVALUE`, `MAXVALUE`, `CACHE`, `CYCLE`, `OWNED BY`,
   `ALTER SEQUENCE`, `setval()`, and `TRUNCATE ... RESTART
