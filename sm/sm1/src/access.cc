@@ -380,12 +380,6 @@ int lock_versioned(sm1::session_t *s, uint64_t storeid, const char *key,
   if (enter(s, xct_view(s), storeid, key, klen) != 0) {
     return -1;
   }
-  // TODO: above read committed, a row lock reads the key twice:
-  // latest_version under the latch, then access_check_current
-  // after the lock. The first read's commit_ts can serve the
-  // check: once the lock is held with no write in flight, no
-  // version can come between, a writer taking the latch and
-  // waiting for the lock. One RocksDB read saved a row lock.
   rocksdb::Slice k(key ? key : "", klen);
   // Find the store's CF.
   const store_t &st = store_of(s, storeid);
@@ -407,6 +401,9 @@ int lock_versioned(sm1::session_t *s, uint64_t storeid, const char *key,
     }
     return lock_self_modified(s, own_seq);
   }
+  // The commit_ts of the newest version, as read when the lock
+  // was taken.
+  uint64_t commit_ts = 0;
   for (;;) {
     uint64_t inflight;
     {
@@ -414,7 +411,6 @@ int lock_versioned(sm1::session_t *s, uint64_t storeid, const char *key,
       // the check and the lock (../LOCKMGR.md §1.5).
       std::lock_guard<std::mutex> latch(lock_latch(s->db, storeid, k));
       bool live;
-      uint64_t commit_ts;
       uint32_t own_seq;
       if (latest_version(s, st, k, &live, &commit_ts, nullptr, &own_seq,
                          &inflight) != 0) {
@@ -452,10 +448,19 @@ int lock_versioned(sm1::session_t *s, uint64_t storeid, const char *key,
   if (s->level == sm1::xctlevel_t::read_committed) {
     return 0;
   }
-  // Now that the lock is held, run ../LOCKMGR.md §4.11's check, so what the
-  // caller reads next under this lock is current: a version
-  // committed after this transaction began fails the call.
-  return access_check_current(s, storeid, k);
+  // Run ../LOCKMGR.md §1.6's check, so what the caller reads next
+  // under this lock is current: a version committed after this
+  // transaction began fails the call. The read under the latch
+  // serves it: the lock was taken with no write in flight, and
+  // since then a writer waits for the lock, so no version came
+  // between.
+  if (commit_ts > s->snapshot_ts) {
+    return xct_fail_retryable(
+        s, sm1::SM_ERR_CONFLICT,
+        "key was changed by a transaction that committed after "
+        "this one began");
+  }
+  return 0;
 }
 
 /* sm1::read into pin, minus the out-of-memory guard. */
@@ -1133,34 +1138,6 @@ int access_skip(sm1::session_t *s, const version_t &v, const view_t &view) {
 int access_enter(sm1::session_t *s, const view_t &view, uint64_t storeid,
                  const char *key, size_t klen) {
   return enter(s, view, storeid, key, klen);
-}
-
-/*
- * ../ROWSTORE.md §4.4's check on its own, for sm1::lock_row: fail if a version
- * of key committed after this transaction's begin snapshot. The caller holds
- * the lock, so no one can add one behind us.
- */
-int access_check_current(sm1::session_t *s, uint64_t storeid,
-                         rocksdb::Slice key) {
-  // Find the store's CF.
-  const store_t &st = store_of(s, storeid);
-  if (!st.cf) {
-    return -1;
-  }
-  bool live;
-  uint64_t commit_ts;
-  // Find the newest committed version of the key.
-  if (latest_version(s, st, key, &live, &commit_ts, nullptr) != 0) {
-    return -1;
-  }
-  // Committed after we began: what we would read is stale.
-  if (commit_ts > s->snapshot_ts) {
-    return xct_fail_retryable(
-        s, sm1::SM_ERR_CONFLICT,
-        "key was changed by a transaction that committed after "
-        "this one began");
-  }
-  return 0;
 }
 
 } // namespace wisr

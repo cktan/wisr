@@ -530,10 +530,6 @@ int lock_wait_xact(sm1::session_t *session, uint64_t xid);
  */
 void lock_wake(db_t *db, bool rollback);
 
-/* ../LOCKMGR.md §5's first-committer-wins check alone, for sm1::lock_row. */
-int access_check_current(sm1::session_t *session, uint64_t storeid,
-                         rocksdb::Slice key);
-
 /*
  * Whether the session holds (storeid, key), and if so in which
  * mode. Reads only the session's own lock list.

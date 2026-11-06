@@ -128,55 +128,6 @@ char *encrypt_password(PasswordType target_type, const char *role,
 }
 
 /*
- * Check MD5 authentication response, and return STATUS_OK or STATUS_ERROR.
- *
- * 'shadow_pass' is the user's correct password or password hash, as stored
- * in pg_authid.rolpassword.
- * 'client_pass' is the response given by the remote user to the MD5 challenge.
- * 'md5_salt' is the salt used in the MD5 authentication challenge.
- *
- * In the error case, save a string at *logdetail that will be sent to the
- * postmaster log (but not the client).
- */
-int md5_crypt_verify(const char *role, const char *shadow_pass,
-                     const char *client_pass, const uint8 *md5_salt,
-                     int md5_salt_len, const char **logdetail) {
-  int retval;
-  char crypt_pwd[MD5_PASSWD_LEN + 1];
-  const char *errstr = NULL;
-
-  Assert(md5_salt_len > 0);
-
-  if (get_password_type(shadow_pass) != PASSWORD_TYPE_MD5) {
-    /* incompatible password hash format. */
-    *logdetail = psprintf(_("User \"%s\" has a password that cannot be used "
-                            "with MD5 authentication."),
-                          role);
-    return STATUS_ERROR;
-  }
-
-  /*
-   * Compute the correct answer for the MD5 challenge.
-   */
-  /* stored password already encrypted, only do salt */
-  if (!pg_md5_encrypt(shadow_pass + strlen("md5"), md5_salt, md5_salt_len,
-                      crypt_pwd, &errstr)) {
-    *logdetail = errstr;
-    return STATUS_ERROR;
-  }
-
-  if (strlen(client_pass) == strlen(crypt_pwd) &&
-      timingsafe_bcmp(client_pass, crypt_pwd, strlen(crypt_pwd)) == 0)
-    retval = STATUS_OK;
-  else {
-    *logdetail = psprintf(_("Password does not match for user \"%s\"."), role);
-    retval = STATUS_ERROR;
-  }
-
-  return retval;
-}
-
-/*
  * Check given password for given user, and return STATUS_OK or STATUS_ERROR.
  *
  * 'shadow_pass' is the user's correct password hash, as stored in
@@ -188,13 +139,9 @@ int md5_crypt_verify(const char *role, const char *shadow_pass,
  */
 int plain_crypt_verify(const char *role, const char *shadow_pass,
                        const char *client_pass, const char **logdetail) {
-  char crypt_client_pass[MD5_PASSWD_LEN + 1];
-  const char *errstr = NULL;
-
   /*
-   * Client sent password in plaintext.  If we have an MD5 hash stored, hash
-   * the password the client sent, and compare the hashes.  Otherwise
-   * compare the plaintext passwords directly.
+   * Client sent password in plaintext: check it against the SCRAM secret
+   * stored.  No role has an MD5 password (../aa/ROLE.md section 5.1).
    */
   switch (get_password_type(shadow_pass)) {
   case PASSWORD_TYPE_SCRAM_SHA_256:
@@ -208,27 +155,11 @@ int plain_crypt_verify(const char *role, const char *shadow_pass,
     break;
 
   case PASSWORD_TYPE_MD5:
-    if (!pg_md5_encrypt(client_pass, (uint8 *)role, strlen(role),
-                        crypt_client_pass, &errstr)) {
-      *logdetail = errstr;
-      return STATUS_ERROR;
-    }
-    if (strlen(crypt_client_pass) == strlen(shadow_pass) &&
-        timingsafe_bcmp(crypt_client_pass, shadow_pass, strlen(shadow_pass)) ==
-            0)
-      return STATUS_OK;
-    else {
-      *logdetail =
-          psprintf(_("Password does not match for user \"%s\"."), role);
-      return STATUS_ERROR;
-    }
-    break;
-
   case PASSWORD_TYPE_PLAINTEXT:
 
     /*
-     * We never store passwords in plaintext, so this shouldn't
-     * happen.
+     * We never store passwords in plaintext, nor an MD5 hash, so this
+     * shouldn't happen.
      */
     break;
   }
