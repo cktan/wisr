@@ -453,10 +453,13 @@ cursor opened while it is on, read at `visible_ts`, at every
 level. The transaction's own writes stay in its view, by its xid
 and mark as before. `sm1::view_latest(session, false)` puts the
 transaction's view back, and the transaction's end turns it off.
+The optional `previous` argument saves the prior setting for
+restoration after a nested check. `sm_view_latest()` exposes this
+to the host for foreign-key validation.
 
-- **The caller holds the table-oid lock X** on what it reads. No
-  other transaction writes there meanwhile, so what is newest
-  when a cursor opens stays newest.
+- **The caller holds table locks that prevent writes** on what
+  it reads. A rewrite holds X; a read-only constraint check can
+  hold SH or SIX. What is newest when a cursor opens stays newest.
 - **No snapshot is registered for it.** The newest committed
   version of a key is never purged, and a key purged is a
   deleted one, which the newest state does not hold.

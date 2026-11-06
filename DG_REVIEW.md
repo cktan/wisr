@@ -2,8 +2,10 @@
 
 Reviewed commit: `bc43915cbe8f20dc38d2f9655bb08d956233cd55`.
 
-Two confirmed findings. Both can commit incorrect database state.
-The review did not change production code.
+Two confirmed findings at the reviewed commit. Both can commit
+incorrect database state. The follow-up below fixes both.
+The review did not change production code. The follow-up fixes
+are described below.
 
 ## P1: Foreign-key validation misses committed orphan rows
 
@@ -195,3 +197,46 @@ crash recovery tests, and stress tests were not run for this
 review. Documented feature gaps, including backward scans,
 parallel queries, and weaker foreign-key lock modes, are not
 reported as defects here.
+
+## Follow-up fixes
+
+The follow-up on `wip-dg-review` addresses both findings.
+
+- Foreign-key checks use a scoped current storage view. The
+  referenced table is held shared to prevent concurrent writes.
+  The previous view is restored on success and error.
+- Volatile column defaults use the existing DDL rewrite path.
+  It reads all current rows and writes a new store, preserving
+  later commits without relaxing ordinary write conflicts.
+- `dg/test/ddl_current.sh` covers both isolation levels, both
+  validation paths, view restoration, defaults, identity columns,
+  later updates, index entries, and rewrite rollback. The tests
+  fail against the original adapter and pass with the fixes.
+
+The full validation results are recorded with the follow-up
+work, separately from the original review above.
+
+### Follow-up validation
+
+- Passed the complete digres debug suite: 124 parser files,
+  12 SQL files alone and in eight sessions, initdb, server tests,
+  65 quick SQL logic files, and all 231 ported PostgreSQL files.
+- The focused current-view unit test passed 100 assertions.
+- Storage unit tests passed: 347 in sm1, 145 in sm2, and 262
+  in sm3. The five storage stress tests also passed.
+- All API-level storage tests passed. All 124 isolation
+  scenarios matched for both versioned and chained stores.
+- The PostgreSQL isolation runner passed against its expected
+  results: 19 of 37 specs pass. One expected failure now passes;
+  its classification is unchanged.
+- The new two-session tests pass with the fixes and fail against
+  the original adapter.
+- ThreadSanitizer is not clean. It reports lock-order warnings
+  in `sm1::lock_status()` and a shutdown race between
+  `sm_detach()` and `sm_closedb()`. Both reproduce with the
+  original adapter. These paths are unchanged by this fix.
+
+Logs and comparison probes are under `bench/build/dg-review/`.
+The sanitizer evidence includes `tsan-run.log`,
+`lock-status-original-server.log`, and
+`focus-original-tsan/server.log`.

@@ -1601,9 +1601,12 @@ int sm1::stmt_begin(sm1::session_t *session, sm1::stmt_t &outer) {
 }
 
 /* Read at the newest committed state, or not; see sm1.h. */
-int sm1::view_latest(sm1::session_t *session, bool on) {
+int sm1::view_latest(sm1::session_t *session, bool on, bool *previous) {
   if (xct_check_active(session) != 0) {
     return -1;
+  }
+  if (nullptr != previous) {
+    *previous = session->view_latest;
   }
   session->view_latest = on;
   return 0;

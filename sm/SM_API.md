@@ -595,6 +595,19 @@ open. Every ref to them goes stale. The current row of each
 `sm_rel_scan_t` of the session goes too, and its refs go stale,
 but the cursor keeps its pin.
 
+### `sm_view_latest`
+
+```cpp
+int sm_view_latest(sm_session_t* session, bool on, bool* previous);
+```
+
+Enables current reads for a DDL check, at every isolation level.
+The caller holds table locks that prevent concurrent writes to
+all tables it reads. Writes retain their normal conflict checks.
+If `previous` is non-NULL, the call stores the old setting there.
+Restore that setting after the check, including on error. The
+transaction's end turns current reads off.
+
 ### `sm_stmt_begin_inner`
 
 ```cpp

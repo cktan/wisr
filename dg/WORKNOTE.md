@@ -11746,3 +11746,44 @@ md5 as a login's method: `aa_auth_method()` gives peer or SCRAM
 - **Tests**: `server.sh`: a renamed role keeps its password and
   logs in by its new name, the old name refused. Shown to fail
   with the rename clearing the password.
+
+## Step 397: DDL includes rows committed after its snapshot
+
+Two paths used an old REPEATABLE READ or SERIALIZABLE view for
+DDL that must read current rows (`../DG_REVIEW.md`).
+
+- **Foreign keys**: `check_fkey_rows()` enables current reads
+  with `sm_view_latest()` while `RI_Initial_Check()` runs. It
+  restores the prior setting on success and error. The child
+  table's SIX lock prevents writes. The referenced table now
+  holds SH too, so both tables stay fixed during validation.
+  The snapshot manager's tokens stay unchanged; ordinary queries
+  keep their transaction view.
+- **Volatile column defaults**: `fill_column()` uses the
+  existing column converter and table rewrite, with the column's
+  type unchanged. The rewrite reads current rows under X and
+  writes a new store. Ordinary updates would reject rows changed
+  after the transaction's snapshot. The converter takes no row
+  slot for a default and checks interrupts for each row.
+- **sm**: `sm_view_latest()` exposes the current read setting.
+  `sm1::view_latest()` can return its prior setting for a nested
+  check. Writes retain their normal conflict checks. A column
+  converter may obtain a sequence value for a volatile default.
+- **Tests**: `test/ddl_current.sh` runs in `server.sh`. It tests
+  foreign-key creation and explicit validation, view restoration
+  on success and failure, nullable and non-null defaults,
+  identity columns, later updates, rebuilt indexes, preserved
+  defaults, and rollback of a failed rewrite. The two-session
+  cases run at REPEATABLE READ and SERIALIZABLE. The new tests
+  fail against the original adapter and pass with both fixes.
+  sm1's current-view test checks nested setting restoration.
+
+- **Validation**: the full digres debug suite passed, including
+  all 231 ported PostgreSQL files. Storage unit, stress, and
+  API-level tests passed. All 124 storage scenarios matched on
+  versioned and chained stores. PostgreSQL isolation passed
+  against its expected results (19 of 37 specs pass).
+  ThreadSanitizer reports lock-order warnings in lock-status
+  reporting and a shutdown session-registry race. Both reproduce
+  with the original adapter; those paths are unchanged. Logs
+  and baseline probes are in `../bench/build/dg-review/`.

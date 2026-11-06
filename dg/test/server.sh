@@ -5812,6 +5812,9 @@ grep -qx 1000 "$work/typecrash.out" &&
   grep -qx 'was text' "$work/typecrash.out" &&
   grep -qx 'sum 500500' "$work/typecrash.out" ||
   fail "crashed retype: the column as it was"
+# Check DDL against rows committed after a transaction snapshot.
+source test/ddl_current.sh
+
 kill -INT $server
 wait $server || fail "crashed retype: shutdown status"
 
