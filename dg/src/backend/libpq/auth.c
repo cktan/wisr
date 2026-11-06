@@ -24,7 +24,6 @@
 #include <unistd.h>
 
 #include "catalog/pg_authid_d.h"
-#include "commands/user.h"
 #include "common/ip.h"
 #include "common/md5.h"
 #include "libpq/auth.h"
@@ -50,12 +49,12 @@
 static const char *const UserAuthName[] = {
     "reject",        "implicit reject", /* Not a user-visible option */
     "trust",         "ident",
-    "password",      "md5",
-    "scram-sha-256", "gss",
-    "sspi",          "pam",
-    "bsd",           "ldap",
-    "cert",          "radius",
-    "peer",          "oauth",
+    "password",      "scram-sha-256",
+    "gss",           "sspi",
+    "pam",           "bsd",
+    "ldap",          "cert",
+    "radius",        "peer",
+    "oauth",
 };
 
 StaticAssertDecl(lengthof(UserAuthName) == USER_AUTH_LAST + 1,
@@ -148,7 +147,6 @@ static char *recv_password_packet(Port *port);
 static int CheckPasswordAuth(Port *port, const char **logdetail);
 static int CheckPWChallengeAuth(Port *port, const char **logdetail);
 
-static int CheckMD5Auth(Port *port, char *shadow_pass, const char **logdetail);
 
 /*----------------------------------------------------------------
  * Ident authentication
@@ -336,7 +334,6 @@ static void auth_failed(Port *port, int status, const char *logdetail) {
     errstr = gettext_noop("Peer authentication failed for user \"%s\"");
     break;
   case uaPassword:
-  case uaMD5:
   case uaSCRAM:
     errstr = gettext_noop("password authentication failed for user \"%s\"");
     /* We use it to indicate if a .pgpass password failed. */
@@ -600,7 +597,6 @@ void ClientAuthentication(Port *port) {
     status = ident_inet(port);
     break;
 
-  case uaMD5:
   case uaSCRAM:
     status = CheckPWChallengeAuth(port, &logdetail);
     break;
@@ -814,14 +810,13 @@ static int CheckPasswordAuth(Port *port, const char **logdetail) {
 }
 
 /*
- * MD5 and SCRAM authentication.
+ * SCRAM authentication, the one login by password (../aa/ROLE.md section 5).
  */
 static int CheckPWChallengeAuth(Port *port, const char **logdetail) {
   int auth_result;
   char *shadow_pass;
-  PasswordType pwtype;
 
-  Assert(port->hba->auth_method == uaSCRAM || port->hba->auth_method == uaMD5);
+  Assert(port->hba->auth_method == uaSCRAM);
 
   /* First look up the user's password. */
   shadow_pass = get_role_password(port->user_name, logdetail);
@@ -829,32 +824,9 @@ static int CheckPWChallengeAuth(Port *port, const char **logdetail) {
   /*
    * If the user does not exist, or has no password or it's expired, we
    * still go through the motions of authentication, to avoid revealing to
-   * the client that the user didn't exist.  If 'md5' is allowed, we choose
-   * whether to use 'md5' or 'scram-sha-256' authentication based on current
-   * password_encryption setting.  The idea is that most genuine users
-   * probably have a password of that type, and if we pretend that this user
-   * had a password of that type, too, it "blends in" best.
+   * the client that the user didn't exist.
    */
-  if (!shadow_pass)
-    pwtype = (PasswordType)Password_encryption;
-  else
-    pwtype = get_password_type(shadow_pass);
-
-  /*
-   * If 'md5' authentication is allowed, decide whether to perform 'md5' or
-   * 'scram-sha-256' authentication based on the type of password the user
-   * has.  If it's an MD5 hash, we must do MD5 authentication, and if it's a
-   * SCRAM secret, we must do SCRAM authentication.
-   *
-   * If MD5 authentication is not allowed, always use SCRAM.  If the user
-   * had an MD5 password, CheckSASLAuth() with the SCRAM mechanism will
-   * fail.
-   */
-  if (port->hba->auth_method == uaMD5 && pwtype == PASSWORD_TYPE_MD5)
-    auth_result = CheckMD5Auth(port, shadow_pass, logdetail);
-  else
-    auth_result =
-        CheckSASLAuth(&pg_be_scram_mech, port, shadow_pass, logdetail);
+  auth_result = CheckSASLAuth(&pg_be_scram_mech, port, shadow_pass, logdetail);
 
   if (shadow_pass)
     pfree(shadow_pass);
@@ -870,34 +842,6 @@ static int CheckPWChallengeAuth(Port *port, const char **logdetail) {
     set_authn_id(port, port->user_name);
 
   return auth_result;
-}
-
-static int CheckMD5Auth(Port *port, char *shadow_pass, const char **logdetail) {
-  uint8 md5Salt[4]; /* Password salt */
-  char *passwd;
-  int result;
-
-  /* include the salt to use for computing the response */
-  if (!pg_strong_random(md5Salt, 4)) {
-    ereport(LOG, (errmsg("could not generate random MD5 salt")));
-    return STATUS_ERROR;
-  }
-
-  sendAuthRequest(port, AUTH_REQ_MD5, md5Salt, 4);
-
-  passwd = recv_password_packet(port);
-  if (passwd == NULL)
-    return STATUS_EOF; /* client wouldn't send password */
-
-  if (shadow_pass)
-    result = md5_crypt_verify(port->user_name, shadow_pass, passwd, md5Salt, 4,
-                              logdetail);
-  else
-    result = STATUS_ERROR;
-
-  pfree(passwd);
-
-  return result;
 }
 
 /*----------------------------------------------------------------

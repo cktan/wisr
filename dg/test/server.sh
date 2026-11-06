@@ -356,6 +356,24 @@ grep -q "STATEMENT:  alter role pw3 pasword '\*\*\*\*\*\*\*\*'" "$work/log" &&
 grep -q "pwseventh\|pweighth" "$work/log" &&
   fail "misspelled password: a password in the log"
 
+# Verify that a renamed role keeps its password: a SCRAM secret does not
+# depend on the role's name (../aa/ROLE.md section 5).
+# 1. Over the local socket, make pw4 with a password.
+# 2. Rename it to pw5: no notice says its password was cleared.
+# 3. Over TCP, pw5 logs in with the password; pw4 is refused.
+# 4. Drop pw5, which the checks after this one do not expect.
+local_psql -c "create role pw4 login password 'pwninth'" > /dev/null 2>&1 ||
+  fail "renamed role: make the role"
+local_psql -c "alter role pw4 rename to pw5" > "$work/pw.out" 2>&1 ||
+  fail "renamed role: the rename"
+grep -q -i "password" "$work/pw.out" && fail "renamed role: a password notice"
+[ "$(tcp_psql pwninth -U pw5 -c 'select 1' 2>&1)" = 1 ] ||
+  fail "renamed role: the new name logs in"
+tcp_psql pwninth -U pw4 -c 'select 1' > /dev/null 2>&1 &&
+  fail "renamed role: the old name logs in"
+local_psql -c "drop role pw5" > /dev/null 2>&1 ||
+  fail "renamed role: drop the role"
+
 # Verify that a change elsewhere replans a prepared statement only if it can
 # matter to one, and that the owners and ACLs other sessions cache still go.
 # 1. A held session prepares a generic plan, and logs each plan it makes.

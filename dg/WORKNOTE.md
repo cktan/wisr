@@ -11723,3 +11723,26 @@ lookup of `pg_proc`, a default ACL made and freed, and aa's mask.
   a GRANT and a REVOKE of `pg_read_all_stats` by another session,
   through a statement and a prepared one. It failed with aa's
   stamp check left out.
+
+## Step 396: the md5 login is gone
+
+No role has an MD5 password (step 382), and digres never chose
+md5 as a login's method: `aa_auth_method()` gives peer or SCRAM
+(`../aa/ROLE.md` §5). What served an md5 login was dead.
+
+- **auth.c**: `CheckMD5Auth()` goes. `CheckPWChallengeAuth()`
+  does SCRAM alone, so its guess of a missing role's password
+  type from `password_encryption` goes too. `uaMD5` leaves
+  `UserAuth` (`hba.h`), and `"md5"` leaves `UserAuthName`.
+- **crypt.c**: `md5_crypt_verify()` goes, and so does the md5
+  case of `plain_crypt_verify()`.
+- **user.c**: `RenameRole()` no longer clears an md5 password,
+  which used the role's name as its salt.
+- **Left on purpose**: `PASSWORD_TYPE_MD5` and
+  `get_password_type()`'s md5 test, which the refusal of step
+  382 needs; `common/md5.h`, which that test and RADIUS use. The
+  other methods digres never chooses (`uaPassword`, GSS, LDAP,
+  RADIUS and the rest) stay for a cut of their own.
+- **Tests**: `server.sh`: a renamed role keeps its password and
+  logs in by its new name, the old name refused. Shown to fail
+  with the rename clearing the password.

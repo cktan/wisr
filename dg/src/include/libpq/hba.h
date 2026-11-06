@@ -27,7 +27,6 @@ typedef enum UserAuth {
   uaTrust,
   uaIdent,
   uaPassword,
-  uaMD5,
   uaSCRAM,
   uaGSS,
   uaSSPI,

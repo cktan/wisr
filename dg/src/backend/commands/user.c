@@ -1218,8 +1218,6 @@ ObjectAddress RenameRole(const char *oldname, const char *newname) {
   HeapTuple oldtuple, newtuple;
   TupleDesc dsc;
   Relation rel;
-  Datum datum;
-  bool isnull;
   Datum repl_val[Natts_pg_authid];
   bool repl_null[Natts_pg_authid];
   bool repl_repl[Natts_pg_authid];
@@ -1314,17 +1312,6 @@ ObjectAddress RenameRole(const char *oldname, const char *newname) {
   repl_val[Anum_pg_authid_rolname - 1] =
       DirectFunctionCall1(namein, CStringGetDatum(newname));
   repl_null[Anum_pg_authid_rolname - 1] = false;
-
-  datum = heap_getattr(oldtuple, Anum_pg_authid_rolpassword, dsc, &isnull);
-
-  if (!isnull &&
-      get_password_type(TextDatumGetCString(datum)) == PASSWORD_TYPE_MD5) {
-    /* MD5 uses the username as salt, so just clear it on a rename */
-    repl_repl[Anum_pg_authid_rolpassword - 1] = true;
-    repl_null[Anum_pg_authid_rolpassword - 1] = true;
-
-    ereport(NOTICE, (errmsg("MD5 password cleared because of role rename")));
-  }
 
   newtuple = heap_modify_tuple(oldtuple, dsc, repl_val, repl_null, repl_repl);
   pg_global_put_role(newtuple, dsc);
