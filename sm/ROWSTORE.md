@@ -1336,6 +1336,16 @@ audited.
   abort, or prepare, the cursor stays closed until its caller
   frees it; a later begin cannot reopen it.
 
+**A tree cursor closes at the transaction's end, and that is
+correct.** Its batches are read at one transaction's view, and
+its entry positions stand for that view. A cursor that went on
+into the next transaction would give rows of two views, and
+would give a row the new transaction may not see. A cursor of a
+rel scan ends with its transaction too. So `commit`, `abort`
+and `prepare` close a tree cursor, and `begin` closes any that
+an engine-side abort left. Its handle stays the caller's: use
+fails with `SM_ERR_SCANCLOSED` until the caller frees it.
+
 ### 6.10 No content lock
 
 A PostgreSQL pin is only a count. Its shared and exclusive modes

@@ -1877,9 +1877,10 @@ static int tree_next(scan_t *scan, uint64_t &id, std::string_view &tuple) {
     }
     size_t i = scan->at++;
     scan->last = i;
-    if (scan->reread) {
+    if (scan->reread && !scan->unread[i]) {
       // The entry remains at its position, but rollback may have
-      // changed its row. Read pending rows at the current view.
+      // changed its row. Read pending rows at the current view; an
+      // entry that went unread still does.
       scan->rcs[i] =
           sm2::rel_read(t->rel, scan->rows[i], scan->raws[i], scan->tuples[i]);
       if (scan->rcs[i] < 0) {
@@ -2131,6 +2132,9 @@ int tbl_scannxt(scan_t *scan, uint64_t &id, pin_ref_t &ref,
 
 /* Hand out a tree's entries with their rows unread; see sm3.h. */
 int tbl_scan_entries_only(scan_t *scan) {
+  if (scan->closed) {
+    return sm1::seterr(sm1::SM_ERR_SCANCLOSED, "table: cursor is closed");
+  }
   if (!scan->entries) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "table: only a tree's cursor hands out entries");

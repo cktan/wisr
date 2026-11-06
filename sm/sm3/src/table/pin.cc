@@ -54,12 +54,15 @@ void drop(sm3::pin_t *p) {
   p->gen++;
 }
 
-/* Discard cached rows from at on, retaining the tree entry positions. */
+/*
+ * Discard cached rows from at on, retaining the tree entry positions
+ * and which entries went unread: an entry on a leaf all visible stays
+ * so, as a rollback or a release of pins cannot clear its leaf.
+ */
 void discard_batch(sm3::scan_t *scan, size_t at) {
   for (size_t i = at; i < scan->raws.size(); i++) {
     sm1::unpin(scan->raws[i]);
     scan->tuples[i] = {};
-    scan->unread[i] = false;
   }
   sm1::batch_iter_free(scan->iter);
   scan->iter = nullptr;

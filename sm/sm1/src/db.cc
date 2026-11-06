@@ -416,7 +416,7 @@ static int read_meta(db_t *db, rocksdb::Slice key, uint64_t *out) {
   if (db->test_before_meta_read) {
     rocksdb::Status hs = db->test_before_meta_read(key);
     if (!hs.ok()) {
-      return set_status_error(hs, "read CF:meta");
+      return set_status_error(hs, (db->name + ": read CF:meta").c_str());
     }
   }
   // Read the key from CF:meta.
@@ -426,10 +426,11 @@ static int read_meta(db_t *db, rocksdb::Slice key, uint64_t *out) {
     return 1;
   }
   if (!s.ok()) {
-    return set_status_error(s, "read CF:meta");
+    return set_status_error(s, (db->name + ": read CF:meta").c_str());
   }
   if (val.size() != 8) {
-    return set_error(sm1::SM_ERR_CORRUPT, "CF:meta value is not 8 bytes");
+    return set_error(sm1::SM_ERR_CORRUPT, "{}: CF:meta value is not 8 bytes",
+                     db->name.c_str());
   }
   // Decode the value.
   *out = sm0::get_be64(val.data());
@@ -439,7 +440,9 @@ static int read_meta(db_t *db, rocksdb::Slice key, uint64_t *out) {
 /* Read a required CF:meta value, reporting its absence as corruption. */
 static int required_meta(db_t *db, rocksdb::Slice key, uint64_t *out) {
   int rc = read_meta(db, key, out);
-  return 1 == rc ? set_error(sm1::SM_ERR_CORRUPT, "CF:meta is incomplete") : rc;
+  return 1 == rc ? set_error(sm1::SM_ERR_CORRUPT, "{}: CF:meta is incomplete",
+                             db->name.c_str())
+                 : rc;
 }
 
 /* Open every column family of the database and load CF:meta. */

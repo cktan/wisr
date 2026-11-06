@@ -2317,8 +2317,61 @@ TEST_CASE("tree: a rollback rereads pending rows without losing entries") {
   REQUIRE(0 == sm3::abort(f.a));
 }
 
+TEST_CASE("tree: a reread keeps unread entries unread") {
+  // Verify a rollback or a release of pins rereads the pending rows
+  // of an index-only scan, but not those it skipped on a leaf all
+  // visible, and a closed cursor takes no entries-only call.
+  // 1. Insert 50 rows of state "old", commit, and compact so every
+  //    leaf is set.
+  // 2. Scan them entries-only; read two entries, then roll back to
+  //    a savepoint; the next entry still comes with its row unread.
+  // 3. Release the pins; the next entry still comes with no row.
+  // 4. Commit: the cursor is closed, and entries-only fails with
+  //    SM_ERR_SCANCLOSED.
+  trees_t f;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  for (int i = 0; i < 50; i++) {
+    row_t r(i, "old", "O");
+    uint64_t id;
+    REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  REQUIRE_MESSAGE(sm3::tbl_compact(t) == 0, sm1::errmsg());
+  int mark = sm3::savepoint(f.a);
+  REQUIRE(mark > 0);
+  std::string lv = sm2::make_varlena("old");
+  sm2::datum_t ld[1] = {sm2::datum_from_ptr(lv.data())};
+  bool nn[1] = {false};
+  sm2::bound_t b{ld, nn, true};
+  sm3::scan_t *scan = nullptr;
+  REQUIRE(sm3::tbl_idx_scan_rows(t, f.by_state, &b, &b, scan) == 0);
+  REQUIRE(sm3::tbl_scan_entries_only(scan) == 0);
+  uint64_t id;
+  sm3::pin_ref_t ref;
+  std::string_view tuple;
+  for (int step = 0; step < 4; step++) {
+    REQUIRE(sm3::tbl_scannxt(scan, id, ref, tuple) == 0);
+    CHECK(nullptr == ref.pin);
+    CHECK(tuple.empty());
+    if (1 == step) {
+      REQUIRE(sm3::rollback(f.a, mark) == 0);
+    } else if (2 == step) {
+      sm3::release_all_pins(f.a);
+    }
+  }
+  REQUIRE(sm3::commit(f.a) == 0);
+  CHECK(-1 == sm3::tbl_scan_entries_only(scan));
+  CHECK(sm1::SM_ERR_SCANCLOSED == sm1::errnum());
+  sm3::tbl_scanend(scan);
+}
+
 TEST_CASE("tree: transaction end closes every prefetched row scan") {
-  // Verify ended scans stay closed, while released pins allow rereads.
+  // Verify ended scans stay closed, while released pins allow rereads
+  // that keep skipped entries unread.
   // 1. Commit four rows and vacuum their tree to all visible.
   // 2. Read two rows, leaving a third prefetched, in each scan mode.
   // 3. Commit, abort, prepare, or release the session's pins.
@@ -2363,7 +2416,8 @@ TEST_CASE("tree: transaction end closes every prefetched row scan") {
       }
       if (3 == how) {
         CHECK(0 == sm3::tbl_scannxt(scan, id, tuple));
-        CHECK_FALSE(tuple.empty());
+        // An entry skipped on a leaf all visible stays unread.
+        CHECK(only == tuple.empty());
         REQUIRE(0 == sm3::abort(f.a));
       } else {
         CHECK(-1 == sm3::tbl_scannxt(scan, id, tuple));
