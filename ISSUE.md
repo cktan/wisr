@@ -9,15 +9,16 @@ Found 2026-11-05, while the module documents were written.
 
 **Not reproduced, from reading alone:**
 
-1. **A failed prepare leaks an SSI node.** A prepare that fails
-   after `ssi_precommit` passed leaves the node committed with
-   `end_ts` at `UINT64_MAX`. `ssi_cleanup` never frees it, and it
-   counts as a first committer for ever, which can cause false
-   failures. It needs a failed lease write, and sm1 has no way to
-   inject one.
-**Closed 2026-11-06:** the `CF:txn` sweep had no back-off
-(`GC.md` §8.6). A sweep now sets `sweep_floor` to the records it
-left, and the next starts only past that plus `txn_sweep_records`.
+None open.
+
+**Closed 2026-11-06:**
+
+1. **A failed prepare leaked an SSI node.** `prepare` now does
+   every step that can fail before `ssi_precommit`
+   (`XCTMGR.md` §10.1). A test fails the prepare by a hook.
+2. **The `CF:txn` sweep had no back-off** (`GC.md` §8.6). A
+   sweep now sets `sweep_floor` to the records it left, and the
+   next starts only past that plus `txn_sweep_records`.
 
 **Closed:** `find_now()` at READ COMMITTED, with a row moved
 since the statement's snapshot, gives the conflict with both

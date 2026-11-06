@@ -624,6 +624,10 @@ struct db_t {
   /* Test hook, as test_before_commit, for the PREPARED record. */
   std::function<rocksdb::Status()> test_before_prepare;
 
+  /* Test hook: true fails prepare after its allocations, before the SSI check.
+   */
+  std::function<bool()> test_prepare_before_ssi;
+
   /* Test hook, as test_before_commit, for a prepared one's ABORTED record. */
   std::function<rocksdb::Status()> test_before_abort_prepared;
 

@@ -389,3 +389,31 @@ TEST_CASE("an SIREAD on keys not stored makes edges as a scan's range") {
           (std::string(key) == "g" ? sm1::SM_ERR_SERIALIZATION : 0));
   }
 }
+
+TEST_CASE("a failed prepare leaves no SSI node behind") {
+  // Verify a prepare that fails once the SSI check could pass frees
+  // the node: a leaked, committed node never ends (ISSUE.md).
+  // 1. Fail the prepare of a writer, then of a reader, by the hook.
+  // 2. Abort each; the database holds no SSI node.
+  // 3. Without the hook, a prepare passes and commits as before.
+  ssi_fixture_t f;
+  f.a->db->test_prepare_before_ssi = [] { return true; };
+  for (bool writes : {true, false}) {
+    CAPTURE(writes);
+    REQUIRE(sm1::begin(f.a, SER) == 0);
+    f.read(f.a, "x");
+    if (writes) {
+      f.write(f.a, "y", "1");
+    }
+    CHECK(sm1::prepare(f.a, "g1") == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_IO);
+    REQUIRE(sm1::abort(f.a) == 0);
+    std::lock_guard<std::mutex> guard(f.a->db->ssi_mu);
+    CHECK(f.a->db->ssi_nodes.empty());
+  }
+  f.a->db->test_prepare_before_ssi = nullptr;
+  REQUIRE(sm1::begin(f.a, SER) == 0);
+  f.write(f.a, "y", "2");
+  REQUIRE(sm1::prepare(f.a, "g1") == 0);
+  REQUIRE(sm1::commit_prepared(f.b, "g1") == 0);
+}

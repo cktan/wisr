@@ -923,17 +923,15 @@ std::string encode_prepared(const sm1::session_t *t, const std::string &gid,
 }
 
 /*
- * Move the session's transaction into a new database-owned
- * object: its state, snapshot registration, SSI node, and row
- * locks, whose table entries are re-pointed at the new owner.
- * The session is left with no transaction. All or nothing: every
- * allocation comes before anything moves, so if one throws the
- * session still holds its transaction, untouched.
+ * Make the database-owned object that will hold the session's
+ * transaction, and copy its state into it. It allocates and may
+ * throw, so prepare calls it before the SSI check; the session is
+ * untouched. The caller passes the result to detach_prepared().
  */
-sm1::session_t *detach_prepared(sm1::session_t *s, const std::string &gid,
-                                long long prepared_at) {
-  // Allocate the database-owned transaction object, freed if a
-  // copy below throws.
+std::unique_ptr<sm1::session_t> make_prepared(sm1::session_t *s,
+                                              const std::string &gid,
+                                              long long prepared_at) {
+  // Allocate the database-owned transaction object.
   std::unique_ptr<sm1::session_t> owner(new sm1::session_t);
   sm1::session_t *g = owner.get();
   // Copy the transaction's identity and state.
@@ -952,8 +950,21 @@ sm1::session_t *detach_prepared(sm1::session_t *s, const std::string &gid,
   g->prepared_gid = gid;
   // Stamp the wall-clock time of the prepare.
   g->prepared_at = prepared_at;
-  // Nothing below allocates: take ownership, then move.
-  owner.release();
+  return owner;
+}
+
+/*
+ * Move the session's transaction into g, made by make_prepared():
+ * its snapshot registration, SSI node, and row locks, whose table
+ * entries are re-pointed at the new owner. The session is left
+ * with no transaction. It allocates nothing, so it cannot fail
+ * once the SSI check has passed.
+ */
+sm1::session_t *
+detach_prepared(sm1::session_t *s,
+                std::unique_ptr<sm1::session_t> owner) noexcept {
+  // Take ownership: the database owns it from here.
+  sm1::session_t *g = owner.release();
   // Move the snapshot registration over.
   g->snapshot_registered = s->snapshot_registered;
   s->snapshot_registered = false;
@@ -1040,22 +1051,31 @@ int prepare(sm1::session_t *s, const char *gid) {
   // The lent row goes with the cursors: the transaction ends.
   xct_end_scans(s);
   sm1::unpin(&s->readpin);
-  // Validate; a passed node counts as committed.
-  if (ssi_precommit(s, UINT64_MAX) != 0) {
-    return xct_fail_retryable(s, sm1::SM_ERR_SERIALIZATION, "not serializable");
-  }
+  // Do everything that can fail before the SSI check: it marks the
+  // node committed, which a later failure cannot undo, and a
+  // committed node whose transaction aborts is never freed.
   // A read-only transaction needs an xid to key its record.
   if (s->xid == 0 && xct_alloc_xid(s) != 0) {
     return -1;
   }
-
-  // Build the record and its key while the transaction is still
-  // the session's: a failure here leaves it there to abort.
+  // Build the record, its key and the prepared object while the
+  // transaction is still the session's: a failure here leaves it
+  // there to abort.
   long long prepared_at = static_cast<long long>(time(nullptr));
   std::string val = encode_prepared(s, key, prepared_at);
   std::string txnkey = txn_key(s->xid);
-  // Move the transaction out of the session, all or nothing.
-  sm1::session_t *g = detach_prepared(s, key, prepared_at);
+  std::unique_ptr<sm1::session_t> owner = make_prepared(s, key, prepared_at);
+  // Let a test fail the prepare where a failure used to leak the node.
+  if (db->test_prepare_before_ssi && db->test_prepare_before_ssi()) {
+    return set_error(sm1::SM_ERR_IO, "injected prepare failure");
+  }
+  // Validate; a passed node counts as committed. Nothing after this
+  // may fail.
+  if (ssi_precommit(s, UINT64_MAX) != 0) {
+    return xct_fail_retryable(s, sm1::SM_ERR_SERIALIZATION, "not serializable");
+  }
+  // Move the transaction out of the session; it cannot fail.
+  sm1::session_t *g = detach_prepared(s, std::move(owner));
   // From here the entry is replaced: keep the reservation.
   unreserve.dismiss();
   // No error unless the hook or the write says so.

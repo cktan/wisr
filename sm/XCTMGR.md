@@ -1258,20 +1258,25 @@ doubt until a coordinator resolves it.
 5. Close the cursors, and let go of the lent row. An open cursor
    could never be used again, and it would hold back the
    watermark while the transaction is in doubt.
-6. Run `ssi_precommit` at `UINT64_MAX`. On a failure, release the
+6. Give a transaction with no `xid` one, entering the active
+   table.
+7. Build the `PREPARED` record (§11.3).
+8. Make the prepared object, and copy the transaction's state
+   into it (§10.2).
+9. Run `ssi_precommit` at `UINT64_MAX`. On a failure, release the
    gid, abort, and report `SM_ERR_SERIALIZATION`. This is the
    last moment the engine may say no.
-7. Give a transaction with no `xid` one, entering the active
-   table.
-8. Build the `PREPARED` record (§11.3).
-9. Move the transaction into the prepared object (§10.2).
-10. Write the record, always synced. A failure is fatal (§8.3).
-11. Register the object under the gid.
+10. Move the transaction into the prepared object.
+11. Write the record, always synced. A failure is fatal (§8.3).
+12. Register the object under the gid.
 
-**The move comes before the write.** It is all or nothing: every
-allocation comes before anything moves. So a failure leaves the
-transaction with its session to abort. After the write nothing
-may fail, and registering finds the reserved entry and allocates
+**Every step that can fail comes before `ssi_precommit`.** The
+check marks the node committed, and nothing can undo that: a
+committed node whose transaction then aborts has no `end_ts`,
+and `ssi_cleanup` never frees it. So all allocation is done
+first, and the move after the check cannot fail. A failure
+before the check leaves the transaction with its session to
+abort. After the write nothing may fail, and registering finds the reserved entry and allocates
 nothing. Until then the entry is null, so no resolver finds a
 transaction whose record is not durable.
 
