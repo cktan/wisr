@@ -3942,84 +3942,7 @@ static bool default_value(Expr *expr, Oid typid, int32 typmod,
  * for the row, as PostgreSQL's rewrite of the table gives one.  Until then
  * every row reads it as null.
  */
-static void fill_column(Oid relid, Expr *expr, Oid typid, int32 typmod) {
-  /* A statement of its own, which sees the new column. */
-  CommandCounterIncrement();
-  sm_tbl_t *tbl = open_table(relid, SM_LOCKMODE_IX);
-
-  if (NULL == tbl)
-    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
-                    errmsg("relation with OID %u does not exist", relid)));
-  const sm_table_def_t *def = sm_tbl_def(tbl);
-
-  if (NULL == def)
-    sm_error("define a table");
-  size_t n = def->columns.size();
-  std::vector<sm_datum_t> values(n);
-  std::unique_ptr<bool[]> isnull(new bool[n]);
-  const sm_index_def_t *pk = NULL;
-
-  for (const sm_index_def_t &x : def->indexes)
-    if (x.primary)
-      pk = &x;
-  EState *estate = CreateExecutorState();
-  ExprContext *econtext = GetPerTupleExprContext(estate);
-  ExprState *state = ExecPrepareExpr(expression_planner(expr), estate);
-  sm_rel_scan_t *scan;
-
-  /*
-   * The cursor does not see the rows this loop writes, so each row is
-   * filled once.  An error leaves it to the transaction's end to close.
-   */
-  if (0 != sm_tbl_scan_rows(tbl, &scan))
-    sm_error("scan a table");
-  for (;;) {
-    uint64_t rowno;
-    const void *tuple;
-    size_t len;
-    bool null;
-    Datum v;
-    int rc;
-
-    CHECK_FOR_INTERRUPTS();
-    rc = sm_rel_scannxt(scan, &rowno, &tuple, &len);
-    if (1 == rc)
-      break;
-    if (0 != rc)
-      sm_error("scan a table");
-    /* Its other columns as they are, its pointers out of line its own. */
-    if (0 != sm_tbl_deform(tbl, tuple, len, values.data(), isnull.get(), n))
-      sm_error("read a row");
-    ResetExprContext(econtext);
-    MemoryContext old = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-
-    v = ExecEvalExpr(state, econtext, &null);
-    isnull[n - 1] = null;
-    if (!null)
-      values[n - 1] = value_to_sm(v, typid, typmod);
-    MemoryContextSwitchTo(old);
-    /* The row's name: its primary key's columns, or its rowno. */
-    sm_datum_t kv[INDEX_MAX_KEYS];
-    bool kn[INDEX_MAX_KEYS] = {false};
-    size_t nk = 1;
-
-    kv[0] = (sm_datum_t)Int64GetDatum((int64)rowno);
-    if (NULL != pk) {
-      nk = pk->key_attnums.size();
-      for (size_t k = 0; k < nk; k++) {
-        kv[k] = values[pk->key_attnums[k]];
-        kn[k] = isnull[pk->key_attnums[k]];
-      }
-    }
-    if (0 != waiting([&] {
-          return sm_tbl_update(tbl, sm_row_key_t{kv, kn, nk}, values.data(),
-                               isnull.get(), n);
-        }))
-      sm_error("give a row its column's default");
-  }
-  sm_rel_scanend(scan);
-  FreeExecutorState(estate);
-}
+static void fill_column(Oid relid, Expr *expr, Oid typid, int32 typmod);
 
 /*
  * ADD COLUMN col to rel, the table relid, in sm: NOT NULL and a DEFAULT
@@ -5225,10 +5148,11 @@ static void check_fkey_rows(Oid relid, Oid pkoid, Oid oid,
   /*
    * Held to the end of the transaction, as VALIDATE CONSTRAINT takes them:
    * the rows checked do not change before it ends.  ADD FOREIGN KEY holds
-   * both X already.
+   * both X already. The referenced table is held shared too, so no
+   * writer changes either table while the current view is in use.
    */
   Relation rel = table_open(relid, ShareUpdateExclusiveLock);
-  Relation pkrel = table_open(pkoid, RowShareLock);
+  Relation pkrel = table_open(pkoid, ShareLock);
 
   memset(&trig, 0, sizeof(trig));
   trig.tgoid = InvalidOid;
@@ -5237,7 +5161,23 @@ static void check_fkey_rows(Oid relid, Oid pkoid, Oid oid,
   trig.tgisinternal = true;
   trig.tgconstrrelid = pkoid;
   trig.tgconstraint = oid;
-  if (!RI_Initial_Check(&trig, rel, pkrel))
+  sm_session_t *s = xact_session();
+  bool previous;
+
+  /* The table locks keep both tables fixed while the check reads now. */
+  if (0 != sm_view_latest(s, true, &previous))
+    sm_error("read current rows for a foreign key");
+  bool checked;
+
+  try {
+    checked = RI_Initial_Check(&trig, rel, pkrel);
+  } catch (...) {
+    sm_view_latest(s, previous, nullptr);
+    throw;
+  }
+  if (0 != sm_view_latest(s, previous, nullptr))
+    sm_error("restore the read view after a foreign key check");
+  if (!checked)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("the rows of \"%s\" cannot be checked against "
                            "foreign key \"%s\"",
@@ -6552,11 +6492,13 @@ static int smstore_index_eval(void *ctx, uint64_t table, uint64_t index,
     ExprContext *econtext = GetPerTupleExprContext(e->estate);
     TupleTableSlot *slot = e->slot;
 
-    ExecClearTuple(slot);
-    memcpy(slot->tts_values, values, n * sizeof(Datum));
-    memcpy(slot->tts_isnull, isnull, n * sizeof(bool));
-    ExecStoreVirtualTuple(slot);
-    econtext->ecxt_scantuple = slot;
+    if (NULL != slot) {
+      ExecClearTuple(slot);
+      memcpy(slot->tts_values, values, n * sizeof(Datum));
+      memcpy(slot->tts_isnull, isnull, n * sizeof(bool));
+      ExecStoreVirtualTuple(slot);
+      econtext->ecxt_scantuple = slot;
+    }
     *belongs = NULL == e->pred || ExecQual(e->pred, econtext);
     for (size_t k = 0; *belongs && k < e->exprs.size(); k++) {
       Datum value =
@@ -6920,20 +6862,24 @@ static int alter_conv(void *ctx, const sm_datum_t *values, const bool *isnull,
    * columns among them, as the descriptor has: a row of another width
    * would leave the slot's other columns unset.
    */
-  if (n != (size_t)c->slot->tts_tupleDescriptor->natts)
+  if (NULL != c->slot &&
+      n != (size_t)c->slot->tts_tupleDescriptor->natts)
     return sm_seterr(SM_ERR_INVALID, "ALTER COLUMN TYPE: sm's row is not "
                                      "the width of the table's descriptor");
   PG_TRY();
   {
+    CHECK_FOR_INTERRUPTS();
     ExprContext *econtext = GetPerTupleExprContext(c->estate);
     TupleTableSlot *slot = c->slot;
 
     /* sm's datums are PostgreSQL's, bit for bit (../DECIMAL.md). */
-    ExecClearTuple(slot);
-    memcpy(slot->tts_values, values, n * sizeof(Datum));
-    memcpy(slot->tts_isnull, isnull, n * sizeof(bool));
-    ExecStoreVirtualTuple(slot);
-    econtext->ecxt_scantuple = slot;
+    if (NULL != slot) {
+      ExecClearTuple(slot);
+      memcpy(slot->tts_values, values, n * sizeof(Datum));
+      memcpy(slot->tts_isnull, isnull, n * sizeof(bool));
+      ExecStoreVirtualTuple(slot);
+      econtext->ecxt_scantuple = slot;
+    }
     Datum value = ExecEvalExprSwitchContext(c->expr, econtext, out_isnull);
 
     if (!*out_isnull)
@@ -6945,6 +6891,39 @@ static int alter_conv(void *ctx, const sm_datum_t *values, const bool *isnull,
   PG_END_TRY();
   MemoryContextSwitchTo(old);
   return rc;
+}
+
+/*
+ * Fill a volatile default through the DDL rewrite path. It reads all
+ * current rows under the table lock X and writes a new store, so rows
+ * committed after a repeatable-read snapshot need no ordinary update.
+ */
+static void fill_column(Oid relid, Expr *expr, Oid typid, int32 typmod) {
+  CommandCounterIncrement();
+  sm_table_def_t def;
+
+  if (!table_def_now(relid, def))
+    elog(ERROR, "table %u is not in sm", relid);
+  const sm_column_def_t &col = def.columns.back();
+  sm_column_type_t to = {col.type_code, typmod,
+                         col.has_default ? col.default_expr.c_str() : nullptr,
+                         col.on_update_expr.empty()
+                             ? nullptr : col.on_update_expr.c_str()};
+  alter_conv_t conv = {};
+
+  conv.estate = CreateExecutorState();
+  conv.expr = ExecPrepareExpr(expression_planner(expr), conv.estate);
+  get_typlenbyval(typid, &conv.typlen, &conv.typbyval);
+  sm_session_t *s = xact_session();
+  int rc = waiting([&] {
+    return sm_cat_alter_column_type(s, relid, col.name.c_str(), to,
+                                    alter_conv, &conv);
+  });
+
+  FreeExecutorState(conv.estate);
+  forget_table(relid);
+  if (0 != rc)
+    sm_error("give a row its column's default");
 }
 
 /*

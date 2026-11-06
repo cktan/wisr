@@ -325,7 +325,8 @@ TEST_CASE("view_latest: reads see the newest committed state while on") {
   // 1. Begin; read x at the snapshot: "0".
   // 2. Another session commits x = "1", and inserts z.
   // 3. Write y = "own" in the first.
-  // 4. View latest on: x reads "1", y "own", and a cursor finds z.
+  // 4. Save and restore nested latest views: x reads "1", y "own",
+  //    and a cursor finds z.
   // 5. View latest off: x reads "0" again, and the cursor finds no z.
   // 6. A transaction's end turns it off; with none it is SM_ERR_NOTRANS.
   for (sm1::xctlevel_t level :
@@ -358,14 +359,20 @@ TEST_CASE("view_latest: reads see the newest committed state while on") {
       return found;
     };
 
-    REQUIRE(sm1::view_latest(s, true) == 0);
+    bool previous = true;
+    REQUIRE(sm1::view_latest(s, true, &previous) == 0);
+    CHECK_FALSE(previous);
+    bool nested = false;
+    REQUIRE(sm1::view_latest(s, true, &nested) == 0);
+    CHECK(nested);
+    REQUIRE(sm1::view_latest(s, nested) == 0);
     REQUIRE(sm1::read(s, g_store, "x", v) == 0);
     CHECK(v == "1");
     REQUIRE(sm1::read(s, g_store, "y", v) == 0);
     CHECK(v == "own");
     CHECK(keys() == "xyz");
 
-    REQUIRE(sm1::view_latest(s, false) == 0);
+    REQUIRE(sm1::view_latest(s, previous) == 0);
     REQUIRE(sm1::read(s, g_store, "x", v) == 0);
     CHECK(v == "0");
     CHECK(keys() == "xy");

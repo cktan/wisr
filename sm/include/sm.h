@@ -268,6 +268,16 @@ void sm_unpin(sm_pin_ref_t* ref);
  */
 void sm_release_all_pins(sm_session_t* session);
 
+/*
+ * Read the newest committed rows while on, including at repeatable
+ * read and serializable. The caller must prevent concurrent writes
+ * to every table it reads with table locks. This does not relax
+ * write conflict checks. Store the old setting in *previous when
+ * non-NULL, and restore it after the operation, including on error.
+ * The transaction's end turns it off (sm1::view_latest).
+ */
+int sm_view_latest(sm_session_t* session, bool on, bool* previous);
+
 /* A statement put aside by sm_stmt_begin_inner: opaque. */
 typedef struct sm_stmt_t sm_stmt_t;
 
@@ -1832,7 +1842,7 @@ struct sm_column_type_t {
  * It is noexcept: it runs inside the rewrite, where what it throws
  * has nowhere to go. It runs on the thread of the session that
  * called sm_cat_alter_column_type, and must not call this API on
- * that session.
+ * that session, except to get a sequence value (sm_cat_nextval).
  */
 typedef int (*sm_column_conv_fn)(void* ctx, const sm_datum_t* values,
                                  const bool* isnull, size_t n,

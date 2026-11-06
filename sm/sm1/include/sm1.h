@@ -779,15 +779,16 @@ int stmt_advance(session_t* session);
  * read and each cursor opened meanwhile sees every key's newest
  * committed version, and the transaction's own writes as before, as
  * PostgreSQL's ALTER TABLE reads a table it rewrites or checks at the
- * latest snapshot. For a caller holding the table-oid lock X on what
- * it reads, under which no other transaction writes there, so what is
+ * latest snapshot. The caller holds table locks that prevent writes
+ * to what it reads (X for a rewrite, SH or SIX for a check), so what is
  * newest stays newest. Off again, reads take the transaction's view
  * as before; a transaction's end turns it off. Writes still check
  * for conflicts against the snapshot taken by sm1::begin().
  *
+ * If previous is set, return the old setting there for restoration.
  * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED.
  */
-int view_latest(session_t* session, bool on);
+int view_latest(session_t* session, bool on, bool* previous = nullptr);
 
 /*
  * FOR QA ONLY: it lets one thread play several sessions in a

@@ -801,6 +801,16 @@ int sm_pin_tuple(sm_pin_ref_t ref, const void **tuple, size_t *len) {
   });
 }
 
+/* Set the current read view for DDL checks under table locks. */
+int sm_view_latest(sm_session_t *session, bool on, bool *previous) {
+  return guard(session, [&] {
+    if (!session) {
+      return null_arg("sm_view_latest", "session");
+    }
+    return sm1::view_latest(session->sm1, on, previous);
+  });
+}
+
 struct sm_stmt_t {
   sm3::stmt_t outer;
   sm_stmt_t *resumed = nullptr; /* the view sm_stmt_resume ran, if any */
