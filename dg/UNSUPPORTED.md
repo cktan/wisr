@@ -140,22 +140,30 @@ regression files are taken out for it (`test/pgregress`,
   (`ALTERTYPE.md` §8, step 378). PostgreSQL makes the index,
   the foreign key or the sequence again, and evaluates every
   USING on the row as it was.
-- **VALIDATE CONSTRAINT of a foreign key locks the referenced
-  table SHARE** — PostgreSQL takes `ROW SHARE` on it (and `SHARE
-  UPDATE EXCLUSIVE` on the table altered, which digres keeps).
-  digres reads both tables at their newest committed rows, so
-  that a row committed after the transaction's snapshot is
-  checked (`../DG_REVIEW.md`, step 397); that read needs a lock
-  that stops writes to both (`../sm/XCTMGR.md` §5.5). So:
-  - Writers to the referenced table wait until the validating
-    transaction ends. Readers do not wait. PostgreSQL lets them
-    write. A long validation of a large child table stalls the
-    parent's writers, which `NOT VALID` followed by `VALIDATE`
-    exists to avoid.
-  - A transaction that wrote the referenced table, and then
-    validates, asks for a stronger lock on a table it holds.
-    Two such transactions can deadlock.
-  - `ADD FOREIGN KEY` is as before: it held both tables X.
+- **VALIDATE CONSTRAINT of a foreign key blocks the child's
+  writers until the transaction ends** — PostgreSQL's does not
+  (`SHARE UPDATE EXCLUSIVE` on the child, `ROW SHARE` on the
+  parent: neither conflicts with a write). The check reads both
+  tables at their newest rows (`../DG_REVIEW.md`, step 397),
+  then `sm3::validate_fkey` writes the child's table record,
+  which locks the child X to the transaction's end. Measured on
+  2026-11-06, debug build, a child of 200,000 rows, in a
+  transaction that sleeps 4 s after the validation:
+
+  | | child writer waited | parent writer waited |
+  | --- | --- | --- |
+  | PostgreSQL 18 | 0.01 s | 0.01 s |
+  | digres | 3.9 s | 0.02 s |
+
+  - The wait is the length of the transaction, not of the
+    check: the check took 0.21 s in digres, 0.02 s in PostgreSQL.
+  - The parent's writers do not wait, as in PostgreSQL. Both
+    `SHARE UPDATE EXCLUSIVE` and `SHARE` are IS in sm
+    (`relation_lock_mode()`). That is sound: a foreign key not
+    valid is enforced on every write, so no write breaks what
+    the check decided.
+  - `ADD FOREIGN KEY` holds both tables X (`sm3::create_fkey`),
+    as before.
   To revisit: `../sm/NEXT.md`, loose ends.
 - **ALTER INDEX, ALTER TYPE, ALTER MATERIALIZED VIEW** —
   refused; ALTER VIEW takes only options and RENAME.

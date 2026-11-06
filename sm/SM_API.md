@@ -603,7 +603,10 @@ int sm_view_latest(sm_session_t* session, bool on, bool* previous);
 
 Enables current reads for a DDL check, at every isolation level.
 The caller holds table locks that prevent concurrent writes to
-all tables it reads. Writes retain their normal conflict checks.
+all tables it reads, or knows that no write can break what it
+decides: a foreign key check holds only IS, and the key, not
+valid, is enforced on every write. Writes retain their normal
+conflict checks.
 If `previous` is non-NULL, the call stores the old setting there.
 Restore that setting after the check, including on error. The
 transaction's end turns current reads off.

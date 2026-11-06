@@ -780,10 +780,12 @@ int stmt_advance(session_t* session);
  * committed version, and the transaction's own writes as before, as
  * PostgreSQL's ALTER TABLE reads a table it rewrites or checks at the
  * latest snapshot. The caller holds table locks that prevent writes
- * to what it reads (X for a rewrite, SH or SIX for a check), so what is
- * newest stays newest. Off again, reads take the transaction's view
- * as before; a transaction's end turns it off. Writes still check
- * for conflicts against the snapshot taken by sm1::begin().
+ * to what it reads (X for a rewrite), or knows that no write can
+ * break what it decides (a foreign key check: the key not valid is
+ * enforced on every write), so what is newest stays true. Off
+ * again, reads take the transaction's view as before; a
+ * transaction's end turns it off. Writes still check for conflicts
+ * against the snapshot taken by sm1::begin().
  *
  * If previous is set, return the old setting there for restoration.
  * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED.

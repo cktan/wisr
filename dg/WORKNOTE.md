@@ -11787,3 +11787,28 @@ DDL that must read current rows (`../DG_REVIEW.md`).
   reporting and a shutdown session-registry race. Both reproduce
   with the original adapter; those paths are unchanged. Logs
   and baseline probes are in `../bench/build/dg-review/`.
+
+## Step 398: VALIDATE CONSTRAINT's locks, measured
+
+Step 397 said the referenced table is held SH during the check,
+and the child SIX. Measured, neither is so (2026-11-06, debug
+build, a child of 200,000 rows, a transaction that sleeps 4 s
+after the validation; PostgreSQL 18 for comparison).
+
+- **The locks**: `relation_lock_mode()` maps `SHARE UPDATE
+  EXCLUSIVE` and `SHARE` to IS, so `check_fkey_rows()` holds IS
+  on both tables, and a writer to either goes on. It took the
+  referenced table at `ROW SHARE` again, as PostgreSQL does:
+  `SHARE` was the same lock, and its comment was wrong.
+- **Why the read is sound**: a foreign key not valid is enforced
+  on every write (an orphan insert, and the delete of a
+  referenced parent row, both fail). `ADD FOREIGN KEY` holds
+  both X (`sm3::create_fkey`). The contract of `sm_view_latest()`
+  says so (`../sm/XCTMGR.md` section 5.5).
+- **What does block**: `sm3::validate_fkey()` writes the child's
+  table record, which locks the child X to the transaction's
+  end. The child's writer waited 3.9 s, PostgreSQL's 0.01 s. The
+  parent's waited 0.02 s, as PostgreSQL's did. The check took
+  0.21 s, PostgreSQL's 0.02 s.
+- **Docs**: `UNSUPPORTED.md`, `../DG-vs-PG.md` and
+  `../sm/NEXT.md` state it; NEXT.md lists the way to revisit it.

@@ -458,8 +458,10 @@ restoration after a nested check. `sm_view_latest()` exposes this
 to the host for foreign-key validation.
 
 - **The caller holds table locks that prevent writes** on what
-  it reads. A rewrite holds X; a read-only constraint check can
-  hold SH or SIX. What is newest when a cursor opens stays newest.
+  it reads. A rewrite holds X. A foreign key check holds only
+  IS, and is sound because the key, not valid, is enforced on
+  every write: no write breaks what the check decided. What is
+  newest when a cursor opens stays true.
 - **No snapshot is registered for it.** The newest committed
   version of a key is never purged, and a key purged is a
   deleted one, which the newest state does not hold.

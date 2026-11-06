@@ -5146,13 +5146,15 @@ static void check_fkey_rows(Oid relid, Oid pkoid, Oid oid,
                             const char *conname) {
   Trigger trig;
   /*
-   * Held to the end of the transaction, as VALIDATE CONSTRAINT takes them:
-   * the rows checked do not change before it ends.  ADD FOREIGN KEY holds
-   * both X already. The referenced table is held shared too, so no
-   * writer changes either table while the current view is in use.
+   * Held to the end of the transaction, as VALIDATE CONSTRAINT takes them.
+   * sm maps both to IS (relation_lock_mode()), so a writer goes on, as in
+   * PostgreSQL.  That is sound: the check reads the newest committed rows,
+   * and a foreign key not valid is enforced on every write, so no write
+   * breaks what the check decided.  ADD FOREIGN KEY holds both X already
+   * (sm3::create_fkey).
    */
   Relation rel = table_open(relid, ShareUpdateExclusiveLock);
-  Relation pkrel = table_open(pkoid, ShareLock);
+  Relation pkrel = table_open(pkoid, RowShareLock);
 
   memset(&trig, 0, sizeof(trig));
   trig.tgoid = InvalidOid;
@@ -5164,7 +5166,7 @@ static void check_fkey_rows(Oid relid, Oid pkoid, Oid oid,
   sm_session_t *s = xact_session();
   bool previous;
 
-  /* The table locks keep both tables fixed while the check reads now. */
+  /* The newest rows: past the snapshot of a REPEATABLE READ transaction. */
   if (0 != sm_view_latest(s, true, &previous))
     sm_error("read current rows for a foreign key");
   bool checked;

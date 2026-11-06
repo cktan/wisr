@@ -271,8 +271,9 @@ void sm_release_all_pins(sm_session_t* session);
 /*
  * Read the newest committed rows while on, including at repeatable
  * read and serializable. The caller must prevent concurrent writes
- * to every table it reads with table locks. This does not relax
- * write conflict checks. Store the old setting in *previous when
+ * to every table it reads with table locks, or know that no write
+ * can break what it decides. This does not relax write conflict
+ * checks. Store the old setting in *previous when
  * non-NULL, and restore it after the operation, including on error.
  * The transaction's end turns it off (sm1::view_latest).
  */
