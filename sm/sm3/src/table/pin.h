@@ -80,6 +80,8 @@ struct sm3::scan_t {
   std::string key; /* the recheck's entry key, its buffer reused */
   bool entries_done = false;
   bool entries_only = false;
+  bool reread = false; /* rollback or released pins invalidated the batch */
+  bool closed = false; /* its transaction ended; never reopened */
   /* tbl_scan_cols's by-reference datums. */
   std::vector<std::optional<std::string>> datums;
   /*
@@ -134,6 +136,9 @@ void pin_release(pin_t *pin);
 
 /* Make the pins of the cursors a rollback closed stale (sm1::rollback). */
 void pins_rolled_back(session_t *s);
+
+/* Close tree cursors and release their batches at transaction end. */
+void close_tree_scans(session_t *s);
 
 /* Free every pin of s's pool, at session_close. */
 void pins_close(session_t *s);

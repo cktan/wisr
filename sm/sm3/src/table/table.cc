@@ -696,8 +696,10 @@ int find_now(sm3::table_t *t, size_t i, const entry_t &e, uint64_t &found,
   if (0 == rc && nullptr != tuple) {
     tuple->assign(v);
   }
-  // Releases the locks; nothing was written since the mark.
-  if (rc < 0 || sm3::rollback(t->session, mark) != 0) {
+  // Release the locks and the internal mark. A failed lookup leaves
+  // its transaction for the caller to abort, as other row calls do.
+  if (rc < 0 || sm3::rollback(t->session, mark) != 0 ||
+      sm3::forget(t->session, mark) != 0) {
     return -1;
   }
   return rc;
@@ -1726,6 +1728,7 @@ static bool tree_scattered(table_t *t, size_t i) {
 static int tree_fill(scan_t *scan) {
   table_t *t = scan->table;
   scan->at = scan->n = 0;
+  scan->reread = false;
   size_t want = scan->batch;
   scan->batch = std::min(scan->batch * 2, tree_batch_max);
   if (scan->keys.size() < want) {
@@ -1874,6 +1877,15 @@ static int tree_next(scan_t *scan, uint64_t &id, std::string_view &tuple) {
     }
     size_t i = scan->at++;
     scan->last = i;
+    if (scan->reread) {
+      // The entry remains at its position, but rollback may have
+      // changed its row. Read pending rows at the current view.
+      scan->rcs[i] =
+          sm2::rel_read(t->rel, scan->rows[i], scan->raws[i], scan->tuples[i]);
+      if (scan->rcs[i] < 0) {
+        return -1;
+      }
+    }
     if (scan->unread[i]) {
       id = scan->ids[i];
       tuple = {};
@@ -1973,7 +1985,7 @@ int tree_find(sm3::table_t *t, size_t i, const entry_t &e, bool now,
   }
   sm2::bound_t b{e.d(), e.null(), true};
   sm3::pin_t *p = sm3::pin_take(t->session);
-  std::string kb;
+  std::string kb, matched;
   int rc;
   for (;;) {
     sm2::index_scan_t *scan = nullptr;
@@ -2013,6 +2025,7 @@ int tree_find(sm3::table_t *t, size_t i, const entry_t &e, bool now,
       }
       if (h == 1) {
         row.assign(r);
+        matched = key;
         rc = 0;
         break;
       }
@@ -2024,8 +2037,27 @@ int tree_find(sm3::table_t *t, size_t i, const entry_t &e, bool now,
       // that got in first is waited for by the lock.
       if (sm2::rel_lock(t->rel, row, sm1::SM_LOCKMODE_SH) != 0) {
         rc = -1;
+        break;
       }
-      break;
+      // A lock without an uncommitted version may have blocked us.
+      // Check the row again under the lock before calling it a match.
+      std::string_view latest;
+      int n = sm2::rel_read_latest(t->rel, row, p->raw, latest);
+      if (n < 0 && sm1::SM_ERR_MOVED == sm1::errnum()) {
+        n = 1;
+      }
+      if (n < 0) {
+        rc = -1;
+        break;
+      }
+      int h = 0 == n ? sm3::still_has(t, i, latest, row, matched, kb) : 0;
+      if (0 != h) {
+        rc = h < 0 ? -1 : 0;
+        break;
+      }
+      sm1::unpin(p->raw);
+      // Deleted, moved, or changed its key: find the current owner.
+      continue;
     }
     if (rc != 2) {
       break;
@@ -2082,6 +2114,10 @@ int tbl_idx_scan_rows(table_t *table, uint64_t index, const sm2::bound_t *lo,
 int tbl_scannxt(scan_t *scan, uint64_t &id, pin_ref_t &ref,
                 std::string_view &tuple) {
   ref = pin_ref_t{};
+  if (scan->closed) {
+    tuple = {};
+    return sm1::seterr(sm1::SM_ERR_SCANCLOSED, "table: cursor is closed");
+  }
   int rc = scan->entries ? tree_next(scan, id, tuple)
                          : sm2::rel_scannxt(scan->rel, id, tuple);
   // Every ref to the row before goes stale, whatever comes next.
@@ -2106,7 +2142,7 @@ int tbl_scan_entries_only(scan_t *scan) {
 /* The key columns of a tree's cursor's last entry; see sm3.h. */
 int tbl_scan_cols(scan_t *scan, std::span<sm2::datum_t> values,
                   std::span<bool> isnull) {
-  if (!scan->entries || 0 == scan->n) {
+  if (scan->closed || !scan->entries || 0 == scan->n) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "table: no tree entry to give the columns of");
   }
@@ -2124,6 +2160,9 @@ int tbl_scannxt(scan_t *scan, uint64_t &id, std::string_view &tuple) {
 /* Aim a tree's cursor of rows at new bounds; see sm3.h. */
 int tbl_scan_rebound(scan_t *scan, const sm2::bound_t *lo,
                      const sm2::bound_t *hi, bool *widened) {
+  if (scan->closed) {
+    return sm1::seterr(sm1::SM_ERR_SCANCLOSED, "table: cursor is closed");
+  }
   if (!scan->entries) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "table: only a tree's cursor is aimed again");
@@ -2159,6 +2198,9 @@ int tbl_scan_seek_key(scan_t *scan, std::string_view key) {
 
 /* The key of the cursor's last row; see sm3.h. */
 std::string_view tbl_scan_key(const scan_t *scan) {
+  if (scan->closed) {
+    return {};
+  }
   if (scan->entries) {
     // Before the first row a tree's cursor has no key.
     return 0 == scan->at ? std::string_view()

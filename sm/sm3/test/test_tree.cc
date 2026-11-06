@@ -2169,3 +2169,213 @@ TEST_CASE("tree: a delete fails a reader whose index-only scan read no row") {
   CHECK(-1 == sm3::commit(f.b));
   CHECK(sm1::SM_ERR_SERIALIZATION == sm1::errnum());
 }
+
+TEST_CASE("tree: an arbiter rechecks its row after waiting for a lock") {
+  // Verify a changed row cannot be returned as a key's conflict.
+  // 1. Create a unique tree and insert owner x.
+  // 2. Lock the row in b without changing its version.
+  // 3. Let a find x, then wait for b's lock.
+  // 4. Change the key, delete the row, or change its membership.
+  // 5. Require a to insert x, with and without a conflict tuple.
+  for (bool want_tuple : {false, true}) {
+    for (int change = 0; change < 3; change++) {
+      trees_t f;
+      uint64_t u = 0, id = 0;
+      std::vector<sm3::index_key_spec_t> owner = {
+          {2, false, false, std::nullopt}};
+      std::vector<int32_t> reads = {1};
+      REQUIRE(0 == sm3::begin(f.a, sm1::xctlevel_t::read_committed));
+      REQUIRE(0 == sm3::create_index(f.a, f.jobs, "u_owner", owner, {}, true,
+                                     "free", reads, u, false, false, true));
+      REQUIRE(0 == sm3::commit(f.a));
+      f.builder(1, 10);
+      REQUIRE(0 == sm3::builder_wait(f.a, f.jobs, u));
+      REQUIRE(0 == sm3::begin(f.a, sm1::xctlevel_t::read_committed));
+      auto *t = f.table(f.a);
+      row_t x(1, "free", "x");
+      REQUIRE(0 == sm3::tbl_insert(t, x.d(), x.null(), id));
+      sm3::tbl_close(t);
+      REQUIRE(0 == sm3::commit(f.a));
+      REQUIRE(0 == sm3::begin(f.b, sm1::xctlevel_t::read_committed));
+      auto *tb = f.table(f.b);
+      REQUIRE(0 == sm3::tbl_lock(tb, id, sm1::SM_LOCKMODE_EX));
+      REQUIRE(0 == sm1::set_tag(sm3::session_sm1(f.a), 101));
+      REQUIRE(0 == sm1::set_tag(sm3::session_sm1(f.b), 102));
+      std::atomic<int> result{-99};
+      std::string conflict;
+      std::thread worker([&] {
+        if (0 != sm3::begin(f.a, sm1::xctlevel_t::read_committed))
+          return;
+        auto *ta = f.table(f.a);
+        row_t r(2, "free", "x");
+        uint64_t got = 0;
+        uint64_t arb[] = {u};
+        result = sm3::tbl_insert_arbiter(ta, r.d(), r.null(), arb, got,
+                                         want_tuple ? &conflict : nullptr);
+        sm3::tbl_close(ta);
+        sm3::abort(f.a);
+      });
+      bool waiting = false;
+      for (int tries = 0; tries < 5000; ++tries) {
+        std::vector<uint64_t> blockers;
+        sm1::waits_for(f.env(), 101, &blockers);
+        if (!blockers.empty()) {
+          waiting = true;
+          break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      row_t y(1, 2 == change ? "busy" : "free", 0 == change ? "y" : "x");
+      int changed = 1 == change ? sm3::tbl_delete(tb, id)
+                                : sm3::tbl_update(tb, id, y.d(), y.null());
+      sm3::tbl_close(tb);
+      int committed = sm3::commit(f.b);
+      worker.join();
+      REQUIRE(waiting);
+      REQUIRE(0 == changed);
+      REQUIRE(0 == committed);
+      CHECK(0 == result.load());
+    }
+  }
+}
+
+TEST_CASE("tree: a rollback discards prefetched inserted rows") {
+  // Verify rollback discards prefetched versions of undone rows.
+  // 1. Create a savepoint and insert four rows.
+  // 2. Scan twice to leave an inserted row buffered.
+  // 3. Roll back and require no inserted row to be returned.
+  trees_t f;
+  REQUIRE(0 == sm3::begin(f.a, sm1::xctlevel_t::read_committed));
+  auto *t = f.table(f.a);
+  int mark = sm3::savepoint(f.a);
+  REQUIRE(mark > 0);
+  uint64_t id;
+  for (int i = 1; i <= 4; ++i) {
+    row_t r(i, "s", std::to_string(i));
+    REQUIRE(0 == sm3::tbl_insert(t, r.d(), r.null(), id));
+  }
+  sm3::scan_t *scan = nullptr;
+  REQUIRE(0 == sm3::tbl_idx_scan_rows(t, f.by_state, nullptr, nullptr, scan));
+  std::string_view tuple;
+  sm3::pin_ref_t ref;
+  REQUIRE(0 == sm3::tbl_scannxt(scan, id, ref, tuple));
+  REQUIRE(0 == sm3::tbl_scannxt(scan, id, ref, tuple));
+  std::string held(tuple);
+  REQUIRE(0 == sm3::rollback(f.a, mark));
+  REQUIRE(0 == sm3::pin_tuple(ref, tuple));
+  CHECK(held == tuple);
+  int rc = sm3::tbl_scannxt(scan, id, tuple);
+  INFO("post-rollback rc=" << rc << " bytes=" << tuple.size());
+  CHECK(1 == rc);
+  sm3::tbl_scanend(scan);
+  sm3::tbl_close(t);
+  sm3::abort(f.a);
+}
+
+TEST_CASE("tree: a rollback rereads pending rows without losing entries") {
+  // Verify rollback refreshes a batch without skipping its entries.
+  // 1. Commit four rows, then update their ids under a savepoint.
+  // 2. Read two rows from the tree and roll back the updates.
+  // 3. Require the two pending rows to have their original values.
+  trees_t f;
+  REQUIRE(0 == sm3::begin(f.a, sm1::xctlevel_t::read_committed));
+  sm3::table_t *t = f.table(f.a);
+  std::vector<uint64_t> rows;
+  for (int i = 1; i <= 4; i++) {
+    row_t r(i, "s", "O");
+    uint64_t id;
+    REQUIRE(0 == sm3::tbl_insert(t, r.d(), r.null(), id));
+    rows.push_back(id);
+  }
+  sm3::tbl_close(t);
+  REQUIRE(0 == sm3::commit(f.a));
+  REQUIRE(0 == sm3::begin(f.a, sm1::xctlevel_t::read_committed));
+  t = f.table(f.a);
+  int mark = sm3::savepoint(f.a);
+  REQUIRE(mark > 0);
+  for (int i = 0; i < 4; i++) {
+    row_t r(101 + i, "s", "O");
+    REQUIRE(0 == sm3::tbl_update(t, rows[i], r.d(), r.null()));
+  }
+  sm3::scan_t *scan = nullptr;
+  REQUIRE(0 == sm3::tbl_idx_scan_rows(t, f.by_state, nullptr, nullptr, scan));
+  uint64_t id;
+  std::string_view tuple;
+  REQUIRE(0 == sm3::tbl_scannxt(scan, id, tuple));
+  REQUIRE(0 == sm3::tbl_scannxt(scan, id, tuple));
+  REQUIRE(0 == sm3::rollback(f.a, mark));
+  for (int expected : {3, 4}) {
+    REQUIRE(0 == sm3::tbl_scannxt(scan, id, tuple));
+    sm2::datum_t d;
+    bool isnull;
+    REQUIRE(0 == sm2::tup_decode(sm3::tbl_def(t).desc, tuple, 0, d, isnull));
+    CHECK(expected == sm2::datum_to_int32(d));
+  }
+  CHECK(1 == sm3::tbl_scannxt(scan, id, tuple));
+  sm3::tbl_scanend(scan);
+  sm3::tbl_close(t);
+  REQUIRE(0 == sm3::abort(f.a));
+}
+
+TEST_CASE("tree: transaction end closes every prefetched row scan") {
+  // Verify ended scans stay closed, while released pins allow rereads.
+  // 1. Commit four rows and vacuum their tree to all visible.
+  // 2. Read two rows, leaving a third prefetched, in each scan mode.
+  // 3. Commit, abort, prepare, or release the session's pins.
+  // 4. Only a release may continue; ended scans stay closed at begin.
+  trees_t f;
+  REQUIRE(0 == sm3::begin(f.a, sm1::xctlevel_t::read_committed));
+  sm3::table_t *t = f.table(f.a);
+  for (int i = 1; i <= 4; i++) {
+    row_t r(i, "s", "O");
+    uint64_t id;
+    REQUIRE(0 == sm3::tbl_insert(t, r.d(), r.null(), id));
+  }
+  sm3::tbl_close(t);
+  REQUIRE(0 == sm3::commit(f.a));
+  for (bool only : {false, true}) {
+    for (int how = 0; how < 4; how++) {
+      CAPTURE(only);
+      CAPTURE(how);
+      REQUIRE(0 == sm3::begin(f.a, sm1::xctlevel_t::read_committed));
+      t = f.table(f.a);
+      REQUIRE(0 == sm3::tbl_compact(t));
+      sm3::scan_t *scan = nullptr;
+      REQUIRE(0 ==
+              sm3::tbl_idx_scan_rows(t, f.by_state, nullptr, nullptr, scan));
+      if (only) {
+        REQUIRE(0 == sm3::tbl_scan_entries_only(scan));
+      }
+      uint64_t id;
+      std::string_view tuple;
+      REQUIRE(0 == sm3::tbl_scannxt(scan, id, tuple));
+      REQUIRE(0 == sm3::tbl_scannxt(scan, id, tuple));
+      CHECK(only == tuple.empty());
+      if (0 == how) {
+        REQUIRE(0 == sm3::commit(f.a));
+      } else if (1 == how) {
+        REQUIRE(0 == sm3::abort(f.a));
+      } else if (2 == how) {
+        REQUIRE(0 == sm3::prepare(f.a, "tree-cursor"));
+        REQUIRE(0 == sm1::abort_prepared(sm3::session_sm1(f.a), "tree-cursor"));
+      } else {
+        sm3::release_all_pins(f.a);
+      }
+      if (3 == how) {
+        CHECK(0 == sm3::tbl_scannxt(scan, id, tuple));
+        CHECK_FALSE(tuple.empty());
+        REQUIRE(0 == sm3::abort(f.a));
+      } else {
+        CHECK(-1 == sm3::tbl_scannxt(scan, id, tuple));
+        CHECK(sm1::SM_ERR_SCANCLOSED == sm1::errnum());
+        CHECK(tuple.empty());
+        REQUIRE(0 == sm3::begin(f.a, sm1::xctlevel_t::read_committed));
+        CHECK(-1 == sm3::tbl_scannxt(scan, id, tuple));
+        CHECK(-1 == sm3::tbl_scan_rebound(scan, nullptr, nullptr));
+        REQUIRE(0 == sm3::abort(f.a));
+      }
+      sm3::tbl_scanend(scan);
+      sm3::tbl_close(t);
+    }
+  }
+}

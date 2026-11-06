@@ -670,6 +670,13 @@ A tree arbiter of `ON CONFLICT` follows the same order
 savepoint. If the key turns out another's, the row's write is
 taken back to the savepoint.
 
+A conflict lookup locks the candidate row shared, then reads
+its newest version and checks its key and membership again.
+An explicit lock can delay the lookup without an uncommitted
+version to detect. A candidate changed while the lookup waited
+starts the lookup again. The lookup rolls back and forgets its
+internal savepoint before returning a successful result.
+
 ### 6.4 A split
 
 A split of page P, S being its old right sibling and R new:

@@ -381,6 +381,10 @@ int begin(session_t *s, sm1::xctlevel_t level, bool read_only) {
   if (sm1::begin(s->sm1, level, read_only) != 0) {
     return -1;
   }
+  // An engine-side abort may have ended the old transaction without
+  // a call to this level's abort. Its cursors cannot serve this one.
+  close_tree_scans(s);
+  release_all_pins(s);
   s->cat->begins.fetch_add(1, std::memory_order_relaxed);
   drop_from(s, 0);
   if (s->has_doomed.load()) {
@@ -548,6 +552,7 @@ int commit(session_t *s) {
   // load open or the transaction doomed, it stays active with this
   // side torn down: the caller can only abort it, and abort works.
   s->in_txn = false;
+  close_tree_scans(s);
   release_all_pins(s);
   if (!made_shared_ddl(s)) {
     // Nothing for the shared catalog: what there is, is the session's.
@@ -578,6 +583,7 @@ int prepare(session_t *s, std::string_view gid) {
   }
   // Its pins go before the prepare, as sm1's went, whether or not
   // it succeeds.
+  close_tree_scans(s);
   release_all_pins(s);
   if (sm1::prepare(s->sm1, gid) != 0) {
     return -1;
@@ -589,6 +595,7 @@ int prepare(session_t *s, std::string_view gid) {
 
 /* Abort, dropping the overlay. */
 int abort(session_t *s) {
+  close_tree_scans(s);
   release_all_pins(s);
   drop_from(s, 0);
   s->in_txn = false;

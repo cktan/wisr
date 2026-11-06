@@ -162,7 +162,9 @@ out)`, under `alloc_mu`:
 
 1. On first use in this process, set `next` and `limit` to the
    lease if there is one, else to `start`. Resuming at the lease
-   skips the rest of that block.
+   skips the rest of that block. Only a confirmed missing
+   lease starts anew. A malformed lease or a read error fails
+   the call without changing the lease or memory state.
 2. Refuse an exhausted Sequence with `SM_ERR_INVALID`.
 3. If `next` has reached `limit`, extend by a whole block,
    stopping at the largest value. If no whole step fits, the new

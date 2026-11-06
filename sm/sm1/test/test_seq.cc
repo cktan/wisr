@@ -9,7 +9,11 @@
 
 #include "db.h"
 #include "session.h"
+#include "sm0_codec.h"
+#include "sm0_defer.h"
 #include "sm1.h"
+
+#include <rocksdb/utilities/stackable_db.h>
 
 #include <signal.h>
 #include <sys/wait.h>
@@ -158,6 +162,75 @@ TEST_CASE("a sequence starts at its start and steps by its increment") {
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1::nextseq(s, std::string_view("s\0q", 3), out) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+}
+
+TEST_CASE("a sequence refuses a malformed or unreadable lease") {
+  // Verify a failed lease read never restarts a used sequence.
+  // 1. Draw from a sequence and retain its persisted lease.
+  // 2. Drop its memory state and inject corruption or a read error.
+  // 3. Require nextseq and lastseq to fail without changing state.
+  // 4. Restore the lease and require a value above the first draw.
+  seq_fixture_t f;
+  sm1::session_t *s = f.s();
+  commit_mkseq(s, SEQ, 1, 1);
+  REQUIRE(1 == next(s));
+  sm1::seqref_t ref;
+  REQUIRE(0 == sm1::seqref(s, SEQ, ref));
+  std::string key(WISR_META_SEQ_PREFIX);
+  sm0::put_be64(key, ref.seqid);
+  std::string lease;
+  REQUIRE(s->db->rdb->Get(rocksdb::ReadOptions(), s->db->cf_meta, key, &lease)
+              .ok());
+  // Stop background access before replacing the database for the probe.
+  wisr::gc_stop(s->db);
+  s->db->seqs.erase(ref.seqid);
+  rocksdb::DB *original = s->db->rdb;
+  sm1::errnum_t expected = sm1::SM_ERR_CORRUPT;
+  std::string stored = lease;
+
+  /* A non-owning database wrapper that fails sequence lease reads. */
+  class failed_read_t : public rocksdb::StackableDB {
+  public:
+    /* Borrow db, whose fixture still owns it. */
+    explicit failed_read_t(rocksdb::DB *db)
+        : StackableDB(std::shared_ptr<rocksdb::DB>(db, [](auto *) {})) {}
+    using StackableDB::Get;
+    /* Fail only lease reads; catalog lookups still work. */
+    rocksdb::Status Get(const rocksdb::ReadOptions &ro,
+                        rocksdb::ColumnFamilyHandle *cf,
+                        const rocksdb::Slice &key,
+                        rocksdb::PinnableSlice *value) override {
+      return key.starts_with(WISR_META_SEQ_PREFIX)
+                 ? rocksdb::Status::IOError("lease read failed")
+                 : StackableDB::Get(ro, cf, key, value);
+    }
+  } failed(original);
+  defer { s->db->rdb = original; };
+  SUBCASE("malformed lease") {
+    stored = "bad";
+    REQUIRE(original->Put(rocksdb::WriteOptions(), s->db->cf_meta, key, stored)
+                .ok());
+  }
+  SUBCASE("failed lease read") {
+    s->db->rdb = &failed;
+    expected = sm1::SM_ERR_IO;
+  }
+  uint64_t out = 77;
+  CHECK(-1 == sm1::nextseq(s, SEQ, out));
+  CHECK(expected == sm1::errnum());
+  CHECK(77 == out);
+  CHECK(-1 == sm1::lastseq(s, SEQ, out));
+  CHECK(expected == sm1::errnum());
+  CHECK(77 == out);
+  CHECK(0 == s->db->seqs.count(ref.seqid));
+  std::string after;
+  REQUIRE(
+      original->Get(rocksdb::ReadOptions(), s->db->cf_meta, key, &after).ok());
+  CHECK(stored == after);
+  s->db->rdb = original;
+  REQUIRE(
+      original->Put(rocksdb::WriteOptions(), s->db->cf_meta, key, lease).ok());
+  CHECK(next(s) > 1);
 }
 
 TEST_CASE("a sequence drawn by its ref goes on as by its name") {
