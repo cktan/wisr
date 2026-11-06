@@ -1,0 +1,38 @@
+# Verify repeated conflict checks preserve the caller's savepoints.
+# 1. Commit 300 rows, each with its own primary key.
+# 2. Keep a savepoint through DO NOTHING and DO UPDATE of all keys.
+# 3. Check the updates, then roll back and check the original rows.
+
+statement ok
+create table conflicts (id int4 primary key, v int4)
+
+statement ok
+insert into conflicts select i, 0 from generate_series(1, 300) as g(i)
+
+statement ok
+begin
+
+statement ok
+savepoint caller
+
+statement ok
+insert into conflicts select i, 1 from generate_series(1, 300) as g(i) on conflict (id) do nothing
+
+statement ok
+insert into conflicts select i, 1 from generate_series(1, 300) as g(i) on conflict (id) do update set v = excluded.v
+
+query II nosort
+select count(*), sum(v) from conflicts
+----
+300	300
+
+statement ok
+rollback to caller
+
+query II nosort
+select count(*), sum(v) from conflicts
+----
+300	0
+
+statement ok
+commit

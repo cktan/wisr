@@ -46,7 +46,7 @@ private:
 class kv_t : public db_t {
 public:
   /* Initialize and load the catalog, create kv, open a and b. */
-  kv_t() {
+  explicit kv_t(bool tree = false) {
     REQUIRE(sm3::cat_init(env(), "db") == 0);
     REQUIRE(sm3::cat_open(env(), "db", cat) == 0);
     REQUIRE(sm3::session_open(cat, open(), a) == 0);
@@ -61,8 +61,10 @@ public:
     };
     REQUIRE(sm3::begin(a, sm1::xctlevel_t::read_committed) == 0);
     REQUIRE(sm3::create_table(a, sm3::nsp_public, "kv", cols, kv) == 0);
-    REQUIRE(sm3::create_index(a, kv, "kv_id", on(0), {}, true, kv_id) == 0);
-    REQUIRE(sm3::create_index(a, kv, "kv_name", on(1), {}, true, kv_name) == 0);
+    REQUIRE(sm3::create_index(a, kv, "kv_id", on(0), {}, true, kv_id, false,
+                              false, tree) == 0);
+    REQUIRE(sm3::create_index(a, kv, "kv_name", on(1), {}, true, kv_name, false,
+                              false, tree) == 0);
     REQUIRE(sm3::create_index(a, kv, "kv_v", on(2), {}, false, kv_v) == 0);
     REQUIRE(sm3::commit(a) == 0);
   }
@@ -116,6 +118,44 @@ size_t count(sm3::table_t *t) {
 }
 
 } // namespace
+
+TEST_CASE("arbiter conflict checks release their internal savepoints") {
+  // Verify conflicts do not consume the caller's savepoint capacity.
+  // 1. Commit a row, with LSM indexes and then with tree indexes.
+  // 2. Keep a caller savepoint and check over 256 conflicts.
+  // 3. Alternate requests for the conflict tuple.
+  // 4. Check the next mark's depth and roll back the caller's mark.
+  for (bool tree : {false, true}) {
+    kv_t f(tree);
+    start(f.a);
+    sm3::table_t *t = f.write(f.a);
+    uint64_t first = 0, found = 0;
+    REQUIRE(0 == upsert(t, 1, "one", first));
+    sm3::tbl_close(t);
+    REQUIRE(0 == sm3::commit(f.a));
+    start(f.a);
+    t = f.write(f.a);
+    int mark = sm3::savepoint(f.a);
+    REQUIRE(1 == mark);
+    row_t r(1, "one", 10);
+    for (int i = 0; i <= sm1::max_savepoints; i++) {
+      std::string tuple;
+      REQUIRE_MESSAGE(
+          1 == sm3::tbl_insert_arbiter(t, r.d(), r.null(), {}, found,
+                                       0 == i % 2 ? &tuple : nullptr),
+          sm1::errmsg());
+      CHECK(first == found);
+      if (0 == i % 2) {
+        CHECK_FALSE(tuple.empty());
+      }
+    }
+    CHECK(2 == sm3::savepoint(f.a));
+    REQUIRE(0 == sm3::rollback(f.a, mark));
+    REQUIRE(0 == sm3::forget(f.a, mark));
+    sm3::tbl_close(t);
+    REQUIRE(0 == sm3::abort(f.a));
+  }
+}
 
 TEST_CASE("an insert with arbiters finds the row that has its key, and "
           "writes nothing") {

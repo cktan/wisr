@@ -54,6 +54,18 @@ void drop(sm3::pin_t *p) {
   p->gen++;
 }
 
+/* Discard cached rows from at on, retaining the tree entry positions. */
+void discard_batch(sm3::scan_t *scan, size_t at) {
+  for (size_t i = at; i < scan->raws.size(); i++) {
+    sm1::unpin(scan->raws[i]);
+    scan->tuples[i] = {};
+    scan->unread[i] = false;
+  }
+  sm1::batch_iter_free(scan->iter);
+  scan->iter = nullptr;
+  scan->reread = true;
+}
+
 } // namespace
 
 namespace sm3 {
@@ -137,11 +149,23 @@ void pin_release(pin_t *p) {
 /* Make the pins of the cursors a rollback closed stale; see pin.h. */
 void pins_rolled_back(session_t *s) {
   for (pin_t *p = s->pins_scan; p; p = p->next) {
-    // A tree's cursor has no rel scan for the rollback to close: its
-    // rows are in its own raw pins, each batch read at the view of
-    // its call, so it goes on (../ROWSTORE.md §7.2).
+    // A tree cursor continues, but its unread rows must be read again
+    // at the view after rollback. Keep the row already handed out.
+    if (p->scan->entries) {
+      discard_batch(p->scan, p->scan->at);
+    }
     if (p->scan->rel && sm2::rel_scan_rolled_back(p->scan->rel)) {
       drop(p);
+    }
+  }
+}
+
+/* Close tree cursors at transaction end; their handles stay caller-owned. */
+void close_tree_scans(session_t *s) {
+  for (pin_t *p = s->pins_scan; p; p = p->next) {
+    if (p->scan->entries) {
+      discard_batch(p->scan, 0);
+      p->scan->closed = true;
     }
   }
 }
@@ -181,6 +205,9 @@ void release_all_pins(session_t *s) {
   }
   // A cursor's row goes with its transaction; the pin stays its.
   for (pin_t *p = s->pins_scan; p; p = p->next) {
+    if (p->scan->entries) {
+      discard_batch(p->scan, 0);
+    }
     drop(p);
   }
 }

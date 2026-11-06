@@ -1321,8 +1321,9 @@ audited.
   rollback closes has no row any more, so sm3 asks each cursor's
   rel scan after the rollback (`pins_rolled_back`,
   `scan_rolled_back`), and makes the closed ones' pins stale. A
-  tree's cursor has no rel scan for the rollback to close. Each
-  batch is read at the view of its call, so it goes on.
+  tree's cursor has no rel scan for the rollback to close. It
+  keeps its entry position, discards unread cached rows, and
+  reads those rows again at the view after rollback.
 - **When sm1 ends the transaction on its own**, as after a
   serialization failure, the pins stay until the client's
   `sm3::abort`. That holds memory only.
@@ -1330,7 +1331,10 @@ audited.
   so no iterator outlives the database (`pins_close`).
 - **`release_all_pins(session)`** is for a client that knows,
   short of the transaction's end, that none of its rows is still
-  wanted. The transaction stays open.
+  wanted. The transaction stays open. A tree cursor discards
+  its cached rows and reads pending rows again. At commit,
+  abort, or prepare, the cursor stays closed until its caller
+  frees it; a later begin cannot reopen it.
 
 ### 6.10 No content lock
 

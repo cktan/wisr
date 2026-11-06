@@ -406,22 +406,33 @@ static bool parse_store_cf_name(const std::string &name, uint64_t *storeid,
 }
 
 /*
- * Read an 8-byte CF:meta value; false if missing or malformed.
+ * Read an 8-byte CF:meta value: 0 found, 1 missing, -1 on error.
  * The key is a slice, because a sequence's lease key carries an
  * 8-byte id whose bytes include NUL.
  */
-static bool read_meta(db_t *db, rocksdb::Slice key, uint64_t *out) {
+static int read_meta(db_t *db, rocksdb::Slice key, uint64_t *out) {
   std::string val;
   // Read the key from CF:meta.
   rocksdb::Status s =
       db->rdb->Get(rocksdb::ReadOptions(), db->cf_meta, key, &val);
-  // Fail if missing or not 8 bytes.
-  if (!s.ok() || val.size() != 8) {
-    return false;
+  if (s.IsNotFound()) {
+    return 1;
+  }
+  if (!s.ok()) {
+    return set_status_error(s, "read CF:meta");
+  }
+  if (val.size() != 8) {
+    return set_error(sm1::SM_ERR_CORRUPT, "CF:meta value is not 8 bytes");
   }
   // Decode the value.
   *out = sm0::get_be64(val.data());
-  return true;
+  return 0;
+}
+
+/* Read a required CF:meta value, reporting its absence as corruption. */
+static int required_meta(db_t *db, rocksdb::Slice key, uint64_t *out) {
+  int rc = read_meta(db, key, out);
+  return 1 == rc ? set_error(sm1::SM_ERR_CORRUPT, "CF:meta is incomplete") : rc;
 }
 
 /* Open every column family of the database and load CF:meta. */
@@ -561,10 +572,9 @@ db_t *db_open(const std::string &path, const char *dbname,
 
   uint64_t version, next_ts, next_objid;
   // Read the format version and both leases.
-  if (!read_meta(db.get(), WISR_META_VERSION, &version) ||
-      !read_meta(db.get(), WISR_META_NEXT_TS, &next_ts) ||
-      !read_meta(db.get(), WISR_META_NEXT_OBJID, &next_objid)) {
-    set_error(sm1::SM_ERR_CORRUPT, "{}: CF:meta is incomplete", dbname);
+  if (0 != required_meta(db.get(), WISR_META_VERSION, &version) ||
+      0 != required_meta(db.get(), WISR_META_NEXT_TS, &next_ts) ||
+      0 != required_meta(db.get(), WISR_META_NEXT_OBJID, &next_objid)) {
     return nullptr;
   }
   // Reject a format this build does not understand.
@@ -944,7 +954,11 @@ int db_next_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
     // A persisted lease means values were handed out before, so
     // resume above it; the rest of that block is skipped, as a
     // crash skips one.
-    bool leased = read_meta(db, seq_meta_key(seqid), &limit);
+    int rc = read_meta(db, seq_meta_key(seqid), &limit);
+    if (rc < 0) {
+      return -1;
+    }
+    bool leased = 0 == rc;
     st.next = leased ? limit : start;
     st.limit = st.next;
     // The largest lease is the last block's, written before its last
@@ -1014,8 +1028,9 @@ int db_last_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
   }
   uint64_t limit;
   // No lease persisted: no value was ever handed out.
-  if (!read_meta(db, seq_meta_key(seqid), &limit)) {
-    return 1;
+  int rc = read_meta(db, seq_meta_key(seqid), &limit);
+  if (0 != rc) {
+    return rc;
   }
   // Values below the lease may have been handed out.
   *out = limit - increment;
