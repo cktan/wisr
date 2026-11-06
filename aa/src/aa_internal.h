@@ -170,6 +170,10 @@ struct aa_session_t {
    * all of them as of mask_stamp (aa_object_mask()). */
   aa_stamp_t mask_stamp;
   std::unordered_map<aa_mask_key_t, uint64_t, aa_mask_key_hash_t> masks;
+  /* The host's objects' masks, by (classid in dbid's place, objid, role),
+   * as of kept_stamp (aa_kept_mask()). */
+  aa_stamp_t kept_stamp;
+  std::unordered_map<aa_mask_key_t, uint64_t, aa_mask_key_hash_t> kept;
 };
 
 /* ---- pg_global's tables (aa_store.cc) ---- */

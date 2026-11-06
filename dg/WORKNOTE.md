@@ -11692,3 +11692,34 @@ What changed (`../sm/XCTMGR.md` §5.5):
   ddl_newest_rows.test`: both, through SQL. The sm tests were
   shown to fail with the view turned off in `xct_view()`; the
   slt file's statements failed on the old server, run by hand.
+
+## Step 395: a function's EXECUTE check, kept in the session
+
+`../sm/NEXT.md` §1 item 2 left a role's prepared point read 4.4%
+dearer than the superuser's, against a goal of 3%. PostgreSQL's
+EXECUTE check of the operator's function is most of the gap:
+about 1,260 instructions at each executor start, a syscache
+lookup of `pg_proc`, a default ACL made and freed, and aa's mask.
+
+- **aa** (`../aa/AA_DESIGN.md` "Caching"): `aa_kept_mask()`,
+  `aa_keep_mask()` and `aa_forget_kept_masks()` keep the mask of
+  an object whose owner and ACL the host reads, by (class,
+  object, role), under the stamp `aa_object_mask()` uses. A keep
+  takes the stamp its miss saw, so a role change in between
+  makes the next lookup miss.
+- **digres** (`aclchk.c`): `object_aclmask_ext()` asks for a
+  function's mask before its `pg_proc` row. On a miss it computes
+  every privilege, keeps it, and answers the mask asked for. A
+  `PROCOID` syscache callback, registered at the first check,
+  forgets the kept masks.
+- **Not measured**: this VM runs no benchmark. Left for
+  `digres-release` with callgrind.
+- **Tests**: aa's `authz: a host's object's mask, kept`: found
+  for its class, object and role alone, and gone at the session's
+  own role change, another's commit, a forget, and a change
+  between the miss and the keep. Ignoring the stamp failed 4
+  checks; a keep taking a fresh stamp failed the last.
+  `server.sh` `fnkept`: a held session's function check follows
+  a GRANT and a REVOKE of `pg_read_all_stats` by another session,
+  through a statement and a prepared one. It failed with aa's
+  stamp check left out.

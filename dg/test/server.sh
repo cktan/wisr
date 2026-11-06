@@ -3763,6 +3763,36 @@ OUT
 cmp -s "$work/fnacl1.out" "$work/fnacl1.expected" ||
   fail "fnacl: the functions initdb takes from PUBLIC"
 
+# Verify that a function's check, which a session keeps (aclchk.c's
+# object_aclmask_ext()), follows a change of the role's memberships that
+# another session makes.
+# 1. Make rgf; hold a session as rgf.
+# 2. rgf may not run pg_get_backend_memory_contexts, and may run now(),
+#    asked twice: the second is the kept answer.
+# 3. GRANT pg_read_all_stats to rgf: the held session runs the function,
+#    by a statement and by a prepared statement executed twice.
+# 4. REVOKE it: the held session may not run it again.
+local_psql -c "create role rgf login password 'pf'" > "$work/fnkept.out" 2>&1 ||
+  fail "fnkept: make rgf"
+held_start fnkept
+held_send fnkept "\\c 'host=127.0.0.1 port=$port dbname=postgres user=rgf password=pf'"
+held_send fnkept "select 'f1:' || has_function_privilege('pg_get_backend_memory_contexts()', 'execute') || ':' || has_function_privilege('now()', 'execute');"
+held_send fnkept "select 'f2:' || has_function_privilege('pg_get_backend_memory_contexts()', 'execute') || ':' || has_function_privilege('now()', 'execute');"
+held_wait fnkept "f2:false:true" && grep -qxF "f1:false:true" "$work/fnkept.out" ||
+  fail "fnkept: before the grant"
+local_psql -c 'grant pg_read_all_stats to rgf' >> "$work/fnkept.out" 2>&1
+held_send fnkept "select 'f3:' || (count(*) > 0) from pg_get_backend_memory_contexts();"
+held_send fnkept "prepare fk as select 'f4:' || (count(*) > 0) from pg_get_backend_memory_contexts(); execute fk; execute fk;"
+held_wait fnkept "f3:true" && held_wait fnkept "f4:true" &&
+  [ "$(grep -cxF "f4:true" "$work/fnkept.out")" = 2 ] ||
+  fail "fnkept: after the grant"
+local_psql -c 'revoke pg_read_all_stats from rgf' >> "$work/fnkept.out" 2>&1
+held_send fnkept "select 'f5:' || has_function_privilege('pg_get_backend_memory_contexts()', 'execute');"
+held_wait fnkept "f5:false" || fail "fnkept: after the revoke"
+held_end fnkept
+local_psql -c 'drop role rgf' >> "$work/fnkept.out" 2>&1 ||
+  fail "fnkept: drop rgf"
+
 # Verify that a REVOKE whose transaction fails at its commit leaves the
 # ACL as it was: what pg_global took away before the commit, it puts back
 # (checked again after the restart below, which reads pg_global).

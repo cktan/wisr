@@ -1551,6 +1551,25 @@ is built.
   cleaner cannot tell which entries changed (§10.3).
 - **A queue of old keys beside the bit.** A lost key could set a
   leaf all visible over a dead entry.
+- **`VACUUM` led by the store's OLD.** OLD ids rise, so the
+  versions written since the last `VACUUM` are one range, and
+  each holds the old row an update or a delete replaced. From
+  it, `VACUUM` could find the old entries' leaves after a
+  restart or a full queue, where the queue misses them (§9.2).
+  It is not built:
+  - **Not every entry in doubt has an OLD version.** An
+    insert's entry is in doubt until its row is settled, and
+    the insert writes CURR alone (`ROWSTORE.md` §4.2). Every
+    dead entry has one, as only an update or a delete leaves
+    one.
+  - **The GC removes OLD versions first.** The compaction
+    filter drops a version no snapshot reaches, and
+    `tbl_compact()` compacts the store before it cleans a tree.
+    Keeping the versions for `VACUUM` keeps garbage.
+  - **The queue gives the same leaves for less.** OLD costs a
+    read of each version, its index keys made again, and a
+    descent to each key's leaf. A miss of the queue costs only
+    until the leaf's next reader or writer queues it.
 - **A count of entries in doubt on a leaf.** A cleaning walks the
   whole page, so a count would save nothing.
 - **A cut entry keeping its leaf unset.** That would queue the

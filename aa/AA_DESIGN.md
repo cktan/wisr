@@ -283,6 +283,10 @@ options, the nearest one winning a tie.
 - for each (database, object, role) asked about, every
   privilege the role holds on the object (`aa_object_mask()`),
   up to 4096 of them.
+- for each (class, object, role) of the host's own, every
+  privilege the host computed for it (`aa_kept_mask()`), up to
+  4096 of them: an object whose owner and ACL are not
+  pg_global's, as digres's functions, which `pg_proc` holds.
 
 Each cache is stamped with the two shared epochs and a counter
 of the session's own changes, which every change the session
@@ -302,6 +306,14 @@ or its database's), the ACL (or the owner's default), parsed,
 and the role's privileges through its memberships; then it
 keeps all of them, so a later check for any privilege on the
 object is a hit.
+
+**The host's objects.** A host that reads an object's owner and
+ACL itself keeps the answer in aa by two calls:
+`aa_kept_mask()`, a lookup under the same stamp, and, after its
+miss, `aa_keep_mask()`, which keeps the mask as of the stamp
+the miss saw, so a change in between makes the next lookup
+miss. aa does not see a change to the host's ACLs: the host
+calls `aa_forget_kept_masks()` for it.
 
 Looking up an object's owner and ACL directly
 (`aa_find_object()`) is not cached: it loads the objects

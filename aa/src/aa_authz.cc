@@ -393,6 +393,37 @@ uint64_t aa_object_mask(aa_env_t *env, aa_session_t *s, uint64_t dbid,
   return all & mask;
 }
 
+/* Whether s keeps a host's object's mask, and the mask; see aa.h. */
+bool aa_kept_mask(aa_session_t *s, aa_oid_t classid, aa_oid_t objid,
+                  aa_oid_t roleid, uint64_t *all) {
+  aa_stamp_t st = stamp_of(s);
+
+  if (!(st == s->kept_stamp)) {
+    s->kept.clear();
+    s->kept_stamp = st;
+  }
+  auto hit = s->kept.find({classid, objid, roleid});
+  if (s->kept.end() == hit)
+    return false;
+  *all = hit->second;
+  return true;
+}
+
+/*
+ * Keep a host's object's mask in s, after aa_kept_mask() missed it: as of
+ * the stamp that call saw, so a change since makes the next call drop it.
+ */
+void aa_keep_mask(aa_session_t *s, aa_oid_t classid, aa_oid_t objid,
+                  aa_oid_t roleid, uint64_t all) {
+  /* Bounded: a session that checks many objects starts again. */
+  if (s->kept.size() >= MASKS_KEPT)
+    s->kept.clear();
+  s->kept[{classid, objid, roleid}] = all;
+}
+
+/* Forget every host's object's mask s keeps; see aa.h. */
+void aa_forget_kept_masks(aa_session_t *s) { s->kept.clear(); }
+
 /* Whether roleid may connect to the database dbid, and if not, why. */
 bool aa_connect_okay(aa_env_t *env, aa_session_t *s, uint64_t dbid,
                      aa_oid_t roleid, const char **why) {

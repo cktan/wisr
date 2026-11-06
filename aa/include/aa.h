@@ -472,6 +472,21 @@ uint64_t aa_object_mask(aa_env_t *env, aa_session_t *s, uint64_t dbid,
                         uint64_t mask);
 
 /*
+ * A host's own objects' masks, kept in s as aa_object_mask() keeps its
+ * own: for an object whose owner and ACL the host reads, not pg_global,
+ * as digres's functions in pg_proc. aa_kept_mask() says whether s keeps
+ * *all, every privilege roleid holds on objid of class classid, as
+ * aa_keep_mask() put it after aa_kept_mask() missed it. Each holds until a
+ * role, a membership or an object's entry changes, or aa_forget_kept_masks(),
+ * the host's ACLs having changed.
+ */
+bool aa_kept_mask(aa_session_t *s, aa_oid_t classid, aa_oid_t objid,
+                  aa_oid_t roleid, uint64_t *all);
+void aa_keep_mask(aa_session_t *s, aa_oid_t classid, aa_oid_t objid,
+                  aa_oid_t roleid, uint64_t all);
+void aa_forget_kept_masks(aa_session_t *s);
+
+/*
  * The last of ROLE.md section 5's checks, once the database dbid is
  * chosen: whether roleid may connect to it, a superuser, or one with
  * CONNECT on it by its ACL. If not, *why says why, for the log.
