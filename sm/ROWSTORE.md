@@ -1445,6 +1445,7 @@ makes them too.
 -- Q9: 100 rows by a secondary index, their rows next to each other
 select sum(c1) from wide_mixed where c2 between :a and :a + 99;
 -- Q7: 100 rows by primary key, the keys sorted by the probes
+TODO: change this to id IN (:k1, :k2, ....)
 select c1 from wide_mixed where id = any(array[:k1, ..., :k100]::int8[]);
 ```
 
