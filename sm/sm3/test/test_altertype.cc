@@ -32,7 +32,7 @@ int all_rows(const sm3::table_def_t &, const sm3::index_def_t &,
 class alt_t : public db_t {
 public:
   /* Initialize and load the catalog, open s, and make t. */
-  alt_t() {
+  explicit alt_t(const sm1::options_t &opt = sm1::options_t()) : db_t(opt) {
     sm1::session_t *raw = open();
     REQUIRE(sm3::cat_init(env(), "db") == 0);
     REQUIRE(sm3::cat_open(env(), "db", cat) == 0);
@@ -205,6 +205,55 @@ TEST_CASE("a column's type changed converts its rows into a new store") {
   sm3::tbl_close(x);
   CHECK(order == std::vector<std::string>{"4", "30", "200"});
   REQUIRE(sm3::commit(f.s) == 0);
+}
+
+TEST_CASE("a converter draws sequence values across lease blocks") {
+  // Verify a converter may draw from a sequence while the table is
+  // rewritten, as a volatile default does, across lease renewals
+  // (../SEQUENCE.md; sm.h, sm_column_conv_fn).
+  // 1. Open with a lease of 3 values; insert 20 rows.
+  // 2. Make a sequence from 1.
+  // 3. Retype c to its own type, the converter drawing nextval.
+  // 4. The rows hold 1 to 20 in key order, with no failure, and
+  //    the sequence goes on at 21.
+  sm1::options_t opt;
+  opt.ts_lease = 3;
+  alt_t f(opt);
+  for (int32_t i = 1; i <= 20; i++) {
+    f.put(i, "x", 0);
+  }
+  f.begin();
+  uint64_t seq = 0;
+  REQUIRE_MESSAGE(sm3::create_sequence(f.s, sm3::nsp_public, "s", 1, 1, seq) ==
+                      0,
+                  sm1::errmsg());
+  REQUIRE(sm3::commit(f.s) == 0);
+  sm3::column_conv_fn conv = [&](std::span<const sm2::datum_t>,
+                                 std::span<const bool>, std::string &out,
+                                 bool &out_null) {
+    uint64_t v = 0;
+    if (sm3::nextval(f.s, seq, v) != 0) {
+      return -1;
+    }
+    out_null = false;
+    out = int4_bytes(static_cast<int32_t>(v));
+    return 0;
+  };
+  f.begin();
+  REQUIRE_MESSAGE(sm3::alter_column_type(f.s, f.t, "c",
+                                         {sm2::type_int4.code, -1}, &conv) == 0,
+                  sm1::errmsg());
+  REQUIRE(sm3::commit(f.s) == 0);
+  f.begin();
+  std::vector<std::string> got = rows(f);
+  REQUIRE(20u == got.size());
+  for (int32_t i = 1; i <= 20; i++) {
+    CHECK(std::to_string(i) + "|x|" + std::to_string(i) == got[i - 1]);
+  }
+  uint64_t next = 0;
+  REQUIRE(sm3::nextval(f.s, seq, next) == 0);
+  CHECK(21u == next);
+  REQUIRE(sm3::abort(f.s) == 0);
 }
 
 TEST_CASE("a key column's type changed keys the rows anew") {

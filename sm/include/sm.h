@@ -1842,7 +1842,11 @@ struct sm_column_type_t {
  * It is noexcept: it runs inside the rewrite, where what it throws
  * has nowhere to go. It runs on the thread of the session that
  * called sm_cat_alter_column_type, and must not call this API on
- * that session, except to get a sequence value (sm_cat_nextval).
+ * that session, except to draw a sequence value (sm_cat_nextval).
+ * That one call is safe: a draw is not part of the transaction. It
+ * takes no lock, scan or savepoint of the session, only the
+ * database's lease mutex, and a lease renewal may wait for it
+ * across a synced write. A volatile default needs it.
  */
 typedef int (*sm_column_conv_fn)(void* ctx, const sm_datum_t* values,
                                  const bool* isnull, size_t n,
