@@ -628,6 +628,9 @@ struct db_t {
    */
   std::function<bool()> test_prepare_before_ssi;
 
+  /* Test hook, as test_before_commit, for a CF:meta read of key. */
+  std::function<rocksdb::Status(rocksdb::Slice key)> test_before_meta_read;
+
   /* Test hook, as test_before_commit, for a prepared one's ABORTED record. */
   std::function<rocksdb::Status()> test_before_abort_prepared;
 

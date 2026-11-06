@@ -188,31 +188,19 @@ TEST_CASE("a sequence refuses a malformed or unreadable lease") {
   sm1::errnum_t expected = sm1::SM_ERR_CORRUPT;
   std::string stored = lease;
 
-  /* A non-owning database wrapper that fails sequence lease reads. */
-  class failed_read_t : public rocksdb::StackableDB {
-  public:
-    /* Borrow db, whose fixture still owns it. */
-    explicit failed_read_t(rocksdb::DB *db)
-        : StackableDB(std::shared_ptr<rocksdb::DB>(db, [](auto *) {})) {}
-    using StackableDB::Get;
-    /* Fail only lease reads; catalog lookups still work. */
-    rocksdb::Status Get(const rocksdb::ReadOptions &ro,
-                        rocksdb::ColumnFamilyHandle *cf,
-                        const rocksdb::Slice &key,
-                        rocksdb::PinnableSlice *value) override {
-      return key.starts_with(WISR_META_SEQ_PREFIX)
-                 ? rocksdb::Status::IOError("lease read failed")
-                 : StackableDB::Get(ro, cf, key, value);
-    }
-  } failed(original);
-  defer { s->db->rdb = original; };
+  defer { s->db->test_before_meta_read = nullptr; };
   SUBCASE("malformed lease") {
     stored = "bad";
     REQUIRE(original->Put(rocksdb::WriteOptions(), s->db->cf_meta, key, stored)
                 .ok());
   }
   SUBCASE("failed lease read") {
-    s->db->rdb = &failed;
+    // Fail only lease reads; catalog lookups still work.
+    s->db->test_before_meta_read = [](rocksdb::Slice key) {
+      return key.starts_with(WISR_META_SEQ_PREFIX)
+                 ? rocksdb::Status::IOError("lease read failed")
+                 : rocksdb::Status::OK();
+    };
     expected = sm1::SM_ERR_IO;
   }
   uint64_t out = 77;
@@ -227,7 +215,7 @@ TEST_CASE("a sequence refuses a malformed or unreadable lease") {
   REQUIRE(
       original->Get(rocksdb::ReadOptions(), s->db->cf_meta, key, &after).ok());
   CHECK(stored == after);
-  s->db->rdb = original;
+  s->db->test_before_meta_read = nullptr;
   REQUIRE(
       original->Put(rocksdb::WriteOptions(), s->db->cf_meta, key, lease).ok());
   CHECK(next(s) > 1);

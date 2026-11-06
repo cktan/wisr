@@ -412,6 +412,13 @@ static bool parse_store_cf_name(const std::string &name, uint64_t *storeid,
  */
 static int read_meta(db_t *db, rocksdb::Slice key, uint64_t *out) {
   std::string val;
+  // Let a test fail the read.
+  if (db->test_before_meta_read) {
+    rocksdb::Status hs = db->test_before_meta_read(key);
+    if (!hs.ok()) {
+      return set_status_error(hs, "read CF:meta");
+    }
+  }
   // Read the key from CF:meta.
   rocksdb::Status s =
       db->rdb->Get(rocksdb::ReadOptions(), db->cf_meta, key, &val);
