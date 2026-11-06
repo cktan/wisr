@@ -317,3 +317,66 @@ TEST_CASE("read_newest: past the snapshot, naming a running writer") {
   REQUIRE(sm1::closedb(w) == 0);
   REQUIRE(sm1::closedb(r) == 0);
 }
+
+TEST_CASE("view_latest: reads see the newest committed state while on") {
+  // Verify sm1::view_latest at repeatable read and serializable: a read
+  // and a cursor see a version committed after the snapshot, and the
+  // transaction's own write; off again, the snapshot's view returns.
+  // 1. Begin; read x at the snapshot: "0".
+  // 2. Another session commits x = "1", and inserts z.
+  // 3. Write y = "own" in the first.
+  // 4. View latest on: x reads "1", y "own", and a cursor finds z.
+  // 5. View latest off: x reads "0" again, and the cursor finds no z.
+  // 6. A transaction's end turns it off; with none it is SM_ERR_NOTRANS.
+  for (sm1::xctlevel_t level :
+       {sm1::xctlevel_t::repeatable_read, sm1::xctlevel_t::serializable}) {
+    latest_fixture_t f;
+    sm1::session_t *s = f.open();
+    std::string_view v;
+    REQUIRE(sm1::begin(s, level) == 0);
+    REQUIRE(sm1::read(s, g_store, "x", v) == 0);
+    CHECK(v == "0");
+    commit_from_other(f, "x", "1");
+    {
+      sm1::session_t *u = f.open();
+      REQUIRE(sm1::begin(u, sm1::xctlevel_t::read_committed) == 0);
+      REQUIRE(sm1::insert(u, g_store, "z", "new") == 0);
+      REQUIRE(sm1::commit(u) == 0);
+      REQUIRE(sm1::closedb(u) == 0);
+    }
+    REQUIRE(set(s, "y", "own") == 0);
+    // Count the keys a cursor over the whole store finds.
+    auto keys = [&]() {
+      sm1::scan_t *c = nullptr;
+      REQUIRE(sm1::scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0, c) == 0);
+      std::string_view k, d;
+      std::string found;
+      while (sm1::scannxt(c, k, d) == 0) {
+        found += std::string(k);
+      }
+      sm1::scanend(c);
+      return found;
+    };
+
+    REQUIRE(sm1::view_latest(s, true) == 0);
+    REQUIRE(sm1::read(s, g_store, "x", v) == 0);
+    CHECK(v == "1");
+    REQUIRE(sm1::read(s, g_store, "y", v) == 0);
+    CHECK(v == "own");
+    CHECK(keys() == "xyz");
+
+    REQUIRE(sm1::view_latest(s, false) == 0);
+    REQUIRE(sm1::read(s, g_store, "x", v) == 0);
+    CHECK(v == "0");
+    CHECK(keys() == "xy");
+    REQUIRE(sm1::view_latest(s, true) == 0);
+    REQUIRE(sm1::abort(s) == 0);
+    CHECK(sm1::view_latest(s, true) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
+    REQUIRE(sm1::begin(s, level) == 0);
+    REQUIRE(sm1::read(s, g_store, "y", v) == 0);
+    CHECK(v == "0");
+    REQUIRE(sm1::commit(s) == 0);
+    REQUIRE(sm1::closedb(s) == 0);
+  }
+}

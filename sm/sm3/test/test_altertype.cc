@@ -617,3 +617,50 @@ TEST_CASE("a column's type changed drops its statistics alone") {
   CHECK(got->stats[0].position == 2);
   REQUIRE(sm3::commit(f.s) == 0);
 }
+
+TEST_CASE("a rewrite keeps a row committed after its transaction's snapshot") {
+  // Verify the rewrite reads the rows as they are now, as PostgreSQL's
+  // does, not at a REPEATABLE READ snapshot older than another's commit
+  // (../../dg/WORKNOTE.md step 394).
+  // 1. t has the row (1, "30", 1).
+  // 2. s begins at REPEATABLE READ and reads t: one row.
+  // 3. A second session inserts (2, "4", 2) and commits.
+  // 4. s retypes b to int4, a rewrite, and commits.
+  // 5. Both rows are in t, converted.
+  alt_t f;
+  f.put(1, "30", 1);
+  sm3::column_conv_fn conv = [](std::span<const sm2::datum_t> v,
+                                std::span<const bool> n, std::string &out,
+                                bool &out_null) {
+    out_null = n[1];
+    if (!out_null) {
+      out = int4_bytes(std::stoi(text_of(v, 1)));
+    }
+    return 0;
+  };
+  REQUIRE(sm3::begin(f.s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(rows(f) == std::vector<std::string>{"1|30|1"});
+
+  sm3::session_t *other = nullptr;
+  REQUIRE(sm3::session_open(f.cat, f.open(), other) == 0);
+  REQUIRE(sm3::begin(other, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *x = nullptr;
+  REQUIRE(sm3::tbl_open(other, f.t, sm1::SM_LOCKMODE_IX, x) == 0);
+  std::string vb = sm2::make_varlena("4");
+  sm2::datum_t d[3] = {sm2::datum_from_int32(2), sm2::datum_from_ptr(vb.data()),
+                       sm2::datum_from_int32(2)};
+  bool n[3] = {false, false, false};
+  uint64_t id = 0;
+  REQUIRE_MESSAGE(sm3::tbl_insert(x, d, n, id) == 0, sm1::errmsg());
+  sm3::tbl_close(x);
+  REQUIRE(sm3::commit(other) == 0);
+  sm3::session_close(other);
+
+  REQUIRE_MESSAGE(sm3::alter_column_type(f.s, f.t, "b",
+                                         {sm2::type_int4.code, -1}, &conv) == 0,
+                  sm1::errmsg());
+  REQUIRE(sm3::commit(f.s) == 0);
+  f.begin();
+  CHECK(rows(f) == std::vector<std::string>{"1|30|1", "2|4|2"});
+  REQUIRE(sm3::commit(f.s) == 0);
+}

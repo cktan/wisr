@@ -1,0 +1,30 @@
+# Plain statements that both servers run alike give no finding.
+# 1. Make a table and fill it.
+# 2. Query it, in order and not, and change a row.
+# 3. Query it again: every record runs, and none is a finding.
+# expect: clean - 6 0 0
+
+statement ok
+CREATE TABLE t (a INTEGER PRIMARY KEY, b VARCHAR)
+
+statement ok
+INSERT INTO t VALUES (1, 'x'), (2, NULL), (3, '')
+
+query IT
+SELECT a, b FROM t ORDER BY a
+----
+1	x
+2	NULL
+3	(empty)
+
+statement ok
+UPDATE t SET b = 'y' WHERE a = 2
+
+query I
+SELECT count(*) FROM t WHERE b IS NOT NULL
+----
+3
+
+query IT
+SELECT * FROM t
+----

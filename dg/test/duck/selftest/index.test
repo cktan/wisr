@@ -1,0 +1,43 @@
+# CREATE INDEX is rewritten into SQL both servers take: USING art, no
+# USING, UNIQUE, IF NOT EXISTS, a quoted table and a schema's table;
+# duck.sh --selftest runs it with and without --tree.
+# 1. Make the tables, one quoted and one in a schema.
+# 2. Make an index of each form.
+# 3. Use them: every record runs alike on both servers, and the
+#    duplicate fails on both.
+# expect: clean - 11 0 1
+
+statement ok
+CREATE TABLE t (a INTEGER, b VARCHAR)
+
+statement ok
+CREATE TABLE "Odd Name" (a INTEGER)
+
+statement ok
+CREATE SCHEMA s
+
+statement ok
+CREATE TABLE s.u (a INTEGER)
+
+statement ok
+CREATE INDEX t_a ON t USING art (a)
+
+statement ok
+CREATE UNIQUE INDEX t_b ON t(b)
+
+statement ok
+CREATE INDEX IF NOT EXISTS odd_a ON "Odd Name" (a)
+
+statement ok
+CREATE INDEX u_a ON s.u (a)
+
+statement ok
+INSERT INTO t VALUES (1, 'x'), (2, 'y')
+
+statement error
+INSERT INTO t VALUES (3, 'x')
+----
+
+query IT
+SELECT a, b FROM t WHERE b = 'y'
+----

@@ -11448,3 +11448,247 @@ and to leave `pg_stat_activity` as PostgreSQL's. Design:
   second statement, CREATE USER with `PASSWORD` misspelled are
   masked; `selec 'x'` keeps its string; no password is in the
   log. Shown to fail with the flag left out.
+
+## Step 384: DuckDB's SQL tests, side by side, and a dropped column
+
+`test/duck/` runs DuckDB's SQL test files on PostgreSQL 18 and
+on digres, and reports where digres differs (`DUCKPLAN.md`,
+`test/duck/README.md`). What it found and what was not fixed
+is in `ISSUE.md`, issues 15 to 26.
+
+- **The runner**, `test/duck/duckrun.cc`, beyond the plan:
+  - DuckDB writes a loop variable `{i}`, not `${i}`: both are
+    replaced.
+  - `EXPLAIN`'s rows are not compared: a plan is each engine's
+    own.
+  - DuckDB's `range()` after FROM or JOIN is rewritten as
+    `generate_series()`, on both servers alike. It is in 406
+    statements, and a table made from it is used by many more.
+  - DuckDB's integer types, such as `TINYINT`, `UINTEGER` and
+    `HUGEINT`, and `DOUBLE` become PostgreSQL's wide enough for
+    their values, on both servers alike: about 4,000 statements
+    on tables of them failed on both.
+  - A statement's command tag, `INSERT 0 3`, is compared too.
+  - `--selftest` runs every file as written and again with
+    `--tree`.
+- **Fixed: a dropped column stayed in its own transaction**
+  (issue 14). `drop_column()` read the table's definition
+  through `table_def_now()`, which opens a handle and keeps it
+  in `open_tables()`. That handle held the definition from
+  before the drop, and the descriptor built after the drop
+  read it, so `SELECT *` showed the column, and an INSERT gave
+  sm a value for it. `smstore_alter_table()` now forgets the
+  table after each subcommand, so the next use opens a handle
+  with the change.
+- **Tests**: `test/slt/drop_column_xact.test`: a column dropped,
+  added and retyped in a transaction is seen at once, and a
+  rollback brings the dropped one back. Shown to fail, in five
+  records, without the fix.
+
+## Step 385: CREATE INDEX's wait for its build is no lock wait
+
+Issue 16, found by DuckDB's tests: with `lock_timeout` set, a
+CREATE INDEX on a table with rows failed after it, with no
+other session, and left the index made. Then DROP INDEX of it
+failed with sm's error while its build ran.
+
+- **smstore.c**: `waiting()` takes `lock_wait`, true by default.
+  `smstore_wait_indexes()` passes false, so `LOCK_TIMEOUT` is
+  not armed for the wait for a build. A cancel still ends it.
+- **sm3 `drop_index()`**: an LSM index's entries are erased one
+  by one. An entry a build's batch committed after the drop's
+  transaction began made `sm1::erase()` answer
+  `SM_ERR_UPDATED` at READ COMMITTED, which was returned as the
+  drop's error. The drop now reads the entry's newest version
+  and erases it again, as sm2's `idx_erase` does.
+- **Left on purpose**: `statement_timeout` does not end the wait
+  either, as it runs after the statement; PostgreSQL's would
+  cancel a CREATE INDEX that takes longer. A cancelled wait
+  leaves the index, INVALID, its build running, as before:
+  `DESIGN.md` §4 promises PostgreSQL's outcome for a build that
+  fails, not for a wait cut short.
+- **Tests**: `test/slt/index_build_wait.test`: CREATE INDEX and
+  CREATE UNIQUE INDEX under a `lock_timeout` of 1 ms, used and
+  dropped. Shown to fail, in four records, with the wait a lock
+  wait again. sm3 `test_ddl.cc`: a drop erases an entry another
+  session committed after the drop's transaction began. Shown to
+  fail without the retry.
+
+## Step 386: ALTER COLUMN TYPE's lock wait ends as a lock timeout
+
+Issue 20, found by DuckDB's tests: `check_retype()` called
+`sm_cat_column_use()`, which takes the table's lock X and so may
+wait, outside `waiting()`. An interrupt ended the wait as sm's
+`SM_ERR_INTERRUPTED`, raised as `57014` in sm's words, "could
+not find what reads a column: the wait was interrupted".
+
+- **smstore.c**: the call is made through `waiting()`, as every
+  other call into sm that may wait for a lock is, so
+  `lock_timeout` bounds it and ends it with PostgreSQL's
+  `55P03`.
+- **Tests**: `test/slt/retype_lock_timeout.test`: a reader's open
+  transaction holds the table; ALTER COLUMN TYPE under a
+  `lock_timeout` of 100 ms fails with PostgreSQL's error, and
+  succeeds once the reader commits. Shown to fail without the
+  fix.
+
+## Step 387: nextval() is refused in a read-only transaction
+
+Issue 18, found by DuckDB's tests: `nextval()` drew a value in
+a READ ONLY transaction. PostgreSQL's refuses it for every
+sequence that is not temporary, and digres has no temporary
+sequence.
+
+- **sequence.c**: `nextval_internal()` calls
+  `PreventCommandIfReadOnly("nextval()")` before it draws, after
+  the privilege check, as PostgreSQL's does. `setval()` is
+  refused already.
+- **Tests**: `test/slt/nextval_read_only.test`: refused under
+  `BEGIN READ ONLY` and under `default_transaction_read_only`,
+  drawn in a read-write transaction. Shown to fail without the
+  call.
+
+## Step 388: a relation renamed to its own name is refused
+
+Issue 23, found by DuckDB's tests: `ALTER TABLE t RENAME TO t`
+succeeded, as did a view's. sm3's `rename_table()` takes a
+rename to the same name as one that changes nothing; PostgreSQL's
+`RenameRelationInternal()` refuses any name taken, the
+relation's own included.
+
+- **smstore.c**: `smstore_rename_table()` refuses a new name
+  equal to the relation's, with `42P07`, "relation ... already
+  exists", before it calls sm. sm is unchanged.
+- **Tests**: `test/slt/rename_self.test`: a table, as written and
+  as case folds its name, and a view, each refused; a rename to
+  a free name works. The statements succeeded before the fix, run
+  by hand on the old server.
+
+## Step 389: OWNED BY with no column says 42601
+
+Issue 25, found by DuckDB's tests: `smstore_own_sequence()`
+raised "invalid OWNED BY option" with `22023`, where
+PostgreSQL's `process_owned_by()` uses `ERRCODE_SYNTAX_ERROR`,
+`42601`.
+
+- **smstore.c**: the error takes `ERRCODE_SYNTAX_ERROR`.
+- **Tests**: `server.sh`: `ALTER SEQUENCE s OWNED BY t` reports
+  `42601` with `VERBOSITY=sqlstate`. The old server gave `22023`
+  in DuckDB's run.
+
+## Step 390: a column's NULL constraint is taken
+
+Issue 26, found by DuckDB's tests: `CREATE TABLE t (v int NULL)`
+was refused, "column asks for what CREATE TABLE does not support
+yet". `NULL` says a column may be null, which it may anyway;
+PostgreSQL's parse analysis checks it against NOT NULL and keeps
+nothing of it. ALTER TABLE ... ADD COLUMN took it already.
+
+- **smstore.c**: `only_taken()` takes `CONSTR_NULL`.
+- **Tests**: `test/slt/null_constraint.test`: a NULL column holds
+  a null; one in a PRIMARY KEY is NOT NULL; NULL beside NOT NULL
+  is refused as PostgreSQL refuses it; ADD COLUMN takes NULL.
+  The old server refused the first statement, run by hand.
+
+## Step 391: a missing schema is reported as missing
+
+Issue 24, found by DuckDB's tests: DROP TABLE, DROP SEQUENCE,
+DROP VIEW, ALTER TABLE ... RENAME and ALTER SEQUENCE ... OWNED
+BY of a name in a schema that does not exist said the relation
+did not exist, unqualified. Each looked the name up with
+`missing_ok` and wrote its own message.
+
+- **smstore.c**: `drop_schema_missing()` gives the three DROPs
+  PostgreSQL's `3F000`, "schema ... does not exist", or with IF
+  EXISTS its notice, before the relation's message.
+  `rename_target()` and `smstore_own_sequence()` pass IF EXISTS
+  to `RangeVarGetRelid()` itself, so a missing schema or relation
+  is PostgreSQL's own error, as `RenameRelation()` gives it:
+  `relation "public.nosuch" does not exist`, qualified as
+  written.
+- **Tests**: `test/slt/missing_schema.test`: each statement, with
+  and without IF EXISTS, and a relation missing from a schema
+  that exists. Six of its records failed on the old server, run
+  by hand.
+
+## Step 392: ALTER SCHEMA ... RENAME is refused
+
+Issue 19, found by DuckDB's tests: `ALTER SCHEMA s RENAME TO t`
+ran PostgreSQL's `RenameSchema()`, which writes `pg_namespace`,
+and failed with "relation 2615 cannot be written: digres has no
+catalog tables". A schema is sm's (`../sm/NAMESPACE.md`), and sm
+renames none.
+
+- **schemacmds.c**: `RenameSchema()` refuses with `0A000`,
+  "ALTER SCHEMA ... RENAME is not supported yet", after
+  PostgreSQL's error for a schema that is not there. PostgreSQL's
+  body, which could not run, is gone. `AlterSchemaOwner()` is
+  unchanged: owners are `pg_global`'s, and it works.
+- **UNSUPPORTED.md** §3 lists it.
+- **Left**: building the rename, in sm3 a namespace record
+  written anew. A table names its namespace by oid, so nothing
+  else would change.
+- **Tests**: `test/slt/alter_schema.test`: a missing schema's
+  error on both; the rename refused on digres and done on
+  PostgreSQL 18; `OWNER TO` on both.
+
+## Step 393: a bare numeric rounds its places, as DECIMAL.md now says
+
+Issue 21, found by DuckDB's tests: `'922337203685478.758'::numeric`
+gave `922337203685478.76`, where `DECIMAL.md` §2.1 said a bare
+`numeric` "refuses past 17 digits". The code does it on purpose:
+`d64_of_wide()` rounds places away, half away from zero, to fit
+17 digits, and refuses only more than 17 digits before the
+point, as a typmod's scale rounds places and its precision
+refuses digits.
+
+- **DECIMAL.md** §2.1 says so, with an example. No code changed.
+- **Left**: refusing a value whose places do not fit instead.
+  That would refuse `'0.1234567890123456789'::numeric`, which
+  PostgreSQL keeps whole, and digres rounds to 17 digits.
+
+## Step 394: DDL reads the rows as they are now
+
+Issues 15 and 17, found by DuckDB's tests, had one cause: DDL
+that reads every row under the table's lock X read them at the
+transaction's snapshot. At REPEATABLE READ that snapshot can be
+older than another transaction's commit.
+
+- **Issue 15**: ALTER COLUMN TYPE in such a transaction rewrote
+  the table at its snapshot, and another's committed UPDATE was
+  lost: `v` was 0 where PostgreSQL gives 7. PostgreSQL's
+  `ATRewriteTable()` reads at the latest snapshot.
+- **Issue 17**: ADD COLUMN ... NOT NULL with no default asked
+  `sm1::store_empty()`, which counts any version, so a table
+  whose rows were all deleted was refused until VACUUM. A check
+  at the snapshot instead would have missed a row committed
+  after it, and made a NOT NULL column that holds a null.
+
+What changed (`../sm/XCTMGR.md` §5.5):
+
+- **sm1**: `sm1::view_latest(session, on)`. While on, every read
+  and every cursor opened reads at `visible_ts`, at every level,
+  with the transaction's own writes as before. A transaction's
+  end turns it off. It is for a caller holding the table-oid
+  lock X, under which no one else writes. Writes still check
+  against the transaction's snapshot.
+- **sm3**: `rewrite_table()` copies the rows with it on: ALTER
+  COLUMN TYPE, and ADD and DROP PRIMARY KEY, which re-key the
+  rows. `need_empty()` asks `has_live_row()`, a scan with it on,
+  when the store holds any key. `set_not_null()` scans with it
+  on too: at REPEATABLE READ it could miss a null committed
+  after the snapshot.
+- **Left on purpose**: under SERIALIZABLE the read makes no
+  rw-edge for a version committed past the snapshot, as
+  PostgreSQL's DDL makes none. The isolation scenarios are
+  unchanged and pass.
+- **Tests**: sm1 `test_read_latest.cc`: a read and a cursor see a
+  version committed after the snapshot, an insert, and their own
+  write, at REPEATABLE READ and SERIALIZABLE, and not once it is
+  off. sm3 `test_altertype.cc`: a rewrite keeps a row committed
+  after its snapshot. sm3 `test_ddl.cc`: a NOT NULL column is
+  added to a table whose rows are deleted, and refused for a row
+  committed past a REPEATABLE READ snapshot. `test/slt/
+  ddl_newest_rows.test`: both, through SQL. The sm tests were
+  shown to fail with the view turned off in `xct_view()`; the
+  slt file's statements failed on the old server, run by hand.

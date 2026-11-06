@@ -958,6 +958,18 @@ grep -qx 'WARNING:  skipping analyze of "t2" --- lock not available' \
   fail "analyze skip_locked of every table"
 echo "commit;" >&4
 exec 4>&-
+
+# Verify that ALTER SEQUENCE ... OWNED BY a name with no column fails
+# with PostgreSQL's SQLSTATE, 42601 (WORKNOTE.md step 389).
+# 1. Make a sequence and a table.
+# 2. Give the sequence an owner with no column: the error is 42601.
+local_psql -c 'create sequence owned_s' -c 'create table owned_t (i int)' \
+  > /dev/null 2>&1
+local_psql -v VERBOSITY=sqlstate -c 'alter sequence owned_s owned by owned_t' \
+  > "$work/owned.out" 2>&1
+grep -qx 'ERROR:  42601' "$work/owned.out" ||
+  fail "OWNED BY a table alone: SQLSTATE 42601"
+local_psql -c 'drop table owned_t' -c 'drop sequence owned_s' > /dev/null 2>&1
 wait $locker
 [ "$(local_psql -c 'begin' -c 'lock table t2 nowait' -c "select 'granted'" \
   -c 'commit' 2>&1 | grep -c granted)" = 1 ] || fail "nowait, granted"

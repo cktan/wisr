@@ -165,6 +165,8 @@ struct sm1::session_t {
    */
   bool stmt_marked = false;
   uint32_t stmt_seq = 0;
+  /* sm1::view_latest: reads see the newest committed state. */
+  bool view_latest = false;
 
   /*
    * The undo list (../XCTMGR.md §6): every version written while a

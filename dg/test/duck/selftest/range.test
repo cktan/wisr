@@ -1,0 +1,29 @@
+# DuckDB's range() is rewritten as generate_series() with DuckDB's
+# meaning: an end left out, a step, and a column named range.
+# Each check divides by zero when the rewrite is right, so it fails on
+# both servers alike and is counted as such.
+# 1. range(5) is 0 to 4: five rows.
+# 2. range(2, 10, 3) is 2, 5, 8: their sum is 15.
+# 3. range(10, 0, -4) is 10, 6, 2: their sum is 18.
+# 4. A range with no alias has the column range, and a JOIN takes one.
+# expect: clean - 5 0 4
+
+query I
+SELECT 1 / (count(*) - 5) FROM range(5)
+----
+
+query I
+SELECT 1 / (sum(i) - 15) FROM range(2, 10, 3) t(i)
+----
+
+query I
+SELECT 1 / (sum(i) - 18) FROM range(10, 0, -4) AS t(i)
+----
+
+query I
+SELECT 1 / (max(range) - 2) FROM range(3)
+----
+
+query I
+SELECT count(*) FROM range(3) a(x) JOIN range(2) ON a.x = range
+----

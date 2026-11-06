@@ -1,0 +1,41 @@
+# Verify that ALTER COLUMN TYPE waiting for a reader's lock ends at
+# lock_timeout with PostgreSQL's error, 55P03, not a cancel's
+# (WORKNOTE.md step 386).
+# 1. A second session reads the table in an open transaction.
+# 2. ALTER COLUMN TYPE, with lock_timeout at 100 ms, fails with
+#    "canceling statement due to lock timeout".
+# 3. Once the reader commits, the ALTER succeeds.
+
+statement ok
+create table t (i int4)
+
+statement ok
+insert into t values (1)
+
+connection reader
+statement ok
+begin
+
+connection reader
+query I nosort
+select i from t
+----
+1
+
+statement ok
+set lock_timeout = '100ms'
+
+statement error canceling statement due to lock timeout
+alter table t alter column i type int8
+
+connection reader
+statement ok
+commit
+
+statement ok
+alter table t alter column i type int8
+
+query T nosort
+select pg_typeof(i)::text from t
+----
+bigint

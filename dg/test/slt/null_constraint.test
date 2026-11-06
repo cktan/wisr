@@ -1,0 +1,34 @@
+# Verify that a column's NULL constraint is taken, as PostgreSQL takes
+# it, asking nothing (WORKNOTE.md step 390).
+# 1. A table with a NULL column holds a null in it.
+# 2. A NULL column in a PRIMARY KEY is NOT NULL, as the key makes it.
+# 3. NULL beside NOT NULL is refused as PostgreSQL refuses it.
+# 4. ALTER TABLE ... ADD COLUMN takes NULL too.
+
+statement ok
+create table t (k int4, v int4 null)
+
+statement ok
+insert into t values (1, null)
+
+query II nosort
+select k, v from t
+----
+1	NULL
+
+statement ok
+create table p (k int4, v int4 null, primary key (k, v))
+
+statement error null value in column "v" of relation "p" violates not-null constraint
+insert into p values (1, null)
+
+statement error conflicting NULL/NOT NULL declarations for column "v" of table "q"
+create table q (v int4 null not null)
+
+statement ok
+alter table t add column w text null
+
+query IIT nosort
+select k, v, w from t
+----
+1	NULL	NULL

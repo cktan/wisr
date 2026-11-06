@@ -1,0 +1,32 @@
+# Verify that a table or a view renamed to its own name is refused, as
+# PostgreSQL refuses a name already taken (WORKNOTE.md step 388).
+# 1. A table renamed to its name, as written or as case folds it, fails
+#    with "relation already exists".
+# 2. A view renamed to its name fails the same way.
+# 3. A rename to a free name still works, and the old name is free.
+
+statement ok
+create table my_table (i int4)
+
+statement error relation "my_table" already exists
+alter table my_table rename to my_table
+
+statement error relation "my_table" already exists
+alter table MY_TABLE rename to My_Table
+
+statement ok
+create view v as select 1 as x
+
+statement error relation "v" already exists
+alter view v rename to v
+
+statement ok
+alter table my_table rename to t2
+
+statement ok
+create table my_table (j int4)
+
+query I nosort
+select count(*) from t2
+----
+0

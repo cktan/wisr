@@ -1,0 +1,33 @@
+# Verify that nextval() is refused in a read-only transaction, as
+# PostgreSQL's is for a sequence that is not temporary (WORKNOTE.md
+# step 387), and drawn in a read-write one.
+# 1. In a READ ONLY transaction, nextval() fails with PostgreSQL's
+#    error, and the sequence is not advanced.
+# 2. With default_transaction_read_only on, the same.
+# 3. In a read-write transaction it draws the next value.
+
+statement ok
+create sequence s
+
+statement ok
+begin read only
+
+statement error cannot execute nextval\(\) in a read-only transaction
+select nextval('s')
+
+statement ok
+rollback
+
+statement ok
+set default_transaction_read_only = on
+
+statement error cannot execute nextval\(\) in a read-only transaction
+select nextval('s')
+
+statement ok
+set default_transaction_read_only = off
+
+query I nosort
+select nextval('s')
+----
+1

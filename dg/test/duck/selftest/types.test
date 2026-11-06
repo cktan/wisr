@@ -1,0 +1,37 @@
+# DuckDB's integer types and DOUBLE are rewritten as PostgreSQL's,
+# wide enough for their values, on both servers alike.
+# Each type check divides by zero when the type is the one expected, so
+# it fails on both servers alike and is counted as such.
+# 1. Make a table of every rewritten type, as DuckDB writes them.
+# 2. Insert each type's largest value.
+# 3. Check four of the columns' types.
+# 4. DOUBLE PRECISION is left as it is.
+# expect: clean - 7 0 4
+
+statement ok
+CREATE TABLE t (a TINYINT, b UTINYINT, c USMALLINT, d UINTEGER,
+  e UBIGINT, f HUGEINT, g UHUGEINT, h DOUBLE, i DOUBLE PRECISION)
+
+statement ok
+INSERT INTO t VALUES (127, 255, 65535, 4294967295, 18446744073709551615,
+  170141183460469231731687303715884105, 340282366920938463463374607431768211, 1.5, 2.5)
+
+query I
+SELECT 1 / (1 - (pg_typeof(a)::text = 'smallint')::int) FROM t
+----
+
+query I
+SELECT 1 / (1 - (pg_typeof(d)::text = 'bigint')::int) FROM t
+----
+
+query I
+SELECT 1 / (1 - (pg_typeof(f)::text = 'numeric')::int) FROM t
+----
+
+query I
+SELECT 1 / (1 - (pg_typeof(h)::text = 'double precision')::int) FROM t
+----
+
+query RR
+SELECT h, i FROM t
+----

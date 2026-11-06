@@ -2671,7 +2671,15 @@ int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec,
       return -1;
     }
   }
-  if (copy_rows(from, to.get(), conv) != 0 ||
+  // The rows as they are now, as PostgreSQL's ATRewriteTable() reads
+  // them at the latest snapshot: under the lock X no other transaction
+  // writes them, and one committed since this transaction's snapshot
+  // would otherwise be lost (../XCTMGR.md §5.5).
+  if (sm1::view_latest(session->sm1, true) != 0) {
+    return -1;
+  }
+  int copied = copy_rows(from, to.get(), conv);
+  if (sm1::view_latest(session->sm1, false) != 0 || copied != 0 ||
       cat_put_table(session, oid, rec) != 0) {
     return -1;
   }
