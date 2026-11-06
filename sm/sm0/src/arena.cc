@@ -6,29 +6,27 @@
 
 #include <cassert>
 #include <cstdint>
-#include <initializer_list>
 #include <new>
 
 namespace sm0 {
 
-/* Free the blocks of both lists. */
+/* Free every block, from the tail back. */
 arena_t::~arena_t() {
-  for (block_t *list : {m_blocks, m_large}) {
-    while (nullptr != list) {
-      block_t *next = list->next;
-      ::operator delete(list);
-      list = next;
-    }
+  while (nullptr != m_tail) {
+    block_t *prev = m_tail->prev;
+    ::operator delete(m_tail);
+    m_tail = prev;
   }
 }
 
 /*
- * Make a block for n bytes, the newest block having no room for them.
+ * Make a block for n bytes, the tail having no room for them.
  * 1. Make a block of n bytes if n is above block_room, else of
  *    block_room.
- * 2. Link it first on the list of large blocks, or on the list that
- *    pieces are cut from.
- * 3. Give the piece all of a large block, or the start of the other.
+ * 2. Link a large block behind the tail, so the tail keeps its room.
+ *    With no tail, the large block is the tail, marked full.
+ * 3. Link any other block as the new tail.
+ * 4. Give the piece all of a large block, or the start of the other.
  */
 char *arena_t::grow(size_t n) {
   // No object is larger, so the size below cannot wrap.
@@ -38,10 +36,16 @@ char *arena_t::grow(size_t n) {
   void *raw =
       ::operator new(offsetof(block_t, data) + (large ? n : block_room));
   block_t *b = static_cast<block_t *>(raw);
-  block_t *&list = large ? m_large : m_blocks;
-  b->next = list;
-  b->top = n;
-  list = b;
+  if (large && nullptr != m_tail) {
+    b->prev = m_tail->prev;
+    m_tail->prev = b;
+    b->top = n;
+  } else {
+    b->prev = m_tail;
+    // A large tail reads as full: block_room - top must not wrap.
+    b->top = large ? block_room : n;
+    m_tail = b;
+  }
   return b->data;
 }
 
