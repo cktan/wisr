@@ -9,6 +9,8 @@
 #include "error.h"
 #include "sm0_codec.h"
 
+#include <algorithm>
+#include <functional>
 #include <memory>
 #include <new>
 
@@ -281,11 +283,20 @@ int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
     // Hold each of its sessions' fp_mu, then every lock mutex, while reading
     // the slots, the table, the lock lists and the waits: a session
     // adds to its list under fp_mu alone, for a slot.
-    std::vector<std::unique_lock<std::mutex>> fps;
+    // In address order: env->sessions has no order that holds from one
+    // call to the next, and two calls that took two fp_mu in different
+    // orders would be a lock-order cycle.
+    std::vector<sm1::session_t *> mine;
     for (sm1::session_t *s : env->sessions) {
       if (s->db == db) {
-        fps.emplace_back(s->fp_mu);
+        mine.push_back(s);
       }
+    }
+    std::sort(mine.begin(), mine.end(), std::less<sm1::session_t *>());
+    std::vector<std::unique_lock<std::mutex>> fps;
+    fps.reserve(mine.size());
+    for (sm1::session_t *s : mine) {
+      fps.emplace_back(s->fp_mu);
     }
     lock_all_t all(db);
     // A lock by its id, and the kind its taker gave, not its key.

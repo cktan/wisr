@@ -482,8 +482,9 @@ struct db_t {
    * strong locker counts itself, then moves every session's
    * slots for its key into the table: the sessions of the
    * database, in fp_sessions, under fp_reg_mu. Order: the env's
-   * mu, fp_reg_mu, a session's fp_mu, the partitions' mutexes in
-   * their order, xact_mu.
+   * mu, fp_reg_mu, a session's fp_mu (lock_status holds many, in
+   * the order of their addresses), the partitions' mutexes in their
+   * order, xact_mu.
    */
   static constexpr size_t fp_strong_slots = 1024;
   std::atomic<uint32_t> fp_strong[fp_strong_slots] = {};

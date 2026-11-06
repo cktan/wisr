@@ -416,25 +416,36 @@ static int start_builder(sm_env_t *env, std::string_view dbname,
                          sm3::catalog_t *cat) {
   sm1::env_t *e = env->env;
   std::string name(dbname);
+  // The btree cleaner first, and before any thread of the builder: a
+  // builder thread opens tables, which read cat->cleaner, so it must
+  // be set before the thread exists. It opens sessions the same way
+  // as the builder, a pass at a time.
+  if (sm3::cleaner_attach(
+          cat,
+          [e, name]() -> sm1::session_t * {
+            sm1::session_t *s = nullptr;
+            return sm1::opendb(e, name, s) == 0 ? s : nullptr;
+          },
+          env->cleaner_workers) != 0) {
+    return -1;
+  }
   if (sm3::builder_attach(cat, [e, name]() -> sm1::session_t * {
         sm1::session_t *s = nullptr;
         return sm1::opendb(e, name, s) == 0 ? s : nullptr;
       }) != 0) {
+    // Not half started: the caller is told it failed.
+    keeping_error([&] { sm3::cleaner_detach(cat); });
     return -1;
   }
   if (sm3::enqueue_pending_indexes(cat) != 0) {
     // Not half started: the caller is told it failed.
-    keeping_error([&] { sm3::builder_detach(cat); });
+    keeping_error([&] {
+      sm3::cleaner_detach(cat);
+      sm3::builder_detach(cat);
+    });
     return -1;
   }
-  // The btree cleaner opens sessions the same way, a pass at a time.
-  return sm3::cleaner_attach(
-      cat,
-      [e, name]() -> sm1::session_t * {
-        sm1::session_t *s = nullptr;
-        return sm1::opendb(e, name, s) == 0 ? s : nullptr;
-      },
-      env->cleaner_workers);
+  return 0;
 }
 
 /* Stop a catalog's builder and cleaner, which hold sessions on it. */
@@ -488,20 +499,34 @@ int sm_attach(const char *homedir, sm_env_t **out,
 /*
  * Detach env. Once sm1 has, the sessions it closed and the
  * catalogs are freed with the handle.
+ * 1. Under env->mu, read the open sessions: a session's thread
+ *    erases its own from the set in sm_closedb(), under that mutex.
+ * 2. Refuse an unforced detach while any is open.
+ * 3. Abort the open transactions, stop the builders, and detach sm1.
+ * 4. Close the sessions of the snapshot, then the catalogs.
+ * A forced detach must not run beside a sm_closedb() of the same
+ * session: the snapshot would name a session freed.
  */
 int sm_detach(sm_env_t *env, int force) {
   return guard(nullptr, [&] {
     if (env == nullptr) {
       return 0;
     }
+    std::vector<sm_session_t *> open;
+    {
+      // Hold the env mutex while reading the set, which a session's
+      // thread changes in sm_closedb().
+      std::lock_guard lock(env->mu);
+      open.assign(env->sessions.begin(), env->sessions.end());
+    }
     // Sessions still open: an unforced detach is refused by sm1,
     // and the builders stay as they are.
-    if (!force && !env->sessions.empty()) {
+    if (!force && !open.empty()) {
       return sm1::detach(env->env, force);
     }
     // A forced detach abandons the open transactions; do it now, so
     // no worker is left waiting for a lock one of them holds.
-    for (sm_session_t *s : env->sessions) {
+    for (sm_session_t *s : open) {
       if (!sm1::in_doubt(s->sm1)) {
         keeping_error([&] { sm3::abort(s->sm3); });
       }
@@ -520,7 +545,7 @@ int sm_detach(sm_env_t *env, int force) {
       });
       return -1;
     }
-    for (sm_session_t *s : env->sessions) {
+    for (sm_session_t *s : open) {
       sm3::session_close(s->sm3);
       delete s;
     }

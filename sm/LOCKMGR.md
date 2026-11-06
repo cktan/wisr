@@ -809,7 +809,8 @@ A thread takes these in this order:
 
 1. the environment's `mu`
 2. `fp_reg_mu`
-3. a session's `fp_mu`
+3. a session's `fp_mu`; `sm1::lock_status` holds many, in the
+   order of their addresses
 4. the partitions' mutexes, in their order
 5. `xact_mu`
 6. `txn_mu`

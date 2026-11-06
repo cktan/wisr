@@ -1055,6 +1055,40 @@ TEST_CASE("lock_status lists each lock held, and each waited for in lock") {
   }
 }
 
+TEST_CASE("lock_status lists the locks of many sessions as the set changes") {
+  // Verify lock_status reads every session's slots while the set of
+  // sessions grows past several rehashes and shrinks, taking their
+  // fp_mu in address order. Two calls that took two in different
+  // orders are a lock-order cycle, which the thread sanitizer reports
+  // (../LOCKMGR.md §3.2); this build cannot, so the rows are checked.
+  // 1. Open 70 sessions; each begins and locks its own oid IS.
+  // 2. After each open, lock_status lists one row for each so far.
+  // 3. Close sessions from the middle; after each, it lists the rest.
+  lock_fixture_t f;
+  std::vector<sm1::session_t *> ss;
+  auto rows = [&] {
+    std::vector<sm1::lock_status_t> out;
+    REQUIRE(sm1::lock_status(f.env(), out) == 0);
+    return out.size();
+  };
+  for (int i = 0; i < 70; i++) {
+    sm1::session_t *s = f.open();
+    REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+    REQUIRE(sm1::lock_oid(s, 1000 + i, sm1::SM_LOCKMODE_IS) == 0);
+    ss.push_back(s);
+    CHECK(rows() == ss.size());
+  }
+  while (ss.size() > 3) {
+    size_t k = ss.size() / 2;
+    sm1::closedb(ss[k]);
+    ss.erase(ss.begin() + static_cast<long>(k));
+    CHECK(rows() == ss.size());
+  }
+  for (sm1::session_t *s : ss) {
+    sm1::closedb(s);
+  }
+}
+
 TEST_CASE("a write waiting on a row's lock is listed with the lock's kind") {
   // Verify a write, which gives no kind, waits listed with the kind of
   // the lock it waits on, so a host still sees a row's lock (../LOCKMGR.md
