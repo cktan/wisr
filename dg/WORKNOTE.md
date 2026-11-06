@@ -11812,3 +11812,23 @@ after the validation; PostgreSQL 18 for comparison).
   0.21 s, PostgreSQL's 0.02 s.
 - **Docs**: `UNSUPPORTED.md`, `../DG-vs-PG.md` and
   `../sm/NEXT.md` state it; NEXT.md lists the way to revisit it.
+
+## Step 399: does marking a foreign key valid need the table X?
+
+No (2026-11-06). Step 398 found the child's writers wait; this
+asks why, and what it costs when VALIDATE is one statement.
+
+- **Why X**: `sm3::validate_fkey()` calls `cat_put_table`, and its
+  `latest_table` locks the table X, the rule that DDL waits out a
+  table's users. `validated` is read only by `pg_constraint.
+  convalidated` (DDL, `\d`), and the key is enforced whatever it
+  says. `cat_put_index_state` shows a lighter write: table IX.
+- **Measured** (debug build; PostgreSQL 18 in brackets): as one
+  statement over 1,000,000 rows, a child writer's slowest insert
+  is 26 ms, its median 22 [10 ms]: no stall. Started while a
+  child writer's 3 s transaction is open, VALIDATE waits 2.5 s
+  [0.03 s]; a writer that starts meanwhile does not wait behind
+  it, 0.02 s [0.01 s], so VALIDATE could wait for ever under
+  overlapping writers.
+- **Left**: `../sm/NEXT.md` lists the steps to take the lighter
+  write; not urgent.

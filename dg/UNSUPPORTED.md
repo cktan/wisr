@@ -140,31 +140,36 @@ regression files are taken out for it (`test/pgregress`,
   (`ALTERTYPE.md` §8, step 378). PostgreSQL makes the index,
   the foreign key or the sequence again, and evaluates every
   USING on the row as it was.
-- **VALIDATE CONSTRAINT of a foreign key blocks the child's
-  writers until the transaction ends** — PostgreSQL's does not
-  (`SHARE UPDATE EXCLUSIVE` on the child, `ROW SHARE` on the
-  parent: neither conflicts with a write). The check reads both
-  tables at their newest rows (`../DG_REVIEW.md`, step 397),
-  then `sm3::validate_fkey` writes the child's table record,
-  which locks the child X to the transaction's end. Measured on
-  2026-11-06, debug build, a child of 200,000 rows, in a
-  transaction that sleeps 4 s after the validation:
+- **VALIDATE CONSTRAINT of a foreign key takes the child X for
+  its last step** — PostgreSQL's takes `SHARE UPDATE EXCLUSIVE`
+  on the child and `ROW SHARE` on the parent: neither conflicts
+  with a write. digres checks the rows under IS (see below), so
+  writers go on. Then `sm3::validate_fkey` writes the child's
+  table record, which locks the child X to the transaction's
+  end (`../sm/NEXT.md`). Measured 2026-11-06, debug build:
 
-  | | child writer waited | parent writer waited |
+  | | PostgreSQL 18 | digres |
   | --- | --- | --- |
-  | PostgreSQL 18 | 0.01 s | 0.01 s |
-  | digres | 3.9 s | 0.02 s |
+  | `VALIDATE` starts while a child writer's 3 s transaction is open: waited | 0.03 s | 2.5 s |
+  | a writer starts meanwhile: waited | 0.01 s | 0.02 s |
+  | child writer, `VALIDATE` in a 4 s transaction: waited | 0.01 s | 3.9 s |
+  | child writer, `VALIDATE` alone (1,000,000 rows): slowest insert | 10 ms | 26 ms (median 22) |
 
-  - The wait is the length of the transaction, not of the
-    check: the check took 0.21 s in digres, 0.02 s in PostgreSQL.
-  - The parent's writers do not wait, as in PostgreSQL. Both
+  - `VALIDATE` waits for every writer of the child in flight. A
+    writer that starts after it asks does not wait behind it,
+    so with writers always overlapping it could wait for ever.
+  - The child's writers wait from the grant to the end of the
+    transaction. Alone, as one statement, that is not seen; in
+    a longer transaction it is that transaction's length.
+  - The check is not the cost: 0.21 s for 200,000 rows here,
+    0.02 s in PostgreSQL.
+  - The parent's writers never wait, as in PostgreSQL. Both
     `SHARE UPDATE EXCLUSIVE` and `SHARE` are IS in sm
     (`relation_lock_mode()`). That is sound: a foreign key not
     valid is enforced on every write, so no write breaks what
     the check decided.
   - `ADD FOREIGN KEY` holds both tables X (`sm3::create_fkey`),
     as before.
-  To revisit: `../sm/NEXT.md`, loose ends.
 - **ALTER INDEX, ALTER TYPE, ALTER MATERIALIZED VIEW** —
   refused; ALTER VIEW takes only options and RENAME.
 - **ALTER SCHEMA ... RENAME** — refused: sm renames no

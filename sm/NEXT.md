@@ -522,24 +522,39 @@ steps behind each entry).
 
 Owed, and blocking nothing above:
 
-- **`VALIDATE CONSTRAINT` of a foreign key blocks the child's
-  writers until the transaction ends; PostgreSQL's does not.**
-  `sm3::validate_fkey()` writes the child's table record, which
-  locks the child X (`cat_put_table`, in
-  `sm3/src/catalog/ddl.cc`), after the check. Measured
-  2026-11-06: the writer waited 3.9 s of a 4 s transaction,
-  PostgreSQL's 0.01 s
-  (`../dg/UNSUPPORTED.md`, "DDL"). The check itself is not the
-  cost: 0.21 s for 200,000 rows. The parent's writers do not
-  wait. To revisit:
-  1. Ask whether marking a key valid needs the table X. The flag
-     is in the table record, whose change moves the table's
-     version and so every session's cached definition.
-  2. If a lighter write can set the flag, take it in `sm3`, with
-     a lock on the record alone, and leave the table's writers
-     alone.
-  3. Add a child writer that runs through the validation to
-     `../dg/test/ddl_current.sh`, and expect it not to wait.
+- **`VALIDATE CONSTRAINT` of a foreign key locks the child X for
+  its last step; PostgreSQL's takes no lock a write conflicts
+  with.** `sm3::validate_fkey()` calls `cat_put_table`, whose
+  `latest_table` takes the table X (`sm3/src/catalog/ddl.cc`)
+  after the check. So it waits for every writer of the child in
+  flight (2.5 s behind a 3 s transaction, PostgreSQL's 0.03 s),
+  may wait for ever under overlapping writers, and holds the
+  child's writers off until its transaction ends. Alone, as one
+  statement, they do not notice (`../dg/UNSUPPORTED.md`, "DDL").
+  **Marking a key valid does not need the table X.** Nothing
+  reads `validated` but `pg_constraint.convalidated`, which DDL
+  and `\d` use; the key is enforced whatever it says; it only
+  ever goes from false to true, so a session that sees it late
+  is right to be careful. The X is the general rule of
+  `cat_put_table`: DDL waits out a table's users. To revisit:
+  1. Write the flag as `cat_put_index_state` writes an index's
+     state: the table IX, so that DDL on the table is kept out
+     and writers go on, and an X lock on the constraint's own
+     key, so two validations of one key meet.
+  2. Publish it at commit by a new definition of the table with
+     the flag set and its version moved, as the index states
+     are applied in `sm3/src/catalog/session.cc`: not the whole
+     record, which would lose another's change made meanwhile
+     under IX.
+  3. Tests: a child writer that runs through the validation, and
+     a validation that starts behind a long writer, neither
+     waiting (`../dg/test/ddl_current.sh`); a restart that loads
+     the flag from the persisted key; and two validations of two
+     keys of one table at once.
+  4. Not urgent: `VALIDATE` is rare, and as one statement its
+     cost is the wait for writers in flight. It is the point of
+     `NOT VALID` followed by `VALIDATE`, so a deployment with
+     long writer transactions on a large child will see it.
 - **A table's size, taken again after 10 s, is at times the
   old one.** dg's `test/server.sh` failed once in four runs
   (2026-10-28, debug build) at "a size taken again after 10
