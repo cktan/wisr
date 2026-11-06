@@ -456,6 +456,13 @@ and so are the catalog tables psql reads
     4. Build each inner level from the one below, and write page
        0 last, as the root.
     To settle:
+    - **Sort with PostgreSQL's sorting utility** (`tuplesort`),
+      not with RocksDB as step 2 says. It probably costs less:
+      it sorts in memory, spills to sorted runs and merges
+      them, and it writes no memtable or SST file. Compare the
+      two before choosing. `tuplesort` is in `dg/`, and sm
+      depends on nothing in it, so sm needs a hook for the
+      sort, or the builder lives in `dg/`.
     - Every entry is born in doubt: after an abort, a clear bit
       would let an index-only scan give a row that is not there.
       So a cleaning still reads each row once.
