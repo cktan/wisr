@@ -67,9 +67,13 @@ Where it stood before §3 was built.
   | `numeric(p, s)`, `18 <= p <= 36` | `decimal128` | `(p, s)` |
   | `numeric(p, s)`, `p > 36` | refused | |
 
-- **A bare `numeric` refuses past 17 digits**, where
-  PostgreSQL's would keep them; a user who wants more says so,
-  as `x::numeric(30, 0)`.
+- **A bare `numeric` holds at most 17 digits**, where
+  PostgreSQL's would keep them all; a user who wants more says
+  so, as `x::numeric(30, 0)`. More than 17 digits before the
+  point is refused. Places past 17 digits in all are rounded
+  away, half away from zero, as a typmod's scale rounds them:
+  `'12345678901234567.8'::numeric` is `12345678901234568`
+  (`d64_of_wide()`).
 - **A typmod applies where PostgreSQL applies one**: to a
   column and to a cast. A function's argument and result
   ignore it, so `f(numeric)` takes a `decimal64` at any

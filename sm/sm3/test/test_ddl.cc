@@ -598,6 +598,130 @@ TEST_CASE("dropping an index erases its entries and nothing else") {
   db.commit();
 }
 
+/* Insert (a, b) into the table t through ss's transaction; its _id. */
+uint64_t insert_t(cat_db_t &db, uint64_t t, int32_t a, const char *b) {
+  sm3::table_t *x = nullptr;
+  REQUIRE(sm3::tbl_open(db.ss, t, sm1::SM_LOCKMODE_IX, x) == 0);
+  std::string vb = sm2::make_varlena(b ? b : "");
+  sm2::datum_t d[2] = {sm2::datum_from_int32(a),
+                       sm2::datum_from_ptr(vb.data())};
+  bool n[2] = {false, b == nullptr};
+  uint64_t id = 0;
+  REQUIRE_MESSAGE(sm3::tbl_insert(x, d, n, id) == 0, sm1::errmsg());
+  sm3::tbl_close(x);
+  return id;
+}
+
+TEST_CASE("a NOT NULL column is added to a table whose rows are deleted") {
+  // Verify add_column of a NOT NULL column with no missing value counts
+  // live rows as of now, not the versions a deleted row leaves
+  // (../../dg/WORKNOTE.md step 394).
+  // 1. Insert a row, commit, delete it, commit.
+  // 2. Add a NOT NULL column with no missing value: it succeeds.
+  // 3. Insert a row; adding another such column fails: SM_ERR_NOTNULL.
+  // 4. At REPEATABLE READ, a row another session committed after the
+  //    snapshot also fails it: SM_ERR_NOTNULL.
+  cat_db_t db;
+  db.begin();
+  uint64_t t = make_t(db);
+  db.commit();
+  db.begin();
+  uint64_t id = insert_t(db, t, 1, "x");
+  db.commit();
+  db.begin();
+  sm3::table_t *x = nullptr;
+  REQUIRE(sm3::tbl_open(db.ss, t, sm1::SM_LOCKMODE_IX, x) == 0);
+  REQUIRE_MESSAGE(sm3::tbl_delete(x, id) == 0, sm1::errmsg());
+  sm3::tbl_close(x);
+  db.commit();
+
+  db.begin();
+  REQUIRE_MESSAGE(sm3::add_column(db.ss, t,
+                                  {"c", sm2::type_int4.code, -1, true},
+                                  std::nullopt) == 0,
+                  sm1::errmsg());
+  db.commit();
+
+  db.begin();
+  sm3::table_t *y = nullptr;
+  REQUIRE(sm3::tbl_open(db.ss, t, sm1::SM_LOCKMODE_IX, y) == 0);
+  std::string vb = sm2::make_varlena("y");
+  sm2::datum_t d[3] = {sm2::datum_from_int32(2), sm2::datum_from_ptr(vb.data()),
+                       sm2::datum_from_int32(3)};
+  bool n[3] = {false, false, false};
+  REQUIRE_MESSAGE(sm3::tbl_insert(y, d, n, id) == 0, sm1::errmsg());
+  sm3::tbl_close(y);
+  db.commit();
+  db.begin();
+  CHECK(sm3::add_column(db.ss, t, {"d", sm2::type_int4.code, -1, true},
+                        std::nullopt) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTNULL);
+  REQUIRE(sm3::abort(db.ss) == 0);
+
+  // A table emptied, then a row committed past a REPEATABLE READ snapshot.
+  db.begin();
+  uint64_t u = 0;
+  std::vector<sm3::column_spec_t> cols = {
+      {"a", sm2::type_int4.code, -1, true},
+      {"b", sm2::type_text.code, -1, false}};
+  REQUIRE(sm3::create_table(db.ss, sm3::nsp_public, "u", cols, u) == 0);
+  db.commit();
+  REQUIRE(sm3::begin(db.ss, sm1::xctlevel_t::repeatable_read) == 0);
+  sm3::table_t *z = nullptr;
+  REQUIRE(sm3::tbl_open(db.ss, u, sm1::SM_LOCKMODE_IS, z) == 0);
+  sm3::tbl_close(z);
+  sm3::session_t *other = nullptr;
+  REQUIRE(sm3::session_open(db.cat, db.open(), other) == 0);
+  REQUIRE(sm3::begin(other, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::tbl_open(other, u, sm1::SM_LOCKMODE_IX, z) == 0);
+  std::string vz = sm2::make_varlena("z");
+  sm2::datum_t dz[2] = {sm2::datum_from_int32(9),
+                        sm2::datum_from_ptr(vz.data())};
+  bool nz[2] = {false, false};
+  REQUIRE_MESSAGE(sm3::tbl_insert(z, dz, nz, id) == 0, sm1::errmsg());
+  sm3::tbl_close(z);
+  REQUIRE(sm3::commit(other) == 0);
+  sm3::session_close(other);
+  CHECK(sm3::add_column(db.ss, u, {"c", sm2::type_int4.code, -1, true},
+                        std::nullopt) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTNULL);
+  REQUIRE(sm3::abort(db.ss) == 0);
+}
+
+TEST_CASE("a drop erases an entry committed after its transaction began") {
+  // Verify drop_index at READ COMMITTED erases an entry another
+  // transaction committed after the drop's began, as an index build's
+  // batch commits them, where sm1's erase answers SM_ERR_UPDATED.
+  // 1. Make the table and its index, and commit.
+  // 2. Begin the dropping transaction, at READ COMMITTED.
+  // 3. In a second session, write an entry under the index's relid,
+  //    and commit.
+  // 4. Drop the index in the first: it succeeds, and the entry is gone.
+  cat_db_t db;
+  db.begin();
+  uint64_t t = make_t(db), ix = 0;
+  std::vector<sm3::index_key_spec_t> keys = {{0, false, false, std::nullopt}};
+  REQUIRE(sm3::create_index(db.ss, t, "i1", keys, {}, false, ix) == 0);
+  db.commit();
+  uint64_t storeid = sm3::cat_get_table(db.cat, t)->storeid;
+  uint16_t relid = sm3::cat_get_table(db.cat, t)->indexes[0].relid;
+  const std::string entry{static_cast<char>(relid >> 8),
+                          static_cast<char>(relid & 0xFF), 'a'};
+
+  db.begin();
+  sm1::session_t *s2 = db.open();
+  REQUIRE(sm1::begin(s2, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::insert(s2, storeid, entry, "e") == 0);
+  REQUIRE(sm1::commit(s2) == 0);
+  REQUIRE_MESSAGE(sm3::drop_index(db.ss, t, ix) == 0, sm1::errmsg());
+  db.commit();
+
+  db.begin();
+  std::string_view v;
+  CHECK(sm1::read(db.s, storeid, entry, v) == 1);
+  db.commit();
+  sm1::closedb(s2);
+}
 TEST_CASE("a column is renamed, and its index goes on using it") {
   // Verify rename_column.
   // 1. b is renamed c: the index on b is still on place 1.

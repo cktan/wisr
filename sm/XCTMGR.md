@@ -439,6 +439,35 @@ which uses the call once reads that way for the rest of its life.
 The gain is one call in place of a pair to keep balanced across
 rollback and prepare.
 
+### 5.5 Reading the newest state
+
+DDL that reads every row of a table and writes them again, or
+checks them, must see the rows as they are, not as an old
+snapshot shows them. PostgreSQL's `ATRewriteTable()` reads at the
+latest snapshot for this reason. A rewrite at a REPEATABLE READ
+snapshot older than another transaction's commit would lose that
+commit's rows (`../dg/WORKNOTE.md` step 394).
+
+`sm1::view_latest(session, true)` makes every read, and every
+cursor opened while it is on, read at `visible_ts`, at every
+level. The transaction's own writes stay in its view, by its xid
+and mark as before. `sm1::view_latest(session, false)` puts the
+transaction's view back, and the transaction's end turns it off.
+
+- **The caller holds the table-oid lock X** on what it reads. No
+  other transaction writes there meanwhile, so what is newest
+  when a cursor opens stays newest.
+- **No snapshot is registered for it.** The newest committed
+  version of a key is never purged, and a key purged is a
+  deleted one, which the newest state does not hold.
+- **Writes are not changed.** They still check for conflicts
+  against the transaction's snapshot. A rewrite writes a new
+  store, where nothing conflicts.
+
+sm3 uses it for a table rewrite, for the check that a table
+holds no row before a NOT NULL column with no default is added,
+and for the scan that makes a column NOT NULL.
+
 ---
 
 ## 6. Savepoints

@@ -1,0 +1,42 @@
+# Verify that lock_timeout does not end CREATE INDEX's wait for its build
+# (WORKNOTE.md step 385): the build is no lock, and PostgreSQL's CREATE
+# INDEX takes no longer than lock_timeout to fail.
+# 1. Fill a table with enough rows that its index is built in the
+#    background, after the commit, for longer than 1 ms.
+# 2. With lock_timeout at 1 ms, CREATE INDEX succeeds, and so does a
+#    unique one.
+# 3. The indexes are usable at once, and DROP INDEX drops them.
+
+statement ok
+create table t (i int4, j int4)
+
+statement ok
+insert into t select g, g % 7 from generate_series(1, 20000) g
+
+statement ok
+set lock_timeout = '1ms'
+
+statement ok
+create index t_j on t (j)
+
+statement ok
+create unique index t_i on t (i)
+
+query I nosort
+select count(*) from t where j = 3
+----
+2857
+
+query I nosort
+select count(*) from t where i between 10 and 19
+----
+10
+
+statement ok
+drop index t_j
+
+statement ok
+drop index t_i
+
+statement ok
+reset lock_timeout

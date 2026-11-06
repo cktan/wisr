@@ -1,0 +1,44 @@
+# Verify that a name in a schema that does not exist is reported as
+# PostgreSQL reports it: the schema is missing (WORKNOTE.md step 391).
+# 1. DROP TABLE, DROP SEQUENCE and DROP VIEW of such a name say the schema
+#    does not exist; with IF EXISTS they succeed.
+# 2. ALTER TABLE ... RENAME and ALTER SEQUENCE ... OWNED BY say the same;
+#    with IF EXISTS they succeed.
+# 3. A relation missing from a schema that exists is named as PostgreSQL
+#    names it, qualified for a RENAME.
+
+statement error schema "nosuch" does not exist
+drop table nosuch.t
+
+statement ok
+drop table if exists nosuch.t
+
+statement error schema "nosuch" does not exist
+drop sequence nosuch.s
+
+statement ok
+drop sequence if exists nosuch.s
+
+statement error schema "nosuch" does not exist
+drop view nosuch.v
+
+statement ok
+drop view if exists nosuch.v
+
+statement error schema "nosuch" does not exist
+alter table nosuch.t rename to x
+
+statement ok
+alter table if exists nosuch.t rename to x
+
+statement error schema "nosuch" does not exist
+alter sequence nosuch.s owned by none
+
+statement ok
+alter sequence if exists nosuch.s owned by none
+
+statement error relation "public.nosuch" does not exist
+alter table public.nosuch rename to x
+
+statement error table "nosuch" does not exist
+drop table public.nosuch

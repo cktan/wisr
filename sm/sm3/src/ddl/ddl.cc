@@ -64,12 +64,45 @@ int check_missing(const sm2::type_t *type, int32_t typmod,
 }
 
 /*
+ * Whether the table oid holds a live row now, in live: its store's keys
+ * may all be rows deleted, which hold none. The newest committed state is
+ * read, a row committed since this transaction's snapshot among it; the
+ * caller holds the lock X, or the table is its session's own.
+ */
+int has_live_row(sm3::session_t *session, uint64_t oid, bool temp, bool &live) {
+  sm3::table_t *t = nullptr;
+  if (0 != sm3::tbl_open(session, oid,
+                         temp ? sm1::SM_LOCKMODE_IS : sm1::SM_LOCKMODE_EX, t)) {
+    return -1;
+  }
+  if (0 != sm1::view_latest(session->sm1, true)) {
+    sm3::tbl_close(t);
+    return -1;
+  }
+  sm3::scan_t *scan = nullptr;
+  int rc = sm3::tbl_scan_rows(t, scan);
+  if (0 == rc) {
+    uint64_t rowno = 0;
+    std::string_view tuple;
+    rc = sm3::tbl_scannxt(scan, rowno, tuple);
+    sm3::tbl_scanend(scan);
+  }
+  sm3::tbl_close(t);
+  if (0 != sm1::view_latest(session->sm1, false) || rc < 0) {
+    return -1;
+  }
+  live = 0 == rc;
+  return 0;
+}
+
+/*
  * Refuse a NOT NULL column with no missing value, name, unless the
  * table oid holds no row, which it then goes on holding.
  * 1. Take the table's table-oid lock X if it is free now. Busy is
  *    SM_ERR_BLOCKED.
- * 2. Check the store is empty. Rows are SM_ERR_NOTNULL.
- * 3. Keep the lock only if the store is empty.
+ * 2. Check the store is empty, or holds no live row now: deleted rows
+ *    leave keys behind. A live row is SM_ERR_NOTNULL.
+ * 3. Keep the lock only if the table holds no row.
  */
 int need_empty(sm3::session_t *session, uint64_t oid, const std::string &name) {
   std::shared_ptr<const sm3::table_def_t> d = sm3::cat_get_table(session, oid);
@@ -80,9 +113,12 @@ int need_empty(sm3::session_t *session, uint64_t oid, const std::string &name) {
   bool empty;
   // A temporary table is the session's alone: no one to keep out.
   if (d->nspoid == sm3::nsp_temp) {
-    if (sm1::store_empty(session->sm1, d->storeid, empty) != 0) {
+    bool live = false;
+    if (sm1::store_empty(session->sm1, d->storeid, empty) != 0 ||
+        (!empty && has_live_row(session, oid, true, live) != 0)) {
       return -1;
     }
+    empty = empty || !live;
     return empty ? 0
                  : sm1::seterr(sm1::SM_ERR_NOTNULL,
                                "add column: " + name +
@@ -96,6 +132,7 @@ int need_empty(sm3::session_t *session, uint64_t oid, const std::string &name) {
   }
   int held = sm3::lock_table_now(session->sm1, oid, sm1::SM_LOCKMODE_EX);
   int rc = 0;
+  bool live = false;
   if (held < 0) {
     rc = -1;
   } else if (held == 1) {
@@ -108,7 +145,9 @@ int need_empty(sm3::session_t *session, uint64_t oid, const std::string &name) {
                      "table " + std::to_string(oid) + " does not exist");
   } else if (sm1::store_empty(session->sm1, d->storeid, empty) != 0) {
     rc = -1;
-  } else if (!empty) {
+  } else if (!empty && has_live_row(session, oid, false, live) != 0) {
+    rc = -1;
+  } else if (!empty && live) {
     rc = sm1::seterr(sm1::SM_ERR_NOTNULL,
                      "add column: " + name +
                          " is NOT NULL, and the table has rows");
@@ -510,6 +549,12 @@ int set_not_null(session_t *session, uint64_t oid, std::string_view name) {
   if (0 != tbl_open(session, oid, sm1::SM_LOCKMODE_EX, t)) {
     return -1;
   }
+  // Every row as it is now, one committed since this transaction's
+  // snapshot among them: under the lock X it stays so.
+  if (0 != sm1::view_latest(session->sm1, true)) {
+    tbl_close(t);
+    return -1;
+  }
   scan_t *scan = nullptr;
   int rc = tbl_scan_rows(t, scan);
   uint64_t rowno = 0;
@@ -528,6 +573,9 @@ int set_not_null(session_t *session, uint64_t oid, std::string_view name) {
   }
   tbl_scanend(scan);
   tbl_close(t);
+  if (0 != sm1::view_latest(session->sm1, false)) {
+    return -1;
+  }
   // The scan's end, 1, is the one way through.
   if (1 != rc) {
     return -1;
@@ -1082,7 +1130,18 @@ int drop_index(session_t *session, uint64_t table, uint64_t oid) {
     return -1;
   }
   for (const std::string &e : entries) {
-    if (sm1::erase(session->sm1, rec.storeid, e) != 0) {
+    int erc = sm1::erase(session->sm1, rec.storeid, e);
+    if (0 != erc && sm1::SM_ERR_UPDATED == sm1::errnum()) {
+      // At read committed the entry was committed after this
+      // transaction began, as an index build's batch commits them:
+      // the newest version read lets sm1 take the erase again.
+      std::string_view latest;
+      if (sm1::read_latest(session->sm1, rec.storeid, e, latest) < 0) {
+        return -1;
+      }
+      erc = sm1::erase(session->sm1, rec.storeid, e);
+    }
+    if (0 != erc) {
       return -1;
     }
   }

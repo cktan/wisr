@@ -236,6 +236,7 @@ void reset(sm1::session_t *s) {
   s->stmt_snapshot_ts = 0;
   s->stmt_marked = false;
   s->stmt_seq = 0;
+  s->view_latest = false;
   // Its store handles of an older store map go (../DBMGR.md).
   uint64_t version = s->db->stores_version.load(std::memory_order_acquire);
   std::erase_if(s->store_handles,
@@ -1294,6 +1295,10 @@ view_t xct_view(sm1::session_t *s) {
   if (s->level == sm1::xctlevel_t::read_committed && s->stmt_taken) {
     v.snapshot_ts = s->stmt_snapshot_ts;
   }
+  // Under sm1::view_latest, the newest committed state, at every level.
+  if (s->view_latest) {
+    v.snapshot_ts = s->db->visible_ts.load();
+  }
   // Its own writes, up to the last still in effect, and within
   // a statement only those made before it began.
   v.xid = s->xid;
@@ -1573,6 +1578,15 @@ int sm1::stmt_begin(sm1::session_t *session, sm1::stmt_t &outer) {
   outer.marked = session->stmt_marked;
   outer.seq = session->stmt_seq;
   return ::stmt_begin(session);
+}
+
+/* Read at the newest committed state, or not; see sm1.h. */
+int sm1::view_latest(sm1::session_t *session, bool on) {
+  if (xct_check_active(session) != 0) {
+    return -1;
+  }
+  session->view_latest = on;
+  return 0;
 }
 
 /* End a statement begun inside another; see sm1.h. */

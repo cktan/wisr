@@ -1,0 +1,21 @@
+# A statement whose answer differs by server is one finding, and the
+# file stops there.
+# 1. Run a plain statement.
+# 2. Ask each server its version: the answers differ.
+# 3. The two records after it do not run.
+# expect: finding result-differs at line 11 2 2 0
+
+statement ok
+CREATE TABLE t (a INTEGER)
+
+query T
+SELECT version()
+----
+
+statement ok
+INSERT INTO t VALUES (1)
+
+query I
+SELECT a FROM t
+----
+1

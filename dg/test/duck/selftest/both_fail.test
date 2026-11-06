@@ -1,0 +1,24 @@
+# A statement that fails the same way on both servers is no finding,
+# and the file goes on past it.
+# 1. Query a table that does not exist: 42P01 on both.
+# 2. Use a DuckDB word PostgreSQL 18 does not have: 42601 on both.
+# 3. Go on: the records after them run, and the file is clean.
+# expect: clean - 4 0 2
+
+statement error
+SELECT * FROM no_such_table
+----
+Catalog Error: Table with name no_such_table does not exist!
+
+query I
+SELECT 1 ORDER BY ALL
+----
+1
+
+statement ok
+CREATE TABLE t (a INTEGER)
+
+query I
+SELECT count(*) FROM t
+----
+0

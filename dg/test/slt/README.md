@@ -126,3 +126,6 @@ whole corpus, `test/slt_corpus.sh '/test/'`, is 622 files and
 5.7 million records, about 45 minutes on PostgreSQL 18. It is
 in no `make test`: it needs the network once, and takes long.
 
+DuckDB's SQL tests are run another way: on PostgreSQL 18 and on
+digres side by side, by `test/duck/duck.sh`
+(`test/duck/README.md`).

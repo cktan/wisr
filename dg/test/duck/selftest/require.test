@@ -1,0 +1,9 @@
+# A require of something not here skips the file whole.
+# 1. Require tpch, an extension of DuckDB's.
+# 2. Nothing runs, and the file is counted as skipped.
+# expect: skipped require tpch 0 0 0
+
+require tpch
+
+statement ok
+SELECT 1
