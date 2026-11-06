@@ -1,0 +1,32 @@
+# Verify that ALTER SCHEMA ... RENAME is refused, as not supported yet,
+# where it failed with an internal error (WORKNOTE.md step 392), and that
+# ALTER SCHEMA ... OWNER TO still works.
+# 1. Rename a schema that does not exist: PostgreSQL's error, on both.
+# 2. Make a schema.
+# 3. Rename it: PostgreSQL renames it; digres refuses, as not supported.
+# 4. Give it an owner: both succeed.
+# 5. Drop it, by either name.
+
+statement error schema "nosuch" does not exist
+alter schema nosuch rename to s2
+
+statement ok
+create schema s1
+
+skipif digres
+statement ok
+alter schema s1 rename to s2
+
+onlyif digres
+statement error ALTER SCHEMA \.\.\. RENAME is not supported yet
+alter schema s1 rename to s2
+
+skipif digres
+statement ok
+alter schema s2 rename to s1
+
+statement ok
+alter schema s1 owner to current_user
+
+statement ok
+drop schema s1

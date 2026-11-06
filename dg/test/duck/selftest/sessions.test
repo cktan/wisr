@@ -1,0 +1,30 @@
+# Two sessions that write one row do not hang the runner: the second
+# waits for the lock, and lock_timeout ends the wait with 55P03 on
+# both servers.
+# 1. Make a table with one row.
+# 2. Session con1 opens a transaction and changes the row.
+# 3. Session con2 changes the same row: 55P03 on both, in 500 ms.
+# 4. con1 commits, and con2 sees the change.
+# expect: clean - 6 0 1
+
+statement ok
+CREATE TABLE t (a INTEGER PRIMARY KEY, b INTEGER)
+
+statement ok
+INSERT INTO t VALUES (1, 10)
+
+statement ok con1
+BEGIN; UPDATE t SET b = 11 WHERE a = 1
+
+statement error con2
+UPDATE t SET b = 12 WHERE a = 1
+----
+Conflict
+
+statement ok con1
+COMMIT
+
+query II con2
+SELECT a, b FROM t
+----
+1	11

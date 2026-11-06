@@ -29,6 +29,7 @@
 #include "catalog/namespace.h"
 #include "commands/sequence.h"
 #include "miscadmin.h"
+#include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/control_block.h"
@@ -133,6 +134,9 @@ int64 nextval_internal(Oid relid, bool check_permissions) {
 
   if (check_permissions)
     check_sequence_privilege(relid, ACL_USAGE | ACL_UPDATE);
+  /* A draw is a write: as PostgreSQL's, which spares only a temporary
+   * sequence, and digres has none (UNSUPPORTED.md section 3). */
+  PreventCommandIfReadOnly("nextval()");
   value = smstore_nextval(relid);
 
   ss().last[relid] = value;

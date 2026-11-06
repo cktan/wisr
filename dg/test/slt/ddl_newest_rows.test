@@ -1,0 +1,95 @@
+# Verify that DDL reading every row reads them as they are, as
+# PostgreSQL's does, not at an older REPEATABLE READ snapshot
+# (WORKNOTE.md step 394).
+# 1. ALTER COLUMN TYPE in a transaction whose snapshot is older than
+#    another's committed UPDATE keeps the update, with or without a
+#    primary key.
+# 2. ADD COLUMN ... NOT NULL with no default is taken by a table whose
+#    rows were all deleted, and refused by one with a row.
+
+statement ok
+create table t (id int4, v int4)
+
+statement ok
+insert into t values (1, 0)
+
+connection old
+statement ok
+begin isolation level repeatable read
+
+connection old
+query I nosort
+select v from t
+----
+0
+
+statement ok
+update t set v = 7
+
+connection old
+statement ok
+alter table t alter column v type int8
+
+connection old
+statement ok
+commit
+
+query I nosort
+select v from t
+----
+7
+
+statement ok
+create table k (id int4 primary key, v int4)
+
+statement ok
+insert into k values (1, 0)
+
+connection old
+statement ok
+begin isolation level repeatable read
+
+connection old
+query I nosort
+select v from k
+----
+0
+
+statement ok
+update k set v = 8
+
+connection old
+statement ok
+alter table k alter column v type int8
+
+connection old
+statement ok
+commit
+
+query II nosort
+select id, v from k
+----
+1	8
+
+statement ok
+create table e (a int4)
+
+statement ok
+insert into e values (1)
+
+statement ok
+delete from e
+
+statement ok
+alter table e add column b int4 not null
+
+statement ok
+insert into e values (2, 3)
+
+statement error column "c" of relation "e" contains null values
+alter table e add column c int4 not null
+
+query II nosort
+select a, b from e
+----
+2	3

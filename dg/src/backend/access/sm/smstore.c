@@ -407,7 +407,8 @@ static void sm_error(const char *what) {
 
 /*
  * Call f, a call into sm that may wait for another transaction, until it
- * does not fail on an interrupted wait.
+ * does not fail on an interrupted wait.  lock_wait says the wait is for a
+ * lock, so lock_timeout bounds it; a wait for an index's build is none.
  * 1. Call f.  An interrupt in this thread's wait mask ends sm's wait, with
  *    SM_ERR_INTERRUPTED (miscinit.c sets the mask).
  * 2. Return what f returned, unless it failed with SM_ERR_INTERRUPTED.
@@ -416,21 +417,23 @@ static void sm_error(const char *what) {
  * 4. Go to step 1.  An interrupt that calls for nothing, or that must wait
  *    until interrupts are allowed, has been taken, so the call waits again.
  */
-template <class F> static int waiting(F f) {
+template <class F> static int waiting(F f, bool lock_wait = true) {
+  const bool timed = lock_wait && LockTimeout > 0;
+
   /*
    * lock_timeout ends a wait for a lock that lasts longer, by a cancel the
    * timer raises (postinit.c).  It counts from the call, as sm does not say
    * when the call begins to wait; a call that ends in time disarms it, and
    * a cancel it raised meanwhile is never taken.
    */
-  if (LockTimeout > 0)
+  if (timed)
     enable_timeout_after(LOCK_TIMEOUT, LockTimeout);
   for (;;) {
     int rc = f();
 
     /* Only -1 is an error: 1, a lock not had at once, is an answer. */
     if (rc != -1 || sm_errnum() != SM_ERR_INTERRUPTED) {
-      if (LockTimeout > 0)
+      if (timed)
         disable_timeout(LOCK_TIMEOUT, false);
       return rc;
     }
@@ -1594,8 +1597,9 @@ void smstore_drop_namespaces(DropStmt *stmt) {
 
 /*
  * Whether constraints, a column's, are only those sm's tables take: NOT
- * NULL, a PRIMARY KEY or UNIQUE, which parse analysis has made an index
- * statement of its own, a DEFAULT, which it has made the column's
+ * NULL, and NULL, which parse analysis has checked against it and which
+ * asks nothing; a PRIMARY KEY or UNIQUE, which parse analysis has made an
+ * index statement of its own, a DEFAULT, which it has made the column's
  * raw_default, and a REFERENCES, which it has made an ALTER TABLE ... ADD
  * FOREIGN KEY to follow.
  */
@@ -1605,9 +1609,10 @@ static bool only_taken(List *constraints) {
   foreach (l, constraints) {
     ConstrType type = lfirst_node(Constraint, l)->contype;
 
-    if (type != CONSTR_NOTNULL && type != CONSTR_PRIMARY &&
-        type != CONSTR_UNIQUE && type != CONSTR_DEFAULT &&
-        type != CONSTR_IDENTITY && type != CONSTR_FOREIGN)
+    if (type != CONSTR_NOTNULL && type != CONSTR_NULL &&
+        type != CONSTR_PRIMARY && type != CONSTR_UNIQUE &&
+        type != CONSTR_DEFAULT && type != CONSTR_IDENTITY &&
+        type != CONSTR_FOREIGN)
       return false;
   }
   return true;
@@ -2011,6 +2016,23 @@ int64 smstore_nextval(Oid oid) {
 }
 
 /*
+ * Whether rv names a schema that does not exist, for a DROP: an error, or
+ * with missing_ok a notice and true, as PostgreSQL's DROP says the schema
+ * is missing before it says the relation is.
+ */
+static bool drop_schema_missing(const RangeVar *rv, bool missing_ok) {
+  if (NULL == rv->schemaname ||
+      OidIsValid(get_namespace_oid(rv->schemaname, true)))
+    return false;
+  if (!missing_ok)
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_SCHEMA),
+                    errmsg("schema \"%s\" does not exist", rv->schemaname)));
+  ereport(NOTICE,
+          (errmsg("schema \"%s\" does not exist, skipping", rv->schemaname)));
+  return true;
+}
+
+/*
  * Drop the sequence rv names, from sm, in this transaction.  One that is not
  * there is an error, or with missing_ok a notice; a relation of another kind
  * by that name is an error.
@@ -2019,6 +2041,8 @@ static void drop_sequence(RangeVar *rv, bool missing_ok) {
   Oid oid = RangeVarGetRelid(rv, NoLock, true);
 
   if (!OidIsValid(oid)) {
+    if (drop_schema_missing(rv, missing_ok))
+      return;
     if (!missing_ok)
       ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
                       errmsg("sequence \"%s\" does not exist", rv->relname)));
@@ -3361,6 +3385,8 @@ static void drop_table(RangeVar *rv, bool missing_ok, bool cascade,
   /* Locked against other sessions' use until the transaction ends. */
   oid = RangeVarGetRelid(rv, AccessExclusiveLock, true);
   if (!OidIsValid(oid)) {
+    if (drop_schema_missing(rv, missing_ok))
+      return;
     if (!missing_ok)
       ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
                       errmsg("table \"%s\" does not exist", rv->relname)));
@@ -3735,6 +3761,8 @@ void smstore_drop_views(DropStmt *stmt) {
     /* Locked against other sessions' use until the transaction ends. */
     oid = RangeVarGetRelid(rv, AccessExclusiveLock, true);
     if (!OidIsValid(oid)) {
+      if (drop_schema_missing(rv, stmt->missing_ok))
+        continue;
       if (!stmt->missing_ok)
         ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
                         errmsg("view \"%s\" does not exist", rv->relname)));
@@ -4472,6 +4500,12 @@ void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
     else
       drop_column(relid, relname, cmd->name, cmd->missing_ok,
                   cmd->behavior == DROP_CASCADE);
+    /*
+     * A handle the subcommand opened, as table_def_now() does, holds the
+     * definition from before its change: closed, so the next use, the
+     * descriptor built again among them, opens one with the change.
+     */
+    forget_table(relid);
     /* The next subcommand sees what this one did. */
     CommandCounterIncrement();
   }
@@ -4500,14 +4534,15 @@ static void check_owner(Oid oid, const char *name, bool schema_too) {
  * TABLE either, as type says; *view is whether it is one.
  */
 static Oid rename_target(RenameStmt *stmt, ObjectType type, bool *view) {
-  /* Locked against other sessions' use until the transaction ends. */
-  Oid relid = RangeVarGetRelid(stmt->relation, AccessExclusiveLock, true);
+  /*
+   * Locked against other sessions' use until the transaction ends.  With
+   * no IF EXISTS, a missing schema or relation is PostgreSQL's own error,
+   * as RenameRelation() gives it.
+   */
+  Oid relid =
+      RangeVarGetRelid(stmt->relation, AccessExclusiveLock, stmt->missing_ok);
 
   if (!OidIsValid(relid)) {
-    if (!stmt->missing_ok)
-      ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
-                      errmsg("relation \"%s\" does not exist",
-                             stmt->relation->relname)));
     ereport(NOTICE, (errmsg("relation \"%s\" does not exist, skipping",
                             stmt->relation->relname)));
     return InvalidOid;
@@ -4540,6 +4575,16 @@ ObjectAddress smstore_rename_table(RenameStmt *stmt) {
 
   if (!OidIsValid(relid))
     return InvalidObjectAddress;
+  /*
+   * The new name is taken, by the relation itself: PostgreSQL's
+   * RenameRelationInternal() refuses it so, where sm takes it as a rename
+   * that changes nothing.
+   */
+  const char *oldname = get_rel_name(relid);
+
+  if (NULL != oldname && 0 == strcmp(oldname, stmt->newname))
+    ereport(ERROR, (errcode(ERRCODE_DUPLICATE_TABLE),
+                    errmsg("relation \"%s\" already exists", stmt->newname)));
   sm_session_t *s = xact_session();
 
   if (waiting([&] {
@@ -6668,7 +6713,8 @@ static int32_t column_place(Relation rel, const char *name) {
  * InvalidObjectAddress if IF EXISTS found no sequence.
  */
 ObjectAddress smstore_own_sequence(AlterSeqStmt *stmt, List *owned_by) {
-  Oid oid = RangeVarGetRelid(stmt->sequence, NoLock, true);
+  /* With no IF EXISTS, a missing schema or sequence is PostgreSQL's error. */
+  Oid oid = RangeVarGetRelid(stmt->sequence, NoLock, stmt->missing_ok);
   int nnames = list_length(owned_by);
   uint64_t table = 0, seq_nspoid;
   int32_t attnum = -1;
@@ -6676,10 +6722,6 @@ ObjectAddress smstore_own_sequence(AlterSeqStmt *stmt, List *owned_by) {
   ObjectAddress address;
 
   if (!OidIsValid(oid)) {
-    if (!stmt->missing_ok)
-      ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
-                      errmsg("relation \"%s\" does not exist",
-                             stmt->sequence->relname)));
     ereport(NOTICE, (errmsg("relation \"%s\" does not exist, skipping",
                             stmt->sequence->relname)));
     return InvalidObjectAddress;
@@ -6699,10 +6741,10 @@ ObjectAddress smstore_own_sequence(AlterSeqStmt *stmt, List *owned_by) {
   }
   if (nnames == 1) {
     if (strcmp(strVal(linitial(owned_by)), "none") != 0)
-      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                      errmsg("invalid OWNED BY option"),
-                      errhint("Specify OWNED BY table.column or OWNED BY "
-                              "NONE.")));
+      ereport(ERROR,
+              (errcode(ERRCODE_SYNTAX_ERROR), errmsg("invalid OWNED BY option"),
+               errhint("Specify OWNED BY table.column or OWNED BY "
+                       "NONE.")));
   } else {
     RangeVar *rv =
         makeRangeVarFromNameList(list_copy_head(owned_by, nnames - 1));
@@ -6953,7 +6995,10 @@ static void check_retype(Oid relid, int32_t at, const char *colname) {
   sm_column_use_t use;
   std::string by;
 
-  if (0 != sm_cat_column_use(xact_session(), relid, at, &use, by))
+  /* It takes the table's lock X, so it may wait, bounded by lock_timeout. */
+  if (0 != waiting([&] {
+        return sm_cat_column_use(xact_session(), relid, at, &use, by);
+      }))
     sm_error("find what reads a column");
   switch (use) {
   case SM_COLUMN_USE_NONE:
@@ -7361,8 +7406,9 @@ void smstore_wait_indexes(void) {
    * for again. */
   built.swap(tcb->smstore->built_after_commit);
   for (const made_index_t &m : built) {
-    if (waiting([&] { return sm_cat_index_wait(session(), m.table, m.index); })
-        == 0)
+    /* A build is no lock: lock_timeout does not end the wait for it. */
+    if (waiting([&] { return sm_cat_index_wait(session(), m.table, m.index); },
+                false) == 0)
       continue;
     /* Dropped since, in its transaction or by another. */
     if (sm_errnum() == SM_ERR_NOTFOUND)

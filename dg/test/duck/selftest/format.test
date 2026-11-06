@@ -1,0 +1,65 @@
+# The runner reads DuckDB's format: loops, answer blocks and skipped
+# regions run the records they should, and no more.
+# 1. A loop of three inserts runs three records.
+# 2. A foreach over two words runs two records.
+# 3. A query with DuckDB's answer block, and a statement error with
+#    its message block, run one record each: the blocks are not SQL.
+# 4. An onlyif inside the loop runs on one value of three.
+# 5. The records between mode skip and mode unskip do not run.
+# 6. A load, a set and a require of DuckDB's build are ignored.
+# Records run: 1 + 3 + 2 + 1 + 1 + 1 + 1 = 10.
+# expect: clean - 10 0 1
+
+require vector_size 2048
+
+load __TEST_DIR__/x.db
+
+set ignore_error_messages
+
+statement ok
+CREATE TABLE t (a INTEGER)
+
+loop i 0 3
+
+statement ok
+INSERT INTO t VALUES (${i})
+
+onlyif i=1
+statement ok
+INSERT INTO t VALUES (${i} + 100)
+
+endloop
+
+foreach v 10 20
+
+statement ok
+INSERT INTO t VALUES ({v})
+
+endloop
+
+query I
+SELECT sum(a) FROM t
+----
+134
+
+statement error
+SELECT 1 / 0
+----
+Out of Range Error: division by zero
+
+mode skip
+
+statement ok
+INSERT INTO t VALUES (1000)
+
+query I
+SELECT 1
+----
+1
+
+mode unskip
+
+query I
+SELECT max(a) FROM t
+----
+101

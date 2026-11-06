@@ -97,6 +97,10 @@ regression files are taken out for it (`test/pgregress`,
   column's is. An error an expression raises in a
   build after the commit says `could not create index "x":`
   before PostgreSQL's message, with another SQLSTATE.
+- **CREATE INDEX waits for every transaction using the table**
+  — differs: it takes the table's lock X (`../sm/INDEXBUILD.md`
+  §2), where PostgreSQL's SHARE lock lets readers go on, so an
+  open transaction that read the table holds it up.
 - **A unique index or constraint made on a table with rows**
   — differs: it is built after the commit (`DESIGN.md` §4),
   so in a transaction block a duplicate key is reported at
@@ -138,6 +142,8 @@ regression files are taken out for it (`test/pgregress`,
   USING on the row as it was.
 - **ALTER INDEX, ALTER TYPE, ALTER MATERIALIZED VIEW** —
   refused; ALTER VIEW takes only options and RENAME.
+- **ALTER SCHEMA ... RENAME** — refused: sm renames no
+  namespace yet (step 392). `OWNER TO` works.
 - **DEFERRABLE constraints** — never for a primary key
   (`../sm/CLUSTER.md` §10.4); refused for a unique constraint
   (step 294), and for a foreign key, with `NOT ENFORCED`,

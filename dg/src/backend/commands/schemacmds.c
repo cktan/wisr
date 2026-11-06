@@ -230,59 +230,16 @@ Oid CreateSchemaCommand(CreateSchemaStmt *stmt, const char *queryString,
 }
 
 /*
- * Rename schema
+ * Rename schema: refused.  A schema is sm's (../sm/NAMESPACE.md), which
+ * renames none yet; pg_namespace, which PostgreSQL's RenameSchema()
+ * wrote, is no table here.
  */
 ObjectAddress RenameSchema(const char *oldname, const char *newname) {
-  Oid nspOid;
-  HeapTuple tup;
-  Relation rel;
-  AclResult aclresult;
-  ObjectAddress address;
-  Form_pg_namespace nspform;
-
-  rel = table_open(NamespaceRelationId, RowExclusiveLock);
-
-  tup = SearchSysCacheCopy1(NAMESPACENAME, CStringGetDatum(oldname));
-  if (!HeapTupleIsValid(tup))
-    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_SCHEMA),
-                    errmsg("schema \"%s\" does not exist", oldname)));
-
-  nspform = (Form_pg_namespace)GETSTRUCT(tup);
-  nspOid = nspform->oid;
-
-  /* make sure the new name doesn't exist */
-  if (OidIsValid(get_namespace_oid(newname, true)))
-    ereport(ERROR, (errcode(ERRCODE_DUPLICATE_SCHEMA),
-                    errmsg("schema \"%s\" already exists", newname)));
-
-  /* must be owner */
-  if (!object_ownercheck(NamespaceRelationId, nspOid, GetUserId()))
-    aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_SCHEMA, oldname);
-
-  /* must have CREATE privilege on database */
-  aclresult = object_aclcheck(DatabaseRelationId, MyDatabaseId, GetUserId(),
-                              ACL_CREATE);
-  if (aclresult != ACLCHECK_OK)
-    aclcheck_error(aclresult, OBJECT_DATABASE, get_database_name(MyDatabaseId));
-
-  if (!allowSystemTableMods && IsReservedName(newname))
-    ereport(ERROR,
-            (errcode(ERRCODE_RESERVED_NAME),
-             errmsg("unacceptable schema name \"%s\"", newname),
-             errdetail("The prefix \"pg_\" is reserved for system schemas.")));
-
-  /* rename */
-  namestrcpy(&nspform->nspname, newname);
-  CatalogTupleUpdate(rel, &tup->t_self, tup);
-
-  InvokeObjectPostAlterHook(NamespaceRelationId, nspOid, 0);
-
-  ObjectAddressSet(address, NamespaceRelationId, nspOid);
-
-  table_close(rel, NoLock);
-  heap_freetuple(tup);
-
-  return address;
+  /* A schema that is not there is PostgreSQL's error, said first. */
+  (void)get_namespace_oid(oldname, false);
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  errmsg("ALTER SCHEMA ... RENAME is not supported yet")));
+  return InvalidObjectAddress; /* not reached */
 }
 
 void AlterSchemaOwner_oid(Oid schemaoid, Oid newOwnerId) {

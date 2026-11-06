@@ -1,0 +1,103 @@
+# Verify that ALTER TABLE takes effect at once in its own transaction,
+# as PostgreSQL's does (WORKNOTE.md step 384).
+# 1. A column dropped in a transaction is gone from SELECT * and by name
+#    before the commit, and an INSERT gives values for the rest alone:
+#    the errors are each in a savepoint, rolled back.
+# 2. A rollback brings the column back, with its values.
+# 3. A column dropped in a transaction that made the table is gone too.
+# 4. A column added and one retyped in a transaction are seen at once.
+
+statement ok
+create table t (i int4, j int4)
+
+statement ok
+insert into t values (1, 10), (2, 20)
+
+statement ok
+begin
+
+statement ok
+alter table t drop column j
+
+query I rowsort
+select * from t
+----
+1
+2
+
+statement ok
+savepoint s
+
+statement error column "j" does not exist
+select j from t
+
+statement ok
+rollback to s
+
+statement error INSERT has more expressions than target columns
+insert into t values (4, 40)
+
+statement ok
+rollback to s
+
+statement ok
+insert into t values (3)
+
+query I rowsort
+select * from t
+----
+1
+2
+3
+
+statement ok
+rollback
+
+query II rowsort
+select * from t
+----
+1	10
+2	20
+
+statement ok
+begin
+
+statement ok
+create table u (a int4, b int4, c text)
+
+statement ok
+insert into u values (1, 2, 'x')
+
+statement ok
+alter table u drop column b
+
+query IT rowsort
+select * from u
+----
+1	x
+
+statement ok
+commit
+
+statement ok
+begin
+
+statement ok
+alter table t add column k text default 'k'
+
+statement ok
+alter table t alter column j type int8
+
+query IIT rowsort
+select i, j, k from t
+----
+1	10	k
+2	20	k
+
+query T nosort
+select pg_typeof(j)::text from t limit 1
+----
+bigint
+
+statement ok
+rollback

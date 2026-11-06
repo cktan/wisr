@@ -1,0 +1,20 @@
+# A query with no ORDER BY compares its rows as a set: PostgreSQL 18
+# returns them as inserted, digres in key order, and that is no finding.
+# 1. Make a table with a primary key, and insert its keys out of order.
+# 2. Select every row with no ORDER BY: the orders differ, the rows not.
+# 3. Select them with ORDER BY: the same order on both.
+# expect: clean - 4 0 0
+
+statement ok
+CREATE TABLE t (a INTEGER PRIMARY KEY, b VARCHAR)
+
+statement ok
+INSERT INTO t VALUES (3, 'c'), (1, 'a'), (2, 'b')
+
+query IT
+SELECT a, b FROM t
+----
+
+query IT
+SELECT a, b FROM t ORDER BY a
+----

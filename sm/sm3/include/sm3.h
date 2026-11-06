@@ -800,11 +800,12 @@ int rename_table(session_t* session, uint64_t oid,
  * missing -- its bytes as sm2 holds them, a varlena for a
  * variable-width type -- or as null without one. So a NOT NULL
  * column without one needs a table with no row: its table-oid lock
- * X is taken if it is free now, and kept only if the table's store
- * is empty, SM_ERR_BLOCKED if it is not free and SM_ERR_NOTNULL if
- * the store holds a version of any kind, a deleted row's too, until
- * compaction. A live column's name is SM_ERR_DUPKEY, and an
- * identity column SM_ERR_INVALID.
+ * X is taken if it is free now, and kept only if the table holds no
+ * row now, SM_ERR_BLOCKED if it is not free and SM_ERR_NOTNULL if
+ * it holds one: a row committed since the transaction's snapshot
+ * counts, and a deleted row does not (sm1::view_latest). A live
+ * column's name is SM_ERR_DUPKEY, and an identity column
+ * SM_ERR_INVALID.
  */
 int add_column(session_t* session, uint64_t oid,
                const column_spec_t& col,
@@ -812,10 +813,11 @@ int add_column(session_t* session, uint64_t oid,
 
 /*
  * Make the live column name of the table oid NOT NULL. Every row
- * the transaction sees must hold a value in it, or it fails with
- * SM_ERR_NOTNULL and changes nothing: the table is opened
- * exclusive (tbl_open), so no row is written meanwhile, and a
- * scan reads each. One NOT NULL already is no error. ADD COLUMN
+ * must hold a value in it, or it fails with SM_ERR_NOTNULL and
+ * changes nothing: the table is opened exclusive (tbl_open), so no
+ * row is written meanwhile, and a scan reads each as it is now, one
+ * committed since the transaction's snapshot among them
+ * (sm1::view_latest). One NOT NULL already is no error. ADD COLUMN
  * with a volatile default makes the column, gives each row its
  * value, and then calls this.
  */
