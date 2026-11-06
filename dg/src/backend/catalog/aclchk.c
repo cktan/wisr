@@ -84,6 +84,7 @@
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/hooks.h"
+#include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/pg_global.h"
 #include "utils/rel.h"
@@ -2582,9 +2583,35 @@ static AclMode object_aclmask(Oid classid, Oid objectid, Oid roleid,
   return object_aclmask_ext(classid, objectid, roleid, mask, how, NULL);
 }
 
+/* A change to pg_proc: the functions' masks aa keeps are stale. */
+static void function_masks_moved(Datum arg, int cacheid, uint32 hashvalue) {
+  aa_session_t *s = pg_global_session();
+
+  if (NULL != s)
+    aa_forget_kept_masks(s);
+}
+
+/*
+ * The aa session that keeps the masks of functions, or NULL before
+ * pg_global is loaded.  pg_proc is digres's, not pg_global's, so a change
+ * to it reaches aa by a syscache callback, registered at the first call.
+ */
+static aa_session_t *function_masks(void) {
+  static thread_local /*LOCAL*/ bool registered = false;
+
+  if (!registered) {
+    /* So that a change to a function's owner or ACL forgets the masks. */
+    CacheRegisterSyscacheCallback(PROCOID, function_masks_moved, (Datum)0);
+    registered = true;
+  }
+  return pg_global_session();
+}
+
 /*
  * Generic routine for examining a user's privileges for an object,
- * with is_missing
+ * with is_missing.  A function's every privilege for a role is kept in
+ * the session (aa_kept_mask()): the executor checks EXECUTE on each
+ * function at each start, and the check is then a lookup.
  */
 static AclMode object_aclmask_ext(Oid classid, Oid objectid, Oid roleid,
                                   AclMode mask, AclMaskHow how,
@@ -2596,6 +2623,8 @@ static AclMode object_aclmask_ext(Oid classid, Oid objectid, Oid roleid,
   bool isNull;
   Acl *acl;
   Oid ownerId;
+  aa_session_t *kept = NULL;
+  uint64_t all;
 
   /* Special cases */
   switch (classid) {
@@ -2613,6 +2642,12 @@ static AclMode object_aclmask_ext(Oid classid, Oid objectid, Oid roleid,
   /* Superusers bypass all permission checking. */
   if (superuser_arg(roleid))
     return mask;
+
+  if (classid == ProcedureRelationId) {
+    kept = function_masks();
+    if (NULL != kept && aa_kept_mask(kept, classid, objectid, roleid, &all))
+      return all & mask;
+  }
 
   /*
    * Get the object's ACL from its catalog
@@ -2645,7 +2680,13 @@ static AclMode object_aclmask_ext(Oid classid, Oid objectid, Oid roleid,
     acl = DatumGetAclP(aclDatum);
   }
 
-  result = aclmask(acl, roleid, ownerId, mask, how);
+  if (NULL != kept) {
+    /* Every privilege, so any mask asked of it later is answered. */
+    all = aclmask(acl, roleid, ownerId, ~(AclMode)0, ACLMASK_ALL);
+    aa_keep_mask(kept, classid, objectid, roleid, all);
+    result = all & mask;
+  } else
+    result = aclmask(acl, roleid, ownerId, mask, how);
 
   /* if we have a detoasted copy, free it */
   if (acl && (Pointer)acl != DatumGetPointer(aclDatum))

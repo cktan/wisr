@@ -16,18 +16,6 @@ are built, the stack's part and digres's
 and so are the catalog tables psql reads
 (`../dg/SYSCATALOG.md` §6).
 
-0. TODO: Investigate if we can do vacuum using the OLD rel. ** TRUE
-   or FALSE: Only
-   rows with entries in OLD rel can be in-doubt. ** If only
-   10% of the rows are in-doubt, BTREE vacuum and REL vacuum
-   should not scan all leaves. Actually not quite true. Newly
-   inserted entries are automatically in-doubt before the 
-   transaction commits. Updating a secondary-key-value of row R
-   will not touch the original btree-index-entry, but will
-   create a new in-doubt btree-index-entry that points to R.
-   But we can spend some cycle to see if we can derive value
-   from OLD rel items.
-
 1. **digres's key-column ALTERs** (`CLUSTER.md` §11, step 3):
    built. ADD and DROP PRIMARY KEY, and of a unique constraint
    (`../dg/PKDDL.md`), and `ALTER COLUMN TYPE` of any column, a
@@ -83,11 +71,15 @@ and so are the catalog tables psql reads
    meet the goal, but it is a change to PostgreSQL's path that
    PostgreSQL does not have, so it is not made.
 
-   TODO: can AA have some form of memoize? ie. if the AA version 
-   has not changed, look in the memoized table for fast-path.
-   This is the normal case because sql statements usually run
-   queries on the same tables (or even same queries) multiple times 
-   in the same session in short bursts.
+   **A function's check, kept** (`../dg/WORKNOTE.md` step 395).
+   The EXECUTE check is now kept in the session, as a table's
+   is: `object_aclmask_ext()` asks aa's `aa_kept_mask()` first,
+   and a repeated check is a lookup. The answer is PostgreSQL's,
+   as the check still runs, once. Not measured yet: the arm VM
+   it was built on runs no benchmark. The estimate is about 100
+   instructions for a hit against about 1,260, which would bring
+   the gap under 3%. Left: measure it with callgrind on
+   `digres-release`.
 
 3. **A secondary index's scan, within 1.5 times PostgreSQL's**
    (`BTREEINDEX.md`, `../dg/WORKNOTE.md` steps 333 to 336). An

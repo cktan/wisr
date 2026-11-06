@@ -31,6 +31,7 @@ inside, see `AA_DESIGN.md`. Every function is declared in
 | Ask if a role is a member of another | `aa_is_member_of_role()` |
 | Ask if a role may administer another | `aa_is_admin_of_role()` |
 | Check a role's privileges on an object (fast, cached) | `aa_object_mask()` |
+| Keep the privileges of an object whose ACL you read yourself | `aa_kept_mask()`, `aa_keep_mask()`, `aa_forget_kept_masks()` |
 | Compute privileges from an ACL you already have | `aa_acl_mask()` |
 | Get an object's owner and ACL | `aa_find_object()` |
 | Find who a GRANT should be recorded as | `aa_select_best_grantor()` |
@@ -474,6 +475,12 @@ A transaction that aborts without trying to commit calls only
   check is a hash lookup with no lock and no allocation.
   `aa_find_object()` and `aa_acl_mask()` are not cached: use
   them for changes, or when you already hold the ACL.
+- **Keep your own objects' masks in aa.** For an object whose
+  owner and ACL you read yourself, as digres's functions in
+  `pg_proc`, call `aa_kept_mask()` first. On a miss, compute
+  every privilege, give it to `aa_keep_mask()`, and call
+  `aa_forget_kept_masks()` when your ACLs change. A change of
+  roles empties it, as it does `aa_object_mask()`'s cache.
 - **Pass the session.** With a session, repeated checks are
   cache hits with no lock. With `NULL`, every call is computed
   again.

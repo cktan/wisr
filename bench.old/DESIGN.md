@@ -105,7 +105,7 @@ on digres (`../sm/BTREE.md`).
 | Q4 | `select sum(length(body)) from toasted` | a value out of line, read whole |
 | Q5 | `select count(*) from toasted` | the same scan, not reading the values |
 | Q6 | `select sum(c1) from T where id between :a and :a + 99`, index scan only | an index range of 100 rows: a page of them, its start costing as much as its rows |
-| Q7 | `select c1 from T where id = any(array[:k1, ..., :k100])`, each `:k` Zipfian | 100 rows by key in one statement, a batch loader's fetch, hot keys drawn often |
+| Q7 | `select c1 from T where id in (:k1, ..., :k100)`, each `:k` Zipfian | 100 rows by key in one statement, a batch loader's fetch, hot keys drawn often |
 | Q8 | Q7, 9 times in 10, and `update T set c1 = c1 + 1 where id = :k`, `:k` Zipfian, 1 in 10; 16 clients | reads and writes at once, the hot rows contended |
 | Q9 | `select sum(c1) from T where c2 between :a and :a + 99`, index scan only | Q6 by the secondary index |
 | Q10 | `select c1 from T where c2 = any(array[:k1, ..., :k100])`, each `:k` Zipfian | Q7 by the secondary index |

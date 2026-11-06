@@ -406,3 +406,64 @@ TEST_CASE("authz: object mask") {
   aa_session_free(s);
   aa_session_free(s2);
 }
+
+// Verify a host's object's mask, kept: found as kept, for that class,
+// object and role alone, and gone at a change of roles by the session or
+// by another's commit, at a forget, and at a change between the miss and
+// the keep.
+// 1. Confirm a mask never kept is not found.
+// 2. Keep A's mask of function 1000: confirm it is found; E's of it, and
+//    A's of the table 1000, are not.
+// 3. Take A's membership in B away in the session: confirm the mask
+//    goes; abort, keep it again, and confirm it is found.
+// 4. Take the membership away in another session and commit: confirm
+//    the mask goes.
+// 5. Keep it again, forget the kept masks: confirm it goes.
+// 6. Miss it, give A the membership back in another session and commit,
+//    then keep it: confirm the next ask misses it.
+TEST_CASE("authz: a host's object's mask, kept") {
+  home_t h;
+  make_roles(h);
+  aa_session_t *s = aa_session_new(h.aa());
+  aa_session_t *s2 = aa_session_new(h.aa());
+  const aa_oid_t proc = 1255;
+  uint64_t all = 0;
+
+  // 1.
+  CHECK(!aa_kept_mask(s, proc, 1000, A, &all));
+
+  // 2.
+  aa_keep_mask(s, proc, 1000, A, AA_EXECUTE);
+  CHECK(aa_kept_mask(s, proc, 1000, A, &all));
+  CHECK(AA_EXECUTE == all);
+  CHECK(!aa_kept_mask(s, proc, 1000, E, &all));
+  CHECK(!aa_kept_mask(s, AA_CLASS_RELATION, 1000, A, &all));
+
+  // 3.
+  aa_delete_member(s, 16500);
+  CHECK(!aa_kept_mask(s, proc, 1000, A, &all));
+  REQUIRE(0 == aa_abort(s));
+  CHECK(!aa_kept_mask(s, proc, 1000, A, &all));
+  aa_keep_mask(s, proc, 1000, A, AA_EXECUTE);
+  CHECK(aa_kept_mask(s, proc, 1000, A, &all));
+
+  // 4.
+  aa_delete_member(s2, 16500);
+  REQUIRE(0 == aa_commit(s2));
+  CHECK(!aa_kept_mask(s, proc, 1000, A, &all));
+
+  // 5.
+  aa_keep_mask(s, proc, 1000, A, AA_EXECUTE);
+  CHECK(aa_kept_mask(s, proc, 1000, A, &all));
+  aa_forget_kept_masks(s);
+  CHECK(!aa_kept_mask(s, proc, 1000, A, &all));
+
+  // 6.
+  CHECK(!aa_kept_mask(s, proc, 1000, A, &all));
+  aa_put_member(s2, grant(16500, B, A, true, true, true));
+  REQUIRE(0 == aa_commit(s2));
+  aa_keep_mask(s, proc, 1000, A, AA_EXECUTE);
+  CHECK(!aa_kept_mask(s, proc, 1000, A, &all));
+  aa_session_free(s);
+  aa_session_free(s2);
+}
