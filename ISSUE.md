@@ -15,9 +15,9 @@ Found 2026-11-05, while the module documents were written.
    counts as a first committer for ever, which can cause false
    failures. It needs a failed lease write, and sm1 has no way to
    inject one.
-2. **The `CF:txn` sweep has no back-off** (`GC.md`). An abandoned
-   pass, or a snapshot that keeps `W0` low, leaves the count
-   above the threshold, so the next run starts another full pass.
+**Closed 2026-11-06:** the `CF:txn` sweep had no back-off
+(`GC.md` §8.6). A sweep now sets `sweep_floor` to the records it
+left, and the next starts only past that plus `txn_sweep_records`.
 
 **Closed:** `find_now()` at READ COMMITTED, with a row moved
 since the statement's snapshot, gives the conflict with both

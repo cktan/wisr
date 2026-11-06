@@ -546,10 +546,11 @@ costs beyond its I/O:
   `gc_run_once()` and waits. Purges, drops and stuck-snapshot
   warnings wait behind the whole pass. Only the wait for old
   readers is off the worker.
-- **It has no back-off.** The trigger reads only the record
-  count. A pass that is abandoned, or an old snapshot that keeps
-  `W0` low so that few records go, leaves the count above the
-  threshold. The next run starts another pass.
+- **It backs off by growth.** A pass that is abandoned, or an
+  old snapshot that keeps `W0` low, leaves records behind. The
+  pass sets `sweep_floor` to the records it left. The next pass
+  starts only when `CF:txn` holds `txn_sweep_records` more than
+  that.
 
 The options:
 

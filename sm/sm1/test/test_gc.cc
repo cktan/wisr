@@ -661,3 +661,34 @@ TEST_CASE("the GC run sweeps CF:txn once it grows past its threshold") {
   CHECK(scan_keys(s).size() == 20);
   REQUIRE(sm1::commit(s) == 0);
 }
+
+TEST_CASE("a sweep that frees nothing backs off until CF:txn grows") {
+  // Verify an old snapshot, which keeps W0 low, does not make every
+  // GC run start another pass (ISSUE.md: no back-off).
+  // 1. Lower the threshold to 5; hold a snapshot; commit 20 keys.
+  // 2. Run GC: a pass runs (the read epoch flips), few records go.
+  // 3. Run GC again: no pass runs.
+  // 4. Commit 10 more keys and run GC: a pass runs again.
+  sm1::options_t opt = tiny_cache();
+  gc_fixture_t f(&opt);
+  sm1::session_t *s = f.s();
+  sm1::session_t *r = f.open();
+  f.db()->txn_sweep_records = 5;
+  REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
+  for (int i = 0; i < 20; i++) {
+    commit_put(s, "k" + std::to_string(100 + i), "v");
+  }
+  uint64_t e0 = f.db()->read_epoch.load();
+  gc_run_once(f.db());
+  uint64_t e1 = f.db()->read_epoch.load();
+  CHECK(e1 == e0 + 1);
+  CHECK(f.txn_records() >= 20);
+  gc_run_once(f.db());
+  CHECK(f.db()->read_epoch.load() == e1);
+  for (int i = 0; i < 10; i++) {
+    commit_put(s, "m" + std::to_string(100 + i), "v");
+  }
+  gc_run_once(f.db());
+  CHECK(f.db()->read_epoch.load() == e1 + 1);
+  REQUIRE(sm1::commit(r) == 0);
+}

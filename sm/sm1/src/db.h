@@ -582,6 +582,12 @@ struct db_t {
   uint64_t sweep_epoch = 0;
   std::atomic<uint64_t> gc_filter_errors{0};
   uint64_t txn_sweep_records = 1000000; /* CF:txn keys to trigger */
+  /*
+   * Back-off: the records a sweep left (or could not remove). The next
+   * sweep starts only when CF:txn holds txn_sweep_records more than this.
+   */
+  uint64_t sweep_floor = 0;
+  uint64_t sweep_records = 0; /* CF:txn keys when the pending sweep began */
 
   /*
    * The SSI tracker (../XCTMGR.md §7), for SERIALIZABLE transactions only:

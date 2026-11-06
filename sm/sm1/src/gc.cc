@@ -361,7 +361,7 @@ void purge_one(db_t *db, const db_t::purge_t &p) {
  * when the sweep completes, 0 if it is pending, -1 if the pass failed
  * or could not be trusted.
  * 1. With no sweep pending: return 0 unless start is set.
- * 2. Record W0, the watermark.
+ * 2. Record W0, the watermark, and the size of CF:txn.
  * 3. Run every store CF through a forced, exclusive, bottommost
  *    compaction, so every committed version with commit_ts <= W0 is
  *    dropped or stamped. Return -1 if a compaction fails, or if the
@@ -370,6 +370,8 @@ void purge_one(db_t *db, const db_t::purge_t &p) {
  * 5. If the old epoch still has readers, return 0: a later call
  *    goes on from here. Else, in this call or a later one, delete
  *    the COMMITTED records at or below W0, and end the sweep.
+ * A sweep that ends, deleted or not, sets sweep_floor to the records
+ * it left, so the next one waits for txn_sweep_records more (back-off).
  */
 int64_t sweep_txn_locked(db_t *db, bool start) {
   // Start a sweep only when none is pending.
@@ -380,6 +382,10 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
     }
     // Record W0: the pass stamps everything at or below it.
     uint64_t w0 = db_watermark(db);
+    // Remember the size of CF:txn: the back-off floor starts from it.
+    uint64_t records = 0;
+    db->rdb->GetIntProperty(db->cf_txn, "rocksdb.estimate-num-keys", &records);
+    db->sweep_records = records;
     // Remember the filter's error count before the pass.
     uint64_t errors = db->gc_filter_errors.load();
     // Collect every store CF.
@@ -409,6 +415,8 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
         log_msg(sm1::loglevel_t::error,
                 "database {}: CF:txn sweep abandoned: compaction failed: {}",
                 db->name.c_str(), s.ToString().c_str());
+        // Back off: nothing was deleted.
+        db->sweep_floor = db->sweep_records;
         return -1;
       }
     }
@@ -418,6 +426,8 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
               "database {}: CF:txn sweep abandoned: some versions stayed "
               "unstamped, so their status records are kept",
               db->name.c_str());
+      // Back off: nothing was deleted.
+      db->sweep_floor = db->sweep_records;
       return -1; // some version stayed unstamped: keep records
     }
     // The pass succeeded: remember W0.
@@ -435,6 +445,9 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
   db->sweep_pending = false;
   // Delete the records every version has outgrown.
   int64_t n = xct_drop_committed_records(db, db->sweep_w0);
+  // Back off: the records left, short of what the sweep deleted.
+  uint64_t gone = n > 0 ? static_cast<uint64_t>(n) : 0;
+  db->sweep_floor = db->sweep_records > gone ? db->sweep_records - gone : 0;
   // Report the outcome: nobody waits on a background sweep.
   if (n < 0) {
     log_msg(sm1::loglevel_t::error, "database {}: CF:txn sweep failed: {}",
@@ -673,7 +686,7 @@ void gc_run_once(db_t *db) {
   if (!db->sweep_pending &&
       db->rdb->GetIntProperty(db->cf_txn, "rocksdb.estimate-num-keys",
                               &records) &&
-      records > db->txn_sweep_records) {
+      records > db->sweep_floor + db->txn_sweep_records) {
     // Big enough: start a sweep.
     sweep_txn_locked(db, true);
   } else if (db->sweep_pending) {
