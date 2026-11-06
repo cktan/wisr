@@ -46,6 +46,7 @@ constexpr size_t bufpool_session_frames = 6;
 constexpr size_t bufpool_key_max = 16;
 
 /* A page, across the process: its database, store and key. */
+// TODO: let's have a hashval here for faster match?
 struct bufpool_page_t {
   uint64_t dbid;
   uint64_t storeid;
@@ -60,6 +61,7 @@ constexpr unsigned bufpool_no_read = 2; /* a new page: exclusive alone */
  * Read a page into buf, of bufpool_frame_bytes, for a miss, setting len:
  * 0; 1 if there is no such page; -1 with the error set.
  */
+// TODO: rename to bufpool_load_fn
 typedef int (*bufpool_load_t)(void *arg, char *buf, size_t &len);
 
 /*
@@ -82,6 +84,8 @@ public:
   bufpool_t(const bufpool_t &) = delete;
   bufpool_t &operator=(const bufpool_t &) = delete;
 
+  // TODO: is it better if a frame_t provide a data() that return 
+  // the bytes of the frame? so pin does not return bytes.
   /*
    * Pin page, shared or, if ex, exclusive: 0 with the frame in out and
    * its bytes in bytes, valid until unpin; 1 if load finds no page,
