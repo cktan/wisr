@@ -428,7 +428,7 @@ int bufpool_t::take(const tag_t &tag, frame_t *&out) {
 
 /* Pin a page; see bufpool.h. */
 int bufpool_t::pin(const bufpool_page_t &page, bool ex, unsigned flags,
-                   bufpool_load_t load, void *arg, frame_t *&out,
+                   bufpool_load_fn load, void *arg, frame_t *&out,
                    std::string_view &bytes) {
   bytes = std::string_view();
   if (page.key.size() > bufpool_key_max) {

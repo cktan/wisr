@@ -82,7 +82,7 @@ struct page_read_t {
 };
 
 /*
- * Read a page into a frame, for a miss (bufpool_load_t). The frame is
+ * Read a page into a frame, for a miss (bufpool_load_fn). The frame is
  * its copy, so RocksDB's block cache keeps none (../BUFMGR.md §1.11).
  */
 int load_page(void *arg, char *buf, size_t &len) {
