@@ -870,8 +870,9 @@ an entry of it. Only a cleaning and a split set it.
 The flag holds nothing the in-doubt bits do not: it is derived
 from them. Its value is speed, not correctness:
 
-- **`VACUUM` and a cleaning** skip a clean leaf by one header
-  byte, and walk no entry.
+- **A cleaning** skips a clean leaf by one header byte, and
+  walks no entry. So does `VACUUM`'s walk of a temporary table's
+  leaves (§9.2).
 - **A reader** learns by one header byte whether a leaf needs
   cleaning, and tests no entry to queue it.
 - **An index-only scan** decides for a whole leaf at once, and
@@ -939,8 +940,8 @@ A scan needs no latch, for the reason in §5.4.
 
 A cleaning removes dead entries, clears the in-doubt bit of
 settled and live entries, and sets a leaf all visible. `VACUUM`
-cleans the leaves on the queue (§9.2). A cleaner thread cleans the
-leaves that readers and writers queue: all of them when the
+cleans the leaves on the queue (§9.2). A cleaner thread cleans
+the leaves that readers and writers queue: all of them when the
 system is not busy, and about 100 pages a second when it is
 (§9.9). digres has no autovacuum (`../dg/UNSUPPORTED.md`), so the
 cleaner is what keeps a tree clean between `VACUUM`s. §8 defines
@@ -1335,7 +1336,8 @@ cleanings:
   A new page adds one `fetch_or`, one mutex and an append.
 - A delete, or a key's change, latches its old key's leaf, and
   descends to it through page 0's copy and the pool.
-- `VACUUM` skips a set leaf, as PostgreSQL's vacuum skips an
+- `VACUUM` reads only the leaves on the queue (§9.2), and skips
+  a set leaf among them, as PostgreSQL's vacuum skips an
   all-visible heap page.
 
 ### 10.4 Measured with the cleaner
@@ -1344,7 +1346,9 @@ Measured 2026-11-05, optimized builds, 200,000 rows, one index on
 the changed column, one run of each, on a WSL2 machine. An update
 changes the key of a random row. The first row counts the
 session's own thread. The hot range is 200 rows, by 4 clients.
-`VACUUM` follows an update of 1% of the rows.
+`VACUUM` follows an update of 1% of the rows. These runs
+walked every leaf: `VACUUM` now reads the queue's leaves (§9.2),
+and its time is not measured again.
 
 | | PostgreSQL | digres, btree | digres, lsm |
 | --- | --: | --: | --: |
@@ -1371,7 +1375,7 @@ session's own thread. The hot range is 200 rows, by 4 clients.
  digres   btree access method, USING btree (or lsm)
             |  scans rows through sm3's cursor
  sm3      index's kind, row check, unique check, DROP,
-          VACUUM's walk, the cleaner
+          VACUUM's queue pages, the cleaner
             |
  sm2      src/tree/   page.cc   bytes of one page, no I/O
                       tree.cc   descent, cursor, insert, split
@@ -1396,10 +1400,10 @@ session's own thread. The hot range is 200 rows, by 4 clients.
 | --- | --- |
 | sm1 | class `0x04`, its comparison and the GC filter's pass-over; a page write outside every transaction; SIREAD and `on_write` on keys that are not stored; the pool; `gc_watermark()`; `set_no_transaction()`; `read_settled_versioned()` |
 | sm2, `src/tree/page.*` | the page's layout, the search of its slots, an entry's insert and a split's halves, on bytes, with no RocksDB; `set_all_visible()`, for which the tree level reads a leaf entry's `value[0]`; `page_mark_in_doubt()` |
-| sm2, `src/tree/tree.*` | descent, cursor, inserts, splits, `tree_mark_in_doubt()`, `clean_page()`, `clean_leaf()`, `tree_prune()`, `tree_clean_leaf()`, `tree_check()`; `leaf_note_fn` |
+| sm2, `src/tree/tree.*` | descent, cursor, inserts, splits, `tree_mark_in_doubt()`, `clean_page()`, `clean_leaf()`, `tree_prune()` (a temporary table's walk), `tree_clean_leaf()`, `tree_check()`; `leaf_note_fn` |
 | sm2, `src/rel/index.cc` | an index over a tree: the in-doubt bit in `tree_value()`, `idx_insert`, `idx_insert_unique`, `idx_delete`, `idx_scan`, `idx_scan_rebound`, `idx_scan_entry`, `idx_vacuum`, `idx_clean_leaf()`; `value[0]`'s readers test bit `0x01` for cut |
 | sm2, `src/rel/` | `toast_fetch_settled()` |
-| sm3, `src/table/table.cc` | `still_has()`, `tree_fill()`, `tree_next()`, `unique_tree_insert()`, `tree_find()`, `judge_entry()`, `tbl_clean_leaf()`, with no open table's lock, and `tbl_compact()`; `open_rels()` gives each tree its `leaf_note_fn`, but for a temporary table |
+| sm3, `src/table/table.cc` | `still_has()`, `tree_fill()`, `tree_next()`, `unique_tree_insert()`, `tree_find()`, `judge_entry()`, `tbl_clean_leaf()`, with no open table's lock, and `tbl_compact()`, which cleans the queue's pages; `open_rels()` gives each tree its `leaf_note_fn`, but for a temporary table |
 | sm3, `src/cleaner/` | the circular queue, the filter, the workers, `cleaner_budget()`, and `cleaner_run_once()` for tests |
 | sm3, `src/catalog/` | `sm3::begin()` counts in `begins`; the index's kind in its definition, and every index operation branching on it (LSMINDEX.md) |
 | sm, `src/sm.cc` | attaches and detaches the cleaner beside the builder; `sm_set_cleaner_workers()` and `sm_cleaner_run()`, for tests |
@@ -1463,6 +1467,9 @@ is the Buffer Manager's question (BUFMGR.md).
    the five a session may hold. A full parent still needs two
    writes and the flag, as one write would pin every level to the
    root. Proposed: build this if a bench shows the split's write.
+10. **`VACUUM` from the queue.** How many leaves with an entry
+    in doubt `VACUUM` leaves behind after a long run (§9.2), and
+    its time against the old walk's.
 
 **Not shown to run:** `tree_prune()`'s check of page 0's level
 has no test that reaches it.
@@ -1539,7 +1546,7 @@ is built.
   entry: a leaf whose newest writer is old can hold an entry
   whose row is gone.
 - **A leaf flag alone, with no bit on an entry.** It puts a leaf
-  once between two cleanings, not once an entry, but `VACUUM`
+  once between two cleanings, not once an entry, but a cleaning
   reads every entry's row on a leaf not set, and a scan or a
   cleaner cannot tell which entries changed (§10.3).
 - **A queue of old keys beside the bit.** A lost key could set a
