@@ -220,11 +220,11 @@ safe.
 
 Above READ COMMITTED, the call fails with `SM_ERR_CONFLICT` and
 aborts when another transaction committed a version of the key
-after this transaction's snapshot (`access_check_current`). At
-READ COMMITTED no check runs. The call returns 0 with the lock
-held, and the caller reads the key with `sm1::read_latest`, which
-requires that lock. T1 commits an update of `id = 7` after T2's
-snapshot, and T2 runs `SELECT * FROM t WHERE id = 7 FOR UPDATE`:
+after this transaction's snapshot. At READ COMMITTED no check
+runs. The call returns 0 with the lock held, and the caller reads
+the key with `sm1::read_latest`, which requires that lock. T1
+commits an update of `id = 7` after T2's snapshot, and T2 runs
+`SELECT * FROM t WHERE id = 7 FOR UPDATE`:
 
 ```
 T2 at READ COMMITTED:
@@ -238,10 +238,14 @@ The levels differ in where staleness is caught, not in whether it
 is. `sm1::lock_oid` runs no such check: no version of an oid can
 exist.
 
-Above READ COMMITTED a row lock reads the key twice: under the
-latch, then in this check. The first read's `commit_ts` could
-serve the check, which would save one RocksDB read a lock. It is
-a `TODO` in `lock_versioned`.
+The check reads no version of its own. It uses the `commit_ts`
+of the read under the latch, step 4 of `sm1::lock_row`. No
+version can come between that read and the check:
+
+- The lock is taken only with no other version in flight.
+- Every writer calls `lock_write_check` under the latch
+  (`sm1::insert`'s steps, in §1.7). With the lock held, the writer
+  waits.
 
 ### 1.7 A write
 
