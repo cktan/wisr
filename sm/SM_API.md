@@ -2002,6 +2002,27 @@ void sm_tbl_close(sm_tbl_t* tbl);
 Closes a table, and frees the handle of a bulk load not ended.
 The table-oid lock stays to the end of the transaction.
 
+The session keeps what the handle built, so that its next
+`sm_tbl_open` of the table skips building it. The next open still
+takes the lock and reads the definition, so it sees every change
+to the table. The caller must not use a closed handle.
+
+A kept handle holds no lock, pin or snapshot of a transaction. Its
+age starts at 128, and halves at the end of each transaction that
+opened a table. At 0 it is freed: a handle unused by seven such
+transactions after the one that closed it goes at the end of the
+seventh. A session keeps at most 1,024, and frees a handle closed
+past that. A table the transaction made, a temporary table, and a
+handle with a bulk load are freed at once.
+
+### `sm_tbl_parked`
+
+```cpp
+size_t sm_tbl_parked(const sm_session_t* session);
+```
+
+Returns the number of closed handles the session keeps.
+
 ### `sm_tbl_def`
 
 ```cpp

@@ -1313,6 +1313,9 @@ int sm_tbl_tryopen(sm_session_t* session, uint64_t oid, sm_lockmode_t mode,
 /* Close a table; NULL is a no-op. */
 void sm_tbl_close(sm_tbl_t* tbl);
 
+/* The closed handles the session keeps for its next opens of a table. */
+size_t sm_tbl_parked(const sm_session_t* session);
+
 /*
  * The table's definition, valid until sm_tbl_close; NULL, with the
  * error set, if it cannot be built. The first call builds it, so

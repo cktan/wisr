@@ -1351,8 +1351,31 @@ int tbl_open(session_t* session, uint64_t oid, sm1::lockmode_t mode,
 int tbl_tryopen(session_t* session, uint64_t oid, sm1::lockmode_t mode,
                 table_t*& out);
 
+/*
+ * Open a table again in session's transaction, from a handle a past
+ * transaction of the same session left by tbl_park. The lock is
+ * taken as tbl_open or, if wait is false, tbl_tryopen takes it, and
+ * the return is theirs. A definition changed since makes the rel and
+ * the indexes again. A return but 0 or 1 leaves the handle to close.
+ */
+int tbl_reopen(table_t* table, sm1::lockmode_t mode, bool wait);
+
+/*
+ * Make a table ready for tbl_reopen: true if it now holds nothing of
+ * its transaction. false if it cannot wait, and is to be closed: a
+ * table this transaction made, or a temporary table, as its
+ * definition ends with the transaction or the session.
+ */
+bool tbl_park(table_t* table);
+
 /* Close a table from tbl_open; nullptr is a no-op. */
 void tbl_close(table_t* table);
+
+/*
+ * The indexes of the table open now: a table opens an index at its
+ * first use, so an index this handle has not used is not counted.
+ */
+size_t tbl_indexes_open(const table_t* table);
 
 /* The definition the table was opened with. */
 const table_def_t& tbl_def(const table_t* table);

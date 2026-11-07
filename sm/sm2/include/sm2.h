@@ -828,6 +828,13 @@ int rel_release(rel_t* rel);
 void rel_forget(rel_t* rel);
 
 /*
+ * Leave a rel holding nothing of the transaction that used it: no
+ * datum kept by a write, nothing in its scratch pin. It may then wait
+ * for the next transaction of its session.
+ */
+void rel_idle(rel_t* rel);
+
+/*
  * TOAST (../TOAST.md §2). A rel opened with a toast_seq keeps
  * a tuple to toast_threshold bytes where it can: the row's longest
  * variable-width datums are written to the store's TOAST relid,

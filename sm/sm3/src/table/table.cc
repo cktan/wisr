@@ -41,14 +41,20 @@ struct sm3::table_t {
   bool fresh;                             /* made by this transaction */
   bool settled = false; /* the cleaner's: no transaction, no lock */
   sm2::rel_t *rel = nullptr;
-  std::vector<sm2::index_t *> indexes; /* one per def->indexes, in order */
+  /* One per def->indexes, in order: nullptr until use_index opens it. */
+  std::vector<sm2::index_t *> indexes;
   /*
    * Each index's state as the session saw it when the table was
    * opened. One that has changed since is seen late, as pending,
    * which is always safe: the index is maintained, and not scanned.
    */
   std::vector<sm3::index_state_t> states;
+  uint64_t states_epoch = 0; /* cat_epoch when states was read */
 };
+
+namespace sm3 {
+static int use_index(table_t *table, size_t i);
+}
 
 namespace {
 
@@ -228,6 +234,8 @@ int unchanged(const sm3::table_def_t &def, const sm3::index_def_t &x,
 
 /* Note the state of each index of t, as its session sees it now. */
 void load_states(sm3::table_t *t) {
+  // Noted first: a publish during the reads shows at the next open.
+  t->states_epoch = sm3::cat_epoch(t->session);
   t->states.clear();
   for (const sm3::index_def_t &x : t->def->indexes) {
     t->states.push_back(sm3::cat_index_state(t->session, x.oid));
@@ -401,6 +409,9 @@ int tree_find(sm3::table_t *t, size_t i, const entry_t &e, bool now,
  */
 int add_entry(sm3::table_t *t, size_t i, const entry_t &e, const vals_t &r,
               std::string_view row) {
+  if (sm3::use_index(t, i) != 0) {
+    return -1;
+  }
   picked_t inc(r, t->def->indexes[i].include_attnums);
   const sm3::index_def_t &x = t->def->indexes[i];
   if ((x.tree && x.unique ? unique_tree_insert(t, i, e, inc, row)
@@ -422,6 +433,9 @@ int add_entry(sm3::table_t *t, size_t i, const entry_t &e, const vals_t &r,
  */
 int remove_entry(sm3::table_t *t, size_t i, const entry_t &e,
                  std::string_view row) {
+  if (sm3::use_index(t, i) != 0) {
+    return -1;
+  }
   if (sm2::idx_delete(t->indexes[i], e.d(), e.null(), row) == 0) {
     return 0;
   }
@@ -475,9 +489,9 @@ namespace sm3 {
 namespace {
 
 /*
- * Open table's rel and indexes on the store its definition names:
- * the rows keyed by the primary key, if it has one, which is read
- * as an index of the rows.
+ * Open table's rel on the store its definition names: the rows keyed
+ * by the primary key, if it has one, which is read as an index of the
+ * rows. Its indexes open at their first use (use_index).
  */
 int open_rels(table_t *table) {
   const table_def_t &def = *table->def;
@@ -497,27 +511,11 @@ int open_rels(table_t *table) {
                          toast_seq, table->rel) != 0) {
     return -1;
   }
-  for (const index_def_t &x : def.indexes) {
-    sm2::index_t *ix = nullptr;
-    if ((x.primary ? sm2::idx_open_primary_layout(table->rel, *x.layout,
-                                                  x.include_attnums, ix)
-                   : sm2::idx_open_layout(s, def.storeid, x.relid, x.key,
-                                          x.unique, *x.layout, pk != nullptr,
-                                          ix, x.tree)) != 0) {
-      return -1;
-    }
-    // A leaf that needs cleaning is queued by whoever finds it. A
-    // temporary table's cannot be: the cleaner cannot read its rows.
-    cleaner_t *cleaner = table->session->cat->cleaner.get();
-    if (nullptr != cleaner && x.tree && nsp_temp != def.nspoid) {
-      sm2::idx_set_leaf_note(ix, cleaner_note, cleaner);
-    }
-    table->indexes.push_back(ix);
-  }
+  table->indexes.assign(def.indexes.size(), nullptr);
   return 0;
 }
 
-/* Close table's rel and indexes, leaving it with neither. */
+/* Close table's rel and the indexes it opened, leaving it with neither. */
 void close_rels(table_t *table) {
   for (sm2::index_t *ix : table->indexes) {
     sm2::idx_close(ix);
@@ -528,9 +526,8 @@ void close_rels(table_t *table) {
 }
 
 /*
- * Lock the table, waiting for it or not, then open its heap and every
- * index: 0, or 1 with nothing taken if the lock would have waited, or
- * -1.
+ * Lock the table, waiting for it or not, then open its heap: 0, or 1
+ * with nothing taken if the lock would have waited, or -1.
  */
 int open_table(session_t *session, uint64_t oid, sm1::lockmode_t mode,
                bool wait, table_t *&out) {
@@ -558,6 +555,37 @@ int open_table(session_t *session, uint64_t oid, sm1::lockmode_t mode,
 
 } // namespace
 
+/*
+ * Open index i of table, if nothing has yet: a table opens an index
+ * at its first use, so a read by the primary key opens no other. Every
+ * read of table->indexes[i] comes after this. A failure is the
+ * caller's, as a failed call of the operation that needed the index.
+ */
+static int use_index(table_t *table, size_t i) {
+  if (nullptr != table->indexes[i]) {
+    return 0;
+  }
+  const table_def_t &def = *table->def;
+  const index_def_t &x = def.indexes[i];
+  sm2::index_t *ix = nullptr;
+  if ((x.primary ? sm2::idx_open_primary_layout(table->rel, *x.layout,
+                                                x.include_attnums, ix)
+                 : sm2::idx_open_layout(table->session->sm1, def.storeid,
+                                        x.relid, x.key, x.unique, *x.layout,
+                                        sm2::rel_keyed(table->rel), ix,
+                                        x.tree)) != 0) {
+    return -1;
+  }
+  // A leaf that needs cleaning is queued by whoever finds it. A
+  // temporary table's cannot be: the cleaner cannot read its rows.
+  cleaner_t *cleaner = table->session->cat->cleaner.get();
+  if (nullptr != cleaner && x.tree && nsp_temp != def.nspoid) {
+    sm2::idx_set_leaf_note(ix, cleaner_note, cleaner);
+  }
+  table->indexes[i] = ix;
+  return 0;
+}
+
 /* Lock the table, then open its heap and every index; see sm3.h. */
 int tbl_open(session_t *session, uint64_t oid, sm1::lockmode_t mode,
              table_t *&out) {
@@ -570,6 +598,51 @@ int tbl_tryopen(session_t *session, uint64_t oid, sm1::lockmode_t mode,
   return open_table(session, oid, mode, false, out);
 }
 
+/*
+ * Open a table again from a parked handle; see sm3.h.
+ * 1. Take the table-oid lock, and read the definition under the
+ *    catalog's mutex. A commit of DDL releases this lock before it
+ *    publishes, so only that read sees the new definition.
+ * 2. Set what belongs to this transaction: the mode, and fresh.
+ * 3. With a new definition, make the rel and the indexes again.
+ * 4. With the same one, read the indexes' states only if the catalog
+ *    has moved, or this transaction has DDL of its own.
+ */
+int tbl_reopen(table_t *table, sm1::lockmode_t mode, bool wait) {
+  session_t *session = table->session;
+  const uint64_t oid = table->def->oid;
+  std::shared_ptr<const table_def_t> def;
+  bool fresh = false;
+  int rc = wait ? cat_lock_table(session, oid, mode, def, &fresh)
+                : cat_trylock_table(session, oid, mode, def, &fresh);
+  if (rc != 0) {
+    return rc;
+  }
+  table->writable = covers_write(mode);
+  table->exclusive = mode == sm1::SM_LOCKMODE_EX;
+  table->fresh = fresh;
+  if (def != table->def) {
+    close_rels(table);
+    table->def = std::move(def);
+    load_states(table);
+    return open_rels(table);
+  }
+  uint64_t epoch = cat_epoch(session);
+  if (epoch_own == epoch || epoch != table->states_epoch) {
+    load_states(table);
+  }
+  return 0;
+}
+
+/* Make a table ready for tbl_reopen; see sm3.h. */
+bool tbl_park(table_t *table) {
+  if (table->fresh || nsp_temp == table->def->nspoid) {
+    return false;
+  }
+  sm2::rel_idle(table->rel);
+  return true;
+}
+
 /* Close the heap and the indexes; the table-oid lock stays to commit. */
 void tbl_close(table_t *table) {
   if (!table) {
@@ -577,6 +650,12 @@ void tbl_close(table_t *table) {
   }
   close_rels(table);
   delete table;
+}
+
+/* The indexes of the table open now; see sm3.h. */
+size_t tbl_indexes_open(const table_t *table) {
+  return table->indexes.size() -
+         std::count(table->indexes.begin(), table->indexes.end(), nullptr);
 }
 
 /* The definition the table was opened with. */
@@ -740,7 +819,7 @@ int tbl_insert_arbiter(table_t *table, std::span<const sm2::datum_t> values,
     if (!arbiter || (!x.primary && table->states[i] == index_state_t::failed)) {
       continue;
     }
-    if (fetch_for(table, x, row) != 0 ||
+    if (use_index(table, i) != 0 || fetch_for(table, x, row) != 0 ||
         make_entry(table, i, row.row(), entry[i]) != 0) {
       return -1;
     }
@@ -1211,7 +1290,7 @@ int tbl_load_add(loader_t *l, std::span<const sm2::datum_t> values,
       continue;
     }
     entry_t e;
-    if (make_entry(table, i, row, e) != 0) {
+    if (use_index(table, i) != 0 || make_entry(table, i, row, e) != 0) {
       return -1;
     }
     if (!e.belongs) {
@@ -1597,6 +1676,9 @@ int tbl_scan_rows(table_t *table, scan_t *&out) {
   }
   for (size_t i = 0; i < table->def->indexes.size(); i++) {
     if (&table->def->indexes[i] == pk) {
+      if (use_index(table, i) != 0) {
+        return -1;
+      }
       return open_scan(table, out, [&](sm2::rel_scan_t *&rel) {
         return sm2::idx_scan_rows(table->indexes[i], nullptr, nullptr, rel);
       });
@@ -2092,6 +2174,9 @@ int tbl_idx_scan_rows(table_t *table, uint64_t index, const sm2::bound_t *lo,
                              " is not the primary key or a tree, or not "
                              "usable");
     }
+    if (use_index(table, i) != 0) {
+      return -1;
+    }
     if (x.tree) {
       pin_t *p = pin_take(table->session);
       sm2::index_scan_t *entries = nullptr;
@@ -2236,6 +2321,9 @@ int tbl_idx_scan(table_t *table, uint64_t index, const sm2::bound_t *lo,
                            "table: index " + def.indexes[i].name +
                                " is not usable by this snapshot");
       }
+      if (use_index(table, i) != 0) {
+        return -1;
+      }
       return sm2::idx_scan(table->indexes[i], lo, hi, out, widened);
     }
   }
@@ -2351,6 +2439,9 @@ int tbl_clean_leaf(session_t *session, std::shared_ptr<const table_def_t> def,
   if (i == d.indexes.size()) {
     return 1;
   }
+  if (use_index(t.get(), i) != 0) {
+    return -1;
+  }
   pin_t *p = pin_take(session);
   defer { pin_put(p); };
   size_t removed = 0;
@@ -2388,6 +2479,9 @@ int tbl_compact(table_t *table) {
   for (size_t i = 0; i < def.indexes.size(); i++) {
     if (!def.indexes[i].tree) {
       continue;
+    }
+    if (use_index(table, i) != 0) {
+      return -1;
     }
     pin_t *p = pin_take(table->session);
     defer {
@@ -2530,7 +2624,8 @@ int tbl_index_backfill(table_t *table, uint64_t index, std::string_view from,
     }
     sm2::bound_t eq{key.d(), key.null(), true};
     sm2::index_scan_t *is = nullptr;
-    if (sm2::idx_scan(table->indexes[i], &eq, &eq, is) != 0) {
+    if (use_index(table, i) != 0 ||
+        sm2::idx_scan(table->indexes[i], &eq, &eq, is) != 0) {
       return -1;
     }
     uint64_t owner;
@@ -2712,8 +2807,8 @@ int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec,
     return -1;
   }
   // Each tree, empty, in the new store, before the rows fill it.
-  for (sm2::index_t *ix : to->indexes) {
-    if (sm2::idx_create(ix) != 0) {
+  for (size_t i = 0; i < to->indexes.size(); i++) {
+    if (use_index(to.get(), i) != 0 || sm2::idx_create(to->indexes[i]) != 0) {
       return -1;
     }
   }
@@ -2740,7 +2835,7 @@ std::span<const sm2::attribute_t> tbl_idx_value_schema(const table_t *table,
   const table_def_t &def = *table->def;
   for (size_t i = 0; i < def.indexes.size(); i++) {
     if (def.indexes[i].oid == index) {
-      return sm2::idx_value_schema(table->indexes[i]);
+      return def.indexes[i].layout->value;
     }
   }
   return {};

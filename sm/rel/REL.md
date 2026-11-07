@@ -782,6 +782,22 @@ counted too.
 (table-size jobs)
 ```
 
+### `(table-version table)`
+The version in the table's definition (`sm_tbl_def`), as of this
+open of the table.
+
+```janet
+(table-version jobs)
+```
+
+### `(tables-parked)`
+The closed handles the session keeps for its next opens of a
+table (`sm_tbl_parked`).
+
+```janet
+(tables-parked)
+```
+
 ### `(analyze table [target])`
 Analyzes the table in the current transaction
 (`../STATISTICS.md` §9): samples up to 300 × `target` rows,

@@ -1,0 +1,367 @@
+# test_reopen.rel -- a session's next transaction reuses the handle of
+# its last, and sees every change made to the table since.
+# sm_tbl_close keeps the handle, and sm_tbl_open takes it back
+# (../SM_API.md).
+#
+# 1. Reads and writes in later transactions, reusing a handle, keep
+#    the indexes in step.
+# 2. An index another session makes is maintained by a reused handle;
+#    one it drops is left alone.
+# 3. A truncate by another session, its table on a new store, leaves
+#    the reused handle on the new store.
+# 4. A column's type changed by another session is read as the new
+#    type.
+# 5. A table another session drops is gone; one made with its name is
+#    the new one.
+# 6. This session's truncate, aborted or rolled back, leaves the old
+#    rows; committed, the new ones.
+# 7. A table made in an aborted transaction is gone; a temporary
+#    table's handle is not kept past its drop.
+# 8. A bulk load, committed and aborted, leaves the rows it should.
+# 9. A lock another session holds still blocks a reused handle.
+# 10. A session that closes more handles than it keeps reads the
+#     table as before.
+# 11. A reused handle's definition has the table's version now: an
+#     analyze moves the version and leaves the definition.
+# 12. A handle unused through seven transactions that open a table is
+#     freed at the end of the seventh: not one sooner, and a use starts
+#     its count again. One that opens no table does not count. An abort
+#     does.
+# 13. Past the cap a closed handle is freed, and those kept stay.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_reopen"))
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "reopendb")
+
+(session-open s1 "reopendb")
+(session-open s2 "reopendb")
+
+# 1. A handle reused.
+# 1.1 s1 makes t with an index, and writes in one transaction.
+# 1.2 s1 reads, then writes, then reads, each in a transaction of its
+#     own: the index has each row.
+(session-use s1)
+(begin :rc)
+(table-create t (columns (id :int4 :not-null) (v :int4)) (primary-key id))
+(index-create t_v (table t) (key (v :asc)) :unique false)
+(insert t [1 10])
+(commit)
+(begin :rc)
+(assert-count 1 (scan t))
+(commit)
+(begin :rc)
+(insert t [2 20])
+(commit)
+(begin :rc)
+(assert-count 2 (idx-scan t_v :ge [0] :le [100]))
+(commit)
+
+# 2. An index made and dropped while s1 holds no transaction.
+# 2.1 s2 makes t_w, an index on id, and it goes valid.
+# 2.2 s1 inserts through its reused handle.
+# 2.3 s2 finds the row by t_w: the handle maintained an index it
+#     did not have.
+# 2.4 s2 drops t_w, and s1 inserts and reads with no error.
+(session-use s2)
+(begin :rc)
+(index-create t_w (table t) (key (id :asc)) :unique false)
+(commit)
+(index-wait t_w)
+(session-use s1)
+(begin :rc)
+(insert t [3 30])
+(commit)
+(session-use s2)
+(begin :rc)
+(assert-count 3 (idx-scan t_w :ge [0] :le [100]))
+(index-drop t_w)
+(commit)
+(session-use s1)
+(begin :rc)
+(insert t [4 40])
+(assert-count 4 (scan t))
+(commit)
+
+# 3. A truncate by s2: s1 reads none, and its write goes to the new
+#    store, which s2 reads.
+(session-use s2)
+(begin :rc)
+(truncate t)
+(commit)
+(session-use s1)
+(begin :rc)
+(assert-count 0 (scan t))
+(insert t [5 50])
+(commit)
+(session-use s2)
+(begin :rc)
+(assert-count 1 (scan t))
+(assert-count 1 (idx-scan t_v :ge [0] :le [100]))
+(commit)
+
+# 4. A type changed by s2: s1 reads and writes the new type.
+(session-use s1)
+(begin :rc)
+(table-create a (columns (id :int4 :not-null) (b :text)) (primary-key id))
+(insert a [1 "30"])
+(commit)
+(begin :rc)
+(assert-eq (read a [1]) [1 "30"])
+(commit)
+(session-use s2)
+(begin :rc)
+(alter-column-type a b :int4)
+(commit)
+(session-use s1)
+(begin :rc)
+(assert-eq (read a [1]) [1 30])
+(insert a [2 40])
+(commit)
+
+# 5. A table dropped by s2, and one made with its name.
+# 5.1 s1 reads d, so its handle waits.
+# 5.2 s2 drops d: s1 finds no table.
+# 5.3 s2 makes d again with two rows: s1 reads two.
+(session-use s1)
+(begin :rc)
+(table-create d (columns (x :int4)))
+(insert d [1])
+(commit)
+(begin :rc)
+(assert-count 1 (scan d))
+(commit)
+(session-use s2)
+(begin :rc)
+(table-drop d)
+(commit)
+(session-use s1)
+(begin :rc)
+(assert-eq (truthy? (try (do (scan d) true) ([e] false))) false)
+(abort)
+(session-use s2)
+(begin :rc)
+(table-create d (columns (x :int4)))
+(insert d [2])
+(insert d [3])
+(commit)
+(session-use s1)
+(begin :rc)
+(assert-count 2 (scan d))
+(commit)
+
+# 6. This session's own truncate.
+# 6.1 Truncated and aborted, the rows are back.
+# 6.2 Truncated under a savepoint and rolled back, the rows are back.
+# 6.3 Truncated and committed, they are gone.
+(begin :rc)
+(table-create o (columns (x :int4)))
+(insert o [1])
+(insert o [2])
+(commit)
+(begin :rc)
+(truncate o)
+(assert-count 0 (scan o))
+(abort)
+(begin :rc)
+(assert-count 2 (scan o))
+(commit)
+(begin :rc)
+(def before (savepoint))
+(truncate o)
+(assert-count 0 (scan o))
+(rollback before)
+(assert-count 2 (scan o))
+(commit)
+(begin :rc)
+(truncate o)
+(commit)
+(begin :rc)
+(assert-count 0 (scan o))
+(insert o [3])
+(commit)
+(begin :rc)
+(assert-count 1 (scan o))
+(commit)
+
+# 7. A table made and aborted, and a temporary table.
+# 7.1 A table made and read in a transaction that aborts is gone.
+# 7.2 A temporary table reads across transactions, and is gone once
+#     dropped; one made with its name reads its own rows.
+(begin :rc)
+(table-create gone (columns (x :int4)))
+(insert gone [1])
+(assert-count 1 (scan gone))
+(abort)
+(begin :rc)
+(assert-eq (truthy? (try (do (scan gone) true) ([e] false))) false)
+(abort)
+(begin :rc)
+(temp-table-create tmp (columns (x :int4)))
+(insert tmp [1])
+(commit)
+(begin :rc)
+(assert-count 1 (scan tmp))
+(table-drop tmp)
+(commit)
+(begin :rc)
+(temp-table-create tmp (columns (x :int4)))
+(assert-count 0 (scan tmp))
+(commit)
+
+# 8. A bulk load.
+# 8.1 Rows loaded and committed read back through a reused handle.
+# 8.2 A load aborted leaves the table empty.
+(def ten (seq [i :range [0 10]] [i]))
+(begin :rc)
+(table-create big (columns (x :int4)))
+(table-create big2 (columns (x :int4)))
+(commit)
+(begin :rc)
+(load big ten)
+(commit)
+(begin :rc)
+(assert-count 10 (scan big))
+(commit)
+(begin :rc)
+(assert-count 0 (scan big2))
+(commit)
+(begin :rc)
+(load big2 ten)
+(abort)
+(begin :rc)
+(assert-count 0 (scan big2))
+(commit)
+
+# 9. A lock held by s2 blocks a reused handle, which then still works.
+# 9.1 s1 reads l, so its handle waits.
+# 9.2 s2 truncates l, and holds the exclusive lock.
+# 9.3 s1, told not to wait, is refused.
+# 9.4 s2 commits, and s1 reads the empty table.
+(begin :rc)
+(table-create l (columns (x :int4)))
+(insert l [1])
+(commit)
+(begin :rc)
+(assert-count 1 (scan l))
+(commit)
+(session-use s2)
+(begin :rc)
+(truncate l)
+(session-use s1)
+(qa-nowait true)
+(begin :rc)
+(assert-err :err-blocked (scan l))
+(abort)
+(qa-nowait false)
+(session-use s2)
+(commit)
+(session-use s1)
+(begin :rc)
+(assert-count 0 (scan l))
+(commit)
+
+# 10. More handles than a session keeps.
+# 10.1 s1 opens 1,100 cursors on one table, each with a handle of its
+#      own, and closes them all, which parks past the cap.
+# 10.2 s1 reads the table through what is left, then with no handle
+#      left to reuse in the next open of a cursor.
+(begin :rc)
+(table-create m (columns (x :int4 :not-null)) (primary-key x))
+(index-create m_x (table m) (key (x :asc)) :unique false)
+(insert m [1])
+(commit)
+(begin :rc)
+(def cursors (seq [i :range [0 1100]] (idx-open m_x :ge [0])))
+(each c cursors (cursor-close c))
+(commit)
+(begin :rc)
+(assert-count 1 (scan m))
+(assert-count 1 (idx-scan m_x))
+(commit)
+
+# 11. The version of a reused handle's definition.
+# 11.1 s1 notes v's version, so its handle waits, its definition built.
+# 11.2 s2 analyzes v: its version moves, its definition does not.
+# 11.3 s1's next read of the version has moved with it.
+(begin :rc)
+(table-create v (columns (x :int4)))
+(insert v [1])
+(commit)
+(begin :rc)
+(def v0 (table-version v))
+(commit)
+(session-use s2)
+(begin :rc)
+(analyze v 10)
+(commit)
+(session-use s1)
+(begin :rc)
+(assert-eq (> (table-version v) v0) true)
+(commit)
+
+# 12. Aging, on a session of its own, so that it starts with no handle.
+# 12.1 s3 reads r1 to r4 in one transaction: four handles.
+# 12.2 Six transactions read r1 alone: still four.
+# 12.3 The seventh frees r2, r3 and r4, which it did not read.
+# 12.4 Transactions with no table leave r1 alone, however many.
+# 12.5 r1 unused through six transactions of r2 is kept, as is r2.
+# 12.6 A seventh, an abort, frees r1.
+(session-open s3 "reopendb")
+(session-use s3)
+(begin :rc)
+(table-create r1 (columns (x :int4)))
+(table-create r2 (columns (x :int4)))
+(table-create r3 (columns (x :int4)))
+(table-create r4 (columns (x :int4)))
+(commit)
+(session-close s3)
+(session-open s3 "reopendb")
+(session-use s3)
+(assert-eq (tables-parked) 0)
+(begin :rc)
+(scan r1)
+(scan r2)
+(scan r3)
+(scan r4)
+(commit)
+(assert-eq (tables-parked) 4)
+(for i 0 6
+  (begin :rc)
+  (scan r1)
+  (commit)
+  (assert-eq (tables-parked) 4))
+(begin :rc)
+(scan r1)
+(commit)
+(assert-eq (tables-parked) 1)
+(for i 0 20
+  (begin :rc)
+  (commit))
+(assert-eq (tables-parked) 1)
+(for i 0 6
+  (begin :rc)
+  (scan r2)
+  (commit))
+(assert-eq (tables-parked) 2)
+(begin :rc)
+(scan r2)
+(abort)
+(assert-eq (tables-parked) 1)
+
+# 13. The cap.
+# 13.1 s3 opens 1,100 cursors on m, and closes them: 1,024 are kept.
+# 13.2 Its read of r2, in the same transaction, takes a handle and
+#      parks it again: the count stays at the cap.
+(begin :rc)
+(def more (seq [i :range [0 1100]] (idx-open m_x :ge [0])))
+(each c more (cursor-close c))
+(assert-eq (tables-parked) 1024)
+(scan r2)
+(assert-eq (tables-parked) 1024)
+(commit)
+(session-close s3)
+
+(session-close s1)
+(session-close s2)

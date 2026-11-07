@@ -1806,6 +1806,24 @@ static Janet cfun_index_wait(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
+/* (tables-parked): the handles the session keeps for its next opens. */
+static Janet cfun_tables_parked(int32_t argc, Janet *argv) {
+  (void)argv;
+  janet_fixarity(argc, 0);
+  session_ctx_t *s = require_session();
+  return janet_wrap_number(static_cast<double>(sm_tbl_parked(s->session)));
+}
+
+/* (table-version table): the version in the table's definition. */
+static Janet cfun_table_version(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  std::string tbl_name = identifier_of(argv[0]);
+  table_def_t *p_tdef =
+      need_table(s, tbl_name, SM_LOCKMODE_IS, "table-version");
+  return janet_wrap_number(static_cast<double>(p_tdef->def->version));
+}
+
 /* (index-state idx_name) */
 static Janet cfun_index_state(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 1);
@@ -3195,6 +3213,9 @@ static const JanetReg s_rel_cfuns[] = {
     {"_index-drop", cfun_index_drop, "internal"},
     {"_index-wait", cfun_index_wait, "internal"},
     {"_index-state", cfun_index_state, "internal"},
+    {"_table-version", cfun_table_version, "internal"},
+    {"tables-parked", cfun_tables_parked,
+     "(tables-parked) -- the handles the session keeps for its next opens"},
     {"list-tables", cfun_list_tables,
      "(list-tables) -- the table names in public, sorted"},
     {"_describe-table", cfun_describe_table, "internal"},
@@ -3284,6 +3305,8 @@ static const char *s_prelude = R"janet(
 
 (defmacro index-state [name]
   ~(_index-state (string ',name)))
+(defmacro table-version [name]
+  ~(_table-version (string ',name)))
 
 (defmacro describe-table [name & flags]
   ~(_describe-table (string ',name) ,;flags))

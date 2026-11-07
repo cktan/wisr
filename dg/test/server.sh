@@ -5814,6 +5814,7 @@ grep -qx 1000 "$work/typecrash.out" &&
   fail "crashed retype: the column as it was"
 # Check DDL against rows committed after a transaction snapshot.
 source test/ddl_current.sh
+source test/parked_tables.sh
 # Check that overlapping ACL changes never restore a revoked right.
 source test/acl_overlap.sh
 

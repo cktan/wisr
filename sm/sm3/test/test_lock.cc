@@ -586,3 +586,182 @@ TEST_CASE("an analyze that does not wait passes over one in progress") {
   CHECK(st != nullptr);
   REQUIRE(sm3::commit(f.c) == 0);
 }
+
+TEST_CASE("a parked table opens again with all that changed since") {
+  // Verify tbl_reopen gives a handle what its table is now, not what
+  // it was when the handle was parked.
+  // 1. A opens t to read and parks it. Reopened to write, it writes;
+  //    reopened to read, its write is refused.
+  // 2. C makes an index: A's reopen has the new definition, the index
+  //    pending.
+  // 3. C sets the index valid, which leaves the definition as it was:
+  //    A's reopen reads the state, valid.
+  // 4. C holds t X: A's reopen without waiting returns 1, and takes
+  //    nothing. C commits, and the same handle reopens.
+  // 5. C drops t: A's reopen fails with SM_ERR_NOTFOUND.
+  locks_t f;
+  using sm3::index_state_t;
+  sm3::table_t *ta = nullptr;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::tbl_open(f.a, f.t, sm1::SM_LOCKMODE_IS, ta) == 0);
+  REQUIRE(sm3::tbl_park(ta));
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  sm2::datum_t v = sm2::datum_from_int32(7);
+  bool isnull = false;
+  uint64_t rowno = 0;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::tbl_reopen(ta, sm1::SM_LOCKMODE_IX, true) == 0);
+  REQUIRE_MESSAGE(sm3::tbl_insert(ta, {&v, 1}, {&isnull, 1}, rowno) == 0,
+                  sm1::errmsg());
+  REQUIRE(sm3::tbl_park(ta));
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::tbl_reopen(ta, sm1::SM_LOCKMODE_IS, true) == 0);
+  CHECK(sm3::tbl_insert(ta, {&v, 1}, {&isnull, 1}, rowno) != 0);
+  REQUIRE(sm3::tbl_park(ta));
+  REQUIRE(sm3::abort(f.a) == 0);
+
+  std::vector<sm3::index_key_spec_t> on_x = {{0, false, false, std::nullopt}};
+  uint64_t x = 0;
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::create_index(f.c, f.t, "t_x", on_x, {}, false, x) == 0);
+  REQUIRE(sm3::commit(f.c) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm3::tbl_def(ta).indexes.empty());
+  REQUIRE(sm3::tbl_reopen(ta, sm1::SM_LOCKMODE_IS, true) == 0);
+  REQUIRE(sm3::tbl_def(ta).indexes.size() == 1);
+  CHECK(sm3::tbl_index_state(ta, x) == index_state_t::pending);
+  REQUIRE(sm3::tbl_park(ta));
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  const sm3::table_def_t *was = &sm3::tbl_def(ta);
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::set_index_state(f.c, f.t, x, index_state_t::valid) == 0);
+  REQUIRE(sm3::commit(f.c) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::tbl_reopen(ta, sm1::SM_LOCKMODE_IS, true) == 0);
+  CHECK(&sm3::tbl_def(ta) == was);
+  CHECK(sm3::tbl_index_state(ta, x) == index_state_t::valid);
+  REQUIRE(sm3::tbl_park(ta));
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  def_ptr d;
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::cat_lock_table(f.c, f.t, sm1::SM_LOCKMODE_EX, d) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm3::tbl_reopen(ta, sm1::SM_LOCKMODE_IS, false) == 1);
+  REQUIRE(sm3::commit(f.c) == 0);
+  REQUIRE(sm3::tbl_reopen(ta, sm1::SM_LOCKMODE_IS, false) == 0);
+  REQUIRE(sm3::tbl_park(ta));
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::drop_table(f.c, f.t) == 0);
+  REQUIRE(sm3::commit(f.c) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm3::tbl_reopen(ta, sm1::SM_LOCKMODE_IS, true) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("a table opens an index at its first use") {
+  // Verify a table opens only the indexes its calls use, and that each
+  // call that needs an index still works on one not yet open.
+  // 1. t has two indexes, valid: its open opens neither.
+  // 2. A scan of one opens that one alone.
+  // 3. An insert maintains both, so opens the other.
+  // 4. The handle, parked and reopened, keeps both.
+  // 5. A new index makes a new definition: reopened, none is open, and
+  //    an insert opens all three and reaches each.
+  locks_t f;
+  using sm3::index_state_t;
+  std::vector<sm3::index_key_spec_t> on_x = {{0, false, false, std::nullopt}};
+  uint64_t x1 = 0, x2 = 0, x3 = 0;
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::create_index(f.c, f.t, "t_x1", on_x, {}, false, x1) == 0);
+  REQUIRE(sm3::create_index(f.c, f.t, "t_x2", on_x, {}, false, x2) == 0);
+  REQUIRE(sm3::commit(f.c) == 0);
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::set_index_state(f.c, f.t, x1, index_state_t::valid) == 0);
+  REQUIRE(sm3::set_index_state(f.c, f.t, x2, index_state_t::valid) == 0);
+  REQUIRE(sm3::commit(f.c) == 0);
+
+  sm3::table_t *t = nullptr;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::tbl_open(f.a, f.t, sm1::SM_LOCKMODE_IX, t) == 0);
+  CHECK(sm3::tbl_indexes_open(t) == 0);
+
+  sm2::index_scan_t *scan = nullptr;
+  REQUIRE_MESSAGE(sm3::tbl_idx_scan(t, x1, nullptr, nullptr, scan) == 0,
+                  sm1::errmsg());
+  sm2::idx_scanend(scan);
+  CHECK(sm3::tbl_indexes_open(t) == 1);
+
+  sm2::datum_t v = sm2::datum_from_int32(7);
+  bool isnull = false;
+  uint64_t rowno = 0;
+  REQUIRE_MESSAGE(sm3::tbl_insert(t, {&v, 1}, {&isnull, 1}, rowno) == 0,
+                  sm1::errmsg());
+  CHECK(sm3::tbl_indexes_open(t) == 2);
+  REQUIRE(sm3::tbl_park(t));
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::tbl_reopen(t, sm1::SM_LOCKMODE_IX, true) == 0);
+  CHECK(sm3::tbl_indexes_open(t) == 2);
+  REQUIRE(sm3::tbl_park(t));
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::create_index(f.c, f.t, "t_x3", on_x, {}, false, x3) == 0);
+  REQUIRE(sm3::commit(f.c) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::tbl_reopen(t, sm1::SM_LOCKMODE_IX, true) == 0);
+  CHECK(sm3::tbl_indexes_open(t) == 0);
+  REQUIRE_MESSAGE(sm3::tbl_insert(t, {&v, 1}, {&isnull, 1}, rowno) == 0,
+                  sm1::errmsg());
+  CHECK(sm3::tbl_indexes_open(t) == 3);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("a table this transaction made, or a temporary one, is not parked") {
+  // Verify tbl_park refuses a table whose definition may end with the
+  // transaction or the session, and takes the same table once it is
+  // committed.
+  // 1. A makes u and opens it in the same transaction: not parked.
+  // 2. A commits, and opens u again: parked.
+  // 3. A makes a temporary table: not parked, in that transaction or
+  //    the next.
+  locks_t f;
+  std::vector<sm3::column_spec_t> cols = {
+      {"x", sm2::type_int4.code, -1, false}};
+  uint64_t u = 0, tmp = 0;
+  sm3::table_t *t = nullptr;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::create_table(f.a, sm3::nsp_public, "u", cols, u) == 0);
+  REQUIRE(sm3::tbl_open(f.a, u, sm1::SM_LOCKMODE_IS, t) == 0);
+  CHECK_FALSE(sm3::tbl_park(t));
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::tbl_open(f.a, u, sm1::SM_LOCKMODE_IS, t) == 0);
+  CHECK(sm3::tbl_park(t));
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::create_temp_table(f.a, "tmp", cols, tmp) == 0);
+  REQUIRE(sm3::tbl_open(f.a, tmp, sm1::SM_LOCKMODE_IS, t) == 0);
+  CHECK_FALSE(sm3::tbl_park(t));
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::tbl_open(f.a, tmp, sm1::SM_LOCKMODE_IS, t) == 0);
+  CHECK_FALSE(sm3::tbl_park(t));
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}

@@ -1121,7 +1121,7 @@ is no leaf.
 
 A temporary table's pages are not queued: the cleaner cannot read
 that session's instance. They keep their in-doubt bits for
-`VACUUM`. `open_rels()` gives a tree its `leaf_note_fn` only for
+`VACUUM`. `use_index()` gives a tree its `leaf_note_fn` only for
 a table that is not temporary.
 
 ### 9.6 A pass
@@ -1410,7 +1410,7 @@ and its time is not measured again.
 | sm2, `src/tree/tree.*` | descent, cursor, inserts, splits, `tree_mark_in_doubt()`, `clean_page()`, `clean_leaf()`, `tree_prune()` (a temporary table's walk), `tree_clean_leaf()`, `tree_check()`; `leaf_note_fn` |
 | sm2, `src/rel/index.cc` | an index over a tree: the in-doubt bit in `tree_value()`, `idx_insert`, `idx_insert_unique`, `idx_delete`, `idx_scan`, `idx_scan_rebound`, `idx_scan_entry`, `idx_vacuum`, `idx_clean_leaf()`; `value[0]`'s readers test bit `0x01` for cut |
 | sm2, `src/rel/` | `toast_fetch_settled()` |
-| sm3, `src/table/table.cc` | `still_has()`, `tree_fill()`, `tree_next()`, `unique_tree_insert()`, `tree_find()`, `judge_entry()`, `tbl_clean_leaf()`, with no open table's lock, and `tbl_compact()`, which cleans the queue's pages; `open_rels()` gives each tree its `leaf_note_fn`, but for a temporary table |
+| sm3, `src/table/table.cc` | `still_has()`, `tree_fill()`, `tree_next()`, `unique_tree_insert()`, `tree_find()`, `judge_entry()`, `tbl_clean_leaf()`, with no open table's lock, and `tbl_compact()`, which cleans the queue's pages; `use_index()` gives each tree its `leaf_note_fn`, but for a temporary table |
 | sm3, `src/cleaner/` | the circular queue, the filter, the workers, `cleaner_budget()`, and `cleaner_run_once()` for tests |
 | sm3, `src/catalog/` | `sm3::begin()` counts in `begins`; the index's kind in its definition, and every index operation branching on it (LSMINDEX.md) |
 | sm, `src/sm.cc` | attaches and detaches the cleaner beside the builder; `sm_set_cleaner_workers()` and `sm_cleaner_run()`, for tests |

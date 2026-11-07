@@ -93,9 +93,21 @@ struct sm_session_t {
   sm_env_t *env;
   sm1::session_t *sm1;
   sm3::session_t *sm3 = nullptr;
+  /*
+   * The handles of past transactions, by table oid, each list linked
+   * through next_parked: a table's next open reuses one (sm_tbl_open).
+   * An oid's entry stays when an open empties its list, so that
+   * parking one again allocates nothing.
+   */
+  std::unordered_map<uint64_t, sm_tbl_t *> parked{};
+  size_t parked_count = 0;
+  bool opened_table = false; /* this transaction has opened a table */
 };
 
 namespace {
+
+void free_parked(sm_session_t *session);
+void age_parked(sm_session_t *session);
 
 /* The sm1 environment behind a C handle. */
 sm1::env_t *env_of(sm_env_t *env) { return env->env; }
@@ -530,6 +542,8 @@ int sm_detach(sm_env_t *env, int force) {
       if (!sm1::in_doubt(s->sm1)) {
         keeping_error([&] { sm3::abort(s->sm3); });
       }
+      // Their rels and indexes name sm1 sessions that end below.
+      free_parked(s);
     }
     // Stop the builders first: their workers hold sm1 sessions,
     // which must be closed before the databases are.
@@ -747,6 +761,7 @@ int sm_closedb(sm_session_t *session) {
       std::lock_guard lock(session->env->mu);
       session->env->sessions.erase(session);
     }
+    free_parked(session);
     sm3::session_close(session->sm3);
     int rc = sm1::closedb(session->sm1);
     delete session;
@@ -764,7 +779,13 @@ int sm_begin(sm_session_t *session, sm_xctlevel_t level, int read_only) {
 
 /* Commit the active transaction. */
 int sm_commit(sm_session_t *session) {
-  return guard(session, [&] { return sm3::commit(session->sm3); });
+  return guard(session, [&] {
+    if (sm3::commit(session->sm3) != 0) {
+      return -1;
+    }
+    age_parked(session);
+    return 0;
+  });
 }
 
 /* Abort the active transaction, or accept that it is already gone. */
@@ -772,8 +793,11 @@ int sm_abort(sm_session_t *session) {
   return guard(session, [&] {
     if (sm3::abort(session->sm3) != 0) {
       // The engine aborted it already, after a retryable error.
-      return sm1::errnum() == sm1::SM_ERR_NOTRANS ? 0 : -1;
+      if (sm1::errnum() != sm1::SM_ERR_NOTRANS) {
+        return -1;
+      }
     }
+    age_parked(session);
     return 0;
   });
 }
@@ -1744,9 +1768,138 @@ struct sm_tbl_t {
   mutable std::optional<sm_table_def_t> def;
   std::unordered_map<uint64_t, sm2::tup_desc_t> value_descs;
   sm3::loader_t *loader = nullptr; /* the bulk load begun on the table */
+  sm_tbl_t *next_parked = nullptr; /* its table's list, while parked */
+  uint8_t age = 0;                 /* halved as transactions end */
 };
 
 namespace {
+
+/*
+ * A handle's age when it is parked. Each transaction's end halves it,
+ * and at 0 the handle is freed: at the end of the eighth, the
+ * transaction that used it being the first. This is what frees a
+ * dropped table's handle, which no open asks for again.
+ */
+constexpr uint8_t parked_age = 1 << 7;
+
+/*
+ * The handles a session keeps parked, at most: a bound for one long
+ * transaction, as age moves only as transactions end.
+ */
+constexpr size_t parked_max = 1024;
+
+/* Free a handle, and the rel and indexes under it. */
+void free_tbl(sm_tbl_t *tbl) {
+  sm3::tbl_close(tbl->table);
+  delete tbl;
+}
+
+/* Put a handle on its session's list for its table. */
+void park_tbl(sm_tbl_t *tbl) {
+  sm_session_t *session = tbl->session;
+  sm_tbl_t *&head = session->parked[sm3::tbl_def(tbl->table).oid];
+  tbl->next_parked = head;
+  tbl->age = parked_age;
+  head = tbl;
+  session->parked_count++;
+}
+
+/* A handle parked for the table oid, off its list; nullptr if none. */
+sm_tbl_t *take_parked(sm_session_t *session, uint64_t oid) {
+  auto it = session->parked.find(oid);
+  if (session->parked.end() == it || nullptr == it->second) {
+    return nullptr;
+  }
+  sm_tbl_t *tbl = it->second;
+  it->second = tbl->next_parked;
+  tbl->next_parked = nullptr;
+  session->parked_count--;
+  return tbl;
+}
+
+/*
+ * Open the table oid, from a parked handle if there is one: 0, -1,
+ * or, with wait false, 1 if the lock is taken.
+ * 1. With no parked handle, make one, which builds the rel and every
+ *    index.
+ * 2. With one, open it again: the lock is taken each time.
+ * 3. Forget what is true of one transaction only, and what was made
+ *    from a definition that has changed.
+ */
+int open_tbl(sm_session_t *session, uint64_t oid, sm_lockmode_t mode, bool wait,
+             sm_tbl_t **out) {
+  session->opened_table = true;
+  sm_tbl_t *parked = take_parked(session, oid);
+  if (nullptr == parked) {
+    auto t = std::make_unique<sm_tbl_t>();
+    t->session = session;
+    int rc = wait ? sm3::tbl_open(session->sm3, oid, mode, t->table)
+                  : sm3::tbl_tryopen(session->sm3, oid, mode, t->table);
+    if (0 == rc) {
+      *out = t.release();
+    }
+    return rc;
+  }
+  const sm3::table_def_t *was = &sm3::tbl_def(parked->table);
+  int rc = sm3::tbl_reopen(parked->table, mode, wait);
+  if (1 == rc) {
+    park_tbl(parked);
+    return rc;
+  }
+  if (0 != rc) {
+    free_tbl(parked);
+    return rc;
+  }
+  // sm_tbl_def's copy holds states and a version as of its call.
+  parked->def.reset();
+  if (was != &sm3::tbl_def(parked->table)) {
+    parked->value_descs.clear();
+  }
+  *out = parked;
+  return 0;
+}
+
+/*
+ * At a transaction's end, halve the age of each parked handle, and
+ * free those it brings to 0. A transaction that opened no table is
+ * passed over, or a pool's keepalive would age a session's tables out.
+ * 1. Walk each table's list, and free a handle whose age reaches 0.
+ * 2. Forget a table left with no handle: it may have been dropped.
+ */
+void age_parked(sm_session_t *session) {
+  if (!session->opened_table) {
+    return;
+  }
+  session->opened_table = false;
+  for (auto it = session->parked.begin(); it != session->parked.end();) {
+    sm_tbl_t **link = &it->second;
+    while (nullptr != *link) {
+      sm_tbl_t *tbl = *link;
+      tbl->age >>= 1;
+      if (0 != tbl->age) {
+        link = &tbl->next_parked;
+        continue;
+      }
+      *link = tbl->next_parked;
+      session->parked_count--;
+      free_tbl(tbl);
+    }
+    it = nullptr == it->second ? session->parked.erase(it) : std::next(it);
+  }
+}
+
+/* Free every handle a session has parked. */
+void free_parked(sm_session_t *session) {
+  for (auto &[oid, head] : session->parked) {
+    while (nullptr != head) {
+      sm_tbl_t *next = head->next_parked;
+      free_tbl(head);
+      head = next;
+    }
+  }
+  session->parked.clear();
+  session->parked_count = 0;
+}
 
 /* Check a write's row arguments, for fn; n must be the column count. */
 int check_row(const char *fn, const sm_tbl_t *tbl, const sm_datum_t *values,
@@ -1787,13 +1940,7 @@ int sm_tbl_open(sm_session_t *session, uint64_t oid, sm_lockmode_t mode,
     if (!session || !out) {
       return null_arg("sm_tbl_open", !session ? "session" : "out");
     }
-    auto t = std::make_unique<sm_tbl_t>();
-    t->session = session;
-    if (sm3::tbl_open(session->sm3, oid, mode, t->table) != 0) {
-      return -1;
-    }
-    *out = t.release();
-    return 0;
+    return open_tbl(session, oid, mode, true, out);
   });
 }
 
@@ -1804,14 +1951,7 @@ int sm_tbl_tryopen(sm_session_t *session, uint64_t oid, sm_lockmode_t mode,
     if (!session || !out) {
       return null_arg("sm_tbl_tryopen", !session ? "session" : "out");
     }
-    auto t = std::make_unique<sm_tbl_t>();
-    t->session = session;
-    int rc = sm3::tbl_tryopen(session->sm3, oid, mode, t->table);
-    if (rc != 0) {
-      return rc;
-    }
-    *out = t.release();
-    return 0;
+    return open_tbl(session, oid, mode, false, out);
   });
 }
 
@@ -1819,10 +1959,23 @@ int sm_tbl_tryopen(sm_session_t *session, uint64_t oid, sm_lockmode_t mode,
 void sm_tbl_close(sm_tbl_t *tbl) {
   if (tbl) {
     // A load never ended: its transaction's end has ended it.
+    bool loaded = nullptr != tbl->loader;
     sm3::tbl_load_free(tbl->loader);
-    sm3::tbl_close(tbl->table);
-    delete tbl;
+    tbl->loader = nullptr;
+    // Kept for the session's next open of the table, which saves
+    // building the rel and every index again.
+    if (loaded || parked_max <= tbl->session->parked_count ||
+        !sm3::tbl_park(tbl->table)) {
+      free_tbl(tbl);
+      return;
+    }
+    park_tbl(tbl);
   }
+}
+
+/* The handles the session keeps for its next opens; see sm.h. */
+size_t sm_tbl_parked(const sm_session_t *session) {
+  return session->parked_count;
 }
 
 /* The table's definition, built at the first call; NULL on error. */

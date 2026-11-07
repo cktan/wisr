@@ -177,102 +177,92 @@ It is not designed, and no case has been checked.
 
 ### 2.2 `sm_tbl_open` is too heavy
 
-**Open.** `sm_tbl_open` costs 2,748 instructions a transaction
-for each table, and `sm_tbl_close` 1,193. Together they are more
-than digres's whole gap of 2,854 to PostgreSQL on a statement
-that reads nothing (§2.1). PostgreSQL's two `LockRelationOid`
-calls on that statement cost 1,379; digres's cost 4,682, with the
-open inside the first. Find what an open can stop doing, then
-make it lighter.
+**Built, target not agreed.** A statement that reads nothing now
+costs digres 3.5% more than PostgreSQL, not 12%, and costs the
+same with 16 secondary indexes as with none. No target was set,
+so this stays open until one is.
 
-**What it does now.** Each transaction that touches a table, for
-each table:
+**What it does now.**
 
-1. `sm_tbl_open()` (`sm/src/sm.cc`) allocates an `sm_tbl_t`,
-   which holds an `unordered_map` and an `optional`.
-2. `open_table()` (`sm/sm3/src/table/table.cc`) allocates a
-   `table_t`.
-3. `cat_lock_table()` takes the table-oid lock and returns the
-   definition.
-4. `load_states()` reads the indexes' states.
-5. `open_rels()` builds the `rel`, then every index of the table,
-   used or not.
-6. `close_tables()` in `dg/src/backend/access/sm/smstore.c` frees
-   all of it at commit.
+1. `sm_tbl_close()` (`sm/src/sm.cc`) parks the handle on the
+   session.
+2. `sm_tbl_open()` takes a parked handle back, and calls
+   `sm3::tbl_reopen()`. This takes the table-oid lock and reads
+   the definition, in each transaction.
+3. The same definition keeps the rel and the indexes. A new one
+   makes them again. The index states are read again only if
+   `cat_epoch()` has moved.
+4. An index opens at its first use (`use_index()` in
+   `sm/sm3/src/table/table.cc`).
+5. A parked handle's age starts at 128. It halves at the end of
+   each transaction that opened a table, and at 0 the handle is
+   freed. A session keeps at most 1,024.
 
-The lock must happen in each transaction. Whether the rest must
-is the question. The definition is shared, and the layouts are
-made once with it, yet the objects built from them are built
-again each time.
+`SM_API.md`'s contract stays: a handle is good for one
+transaction. digres does not change. The reopen must read the
+definition under the catalog's mutex: a commit of DDL releases
+the table-oid lock before it publishes, so a check without the
+mutex could keep the old definition.
 
-**Where the instructions go.** Exact counts by callgrind, at
-4abf45ee, for a table with a primary key and no other index. The
-method and its limits are in §2.1. The split is approximate, as
-aarch64 tail calls blur the edges below `sm3::tbl_open`.
+**Measured** by `bench/idxopen.sh`, on the data each run loaded.
+Instructions a statement, prepared, superuser, on 2026-11-06.
 
-| Part | Instructions |
-| --- | --- |
-| `sm_tbl_open`, all of it | 2,748 |
-| `sm3::tbl_open`, within it | 2,278 |
-| `wisr::lock_oid`, the lock | 752 |
-| `sm2::open_rel`, the `rel` | 869 |
-| `sm2::idx_open_primary_layout`, the primary key | 387 |
-| `sm_tbl_t`, the guard and the rest of `sm_tbl_open` | 470 |
+| Statement | Index kind | System | 0 | 1 | 4 | 16 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `WHERE false` | lsm | digres, before | 25,653 | 26,675 | 29,243 | 39,647 |
+| | lsm | digres, now | 23,563 | 23,559 | 23,559 | 23,563 |
+| | btree | digres, before | 25,649 | 26,793 | 29,594 | 39,842 |
+| | btree | digres, now | 23,558 | 23,604 | 23,595 | 23,599 |
+| | btree | PostgreSQL | 22,794 | 22,761 | 22,773 | 22,871 |
+| point read | lsm | digres, before | 42,315 | 43,505 | 46,520 | 66,076 |
+| | lsm | digres, now | 40,299 | 41,274 | 41,995 | 48,676 |
+| | btree | digres, before | 42,848 | 47,887 | 50,548 | 63,248 |
+| | btree | digres, now | 40,370 | 44,634 | 44,775 | 44,828 |
+| | btree | PostgreSQL | 41,174 | 41,214 | 41,421 | 41,519 |
 
-The lock is about a quarter of the open, and a kept object could
-not save it. `sm_tbl_close` mirrors the build: 1,193
-instructions, the most of it closing the `rel` and the index.
+The saving at no secondary index is about 2,090 a statement. The
+gap left on `WHERE false` is about 800.
 
-**Not measured, and first to do: a table with more indexes.**
-`open_rels()` loops over every index, and each secondary index
-goes through `sm2::idx_open_layout`. So an open should grow with
-the index count, even for a read by the primary key. Measure
-`t` and `pt` on a table of 0, 1, 4 and 16 secondary indexes, by
-the method in §2.1, with `bench/privcheck.sh`'s statements.
+**Not measured:** what opening on demand saves. It helps only a
+session's first open of a table, and a first open after DDL, and
+a slope leaves both out. `sm3/test/test_lock.cc` shows which
+indexes open.
 
-**In particular: open an index on demand.** This is decided. An
-open builds the `rel` and takes the lock, and an index is opened
-when it is first used, not in `open_rels()`. A read by the
-primary key then opens no secondary index. A write opens the
-indexes it maintains. This keeps `SM_API.md`'s contract. To
-settle:
+**Tests:** `sm/rel/test/test_reopen.rel`,
+`sm/sm3/test/test_lock.cc`, `dg/test/parked_tables.sh`. An
+isolation scenario cannot express this: the change is above sm1.
 
-- Every reader of `table->indexes` must go through the open on
-  demand, as the vector is filled at the open today. `table.cc`
-  reads it in many places, by position, so an entry not yet
-  opened must be a null that each one handles. `close_rels()`
-  must skip those.
-- A first use that fails must report its error where the caller
-  can take it, as the open's failure does now.
+### 2.3 A point read's cost depends on the state of the data
 
-**Other candidates.** These are not designed, and neither is
-recommended. Either can go with the open on demand:
+**Open.** The point-read rows of §2.2 are not a clean effect of
+the index count. They move with the data's state, and the cause
+is not known.
 
-- **Reuse the objects within a session**: a free list of
-  `sm_tbl_t`, `table_t`, `rel` and index objects. This removes
-  allocations, and the contract stays.
-- **Keep a handle across transactions**, and take only the lock
-  at each open. This saves the most, and changes `SM_API.md`'s
-  contract: an `sm_tbl_t` lasts one transaction.
+On one data directory, with the server restarted, a build that
+opens every index at the open and the build that opens on demand
+agree to 0.4%:
 
-**Before building,** answer these for each change:
+| Table | Open on demand | Open all | The same table before the restart |
+| --- | --- | --- | --- |
+| lsm, 0 indexes | 42,700 | 42,850 | 40,299 |
+| lsm, 4 indexes | 42,990 | 42,990 | 41,995 |
+| lsm, 16 indexes | 44,560 | 44,565 | 48,676 |
+| btree, 1 index | 43,450 | 43,450 | 44,634 |
 
-- A definition that changes between two transactions: ALTER,
-  DROP INDEX, CREATE INDEX pending, TRUNCATE, a rewrite that
-  moves the table to a new store.
-- `load_states()`: an index's state read late, or kept too long.
-- Abort, savepoint rollback and a handle opened in a
-  subtransaction (`smstore.c` closes those at the rollback).
-- `fresh`, a table this transaction made, and temporary tables.
-- The cleaner's note set on a tree index in `open_rels()`.
-- What `rel` and an index hold of the transaction: the session,
-  a snapshot, a cursor, a pin. Read `sm/sm2/src/rel/rel.cc` and
-  `index.cc` to settle this first.
+So opening on demand does not cost a point read. But:
 
-**Rules for the work.** Test at each layer the change reaches
-(`sm/sm3/test`, `sm/rel/test`, `dg/test`), and add an isolation
-scenario if a change moves what a transaction sees. Compare with
-PostgreSQL, in instructions.
+- After the restart, digres's read of a table with no secondary
+  index costs more than PostgreSQL's 41,174. Before it, less.
+  Do not quote digres as cheaper than PostgreSQL on a point read.
+- Runs that load the data separately differ: lsm with 16 indexes
+  gave 45,771 on one build and 48,676 on the next, though the
+  rounds of each agree to 1%. Why a load's outcome differs is not
+  known.
 
-**Done when:** a target is agreed, the design is chosen, and `t`
-and `pt` measure under it. No target is set yet.
+**First to do:** load once, then compare a table's count before
+and after a flush, and after a compaction, with `rocksdb` level
+counts beside each. An lsm index's entries share the table's
+store, so a read may search more files. That is a guess.
+
+**Warning:** this box's clock can step backwards. After a
+sabotage, delete the object file: `touch` may not rebuild it.

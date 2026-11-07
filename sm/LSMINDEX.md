@@ -964,10 +964,15 @@ refuses a row key past `max_pk_len`.
 ### 10.2 sm3: `src/table/table.cc`
 
 - `table_t` holds the definition under the table-oid lock, the
-  rel, one `sm2::index_t` for each index, and `states`: each
+  rel, a slot for each index's `sm2::index_t`, and `states`: each
   index's state, noted at open (INDEXBUILD.md).
-- `open_rels` opens the rel and every index on the definition's
-  layouts.
+- `open_rels` opens the rel on the definition's layouts.
+  `use_index` opens an index at its first use, so a read by the
+  primary key opens no other index.
+- `tbl_park` and `tbl_reopen` keep a handle for its session's next
+  transaction (`SM_API.md`, `sm_tbl_close`). A reopen takes the
+  lock and reads the definition, and makes the rel and indexes
+  again only if the definition has changed.
 - `make_entry` gives an index's entry for one image: `entry_t`
   holds `belongs`, the key datums and the evaluator's values,
   which the key points into. It keeps its arrays when made again.

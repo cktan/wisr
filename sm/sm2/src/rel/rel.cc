@@ -1042,6 +1042,14 @@ int rel_release(rel_t *rel) { return release(rel); }
 /* Forget the datums the rel's writes held, erasing none; see sm2.h. */
 void rel_forget(rel_t *rel) { rel->held.clear(); }
 
+/* Leave a rel holding nothing of its transaction; see sm2.h. */
+void rel_idle(rel_t *rel) {
+  rel->held.clear();
+  if (rel->scratch) {
+    sm1::unpin(rel->scratch);
+  }
+}
+
 /* Read the datum a TOAST pointer names; see sm2.h. */
 int toast_fetch(rel_t *rel, std::string_view ptr, std::string &out) {
   toast_ptr_t p;
