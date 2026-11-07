@@ -51,7 +51,7 @@ and so are the catalog tables psql reads
    and an ACL's text is read without `sscanf()` (step 330), and
    a role's privileges on an object are kept in its session
    (step 331): an object's check costs a role 0.07 µs more than
-   the superuser (`../bench/roles.sh`).
+   the superuser (`../bench.old/roles.sh`).
 
    **Done** (`../dg/WORKNOTE.md` steps 381, 395 and 400). sm's
    catalog rows are kept in the syscache, and `aa_roles()` and
@@ -132,7 +132,7 @@ and so are the catalog tables psql reads
    `entry_row()` in `sm2/src/rel/index.cc`), about 540 an
    entry; and an entry that is all key, as MyRocks's.
 4. **sm1's lock table, a hash table of its own**
-   (`LOCKMGR.md` §3.2). `../bench/roles.sh`'s t16,
+   (`LOCKMGR.md` §3.2). `../bench.old/roles.sh`'s t16,
    sixteen tables a statement, scaled 2.8× from 1 to 16
    clients, every table lock taken and released under the one
    `lock_mu`. Keyed by two words (`../dg/WORKNOTE.md` step 337)
@@ -206,7 +206,7 @@ and so are the catalog tables psql reads
    inserting children of a few parent rows; `SELECT ... FOR
    UPDATE` of keys at random), before and after, to show the
    module's gain reaches a client. Built as
-   `../bench/rowlocks.sh` (`../dg/WORKNOTE.md` step 344), each
+   `../bench.old/rowlocks.sh` (`../dg/WORKNOTE.md` step 344), each
    client locking rows of its own, so none waits. Its baseline,
    at 8612f68b: a lock adds 3.3 µs of a client's time to a
    statement of 100 at 1 client and 28 at 16, and 100 rows locked
@@ -322,7 +322,7 @@ and so are the catalog tables psql reads
    in the queue, near half under each write. And a group is as
    large as the writers waiting when it forms, so anything a
    transaction does outside the queue costs syncs: 100 µs of
-   `pg_sleep` an insert takes `../bench/rowlocks.sh`'s `ins`
+   `pg_sleep` an insert takes `../bench.old/rowlocks.sh`'s `ins`
    from about 5,600 tps to 4,100, and its `fk`, a foreign key's
    check of about 70 µs, to 3,950. A plain insert scales 5.1×
    from 1 client to 16. To weigh, each measured on `ins` and
@@ -330,7 +330,7 @@ and so are the catalog tables psql reads
 
    - **RocksDB's own**: `enable_pipelined_write`, the WAL written
      apart from the memtables, measured on 2026-11-01
-     (`../bench/rowlocks.sh`, digres, the hand-written lock
+     (`../bench.old/rowlocks.sh`, digres, the hand-written lock
      partition): at 16 clients `ins` 4,602 tps with it and 4,753
      without, `fk` 4,551 and 4,293, within a run's swing, against
      PostgreSQL's 10,073 and 10,523. It does not help: the cost

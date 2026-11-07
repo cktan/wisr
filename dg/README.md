@@ -79,11 +79,10 @@ its catalog is being replaced, not created (`../sm/PART4.md`
 
 ## Building
 
-Each directory has a Makefile of a few lines that includes
-`dg.mk`, which holds the rules; `Makefile` here adds the
-generated sources. A file that is not compiled is named in its
-directory's `SKIP`, with the reason beside it. The TLS and GSSAPI
-files are the ones waiting on a decision.
+`Makefile` builds the whole tree, with the rules in it and the
+generated sources. A file that is not compiled is named in the
+`SKIP` list of `Makefile`, with the reason beside it. The TLS and
+GSSAPI files are the ones waiting on a decision.
 
 Two tools made the C compile as C++, and are kept for the code
 still to come from PostgreSQL: `src/tools/cxx_keywords.py`

@@ -44,7 +44,7 @@ plans none (`../../../sm/CLUSTER.md` §6), and the results that
 follow are compared. An index's kind `lsm`, as
 `pg_get_indexdef()` and psql's `\d` print it, is read as
 PostgreSQL's `btree`: in digres both are `pg_am`'s `btree`
-(`../../../sm/BTREE.md` §12). A result's rule line is compared
+(`../../../sm/BTREEINDEX.md`). A result's rule line is compared
 without its width, which the shorter name changes. This applies
 to `test` only: `trim` and `differs` still see `lsm`. A file's
 output and diff go in

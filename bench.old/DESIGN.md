@@ -95,7 +95,7 @@ reads under many clients with writes among them. Q9 to Q11
 are Q6 to Q8 by a secondary index, the same rows: an entry
 found, then its row read, where the primary key's entry is
 the row. Q9b and Q10b are Q9 and Q10 by that index as a tree
-on digres (`../sm/BTREE.md`).
+on digres (`../sm/BTREEINDEX.md`).
 
 | # | Query | What it isolates |
 | --- | --- | --- |
