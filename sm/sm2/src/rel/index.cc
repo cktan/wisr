@@ -19,6 +19,7 @@
 #include "rel.h"
 #include "sm2.h"
 
+#include <algorithm>
 #include <cstring>
 #include <functional>
 #include <memory>
