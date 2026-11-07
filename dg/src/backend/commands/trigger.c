@@ -5708,18 +5708,6 @@ done:
 }
 
 /*
- * GUC assign_hook for session_replication_role
- */
-void assign_session_replication_role(int newval, void *extra) {
-  /*
-   * Must flush the plan cache when changing replication role; but don't
-   * flush unnecessarily.
-   */
-  if (SessionReplicationRole != newval)
-    ResetPlanCache();
-}
-
-/*
  * SQL function pg_trigger_depth()
  */
 Datum pg_trigger_depth(PG_FUNCTION_ARGS) { PG_RETURN_INT32(MyTriggerDepth); }

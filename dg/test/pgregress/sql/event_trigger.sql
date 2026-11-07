@@ -109,7 +109,8 @@ reset role;
 --dg create table event_trigger_fire1 (a int);
 --dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
 --dg alter event trigger regress_event_trigger enable;
-set session_replication_role = replica;
+--dg-skip: unrecognized configuration parameter "?"
+--dg set session_replication_role = replica;
 -- fires nothing
 create table event_trigger_fire2 (a int);
 --dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
@@ -122,7 +123,8 @@ create table event_trigger_fire2 (a int);
 -- fires only _trigger
 --dg-cascade
 --dg create table event_trigger_fire4 (a int);
-reset session_replication_role;
+--dg-skip: unrecognized configuration parameter "?"
+--dg reset session_replication_role;
 -- fires all three
 --dg-cascade
 --dg create table event_trigger_fire5 (a int);
@@ -807,7 +809,8 @@ CREATE TABLE event_trigger_test (a integer, b text);
 --dg 	ON sql_drop
 --dg 	WHEN TAG IN ('DROP POLICY') EXECUTE FUNCTION test_event_trigger_guc();
 
-SET event_triggers = 'on';
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET event_triggers = 'on';
 --dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY pguc ON event_trigger_test USING (FALSE);
 --dg-cascade
@@ -815,6 +818,7 @@ SET event_triggers = 'on';
 
 --dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY pguc ON event_trigger_test USING (FALSE);
-SET event_triggers = 'off';
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET event_triggers = 'off';
 --dg-cascade
 --dg DROP POLICY pguc ON event_trigger_test;

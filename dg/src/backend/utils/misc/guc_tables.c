@@ -164,16 +164,6 @@ static const struct config_enum_entry isolation_level_options[] = {
     {"read uncommitted", XACT_READ_UNCOMMITTED, false},
     {NULL, 0}};
 
-static const struct config_enum_entry session_replication_role_options[] = {
-    {"origin", SESSION_REPLICATION_ROLE_ORIGIN, false},
-    {"replica", SESSION_REPLICATION_ROLE_REPLICA, false},
-    {"local", SESSION_REPLICATION_ROLE_LOCAL, false},
-    {NULL, 0, false}};
-
-StaticAssertDecl(lengthof(session_replication_role_options) ==
-                     (SESSION_REPLICATION_ROLE_LOCAL + 2),
-                 "array length mismatch");
-
 static const struct config_enum_entry syslog_facility_options[] = {
 #ifdef HAVE_SYSLOG
     {"local0", LOG_LOCAL0, false},
@@ -1215,20 +1205,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      },
      &data_sync_retry,
      false,
-     NULL,
-     NULL,
-     NULL},
-
-    {{
-         "event_triggers",
-         PGC_SUSET,
-         CLIENT_CONN_STATEMENT,
-         gettext_noop("Enables event triggers."),
-         gettext_noop("When enabled, event triggers will fire for all "
-                      "applicable statements."),
-     },
-     &event_triggers,
-     true,
      NULL,
      NULL,
      NULL},
@@ -2710,17 +2686,6 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
      syslog_facility_options,
      NULL,
      assign_syslog_facility,
-     NULL},
-
-    {{"session_replication_role", PGC_SUSET, CLIENT_CONN_STATEMENT,
-      gettext_noop(
-          "Sets the session's behavior for triggers and rewrite rules."),
-      NULL},
-     &SessionReplicationRole,
-     SESSION_REPLICATION_ROLE_ORIGIN,
-     session_replication_role_options,
-     NULL,
-     assign_session_replication_role,
      NULL},
 
     {{"xmlbinary", PGC_USERSET, CLIENT_CONN_STATEMENT,

@@ -397,13 +397,15 @@ insert into trigtest default values;
 --dg alter table trigtest enable trigger trigtest_a_stmt_tg;
 --dg-cascade
 --dg insert into trigtest default values;
-set session_replication_role = replica;
+--dg-skip: unrecognized configuration parameter "?"
+--dg set session_replication_role = replica;
 insert into trigtest default values;  -- does not trigger
 --dg-cascade
 --dg alter table trigtest enable always trigger trigtest_a_stmt_tg;
 --dg-cascade
 --dg insert into trigtest default values;  -- now it does
-reset session_replication_role;
+--dg-skip: unrecognized configuration parameter "?"
+--dg reset session_replication_role;
 insert into trigtest2 values(1);
 insert into trigtest2 values(2);
 --dg-cascade

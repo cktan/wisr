@@ -630,7 +630,6 @@
 #default_transaction_isolation = 'read committed'
 #default_transaction_read_only = off
 #default_transaction_deferrable = off
-#session_replication_role = 'origin'
 #statement_timeout = 0				# in milliseconds, 0 is disabled
 #transaction_timeout = 0			# in milliseconds, 0 is disabled
 #lock_timeout = 0				# in milliseconds, 0 is disabled
@@ -641,7 +640,6 @@
 #xmloption = 'content'
 #gin_pending_list_limit = 4MB
 #createrole_self_grant = ''		# set and/or inherit
-#event_triggers = on
 
 # - Locale and Formatting -
 

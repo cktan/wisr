@@ -11939,3 +11939,19 @@ drops the ones whose feature digres removed.
 - **Left**: settings of refused features (triggers,
   partitioning, foreign tables, xml) and of the process model.
   Their code is still compiled.
+
+## Step 404: the trigger settings are gone
+
+DG has no triggers, so `session_replication_role` and
+`event_triggers` have nothing to set.
+
+- **Gone**: both settings, `session_replication_role`'s option
+  table and its assign hook, and their lines in
+  `postgresql.conf.sample`.
+- **Kept on purpose**: the variables `SessionReplicationRole`
+  and `event_triggers`. PostgreSQL's code still reads them, and
+  they stay at `origin` and on.
+- **Tests**: `triggers`, `event_trigger` and `rules` in
+  `test/pgregress` set these. They are trimmed again, and now
+  skip the `SET` and `RESET` with "unrecognized configuration
+  parameter".

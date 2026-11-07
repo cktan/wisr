@@ -1590,12 +1590,14 @@ INSERT INTO ruletest1 VALUES (1);
 INSERT INTO ruletest1 VALUES (2);
 --dg-cascade
 --dg ALTER TABLE ruletest1 ENABLE RULE rule1;
-SET session_replication_role = replica;
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET session_replication_role = replica;
 INSERT INTO ruletest1 VALUES (3);
 --dg-cascade
 --dg ALTER TABLE ruletest1 ENABLE REPLICA RULE rule1;
 INSERT INTO ruletest1 VALUES (4);
-RESET session_replication_role;
+--dg-skip: unrecognized configuration parameter "?"
+--dg RESET session_replication_role;
 INSERT INTO ruletest1 VALUES (5);
 
 --dg-cascade
