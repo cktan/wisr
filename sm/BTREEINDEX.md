@@ -787,6 +787,13 @@ latch and one write a page (`BTREELOAD_PLAN.md`):
   (§2.3). `idx_load()` reports the whole key before the Sort
   drops the row's key from a unique tree's record. A committed
   reader can keep an SIREAD after the table's lock ends.
+  **Cost:** below SERIALIZABLE the call returns at once. Under
+  SERIALIZABLE, each call builds a point key (one allocation),
+  takes `ssi_mu`, the lock of the database, and looks the key
+  up. The load already does this for each row, so each tree
+  adds one more call a row. This cost is not measured. If it
+  matters, reuse one key buffer, or take `ssi_mu` once for a
+  batch of keys.
 - **A page holds two entries at least**, so each level above
   has half the pages or fewer. A page whose high key does not
   fit gives its last entries to the next page.
