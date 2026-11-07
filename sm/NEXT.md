@@ -105,12 +105,18 @@ and so are the catalog tables psql reads
         (`BTREEINDEX.md` §5.3). q2 went from 245.5k to 230.0k
         instructions, 1.52 times PostgreSQL's 150.8k; q1 and q3
         about 1% fewer (aarch64 under WSL2, 2026-11-07).
-     2. **Hand out a leaf's entries from the pinned leaf,** with
-        no copy, as PostgreSQL walks its page. About 5% of q2.
-     With the second, q2 is expected at about 1.4 times
-     PostgreSQL.
-     Parity needs a count in sm, one tuple a leaf, which helps
-     `count(*)` alone.
+     2. **Hand out a leaf's entries from the pinned leaf**:
+        dropped (2026-11-07). PostgreSQL copies each entry too:
+        `_bt_saveitem()` copies an index-only scan's tuple, then
+        unlocks the page. A pin is a latch (`BUFMGR.md` §1.3),
+        so a pin held across calls would make writers wait on
+        the reader. A leaf id kept as a hint, pinned only if in
+        the pool, was measured: q2 0.2% fewer instructions, q1
+        1.2% and q3 0.3% more, as a hit saves only page 0's
+        search and a random probe's miss costs a pin.
+     What is left of q2's gap is the cursor's per-entry work and
+     the executor. Parity needs a count in sm, one tuple a leaf,
+     which helps `count(*)` alone.
    - **q3 fails by the cost of a row**: about 13,200
      instructions beyond its entry, against PostgreSQL's 3,200.
      RocksDB's `MultiGet` takes 9,000 of it, and RocksDB's
