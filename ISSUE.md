@@ -20,7 +20,8 @@ None open.
    sweep now sets `sweep_floor` to the records it left, and the
    next starts only past that plus `txn_sweep_records`.
 
-**Thread sanitizer, closed 2026-11-06.** Found by `DG_REVIEW.md`;
+**Thread sanitizer, closed 2026-11-06.** Found by the dg review
+(`DG_REVIEW.md` at `bc43915c`);
 reproduced with `digres-tsan` (`server.sh`) and a program that
 grows the session set. `server.sh` and `run.sh` now pass under it
 with no report.
@@ -33,7 +34,7 @@ with no report.
    thread read `cat->cleaner` while `cleaner_attach()` set it,
    and the cleaner's fields were set after the pointer. The
    cleaner is now attached first, before any builder thread
-   exists. Not in `DG_REVIEW.md`.
+   exists. Not in that review.
 5. **`sm1::lock_status()` took sessions' `fp_mu` in the order of
    an `unordered_set`.** A rehash changes that order, so two
    calls took two in opposite orders: a cycle for the sanitizer,
