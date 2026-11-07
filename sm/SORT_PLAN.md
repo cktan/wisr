@@ -1,6 +1,7 @@
 # SORT_PLAN — an external sort in sm
 
-Status: step 1 of §8 is built. §9 lists what the user has decided.
+Status: steps 1 and 2 of §8 are built. §9 lists what the user has
+decided.
 
 **Warning: no PostgreSQL code goes into `sm/`.** This file
 describes techniques. Write the code from scratch, and copy
@@ -71,14 +72,14 @@ keys give it something simpler.
 | Sort an array of small fixed items, each with the first key inline, not the tuples | a compare touches no pointer, and cache misses are the cost | **Take**: §4.1 |
 | Abbreviated keys: a short integer that orders most pairs, with the full compare for ties | an integer compare in place of a call | **Better**: §4.2 |
 | Abort abbreviation if a sample shows too few distinct values, by HyperLogLog | a bad abbreviation costs more than it saves | **Better**: §4.2 needs no abort |
-| Quicksort templates specialized by comparator, so the compare is inlined | no call for each compare | **Take, free**: one comparator, inlined by `std::sort` |
+| Quicksort templates specialized by comparator, so the compare is inlined | no call for each compare | **Take**: one comparator, inline in both sorts, §4.4 |
 | `onlyKey`: no tiebreak call when there is one key | saves a call | **Better**: a key is one byte string |
 | A check for sorted input first | an index on a column correlated with the load's order sorts in one pass | **Take**: §4.3 |
-| Median of nine pivots, insertion sort under 7, three-way partition | few bad cases, many equal keys | **Take, in part**: `std::sort` has its own bad-case guard; equal keys are rare in sm (§4.4) |
+| Median of nine pivots, insertion sort under 7, three-way partition | few bad cases, many equal keys | **Take, in part**: `std::sort` has its own guard; the own loop has median of three, insertion sort under 16, and heap sort past a depth limit |
 | A bump allocator with no header on a tuple | less memory a tuple, so longer runs | **Take**: `sm0::arena_t` |
 | The tuple array grows by doubling, then one last step sized by the memory used so far | it does not stop at half the budget | **Take**: §4.1 |
 | Quicksort for runs, not replacement selection | better cache use; runs are shorter, and merging is cheap | **Take** |
-| Find a unique index's duplicate during the sort | fail early | **Take**: §4.4 |
+| Find a unique index's duplicate during the sort | fail early | **Take**: a compare that finds two equal keys stops the sort, §4.4 |
 
 ### 2.2 On disk
 
@@ -177,25 +178,50 @@ Before sorting, check whether the abbreviations ascend, and stop
 at the first that does not. This costs at most one pass. A load
 in the order of an indexed column then needs no sort.
 
-### 4.4 Duplicates
+### 4.4 Two sorts of memory
+
+| Sort | Used | Why |
+| --- | --- | --- |
+| `std::sort` | not unique | the faster: on the same keys, 480 instructions a record against 512, and about 11% less time |
+| the sort's own loop | unique | it can stop, on a duplicate or an interrupt |
+
+sm never throws, so `std::sort` cannot stop part way. The own
+loop:
+
+1. A range of 16 items or fewer is sorted by insertion.
+2. A longer range splits around the median of three items.
+3. Past a depth limit, twice the bits of the item count, the
+   input is a bad case. Heap sort finishes that range.
+
+In both, unequal abbreviations decide most compares inline, in
+one integer compare. Ties go out of line.
+
+### 4.5 Duplicates
 
 A sort is opened **unique** or not.
 
-- Unique: after each sort of memory, a pass over neighbours looks
-  for two equal keys, and the merge checks each record against
-  the one before. An equal pair fails with `SM_ERR_DUPKEY`.
-- This improves on `BULKLOAD.md` §5.4 only in that a duplicate
-  inside one run fails when that run is sorted, not at the close.
+- Unique: **a compare that finds two equal keys ends the sort**
+  with `SM_ERR_DUPKEY`. The rest is not sorted. A comparison sort
+  must compare each pair of neighbours in the final order, so two
+  equal keys always meet, and no later pass is needed.
+- The sorted-input check of §4.3 finds them too.
+- Heap sort, past the depth limit, finishes its range before it
+  reports one. It is rare.
+- Across runs, the merge checks each record against the one
+  before, and stops there.
 - Not unique: equal keys come back in no set order. A non-unique
   index's key holds its row key, so its keys are distinct.
 
-### 4.5 Interrupts
+An item compared with itself, as a pivot may be, is no duplicate.
 
-`std::sort` cannot stop part way, and the budget bounds it to
-some seconds. The sort checks the thread's pending interrupts
-between records and between reads. To decide at step 1 of §8:
-whether that delay is acceptable, or whether the sort needs a
-loop of its own.
+### 4.6 Interrupts
+
+The sort looks for an interrupt every 4,096 records put and at
+each read of a run. Under unique it also looks at each split of
+4,096 items or more. Without unique, a cancel waits for the sort
+of memory under way: `std::sort` of 2 million records takes about
+a third of a second here, so a 256 MB budget's run is a second or
+so.
 
 ---
 
@@ -272,7 +298,7 @@ pass is rare (§6.1), and this needs no free list.
 
 The merge order is how many runs one pass reads: the budget over
 the read buffer's size, less one buffer for output, at least 6
-and at most 500. A budget of 256 MB gives 500.
+and at most `max_runs`. A budget of 256 MB gives 500.
 
 One pass handles the merge order times the budget. At 256 MB that
 is 125 GB, so a second pass is rare. It must still work, for
@@ -311,9 +337,20 @@ until the next call, so a run steps only at the next call.
 namespace sm0 {
 struct sort_t;
 
-// Open a sort of up to budget bytes of memory, its runs in dir.
-int sort_open(const char* dir, size_t budget, bool unique,
-              sort_t*& out);
+struct sort_options_t {
+  std::string dir;                 // its runs' directory
+  size_t budget = 256 << 20;       // memory for records
+  bool unique = false;             // equal keys stop the sort
+  size_t buffer_bytes = 256 << 10; // a run's read or write buffer
+  size_t max_runs = 500;           // the most runs a pass reads
+  int fd_share = 4;                // the real fds it holds
+  size_t max_sort_depth = 0;       // splits before heap sort
+  size_t max_run_records = 0;      // a run's records; 0: no limit
+  size_t max_run_size = 0;         // a run's bytes; 0: no limit
+};
+
+// Open a sort.
+int sort_open(const sort_options_t& options, sort_t*& out);
 // Add a record. The sort copies it.
 int sort_put(sort_t* sort, std::string_view key,
              std::string_view value);
@@ -322,14 +359,22 @@ int sort_done(sort_t* sort);
 // The next record, good until the next call: 0, or 1 at the end.
 int sort_next(sort_t* sort, std::string_view& key,
               std::string_view& value);
+// About the compares made so far: for tests.
+uint64_t sort_compares(const sort_t* sort);
 // Free the sort, at any point; nullptr is a no-op.
 void sort_free(sort_t* sort);
 }
 ```
 
+The options past `unique` have defaults a caller leaves alone.
+Tests set them, to force many runs, many passes and records cut
+by a buffer's end from little data.
+
 A sort has one owner, on one thread. Its owner frees it, at the
 end or on an abort. Errors are `SM_ERR_DUPKEY`,
-`SM_ERR_DISKFULL`, `SM_ERR_IO` and `SM_ERR_INTERRUPTED`.
+`SM_ERR_DISKFULL`, `SM_ERR_IO` and `SM_ERR_INTERRUPTED`. A
+duplicate across runs shows at `sort_next`, or at `sort_done` if
+it needs a second pass.
 
 `load.cc` then keeps its streams, its budget and its sorted
 files, and calls this in place of `sort_buf`, `spill` and
@@ -363,6 +408,24 @@ Test layers: sm0 unit tests for the sort; `rel` and `dg/test`
 reach it through `COPY` and `load`. The isolation scenarios
 cannot express it: a sort has no versions and no transaction.
 
+### 8.1 Measured
+
+`load.cc`'s way and this sort, on 4 million records of 8-byte
+values at a budget of 32 MB, spill and merge included,
+instructions a record, key generation taken out. `load.cc`'s way
+is a copy of its technique in a test program, not `load.cc`
+itself.
+
+| Keys | `load.cc`'s way | This sort |
+| --- | --- | --- |
+| random `int8` | 3,518 | 764 |
+| email-like text | 3,467 | 769 |
+
+These are from before the sort's own loop (§4.4). A sort of
+memory now takes 484 a record without unique, on 2 million random
+keys, against 2,277 for `load.cc`'s way. About 35 of that is the
+budget's accounting in `sort_put`.
+
 ---
 
 ## 9. Decided
@@ -376,9 +439,8 @@ cannot express it: a sort has no versions and no transaction.
    key: key `a` with value `b` would tie key `ab` with no value.
 4. **digres's `ORDER BY` stays on `tuplesort`** (§1.1).
 
-Still open, each at its step in §8: whether a stop between
-records is soon enough for a cancel (§4.5), and how a load's
-streams share its budget (§7).
+Still open, for step 3 of §8: how a load's streams share its
+budget (§7).
 
 ---
 
@@ -391,7 +453,7 @@ streams share its budget (§7).
 | 2PC | a sort leaves nothing in a transaction. A load still blocks `prepare`, by its own rule |
 | Two sorts, or many sessions | names from one process counter; each sort has its own files |
 | Temporary tables, `load` into one | the sort sees bytes, and is the same |
-| Unique, primary key | §4.4 |
+| Unique, primary key | §4.5 |
 | Non-unique | keys are distinct by their row key; if equal, any order |
 | TOAST | a sort sees bytes; a row that goes out of line is the loader's (`BULKLOAD.md`) |
 | Cut keys | a cut key is bytes as any other; a unique tree's check of one stays with its caller |
@@ -400,5 +462,5 @@ streams share its budget (§7).
 | All keys equal | the common prefix is the whole key; a unique sort fails on the first pair |
 | Disk full | `SM_ERR_DISKFULL`; the owner aborts and frees the sort |
 | Descriptor ceiling | §5.4 |
-| Cancel | §4.5 |
+| Cancel | §4.6 |
 | GC, SSI, snapshots | not involved: nothing here is a version |
