@@ -195,7 +195,7 @@ unique tree to row-by-row inserts.
 | 2PC | the loader must be closed before the prepare, as now |
 | two writers | none: the table is X, or temporary |
 | old RR snapshot | reads rows; no leaf is all visible (§3.2) |
-| SSI | as a load now; the table is X to the end |
+| SSI | the heap and every full tree entry key report their writes; a committed reader can retain an SIREAD after releasing the table lock |
 | the cleaner, a page queued before the open | the drop removes the page; the cleaner finds none, or the new page 0, judged again under the latch |
 | other sessions' copies of page 0 | the drop's purge and page 0's write move the frame's version, so a copy is stale and read again (`BTREEINDEX.md` §5.5) |
 | DROP INDEX, TRUNCATE | the table is X for the load |

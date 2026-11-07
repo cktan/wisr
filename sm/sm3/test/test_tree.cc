@@ -519,6 +519,55 @@ TEST_CASE("tree: a write skew through a tree's ranges fails one") {
   CHECK(sm1::SM_ERR_SERIALIZATION == sm1::errnum());
 }
 
+TEST_CASE("tree: a bulk load retains a committed reader's SSI dependency") {
+  // Verify a table lock does not replace a load's SSI notifications.
+  // 1. Create a second empty table beside the indexed table.
+  // 2. The loader reads the second table at SERIALIZABLE.
+  // 3. Another transaction scans the tree.
+  // 4. Insert into the second table in that transaction.
+  // 5. Commit that transaction.
+  // 6. Load the indexed table.
+  // 7. Require the loader's commit to fail serialization.
+  trees_t f;
+  REQUIRE(0 == sm3::begin(f.a, sm1::xctlevel_t::read_committed));
+  uint64_t other;
+  std::vector<sm3::column_spec_t> cols = {
+      {"id", sm2::type_int4.code, -1, true}};
+  REQUIRE(0 == sm3::create_table(f.a, sm3::nsp_public, "other", cols, other));
+  REQUIRE(0 == sm3::commit(f.a));
+  REQUIRE(0 == sm3::begin(f.b, sm1::xctlevel_t::serializable));
+  sm3::table_t *y = nullptr;
+  REQUIRE(0 == sm3::tbl_open(f.b, other, sm1::SM_LOCKMODE_IS, y));
+  sm3::scan_t *scan = nullptr;
+  REQUIRE(0 == sm3::tbl_scan_rows(y, scan));
+  uint64_t id;
+  std::string_view tuple;
+  CHECK(1 == sm3::tbl_scannxt(scan, id, tuple));
+  sm3::tbl_scanend(scan);
+  sm3::tbl_close(y);
+
+  REQUIRE(0 == sm3::begin(f.a, sm1::xctlevel_t::serializable));
+  auto *x = f.table(f.a);
+  CHECK(ids(x, f.by_state).empty());
+  sm3::tbl_close(x);
+  REQUIRE(0 == sm3::tbl_open(f.a, other, sm1::SM_LOCKMODE_IX, y));
+  sm2::datum_t value[] = {sm2::datum_from_int32(1)};
+  bool nulls[] = {false};
+  REQUIRE(0 == sm3::tbl_insert(y, value, nulls, id));
+  sm3::tbl_close(y);
+  REQUIRE(0 == sm3::commit(f.a));
+
+  x = f.table(f.b);
+  sm3::loader_t *load = nullptr;
+  REQUIRE(0 == sm3::tbl_load_open(x, load));
+  row_t row(1, "on", "owner");
+  REQUIRE(0 == sm3::tbl_load_add(load, row.d(), row.null(), id));
+  REQUIRE(0 == sm3::tbl_load_close(load));
+  sm3::tbl_close(x);
+  CHECK(-1 == sm3::commit(f.b));
+  CHECK(sm1::SM_ERR_SERIALIZATION == sm1::errnum());
+}
+
 TEST_CASE("tree: a unique tree refuses a key a live row has") {
   // Verify a unique tree's check, by the rows its entries name.
   // 1. Make a unique tree on owner; insert rows of owners x and y.

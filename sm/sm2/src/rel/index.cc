@@ -721,6 +721,11 @@ int idx_load(index_t *index, sm1::loader_t *loader, size_t stream,
   if (!index->tree) {
     return sm1::load_put(loader, stream, k, value);
   }
+  // A committed reader can retain an SIREAD after its table lock ends.
+  // Report the full entry key before a unique sort removes its row key.
+  if (0 != sm1::ssi_write_key(index->session, index->storeid, k)) {
+    return -1;
+  }
   // A unique tree's entries are sorted by what its check compares:
   // the key columns, and the row's key only after a NULL, which
   // equals no other. The row's key rides after the value, and the

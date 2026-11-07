@@ -63,6 +63,60 @@ std::vector<uint64_t> ids_of(sm2::index_t *ix, const sm2::bound_t *lo,
 
 } // namespace
 
+TEST_CASE("tree index: a load reports writes to a committed SSI reader") {
+  // Verify a load retains a committed index reader's SSI dependency.
+  // 1. Create an empty tree and a second store.
+  // 2. The loader reads the second store in its serializable snapshot.
+  // 3. Another transaction scans the tree.
+  // 4. Insert into the second store in that transaction.
+  // 5. Commit that transaction.
+  // 6. Build the loaded tree.
+  // 7. Require the loader's commit to fail serialization.
+  for (bool unique : {false, true}) {
+    CAPTURE(unique);
+    db_t db;
+    auto *reader = db.open();
+    auto *writer = db.open();
+    std::vector<sm2::key_column_t> cols = {
+        {&sm2::type_int4, -1, nullptr, false, false}};
+    REQUIRE(0 == sm1::begin(reader, sm1::xctlevel_t::read_committed));
+    auto *a = open_kind(db, reader, cols, unique, 2, true);
+    uint64_t other;
+    REQUIRE(0 == sm1::mkstore(reader, other));
+    REQUIRE(0 == sm1::commit(reader));
+    sm2::index_t *b = nullptr;
+    REQUIRE(0 == sm2::idx_open(writer, db.store(), 2, cols, unique, {}, false,
+                               b, true));
+
+    REQUIRE(0 == sm1::begin(writer, sm1::xctlevel_t::serializable));
+    sm1::scan_t *scan = nullptr;
+    REQUIRE(0 == sm1::scan(writer, other, nullptr, 0, 1, nullptr, 0, 0, scan));
+    std::string_view scanned_key, scanned_value;
+    REQUIRE(1 == sm1::scannxt(scan, scanned_key, scanned_value));
+    sm1::scanend(scan);
+    REQUIRE(0 == sm1::begin(reader, sm1::xctlevel_t::serializable));
+    CHECK(ids_of(a, nullptr, nullptr).empty());
+    REQUIRE(0 == sm1::insert(reader, other, "y", "value"));
+    REQUIRE(0 == sm1::commit(reader));
+
+    sm1::loader_t *load = nullptr;
+    REQUIRE(0 == sm1::load_open(writer, db.store(), load));
+    size_t entries, pages;
+    REQUIRE(0 == sm2::idx_load_tree(b, load, entries, pages));
+    sm2::datum_t value[] = {sm2::datum_from_int32(7)};
+    bool nulls[] = {false};
+    REQUIRE(0 ==
+            sm2::idx_load(b, load, entries, value, nulls, row_of(1), {}, {}));
+    REQUIRE(0 == sm2::idx_load_build(b, load, entries, pages));
+    REQUIRE(0 == sm1::load_close(load));
+    REQUIRE(0 == sm2::idx_load_root(b));
+    CHECK(-1 == sm1::commit(writer));
+    CHECK(sm1::SM_ERR_SERIALIZATION == sm1::errnum());
+    sm2::idx_close(a);
+    sm2::idx_close(b);
+  }
+}
+
 TEST_CASE("tree index: scans give what sm1's entries give") {
   // Verify a tree's scans against an index of sm1's entries.
   // 1. Open two indexes on (int4, text), one a tree with small pages

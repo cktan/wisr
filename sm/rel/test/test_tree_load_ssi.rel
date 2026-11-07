@@ -1,0 +1,40 @@
+# Verify that a bulk tree load detects a committed reader's SSI dependency.
+# 1. Make an empty table with unique and non-unique trees and a second table.
+# 2. The loader reads the second table in a serializable transaction.
+# 3. Another transaction reads both trees.
+# 4. Insert into the second table in that transaction.
+# 5. Commit that transaction.
+# 6. Load the first table.
+# 7. Require the loader's commit to fail serialization.
+(def test-dir (string (os/getenv "REL_TMP") "/tree_load_ssi"))
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "db")
+(db-open "db")
+(begin :rc)
+(table-create x (columns (v :int4 :not-null)))
+(index-create x_unique (table x) (key (v :asc)) :unique true :tree true)
+(index-create x_tree (table x) (key (v :asc)) :tree true)
+(table-create y (columns (v :int4 :not-null)))
+(commit)
+(index-wait x_unique)
+(index-wait x_tree)
+(session-open "loader" "db")
+(session-use "loader")
+(begin :ser)
+(assert-count 0 (scan y))
+(session-use "default")
+(begin :ser)
+(assert-count 0 (idx-rows x_unique))
+(assert-count 0 (idx-rows x_tree))
+(insert y [1])
+(commit)
+(session-use "loader")
+(load x [[1]])
+(assert-err :err-serialization (commit))
+(session-close "loader")
+(session-use "default")
+(db-close)
+(env-detach)
+(rm-rf test-dir)
+(print "test_tree_load_ssi.rel passed")

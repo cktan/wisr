@@ -5817,6 +5817,7 @@ source test/ddl_current.sh
 source test/parked_tables.sh
 # Check that overlapping ACL changes never restore a revoked right.
 source test/acl_overlap.sh
+source test/tree_load_ssi.sh
 
 kill -INT $server
 wait $server || fail "crashed retype: shutdown status"
