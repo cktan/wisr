@@ -1,6 +1,6 @@
 # SORT_PLAN — an external sort in sm
 
-Status: a plan, not built. §9 lists what the user has decided.
+Status: step 1 of §8 is built. §9 lists what the user has decided.
 
 **Warning: no PostgreSQL code goes into `sm/`.** This file
 describes techniques. Write the code from scratch, and copy
