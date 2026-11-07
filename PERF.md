@@ -9,11 +9,16 @@ throughput and latency only. Profiles are in `RESULT.md` and
 Find how far digres is from PostgreSQL 18 on five simple queries,
 and what the gap is made of. Each query isolates one cost:
 
-- q0: the cost of one row read by the primary key.
-- q1: the cost of a short index range (8 entries).
-- q2: the cost of a long index range (183 entries).
-- q3: the cost of reading a table row after an index lookup.
-- q4: the cost of reading every row of the table, with no index.
+- q0, `bench/q0-pkget.sql`: the cost of one row read by the
+  primary key.
+- q1, `bench/q1-sk10.sql`: the cost of a short index range (8
+  entries).
+- q2, `bench/q2-sk180.sql`: the cost of a long index range (183
+  entries).
+- q3, `bench/q3-skfetchrow.sql`: the cost of reading a table row
+  after an index lookup.
+- q4, `bench/q4-seqscan.sql`: the cost of reading every row of
+  the table, with no index.
 
 MariaDB with MyRocks (an LSM row store, as digres has) and with
 InnoDB (a clustered B-tree) are a second reference.
@@ -25,7 +30,7 @@ text columns `lastname`, `firstname`, `street`, `city`, `state`,
 `zip`, `phone`. There are two secondary indexes, on `lastname`
 and on `state`.
 
-**q0.** `n` is random from 1 to 10000.
+**q0, `q0-pkget.sql`.** `n` is random from 1 to 10000.
 
 ```sql
 select zip from usertable where id = n;
@@ -35,7 +40,7 @@ select zip from usertable where id = n;
   one matching row is read. Both digres and PostgreSQL use an
   index scan. MariaDB reads the row by its primary key.
 
-**q1.** `n` is random from 1 to 1000.
+**q1, `q1-sk10.sql`.** `n` is random from 1 to 1000.
 
 ```sql
 select count(*) from usertable
@@ -45,7 +50,7 @@ select count(*) from usertable
 - Plan: an index-only scan of the `lastname` index, then a count.
   About 8 entries match. No table row is read.
 
-**q2.**
+**q2, `q2-sk180.sql`.**
 
 ```sql
 select count(*) from usertable where state = 'CA';
@@ -54,7 +59,7 @@ select count(*) from usertable where state = 'CA';
 - Plan: an index-only scan of the `state` index, then a count.
   183 entries match. No table row is read.
 
-**q3.** `n` is random from 1 to 1000.
+**q3, `q3-skfetchrow.sql`.** `n` is random from 1 to 1000.
 
 ```sql
 select phone from usertable
@@ -65,7 +70,7 @@ select phone from usertable
   read from the table. digres uses an index scan. PostgreSQL uses
   a bitmap heap scan.
 
-**q4.**
+**q4, `q4-seqscan.sql`.**
 
 ```sql
 select sum(zip::int) from usertable;
