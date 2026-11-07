@@ -7842,13 +7842,19 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
                              "yet")));
 
   scan = (smstore_scan_t *)palloc0(sizeof(smstore_scan_t));
-  scan->arr_col = (int *)palloc0(ncols * sizeof(int));
-  scan->arr_n = (int *)palloc0(ncols * sizeof(int));
-  scan->arr_at = (int *)palloc0(ncols * sizeof(int));
-  scan->arr_lo = (sm_datum_t **)palloc0(ncols * sizeof(sm_datum_t *));
-  scan->arr_hi = (sm_datum_t **)palloc0(ncols * sizeof(sm_datum_t *));
-  scan->elems = (Datum **)palloc0(Max(nkeys, 1) * sizeof(Datum *));
-  scan->nelems = (int *)palloc0(Max(nkeys, 1) * sizeof(int));
+  /* The arrays' places are made only for a scan with an array key. */
+  bool have_arrays = false;
+  for (int i = 0; i < nkeys; i++)
+    have_arrays = have_arrays || (keys[i].sk_flags & SK_SEARCHARRAY);
+  if (have_arrays) {
+    scan->arr_col = (int *)palloc0(ncols * sizeof(int));
+    scan->arr_n = (int *)palloc0(ncols * sizeof(int));
+    scan->arr_at = (int *)palloc0(ncols * sizeof(int));
+    scan->arr_lo = (sm_datum_t **)palloc0(ncols * sizeof(sm_datum_t *));
+    scan->arr_hi = (sm_datum_t **)palloc0(ncols * sizeof(sm_datum_t *));
+    scan->elems = (Datum **)palloc0(Max(nkeys, 1) * sizeof(Datum *));
+    scan->nelems = (int *)palloc0(Max(nkeys, 1) * sizeof(int));
+  }
   /* Each array's elements, but a null array's: it meets no row. */
   for (int i = 0; i < nkeys; i++)
     if ((keys[i].sk_flags & SK_SEARCHARRAY) &&
