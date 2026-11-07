@@ -1,15 +1,17 @@
 # SCHEMACACHE — a session's schema, kept across transactions
 
 **Status: built.** §7's six steps: the epoch, a name's relation
-(Q7's name lookup from 3,000 instructions to 500), the version
-check after a lock (900 to 100), statistics rows (about 4,700 to
-1,300, with pg_statistic's descriptor made once a session), size
-estimates (2,400 to 900), and sm3's table open (3,400 to 1,800).
-Q7 is at about 110,000 user instructions to PostgreSQL's
-107,000-108,500, from 122,400; its latency and CPU time a query
-are now below PostgreSQL's.
+(a point read's name lookup from 3,000 instructions to 500), the
+version check after a lock (900 to 100), statistics rows (about
+4,700 to 1,300, with pg_statistic's descriptor made once a
+session), size estimates (2,400 to 900), and sm3's table open
+(3,400 to 1,800). A point read is at about 110,000 user
+instructions to PostgreSQL's 107,000-108,500, from 122,400; its
+latency and CPU time a query are now below PostgreSQL's.
 
-A query of one row by its key, Q7 of `../bench/DESIGN.md`,
+A point read, one row by its key, `select c1 from wide_mixed
+where id = :k` on the old bench's million rows
+(`../bench.old/DESIGN.md`; `../bench/q0.sql` is the same shape),
 runs 16,000 more instructions in digres than in PostgreSQL, and
 nearly all of them go to asking sm, in every transaction, what
 the schema is: which table a name means, what its definition and
@@ -38,8 +40,8 @@ one number sm gives it, the catalog's epoch.
 ## 1. Why
 
 Instructions a query, in thousands, sampled every 100,000
-instructions over 20,000 queries of Q7, on `bench/run.sh`'s
-loaded data (release builds, 2026-10-25):
+instructions over 20,000 point reads, on
+`../bench.old/run.sh`'s loaded data (release builds, 2026-10-25):
 
 | | PostgreSQL | digres | gap |
 | --- | --- | --- | --- |
@@ -149,15 +151,15 @@ version.
 
 Not a cache in digres, but the same idea in sm3: what an open
 learns from the definition's generation is learned once with it
-(as its layouts are, `../sm/CATALOG.md` §4). Whether
-the store is chained is fixed when the store is made, so it is
-read once into the definition instead of from sm1 at every open;
-whether this transaction made the table comes from the lock's own
-lookup instead of a second one. The name of the table's TOAST
-sequence is made with the definition, whether its layout has a
-column of variable width with the layout, and an index's state is
-read without a copy of a failed one's error (Q7's parse analysis
-from 31,000 instructions to 30,400).
+(as its layouts are, `../sm/CATALOG.md` §4). Whether the store is
+chained is fixed when the store is made, so it is read once into
+the definition instead of from sm1 at every open; whether this
+transaction made the table comes from the lock's own lookup
+instead of a second one. The name of the table's TOAST sequence
+is made with the definition, whether its layout has a column of
+variable width with the layout, and an index's state is read
+without a copy of a failed one's error (a point read's parse
+analysis from 31,000 instructions to 30,400).
 
 ### 4.6 An index's usability
 
@@ -209,8 +211,8 @@ probe; memory of a few entries a table a session.
 
 ## 7. Order of work
 
-Each step is measured by Q7's instructions a query, before and
-after, PostgreSQL's beside it.
+Each step is measured by a point read's instructions, before
+and after, PostgreSQL's beside it.
 
 1. **`sm_cat_epoch`** in sm: the count, the session's temporary
    count, and `UINT64_MAX` with DDL of the transaction's own.

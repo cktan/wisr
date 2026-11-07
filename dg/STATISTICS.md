@@ -139,17 +139,17 @@ Where it stood before §3 was built.
 - **The row is the caller's**, freed with `heap_freetuple`, not
   `ReleaseSysCache`: each call site that sets
   `vardata->freefunc` for it is changed to match.
-- **Made once from each version of the statistics.** A plan
-  asks for a column's row several times, and building its
-  arrays was 9% of a point query's time, measured (Q7 of
-  `../bench`, `WORKNOTE.md` step 280). A session keeps each row
-  it makes, as its bytes, with the `sm_stats_t` it was made
-  from and the column's type and collation, and hands out a
-  copy while sm still hands out those statistics: an ANALYZE
-  publishes new ones, and the row is made again. Keeping the
-  statistics keeps their address from being reused, so
-  comparing it is enough. A session keeps 1,024 rows at most,
-  and starts over past them.
+- **Made once from each version of the statistics.** A plan asks
+  for a column's row several times, and building its arrays was
+  9% of a point query's time, measured (a read of one row by key
+  on the old bench, `../bench.old/`, as `../bench/q0.sql` reads
+  one; `WORKNOTE.md` step 280). A session keeps each row it
+  makes, as its bytes, with the `sm_stats_t` it was made from and
+  the column's type and collation, and hands out a copy while sm
+  still hands out those statistics: an ANALYZE publishes new
+  ones, and the row is made again. Keeping the statistics keeps
+  their address from being reused, so comparing it is enough. A
+  session keeps 1,024 rows at most, and starts over past them.
 - **A column's width is read where the row is kept.**
   `get_attavgwidth()`, which a plan calls for each column it
   returns, wants only `stawidth`: `smstore_statistic_width()`

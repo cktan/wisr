@@ -472,14 +472,15 @@ compacted, in the block cache:
 
 - **The 12-byte tail is most of a scan's cost**, so it leaves
   CURR's keys, and is not padded.
-- **A point read gains a little**, about 4% of Q7.
+- **A point read gains a little**, about 4% of the old bench's
+  Q7 (`../bench.old/DESIGN.md` §5).
 - **In digres the scans gained less than these figures
-  promised**: q1 stayed at 2.4 to 3.5 times PostgreSQL in one
-  run. A raw RocksDB scan of rows all of one size is not dearer
-  by the byte. Values of 431 and 501 bytes scan at about 108 ns a
-  row, and 403 and 529 at 170 to 210, whatever header makes up
-  the size. So a header's size moves a table of fixed-size rows
-  by luck.
+  promised**: the old bench's Q1 stayed at 2.4 to 3.5 times
+  PostgreSQL in one run. A raw RocksDB scan of rows all of one
+  size is not dearer by the byte. Values of 431 and 501 bytes
+  scan at about 108 ns a row, and 403 and 529 at 170 to 210,
+  whatever header makes up the size. So a header's size moves a
+  table of fixed-size rows by luck.
 
 ### 3.7 The Garbage Collector and a chain
 
@@ -1455,6 +1456,8 @@ makes them too.
 
 ### 7.1 Why
 
+Two queries of the old bench (`../bench.old/DESIGN.md` §5):
+
 ```sql
 -- Q9: 100 rows by a secondary index, their rows next to each other
 select sum(c1) from wide_mixed where c2 between :a and :a + 99;
@@ -1504,8 +1507,8 @@ the steps.
   the first key, and steps up to four times to each next key.
   From the first key the steps miss on, the rest go to
   `MultiGet`, as keys far apart do not gain from the iterator.
-  Q9: 1,659k to 1,338k user instructions with an LSM Index,
-  1,548k to 1,142k through a tree.
+  The old bench's Q9: 1,659k to 1,338k user instructions with
+  an LSM Index, 1,548k to 1,142k through a tree.
 - **An iterator's row is copied into the key's pin**, so the
   iterator can go with the call and the pin stays.
 - **A batch of one key** goes to `MultiGet`.
@@ -1540,8 +1543,8 @@ later batch.
   at a rollback to a savepoint, and at its close. A caller that
   does not free one, as digres on an error, then holds no RocksDB
   file.
-- q3 of the benchmark, about 10 rows a probe through a tree: 283k
-  to 249k instructions a statement.
+- `../bench/` q3, about 10 rows a probe through a tree: 283k to
+  249k instructions a statement.
 
 ### 7.4 Scattered keys
 
@@ -2152,10 +2155,10 @@ versioned keys.
   `--chained` runs do not. It changes the format. The byte is not
   shown to matter: about 1 + k bytes a row with k indexes, and a
   scan's cost does not follow a row's bytes closely. To revisit,
-  measure the q1 scan and `../bench.old/relq6` first, with a
-  current row's prefix cut to 2 bytes. A smaller step keeps sm1
-  apart from sm2: a store that is not chained could drop the
-  byte, which saves it on the catalog only.
+  measure the old bench's Q1 scan and `../bench.old/relq6` first,
+  with a current row's prefix cut to 2 bytes. A smaller step
+  keeps sm1 apart from sm2: a store that is not chained could
+  drop the byte, which saves it on the catalog only.
 - **Three column families a store.** An earlier build split a
   store so, with unversioned index entries. Both went, for
   simplicity.
@@ -2163,8 +2166,8 @@ versioned keys.
   cost (§3.6).
 - **A frozen header of 1 byte**, a row every snapshot sees
   keeping its flags alone. Built and reverted: smbench's 500-byte
-  rows got faster, the bench's `wide_fixed` slower (q1 165 to 258
-  ms), and q6 and q7 did not move.
+  rows got faster, the old bench's `wide_fixed` slower (Q1 165 to
+  258 ms), and Q6 and Q7 did not move.
 - **Unversioned index entries.** They need a stamp, a list, a
   recheck of every hit and a deferred drop: a step of its own.
 - **Unversioned TOAST, and chaining the catalog store.** Neither
@@ -2226,8 +2229,8 @@ versioned keys.
   store the Garbage Collector drops.
 - **A whole-tuple check on a read.** A read checks what it reads
   (§6.8).
-- **Block cache and compression work.** The other part of the Q1
-  profile is a separate change.
+- **Block cache and compression work.** The other part of the old
+  bench's Q1 profile is a separate change.
 
 ---
 

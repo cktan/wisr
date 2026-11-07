@@ -18,9 +18,9 @@ array (`amsearcharray = false`,
 index path for the clause, and a sequential scan filtered
 every row; with `enable_seqscan` off the plan was still `Seq
 Scan`, disabled. An IN list is what an
-ORM's prefetch and a batch loader send, and the benchmark's
-Q7 is one (`../bench/DESIGN.md` §5): a million rows read for
-100.
+ORM's prefetch and a batch loader send, and the old bench's
+Q7 is one (`../bench.old/DESIGN.md` §5): a million rows read
+for 100.
 
 ## 2. Design
 

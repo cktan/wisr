@@ -25,8 +25,9 @@ initdb.
 
 An index scan must cost digres no more than 1.5 times what it
 costs PostgreSQL. Reads by the primary key meet this, through
-RocksDB. Reads by an LSM Index do not. Instructions a statement,
-both servers pinned (`../dg/WORKNOTE.md` steps 333 to 336):
+RocksDB. Reads by an LSM Index do not. Instructions a statement
+on the old bench's queries (`../bench.old/DESIGN.md` §5), both
+servers pinned (`../dg/WORKNOTE.md` steps 333 to 336):
 
 | Query | digres | PostgreSQL | Ratio |
 | --- | --- | --- | --- |
@@ -1312,38 +1313,39 @@ of about 40 bytes. Measured, a million rows loaded into
 | a tree of 2 KB pages | 27 |
 | a tree of 4 KB pages, the entry spliced into the bytes, none decoded | 27.7 |
 
-Q9 and Q10 stay within 2% of each other at all three page sizes.
+The old bench's Q9 and Q10 stay within 2% of each other at all
+three page sizes.
 Logging the entry and writing the page later is what would close
 the rest (§12.2).
 
 ### 10.2 Against PostgreSQL
 
-These figures were taken before pages moved to the Buffer
-Manager's pool. Instructions are `perf stat`'s user instructions
-of the whole server, per statement (`../dg/WORKNOTE.md` step
-354).
+`../bench/run.sh`'s q1 to q3 on `usertable`, 10,000 rows, one
+client (`../PERF.md`). Latency over PostgreSQL's:
 
-| | PostgreSQL 18 | an LSM Index | a tree |
-| --- | --- | --- | --- |
-| Q9, a range, 100 rows | 395k | 1,344k (3.4×) | 955k (2.4×) |
-| Q10, 100 probes | 768k | 3,670k (4.8×) | 1,562k (2.0×) |
-| Q11, 16 clients, tps | 33,512 | 12,250 | 19,721 |
-| a write moving a key, 16 clients, tps | 26,904 | 10,874 | 18,196 |
+| Query | an LSM Index | a tree |
+| --- | --- | --- |
+| q1, 8 entries of `lastname`, a count | 1.41 | 1.19 |
+| q2, 183 entries of `state`, a count | 2.96 | 1.29 |
+| q3, 8 rows found by `lastname` | 2.40 | 1.74 |
 
-With the root at page 0, on one machine and build
+A tree's instructions a statement are 1.05, 1.63 and 2.05 times
+PostgreSQL's (`../PARITY.md` §3.2).
+
+Writes and loads, from the old bench (`../bench.old/DESIGN.md`):
+`wide_mixed`, a million rows, its `c2` index, the root at page 0
 (`../dg/WORKNOTE.md` step 359):
 
 | | a tree | an LSM Index |
 | --- | --- | --- |
-| Q9 | 957k | 1,324k |
-| Q10 | 1,522k | 3,637k |
-| Q11, 16 clients, tps | 22,889 | 11,108 |
+| the old bench's Q11, 16 clients, tps | 22,889 | 11,108 |
 | a write moving a key, 16 clients, tps | 15,184 | 9,835 |
 | a million rows, seconds | 66 | 12 |
 
-- **The goal, 1.5× of PostgreSQL, is not met.** A tree's Q9
-  spends a fifth in malloc and free, then the executor and each
-  row's recheck. Q10 spends a descent a probe, and its row.
+- **The goal, 1.5× of PostgreSQL's instructions, is met by q1
+  alone.** q2's gap is the cost of an entry, mostly the tree
+  cursor's copies. q3's gap is a row's read, mostly RocksDB's
+  `MultiGet` (`../PARITY.md` §4, `NEXT.md` §1).
 - **A load is 5.6 times an LSM Index's on that machine**, against
   1.5 in §10.1, on both builds, and why is not known. Its profile
   is RocksDB's: LZ4 a tenth, then compaction and the memtable.

@@ -78,70 +78,53 @@ and so are the catalog tables psql reads
    PostgreSQL's check costs 713. This item is done.
 
 3. **A secondary index's scan, within 1.5 times PostgreSQL's**
-   (`BTREEINDEX.md`, `../dg/WORKNOTE.md` steps 333 to 336). An
-   index scan may cost digres no more than 1.5 times what it
-   costs PostgreSQL; a sequential scan may, as OLTP runs none.
-   Instructions a statement, servers pinned, on 2026-10-29:
+   (`BTREEINDEX.md`, `../PARITY.md`, `../PERF.md`). An index
+   scan may cost digres no more than 1.5 times what it costs
+   PostgreSQL; a sequential scan may, as OLTP runs none. The
+   measure is three queries of `../bench/run.sh` on
+   `usertable`, 10,000 rows, with btree indexes. Instructions a
+   statement, from `../PARITY.md` §3.2:
 
-   | Scan | Rows | digres | PostgreSQL | Ratio |
+   | Query | What it reads | digres | PostgreSQL | Ratio |
    | --- | --- | --- | --- | --- |
-   | primary key, a range | 100 | 445k | 381k | 1.17 |
-   | Q7, by primary key | 100 | 976k | 802k | 1.22 |
-   | secondary, a range of `c2` (Q9's) | 10 | 376k | 249k | 1.51 |
-   | | 100 | 1,345k | 377k | 3.57 |
-   | secondary, an uncorrelated range | 10 | 432k | 258k | 1.67 |
-   | Q10, Q7's rows by `c2` | 100 | 2,946k | 802k | 3.67 |
+   | q1 | 8 entries of the `lastname` index, a count | 63,071 | 60,170 | 1.05 |
+   | q2 | 183 entries of the `state` index, a count | 241,411 | 148,062 | 1.63 |
+   | q3 | 8 rows, found by the `lastname` index | 176,393 | 86,009 | 2.05 |
 
-   Reads by the primary key pass; reads by a secondary index
-   fail from about 10 rows. A probe of one costs about 30k
-   instructions more than one of the primary key: a RocksDB
-   iterator made and destroyed a probe, its `Seek`, and
-   sm's wrappers. An entry of a range costs 2,820 against
-   PostgreSQL's 695, RocksDB's `Next` alone 1,110 of it.
-   In order:
+   Since then, `7f381103` made q2 4.3% cheaper. Latency is 1.19,
+   1.29 and 1.74 times PostgreSQL's (`../PERF.md`). The fixed
+   cost of a statement is at parity, so the gap is the cost of
+   an entry and of a row.
 
-   1. **Secondary indexes as B+trees** (`BTREEINDEX.md`): built
-      on the `wip-btree` branch, unique ones and `ON CONFLICT`
-      arbiters among them, asked for by `CREATE INDEX ... USING
-      btree` (`lsm`, today's kind, is the default); its steps in
-      `../dg/WORKNOTE.md` 345 to 349.
-   2. **Rows of sorted, close keys read by one cursor**: built,
-      inside sm1's `chain_read_batch` (`ROWSTORE.md` §7.2).
-      Measured with `perf stat`, user instructions of the whole
-      server a statement, not pinned, on 2026-10-30:
+   - **q1 passes.** The gap is its 8 entries and one descent.
+   - **q2 fails by the cost of an entry**: about 1,000
+     instructions, against PostgreSQL's 530. The tree cursor
+     takes about half of it, the executor the rest. In order:
+     1. **Copy an entry once.** `fill` copies a leaf's entries
+        into the cursor, and `tree_fill()` in
+        `sm3/src/table/table.cc` copies them again into the
+        scan's `bytes`. About 10% of q2.
+     2. **Hand out a leaf's entries from the pinned leaf,** with
+        no copy, as PostgreSQL walks its page. About 5% of q2.
+     With both, q2 is expected at about 1.4 times PostgreSQL.
+     Parity needs a count in sm, one tuple a leaf, which helps
+     `count(*)` alone.
+   - **q3 fails by the cost of a row**: about 13,200
+     instructions beyond its entry, against PostgreSQL's 3,200.
+     RocksDB's `MultiGet` takes 9,000 of it, and RocksDB's
+     settings are already tuned. With no cost in RocksDB at all,
+     q3 is still 1.2 times PostgreSQL. Two large changes close
+     the gap:
+     - **A row cache in sm's buffer pool**, keyed by the row's
+       key and version: about 1.35 times PostgreSQL. It needs a
+       design for the version in the key and for invalidation.
+     - **A table's rows in sm's own pages**, as a tree keeps an
+       index's entries: parity, and a redesign of the row store.
 
-      | | Q9 | Q10 |
-      | --- | --- | --- |
-      | PostgreSQL 18 | 395k | 768k |
-      | today's entries | 1,344k (3.4) | 3,670k (4.8) |
-      | a tree | 955k (2.4) | 1,562k (2.0) |
-
-      Under 16 clients, Q11 and a write moving `c2`'s key one in
-      ten, a tree runs 19,721 and 18,196 tps, today's entries
-      12,250 and 10,874, PostgreSQL 33,512 and 26,904
-      (`../dg/WORKNOTE.md` step 353). Neither is under 1.5 yet.
-      Measured again on 2026-10-31, the root at page 0, no meta
-      page, `prev` (step 359): Q9 and Q10 moved under 1%, so
-      neither the sibling's write nor the meta page's absence
-      shows; a load is 5.6 times today's entries' on this
-      machine, the same before the change, where it was 1.5
-      (BTREEINDEX.md §10), and why is not known. What a tree's Q9
-      spends now: malloc and free a fifth, the executor's own
-      share, each row's recheck; Q10's, a descent a probe and its
-      row.
-   3. **Then measure** the grid again, on both kinds of index
-      (`LSMINDEX.md` §8): measured on 2026-11-03
-      (`../dg/WORKNOTE.md` step 379). A tree wins every read
-      and mix, Q9 2.39 and Q10 2.14 times PostgreSQL's;
-      `lsm` loads faster, 25 s to 34 s. The gap is a row's
-      read, not the plan: a row of Q9's range 7.4k against
-      1.4k, planning and a probe near PostgreSQL's. A row's
-      allocations are gone, Q9 to 688k; next, RocksDB's
-      iteration, the recheck of the entry, and the copies,
-      about 750, 700 and 460 a row.
-
-   For today's entries (`LSMINDEX.md` §8):
-   one cursor a scan, moved from probe to probe, not one
+   For lsm indexes, the default, q1 to q3 are 1.41, 2.96 and
+   2.40 times PostgreSQL's latency (`../PERF.md`). What is left
+   for them (`LSMINDEX.md` §8): one cursor a scan, moved from
+   probe to probe, not one
    opened a probe (`open_probe()` in
    `../dg/src/backend/access/sm/smstore.c`), with each
    probe's range an SIREAD of its own, about 10k a probe; sm2

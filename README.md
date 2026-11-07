@@ -93,7 +93,7 @@ sudo apt install build-essential cmake git flex bison python3 \
 
 `libreadline-dev` is for building PostgreSQL 18, `libpq-dev`,
 `libssl-dev` and `pkg-config` for digres's test clients, `bc`
-for `bench/btree.sh`.
+for `bench.old/btree.sh`.
 
 - **RocksDB 8.9.1**: the system's (`librocksdb-dev` on 24.04)
   for the debug build; the release and TSan builds build their
@@ -136,8 +136,8 @@ for `bench/btree.sh`.
   - `bench/build/pg18`, PostgreSQL 18.6 itself (commit
     `724edf9`) built optimized with no `--enable-cassert` or
     `--enable-debug`, for the benchmark
-    (`bench/DESIGN.md` §2), from a worktree of that clone, its
-    prefix the absolute path of this repository's
+    (`bench.old/DESIGN.md` §2), from a worktree of that clone,
+    its prefix the absolute path of this repository's
     `bench/build/pg18`:
 
     ```
@@ -373,27 +373,37 @@ perf stat -e instructions,cycles -- true
 ```
 
 If `instructions` says `<not supported>`, as on a GCP
-`n4a-standard-4`, which has `cycles` alone, `bench/btree.sh`,
-`bench/relq6/run.sh` and the instruction counts below cannot run
-there.
+`n4a-standard-4`, which has `cycles` alone,
+`bench.old/btree.sh`, `bench.old/relq6/run.sh` and the
+instruction counts below cannot run there.
 
 ```
-make -j4 bench                 # the release build, then bench/run.sh
-bench/run.sh dg                # one system, for a look; no report
+DG_PORT=5432 PG_PORT=5433 make -j4 bench  # both servers up
 ```
 
-- `run.sh` loads each system in turn into `bench/build/run`,
-  records each query's plan, times Q1 to Q6 and Q9 (sequential
-  and index scans) and runs pgbench for Q7, Q8, Q10 and Q11
-  (reads by key, by a secondary index, and an update), then
-  writes `bench/results/<date>.md` and a line in
-  `bench/results/LOG.md`. `RUNS`, `WARM` and `Q7_SECONDS` change
-  how long.
+- `make bench` builds `dg/build/digres-release`, then runs
+  `bench/run.sh`. Start that build's server before the run.
+- `run.sh` makes the database `bench` again on each server
+  (`bench/load.sql`: `usertable`, 10,000 rows), then times q0
+  to q4 (`bench/q0.sql` to `bench/q4.sql`). q0 and q4 run once.
+  q1 to q3 run on regular (lsm) indexes, then on btree ones
+  (`mkregidx.sql`, `mkbtidx.sql`). Each query is pgbench,
+  prepared, one client, for `Q_SECONDS` (10). It prints tps,
+  latency, and digres's latency over PostgreSQL's; the logs
+  go to `bench/build/run`.
 - It refuses a debug build of either side: a server whose
   `debug_assertions` is on, or a digres whose `--build` is not
   a release's.
-- The queries are in `bench/sql/` (`queries.txt`, `q7.sql`
-  and the others), the method in `bench/DESIGN.md`.
+- The queries:
+  - q0: one row by the primary key.
+  - q1: 8 entries of the `lastname` index, a count.
+  - q2: 183 entries of the `state` index, a count.
+  - q3: 8 rows, found by the `lastname` index.
+  - q4: every row, a sum, no index.
+- `PERF.md` has the throughput of digres, PostgreSQL 18,
+  MyRocks and InnoDB on q0 to q4.
+- The old benchmark is `bench.old/run.sh`. Its queries, Q1 to
+  Q11, are in `bench.old/DESIGN.md`.
 - Judge digres against PostgreSQL, never against an older
   digres.
 - **On a machine whose clock varies** (a VM, a laptop),
@@ -402,10 +412,9 @@ bench/run.sh dg                # one system, for a look; no report
   (`taskset -c 0-3`) and pgbench (`taskset -c 4`), and count
   the server's with `perf stat -e instructions -p PID` over a
   fixed `pgbench -t N`.
-- `bench/smbench/`, `bench/getseek/` and `bench/relq6/`
-  measure layers below SQL (`bench/README.md`).
-- `PERF.md` has the throughput of digres, PostgreSQL 18, MyRocks
-  and InnoDB on q0 to q4 (`bench/q0.sql` to `bench/q4.sql`).
+- `bench.old/smbench/`, `bench.old/getseek/` and
+  `bench.old/relq6/` measure layers below SQL
+  (`bench.old/README.md`).
 
 ## Where things are
 

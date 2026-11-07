@@ -261,7 +261,8 @@ opens a table and its trees once a transaction.
 One budget, `block_cache_bytes`, serves two users. digres sets it
 to `shared_buffers` (`NBuffers * BLCKSZ`). attach gives a quarter
 to the pool and the rest to the block cache, as the B-tree Index
-benchmark's probes, Q9 and Q10, read more row blocks than pages.
+benchmark's probes, the old bench's Q9 and Q10
+(`../bench.old/btree.sh`), read more row blocks than pages.
 The pool keeps its floor (§1.6), which can take it past the
 quarter.
 
@@ -654,7 +655,7 @@ every transaction, and its scenarios see only versions.
 
 - **The pool is built, not measured.** The baseline is still to
   run: on a machine with `perf` and `pgbench`, at 16 threads, the
-  B-tree Index benchmark's queries Q9 to Q12 and a load
+  old B-tree Index benchmark's queries Q9 to Q12 and a load
   (`../bench.old/btree.sh`), with §1.11's pin and write measures
   again. If it shows no contention at 16 clients, the pool's case
   is memory alone.

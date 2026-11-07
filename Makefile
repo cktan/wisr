@@ -10,7 +10,7 @@
 #                       sm, sq, aa, then digres; make test-sm, test-sq,
 #                       test-aa or test-dg, one part's
 #   make -j4 tsan       digres under the thread sanitizer, and its tests
-#   make -j4 bench      the release build, then bench.old/run.sh
+#   make -j4 bench      the release build, then bench/run.sh
 #   make format         clang-format sm, sq and aa
 #   make clean          remove every part's build directory
 #
@@ -48,7 +48,7 @@ tsan:
 
 bench:
 	$(MAKE) -C dg release
-	bench.old/run.sh
+	bench/run.sh
 
 format: $(FORMATDIRS)
 
