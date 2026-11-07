@@ -56,8 +56,11 @@ check() {
 measure() {
   local sys=$1 port=$2 q=$3 kind=$4 log=$work/$1-$4-$3.log
   echo "run: $sys: $q, $kind index"
+  # The query's file is its label and a name: q1 is q1-seckey10.sql.
+  local qf
+  qf=$(ls "$q"-*.sql) || exit 1
   "$pgbin/pgbench" -p "$port" -d bench -n -M prepared -c 1 -T "$seconds" \
-    -f "$q.sql" > "$log" 2>&1 || {
+    -f "$qf" > "$log" 2>&1 || {
     echo "run: pgbench failed; see $log" >&2
     exit 1
   }

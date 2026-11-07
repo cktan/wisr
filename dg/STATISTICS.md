@@ -142,7 +142,7 @@ Where it stood before §3 was built.
 - **Made once from each version of the statistics.** A plan asks
   for a column's row several times, and building its arrays was
   9% of a point query's time, measured (a read of one row by key
-  on the old bench, `../bench.old/`, as `../bench/q0.sql` reads
+  on the old bench, `../bench.old/`, as `../bench/q0-pkget.sql` reads
   one; `WORKNOTE.md` step 280). A session keeps each row it
   makes, as its bytes, with the `sm_stats_t` it was made from and
   the column's type and collation, and hands out a copy while sm

@@ -11,7 +11,7 @@ latency and CPU time a query are now below PostgreSQL's.
 
 A point read, one row by its key, `select c1 from wide_mixed
 where id = :k` on the old bench's million rows
-(`../bench.old/DESIGN.md`; `../bench/q0.sql` is the same shape),
+(`../bench.old/DESIGN.md`; `../bench/q0-pkget.sql` is the same shape),
 runs 16,000 more instructions in digres than in PostgreSQL, and
 nearly all of them go to asking sm, in every transaction, what
 the schema is: which table a name means, what its definition and

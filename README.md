@@ -385,7 +385,9 @@ DG_PORT=5432 PG_PORT=5433 make -j4 bench  # both servers up
   `bench/run.sh`. Start that build's server before the run.
 - `run.sh` makes the database `bench` again on each server
   (`bench/load.sql`: `usertable`, 10,000 rows), then times q0
-  to q4 (`bench/q0.sql` to `bench/q4.sql`). q0 and q4 run once.
+  to q4 (`bench/q0-pkget.sql`, `q1-seckey10.sql`,
+  `q2-seckey180.sql`, `q3-seckeyfetchrow.sql` and
+  `q4-seqscan.sql`). q0 and q4 run once.
   q1 to q3 run on regular (lsm) indexes, then on btree ones
   (`mkregidx.sql`, `mkbtidx.sql`). Each query is pgbench,
   prepared, one client, for `Q_SECONDS` (10). It prints tps,
