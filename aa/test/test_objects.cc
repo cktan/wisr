@@ -506,6 +506,50 @@ TEST_CASE("objects: a commit on a stale entry conflicts") {
   aa_session_free(s2);
 }
 
+// Verify an ACL change retains its read epoch across a nested owner read.
+// 1. Read a database ACL.
+// 2. Revoke CONNECT in another session.
+// 3. Commit that session.
+// 4. Record the saved ACL before the nested owner setter settles again.
+// 5. Set the owner.
+// 6. Require a conflict at commit.
+// 7. Confirm the owner and CONNECT stay unchanged after abort.
+TEST_CASE("objects: a saved ACL keeps its epoch across an owner settle") {
+  home_t h;
+  aa_session_t *a = aa_session_new(h.aa());
+  aa_session_t *b = aa_session_new(h.aa());
+  aa_object_t object = database_revoked();
+  object.has_acl = true;
+  object.acl = aa_acl_text({{AA_PUBLIC, object.owner, AA_CONNECT}});
+  aa_set_object(a, 1, object);
+  commit(a);
+
+  aa_object_settled(a);
+  aa_object_t saved;
+  REQUIRE(aa_find_object(h.aa(), a, aa_key_t(1, 0), &saved));
+  aa_object_settled(b);
+  aa_object_t revoked = saved;
+  revoked.acl.clear();
+  aa_set_object(b, 1, revoked);
+  commit(b);
+
+  // The ACL setter records the original read before the owner setter.
+  saved.acl = aa_acl_text({{AA_PUBLIC, 16501, AA_CONNECT}});
+  aa_set_object(a, 1, saved);
+  aa_object_settled(a);
+  REQUIRE(aa_find_object(h.aa(), a, aa_key_t(1, 0), &object));
+  object.owner = 16501;
+  aa_set_object(a, 1, object);
+  CHECK(-1 == aa_commit(a));
+  CHECK(AA_ERR_CONFLICT == aa_errnum());
+  REQUIRE(0 == aa_abort(a));
+  REQUIRE(aa_find_object(h.aa(), nullptr, aa_key_t(1, 0), &object));
+  CHECK(object.acl.empty());
+  CHECK(AA_BOOTSTRAP_SUPERUSER == object.owner);
+  aa_session_free(a);
+  aa_session_free(b);
+}
+
 // Verify that overlapping transactions that change different entries both
 // commit.
 // 1. Both sessions read settled; each sets a different table's owner.

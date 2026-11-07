@@ -13,6 +13,8 @@ The report was written before any source fix.
 Location: `sm/sm2/src/rel/index.cc`, lines 724 to 735.
 Commit: `268fb234`.
 
+Status: fixed on this branch.
+
 The new tree path calls `load_put()` on a drained stream.
 That stream deliberately skips `ssi_on_write()` in sm1.
 The old path called `idx_insert()`, which reports the tree
@@ -23,11 +25,14 @@ The exclusive table lock does not remove a committed reader's
 SIREAD range while another transaction overlaps that reader.
 This schedule commits a serialization cycle:
 
-1. Start transaction B at SERIALIZABLE and read empty table Y.
-2. Start transaction A at SERIALIZABLE and scan empty X's tree.
-3. Insert into Y in A, then commit A.
-4. Acquire X's exclusive lock in B and bulk load a row into X.
-5. Commit B. Both transactions commit despite the cycle.
+1. Start transaction B at SERIALIZABLE.
+2. Read empty table Y in B.
+3. Start transaction A at SERIALIZABLE.
+4. Scan empty X's tree in A.
+5. Insert into Y in A.
+6. Commit A.
+7. Bulk load a row into X in B under its exclusive table lock.
+8. Commit B. Both transactions commit despite the cycle.
 
 The control uses an ordinary insert in B. Its commit fails
 with `SM_ERR_SERIALIZATION`. The bulk load's commit succeeds.
@@ -50,6 +55,8 @@ Artifacts:
 Location: `aa/src/aa.cc`, lines 542 to 545.
 Commit: `dac3c73d`.
 
+Status: fixed on this branch.
+
 `aa_object_settled()` replaces `settled_epoch` on every call.
 The new conflict check therefore loses the epoch of an earlier
 ACL read if a nested setter settles before the first change.
@@ -64,10 +71,12 @@ table lock that excludes a concurrent database ACL change.
 The following call sequence reproduces the lost revoke:
 
 1. Read an ACL that grants CONNECT to PUBLIC in session A.
-2. Revoke that grant in session B and commit B.
-3. Repeat the settle inside A's owner setter.
-4. Set the owner, then apply the saved ACL with the new owner.
-5. Commit A. The commit succeeds and restores PUBLIC CONNECT.
+2. Revoke that grant in session B.
+3. Commit B.
+4. Repeat the settle inside A's owner setter.
+5. Set the owner in A.
+6. Apply the saved ACL with the new owner in A.
+7. Commit A. The commit succeeds and restores PUBLIC CONNECT.
 
 The control omits the nested settle. Its commit conflicts and
 the grant stays revoked. This is an incomplete fix for the
@@ -88,17 +97,35 @@ Artifacts:
 - `bench/build/review-18h/aa-nested.log`: the commit succeeds and
   restores CONNECT.
 
+## Implemented fixes
+
+The bulk load now reports every full tree entry key to SSI
+before it shortens a unique key for sorting. Tests cover sm2,
+sm3, rel, and SQL COPY. The sm1 isolation driver cannot express
+a tree index. AA and sq do not implement this path.
+
+The owner change now records its rewritten ACL before the
+nested owner setter settles again. AA retains the entry's
+first change epoch. This avoids a global change to AA's epoch
+rules for later statements. Tests cover AA's epoch retention
+and a database owner change beside a revoke in dg. The storage
+levels and rel do not implement owners or ACLs.
+
 ## Validation
 
 - Debug builds of sm and dg completed.
-- AA: all 43 tests passed, with 643 assertions.
+- AA: all 44 tests passed, with 659 assertions.
 - sm0: all 85 tests passed, with 3,297,655 assertions.
 - All 124 isolation scripts matched in both store formats.
 - dg SQL tests: all 13 files passed, alone and in eight
   concurrent sessions.
-- The dg server integration tests passed.
-- The full sm suite was started. Its final status is reported
-  in the review response.
+- All 124 parser test files passed.
+- The dg initialization and server integration tests passed.
+- All 65 logic test files passed: 11,073 records and 19 skips.
+- All 231 ported PostgreSQL regression files passed.
+- The full sm suite passed at every level, including all rel
+  tests. sm1 passed 352 unit tests and 5 stress tests. sm2
+  passed 150 tests. sm3 passed 269 tests.
 
 The probes use debug libraries. Their data and logs are under
 `bench/build/review-18h`, with TMPDIR in that directory.

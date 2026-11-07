@@ -221,6 +221,11 @@ database's commit:
   concurrently updated". The statement does not wait, so the
   conflict shows at the commit.
 
+An owner change records its rewritten ACL before its owner
+setter settles again. The first change retains the epoch of
+the ACL read. A nested settle cannot then hide a concurrent
+revoke from the commit check.
+
 A transaction that changes no entry, DML or a temporary object's,
 never takes it. Commits that change entries wait for one another,
 each across its database's WAL sync.

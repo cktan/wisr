@@ -11901,3 +11901,19 @@ Done (2026-11-07), as step 399 planned.
   (validation beside an open child writer, bounded by
   `lock_timeout`).
 - **Left**: the session that validated reads the flag at commit.
+
+## Step 402: retain an owner change's ACL read epoch
+
+An owner change reads an ACL, rewrites its owner, and records
+the result. Its nested owner setter settles again before it
+records the owner. If another session revoked a right between
+those reads, that settle could hide the stale ACL's epoch.
+
+`pg_global_change_owner()` now records the rewritten ACL before
+it calls the owner setter. AA retains the first change's epoch
+for the entry. A concurrent revoke then fails the owner change
+at commit instead of being restored.
+
+The AA test checks that a recorded ACL retains its epoch across
+a nested settle. `test/acl_owner_overlap.sh` checks a database
+owner change beside a revoke, its conflict, and a fresh retry.

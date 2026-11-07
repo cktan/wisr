@@ -604,10 +604,14 @@ void pg_global_change_owner(uint64_t dbid, Oid classid, Oid objid, Oid owner,
                                           : pg_global_owner(objid);
   Acl *acl = pg_global_acl(dbid, objid);
 
-  pg_global_set_owner(dbid, classid, objid, owner, temp);
+  /*
+   * Record the ACL read's epoch before set_owner settles again. A revoke
+   * between the two reads must conflict with this saved ACL at commit.
+   */
   if (NULL != acl)
     pg_global_set_acl(dbid, classid, objid, owner, aclnewowner(acl, old, owner),
                       temp);
+  pg_global_set_owner(dbid, classid, objid, owner, temp);
 }
 
 /* A subtransaction commits: its changes are its parent's. */
