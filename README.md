@@ -404,6 +404,8 @@ bench/run.sh dg                # one system, for a look; no report
   fixed `pgbench -t N`.
 - `bench/smbench/`, `bench/getseek/` and `bench/relq6/`
   measure layers below SQL (`bench/README.md`).
+- `PERF.md` has the throughput of digres, PostgreSQL 18, MyRocks
+  and InnoDB on q0 to q4 (`bench/q0.sql` to `bench/q4.sql`).
 
 ## Where things are
 
@@ -413,6 +415,7 @@ bench/run.sh dg                # one system, for a look; no report
 | `sm/README.md` | the stack's levels, and each one's design document |
 | `sm/NEXT.md` | what is to be built next, in order |
 | `DG-vs-PG.md` | how digres differs from PostgreSQL 18 |
+| `PERF.md` | how fast digres runs against PostgreSQL 18, MyRocks and InnoDB |
 | `dg/README.md`, `dg/DESIGN.md` | what digres is, and its decisions of record |
 | `dg/WORKNOTE.md` | every step taken in digres, and why |
 | `sm/BTREEINDEX.md` and the other notes in `sm/` | designs of a feature each, built or proposed |

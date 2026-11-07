@@ -4,7 +4,7 @@
 the Wisr storage stack (`sm/`). DG keeps PG's wire protocol,
 analyzer, planner, and executor. It replaces the process model,
 storage engine, transaction manager, catalog, and authentication
-layer.
+layer. `PERF.md` measures how fast DG runs against PG.
 
 > **Roles, authentication, and authorization are redone.** DG
 > does not keep PG's role and privilege machinery. A new
