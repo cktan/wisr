@@ -11832,3 +11832,49 @@ asks why, and what it costs when VALIDATE is one statement.
   overlapping writers.
 - **Left**: `../sm/NEXT.md` lists the steps to take the lighter
   write; not urgent.
+
+## Step 400: a role's checks, measured with no rows to read
+
+`../sm/NEXT.md` §1 item 2 left step 395 unmeasured. Callgrind on
+a point read was the plan. A statement that reads no row is a
+better instrument: the checks are most of what is left, so
+`perf stat` shows them, though it swings 2% on a point read.
+
+- **`../bench/privcheck.sh`**: an empty table, statements
+  `WHERE false`, and a point read of `narrow`, by the superuser
+  and by a role, on `digres-release` and PostgreSQL 18. The
+  superuser skips the checks, so a check is the role's count
+  over the superuser's. A statement's count is the slope of two
+  run lengths, so connection and first plans cancel.
+- **An EXECUTE check runs under `WHERE false`**: at executor
+  start, for each function in the plan. With EXECUTE on
+  `length()` revoked, PostgreSQL refuses the statement. A
+  statement with no function makes no EXECUTE check, so one
+  statement holds one `length(c)` and one holds sixteen.
+- **Measured** at 3623ce73, prepared, instructions a statement,
+  the median of 5 rounds:
+
+  | Statement | System | Superuser | Role | Gap |
+  | --- | --- | --- | --- | --- |
+  | table only | digres | 25,600 | 25,953 | 354 |
+  | | PostgreSQL | 22,763 | 23,082 | 318 |
+  | table, 1 function | digres | 26,358 | 26,851 | 493 |
+  | | PostgreSQL | 23,765 | 24,792 | 1,027 |
+  | table, 16 functions | digres | 49,709 | 52,287 | 2,579 |
+  | | PostgreSQL | 56,583 | 68,313 | 11,730 |
+  | point read | digres | 45,089 | 45,576 | 487 (1.1%) |
+  | | PostgreSQL | 43,168 | 44,201 | 1,033 (2.4%) |
+
+- **The goal of 3% is met.** A kept EXECUTE check is 139
+  instructions, by one function and by sixteen. PostgreSQL's is
+  708 and 713. A point read pays one table check and one
+  EXECUTE check: 354 + 139 is 493 against 487 measured, and
+  318 + 713 is 1,031 against 1,033.
+- **Not measured**: a session's first check of a function, which
+  misses and reads `pg_proc`. The slope leaves it out.
+- **The simple protocol is left out**: rounds differ by more
+  than the gap. digres gave -50 by one function and 113 by
+  sixteen.
+- **A round is not reported first**: the load's compactions and
+  autovacuum count as the server's instructions, and the first
+  round spread by 230% with them.

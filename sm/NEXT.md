@@ -53,33 +53,29 @@ and so are the catalog tables psql reads
    (step 331): an object's check costs a role 0.07 µs more than
    the superuser (`../bench/roles.sh`).
 
-   **Done, short of the goal for a reason** (`../dg/WORKNOTE.md`
-   step 381). sm's catalog rows are kept in the syscache again,
-   and `aa_roles()` and `aa_objects()` read without the mutex.
-   Instructions a prepared point read, by callgrind:
+   **Done** (`../dg/WORKNOTE.md` steps 381, 395 and 400). sm's
+   catalog rows are kept in the syscache, and `aa_roles()` and
+   `aa_objects()` read without the mutex. A function's EXECUTE
+   check is kept in the session, as a table's is:
+   `object_aclmask_ext()` asks aa's `aa_kept_mask()` first, and a
+   repeated check is a lookup. The answer is PostgreSQL's, as the
+   check still runs, once.
 
-   | | Superuser | Role | Gap |
-   | --- | --- | --- | --- |
-   | before | 41,657 | 43,168 | 3.6% |
-   | after | 41,193 | 43,003 | 4.4% |
+   The goal was a role's prepared point read within 3% of the
+   superuser's. Instructions a statement, measured by
+   `../bench/privcheck.sh` on 2026-11-06:
 
-   The goal of 3% is not met. PostgreSQL's own EXECUTE check of
-   the operator's function is about 1,260 instructions, 3.1% of
-   the read by itself, and PostgreSQL pays it too: its gap is
-   2.5% by `perf stat`. digres's table check is about 360, 0.9%.
-   Skipping the EXECUTE check of a compiled-in function would
-   meet the goal, but it is a change to PostgreSQL's path that
-   PostgreSQL does not have, so it is not made.
+   | Statement | System | Superuser | Role | Gap |
+   | --- | --- | --- | --- | --- |
+   | one table, `WHERE false` | digres | 25,600 | 25,953 | 354 |
+   | | PostgreSQL | 22,763 | 23,082 | 318 |
+   | one table, one function, `WHERE false` | digres | 26,358 | 26,851 | 493 |
+   | | PostgreSQL | 23,765 | 24,792 | 1,027 |
+   | point read of `narrow` | digres | 45,089 | 45,576 | 487 (1.1%) |
+   | | PostgreSQL | 43,168 | 44,201 | 1,033 (2.4%) |
 
-   **A function's check, kept** (`../dg/WORKNOTE.md` step 395).
-   The EXECUTE check is now kept in the session, as a table's
-   is: `object_aclmask_ext()` asks aa's `aa_kept_mask()` first,
-   and a repeated check is a lookup. The answer is PostgreSQL's,
-   as the check still runs, once. Not measured yet: the arm VM
-   it was built on runs no benchmark. The estimate is about 100
-   instructions for a hit against about 1,260, which would bring
-   the gap under 3%. Left: measure it with callgrind on
-   `digres-release`.
+   A kept EXECUTE check costs a role 139 instructions, and
+   PostgreSQL's check costs 713. This item is done.
 
 3. **A secondary index's scan, within 1.5 times PostgreSQL's**
    (`BTREEINDEX.md`, `../dg/WORKNOTE.md` steps 333 to 336). An
