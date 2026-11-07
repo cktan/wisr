@@ -6,6 +6,21 @@ Two confirmed P1 findings. Both can leave a role holding
 privileges that a committed transaction revoked.
 This review changes no production code.
 
+## Status
+
+Both findings are fixed in `dac3c73d`.
+
+- Overlapping ACL changes: `aa_commit()` fails with
+  `AA_ERR_CONFLICT` if another commit changed an entry after the
+  transaction read it, or if the log of changes lost entries after
+  that epoch. Tests: `aa/test/test_objects.cc` and
+  `dg/test/acl_overlap.sh`.
+- Failed final write: `aa_post_commit()` publishes the
+  intermediate entries already on disk, so the live privileges are
+  those a restart reads. It does not retry the write. Tests:
+  `aa/test/test_objects.cc`, with `sm_begin()` wrapped to fail.
+  There is no digres test, as `server.sh` cannot inject a failure.
+
 ## P1: Overlapping ACL changes can restore a committed revoke
 
 Primary location:
