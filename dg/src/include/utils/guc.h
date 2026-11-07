@@ -255,7 +255,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_parser_stats;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_planner_stats;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_executor_stats;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_statement_stats;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_btree_build_stats;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *event_source;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool check_function_bodies;

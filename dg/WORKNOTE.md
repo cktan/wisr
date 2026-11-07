@@ -11917,3 +11917,25 @@ at commit instead of being restored.
 The AA test checks that a recorded ACL retains its epoch across
 a nested settle. `test/acl_owner_overlap.sh` checks a database
 owner change beside a revoke, its conflict, and a fresh retry.
+
+## Step 403: settings of removed features are gone
+
+A sweep of the settings found some that nothing reads. This step
+drops the ones whose feature digres removed.
+
+- **Gone**: `data_checksums`, `segment_size` (heap files),
+  `log_btree_build_stats` (nbtree), and `vacuum_cost_page_hit`,
+  `vacuum_cost_page_miss`, `vacuum_cost_page_dirty` and
+  `vacuum_cost_limit`. Their variables, `VacuumCostPageHit`,
+  `VacuumCostPageMiss`, `VacuumCostPageDirty` and
+  `VacuumCostLimit`, and their lines in `postgresql.conf.sample`
+  went with them.
+- **Kept on purpose**: `vacuum_cost_delay` and
+  `default_with_oids`. The ported `guc` test sets both, and its
+  expected output is PostgreSQL's.
+- **Kept on purpose**: the TLS, GSSAPI and Bonjour settings.
+  They are compiled out by configure, not removed
+  (`CODE.md` §7), and TLS is an open decision.
+- **Left**: settings of refused features (triggers,
+  partitioning, foreign tables, xml) and of the process model.
+  Their code is still compiled.

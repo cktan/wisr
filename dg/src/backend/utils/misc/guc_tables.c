@@ -309,7 +309,6 @@ thread_local /*LOCAL*/ bool log_executor_stats = false;
 thread_local /*LOCAL*/ bool log_statement_stats =
     false; /* this is sort of all three
             * above together */
-thread_local /*LOCAL*/ bool log_btree_build_stats = false;
 thread_local /*LOCAL*/ char *event_source;
 
 thread_local /*LOCAL*/ bool row_security;
@@ -388,8 +387,6 @@ static thread_local /*LOCAL*/ int max_function_args;
 static thread_local /*LOCAL*/ int max_index_keys;
 static thread_local /*LOCAL*/ int max_identifier_length;
 static thread_local /*LOCAL*/ int block_size;
-static thread_local /*LOCAL*/ int segment_size;
-static thread_local /*LOCAL*/ bool data_checksums;
 static thread_local /*LOCAL*/ bool integer_datetimes;
 
 #ifdef USE_ASSERT_CHECKING
@@ -963,17 +960,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      check_log_stats,
      NULL,
      NULL},
-#ifdef BTREE_BUILD_STATS
-    {{"log_btree_build_stats", PGC_SUSET, DEVELOPER_OPTIONS,
-      gettext_noop("Logs system resource usage statistics (memory and CPU) on "
-                   "various B-tree operations."),
-      NULL, GUC_NOT_IN_SAMPLE},
-     &log_btree_build_stats,
-     false,
-     NULL,
-     NULL,
-     NULL},
-#endif
 
     {{"track_io_timing", PGC_SUSET, STATS_CUMULATIVE,
       gettext_noop("Collects timing statistics for database I/O activity."),
@@ -1195,16 +1181,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
          NULL,
      },
      &quote_all_identifiers,
-     false,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"data_checksums", PGC_INTERNAL, PRESET_OPTIONS,
-      gettext_noop(
-          "Shows whether data checksums are turned on for this cluster."),
-      NULL, GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE | GUC_RUNTIME_COMPUTED},
-     &data_checksums,
      false,
      NULL,
      NULL,
@@ -1494,47 +1470,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"vacuum_cost_page_hit", PGC_USERSET, VACUUM_COST_DELAY,
-      gettext_noop("Vacuum cost for a page found in the buffer cache."), NULL},
-     &VacuumCostPageHit,
-     1,
-     0,
-     10000,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"vacuum_cost_page_miss", PGC_USERSET, VACUUM_COST_DELAY,
-      gettext_noop("Vacuum cost for a page not found in the buffer cache."),
-      NULL},
-     &VacuumCostPageMiss,
-     2,
-     0,
-     10000,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"vacuum_cost_page_dirty", PGC_USERSET, VACUUM_COST_DELAY,
-      gettext_noop("Vacuum cost for a page dirtied by vacuum."), NULL},
-     &VacuumCostPageDirty,
-     20,
-     0,
-     10000,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"vacuum_cost_limit", PGC_USERSET, VACUUM_COST_DELAY,
-      gettext_noop("Vacuum cost amount available before napping."), NULL},
-     &VacuumCostLimit,
-     200,
-     1,
-     10000,
-     NULL,
-     NULL,
-     NULL},
-
     {{"max_files_per_process", PGC_POSTMASTER, RESOURCES_KERNEL,
       gettext_noop("Sets the maximum number of files each server process is "
                    "allowed to open simultaneously."),
@@ -1759,17 +1694,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      BLCKSZ,
      BLCKSZ,
      BLCKSZ,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"segment_size", PGC_INTERNAL, PRESET_OPTIONS,
-      gettext_noop("Shows the number of pages per disk file."), NULL,
-      GUC_UNIT_BLOCKS | GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE},
-     &segment_size,
-     RELSEG_SIZE,
-     RELSEG_SIZE,
-     RELSEG_SIZE,
      NULL,
      NULL,
      NULL},

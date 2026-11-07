@@ -269,10 +269,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int work_mem;
 extern thread_local /*LOCAL*/ PGDLLIMPORT double hash_mem_multiplier;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int maintenance_work_mem;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT int VacuumCostPageHit;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int VacuumCostPageMiss;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int VacuumCostPageDirty;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int VacuumCostLimit;
 extern thread_local /*LOCAL*/ PGDLLIMPORT double VacuumCostDelay;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT int VacuumCostBalance;

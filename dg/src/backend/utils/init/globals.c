@@ -117,10 +117,6 @@ thread_local /*LOCAL*/ int MaxConnections = 100;
 
 /* GUC parameters for vacuum */
 
-thread_local /*LOCAL*/ int VacuumCostPageHit = 1;
-thread_local /*LOCAL*/ int VacuumCostPageMiss = 2;
-thread_local /*LOCAL*/ int VacuumCostPageDirty = 20;
-thread_local /*LOCAL*/ int VacuumCostLimit = 200;
 thread_local /*LOCAL*/ double VacuumCostDelay = 0;
 
 thread_local /*LOCAL*/ int VacuumCostBalance = 0; /* working state for vacuum */
