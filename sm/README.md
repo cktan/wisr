@@ -123,5 +123,10 @@ One document for each module, with its design and implementation.
 - `CLUSTER.md` — Clustered Table: rows stored in primary-key
   order
 - `FOREIGNKEY.md` — Foreign Key: a table's references to another
+- `SORT.md` — Sort: records in key order, in memory and in runs
+  on files
+- `SORT_PLAN.md` — the plan the Sort was built from
+- `BTREELOAD_PLAN.md` — the plan for a bulk load that builds a
+  B-tree from the bottom up
 - `LOGICALDECODE.md` — Logical Decoding: a design, not built
 
