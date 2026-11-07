@@ -34,6 +34,9 @@ void drop_from(sm3::session_t *s, int d) {
   while (!s->states.empty() && s->states.back().depth >= d) {
     s->states.pop_back();
   }
+  while (!s->fkeys.empty() && s->fkeys.back().depth >= d) {
+    s->fkeys.pop_back();
+  }
   while (!s->sequences.empty() && s->sequences.back().depth >= d) {
     s->sequences.pop_back();
   }
@@ -104,7 +107,7 @@ std::unordered_set<uint64_t> hidden_views(const sm3::session_t *s) {
 bool made_ddl(const sm3::session_t *s) {
   return !s->tables.empty() || !s->names.empty() || !s->collations.empty() ||
          !s->nspaces.empty() || !s->states.empty() || !s->sequences.empty() ||
-         !s->stats.empty() || !s->views.empty();
+         !s->stats.empty() || !s->views.empty() || !s->fkeys.empty();
 }
 
 /* Whether a name change is of a temporary table's name. */
@@ -123,7 +126,8 @@ bool made_shared_ddl(const sm3::session_t *s) {
          !std::all_of(s->names.begin(), s->names.end(), temp_name) ||
          std::any_of(s->states.begin(), s->states.end(), shared) ||
          !s->collations.empty() || !s->nspaces.empty() ||
-         !s->sequences.empty() || !s->stats.empty() || !s->views.empty();
+         !s->sequences.empty() || !s->stats.empty() || !s->views.empty() ||
+         !s->fkeys.empty();
 }
 
 /*
@@ -272,6 +276,34 @@ void publish(sm3::session_t *s) {
     }
   }
   s->tables.clear();
+  // A key marked valid under the table's IX goes into the
+  // definition now in the catalog, which may hold another's change
+  // made meanwhile. A rebuild that fails leaves the flag unset in
+  // memory: a session that sees it late is only careful.
+  for (const sm3::fkey_valid_change_t &c : s->fkeys) {
+    auto old = cat->tables.find(c.table);
+    if (old == cat->tables.end()) {
+      continue;
+    }
+    sm3::table_rec_t rec = old->second->rec;
+    for (sm3::fkey_rec_t &fk : rec.fkeys) {
+      if (fk.oid == c.fkey) {
+        fk.validated = true;
+      }
+    }
+    sm3::collation_lookup_t lookup = [cat](uint64_t o,
+                                           const sm2::collation_t *&out) {
+      auto it = cat->collations.find(o);
+      out = it == cat->collations.end() ? nullptr : it->second;
+      return out != nullptr;
+    };
+    std::shared_ptr<const sm3::table_def_t> def;
+    if (sm3::build_table(lookup, c.table, rec, def) == 0) {
+      cat->tables[c.table] = std::move(def);
+      cat->table_seq[c.table] = seq;
+    }
+  }
+  s->fkeys.clear();
   for (sm3::view_change_t &v : s->views) {
     if (v.other) {
       // Another session's temporary view leaves the register, and
@@ -523,6 +555,9 @@ int forget(session_t *s, int depth) {
   for (state_change_t &c : s->states) {
     c.depth = std::min(c.depth, depth - 1);
   }
+  for (fkey_valid_change_t &c : s->fkeys) {
+    c.depth = std::min(c.depth, depth - 1);
+  }
   for (sequence_change_t &c : s->sequences) {
     c.depth = std::min(c.depth, depth - 1);
   }
@@ -635,6 +670,11 @@ void overlay_sequence(session_t *s, uint64_t oid,
                       std::string_view name) {
   s->sequences.push_back(
       {s->depth, oid, nspoid, {name_nspoid, std::string(name)}});
+}
+
+/* Record a foreign key marked validated; see internal.h. */
+void overlay_fkey_valid(session_t *s, uint64_t table, uint64_t fkey) {
+  s->fkeys.push_back({s->depth, table, fkey});
 }
 
 /* Record a view's new definition, or its drop. */

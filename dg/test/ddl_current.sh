@@ -66,6 +66,30 @@ for level in 'repeatable read' 'serializable'; do
   grep -qx 'old view 1' "$work/dgood_$tag.out" ||
     fail "view after successful foreign key at $level"
   held_end "dgood_$tag"
+
+  # A validation does not wait for a child writer in flight.
+  # 1. Re-add the key NOT VALID, and hold a writer of dc_child open.
+  # 2. Validate from another session with a lock_timeout: it ends.
+  # 3. The writer commits, and the key reads validated.
+  held_start "dw_$tag"
+  local_psql -v ON_ERROR_STOP=1 -c "
+    alter table dc_child drop constraint dc_fk;
+    alter table dc_child add constraint dc_fk
+      foreign key(pid) references dc_parent(id) not valid;" \
+    >> "$work/dc-$tag.log" 2>&1 || fail "validation setup at $level"
+  held_send "dw_$tag" "begin; insert into dc_child values(3,1);
+    select 'writing';"
+  held_wait "dw_$tag" writing || fail "child writer at $level"
+  local_psql -v ON_ERROR_STOP=1 -c "set lock_timeout = '10s';
+    alter table dc_child validate constraint dc_fk;" \
+    >> "$work/dc-$tag.log" 2>&1 ||
+    fail "validation waited for a child writer at $level"
+  held_send "dw_$tag" "commit; select 'committed';"
+  held_wait "dw_$tag" committed || fail "child writer commit at $level"
+  held_end "dw_$tag"
+  [ "$(local_psql -At -c "select convalidated from pg_constraint
+      where conname = 'dc_fk'")" = t ] ||
+    fail "key not validated beside a writer at $level"
   local_psql -c 'drop table dc_child, dc_parent, dc_witness' \
     >> "$work/dc-$tag.log" 2>&1
 

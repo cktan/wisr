@@ -284,6 +284,56 @@ TEST_CASE("a foreign key is dropped, validated and renamed") {
   CHECK(sm3::cat_get_table(db.cat, t.c)->rec.fkeys.empty());
 }
 
+TEST_CASE("validating a foreign key does not wait for the child's writers") {
+  // Verify validate_fkey takes the child's lock IX, publishes the flag
+  // into the newest definition, and loses no other validation.
+  // 1. Add two NOT VALID keys f1 and f2 on c, and commit.
+  // 2. A second session holds c's lock IX, as a writer does.
+  // 3. The first validates f1 with no wait; the second validates f2
+  //    through its own transaction.
+  // 4. Both commit: both keys are validated in memory, and after a
+  //    restart.
+  fk_db_t db;
+  db.begin();
+  pair_t t = make_pair(db);
+  uint64_t f1 = 0, f2 = 0;
+  sm3::fkey_rec_t k = c_to_p(t);
+  k.validated = false;
+  REQUIRE(sm3::create_fkey(db.ss, t.c, k, f1) == 0);
+  k.name = "c_pid2";
+  REQUIRE(sm3::create_fkey(db.ss, t.c, k, f2) == 0);
+  db.commit();
+
+  sm1::session_t *s2 = db.open();
+  sm3::session_t *ss2 = nullptr;
+  REQUIRE(sm3::session_open(db.cat, s2, ss2) == 0);
+  REQUIRE(sm3::begin(ss2, sm1::xctlevel_t::read_committed) == 0);
+  std::shared_ptr<const sm3::table_def_t> d;
+  REQUIRE(sm3::cat_lock_table(ss2, t.c, sm1::SM_LOCKMODE_IX, d) == 0);
+
+  db.begin();
+  uint64_t v0 = sm3::cat_table_version(db.ss, t.c);
+  REQUIRE_MESSAGE(sm3::validate_fkey(db.ss, t.c, f1) == 0, sm1::errmsg());
+  REQUIRE_MESSAGE(sm3::validate_fkey(ss2, t.c, f2) == 0, sm1::errmsg());
+  CHECK(sm3::validate_fkey(db.ss, t.c, 999999) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  db.commit();
+  REQUIRE_MESSAGE(sm3::commit(ss2) == 0, sm1::errmsg());
+  sm3::session_close(ss2);
+
+  auto c = sm3::cat_get_table(db.cat, t.c);
+  REQUIRE(c->rec.fkeys.size() == 2);
+  CHECK(c->rec.fkeys[0].validated);
+  CHECK(c->rec.fkeys[1].validated);
+  CHECK(sm3::cat_table_version(db.ss, t.c) != v0);
+
+  db.reload();
+  c = sm3::cat_get_table(db.cat, t.c);
+  REQUIRE(c->rec.fkeys.size() == 2);
+  CHECK(c->rec.fkeys[0].validated);
+  CHECK(c->rec.fkeys[1].validated);
+}
+
 TEST_CASE("a table's foreign key to itself goes with the table") {
   // Verify a self-referencing foreign key (FOREIGNKEY.md §5).
   // 1. Make p, its unique index, and a column boss; add p(boss) ->

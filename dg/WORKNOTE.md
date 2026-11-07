@@ -11878,3 +11878,26 @@ better instrument: the checks are most of what is left, so
 - **A round is not reported first**: the load's compactions and
   autovacuum count as the server's instructions, and the first
   round spread by 230% with them.
+
+## Step 401: VALIDATE CONSTRAINT of a foreign key takes the child IX
+
+Done (2026-11-07), as step 399 planned.
+
+- **`sm3::cat_validate_fkey`**: the table IX, then the key's own
+  record (`kind_t::constraint`) locked X and written with the
+  flag set, so two validations of one key meet and writers go
+  on. `validate_fkey` calls it.
+- **Published at commit**: the session notes the key
+  (`fkey_valid_change_t`). `publish()` sets the flag in the
+  definition now in the catalog and moves the table's version,
+  so another's change made meanwhile under IX is kept. A rebuild
+  that fails leaves memory unset: only more careful.
+- **`latest_table`** adds a note of this transaction to the
+  record it returns, so a later DDL in the transaction keeps the
+  flag. A table the transaction changed, or a temporary one,
+  takes the old path: the whole record under X.
+- **Tests**: `sm3/test/test_fkey.cc` (two sessions, one holding
+  IX, validate two keys, restart); `dg/test/ddl_current.sh`
+  (validation beside an open child writer, bounded by
+  `lock_timeout`).
+- **Left**: the session that validated reads the flag at commit.

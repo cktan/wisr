@@ -119,6 +119,15 @@ int latest_table(sm3::session_t *session, uint64_t oid, sm3::table_rec_t &rec) {
                        "table " + std::to_string(oid) + " does not exist");
   }
   rec = d->rec;
+  // A key this transaction marked valid is not in the definition
+  // yet: a record written from rec must keep the flag.
+  for (const sm3::fkey_valid_change_t &c : session->fkeys) {
+    for (sm3::fkey_rec_t &fk : rec.fkeys) {
+      if (c.table == oid && fk.oid == c.fkey) {
+        fk.validated = true;
+      }
+    }
+  }
   return 0;
 }
 
@@ -731,6 +740,58 @@ int cat_put_index_state(session_t *session, uint64_t table_oid,
     return -1;
   }
   overlay_state(session, index_oid, std::move(st));
+  return 0;
+}
+
+/* Mark a foreign key valid, under the child's lock IX; see sm3.h. */
+int cat_validate_fkey(session_t *session, uint64_t table_oid,
+                      uint64_t fkey_oid) {
+  // A table this transaction changed, or a temporary one, has a
+  // definition of its own to write: the whole record, under X.
+  std::shared_ptr<const table_def_t> d = cat_get_table(session, table_oid);
+  if (d && (d->nspoid == nsp_temp ||
+            cat_table_version(session, table_oid) == table_version_own)) {
+    table_rec_t rec;
+    if (latest_table(session, table_oid, rec) != 0) {
+      return -1;
+    }
+    for (fkey_rec_t &fk : rec.fkeys) {
+      if (fk.oid == fkey_oid) {
+        fk.validated = true;
+        return cat_put_table(session, table_oid, rec);
+      }
+    }
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "validate foreign key: no foreign key " +
+                           std::to_string(fkey_oid));
+  }
+  // As a writer of the table takes it: writers go on, DDL on the
+  // table is kept out until this commits.
+  if (cat_lock_table(session, table_oid, sm1::SM_LOCKMODE_IX, d) != 0) {
+    return -1;
+  }
+  const fkey_rec_t *fk = nullptr;
+  for (const fkey_rec_t &k : d->rec.fkeys) {
+    if (k.oid == fkey_oid) {
+      fk = &k;
+    }
+  }
+  if (!fk) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "validate foreign key: no foreign key " +
+                           std::to_string(fkey_oid));
+  }
+  kv_ptr_t kv(nullptr, &sm2::catkv_close);
+  if (open_kv(session->sm1, kv) != 0) {
+    return -1;
+  }
+  // The key's own lock X: two validations of one key meet here.
+  fkey_rec_t marked = *fk;
+  marked.validated = true;
+  if (put_fkey(session, kv.get(), table_oid, marked) != 0) {
+    return -1;
+  }
+  overlay_fkey_valid(session, table_oid, fkey_oid);
   return 0;
 }
 

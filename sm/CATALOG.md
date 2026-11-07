@@ -666,6 +666,8 @@ readers.
    loses its count.
 6. Apply the tables: free the old definition's index names, add
    the new one's, and date the table.
+6a. Apply the foreign keys marked valid (§7.4) to the tables
+   now in the catalog, and date each table.
 7. Apply the views. A drop of another session's temporary view
    dooms it for that session's next `begin`.
 8. Store the new count, after the namespaces' epoch: one who
@@ -886,6 +888,27 @@ newer than the snapshot.
   nothing.
 - **Erasing an index erases its state**, in `cat_put_table` or
   `cat_del_table`.
+
+### 7.4 A foreign key marked valid
+
+- **`cat_validate_fkey(ss, table_oid, fkey_oid)`** sets a foreign
+  key's `validated` flag. It takes the table's lock IX and locks
+  the key's own record X, so the table's writers go on and two
+  validations of one key meet. It writes the key's record only.
+- **IX is enough** because nothing reads the flag but DDL and
+  `pg_constraint.convalidated`, the key is enforced whatever it
+  says, and it only goes from false to true. A session that sees
+  it late is only careful.
+- **It is published at commit** into the definition then in the
+  catalog (§5.2, step 6a), not into the one the session read: of
+  two transactions validating two keys, the second would
+  otherwise undo the first in memory. The table's version moves.
+- **The session sees it at commit.** Until then its own reads of
+  the table show the flag unset.
+- **A table the transaction changed, or a temporary table,**
+  takes `cat_put_table` and the table X, as any DDL does.
+  `latest_table` adds the keys this transaction marked to the
+  record it returns, so a later DDL keeps them.
 
 ---
 

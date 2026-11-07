@@ -180,6 +180,13 @@ struct state_change_t {
   std::optional<index_status_t> status; /* nullopt: none, the index gone */
   bool temp = false;                    /* a temporary table's index */
 };
+/* A foreign key marked validated, applied to the table's newest definition at
+ * publish. */
+struct fkey_valid_change_t {
+  int depth;
+  uint64_t table;
+  uint64_t fkey;
+};
 struct nspace_change_t {
   int depth;
   uint64_t oid;
@@ -221,6 +228,7 @@ struct sm3::session_t {
   std::vector<collation_change_t> collations;
   std::vector<nspace_change_t> nspaces;
   std::vector<state_change_t> states;
+  std::vector<fkey_valid_change_t> fkeys;
   std::vector<sequence_change_t> sequences;
   std::vector<stats_change_t> stats;
   std::vector<view_change_t> views;
@@ -378,6 +386,7 @@ temp_tables_of(const session_t *s);
  * marks one of a temporary table, which a commit keeps in the
  * session.
  */
+void overlay_fkey_valid(session_t *s, uint64_t table, uint64_t fkey);
 void overlay_table(session_t *s, uint64_t oid,
                    std::shared_ptr<const table_def_t> def, bool temp = false);
 /*

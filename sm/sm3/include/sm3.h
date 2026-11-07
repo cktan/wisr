@@ -630,6 +630,17 @@ int cat_put_index_state(session_t* s, uint64_t table_oid, uint64_t index_oid,
                         const index_status_t& status);
 
 /*
+ * Mark a foreign key of the table valid under the table's lock IX
+ * and the key's own record locked X, so that the table's writers go
+ * on and two validations of one key meet. The flag is published at
+ * commit into the table's definition as it is then, with its
+ * version moved. A table this transaction changed, or a temporary
+ * one, takes cat_put_table and the table X. No such key fails with
+ * SM_ERR_NOTFOUND.
+ */
+int cat_validate_fkey(session_t* s, uint64_t table_oid, uint64_t fkey_oid);
+
+/*
  * Erase the record of the table table_oid and the names it took,
  * under its table-oid lock exclusive. Its store and its sequence are
  * the caller's to drop. No such table fails with SM_ERR_NOTFOUND.
@@ -1072,7 +1083,11 @@ int create_fkey(session_t* session, uint64_t table, const fkey_rec_t& def,
 /* Drop the foreign key oid of the table, under both tables' locks X. */
 int drop_fkey(session_t* session, uint64_t table, uint64_t oid);
 
-/* Mark the foreign key oid of the table validated: its rows checked. */
+/*
+ * Mark the foreign key oid of the table validated: its rows checked.
+ * Under the table's lock IX, so that its writers go on; see
+ * cat_validate_fkey.
+ */
 int validate_fkey(session_t* session, uint64_t table, uint64_t oid);
 
 /* Rename the foreign key oid of the table; a taken name is DUPKEY. */

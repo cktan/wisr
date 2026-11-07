@@ -227,12 +227,10 @@ layer.
   an expression or partial index, a foreign key, or an identity
   sequence uses, a `COLLATE`, and a `USING` that reads another
   column the same statement retypes (`dg/ALTERTYPE.md`).
-- **`VALIDATE CONSTRAINT` of a foreign key.** PostgreSQL's does
-  not wait for the table's writers, nor they for it. DG's last
-  step locks the table X, so it waits for the writers in flight,
-  and then they wait for it until its transaction ends. Writers
-  to the referenced table go on, as in PostgreSQL
-  (`dg/UNSUPPORTED.md`, "DDL").
+- **`VALIDATE CONSTRAINT` of a foreign key.** As in
+  PostgreSQL, no writer of either table waits for it, nor it
+  for them. The flag shows to the session that set it at
+  commit, not before (`dg/UNSUPPORTED.md`, "DDL").
 - **Sequences.** A sequence takes `START`, `INCREMENT`, and
   `AS`. `MINVALUE`, `MAXVALUE`, `CACHE`, `CYCLE`, `OWNED BY`,
   `ALTER SEQUENCE`, `setval()`, and `TRUNCATE ... RESTART

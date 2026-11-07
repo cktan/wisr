@@ -1384,18 +1384,7 @@ int drop_fkey(session_t *session, uint64_t table, uint64_t oid) {
 
 /* Mark a foreign key's rows checked; see sm3.h. */
 int validate_fkey(session_t *session, uint64_t table, uint64_t oid) {
-  table_rec_t child;
-  if (cat_get_table_rec(session, table, child) != 0) {
-    return -1;
-  }
-  fkey_rec_t *fk = fkey_in(child, oid);
-  if (!fk) {
-    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
-                       "validate foreign key: no foreign key " +
-                           std::to_string(oid));
-  }
-  fk->validated = true;
-  return cat_put_table(session, table, child);
+  return cat_validate_fkey(session, table, oid);
 }
 
 /* Rename a foreign key; see sm3.h. */
