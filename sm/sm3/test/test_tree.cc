@@ -1369,7 +1369,8 @@ struct only_t {
 /*
  * An index-only scan of index from text lo to hi, both inclusive
  * (tbl_scan_entries_only): each entry's key column, decoded from its
- * key, and the count handed out with the row unread.
+ * key, and the count handed out with the row unread. Each entry's
+ * tbl_scan_plain must agree with tbl_scan_cols.
  */
 only_t entries_only(sm3::table_t *t, uint64_t index, std::string lo,
                     std::string hi) {
@@ -1390,8 +1391,12 @@ only_t entries_only(sm3::table_t *t, uint64_t index, std::string lo,
   while ((rc = sm3::tbl_scannxt(scan, id, ref, tuple)) == 0) {
     sm2::datum_t d[1];
     bool isnull[1];
+    // tbl_scan_plain says, with no decoding, whether the key gives its
+    // columns back: it must agree with tbl_scan_cols.
+    bool plain = sm3::tbl_scan_plain(scan);
     int cols = sm3::tbl_scan_cols(scan, d, isnull);
     REQUIRE(cols >= 0);
+    CHECK(plain == (0 == cols));
     if (1 == cols) {
       // A cut key gives no columns back: its row was read for them.
       CHECK_FALSE(tuple.empty());

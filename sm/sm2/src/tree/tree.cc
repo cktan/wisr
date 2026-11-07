@@ -900,9 +900,24 @@ int fill(cursor_t &c) {
     if (i < v.count() && !c.from_inclusive && v.key(i) == c.from) {
       i++;
     }
+    // The first key past the high bound, found from the last: a leaf the
+    // range holds whole costs one compare; else a binary search, as the
+    // keys are sorted.
     size_t j = i;
-    while (j < v.count() && !past_hi(c, v.key(j))) {
-      j++;
+    if (i < v.count()) {
+      if (!past_hi(c, v.key(v.count() - 1))) {
+        j = v.count();
+      } else {
+        size_t last = v.count() - 1;
+        while (j < last) {
+          size_t mid = j + (last - j) / 2;
+          if (past_hi(c, v.key(mid))) {
+            last = mid;
+          } else {
+            j = mid + 1;
+          }
+        }
+      }
     }
     c.done = j < v.count();
     c.leaf = pageid;

@@ -574,6 +574,8 @@ typedef struct IndexOnlyScan
 	List	   *indextlist;
 	/* forward or backward or don't care */
 	ScanDirection indexorderdir;
+	/* nothing above reads a column of the scan's tuples */
+	bool		nocols;
 } IndexOnlyScan;
 
 /* ----------------

@@ -1278,6 +1278,13 @@ int sm_rel_scan_cols(sm_rel_scan_t *scan, sm_datum_t *values, bool *isnull,
   });
 }
 
+/* Whether a tree's cursor's last entry is whole; see sm.h. */
+int sm_rel_scan_plain(const sm_rel_scan_t *scan) {
+  return sm3::tbl_scan_plain(rel_scan_of(const_cast<sm_rel_scan_t *>(scan)))
+             ? 1
+             : 0;
+}
+
 /* Aim a tree's cursor of rows at new bounds. */
 int sm_rel_scan_rebound(sm_rel_scan_t *scan, const sm_bound_t *lo,
                         const sm_bound_t *hi) {

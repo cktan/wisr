@@ -1812,6 +1812,15 @@ int tbl_scan_entries_only(scan_t* scan);
 int tbl_scan_cols(scan_t* scan, std::span<sm2::datum_t> values,
                   std::span<bool> isnull);
 
+/*
+ * Whether the entry a tree's cursor's tbl_scannxt last gave is whole:
+ * its key is not cut and gives its columns back, so tbl_scan_cols
+ * would return 0. A scan whose bounds hold the key of an equality on
+ * a text column of a deterministic collation need not read such an
+ * entry's columns to know it meets the key.
+ */
+bool tbl_scan_plain(const scan_t* scan);
+
 /* Move the cursor forward to _id id, as sm2::rel_scan_seek does. */
 int tbl_scan_seek(scan_t* scan, uint64_t id);
 

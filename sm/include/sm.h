@@ -650,6 +650,13 @@ int sm_rel_scan_cols(sm_rel_scan_t* scan, sm_datum_t* values, bool* isnull,
                      size_t n);
 
 /*
+ * Whether the entry of a tree's rows that sm_rel_scannxt last gave is
+ * whole: 1 if its key is not cut and gives its columns back, so
+ * sm_rel_scan_cols would return 0; else 0.
+ */
+int sm_rel_scan_plain(const sm_rel_scan_t* scan);
+
+/*
  * Aim a cursor of a tree's rows (sm_tbl_idx_scan_rows) at the rows
  * between lo and hi, as if opened anew: an IN list's next probe, with
  * no cursor made for it. SM_ERR_INVALID on any other cursor.
