@@ -1075,7 +1075,11 @@ int idx_scan_entry(index_scan_t *scan, uint64_t &id, bool &cut,
   scan->key = key;
   scan->cut = 0 != (value[0] & tree::entry_cut);
   row = key.substr(relid_len + cols_len);
-  scan->row.assign(row);
+  // An index of a table gives its row's key from the entry's key
+  // (idx_scan_row); only one with no table keeps a copy.
+  if (nullptr == ix->rel) {
+    scan->row.assign(row);
+  }
   scan->id = 0;
   std::string_view r = row;
   if (!ix->keyed && !get_be(r, scan->id)) {
@@ -1089,6 +1093,11 @@ int idx_scan_entry(index_scan_t *scan, uint64_t &id, bool &cut,
 /* The key of a cursor's last entry; see sm2.h. */
 std::string_view idx_scan_entry_key(const index_scan_t *scan) {
   return scan->key;
+}
+
+/* The entries a tree's cursor holds past its last; see sm2.h. */
+size_t idx_scan_held(const index_scan_t *scan) {
+  return scan->cursor ? tree::cursor_held(*scan->cursor) : 0;
 }
 
 /* The key a row's entry has in index; see sm2.h. */

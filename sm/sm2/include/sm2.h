@@ -1332,10 +1332,20 @@ void idx_scanend(index_scan_t* scan);
 /*
  * A tree's next entry, as idx_scannxt without its value: 0 with its
  * row's _id, whether its key was cut, and its row's key, valid until
- * the next call on the cursor; 1 at the end; -1 on error.
+ * the cursor copies its next leaf or is aimed again (idx_scan_held);
+ * 1 at the end; -1 on error.
  */
 int idx_scan_entry(index_scan_t* scan, uint64_t& id, bool& cut,
                    std::string_view& row);
+
+/*
+ * The entries a tree's cursor holds past the last it gave
+ * (idx_scan_entry), copied from one leaf: while more than 0, the next
+ * idx_scan_entry gives one of them, and the rows and keys
+ * (idx_scan_entry_key) it gave since it copied that leaf stay valid.
+ * 0 for a cursor not a tree's.
+ */
+size_t idx_scan_held(const index_scan_t* scan);
 
 /*
  * Aim a tree's cursor at the entries between lo and hi, as idx_scan
@@ -1346,8 +1356,8 @@ int idx_scan_rebound(index_scan_t* scan, const bound_t* lo,
                      const bound_t* hi, bool* widened = nullptr);
 
 /*
- * The whole key of the entry a tree's cursor last gave, valid until
- * the next call on the cursor: as idx_entry_key makes it.
+ * The whole key of the entry a tree's cursor last gave, valid as its
+ * row's key is (idx_scan_entry): as idx_entry_key makes it.
  */
 std::string_view idx_scan_entry_key(const index_scan_t* scan);
 

@@ -48,11 +48,10 @@ struct sm3::scan_t {
    * (../ROWSTORE.md): each entry's key, its row's key and _id,
    * and the row in a raw pin of the batch's; batch the next read's
    * size, doubling to tree_batch_max, as digres's read-ahead does.
-   * The keys lie end to end in bytes, which each batch fills anew;
-   * key_at and row_at place them, good until the next batch.
+   * The keys view the cursor's copy of one leaf (idx_scan_held), so a
+   * batch ends where that leaf's entries do; good until the next batch.
    */
-  std::string bytes;
-  std::vector<std::pair<size_t, size_t>> key_at, row_at; /* in bytes */
+  std::vector<std::string_view> keys, rows;
   std::vector<uint64_t> ids;
   std::vector<sm1::rawpin_t *> raws;
   std::vector<std::string_view> tuples;

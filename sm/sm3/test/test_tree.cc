@@ -1554,6 +1554,54 @@ TEST_CASE("tree: an index-only scan reads no row on a leaf vacuum set") {
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
+TEST_CASE("tree: a batch of a cursor of rows ends where its leaf does") {
+  // Verify a tree's cursor gives each row and each entry's key across
+  // many leaves, its batches viewing the cursor's copy of one leaf.
+  // 1. Insert 3,000 rows of distinct states s0000 to s2999, out of key
+  //    order, so the entries span many leaves and batches reach 64.
+  // 2. A scan of rows gives every row once, in key order.
+  // 3. A scan from s1500 gives rows 1500 to 2999: its first batch
+  //    starts inside a leaf.
+  // 4. An index-only scan, before and after a vacuum, gives each
+  //    entry's state decoded from its key, in key order.
+  trees_t f;
+  auto state_of = [](int n) {
+    char s[8];
+    std::snprintf(s, sizeof(s), "s%04d", n);
+    return std::string(s);
+  };
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  for (int i = 0; i < 3000; i++) {
+    int n = i * 7919 % 3000;
+    row_t r(n, state_of(n), "O");
+    uint64_t id;
+    REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  std::vector<int32_t> want(3000);
+  std::vector<std::string> states(3000);
+  for (int n = 0; n < 3000; n++) {
+    want[n] = n;
+    states[n] = state_of(n);
+  }
+  CHECK(want == ids(t, f.by_state));
+  CHECK(std::vector<int32_t>(want.begin() + 1500, want.end()) ==
+        ids(t, f.by_state, state_of(1500), state_of(2999)));
+  CHECK(states ==
+        entries_only(t, f.by_state, state_of(0), state_of(2999)).states);
+  REQUIRE(sm3::tbl_compact(t) == 0);
+  only_t o = entries_only(t, f.by_state, state_of(0), state_of(2999));
+  CHECK(states == o.states);
+  CHECK(3000u == o.unread);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
 TEST_CASE("tree: a leaf is cleaned with no transaction and no lock") {
   // Verify tbl_clean_leaf judges rows as VACUUM does, with no
   // transaction, no table lock, and no snapshot held (../BTREEINDEX.md

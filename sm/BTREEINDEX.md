@@ -458,7 +458,9 @@ A cursor (`cursor_t`) reads a tree in key order, forward only.
    held while rows are read.
 3. If the leaf was not all visible, `cursor_next()` queues it for
    the cleaner (§9.5).
-4. `cursor_next()` hands out entries from the copy.
+4. `cursor_next()` hands out entries from the copy. They stay
+   valid until the copy is replaced: `cursor_held()` counts the
+   entries left in it.
 5. The next batch reads that leaf again, past the last key handed
    out, and moves right. A split meanwhile hides nothing, as no
    page is ever freed and a key only moves right.
@@ -479,7 +481,10 @@ entry's row by the entry's key, at the transaction's snapshot. It
 hands the row out only if the row still gives this entry's key:
 
 1. `tree_fill()` takes the next entries, in a batch that starts
-   at 1 and doubles to `tree_batch_max`, 64.
+   at 1 and doubles to `tree_batch_max`, 64. The batch views
+   the cursor's copy of one leaf, with no copy of its own, so it
+   also ends where that leaf's entries end
+   (`sm2::idx_scan_held`).
 2. It reads their rows in one call (`sm2::rel_read_batch`,
    `ROWSTORE.md` §2.1). A single row is read into the cursor's
    pin. Rows of sorted, close keys are read by one cursor.

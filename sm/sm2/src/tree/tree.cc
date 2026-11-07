@@ -1000,6 +1000,9 @@ int cursor_next(cursor_t &cursor, std::string_view &key,
   return 0;
 }
 
+/* The entries of a cursor's copy not yet handed out; see tree.h. */
+size_t cursor_held(const cursor_t &cursor) { return cursor.end - cursor.at; }
+
 namespace {
 
 /*

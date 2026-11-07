@@ -100,13 +100,15 @@ and so are the catalog tables psql reads
    - **q2 fails by the cost of an entry**: about 1,000
      instructions, against PostgreSQL's 530. The tree cursor
      takes about half of it, the executor the rest. In order:
-     1. **Copy an entry once.** `fill` copies a leaf's entries
-        into the cursor, and `tree_fill()` in
-        `sm3/src/table/table.cc` copies them again into the
-        scan's `bytes`. About 10% of q2.
+     1. **Copy an entry once**: built. sm3's batch views the
+        cursor's copy of one leaf, and ends with it
+        (`BTREEINDEX.md` §5.3). q2 went from 245.5k to 230.0k
+        instructions, 1.52 times PostgreSQL's 150.8k; q1 and q3
+        about 1% fewer (aarch64 under WSL2, 2026-11-07).
      2. **Hand out a leaf's entries from the pinned leaf,** with
         no copy, as PostgreSQL walks its page. About 5% of q2.
-     With both, q2 is expected at about 1.4 times PostgreSQL.
+     With the second, q2 is expected at about 1.4 times
+     PostgreSQL.
      Parity needs a count in sm, one tuple a leaf, which helps
      `count(*)` alone.
    - **q3 fails by the cost of a row**: about 13,200

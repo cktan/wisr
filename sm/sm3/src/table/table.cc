@@ -1848,22 +1848,21 @@ static bool tree_scattered(table_t *t, size_t i) {
   return false;
 }
 
-/* Entry i's key in the batch's bytes, viewed when it is asked for. */
+/* Entry i's key in the batch, in the cursor's copy of its leaf. */
 static std::string_view batch_key(const scan_t *scan, size_t i) {
-  return std::string_view(scan->bytes.data() + scan->key_at[i].first,
-                          scan->key_at[i].second);
+  return scan->keys[i];
 }
 
-/* Entry i's row's key in the batch's bytes, viewed when it is asked for. */
+/* Entry i's row's key in the batch, the tail of its key. */
 static std::string_view batch_row(const scan_t *scan, size_t i) {
-  return std::string_view(scan->bytes.data() + scan->row_at[i].first,
-                          scan->row_at[i].second);
+  return scan->rows[i];
 }
 
 /*
  * Read a tree's cursor's next entries, scan->batch of them or what is
- * left, and their rows at the transaction's snapshot, in one call
- * (../ROWSTORE.md); the batch doubles for the next.
+ * left of the leaf the cursor copied, and their rows at the
+ * transaction's snapshot, in one call (../ROWSTORE.md); the batch
+ * doubles for the next.
  */
 static int tree_fill(scan_t *scan) {
   table_t *t = scan->table;
@@ -1871,21 +1870,21 @@ static int tree_fill(scan_t *scan) {
   scan->reread = false;
   size_t want = scan->batch;
   scan->batch = std::min(scan->batch * 2, tree_batch_max);
-  if (scan->key_at.size() < want) {
+  if (scan->keys.size() < want) {
     // Room for the largest batch at the second, so the doubling
     // grows no array again; a probe of one row stops at the first.
-    if (want > 1 && scan->key_at.capacity() < tree_batch_max) {
+    if (want > 1 && scan->keys.capacity() < tree_batch_max) {
       scan->tuples.reserve(tree_batch_max);
-      scan->key_at.reserve(tree_batch_max);
-      scan->row_at.reserve(tree_batch_max);
+      scan->keys.reserve(tree_batch_max);
+      scan->rows.reserve(tree_batch_max);
       scan->ids.reserve(tree_batch_max);
       scan->rcs.reserve(tree_batch_max);
       scan->cuts.reserve(tree_batch_max);
       scan->unread.reserve(tree_batch_max);
       scan->raws.reserve(tree_batch_max);
     }
-    scan->key_at.resize(want);
-    scan->row_at.resize(want);
+    scan->keys.resize(want);
+    scan->rows.resize(want);
     scan->ids.resize(want);
     scan->tuples.resize(want);
     scan->rcs.resize(want);
@@ -1908,13 +1907,16 @@ static int tree_fill(scan_t *scan) {
       }
     }
   }
-  // The batch's keys end to end, viewed once all are in.
-  scan->bytes.clear();
   scan->want_rows.clear();
   // Whether the index's keys give their columns back, found once a batch.
   const bool decodable =
       scan->entries_only && sm2::idx_decodable(t->indexes[scan->index]);
   while (scan->n < want && !scan->entries_done) {
+    // The next entry past the leaf's would copy the next leaf over the
+    // batch's keys, so the batch ends here.
+    if (scan->n > 0 && 0 == sm2::idx_scan_held(scan->entries)) {
+      break;
+    }
     std::string_view row;
     bool cut;
     int rc = sm2::idx_scan_entry(scan->entries, scan->ids[scan->n], cut, row);
@@ -1925,11 +1927,8 @@ static int tree_fill(scan_t *scan) {
       scan->entries_done = true;
       break;
     }
-    std::string_view key = sm2::idx_scan_entry_key(scan->entries);
-    scan->key_at[scan->n] = {scan->bytes.size(), key.size()};
-    scan->bytes.append(key);
-    scan->row_at[scan->n] = {scan->bytes.size(), row.size()};
-    scan->bytes.append(row);
+    scan->keys[scan->n] = sm2::idx_scan_entry_key(scan->entries);
+    scan->rows[scan->n] = row;
     scan->cuts[scan->n] = cut;
     // An index-only scan's entry on a leaf all visible is every
     // snapshot's: its row goes unread where the key gives its

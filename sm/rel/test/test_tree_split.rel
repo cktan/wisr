@@ -146,6 +146,34 @@
            @[9000])
 (commit)
 
+# Verify a tree of short keys, many a leaf, read in batches: a batch of a
+# cursor of rows views the cursor's copy of one leaf, and ends with it.
+# 1. Make a keyless table and a tree on its short keys; insert 3,000
+#    rows out of key order, so the entries span many leaves.
+# 2. A scan of rows gives each row in key order; one from s1500, whose
+#    first batch starts inside a leaf, gives rows 1500 to 2999.
+# 3. An index-only scan, before and after (compact), gives each entry's
+#    key in order; after it, every leaf is all visible and no row read.
+(defn short-key [n] (string/format "s%04d" n))
+(begin :rc)
+(table-create s (columns (id :int4 :not-null) (k :text)))
+(index-create s_k (table s) (key (k :asc)) :tree true)
+(commit)
+(begin :rc)
+(each n (shuffled 0 3000) (insert s [n (short-key n)]))
+(commit)
+(begin :rc)
+(assert-eq (ids (idx-rows s_k)) (range 0 3000))
+(assert-eq (ids (idx-rows s_k :ge [(short-key 1500)])) (range 1500 3000))
+(defn only-keys [o] (map (fn [k] (k 0)) (o :keys)))
+(assert-eq (only-keys (idx-only s_k :ge [(short-key 0)]))
+           (map short-key (range 0 3000)))
+(compact s)
+(def all-s (idx-only s_k :ge [(short-key 0)]))
+(assert-eq (only-keys all-s) (map short-key (range 0 3000)))
+(assert-eq (all-s :unread) 3000)
+(commit)
+
 (db-close)
 (env-detach)
 (rm-rf test-dir)
