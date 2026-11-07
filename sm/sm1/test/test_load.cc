@@ -712,3 +712,182 @@ TEST_CASE("a committed load is there after a restart, and a crash's files "
   CHECK(get(f.s, store, key_of('a', 299)) == "va299");
   commit_xct(f.s);
 }
+
+namespace {
+
+/* The key of page i, as a tree's: a relid, then i, big-endian. */
+std::string page_of(uint16_t relid, uint64_t i) {
+  std::string k;
+  k.push_back(static_cast<char>(relid >> 8));
+  k.push_back(static_cast<char>(relid & 0xFF));
+  for (int b = 7; b >= 0; b--) {
+    k.push_back(static_cast<char>(i >> (8 * b)));
+  }
+  return k;
+}
+
+/* The bytes of page key, or "<none>" if no page is there. */
+std::string page_bytes(sm1::session_t *s, uint64_t storeid,
+                       const std::string &key) {
+  sm1::page_t *page = nullptr;
+  std::string_view bytes;
+  int r = sm1::pin_page(s, storeid, key, sm1::page_mode_t::sh, 0, page, bytes);
+  REQUIRE_MESSAGE(r >= 0, sm1::errmsg());
+  if (r == 1) {
+    return "<none>";
+  }
+  std::string out(bytes);
+  sm1::unpin_page(s, page);
+  return out;
+}
+
+/* Declare a page stream of l, failing the test on an error. */
+size_t page_stream(sm1::loader_t *l) {
+  size_t n = 0;
+  REQUIRE(sm1::load_page_stream(l, n) == 0);
+  return n;
+}
+
+/* Declare a drained stream of l, failing the test on an error. */
+size_t drain_stream(sm1::loader_t *l) {
+  size_t n = 0;
+  REQUIRE(sm1::load_drain_stream(l, n) == 0);
+  return n;
+}
+
+} // namespace
+
+TEST_CASE("a load puts a page stream's pages as they are, beside its rows") {
+  // Verify a page stream: pages, not versions, in a batch and in files.
+  // 1. For a small load (a batch) and a large one (files), load 300
+  //    rows and 300 pages of relid 7.
+  // 2. After the close, each page reads back by pin_page with its
+  //    bytes, and a scan of the store gives the rows alone.
+  // 3. A page key out of order fails its put.
+  for (bool files : {false, true}) {
+    CAPTURE(files);
+    load_fixture_t f(files ? files_options() : sm1::options_t());
+    begin_xct(f.s);
+    uint64_t store = mkstore(f.s);
+    sm1::loader_t *l = open_load(f.s, store);
+    size_t rows = stream(l, true), pages = page_stream(l);
+    for (int i = 1; i <= 300; i++) {
+      REQUIRE(sm1::load_put(l, rows, key_of('a', i), "row") == 0);
+      REQUIRE_MESSAGE(sm1::load_put(l, pages, page_of(7, i),
+                                    "page" + std::to_string(i)) == 0,
+                      sm1::errmsg());
+    }
+    CHECK(sm1::load_put(l, pages, page_of(7, 5), "x") == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    REQUIRE_MESSAGE(sm1::load_close(l) == 0, sm1::errmsg());
+    CHECK(page_bytes(f.s, store, page_of(7, 1)) == "page1");
+    CHECK(page_bytes(f.s, store, page_of(7, 300)) == "page300");
+    CHECK(page_bytes(f.s, store, page_of(7, 301)) == "<none>");
+    CHECK(keys(f.s, store).size() == 300);
+    commit_xct(f.s);
+  }
+}
+
+TEST_CASE("two page streams of one range fail a load's close") {
+  // Verify page streams are checked apart from each other.
+  // 1. Load pages 1 to 10 of relid 7 in one page stream and 5 to 15
+  //    in another: the close fails with SM_ERR_INVALID.
+  // 2. Pages of relids 7 and 8 in two streams close.
+  load_fixture_t f(files_options());
+  begin_xct(f.s);
+  uint64_t store = mkstore(f.s);
+  sm1::loader_t *l = open_load(f.s, store);
+  size_t a = page_stream(l), b = page_stream(l);
+  for (int i = 1; i <= 10; i++) {
+    REQUIRE(sm1::load_put(l, a, page_of(7, i), "p") == 0);
+    REQUIRE(sm1::load_put(l, b, page_of(7, i + 4), "p") == 0);
+  }
+  CHECK(sm1::load_close(l) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+
+  l = open_load(f.s, store);
+  a = page_stream(l);
+  b = page_stream(l);
+  for (int i = 1; i <= 10; i++) {
+    REQUIRE(sm1::load_put(l, a, page_of(7, i), "p") == 0);
+    REQUIRE(sm1::load_put(l, b, page_of(8, i), "p") == 0);
+  }
+  REQUIRE_MESSAGE(sm1::load_close(l) == 0, sm1::errmsg());
+  CHECK(page_bytes(f.s, store, page_of(8, 10)) == "p");
+  commit_xct(f.s);
+}
+
+TEST_CASE("a drained stream gives its keys back in order, and none to the "
+          "store") {
+  // Verify a drained stream sorts as any other, but for its caller.
+  // 1. With a budget of a few keys, put 2000 shuffled keys into a
+  //    drained stream, and 2000 rows into an ascending one.
+  // 2. Drain it: every key in order, with its value, then 1.
+  // 3. A put after the drain fails; so does draining a stream that
+  //    is not drained.
+  // 4. After the close the store holds the rows alone, and the
+  //    load's directory is gone.
+  sm1::options_t opt = files_options();
+  opt.load_sort_bytes = 2000;
+  load_fixture_t f(opt);
+  begin_xct(f.s);
+  uint64_t store = mkstore(f.s);
+  sm1::loader_t *l = open_load(f.s, store);
+  size_t rows = stream(l, true), d = drain_stream(l);
+  std::vector<int> order(2000);
+  for (int i = 0; i < 2000; i++) {
+    order[i] = i;
+  }
+  std::shuffle(order.begin(), order.end(), std::mt19937(3));
+  for (int i = 0; i < 2000; i++) {
+    REQUIRE(sm1::load_put(l, rows, key_of('a', i), "row") == 0);
+    REQUIRE(sm1::load_put(l, d, key_of('z', order[i]),
+                          std::to_string(order[i])) == 0);
+  }
+  std::string_view k, v;
+  for (int i = 0; i < 2000; i++) {
+    REQUIRE_MESSAGE(sm1::load_drain(l, d, k, v) == 0, sm1::errmsg());
+    CHECK(k == key_of('z', i));
+    CHECK(v == std::to_string(i));
+  }
+  CHECK(sm1::load_drain(l, d, k, v) == 1);
+  CHECK(sm1::load_drain(l, d, k, v) == 1);
+  CHECK(sm1::load_put(l, d, key_of('z', 5000), "x") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm1::load_drain(l, rows, k, v) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE_MESSAGE(sm1::load_close(l) == 0, sm1::errmsg());
+  CHECK(keys(f.s, store).size() == 2000);
+  CHECK(get(f.s, store, key_of('z', 1)) == "<none>");
+  CHECK_FALSE(has_entries(load_dir(f.s)));
+  commit_xct(f.s);
+}
+
+TEST_CASE("two equal keys of a drained stream fail its drain") {
+  // Verify a drained stream's keys are unique, as every stream's.
+  // 1. Put 500 keys and one of them again into a drained stream,
+  //    with a budget that spills it to runs.
+  // 2. Draining it fails with SM_ERR_DUPKEY before its end.
+  sm1::options_t opt = files_options();
+  opt.load_sort_bytes = 2000;
+  load_fixture_t f(opt);
+  begin_xct(f.s);
+  uint64_t store = mkstore(f.s);
+  sm1::loader_t *l = open_load(f.s, store);
+  size_t d = drain_stream(l);
+  for (int i = 0; i < 500; i++) {
+    REQUIRE(sm1::load_put(l, d, key_of('z', i), "v") == 0);
+  }
+  REQUIRE(sm1::load_put(l, d, key_of('z', 17), "v") == 0);
+  std::string_view k, v;
+  int rc;
+  int n = 0;
+  while ((rc = sm1::load_drain(l, d, k, v)) == 0) {
+    n++;
+  }
+  CHECK(rc == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  CHECK(n < 500);
+  REQUIRE(sm1::abort(f.s) == 0);
+  CHECK_FALSE(has_entries(load_dir(f.s)));
+}

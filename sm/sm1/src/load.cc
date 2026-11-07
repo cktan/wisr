@@ -41,11 +41,20 @@ struct sort_free_t {
   void operator()(sm0::sort_t *sort) const { sm0::sort_free(sort); }
 };
 
+/* What a stream's keys are (sm1.h). */
+enum class kind_t {
+  versions, /* the load's versions of its keys */
+  chained,  /* a chained store's chained keys (sm1::load_stream) */
+  pages,    /* pages, put as they are (sm1::load_page_stream) */
+  drained,  /* the caller's, taken back by sm1::load_drain */
+};
+
 /* One stream of a load: a range of the store's keys. */
 struct stream_t {
   bool ascending = false;
-  /* Its keys are a chained store's chained keys (sm1::load_stream). */
-  bool chained = false;
+  kind_t kind = kind_t::versions;
+  /* A drained stream's sort has ended its input. */
+  bool draining = false;
   /* What is not yet in a file; none once an ascending stream's is. */
   std::unique_ptr<sm0::sort_t, sort_free_t> sort;
   size_t bytes = 0;        /* what its memory is charged */
@@ -108,7 +117,19 @@ int finish_file(stream_t &t) {
 std::string stream_key(const sm1::loader_t *l, const stream_t &t,
                        std::string_view key) {
   rocksdb::Slice k(key.data(), key.size());
-  return t.chained ? curr_key(k) : version_key(k, l->wts, l->seq);
+  switch (t.kind) {
+  case kind_t::chained:
+    return curr_key(k);
+  case kind_t::pages: {
+    // A page's key: its class, then the caller's key, as page.cc
+    // makes one.
+    std::string p(1, key_class_page);
+    p.append(key);
+    return p;
+  }
+  default:
+    return version_key(k, l->wts, l->seq);
+  }
 }
 
 /*
@@ -118,7 +139,10 @@ std::string stream_key(const sm1::loader_t *l, const stream_t &t,
 std::string stream_value(const sm1::loader_t *l, const stream_t &t,
                          std::string_view value) {
   rocksdb::Slice payload(value.data(), value.size());
-  if (!t.chained) {
+  if (t.kind == kind_t::pages) {
+    return std::string(value);
+  }
+  if (t.kind != kind_t::chained) {
     return version_value(0, l->s->xid, payload);
   }
   chain_version_t v;
@@ -208,12 +232,15 @@ void remove_dir(const sm1::loader_t *l) {
 /*
  * Fail unless no two streams' keys overlap: files that did would
  * all land in RocksDB's level 0 (BULKLOAD.md §10), and a stream's
- * duplicate check sees only its own keys.
+ * duplicate check sees only its own keys. The page streams are
+ * checked apart, with pages: a page's class keeps it from every
+ * version's key, and the caller gives its key without the class.
  */
-int check_disjoint(const sm1::loader_t *l) {
+int check_disjoint(const sm1::loader_t *l, bool pages) {
   std::vector<const stream_t *> used;
   for (const stream_t &t : l->streams) {
-    if (t.any) {
+    if (t.any && t.kind != kind_t::drained &&
+        (t.kind == kind_t::pages) == pages) {
       used.push_back(&t);
     }
   }
@@ -253,6 +280,9 @@ int write_batch(sm1::loader_t *l) {
   rocksdb::WriteBatch batch;
   std::vector<std::pair<std::string, size_t>> written;
   for (stream_t &t : l->streams) {
+    if (t.kind == kind_t::drained) {
+      continue;
+    }
     if (0 != sm0::sort_done(t.sort.get())) {
       return -1;
     }
@@ -261,7 +291,10 @@ int write_batch(sm1::loader_t *l) {
     while (0 == (rc = sm0::sort_next(t.sort.get(), key, value))) {
       std::string k = stream_key(l, t, key), v = stream_value(l, t, value);
       batch.Put(l->st.cf, k, v);
-      written.emplace_back(key, k.size() + v.size());
+      // A page is no version, and counts as none.
+      if (t.kind != kind_t::pages) {
+        written.emplace_back(key, k.size() + v.size());
+      }
     }
     if (rc < 0) {
       return -1;
@@ -282,6 +315,9 @@ int write_batch(sm1::loader_t *l) {
 /* A large load: finish every stream's files, and hand them over. */
 int ingest(sm1::loader_t *l) {
   for (stream_t &t : l->streams) {
+    if (t.kind == kind_t::drained) {
+      continue;
+    }
     // An ascending stream's keys went to its files as they came.
     if ((!t.ascending && sort_to_file(l, t) != 0) || finish_file(t) != 0) {
       return -1;
@@ -453,9 +489,54 @@ int sm1::load_stream(sm1::loader_t *l, bool ascending, size_t &stream,
   stream = l->streams.size();
   l->streams.emplace_back();
   l->streams.back().ascending = ascending;
-  l->streams.back().chained = chained;
+  l->streams.back().kind = chained ? kind_t::chained : kind_t::versions;
   l->streams.back().sort.reset(sort);
   return 0;
+}
+
+/* Declare a stream of pages; see sm1.h. */
+int sm1::load_page_stream(sm1::loader_t *l, size_t &stream) {
+  if (0 != load_stream(l, true, stream)) {
+    return -1;
+  }
+  l->streams[stream].kind = kind_t::pages;
+  return 0;
+}
+
+/* Declare a drained stream; see sm1.h. */
+int sm1::load_drain_stream(sm1::loader_t *l, size_t &stream) {
+  if (0 != load_stream(l, false, stream)) {
+    return -1;
+  }
+  l->streams[stream].kind = kind_t::drained;
+  return 0;
+}
+
+/* The next key of a drained stream; see sm1.h. */
+int sm1::load_drain(sm1::loader_t *l, size_t stream, std::string_view &key,
+                    std::string_view &value) {
+  if (!l || stream >= l->streams.size() ||
+      l->streams[stream].kind != kind_t::drained) {
+    return set_error(sm1::SM_ERR_INVALID, "load: no such drained stream");
+  }
+  stream_t &t = l->streams[stream];
+  if (!t.sort) {
+    return 1;
+  }
+  // The first call ends the input: what the sort spilled, it merges.
+  if (!t.draining) {
+    t.draining = true;
+    if (0 != sm0::sort_done(t.sort.get())) {
+      return -1;
+    }
+  }
+  int rc = sm0::sort_next(t.sort.get(), key, value);
+  if (rc == 1) {
+    // Done: its memory and runs go back now, not at the close.
+    t.sort.reset();
+    drop_charge(l, t);
+  }
+  return rc;
 }
 
 /* Put a key into a stream of the load; see sm1.h. */
@@ -469,6 +550,9 @@ int sm1::load_put(sm1::loader_t *l, size_t stream, std::string_view key,
     return set_error(sm1::SM_ERR_INVALID, "load: a key or value of a bad size");
   }
   stream_t &t = l->streams[stream];
+  if (t.draining) {
+    return set_error(sm1::SM_ERR_INVALID, "load: a stream already drained");
+  }
   if (t.ascending && t.any && key <= t.last) {
     return key == t.last
                ? duplicate()
@@ -485,8 +569,9 @@ int sm1::load_put(sm1::loader_t *l, size_t stream, std::string_view key,
   t.any = true;
   // A serializable load owes every concurrent reader of the key
   // an edge, as any write does (BULKLOAD.md §3.4). No one else
-  // reads a temporary store.
-  if (!l->st.owner) {
+  // reads a temporary store, and a page or a drained key is no
+  // version.
+  if (!l->st.owner && t.kind != kind_t::pages && t.kind != kind_t::drained) {
     ssi_on_write(l->s, l->storeid, rocksdb::Slice(key.data(), key.size()));
   }
   // An ascending stream past the small load goes straight to its file.
@@ -513,7 +598,7 @@ int sm1::load_put(sm1::loader_t *l, size_t stream, std::string_view key,
   if (l->to_files && l->buffered > l->s->db->load_sort_bytes) {
     stream_t *big = nullptr;
     for (stream_t &u : l->streams) {
-      if (!u.ascending && (!big || u.bytes > big->bytes)) {
+      if (!u.ascending && !u.draining && (!big || u.bytes > big->bytes)) {
         big = &u;
       }
     }
@@ -536,7 +621,7 @@ int sm1::load_close(sm1::loader_t *l) {
   // A close that fails ends the load too, with the store still
   // empty: the batch and the ingest each apply whole or not at
   // all, so a rollback past the load is let in (BULKLOAD.md §3.5).
-  if (check_disjoint(l) != 0 ||
+  if (check_disjoint(l, false) != 0 || check_disjoint(l, true) != 0 ||
       (l->to_files ? ingest(l) : write_batch(l)) != 0) {
     load_discard(s);
     return -1;
@@ -554,4 +639,11 @@ int sm1::load_close(sm1::loader_t *l) {
   remove_dir(l);
   delete l;
   return 0;
+}
+
+/* End the load with nothing put; see sm1.h. */
+void sm1::load_cancel(sm1::loader_t *l) {
+  if (l) {
+    load_discard(l->s);
+  }
 }

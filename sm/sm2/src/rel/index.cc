@@ -45,6 +45,8 @@ struct sm2::index_t {
   /* A tree's (../BTREEINDEX.md): its entries are its own pages'. */
   bool tree = false;
   sm2::tree::tree_t pages;
+  /* A tree's build in a bulk load, from idx_load_build to idx_load_root. */
+  std::unique_ptr<sm2::tree::build_t> build;
   /* key_decodable(key), found at its first ask: -1 not yet (idx_decodable) */
   mutable int8_t decodable = -1;
 };
@@ -166,6 +168,9 @@ int entry_key(const sm2::index_t *ix, std::span<const sm2::datum_t> key,
   }
   return 0;
 }
+
+/* The bytes of a tree entry's value: its flags, and the columns' length. */
+constexpr size_t tree_value_len = 3;
 
 /*
  * A new tree entry's value (../BTREEINDEX.md §4): its flags, in doubt as
@@ -713,12 +718,72 @@ int idx_load(index_t *index, sm1::loader_t *loader, size_t stream,
                value) != 0) {
     return -1;
   }
-  // A tree's pages are no versions to load: the entry goes in as a
-  // writer's does, and is dead if the load is rolled back.
-  if (index->tree) {
-    return idx_insert(index, key, key_isnull, row, include, include_isnull);
+  if (!index->tree) {
+    return sm1::load_put(loader, stream, k, value);
+  }
+  // A unique tree's entries are sorted by what its check compares:
+  // the key columns, and the row's key only after a NULL, which
+  // equals no other. The row's key rides after the value, and the
+  // build puts it back (../BTREELOAD_PLAN.md §3.4).
+  bool has_null =
+      std::find(key_isnull.begin(), key_isnull.end(), true) != key_isnull.end();
+  if (index->unique && !has_null) {
+    size_t cols = relid_len + cols_len_of(value);
+    value.append(k, cols);
+    k.resize(cols);
   }
   return sm1::load_put(loader, stream, k, value);
+}
+
+/* Make a tree empty and declare its streams for a load; see sm2.h. */
+int idx_load_tree(index_t *index, sm1::loader_t *loader, size_t &entries,
+                  size_t &pages) {
+  if (!index->tree) {
+    return sm1::seterr(sm1::SM_ERR_INVALID, "index: not a tree");
+  }
+  // The table holds no version, so no entry is live: start empty,
+  // which drops the dead entries of aborted inserts too.
+  if (0 != tree::tree_create(index->pages) ||
+      0 != sm1::load_drain_stream(loader, entries)) {
+    return -1;
+  }
+  return sm1::load_page_stream(loader, pages);
+}
+
+/* Build a tree from a load's sorted entries; see sm2.h. */
+int idx_load_build(index_t *index, sm1::loader_t *loader, size_t entries,
+                   size_t pages) {
+  index->build = std::make_unique<tree::build_t>();
+  tree::build_open(index->pages, *index->build,
+                   [loader, pages](std::string_view key, std::string_view b) {
+                     return sm1::load_put(loader, pages, key, b);
+                   });
+  std::string k;
+  std::string_view key, value;
+  int rc;
+  while (0 == (rc = sm1::load_drain(loader, entries, key, value))) {
+    // A unique tree's row key, after the value's three bytes.
+    std::string_view entry = key;
+    if (value.size() > tree_value_len) {
+      k.assign(key);
+      k.append(value.substr(tree_value_len));
+      entry = k;
+      value = value.substr(0, tree_value_len);
+    }
+    if (0 != tree::build_add(*index->build, entry, value)) {
+      return -1;
+    }
+  }
+  return rc < 0 ? -1 : tree::build_end(*index->build);
+}
+
+/* Write a built tree's page 0; see sm2.h. */
+int idx_load_root(index_t *index) {
+  if (!index->build) {
+    return sm1::seterr(sm1::SM_ERR_INVALID, "index: no tree built");
+  }
+  std::unique_ptr<tree::build_t> build = std::move(index->build);
+  return tree::build_root(*build);
 }
 
 /* Remove the entry for key and the row with key row. */

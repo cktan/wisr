@@ -434,36 +434,12 @@ and so are the catalog tables psql reads
    mean fewer pages a range scan reads (item 3) and fewer
    splits; an insert still writes its whole page. Each step
    changes the page's format.
-10. **A bulk load builds a B-tree Index from the bottom up.**
-    Today a load into an empty table with a unique B-tree Index
-    inserts its rows one at a time, and a non-unique tree takes a
-    page write per entry. A unique tree cannot be checked during
-    a bulk load: the check reads rows, and a file's rows are in
-    no store yet. Instead, for a load into an empty table:
-    1. At `tbl_load_open()`, drop the tree's pages, and leave an
-       empty tree at page 0 in one write. This also clears dead
-       entries from aborted inserts.
-    2. As each row goes to the Row Store, give its entry's key to
-       an `sm0::sort_t` (`SORT_PLAN.md`), which spills to plain
-       files, so a crash leaves nothing to clean.
-    3. At close, read the sort in key order, and pack leaf
-       pages. Two equal keys in a unique tree fail with
-       `SM_ERR_DUPKEY`, with no row read.
-    4. Build each inner level from the one below, and write page
-       0 last, as the root.
-    To settle:
-    - Every entry is born in doubt: after an abort, a clear bit
-      would let an index-only scan give a row that is not there.
-      So a cleaning still reads each row once.
-    - A row that goes out of line ends the files, so the tree is
-      built then, and later rows are inserted.
-    - Page ids ascend, so leaves are in key order. Whether sm1's
-      loader can take class `0x04` keys as a sorted file is not
-      checked.
-    - Dropping purges the frames, but sessions' root copies must
-      be invalidated too.
-    - A table with rows keeps the insert path. `CREATE INDEX` may
-      share the builder, but it runs beside writers.
+10. **A bulk load builds a B-tree Index from the bottom up**:
+    built (`BTREEINDEX.md` §6.7, `BTREELOAD_PLAN.md`). A load
+    into an empty table sorts each tree's entries, unique trees
+    too, and ingests the pages with the rows. Still open:
+    whether `CREATE INDEX` can share the builder, as it runs
+    beside writers.
 
 Low priority:
 

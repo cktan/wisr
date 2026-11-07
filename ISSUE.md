@@ -310,3 +310,50 @@ store, so a read may search more files. That is a guess.
 
 **Warning:** this box's clock can step backwards. After a
 sabotage, delete the object file: `touch` may not rebuild it.
+
+### 2.4 A `COPY` into a table with a unique B-tree Index is slow
+
+**Closed 2026-11-07** by `sm/BTREELOAD_PLAN.md`: a load builds
+its trees from the bottom up (`sm/BTREEINDEX.md` §6.7).
+
+`bench/sortload.sh` with `KIND=btree`: a `COPY` of 5 million
+rows, in no key order, into an empty table:
+
+```sql
+CREATE TABLE t (id int8 PRIMARY KEY, email text, n int8);
+CREATE UNIQUE INDEX t_email ON t USING btree (email);
+CREATE INDEX t_n ON t USING btree (n);
+```
+
+| System | Instructions a row | Time, median of 3 |
+| --- | --- | --- |
+| digres, rows inserted | 494,733 | 825 s |
+| digres, trees built | 20,819 | 12.0 s |
+| PostgreSQL 18 | 43,534 | 59.4 s |
+
+Inserted, digres was 11 times PostgreSQL's instructions. The
+rounds agree to 1% in instructions. The inserted times spread
+from 749 to 871 s, as builds ran on the box at the same time.
+With LSM Indexes, the same load costs digres 27,195
+instructions a row and 14 s.
+
+**The cause.** A load into an empty table writes its rows to
+sorted files (`sm/BULKLOAD.md` §5). A unique tree stops this:
+
+1. `tbl_load_open()` (`sm/sm3/src/table/table.cc`) sends a table
+   with a unique tree to row-by-row inserts, as the tree's check
+   reads rows, and a file's rows are in no store yet.
+2. So each row goes through RocksDB's WAL and memtable, and the
+   primary key is checked.
+3. Each tree's entry latches its leaf and writes the whole 4 KB
+   page: about 40 GB of page writes for the load, then flushed
+   and compacted.
+
+A non-unique tree alone keeps the files for the rows, but still
+writes a page for each entry (`idx_load()` in
+`sm/sm2/src/rel/index.cc`).
+
+**What closed it.** The load sorts each tree's entries and
+builds the tree from the bottom up, one write a page, into the
+load's files. A unique tree's duplicate is found by the sort,
+with no row read.

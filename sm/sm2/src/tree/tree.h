@@ -214,6 +214,71 @@ int tree_clean_leaf(
     const std::function<int(std::string_view, std::string_view)> &dead,
     size_t &removed, bool &doubt);
 
+/*
+ * A tree built whole, from the bottom up, from keys given in order
+ * (../BTREELOAD_PLAN.md):
+ * 1. build_add fills each leaf to leaf_fill of the tree's limit, then
+ *    hands it out, linked, with the next leaf's first key as its high
+ *    key.
+ * 2. build_end builds each level above from the first key and id of
+ *    each page below, inner pages filled to inner_fill, until a level
+ *    fits one page.
+ * 3. build_root writes that level as page 0, and tells the tree's
+ *    owner of each leaf.
+ * Every page but page 0 goes to put, in page id order, ids drawn as
+ * pages start: no frame of the pool holds one. The caller writes
+ * them to the store before build_root, as page 0 names them. Every
+ * entry is as its caller gives it, in doubt or not; no leaf is all
+ * visible.
+ */
+constexpr size_t leaf_fill = 90;  /* percent */
+constexpr size_t inner_fill = 70; /* percent */
+
+/* A page a build hands out: its sm1 key and bytes; 0, or -1. */
+using build_put_fn =
+    std::function<int(std::string_view key, std::string_view bytes)>;
+
+/* One level of a build: the page being filled, and those handed out. */
+struct build_level_t {
+  uint8_t level = 0;
+  size_t target = 0;  /* the bytes a page fills to */
+  page_t page;        /* the page being filled */
+  size_t payload = 0; /* its entries' bytes, slots included */
+  uint64_t id = 0;    /* its id, drawn once a page before it is out */
+  bool has_id = false;
+  uint64_t prev = 0; /* the level's page before it, 0 none */
+  /* Each page handed out: its low key, empty for the first, and id. */
+  std::vector<std::pair<std::string, uint64_t>> lows;
+};
+
+/* A build of tree's pages, by build_open. */
+struct build_t {
+  tree_t *tree = nullptr;
+  build_put_fn put;
+  build_level_t leaves;
+  std::vector<uint64_t> leaf_ids; /* each leaf handed out */
+  page_t root;                    /* page 0, by build_end */
+};
+
+/* Begin building tree, whose page 0 is an empty leaf, its pages to put. */
+void build_open(tree_t &tree, build_t &build, build_put_fn put);
+
+/*
+ * Add key, past every key added before, with value: 0; -1 with
+ * SM_ERR_KEYTOOLONG as tree_insert, SM_ERR_INVALID if out of order,
+ * or put's error.
+ */
+int build_add(build_t &build, std::string_view key, std::string_view value);
+
+/* Hand out the last leaf and every level above but page 0: 0, or -1. */
+int build_end(build_t &build);
+
+/*
+ * Write page 0, the top level, once the pages put are in the store,
+ * and tell the tree's owner of each leaf: 0, or -1.
+ */
+int build_root(build_t &build);
+
 /* The tree's height, from its root: for tests. */
 int tree_height(tree_t &tree, size_t &height);
 

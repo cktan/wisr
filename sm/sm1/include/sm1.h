@@ -1624,6 +1624,34 @@ int load_stream(loader_t* loader, bool ascending, size_t& stream,
                 bool chained = false);
 
 /*
+ * Declare a stream of pages, ascending, in stream: each key put to it
+ * is a page's key, as sm1::pin_page takes one, and its value the
+ * page's bytes, put as they are, no version. It is how a tree built
+ * whole is loaded (../BTREELOAD_PLAN.md). No frame of the buffer pool
+ * may hold a page put: the caller puts only pages no one has made.
+ */
+int load_page_stream(loader_t* loader, size_t& stream);
+
+/*
+ * Declare a drained stream in stream: its keys are sorted as any
+ * other's, and an equal two fail, but none goes to the store. The
+ * caller takes them back, in order, by sm1::load_drain, before the
+ * close. Its keys are any bytes, not the store's.
+ */
+int load_drain_stream(loader_t* loader, size_t& stream);
+
+/*
+ * The next key and value of a drained stream, in key order: 0 with
+ * them, valid until the next call on the loader, or 1 past the last.
+ * The first call ends the stream's input; a put to it then fails.
+ *
+ * Errors: SM_ERR_DUPKEY, SM_ERR_INVALID (not a drained stream),
+ * SM_ERR_IO, SM_ERR_INTERRUPTED.
+ */
+int load_drain(loader_t* loader, size_t stream, std::string_view& key,
+               std::string_view& value);
+
+/*
  * Put a key and its value into a stream. A key equal to another of
  * the load fails with SM_ERR_DUPKEY, here or at the close; one out
  * of order in an ascending stream with SM_ERR_INVALID. After a
@@ -1646,6 +1674,14 @@ int load_put(loader_t* loader, size_t stream, std::string_view key,
  * SM_ERR_DISKFULL, SM_ERR_IO.
  */
 int load_close(loader_t* loader);
+
+/*
+ * End the load with nothing put into the store, as a close that
+ * fails ends it: its files and runs are deleted, the loader is
+ * freed, and the transaction may go on. For a caller that fails
+ * before the close, as a tree's build can (../BTREELOAD_PLAN.md).
+ */
+void load_cancel(loader_t* loader);
 
 /*
  * The newest version of key in storeid, whether or not the snapshot

@@ -5,7 +5,9 @@
 #   bench/sortload.sh
 #
 # The table has a primary key and two secondary indexes, so a digres
-# load sorts three streams. ROWS (5,000,000) rows in no key order pass
+# load sorts three streams. With KIND=btree the indexes are B-tree
+# Indexes, the one on email unique; the default, KIND=lsm, makes LSM
+# Indexes, neither unique. ROWS (5,000,000) rows in no key order pass
 # the sort budget, 256 MB by default, so the sort spills and merges.
 #
 # 1. Make a CSV of ROWS rows under build/sortload.
@@ -29,6 +31,14 @@ rows=${ROWS:-5000000}
 rounds=${ROUNDS:-3}
 srv_cpu=${SRV_CPU:-2}
 cli_cpu=${CLI_CPU:-4}
+kind=${KIND:-lsm}
+case "$kind" in
+lsm) indexes="create index t_email on t (email);
+create index t_n on t (n);" ;;
+btree) indexes="create unique index t_email on t using btree (email);
+create index t_n on t using btree (n);" ;;
+*) echo "sortload: KIND is lsm or btree" >&2 && exit 1 ;;
+esac
 
 mkdir -p "$work"
 rm -rf "$work/dg-data" "$work/pg-data" "$work/runs"
@@ -68,11 +78,10 @@ sql() {
 measure() {
   local sys=$1 port=$2 pid=$3 round start end
   for round in $(seq "$rounds"); do
-    sql "$port" << 'SQL' || return 1
+    sql "$port" << SQL || return 1
 drop table if exists t;
 create table t (id int8 primary key, email text, n int8);
-create index t_email on t (email);
-create index t_n on t (n);
+$indexes
 SQL
     start=$(date +%s%N)
     perf stat -x, -e instructions:u -p "$pid" -o "$work/perf.out" -- \

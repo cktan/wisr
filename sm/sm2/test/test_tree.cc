@@ -1770,3 +1770,189 @@ TEST_CASE("tree: a unique insert that finds its key unsets its leaf") {
   }
   CHECK(1000u == entries);
 }
+
+namespace {
+
+/* What a build put, and the leaves it noted, for build tests. */
+struct built_t {
+  std::vector<uint64_t> ids; /* each page put, in order */
+  std::set<uint64_t> noted;  /* each leaf noted */
+};
+
+/* Note a leaf into the built_t at ctx. */
+void note_built(void *ctx, uint64_t, uint16_t, uint64_t pageid) {
+  static_cast<built_t *>(ctx)->noted.insert(pageid);
+}
+
+/*
+ * Build t's tree from keys, in order, with values "v" then the key's
+ * index: each page written as it is put, then page 0. REQUIREs no
+ * error.
+ */
+built_t build_tree(open_tree_t &t, uint64_t store,
+                   const std::vector<std::string> &keys) {
+  built_t out;
+  t.tree.note = note_built;
+  t.tree.note_ctx = &out;
+  REQUIRE(0 == tree_create(t.tree));
+  build_t b;
+  build_open(t.tree, b, [&](std::string_view key, std::string_view bytes) {
+    // The page's id is the key's last 8 bytes, big-endian.
+    uint64_t id = 0;
+    for (size_t i = key.size() - 8; i < key.size(); i++) {
+      id = id << 8 | static_cast<uint8_t>(key[i]);
+    }
+    out.ids.push_back(id);
+    write_raw(t.s, store, key, bytes);
+    return 0;
+  });
+  for (size_t i = 0; i < keys.size(); i++) {
+    REQUIRE_MESSAGE(0 == build_add(b, keys[i], "v" + std::to_string(i)),
+                    std::string(sm1::errmsg()));
+  }
+  REQUIRE_MESSAGE(0 == build_end(b), std::string(sm1::errmsg()));
+  REQUIRE_MESSAGE(0 == build_root(b), std::string(sm1::errmsg()));
+  // out is the caller's copy now: later writers note no leaf into it.
+  t.tree.note = nullptr;
+  return out;
+}
+
+/* n distinct random keys, sorted, of 1 to max_len bytes. */
+std::vector<std::string> sorted_keys(size_t n, size_t max_len, uint64_t seed) {
+  std::mt19937_64 rng(seed);
+  std::set<std::string> keys;
+  while (keys.size() < n) {
+    keys.insert(random_key(rng, max_len));
+  }
+  return std::vector<std::string>(keys.begin(), keys.end());
+}
+
+} // namespace
+
+TEST_CASE("tree: a build from keys in order makes a tree that checks whole") {
+  // Verify a bottom-up build at every size, short keys and long.
+  // 1. For no key, one, one leaf's worth, and 20,000 of up to the
+  //    longest an entry takes, at a small limit and the real one,
+  //    build a tree.
+  // 2. Its pages went out in ascending id order, and every leaf
+  //    was noted; a tree of one leaf notes page 0.
+  // 3. The tree checks whole, and a cursor gives every key in
+  //    order, with its value.
+  for (size_t limit : {size_t(512), page_limit}) {
+    const size_t longest = entry_max(limit) - entry_size(0, 8);
+    for (size_t n : {size_t(0), size_t(1), size_t(4), size_t(20000)}) {
+      CAPTURE(limit);
+      CAPTURE(n);
+      db_t d;
+      open_tree_t t(d, 31, limit);
+      std::vector<std::string> keys = sorted_keys(n, longest, n + limit);
+      built_t built = build_tree(t, d.store(), keys);
+      CHECK(std::is_sorted(built.ids.begin(), built.ids.end()));
+      CHECK(std::adjacent_find(built.ids.begin(), built.ids.end()) ==
+            built.ids.end());
+      if (n > 0 && built.ids.empty()) {
+        CHECK(built.noted == std::set<uint64_t>{0});
+      }
+      if (n == 20000) {
+        size_t height = 0;
+        REQUIRE(0 == tree_height(t.tree, height));
+        CHECK(height >= 3);
+        CHECK(built.noted.size() > 1);
+        CHECK(built.noted.count(0) == 0);
+      }
+      REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+      cursor_t c;
+      cursor_open(t.tree, c, nullptr, true, nullptr, true);
+      auto all = drain(c);
+      REQUIRE(keys.size() == all.size());
+      for (size_t i = 0; i < keys.size(); i++) {
+        CHECK(keys[i] == all[i].first);
+        CHECK("v" + std::to_string(i) == all[i].second);
+      }
+    }
+  }
+}
+
+TEST_CASE("tree: a build fills its leaves to 90%, and its inner pages to 70%") {
+  // Verify the fill: few splits for the next inserts, and no more pages.
+  // 1. Build 20,000 keys of 20 bytes at the real limit.
+  // 2. Every leaf but the last is over 85% full and at most 90%;
+  //    every inner page but a level's last is at most 70% full.
+  db_t d;
+  open_tree_t t(d, 32, page_limit);
+  std::vector<std::string> keys;
+  for (int i = 0; i < 20000; i++) {
+    std::string k = std::to_string(100000 + i);
+    k.resize(20, 'k');
+    keys.push_back(k);
+  }
+  built_t built = build_tree(t, d.store(), keys);
+  REQUIRE(built.ids.size() > 3);
+  for (uint64_t id : built.ids) {
+    page_t page = read_decoded(t.s, d.store(), 32, id);
+    if (0 == page.next) {
+      continue;
+    }
+    size_t size = page_size(page) - page.high.size();
+    if (0 == page.level) {
+      CHECK(size * 100 > page_limit * 85);
+      CHECK(size * 100 <= page_limit * leaf_fill);
+    } else {
+      CHECK(size * 100 <= page_limit * inner_fill);
+    }
+  }
+}
+
+TEST_CASE("tree: a built tree takes inserts and splits as any tree") {
+  // Verify a built tree is a tree like any other to its writers.
+  // 1. Build 5,000 random keys at a small limit.
+  // 2. Insert 5,000 more random keys, which split the built pages.
+  // 3. The tree checks whole, and a cursor gives the union in order.
+  db_t d;
+  open_tree_t t(d, 33, 512);
+  std::vector<std::string> keys = sorted_keys(5000, 24, 33);
+  build_tree(t, d.store(), keys);
+  std::map<std::string, std::string> expected;
+  for (size_t i = 0; i < keys.size(); i++) {
+    expected[keys[i]] = "v" + std::to_string(i);
+  }
+  std::mt19937_64 rng(34);
+  for (int i = 0; i < 5000; i++) {
+    std::string key = random_key(rng, 24);
+    int rc = tree_insert(t.tree, key, "w");
+    REQUIRE_MESSAGE(rc >= 0, sm1::errmsg());
+    CHECK(rc == (expected.count(key) > 0 ? 1 : 0));
+    expected.emplace(key, "w");
+  }
+  REQUIRE_MESSAGE(0 == tree_check(t.tree), std::string(sm1::errmsg()));
+  cursor_t c;
+  cursor_open(t.tree, c, nullptr, true, nullptr, true);
+  auto all = drain(c);
+  REQUIRE(expected.size() == all.size());
+  CHECK(std::equal(all.begin(), all.end(), expected.begin(),
+                   [](const auto &a, const auto &b) {
+                     return a.first == b.first && a.second == b.second;
+                   }));
+}
+
+TEST_CASE("tree: a build refuses a key out of order, and one too long") {
+  // Verify a build's checks of its input.
+  // 1. A key equal to the one before fails with SM_ERR_INVALID, and
+  //    so does one below it.
+  // 2. A key too long for an inner entry fails with
+  //    SM_ERR_KEYTOOLONG, as tree_insert's does.
+  db_t d;
+  open_tree_t t(d, 34, 512);
+  REQUIRE(0 == tree_create(t.tree));
+  build_t b;
+  build_open(t.tree, b, [](std::string_view, std::string_view) { return 0; });
+  REQUIRE(0 == build_add(b, "b", "v"));
+  CHECK(-1 == build_add(b, "b", "v"));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  CHECK(-1 == build_add(b, "a", "v"));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  std::string longest(entry_max(512) - entry_size(0, 8), 'z');
+  CHECK(0 == build_add(b, longest, "v"));
+  CHECK(-1 == build_add(b, longest + "z", "v"));
+  CHECK(sm1::SM_ERR_KEYTOOLONG == sm1::errnum());
+}

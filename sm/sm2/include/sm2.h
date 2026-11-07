@@ -1213,13 +1213,35 @@ int idx_find_latest(index_t* index, std::span<const datum_t> key,
  * Put the entry for the row with key row into a bulk load of the
  * index's store, as idx_insert would write it, into
  * stream, which the caller gives this index's entries alone and
- * did not declare ascending. A key already in the load fails with
- * SM_ERR_DUPKEY, when the load is closed.
+ * did not declare ascending; a tree's, into the entries stream of
+ * sm2::idx_load_tree. A key already in the load fails with
+ * SM_ERR_DUPKEY, when the load is closed, or for a tree when it is
+ * built.
  */
 int idx_load(index_t* index, sm1::loader_t* loader, size_t stream,
              std::span<const datum_t> key, std::span<const bool> key_isnull,
              std::string_view row, std::span<const datum_t> include,
              std::span<const bool> include_isnull);
+
+/*
+ * A tree built whole by a bulk load into an empty table
+ * (../BTREELOAD_PLAN.md):
+ * 1. sm2::idx_load_tree makes the tree empty, and declares its two
+ *    streams: its entries, sorted for it, and its pages.
+ * 2. sm2::idx_load puts each entry.
+ * 3. sm2::idx_load_build builds the tree from its sorted entries,
+ *    before sm1::load_close, its pages to the page stream.
+ * 4. sm2::idx_load_root writes page 0, after sm1::load_close puts
+ *    the pages in the store.
+ * Every entry is in doubt, as an insert's is. Each returns 0, or -1;
+ * a duplicate of a unique tree fails idx_load_build with
+ * SM_ERR_DUPKEY.
+ */
+int idx_load_tree(index_t* index, sm1::loader_t* loader, size_t& entries,
+                  size_t& pages);
+int idx_load_build(index_t* index, sm1::loader_t* loader, size_t entries,
+                   size_t pages);
+int idx_load_root(index_t* index);
 
 /*
  * Remove the entry idx_insert added for key and the row with key

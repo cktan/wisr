@@ -1185,14 +1185,12 @@ narrowed, with these differences.
   its entries made as `tbl_insert` makes them. The heap's is
   ascending in a keyless table, by `_id`, and unsorted in one
   with a primary key, sorted at the close as an index's is.
-- **A B-tree Index has a stream and puts nothing in it.** Its
-  pages are no versions to load, so `idx_load` inserts the entry
-  as a writer does, and the entry is dead if the load rolls back.
-  A rollback leaves the tree's pages: the store's range stops at
-  them. A table with a unique B-tree Index is not loaded from
-  files: `tbl_load_open` inserts its rows one at a time, as a
-  unique tree checks a key against rows, and a file's rows are in
-  no store yet.
+- **A B-tree Index is built whole** (`BTREEINDEX.md` §6.7).
+  Its entries go to a drained stream, sorted as any other's,
+  and come back to sm2 at the close. sm2 packs them into pages,
+  which go to a page stream as they are, and into the store with
+  the rows. A unique tree's entries are sorted by its key
+  columns, so the sort finds a duplicate, with no row read.
 - **No stream is declared unique.** With the store empty and
   no one else in it, two equal keys are both the load's, in a
   unique index or not, so every stream is checked alike: a
@@ -1228,9 +1226,11 @@ narrowed, with these differences.
   filesystem, and copies it when they are not.
 - **The options** are `load_small_bytes`, `load_sort_bytes`
   and `load_file_bytes` (`include/sm_options.h`).
-- **The calls**: `sm1::load_open`, `load_stream`, `load_put`,
-  `load_close` and `store_empty`; `sm2::rel_load` and
-  `idx_load`; `sm3::tbl_load_open`, `tbl_load_add`,
+- **The calls**: `sm1::load_open`, `load_stream`,
+  `load_page_stream`, `load_drain_stream`, `load_put`,
+  `load_drain`, `load_close`, `load_cancel` and `store_empty`;
+  `sm2::rel_load`, `idx_load`, `idx_load_tree`, `idx_load_build`
+  and `idx_load_root`; `sm3::tbl_load_open`, `tbl_load_add`,
   `tbl_load_close`; `sm_tbl_load_begin`, `sm_tbl_load_add`,
   `sm_tbl_load_end`; `rel`'s verb is `(load table rows)`
   (`rel/REL.md`).

@@ -31,7 +31,16 @@ struct sm3::loader_t {
   sm1::loader_t *load = nullptr;
   size_t heap = 0;             /* the stream of the table's rows */
   std::vector<size_t> streams; /* the stream of each index, in order */
+  /* A tree's stream of pages, by index; no_pages for any other. */
+  std::vector<size_t> pages;
 };
+
+namespace {
+
+/* An index of a load that is not a tree built whole: no page stream. */
+constexpr size_t no_pages = SIZE_MAX;
+
+} // namespace
 
 struct sm3::table_t {
   session_t *session;
@@ -1208,11 +1217,6 @@ int tbl_load_open(table_t *table, loader_t *&out) {
   if (sm1::store_empty(s, storeid, empty) != 0) {
     return -1;
   }
-  // A unique tree checks a key against its rows, and a file's rows are
-  // in no store yet: such a table's rows are inserted, one at a time.
-  for (const index_def_t &x : table->def->indexes) {
-    empty = empty && !(x.tree && x.unique);
-  }
   // A temporary table is its session's alone: no one to keep out.
   if (empty && !table->exclusive && table->def->nspoid != nsp_temp) {
     // Keep every other transaction out, readers too, to the end of
@@ -1245,15 +1249,60 @@ int tbl_load_open(table_t *table, loader_t *&out) {
                          sm2::rel_chained(table->rel)) != 0) {
       return -1;
     }
-    // An index's entries arrive in the heap's order, not its own.
+    // An index's entries arrive in the heap's order, not its own. A
+    // tree's are sorted for it, and it is built whole at the close
+    // (../BTREELOAD_PLAN.md).
     l->streams.resize(table->indexes.size());
-    for (size_t &stream : l->streams) {
-      if (sm1::load_stream(l->load, false, stream) != 0) {
+    l->pages.assign(table->indexes.size(), no_pages);
+    for (size_t i = 0; i < l->streams.size(); i++) {
+      if (table->def->indexes[i].tree && maintained(table, i)) {
+        if (use_index(table, i) != 0 ||
+            sm2::idx_load_tree(table->indexes[i], l->load, l->streams[i],
+                               l->pages[i]) != 0) {
+          return -1;
+        }
+      } else if (sm1::load_stream(l->load, false, l->streams[i]) != 0) {
         return -1;
       }
     }
   }
   out = l.release();
+  return 0;
+}
+
+/*
+ * Put what load l holds into its table, and end sm1's load:
+ * 1. Build each tree from its sorted entries, its pages to the load.
+ * 2. Close the load: the rows, the entries and the pages go into the
+ *    store at once.
+ * 3. Write each tree's page 0, which names pages now in the store.
+ * A build that fails cancels the load, as a close that fails ends it.
+ */
+static int finish_load(loader_t *l) {
+  table_t *table = l->table;
+  sm1::loader_t *load = l->load;
+  l->load = nullptr;
+  for (size_t i = 0; i < l->pages.size(); i++) {
+    if (l->pages[i] != no_pages &&
+        sm2::idx_load_build(table->indexes[i], load, l->streams[i],
+                            l->pages[i]) != 0) {
+      // Which index has the key: a unique tree's duplicate is found
+      // as its entries are sorted, here.
+      if (sm1::errnum() == sm1::SM_ERR_DUPKEY) {
+        sm1::setdup({table->def->indexes[i].oid, {}});
+      }
+      sm1::load_cancel(load);
+      return -1;
+    }
+  }
+  if (sm1::load_close(load) != 0) {
+    return -1;
+  }
+  for (size_t i = 0; i < l->pages.size(); i++) {
+    if (l->pages[i] != no_pages && sm2::idx_load_root(table->indexes[i]) != 0) {
+      return -1;
+    }
+  }
   return 0;
 }
 
@@ -1277,10 +1326,7 @@ int tbl_load_add(loader_t *l, std::span<const sm2::datum_t> values,
     // A row a load does not take, too long or to be stored out of
     // line: what is loaded so far goes into the table, and this
     // row and those after it are inserted.
-    sm1::loader_t *load = l->load;
-    l->load = nullptr;
-    return sm1::load_close(load) != 0 ? -1
-                                      : tbl_insert(table, values, isnull, id);
+    return finish_load(l) != 0 ? -1 : tbl_insert(table, values, isnull, id);
   }
   // Its entry in every index, as tbl_insert makes it. No value is
   // out of line: rel_load took the row.
@@ -1314,7 +1360,7 @@ int tbl_load_add(loader_t *l, std::span<const sm2::datum_t> values,
 /* Finish a bulk load; see sm3.h. */
 int tbl_load_close(loader_t *l) {
   std::unique_ptr<loader_t> own(l);
-  return l->load == nullptr ? 0 : sm1::load_close(l->load);
+  return l->load == nullptr ? 0 : finish_load(l);
 }
 
 /* Free a bulk load's handle, and no more; see sm3.h. */

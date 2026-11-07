@@ -754,6 +754,46 @@ descends again if it is not what it wanted. A reader holding page
 
 The cost of writing a page whole is in §10.1.
 
+### 6.7 A bulk load builds the tree whole
+
+A load into an empty table (`BULKLOAD.md` §5.1) does not insert
+its entries. It builds each tree from the bottom up, with no
+latch and one write a page (`BTREELOAD_PLAN.md`):
+
+1. `idx_load_tree()` makes the tree empty, and declares two
+   streams of the load: a drained stream for the entries and a
+   page stream for the pages.
+2. Each row's entry goes to the drained stream, which the
+   Sort (`SORT.md`) sorts in the load's memory budget.
+3. At the close, `idx_load_build()` takes the entries back in
+   key order. `build_add()` fills each leaf to 90%, links it to
+   the next, and gives it the next leaf's first key as its high
+   key.
+4. `build_end()` builds each level above from the first key and
+   id of each page below, its pages filled to 70%, until a
+   level fits one page.
+5. Each page but page 0 goes to the page stream as it is, in
+   page id order. `sm1::load_close()` puts the pages into the
+   store with the rows.
+6. `idx_load_root()` writes the top level as page 0, and queues
+   each leaf for the cleaner.
+
+- **Every entry is in doubt**, as an insert's is, and no leaf is
+  all visible. The pages stay after an abort, and an old
+  snapshot can scan the tree once the table's lock goes at the
+  commit. The cleaner reads each row once.
+- **A page holds two entries at least**, so each level above
+  has half the pages or fewer. A page whose high key does not
+  fit gives its last entries to the next page.
+- **A unique tree's entries are sorted by its key columns**, and
+  the row's key only after a NULL. So the Sort's own check finds
+  a duplicate, with no row read, and stops. The row's key rides
+  in the record's value, and the build puts it back.
+- **Page 0 is written last.** A crash before it leaves pages no
+  page names, which no one reads: page ids are never reused.
+- **A build that fails** cancels the load (`sm1::load_cancel`),
+  and leaves the tree empty.
+
 ---
 
 ## 7. Uniqueness
@@ -1534,7 +1574,7 @@ is built.
 | TRUNCATE, ALTER rewrite | a new store, with new trees built as CREATE INDEX builds. The old store id finds no table, so its pages are dropped; a write to the old store fails, and the page is dropped |
 | temporary tables | a temporary store's pages, as its rows. Bits as any tree's; not queued, so `VACUUM` in the session |
 | keyless (`_id`) tables | the row key is the `_id` |
-| bulk load, its rollback | entries inserted as rows are, bits set; a reader or writer of the leaf queues it, and a cleaning removes a rolled-back load's entries. A sorted build bottom-up is left for later |
+| bulk load, its rollback | into an empty table, built whole (§6.7), bits set and leaves queued; a cleaning removes a rolled-back load's entries. Into a table with rows, entries inserted as rows are |
 
 ---
 

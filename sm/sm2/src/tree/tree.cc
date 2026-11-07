@@ -1257,4 +1257,199 @@ int tree_check(tree_t &tree) {
   return 0;
 }
 
+namespace {
+
+/* The slots past its entries that a page of n entries lays out. */
+size_t spare_slots(size_t n) { return 2 * (page_slots(n) - n); }
+
+/* The bytes level's page takes with its entries and a high key of high. */
+size_t level_bytes(const build_level_t &lv, size_t high) {
+  return page_header_size + high + lv.payload +
+         spare_slots(lv.page.entries.size());
+}
+
+/* A new level of a build, at level, filled to fill percent of limit. */
+build_level_t new_level(uint8_t level, size_t fill, size_t limit) {
+  build_level_t lv;
+  lv.level = level;
+  lv.target = limit * fill / 100;
+  return lv;
+}
+
+/* Add an entry to the page level is filling. */
+void level_push(build_level_t &lv, std::string key, std::string value) {
+  lv.payload += entry_size(key.size(), value.size());
+  lv.page.entries.emplace_back(std::move(key), std::move(value));
+}
+
+/* Hand out level's page, its version and its level set, by put. */
+int level_put(build_t &b, build_level_t &lv) {
+  lv.page.level = lv.level;
+  lv.page.prev = lv.prev;
+  lv.page.version = 1;
+  lv.lows.emplace_back(
+      lv.lows.empty() ? std::string() : lv.page.entries.front().first, lv.id);
+  return b.put(key_of(*b.tree, lv.id), page_bytes(lv.page));
+}
+
+/*
+ * Hand out level's page, full, whose right neighbour's first key is
+ * key, and start that neighbour:
+ * 1. Give the page and its neighbour ids, in that order, so ids
+ *    ascend as pages go out.
+ * 2. Make key its high key. While the two do not fit the limit,
+ *    which only long keys can do, move its last entry to the
+ *    neighbour, and make that entry's key the high key. Two
+ *    entries always fit with one.
+ * 3. Link it to its neighbours, and hand it out.
+ * 4. Start the neighbour with the entries moved.
+ */
+int level_close(build_t &b, build_level_t &lv, std::string_view key) {
+  if (!lv.has_id && 0 != next_page(*b.tree, lv.id)) {
+    return -1;
+  }
+  lv.has_id = true;
+  uint64_t next = 0;
+  if (0 != next_page(*b.tree, next)) {
+    return -1;
+  }
+  std::vector<std::pair<std::string, std::string>> moved;
+  std::string high(key);
+  while (level_bytes(lv, high.size()) > b.tree->limit &&
+         lv.page.entries.size() > 2) {
+    auto &last = lv.page.entries.back();
+    lv.payload -= entry_size(last.first.size(), last.second.size());
+    high = last.first;
+    moved.insert(moved.begin(), std::move(last));
+    lv.page.entries.pop_back();
+  }
+  lv.page.next = next;
+  lv.page.high = std::move(high);
+  lv.page.flags = page_has_high;
+  if (0 != level_put(b, lv)) {
+    return -1;
+  }
+  lv.prev = lv.id;
+  lv.id = next;
+  lv.page = page_t();
+  lv.payload = 0;
+  for (auto &[k, v] : moved) {
+    level_push(lv, std::move(k), std::move(v));
+  }
+  return 0;
+}
+
+/*
+ * Add key with value to level, handing out its page first if full. A
+ * page holds two entries at least, so each level above has half the
+ * pages or fewer, and a build ends. Two entries and a high key fit
+ * any page, an entry being a third of one at most.
+ */
+int level_add(build_t &b, build_level_t &lv, std::string_view key,
+              std::string_view value) {
+  size_t n = lv.page.entries.size();
+  size_t after = page_header_size + lv.payload +
+                 entry_size(key.size(), value.size()) + spare_slots(n + 1);
+  if (n >= 2 && after > lv.target && 0 != level_close(b, lv, key)) {
+    return -1;
+  }
+  level_push(lv, std::string(key), std::string(value));
+  return 0;
+}
+
+/*
+ * End level: true if it is the top, one page never handed out, left
+ * in lv.page; else hand out its last page, the rightmost, and false.
+ */
+int level_end(build_t &b, build_level_t &lv, bool &top) {
+  top = !lv.has_id;
+  if (top) {
+    lv.page.level = lv.level;
+    return 0;
+  }
+  lv.page.next = 0;
+  lv.page.flags = 0;
+  return level_put(b, lv);
+}
+
+} // namespace
+
+/* Begin a build; see tree.h. */
+void build_open(tree_t &tree, build_t &build, build_put_fn put) {
+  build.tree = &tree;
+  build.put = std::move(put);
+  build.leaves = new_level(0, leaf_fill, tree.limit);
+  build.leaf_ids.clear();
+  build.root = page_t();
+}
+
+/* Add the next key of a build; see tree.h. */
+int build_add(build_t &b, std::string_view key, std::string_view value) {
+  if (0 != check_entry(*b.tree, key, value)) {
+    return -1;
+  }
+  const auto &entries = b.leaves.page.entries;
+  if (!entries.empty() && key <= entries.back().first) {
+    return sm1::seterr(sm1::SM_ERR_INVALID, "tree build: a key out of order");
+  }
+  return level_add(b, b.leaves, key, value);
+}
+
+/* Hand out every page of a build but page 0; see tree.h. */
+int build_end(build_t &b) {
+  build_level_t lv = std::move(b.leaves);
+  for (;;) {
+    bool top = false;
+    if (0 != level_end(b, lv, top)) {
+      return -1;
+    }
+    if (top) {
+      b.root = std::move(lv.page);
+      return 0;
+    }
+    if (0 == lv.level) {
+      for (const auto &low : lv.lows) {
+        b.leaf_ids.push_back(low.second);
+      }
+    }
+    // The level above: an entry for each page of this one.
+    build_level_t up = new_level(static_cast<uint8_t>(lv.level + 1), inner_fill,
+                                 b.tree->limit);
+    for (const auto &[low, id] : lv.lows) {
+      if (0 != level_add(b, up, low, child_value(id))) {
+        return -1;
+      }
+    }
+    lv = std::move(up);
+  }
+}
+
+/* Write a build's page 0, and note its leaves; see tree.h. */
+int build_root(build_t &b) {
+  tree_t &tree = *b.tree;
+  // Page 0 is there, an empty leaf: its latch waits out a cleaning of
+  // it, and its version goes on from the page's.
+  pinned_t root;
+  if (0 != pin_ex(tree, root_id, true, root)) {
+    return -1;
+  }
+  b.root.version = root.view.version();
+  b.root.prev = 0;
+  b.root.next = 0;
+  b.root.flags = 0;
+  b.root.high.clear();
+  std::vector<out_t> outs{out_of(root_id, b.root, root.pin)};
+  if (0 != write_pages(tree, outs)) {
+    return -1;
+  }
+  root.release();
+  if (b.leaf_ids.empty() && !b.root.entries.empty()) {
+    note_leaf(tree, root_id);
+  }
+  for (uint64_t id : b.leaf_ids) {
+    note_leaf(tree, id);
+  }
+  return 0;
+}
+
 } // namespace sm2::tree

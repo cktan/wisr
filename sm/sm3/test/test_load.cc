@@ -357,68 +357,98 @@ TEST_CASE("a row to be stored out of line ends the files, and the rest are "
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
-TEST_CASE("a load into an empty table with a unique tree inserts its rows") {
-  // Verify a load takes the insert path for a table with a unique
-  // B-tree Index, whose check needs rows a file does not yet show.
-  // 1. Make a table with a unique tree on name, in one transaction, so
-  //    the tree is valid at once.
-  // 2. A load adds rows, each in the table at once, and keeps no reader
-  //    out: no files were opened.
-  // 3. Commit. A second load's row with a name already there fails
-  //    with SM_ERR_DUPKEY, and its transaction aborts.
-  // 4. The ten rows are there, and the tree finds each by name.
-  items_t f(files_options());
-  std::vector<sm3::column_spec_t> cols = {
-      {"id", sm2::type_int4.code, -1, true},
-      {"name", sm2::type_text.code, -1, true},
-      {"note", sm2::type_text.code, -1, false}};
-  std::vector<sm3::index_key_spec_t> key = {{1, false, false, std::nullopt}};
-  uint64_t table = 0, tree = 0;
-  start(f.a);
-  REQUIRE(sm3::create_table(f.a, sm3::nsp_public, "uitems", cols, table) == 0);
-  REQUIRE_MESSAGE(sm3::create_index(f.a, table, "uitems_name", key, {}, true,
-                                    tree, false, false, true) == 0,
-                  sm1::errmsg());
-  REQUIRE(sm3::commit(f.a) == 0);
-
-  auto open = [&](sm3::session_t *s) {
-    sm3::table_t *t = nullptr;
-    REQUIRE_MESSAGE(sm3::tbl_open(s, table, sm1::SM_LOCKMODE_IX, t) == 0,
+TEST_CASE("a load into an empty table builds its unique tree whole") {
+  // Verify a unique B-tree Index no longer makes a load insert its rows:
+  // the tree is built from the load's sorted entries at its close.
+  // 1. Make two tables, each with a unique tree on name, each in the
+  //    transaction that makes its table, so the tree is valid at once.
+  // 2. A load into it, empty, keeps readers out, as one from files.
+  // 3. After the close and the commit, the tree finds each row by name.
+  // 4. A load of a name twice into it, empty again, fails its close
+  //    with SM_ERR_DUPKEY, the tree in errdup(); after the abort the
+  //    table and its tree are empty.
+  // 5. Into the table with rows, a load inserts: a name there fails
+  //    its add with SM_ERR_DUPKEY.
+  for (bool files : {false, true}) {
+    CAPTURE(files);
+    items_t f(files ? files_options() : sm1::options_t());
+    std::vector<sm3::column_spec_t> cols = {
+        {"id", sm2::type_int4.code, -1, true},
+        {"name", sm2::type_text.code, -1, true},
+        {"note", sm2::type_text.code, -1, false}};
+    std::vector<sm3::index_key_spec_t> key = {{1, false, false, std::nullopt}};
+    uint64_t table = 0, tree = 0, other = 0, tree2 = 0;
+    start(f.a);
+    REQUIRE(sm3::create_table(f.a, sm3::nsp_public, "uitems", cols, table) ==
+            0);
+    REQUIRE_MESSAGE(sm3::create_index(f.a, table, "uitems_name", key, {}, true,
+                                      tree, false, false, true) == 0,
                     sm1::errmsg());
-    return t;
-  };
-  start(f.a);
-  sm3::table_t *t = open(f.a);
-  sm3::loader_t *l = open_load(t);
-  start(f.b);
-  sm3::table_t *other = open(f.b);
-  sm3::tbl_close(other);
-  REQUIRE(sm3::commit(f.b) == 0);
-  add_rows(l, 1, 10);
-  CHECK(count(t) == 10);
-  REQUIRE(sm3::tbl_load_close(l) == 0);
-  sm3::tbl_close(t);
-  REQUIRE(sm3::commit(f.a) == 0);
+    REQUIRE(sm3::create_table(f.a, sm3::nsp_public, "other", cols, other) == 0);
+    REQUIRE_MESSAGE(sm3::create_index(f.a, other, "other_name", key, {}, true,
+                                      tree2, false, false, true) == 0,
+                    sm1::errmsg());
+    REQUIRE(sm3::commit(f.a) == 0);
 
-  start(f.a);
-  t = open(f.a);
-  l = open_load(t);
-  row_t dup(99, "name-3", "y");
-  uint64_t rowno = 0;
-  CHECK(sm3::tbl_load_add(l, dup.d(), dup.null(), rowno) == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
-  sm3::tbl_load_free(l);
-  sm3::tbl_close(t);
-  REQUIRE(sm3::abort(f.a) == 0);
+    auto open = [&](sm3::session_t *s, uint64_t oid) {
+      sm3::table_t *t = nullptr;
+      REQUIRE_MESSAGE(sm3::tbl_open(s, oid, sm1::SM_LOCKMODE_IX, t) == 0,
+                      sm1::errmsg());
+      return t;
+    };
+    start(f.a);
+    sm3::table_t *t = open(f.a, table);
+    sm3::loader_t *l = open_load(t);
+    REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.b), true) == 0);
+    start(f.b);
+    sm3::table_t *seen = nullptr;
+    CHECK(sm3::tbl_open(f.b, table, sm1::SM_LOCKMODE_IS, seen) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+    REQUIRE(sm3::abort(f.b) == 0);
+    add_rows(l, 1, 10);
+    REQUIRE_MESSAGE(sm3::tbl_load_close(l) == 0, sm1::errmsg());
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
+    start(f.a);
+    t = open(f.a, table);
+    CHECK(count(t) == 10);
+    for (int32_t i = 1; i <= 10; i++) {
+      CHECK(by_name(t, tree, "name-" + std::to_string(i % 10)) == 1);
+    }
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
 
-  start(f.a);
-  t = open(f.a);
-  CHECK(count(t) == 10);
-  for (int32_t i = 1; i <= 10; i++) {
-    CHECK(by_name(t, tree, "name-" + std::to_string(i % 10)) == 1);
+    // The same, into a second table of the same columns and its own
+    // unique tree, with a name twice.
+    start(f.a);
+    t = open(f.a, other);
+    l = open_load(t);
+    add_rows(l, 1, 12);
+    CHECK(sm3::tbl_load_close(l) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+    CHECK(sm1::errdup().index == tree2);
+    sm3::tbl_close(t);
+    REQUIRE(sm3::abort(f.a) == 0);
+    start(f.a);
+    t = open(f.a, other);
+    CHECK(count(t) == 0);
+    for (int32_t i = 0; i < 10; i++) {
+      CHECK(by_name(t, tree2, "name-" + std::to_string(i)) == 0);
+    }
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
+
+    start(f.a);
+    t = open(f.a, table);
+    l = open_load(t);
+    row_t dup(99, "name-3", "y");
+    uint64_t rowno = 0;
+    CHECK(sm3::tbl_load_add(l, dup.d(), dup.null(), rowno) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+    sm3::tbl_load_free(l);
+    sm3::tbl_close(t);
+    REQUIRE(sm3::abort(f.a) == 0);
   }
-  sm3::tbl_close(t);
-  REQUIRE(sm3::commit(f.a) == 0);
 }
 
 TEST_CASE("a commit refused with a load open can still abort") {

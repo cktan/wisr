@@ -364,21 +364,100 @@
 (assert-eq (idx-entries clean_state) 2)
 (commit)
 
-# Verify a load into an empty table with a unique tree inserts its rows.
-# 1. Make a table and a unique tree on its key.
-# 2. A load gives each row; the tree finds them.
-# 3. A second load of a key there fails, and the row is not added.
+# Verify a load into an empty table builds its trees whole, unique or
+# not (../BTREELOAD_PLAN.md).
+# 1. Make a table with a unique tree on k and a tree on g, and load
+#    3,000 rows in no order of either, some with a NULL k.
+# 2. Each tree gives every row in its key's order, and a range gives
+#    its rows; the NULL k rows are no duplicates of each other.
+# 3. Every entry is in doubt: an index-only scan reads every row, until
+#    a cleaner pass reads each once and sets the leaves all visible.
+# 4. An insert lands in the built tree; one of a k there fails.
+(def nrows 3000)
+# Row i's k: a permutation of 0..2999 as text, NULL for i below 10.
+(defn k-of [i] (if (< i 10) nil (string "k" (% (* i 7919) nrows))))
+(defn g-of [i] (string "g" (% i 7)))
+(def load-rows (map (fn [i] [i (k-of i) (g-of i)]) (range nrows)))
+(defn ids-by [key-of]
+  (map (fn [r] (r 0))
+       (sort-by (fn [r] [(key-of (r 0)) (r 0)])
+                (filter (fn [r] (key-of (r 0))) load-rows))))
 (begin :rc)
-(table-create uload (columns (id :int4 :not-null) (k :text)))
+(table-create uload (columns (id :int4 :not-null) (k :text) (g :text)))
 (index-create uload_k (table uload) (key (k :asc)) :unique true :tree true)
+(index-create uload_g (table uload) (key (g :asc)) :tree true)
 (commit)
 (index-wait uload_k)
+(index-wait uload_g)
 (begin :rc)
-(load uload [[1 "a"] [2 "b"] [3 "c"]])
+(load uload load-rows)
 (commit)
 (begin :rc)
-(assert-eq (ids (idx-rows uload_k)) @[1 2 3])
-(assert-eq (ids (idx-rows uload_k :ge ["b"] :le ["b"])) @[2])
+(assert-eq (ids (idx-rows uload_k :ge ["k"] :lt ["l"])) (ids-by k-of))
+(assert-eq (ids (idx-rows uload_g)) (ids-by g-of))
+(assert-eq (ids (idx-rows uload_k :ge ["k1234"] :le ["k1234"]))
+           @[(find (fn [i] (= (k-of i) "k1234")) (range nrows))])
+(assert-eq (length (idx-rows uload_k)) nrows)
+(def before (idx-only uload_g :ge ["g3"] :le ["g3"]))
+(assert-eq (length (before :keys)) (length (filter (fn [i] (= (% i 7) 3))
+                                                   (range nrows))))
+(assert-eq (before :unread) 0)
+(commit)
+(cleaner-pass)
+(begin :rc)
+(def after (idx-only uload_g :ge ["g3"] :le ["g3"]))
+(assert-eq (after :unread) (length (after :keys)))
+(insert uload [5000 "kz" "gz"])
+(assert-eq (ids (idx-rows uload_k :ge ["kz"] :le ["kz"])) @[5000])
+(commit)
+(begin :rc)
+(assert-err :err-dupkey (insert uload [5001 "k17" "gz"]))
+(abort)
+
+# Verify a load's duplicate in a unique tree fails it, and leaves its
+# table empty and its trees usable.
+# 1. Load three rows into an empty table, two with one k: the load
+#    fails with SM_ERR_DUPKEY, and its transaction aborts.
+# 2. The table and both its trees are empty.
+# 3. A load of distinct rows then succeeds, and the trees give them.
+(begin :rc)
+(table-create udup (columns (id :int4 :not-null) (k :text)))
+(index-create udup_k (table udup) (key (k :asc)) :unique true :tree true)
+(commit)
+(index-wait udup_k)
+(begin :rc)
+(assert-err :err-dupkey (load udup [[1 "a"] [2 "b"] [3 "a"]]))
+(begin :rc)
+(assert-count 0 (scan udup))
+(assert-eq (idx-entries udup_k) 0)
+(load udup [[1 "a"] [2 "b"] [3 "c"]])
+(commit)
+(begin :rc)
+(assert-eq (ids (idx-rows udup_k)) @[1 2 3])
+(commit)
+
+# Verify a load aborted after its end leaves only dead entries, which a
+# cleaner pass removes.
+# 1. Load 500 rows into an empty table, end the load, and abort.
+# 2. No row is there, and the tree gives none, though it holds 500
+#    entries.
+# 3. After a cleaner pass the tree holds none.
+(begin :rc)
+(table-create uabort (columns (id :int4 :not-null) (k :text)))
+(index-create uabort_k (table uabort) (key (k :asc)) :unique true :tree true)
+(commit)
+(index-wait uabort_k)
+(begin :rc)
+(load uabort (map (fn [i] [i (string "k" i)]) (range 500)))
+(abort)
+(begin :rc)
+(assert-count 0 (scan uabort))
+(assert-eq (ids (idx-rows uabort_k)) @[])
+(assert-eq (idx-entries uabort_k) 500)
+(commit)
+(cleaner-pass)
+(begin :rc)
+(assert-eq (idx-entries uabort_k) 0)
 (commit)
 
 (db-close)
