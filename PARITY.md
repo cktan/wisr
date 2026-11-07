@@ -1,8 +1,8 @@
 # Parity with PostgreSQL on q1, q2 and q3 (btree indexes)
 
-Goal: digres runs `bench/q1-seckey10.sql`, `q2-seckey180.sql` and
-`q3-seckeyfetchrow.sql`
-on btree indexes as fast as PostgreSQL 18. This document gives the
+Goal: digres runs `bench/q1-sk10.sql`, `q2-sk180.sql` and
+`q3-skfetchrow.sql` on btree
+indexes as fast as PostgreSQL 18. This document gives the
 profile, what was changed, and what is left. Written 2026-11-07
 by a profile of `main` at 20f43e31.
 

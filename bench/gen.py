@@ -4,7 +4,7 @@
 Each row is id, lastname, firstname, street, city, state, zip,
 phone. Lastnames are Last1 to Last1000 and states the 50 US
 states, both uniform, so a lastname is about 10 rows and a
-state about 200: q1-seckey10.sql and q2-seckey180.sql count them.
+state about 200: q1-sk10.sql and q2-sk180.sql count them.
 """
 import csv
 import gzip
