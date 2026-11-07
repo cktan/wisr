@@ -33,6 +33,7 @@ document. Use these and no others in code comments and documents.
 | View | view | `VIEW.md` | a stored query's definition | `sm3/src/ddl/ddl.cc` |
 | Statistics | stats | `STATISTICS.md` | what ANALYZE records | `sm3/src/analyze/` |
 | Bulk Load | load | `BULKLOAD.md` | loading an empty table from sorted files | `sm1/src/load.cc` |
+| Sort | sort | `SORT.md` | records in key order, in memory and in runs on files | `sm0/src/sort.cc` |
 | Clustered Table | cluster | `CLUSTER.md` | rows stored in primary-key order | `sm3/src/table/table.cc` |
 | Foreign Key | fkey | `FOREIGNKEY.md` | a table's references to another | `sm3/src/ddl/ddl.cc` |
 | Logical Decoding | decode | `LOGICALDECODE.md` | a design, not built | none |

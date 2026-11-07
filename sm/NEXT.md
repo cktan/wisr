@@ -443,22 +443,15 @@ and so are the catalog tables psql reads
     1. At `tbl_load_open()`, drop the tree's pages, and leave an
        empty tree at page 0 in one write. This also clears dead
        entries from aborted inserts.
-    2. As each row goes to the Row Store, write its entry's key to
-       a sort stream, backed by a temporary store: RocksDB sorts
-       it, with no WAL, and a crash leaves nothing to clean.
-    3. At close, scan that store in key order, and pack leaf
+    2. As each row goes to the Row Store, give its entry's key to
+       an `sm0::sort_t` (`SORT_PLAN.md`), which spills to plain
+       files, so a crash leaves nothing to clean.
+    3. At close, read the sort in key order, and pack leaf
        pages. Two equal keys in a unique tree fail with
        `SM_ERR_DUPKEY`, with no row read.
     4. Build each inner level from the one below, and write page
        0 last, as the root.
     To settle:
-    - **Sort with PostgreSQL's sorting utility** (`tuplesort`),
-      not with RocksDB as step 2 says. It probably costs less:
-      it sorts in memory, spills to sorted runs and merges
-      them, and it writes no memtable or SST file. Compare the
-      two before choosing. `tuplesort` is in `dg/`, and sm
-      depends on nothing in it, so sm needs a hook for the
-      sort, or the builder lives in `dg/`.
     - Every entry is born in doubt: after an abort, a clear bit
       would let an index-only scan give a row that is not there.
       So a cleaning still reads each row once.
