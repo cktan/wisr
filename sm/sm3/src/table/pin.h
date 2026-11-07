@@ -49,11 +49,10 @@ struct sm3::scan_t {
    * and the row in a raw pin of the batch's; batch the next read's
    * size, doubling to tree_batch_max, as digres's read-ahead does.
    * The keys lie end to end in bytes, which each batch fills anew;
-   * keys and rows view it, good until the next batch.
+   * key_at and row_at place them, good until the next batch.
    */
   std::string bytes;
   std::vector<std::pair<size_t, size_t>> key_at, row_at; /* in bytes */
-  std::vector<std::string_view> keys, rows;
   std::vector<uint64_t> ids;
   std::vector<sm1::rawpin_t *> raws;
   std::vector<std::string_view> tuples;

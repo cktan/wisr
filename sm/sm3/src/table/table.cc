@@ -1802,6 +1802,18 @@ static bool tree_scattered(table_t *t, size_t i) {
   return false;
 }
 
+/* Entry i's key in the batch's bytes, viewed when it is asked for. */
+static std::string_view batch_key(const scan_t *scan, size_t i) {
+  return std::string_view(scan->bytes.data() + scan->key_at[i].first,
+                          scan->key_at[i].second);
+}
+
+/* Entry i's row's key in the batch's bytes, viewed when it is asked for. */
+static std::string_view batch_row(const scan_t *scan, size_t i) {
+  return std::string_view(scan->bytes.data() + scan->row_at[i].first,
+                          scan->row_at[i].second);
+}
+
 /*
  * Read a tree's cursor's next entries, scan->batch of them or what is
  * left, and their rows at the transaction's snapshot, in one call
@@ -1813,13 +1825,11 @@ static int tree_fill(scan_t *scan) {
   scan->reread = false;
   size_t want = scan->batch;
   scan->batch = std::min(scan->batch * 2, tree_batch_max);
-  if (scan->keys.size() < want) {
+  if (scan->key_at.size() < want) {
     // Room for the largest batch at the second, so the doubling
     // grows no array again; a probe of one row stops at the first.
-    if (want > 1 && scan->keys.capacity() < tree_batch_max) {
-      for (auto *v : {&scan->keys, &scan->rows, &scan->tuples}) {
-        v->reserve(tree_batch_max);
-      }
+    if (want > 1 && scan->key_at.capacity() < tree_batch_max) {
+      scan->tuples.reserve(tree_batch_max);
       scan->key_at.reserve(tree_batch_max);
       scan->row_at.reserve(tree_batch_max);
       scan->ids.reserve(tree_batch_max);
@@ -1828,8 +1838,6 @@ static int tree_fill(scan_t *scan) {
       scan->unread.reserve(tree_batch_max);
       scan->raws.reserve(tree_batch_max);
     }
-    scan->keys.resize(want);
-    scan->rows.resize(want);
     scan->key_at.resize(want);
     scan->row_at.resize(want);
     scan->ids.resize(want);
@@ -1856,6 +1864,7 @@ static int tree_fill(scan_t *scan) {
   }
   // The batch's keys end to end, viewed once all are in.
   scan->bytes.clear();
+  scan->want_rows.clear();
   // Whether the index's keys give their columns back, found once a batch.
   const bool decodable =
       scan->entries_only && sm2::idx_decodable(t->indexes[scan->index]);
@@ -1881,31 +1890,20 @@ static int tree_fill(scan_t *scan) {
     // columns back (../BTREEINDEX.md §8).
     scan->unread[scan->n] =
         decodable && !cut && sm2::idx_scan_visible(scan->entries);
-    scan->tuples[scan->n] = {};
-    scan->rcs[scan->n] = 0;
+    if (!scan->unread[scan->n]) {
+      scan->want_rows.push_back(scan->n);
+    }
     scan->n++;
   }
-  for (size_t i = 0; i < scan->n; i++) {
-    scan->keys[i] = std::string_view(scan->bytes)
-                        .substr(scan->key_at[i].first, scan->key_at[i].second);
-    scan->rows[i] = std::string_view(scan->bytes)
-                        .substr(scan->row_at[i].first, scan->row_at[i].second);
-  }
-  // The rows to read: each entry's but an unread one's.
+  // The rows to read: each entry's but an unread one's, noted above.
   std::vector<size_t> &want_rows = scan->want_rows;
-  want_rows.clear();
-  for (size_t i = 0; i < scan->n; i++) {
-    if (!scan->unread[i]) {
-      want_rows.push_back(i);
-    }
-  }
   if (want_rows.empty()) {
     return 0;
   }
   if (1 == want_rows.size()) {
     size_t i = want_rows[0];
-    int rc =
-        sm2::rel_read(t->rel, scan->rows[i], scan->raws[i], scan->tuples[i]);
+    int rc = sm2::rel_read(t->rel, batch_row(scan, i), scan->raws[i],
+                           scan->tuples[i]);
     scan->rcs[i] = rc;
     return rc < 0 ? -1 : 0;
   }
@@ -1919,7 +1917,7 @@ static int tree_fill(scan_t *scan) {
   raws.resize(m);
   rcs.resize(m);
   for (size_t j = 0; j < m; j++) {
-    keys[j] = scan->rows[want_rows[j]];
+    keys[j] = batch_row(scan, want_rows[j]);
     raws[j] = scan->raws[want_rows[j]];
   }
   if (!scan->iter) {
@@ -1965,8 +1963,8 @@ static int tree_next(scan_t *scan, uint64_t &id, std::string_view &tuple) {
       // The entry remains at its position, but rollback may have
       // changed its row. Read pending rows at the current view; an
       // entry that went unread still does.
-      scan->rcs[i] =
-          sm2::rel_read(t->rel, scan->rows[i], scan->raws[i], scan->tuples[i]);
+      scan->rcs[i] = sm2::rel_read(t->rel, batch_row(scan, i), scan->raws[i],
+                                   scan->tuples[i]);
       if (scan->rcs[i] < 0) {
         return -1;
       }
@@ -1979,8 +1977,8 @@ static int tree_next(scan_t *scan, uint64_t &id, std::string_view &tuple) {
     if (scan->rcs[i] != 0) {
       continue;
     }
-    int rc = still_has(t, scan->index, scan->tuples[i], scan->rows[i],
-                       scan->keys[i], scan->key);
+    int rc = still_has(t, scan->index, scan->tuples[i], batch_row(scan, i),
+                       batch_key(scan, i), scan->key);
     if (rc < 0) {
       return -1;
     }
@@ -2238,8 +2236,9 @@ int tbl_scan_cols(scan_t *scan, std::span<sm2::datum_t> values,
                        "table: no tree entry to give the columns of");
   }
   size_t i = scan->last;
-  return sm2::idx_entry_cols(scan->table->indexes[scan->index], scan->keys[i],
-                             scan->cuts[i], scan->datums, values, isnull);
+  return sm2::idx_entry_cols(scan->table->indexes[scan->index],
+                             batch_key(scan, i), scan->cuts[i], scan->datums,
+                             values, isnull);
 }
 
 /* Whether the last tree entry's key gives its columns back; see sm3.h. */
@@ -2301,8 +2300,7 @@ std::string_view tbl_scan_key(const scan_t *scan) {
   }
   if (scan->entries) {
     // Before the first row a tree's cursor has no key.
-    return 0 == scan->at ? std::string_view()
-                         : std::string_view(scan->rows[scan->at - 1]);
+    return 0 == scan->at ? std::string_view() : batch_row(scan, scan->at - 1);
   }
   return sm2::rel_scan_key(scan->rel);
 }
