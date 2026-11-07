@@ -1856,6 +1856,9 @@ static int tree_fill(scan_t *scan) {
   }
   // The batch's keys end to end, viewed once all are in.
   scan->bytes.clear();
+  // Whether the index's keys give their columns back, found once a batch.
+  const bool decodable =
+      scan->entries_only && sm2::idx_decodable(t->indexes[scan->index]);
   while (scan->n < want && !scan->entries_done) {
     std::string_view row;
     bool cut;
@@ -1876,9 +1879,8 @@ static int tree_fill(scan_t *scan) {
     // An index-only scan's entry on a leaf all visible is every
     // snapshot's: its row goes unread where the key gives its
     // columns back (../BTREEINDEX.md §8).
-    scan->unread[scan->n] = scan->entries_only && !cut &&
-                            sm2::idx_scan_visible(scan->entries) &&
-                            sm2::idx_decodable(t->indexes[scan->index]);
+    scan->unread[scan->n] =
+        decodable && !cut && sm2::idx_scan_visible(scan->entries);
     scan->tuples[scan->n] = {};
     scan->rcs[scan->n] = 0;
     scan->n++;

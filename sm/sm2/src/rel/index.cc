@@ -45,6 +45,8 @@ struct sm2::index_t {
   /* A tree's (../BTREEINDEX.md): its entries are its own pages'. */
   bool tree = false;
   sm2::tree::tree_t pages;
+  /* key_decodable(key), found at its first ask: -1 not yet (idx_decodable) */
+  mutable int8_t decodable = -1;
 };
 
 struct sm2::index_scan_t {
@@ -1076,7 +1078,13 @@ bool idx_scan_visible(const index_scan_t *scan) {
 }
 
 /* Whether an index's key columns decode from its keys; see sm2.h. */
-bool idx_decodable(const index_t *index) { return key_decodable(index->key); }
+bool idx_decodable(const index_t *index) {
+  // The key columns never change, so the answer is found once.
+  if (index->decodable < 0) {
+    index->decodable = key_decodable(index->key) ? 1 : 0;
+  }
+  return 1 == index->decodable;
+}
 
 /* An entry's key columns, decoded from its key; see sm2.h. */
 int idx_entry_cols(const index_t *ix, std::string_view key, bool cut,
@@ -1086,7 +1094,7 @@ int idx_entry_cols(const index_t *ix, std::string_view key, bool cut,
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "index: a datum and null flag for every key column");
   }
-  if (cut || !key_decodable(ix->key)) {
+  if (cut || !idx_decodable(ix)) {
     return 1;
   }
   // The relid, the columns, then the row's key if the entry has it.
