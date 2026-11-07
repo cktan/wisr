@@ -1,7 +1,7 @@
 # SORT_PLAN — an external sort in sm
 
-Status: steps 1 and 2 of §8 are built. §9 lists what the user has
-decided.
+Status: steps 1 to 3 of §8 are built. §9 lists what the user has
+decided. `SORT.md` is the design of the code as it stands.
 
 **Warning: no PostgreSQL code goes into `sm/`.** This file
 describes techniques. Write the code from scratch, and copy
@@ -425,6 +425,22 @@ These are from before the sort's own loop (§4.4). A sort of
 memory now takes 484 a record without unique, on 2 million random
 keys, against 2,277 for `load.cc`'s way. About 35 of that is the
 budget's accounting in `sort_put`.
+
+---
+
+### 8.2 A load, measured
+
+`bench/sortload.sh`: a `COPY` of 5 million rows in no key order
+into an empty table with a primary key and two indexes, so three
+streams sort past the 256 MB budget. Server instructions and
+time, the median of 3, on 2026-11-07. digres before is
+`load.cc`'s own sort, the commit before step 3.
+
+| System | Instructions a row | Time |
+| --- | --- | --- |
+| digres, before | 36,759 | 30.4 s |
+| digres, with this sort | 27,195 | 14.1 s |
+| PostgreSQL 18 | 43,877 | 56.8 s |
 
 ---
 

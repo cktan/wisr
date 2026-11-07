@@ -846,3 +846,45 @@ TEST_CASE("an interrupt stops the sort of memory") {
   sm_set_wait_mask(mask);
   sm0::sort_free(s);
 }
+
+TEST_CASE("a caller may decide when a sort spills") {
+  // Verify manual_spill: a budget shared by sorts is the caller's.
+  // 1. Far past the budget, no run is written.
+  // 2. sort_spill writes one; with nothing in memory, it writes none.
+  // 3. After the end of the input it is refused.
+  // 4. A spill holds no fd after it.
+  // 5. The records come back in order, those spilled and those not.
+  run_dir_t dir;
+  int before = sm_fd_held();
+  sm0::sort_options_t opt = options(dir.path, 1 << 10, false);
+  opt.manual_spill = true;
+  sm0::sort_t *s = nullptr;
+  REQUIRE(sm0::sort_open(opt, s) == 0);
+  std::vector<std::string> keys = distinct_keys(3000);
+  for (size_t i = 0; i < 2000; i++) {
+    REQUIRE(sm0::sort_put(s, keys[i], "value") == 0);
+  }
+  CHECK(dir.files() == 0);
+
+  REQUIRE(sm0::sort_spill(s) == 0);
+  CHECK(dir.files() == 1);
+  CHECK(sm_fd_held() == before);
+  REQUIRE(sm0::sort_spill(s) == 0);
+  CHECK(dir.files() == 1);
+
+  for (size_t i = 2000; i < keys.size(); i++) {
+    REQUIRE(sm0::sort_put(s, keys[i], "value") == 0);
+  }
+  REQUIRE(sm0::sort_done(s) == 0);
+  CHECK(sm0::sort_spill(s) == -1);
+  std::sort(keys.begin(), keys.end());
+  std::string_view k, v;
+  for (const std::string &want : keys) {
+    REQUIRE(sm0::sort_next(s, k, v) == 0);
+    REQUIRE(k == want);
+    REQUIRE(v == "value");
+  }
+  CHECK(sm0::sort_next(s, k, v) == 1);
+  sm0::sort_free(s);
+  CHECK(dir.files() == 0);
+}

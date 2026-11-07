@@ -1,5 +1,5 @@
 /*
- * sort.cc -- a sort of records by key (../SORT_PLAN.md).
+ * sort.cc -- a sort of records by key (../../SORT.md).
  *
  * A record is one array of bytes, the same in memory as in a run:
  * its length, then its key's length, its key and its value. An item
@@ -469,7 +469,7 @@ int new_run(sort_t *sort, size_t &at) {
     sort->cache = sm_vfd_cache_make(sort->options.fd_share);
   }
   run_t run;
-  run.path = sort->options.dir + "/sort-" + std::to_string(getpid()) + "-" +
+  run.path = sort->options.dir + "/run-" + std::to_string(getpid()) + "-" +
              std::to_string(sort->number) + "-" +
              std::to_string(sort->runs_made++);
   run.vfd = sm_vfd_open(sort->cache, run.path.c_str(),
@@ -567,6 +567,8 @@ int spill(sort_t *sort) {
   sort->record_bytes = 0;
   sort->first_key = {};
   sort->prefix = 0;
+  // A run needs no fd until the merge: a load has many sorts.
+  sm_vfd_close_all(sort->cache);
   return 0;
 }
 
@@ -808,10 +810,13 @@ int sm0::sort_put(sort_t *sort, std::string_view key, std::string_view value) {
   }
   const sort_options_t &opt = sort->options;
   bool full =
-      memory_used(sort) >= opt.budget ||
-      (0 != opt.max_run_records && sort->items.size() >= opt.max_run_records) ||
-      (0 != opt.max_run_size && sort->record_bytes >= opt.max_run_size);
-  if (!full && sort->items.size() == sort->items.capacity()) {
+      !opt.manual_spill &&
+      (memory_used(sort) >= opt.budget ||
+       (0 != opt.max_run_records &&
+        sort->items.size() >= opt.max_run_records) ||
+       (0 != opt.max_run_size && sort->record_bytes >= opt.max_run_size));
+  if (!full && !opt.manual_spill &&
+      sort->items.size() == sort->items.capacity()) {
     full = !grow_items(sort);
   }
   if (full && !sort->items.empty() && 0 != spill(sort)) {
@@ -832,6 +837,14 @@ int sm0::sort_put(sort_t *sort, std::string_view key, std::string_view value) {
   }
   sort->items.push_back({0, record});
   return 0;
+}
+
+/* Write the records in memory as a run; see sm0_sort.h. */
+int sm0::sort_spill(sort_t *sort) {
+  if (sort->done) {
+    return set_error(SM_ERR_INVALID, "sort: the input has ended");
+  }
+  return sort->items.empty() ? 0 : spill(sort);
 }
 
 /*

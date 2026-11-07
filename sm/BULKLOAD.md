@@ -599,20 +599,22 @@ primary key is found at the close (`CLUSTER.md` §5).
 ### 5.3 Sorting an index
 
 An index's entries arrive in the heap's order, not the key's.
-It is an external sort, in the plain two-phase form.
+It is an external sort: each stream has an `sm0::sort_t`
+(`sm0/include/sm0_sort.h`, `SORT_PLAN.md`).
 
 1. **Runs.** Entries collect in memory up to a budget, a
    knob, 256 MB by default for the whole load. When it is full
-   they are sorted and written out as a run, and the memory is
-   reused.
+   the fullest stream's entries are sorted and written out as a
+   run, and the memory is reused. The load decides this, by
+   `sort_spill`, as the budget is shared by a table's streams.
 2. **Merge.** At the end the runs are merged into the files
    to ingest, which do not overlap each other. A stream that
    never filled its budget is sorted and written once, with
    no run.
 
-Memory is the budget, shared by a table's streams. Disk is,
-for a moment, twice the index: the runs and the merged files
-together, until the runs are deleted.
+A run is a plain file of records in the load's directory. Disk
+is, for a moment, about twice the index: the runs and the merged
+files together. A run goes as the merge reads its last record.
 
 **The alternative is to skip the merge**: write each run as a
 file and ingest them all. RocksDB accepts files that overlap
@@ -626,17 +628,19 @@ is where §5.4 does its work. The merge is kept.
 ### 5.4 Unique keys
 
 In an empty table a unique key can collide only with another
-row of the same load. The merge finds it: equal keys come out
-as neighbours. No key is read from the store.
+row of the same load. The sort finds it: a compare of two equal
+keys stops the sort of a run, and the merge sees equal keys as
+neighbours. No key is read from the store.
 
 In a table with rows the index entries go in batches, and a
 unique key is checked as batch mode checks it (§4.2): within
 its chunk and by a read of the store.
 
-**In an empty table all of this happens at the end.** A
-duplicate in the tenth row of a hundred million is found after
-the last row is handed over. PostgreSQL finds it at the tenth
-row. The work lost is the price of sorting before checking.
+**In an empty table most of this happens late.** A duplicate in
+the tenth row of a hundred million is found when its run is
+sorted, or at the merge if the two rows are in two runs.
+PostgreSQL finds it at the tenth row. The work lost is the price
+of sorting before checking.
 
 ### 5.5 Closing: ingestion
 

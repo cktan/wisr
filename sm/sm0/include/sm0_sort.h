@@ -1,5 +1,5 @@
 /*
- * sm0_sort.h -- a sort of records by key (../SORT_PLAN.md).
+ * sm0_sort.h -- a sort of records by key (../../SORT.md).
  *
  *   sm0::sort_options_t opt;
  *   opt.dir = dir;
@@ -60,6 +60,11 @@ struct sort_options_t {
   int fd_share = 4;
   /* Under unique, splits before heap sort; 0 by the input's size. */
   size_t max_sort_depth = 0;
+  /*
+   * The caller decides when memory becomes a run, by sort_spill: for
+   * a budget shared by many sorts. budget then only sizes the merge.
+   */
+  bool manual_spill = false;
   /* A run ends at this many records; 0 for no limit. */
   size_t max_run_records = 0;
   /* A run ends once its records reach this many bytes; 0 for no limit. */
@@ -81,6 +86,13 @@ int sort_open(const sort_options_t &options, sort_t *&out);
  * SM_ERR_DISKFULL, SM_ERR_IO, SM_ERR_INTERRUPTED.
  */
 int sort_put(sort_t *sort, std::string_view key, std::string_view value);
+
+/*
+ * Write the records in memory as a run; none is no error.
+ *
+ * Errors: as sort_put's.
+ */
+int sort_spill(sort_t *sort);
 
 /*
  * End the input, and order the records.

@@ -15,15 +15,12 @@
 #include "chain.h"
 #include "error.h"
 #include "session.h"
+#include "sm0_sort.h"
 #include "version.h"
-
-#include <errno.h>
-#include <stdio.h>
 
 #include <algorithm>
 #include <filesystem>
 #include <memory>
-#include <queue>
 #include <string>
 #include <utility>
 #include <vector>
@@ -36,22 +33,24 @@ using namespace wisr;
 
 namespace {
 
-/* A key and its value, as a caller put them. */
-using entry_t = std::pair<std::string, std::string>;
-
 /* What an entry is charged against a load's memory, beyond its bytes. */
 constexpr size_t entry_overhead = 2 * sizeof(std::string);
+
+/* Frees a stream's sort, and the run files it has left. */
+struct sort_free_t {
+  void operator()(sm0::sort_t *sort) const { sm0::sort_free(sort); }
+};
 
 /* One stream of a load: a range of the store's keys. */
 struct stream_t {
   bool ascending = false;
   /* Its keys are a chained store's chained keys (sm1::load_stream). */
   bool chained = false;
-  std::vector<entry_t> buf;      /* not yet in a file or a run */
-  size_t bytes = 0;              /* what buf is charged */
-  std::vector<std::string> runs; /* sorted runs on disk, to merge */
-  std::string first, last;       /* the least and greatest key so far */
-  bool any = false;              /* a key has been put */
+  /* What is not yet in a file; none once an ascending stream's is. */
+  std::unique_ptr<sm0::sort_t, sort_free_t> sort;
+  size_t bytes = 0;        /* what its memory is charged */
+  std::string first, last; /* the least and greatest key so far */
+  bool any = false;        /* a key has been put */
   /* The sorted file being written, and how many keys it holds. */
   std::unique_ptr<rocksdb::SstFileWriter> writer;
   uint64_t in_file = 0;
@@ -74,11 +73,6 @@ struct sm1::loader_t {
 };
 
 namespace {
-
-/* Fail with the error errno names, on path. */
-int io_error(const char *what, const std::string &path) {
-  return sm0::set_errno_error(errno, (std::string(what) + " " + path).c_str());
-}
 
 /* A new file name in the load's directory, with this prefix. */
 std::string new_name(sm1::loader_t *l, const char *prefix) {
@@ -112,8 +106,9 @@ int finish_file(stream_t &t) {
  * or for a chained stream its current key (../ROWSTORE.md §3.8).
  */
 std::string stream_key(const sm1::loader_t *l, const stream_t &t,
-                       const std::string &key) {
-  return t.chained ? curr_key(key) : version_key(key, l->wts, l->seq);
+                       std::string_view key) {
+  rocksdb::Slice k(key.data(), key.size());
+  return t.chained ? curr_key(k) : version_key(k, l->wts, l->seq);
 }
 
 /*
@@ -121,15 +116,16 @@ std::string stream_key(const sm1::loader_t *l, const stream_t &t,
  * chained stream a current version with nothing before it.
  */
 std::string stream_value(const sm1::loader_t *l, const stream_t &t,
-                         const std::string &value) {
+                         std::string_view value) {
+  rocksdb::Slice payload(value.data(), value.size());
   if (!t.chained) {
-    return version_value(0, l->s->xid, value);
+    return version_value(0, l->s->xid, payload);
   }
   chain_version_t v;
   v.xid = l->s->xid;
   v.wts = l->wts;
   v.seq = l->seq;
-  v.payload = rocksdb::Slice(value);
+  v.payload = payload;
   return chain_value(v, false);
 }
 
@@ -138,8 +134,8 @@ std::string stream_value(const sm1::loader_t *l, const stream_t &t,
  * version of the key, opening a file if none is open and closing
  * it once it is load_file_bytes long. Keys come in order.
  */
-int add_to_file(sm1::loader_t *l, stream_t &t, const std::string &key,
-                const std::string &value) {
+int add_to_file(sm1::loader_t *l, stream_t &t, std::string_view key,
+                std::string_view value) {
   if (!t.writer) {
     if (need_dir(l) != 0) {
       return -1;
@@ -174,159 +170,33 @@ int add_to_file(sm1::loader_t *l, stream_t &t, const std::string &key,
 /* Fail with SM_ERR_DUPKEY: two keys of the load are equal. */
 int duplicate() { return set_error(sm1::SM_ERR_DUPKEY, "key already exists"); }
 
-/* Sort stream t's buffer, and fail if two of its keys are equal. */
-int sort_buf(stream_t &t) {
-  if (!t.ascending) {
-    std::sort(
-        t.buf.begin(), t.buf.end(),
-        [](const entry_t &a, const entry_t &b) { return a.first < b.first; });
-  }
-  for (size_t i = 1; i < t.buf.size(); i++) {
-    if (t.buf[i - 1].first == t.buf[i].first) {
-      return duplicate();
-    }
-  }
-  return 0;
-}
-
-/* Give back what stream t's buffer was charged, and empty it. */
-void drop_buf(sm1::loader_t *l, stream_t &t) {
+/* Give back what stream t's memory was charged. */
+void drop_charge(sm1::loader_t *l, stream_t &t) {
   l->buffered -= t.bytes;
   t.bytes = 0;
-  std::vector<entry_t>().swap(t.buf);
 }
 
-/* Write stream t's buffer, in order, to its sorted file. */
-int buf_to_file(sm1::loader_t *l, stream_t &t) {
-  for (const entry_t &e : t.buf) {
-    if (add_to_file(l, t, e.first, e.second) != 0) {
+/*
+ * Write stream t's records, in order, to its sorted files, and free
+ * its sort. What the sort spilled, it merges now.
+ */
+int sort_to_file(sm1::loader_t *l, stream_t &t) {
+  if (0 != sm0::sort_done(t.sort.get())) {
+    return -1;
+  }
+  std::string_view key, value;
+  int rc;
+  while (0 == (rc = sm0::sort_next(t.sort.get(), key, value))) {
+    if (add_to_file(l, t, key, value) != 0) {
       return -1;
     }
   }
-  drop_buf(l, t);
-  return 0;
-}
-
-/* Write a 4-byte length and then the bytes. */
-bool write_bytes(FILE *f, const std::string &b) {
-  uint32_t n = static_cast<uint32_t>(b.size());
-  return fwrite(&n, sizeof(n), 1, f) == 1 &&
-         (n == 0 || fwrite(b.data(), 1, n, f) == n);
-}
-
-/* Read what write_bytes wrote into b; false at the end or on error. */
-bool read_bytes(FILE *f, std::string &b) {
-  uint32_t n;
-  if (fread(&n, sizeof(n), 1, f) != 1) {
-    return false;
-  }
-  b.resize(n);
-  return n == 0 || fread(b.data(), 1, n, f) == n;
-}
-
-/*
- * Sort stream t's buffer and write it to disk as a run, for the
- * close to merge, giving its memory back.
- */
-int spill(sm1::loader_t *l, stream_t &t) {
-  if (sort_buf(t) != 0 || need_dir(l) != 0) {
+  if (rc < 0) {
     return -1;
   }
-  std::string path = new_name(l, "run-");
-  FILE *f = fopen(path.c_str(), "wb");
-  if (!f) {
-    return io_error("load: cannot write", path);
-  }
-  t.runs.push_back(path);
-  bool ok = true;
-  for (const entry_t &e : t.buf) {
-    ok = ok && write_bytes(f, e.first) && write_bytes(f, e.second);
-  }
-  // fclose flushes: a full disk shows here if not before.
-  ok = (fclose(f) == 0) && ok;
-  if (!ok) {
-    return io_error("load: cannot write", path);
-  }
-  drop_buf(l, t);
+  t.sort.reset();
+  drop_charge(l, t);
   return 0;
-}
-
-/* A run being read back: its file, and the entry at its head. */
-struct run_t {
-  FILE *f = nullptr;
-  entry_t head;
-  bool more = false;
-
-  /* Read the next entry into head. */
-  void advance() {
-    more = read_bytes(f, head.first) && read_bytes(f, head.second);
-  }
-};
-
-/*
- * Merge stream t's runs into its sorted files, failing if two
- * keys are equal, and delete the runs.
- */
-int merge_runs(sm1::loader_t *l, stream_t &t) {
-  std::vector<run_t> runs(t.runs.size());
-  // Close every run's file however this ends.
-  auto close_all = [&] {
-    for (run_t &r : runs) {
-      if (r.f) {
-        fclose(r.f);
-      }
-    }
-  };
-  for (size_t i = 0; i < runs.size(); i++) {
-    runs[i].f = fopen(t.runs[i].c_str(), "rb");
-    if (!runs[i].f) {
-      close_all();
-      return io_error("load: cannot read", t.runs[i]);
-    }
-    runs[i].advance();
-  }
-  // The run whose head is least comes first.
-  auto later = [&](size_t a, size_t b) {
-    return runs[a].head.first > runs[b].head.first;
-  };
-  std::priority_queue<size_t, std::vector<size_t>, decltype(later)> heap(later);
-  for (size_t i = 0; i < runs.size(); i++) {
-    if (runs[i].more) {
-      heap.push(i);
-    }
-  }
-  std::string prev;
-  bool first = true;
-  int rc = 0;
-  while (rc == 0 && !heap.empty()) {
-    size_t i = heap.top();
-    heap.pop();
-    run_t &r = runs[i];
-    // Equal keys are neighbours once merged.
-    if (!first && r.head.first == prev) {
-      rc = duplicate();
-      break;
-    }
-    rc = add_to_file(l, t, r.head.first, r.head.second);
-    prev = r.head.first;
-    first = false;
-    r.advance();
-    if (r.more) {
-      heap.push(i);
-    }
-  }
-  // A run that ends on a read error ends early: tell it apart.
-  for (run_t &r : runs) {
-    if (rc == 0 && ferror(r.f)) {
-      rc = set_error(sm1::SM_ERR_IO, "load: cannot read a run");
-    }
-  }
-  close_all();
-  for (const std::string &path : t.runs) {
-    remove(path.c_str());
-  }
-  t.runs.clear();
-  return rc;
 }
 
 /* Delete the load's directory and everything in it. */
@@ -381,13 +251,20 @@ int holds_a_key(const store_t &st) {
 /* A small load: every key in one write batch (BULKLOAD.md §5.7). */
 int write_batch(sm1::loader_t *l) {
   rocksdb::WriteBatch batch;
+  std::vector<std::pair<std::string, size_t>> written;
   for (stream_t &t : l->streams) {
-    if (sort_buf(t) != 0) {
+    if (0 != sm0::sort_done(t.sort.get())) {
       return -1;
     }
-    for (const entry_t &e : t.buf) {
-      batch.Put(l->st.cf, stream_key(l, t, e.first),
-                stream_value(l, t, e.second));
+    std::string_view key, value;
+    int rc;
+    while (0 == (rc = sm0::sort_next(t.sort.get(), key, value))) {
+      std::string k = stream_key(l, t, key), v = stream_value(l, t, value);
+      batch.Put(l->st.cf, k, v);
+      written.emplace_back(key, k.size() + v.size());
+    }
+    if (rc < 0) {
+      return -1;
     }
   }
   // One write, not synced, as any version's put is.
@@ -396,12 +273,8 @@ int write_batch(sm1::loader_t *l) {
     return set_status_error(st, "load: write the batch");
   }
   // Every key is in the memtable now: count each.
-  for (const stream_t &t : l->streams) {
-    for (const entry_t &e : t.buf) {
-      count_write(l->st, e.first,
-                  stream_key(l, t, e.first).size() +
-                      stream_value(l, t, e.second).size());
-    }
+  for (const auto &[key, bytes] : written) {
+    count_write(l->st, key, bytes);
   }
   return 0;
 }
@@ -409,22 +282,8 @@ int write_batch(sm1::loader_t *l) {
 /* A large load: finish every stream's files, and hand them over. */
 int ingest(sm1::loader_t *l) {
   for (stream_t &t : l->streams) {
-    if (t.ascending) {
-      if (finish_file(t) != 0) {
-        return -1;
-      }
-      continue;
-    }
-    // Sorted in memory if it never spilled; else one more run,
-    // and the merge.
-    if (t.runs.empty()) {
-      if (sort_buf(t) != 0 || buf_to_file(l, t) != 0) {
-        return -1;
-      }
-    } else if ((!t.buf.empty() && spill(l, t) != 0) || merge_runs(l, t) != 0) {
-      return -1;
-    }
-    if (finish_file(t) != 0) {
+    // An ascending stream's keys went to its files as they came.
+    if ((!t.ascending && sort_to_file(l, t) != 0) || finish_file(t) != 0) {
       return -1;
     }
   }
@@ -475,6 +334,7 @@ void load_discard(sm1::session_t *s) {
   s->loader = nullptr;
   for (stream_t &t : l->streams) {
     t.writer.reset();
+    t.sort.reset();
   }
   remove_dir(l);
   delete l;
@@ -579,10 +439,22 @@ int sm1::load_stream(sm1::loader_t *l, bool ascending, size_t &stream,
     return set_error(sm1::SM_ERR_INVALID, "load: store {} is not chained",
                      l->storeid);
   }
+  // Every stream's keys must be distinct. Its runs are with the load's
+  // files, and the load spills them, as its budget is the streams' own.
+  sm0::sort_options_t opt;
+  opt.dir = l->dir;
+  opt.budget = l->s->db->load_sort_bytes;
+  opt.unique = true;
+  opt.manual_spill = true;
+  sm0::sort_t *sort = nullptr;
+  if (0 != sm0::sort_open(opt, sort)) {
+    return -1;
+  }
   stream = l->streams.size();
   l->streams.emplace_back();
   l->streams.back().ascending = ascending;
   l->streams.back().chained = chained;
+  l->streams.back().sort.reset(sort);
   return 0;
 }
 
@@ -619,10 +491,12 @@ int sm1::load_put(sm1::loader_t *l, size_t stream, std::string_view key,
   }
   // An ascending stream past the small load goes straight to its file.
   if (t.ascending && l->to_files) {
-    return add_to_file(l, t, std::string(key), std::string(value));
+    return add_to_file(l, t, key, value);
   }
   size_t charge = key.size() + value.size() + entry_overhead;
-  t.buf.emplace_back(key, value);
+  if (0 != sm0::sort_put(t.sort.get(), key, value)) {
+    return -1;
+  }
   t.bytes += charge;
   l->buffered += charge;
   // No longer a small load: the ascending streams' keys so far go
@@ -630,7 +504,7 @@ int sm1::load_put(sm1::loader_t *l, size_t stream, std::string_view key,
   if (!l->to_files && l->buffered > l->s->db->load_small_bytes) {
     l->to_files = true;
     for (stream_t &a : l->streams) {
-      if (a.ascending && buf_to_file(l, a) != 0) {
+      if (a.ascending && sort_to_file(l, a) != 0) {
         return -1;
       }
     }
@@ -643,8 +517,11 @@ int sm1::load_put(sm1::loader_t *l, size_t stream, std::string_view key,
         big = &u;
       }
     }
-    if (big && big->bytes > 0 && spill(l, *big) != 0) {
-      return -1;
+    if (big && big->bytes > 0) {
+      if (0 != sm0::sort_spill(big->sort.get())) {
+        return -1;
+      }
+      drop_charge(l, *big);
     }
   }
   return 0;
