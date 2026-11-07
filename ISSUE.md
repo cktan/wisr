@@ -228,6 +228,49 @@ session's first open of a table, and a first open after DDL, and
 a slope leaves both out. `sm3/test/test_lock.cc` shows which
 indexes open.
 
+**Where an open's instructions go now.** Exact counts by
+callgrind, by the method in §2.1, on `WHERE false`. Edges are
+approximate near tail calls: callgrind charges `sm_tbl_open`
+1,388, of which 321 is digres's insert into `open_tables()`.
+
+| Path | Part | Instructions |
+| --- | --- | --- |
+| Reopen, 0 or 16 indexes | all of it | about 1,070 |
+| | the table-oid lock | about 570 |
+| | the definition's read | about 400 |
+| | the rest | about 100 |
+| First open, no index | all of it | about 3,700 |
+| First open, 16 indexes | all of it | about 7,900 |
+
+- A reopen reads no storage: RocksDB's code runs 4 instructions a
+  statement, and the index states are not read.
+- `sm_tbl_close` costs 99, and aging 33 at a commit.
+- A first open grows by about 262 an index, all in
+  `load_states()`. It takes the catalog's mutex once for each
+  index, used or not. Taking it once for the loop would save part
+  of this, on first opens only.
+- The definition's read must stay under the mutex. A check of the
+  epoch under the mutex, in place of the lookup, might save about
+  200. This is an estimate.
+
+**A plan's sizes are read once a session.** A session's first
+plan of a table calls `approxsize` for the table and for each
+index: 17 calls and about 61,700 instructions with 16 indexes, in
+RocksDB's `GetApproximateSizes`. `kept_estimate()` in `smstore.c`
+keeps the answers by epoch, so later plans make no such call.
+
+Each statement planned, by the simple protocol, on the same
+tables, median of 4 runs:
+
+| Table | digres | PostgreSQL |
+| --- | --- | --- |
+| no secondary index | 55,956 | 57,303 |
+| 16 indexes | 93,632 | 110,006 |
+
+**Not explained:** a new connection's statement costs about
+630,000 more on the table of 16 indexes than on the table of
+none. The size calls are about a tenth of that.
+
 **Tests:** `sm/rel/test/test_reopen.rel`,
 `sm/sm3/test/test_lock.cc`, `dg/test/parked_tables.sh`. An
 isolation scenario cannot express this: the change is above sm1.
