@@ -10,6 +10,29 @@
 #include <chrono>
 #include <future>
 
+/*
+ * sm_begin() as the tests link it: the Makefile wraps its C++ symbol
+ * (WRAP_SM_BEGIN), so that it fails once, if a test sets fail_next_begin,
+ * to fail a write.
+ */
+static bool fail_next_begin = false;
+
+int real_sm_begin(
+    sm_session_t *session, sm_xctlevel_t level,
+    int read_only) __asm__("__real__Z8sm_beginP12sm_session_t13sm_xctlevel_ti");
+
+/* Begin as sm does, but once fail_next_begin is set, fail that call. */
+int wrap_sm_begin(
+    sm_session_t *session, sm_xctlevel_t level,
+    int read_only) __asm__("__wrap__Z8sm_beginP12sm_session_t13sm_xctlevel_ti");
+int wrap_sm_begin(sm_session_t *session, sm_xctlevel_t level, int read_only) {
+  if (fail_next_begin) {
+    fail_next_begin = false;
+    return -1;
+  }
+  return real_sm_begin(session, level, read_only);
+}
+
 /* A table's entry: of the database 1, its oid objid, owned by owner. */
 static aa_object_t table(aa_oid_t objid, aa_oid_t owner) {
   aa_object_t o;
@@ -422,6 +445,204 @@ TEST_CASE("objects: forget") {
   h.restart();
   CHECK(1 == aa_objects(h.aa())->size());
   CHECK(aa_find_object(h.aa(), NULL, aa_key_t(1, 20001), &o));
+}
+
+// Verify that a commit based on an entry another commit has changed since
+// fails, so a change never restores a right a committed one revoked.
+// 1. Commit a table granting role B SELECT and UPDATE.
+// 2. Both sessions read the entry, settled; session 1 revokes B's
+//    SELECT, session 2 grants role C UPDATE from the old entry.
+// 3. Session 1 commits; session 2's commit fails with AA_ERR_CONFLICT.
+// 4. Abort session 2; confirm B has UPDATE alone and C nothing.
+// 5. Session 2 reads the entry again, settled, and its change commits.
+TEST_CASE("objects: a commit on a stale entry conflicts") {
+  home_t h;
+  aa_session_t *s1 = aa_session_new(h.aa());
+  aa_session_t *s2 = aa_session_new(h.aa());
+  aa_object_t o = table(20000, 16500);
+  aa_acl_item_t mine = {16500, 16500, AA_ALL_RIGHTS_RELATION};
+  aa_object_t old, now;
+
+  // 1.
+  o.has_acl = true;
+  o.acl = aa_acl_text({mine, {16501, 16500, AA_SELECT | AA_UPDATE}});
+  aa_set_object(s1, 1, o);
+  commit(s1);
+
+  // 2.
+  aa_object_settled(s1);
+  aa_object_settled(s2);
+  REQUIRE(aa_find_object(h.aa(), s1, aa_key_t(1, 20000), &o));
+  REQUIRE(aa_find_object(h.aa(), s2, aa_key_t(1, 20000), &old));
+  o.acl = aa_acl_text({mine, {16501, 16500, AA_UPDATE}});
+  aa_set_object(s1, 1, o);
+  old.acl = aa_acl_text(
+      {mine, {16501, 16500, AA_SELECT | AA_UPDATE}, {16502, 16500, AA_UPDATE}});
+  aa_set_object(s2, 1, old);
+
+  // 3.
+  commit(s1);
+  CHECK(-1 == aa_commit(s2));
+  CHECK(AA_ERR_CONFLICT == aa_errnum());
+
+  // 4.
+  CHECK(0 == aa_abort(s2));
+  REQUIRE(aa_find_object(h.aa(), NULL, aa_key_t(1, 20000), &now));
+  auto items = aa_acl_items(now.acl);
+  REQUIRE(2 == items.size());
+  CHECK(16501 == items[1].grantee);
+  CHECK(AA_UPDATE == items[1].privs);
+
+  // 5.
+  aa_object_settled(s2);
+  REQUIRE(aa_find_object(h.aa(), s2, aa_key_t(1, 20000), &old));
+  old.acl =
+      aa_acl_text({mine, {16501, 16500, AA_UPDATE}, {16502, 16500, AA_UPDATE}});
+  aa_set_object(s2, 1, old);
+  commit(s2);
+  REQUIRE(aa_find_object(h.aa(), NULL, aa_key_t(1, 20000), &now));
+  CHECK(3 == aa_acl_items(now.acl).size());
+  aa_session_free(s1);
+  aa_session_free(s2);
+}
+
+// Verify that overlapping transactions that change different entries both
+// commit.
+// 1. Both sessions read settled; each sets a different table's owner.
+// 2. Both commit.
+TEST_CASE("objects: overlapping changes of different entries commit") {
+  home_t h;
+  aa_session_t *s1 = aa_session_new(h.aa());
+  aa_session_t *s2 = aa_session_new(h.aa());
+
+  // 1.
+  aa_object_settled(s1);
+  aa_object_settled(s2);
+  aa_set_object(s1, 1, table(20000, 16500));
+  aa_set_object(s2, 1, table(20001, 16500));
+
+  // 2.
+  commit(s1);
+  commit(s2);
+  CHECK(2 == aa_objects(h.aa())->size());
+  aa_session_free(s1);
+  aa_session_free(s2);
+}
+
+// Verify that an entry's changes trimmed off the kept log still fail a
+// commit on an older entry: what was lost is taken as a change.
+// 1. Session 2 reads settled and sets a table's owner.
+// 2. Session 1 commits more changes than the log keeps.
+// 3. Session 2's commit fails with AA_ERR_CONFLICT.
+TEST_CASE("objects: a commit older than the kept changes conflicts") {
+  home_t h;
+  aa_session_t *s1 = aa_session_new(h.aa());
+  aa_session_t *s2 = aa_session_new(h.aa());
+
+  // 1.
+  aa_object_settled(s2);
+  aa_set_object(s2, 1, table(19999, 16500));
+
+  // 2.
+  for (int i = 0; i < 5000; i++)
+    aa_set_object(s1, 1, table(20000 + i, 16500));
+  commit(s1);
+
+  // 3.
+  CHECK(-1 == aa_commit(s2));
+  CHECK(AA_ERR_CONFLICT == aa_errnum());
+  CHECK(0 == aa_abort(s2));
+  aa_session_free(s1);
+  aa_session_free(s2);
+}
+
+// Verify that a failed final write leaves the live privileges as the
+// disk has them: what the first commit wrote, granting only what the old
+// and the new entry both grant.
+// 1. Commit a table owned by A granting B SELECT and UPDATE; warm a
+//    reader's cache of B's mask.
+// 2. Change its owner to C and its ACL to B SELECT alone; run aa_commit().
+// 3. Fail the final write: aa_post_commit() returns -1.
+// 4. Confirm the cached reader, an uncached one and the entry say B has
+//    SELECT alone and the superuser owns the table.
+// 5. Restart; confirm the same from the disk.
+// 6. A later commit of another entry leaves it so.
+TEST_CASE("objects: a failed final write publishes what the disk has") {
+  home_t h;
+  aa_session_t *w = aa_session_new(h.aa());
+  aa_session_t *r = aa_session_new(h.aa());
+  aa_object_t o = table(20000, 16500);
+  aa_acl_item_t mine = {16500, 16500, AA_ALL_RIGHTS_RELATION};
+  const uint64_t both = AA_SELECT | AA_UPDATE;
+
+  // 1.
+  o.has_acl = true;
+  o.acl = aa_acl_text({mine, {16501, 16500, both}});
+  aa_set_object(w, 1, o);
+  commit(w);
+  REQUIRE(both ==
+          aa_object_mask(h.aa(), r, 1, 20000, AA_CLASS_RELATION, 16501, both));
+
+  // 2.
+  o.owner = 16502;
+  o.acl = aa_acl_text({mine, {16501, 16500, AA_SELECT}});
+  aa_set_object(w, 1, o);
+  REQUIRE(0 == aa_commit(w));
+
+  // 3.
+  fail_next_begin = true;
+  CHECK(-1 == aa_post_commit(w));
+  CHECK(!fail_next_begin);
+
+  // 4.
+  CHECK(AA_SELECT ==
+        aa_object_mask(h.aa(), r, 1, 20000, AA_CLASS_RELATION, 16501, both));
+  CHECK(AA_SELECT ==
+        aa_object_mask(h.aa(), NULL, 1, 20000, AA_CLASS_RELATION, 16501, both));
+  CHECK(AA_SELECT ==
+        aa_object_mask(h.aa(), w, 1, 20000, AA_CLASS_RELATION, 16501, both));
+  REQUIRE(aa_find_object(h.aa(), NULL, aa_key_t(1, 20000), &o));
+  CHECK(AA_BOOTSTRAP_SUPERUSER == o.owner);
+
+  // 6.
+  aa_set_object(w, 1, table(20001, 16500));
+  commit(w);
+  CHECK(AA_SELECT ==
+        aa_object_mask(h.aa(), r, 1, 20000, AA_CLASS_RELATION, 16501, both));
+  aa_session_free(w);
+  aa_session_free(r);
+
+  // 5.
+  h.restart();
+  CHECK(AA_SELECT ==
+        aa_object_mask(h.aa(), NULL, 1, 20000, AA_CLASS_RELATION, 16501, both));
+  REQUIRE(aa_find_object(h.aa(), NULL, aa_key_t(1, 20000), &o));
+  CHECK(AA_BOOTSTRAP_SUPERUSER == o.owner);
+}
+
+// Verify that a failed final write of a database's revoked CONNECT, on a
+// database with no entry, leaves it revoked while the server runs.
+// 1. Revoke CONNECT from PUBLIC on database 1, which has no entry; run
+//    aa_commit().
+// 2. Fail the final write.
+// 3. Confirm a role that is no superuser may not connect.
+TEST_CASE("objects: a failed final write keeps a revoked connect") {
+  home_t h;
+  aa_session_t *s = aa_session_new(h.aa());
+  const char *why;
+
+  // 1.
+  REQUIRE(aa_connect_okay(h.aa(), NULL, 1, 16501, &why));
+  aa_set_object(s, 1, database_revoked());
+  REQUIRE(0 == aa_commit(s));
+
+  // 2.
+  fail_next_begin = true;
+  CHECK(-1 == aa_post_commit(s));
+
+  // 3.
+  CHECK(!aa_connect_okay(h.aa(), NULL, 1, 16501, &why));
+  aa_session_free(s);
 }
 
 // Verify that the objects of a role are those it owns, and those whose

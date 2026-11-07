@@ -47,6 +47,10 @@ LIB_OBJS  := $(LIB_SRCS:src/%.cc=$(BUILD)/src/%.o)
 TEST_SRCS := $(wildcard test/*.cc)
 TEST_OBJS := $(TEST_SRCS:test/%.cc=$(BUILD)/test/%.o)
 
+# sm_begin() by its C++ symbol, which the tests wrap to fail a write
+# (test_objects.cc).
+WRAP_SM_BEGIN := _Z8sm_beginP12sm_session_t13sm_xctlevel_ti
+
 LIB      := $(BUILD)/libaa.a
 TEST_BIN := $(BUILD)/test_aa
 
@@ -62,7 +66,7 @@ $(LIB): $(LIB_OBJS)
 	$(AR) rcs $@ $^
 
 $(TEST_BIN): $(TEST_OBJS) $(LIB) $(SM_LIB)
-	$(CXX) $(CXXFLAGS) -o $@ $(TEST_OBJS) $(LIB) $(SM_LIB) $(LDLIBS)
+	$(CXX) $(CXXFLAGS) -Wl,--wrap=$(WRAP_SM_BEGIN) -o $@ $(TEST_OBJS) $(LIB) $(SM_LIB) $(LDLIBS)
 
 # sm builds its own library; whether it is up to date is sm's to say.
 ifeq ($(BUILD),build)

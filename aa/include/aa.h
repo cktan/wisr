@@ -247,7 +247,10 @@ void aa_forget_object(aa_session_t *s, int level, const aa_key_t &key);
  * Wait out another session's commit of objects' entries in flight, from
  * its aa_commit() to its aa_post_commit() or aa_abort(): an entry read
  * after it is as that commit leaves it. For a change, before it reads the
- * entry it changes; a session in its own commit does not wait.
+ * entry it changes; a session in its own commit does not wait. It also
+ * notes the objects epoch the reads are as of: aa_commit() fails with
+ * AA_ERR_CONFLICT if another commit changed an entry the transaction
+ * changes after that epoch.
  */
 void aa_object_settled(aa_session_t *s);
 

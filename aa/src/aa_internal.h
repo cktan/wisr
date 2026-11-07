@@ -103,6 +103,9 @@ struct aa_change_t {
   aa_key_t key; /* the object's */
   bool present; /* false: the entry goes */
   aa_object_t object;
+  /* The objects epoch the entry the change is based on was read at: a
+   * commit fails if the entry changed since (aa_commit()). */
+  uint64_t base_epoch;
 };
 
 /*
@@ -123,6 +126,8 @@ struct aa_restore_t {
   aa_key_t key;
   aa_object_t object;
   bool present = true;
+  /* The entry aa_commit() wrote in its place until the final write. */
+  aa_object_t middle;
 };
 
 /* A session's own: its changes not yet committed, and its sm session. */
@@ -155,6 +160,10 @@ struct aa_session_t {
   /* Whether the session holds env->objects_commit_mutex, from its
    * aa_commit() to its aa_post_commit() or aa_abort(). */
   bool objects_committing = false;
+  /* The objects epoch at the session's last aa_object_settled() in the
+   * transaction, if it called it: what its reads of entries are as of. */
+  bool settled = false;
+  uint64_t settled_epoch = 0;
 
   /* Bumped at each change to what the session sees of the roles or the
    * objects' entries: with the shared epochs, what its caches are of. */

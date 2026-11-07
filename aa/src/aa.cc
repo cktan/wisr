@@ -210,11 +210,27 @@ bool aa_find_object(aa_env_t *env, aa_session_t *s, const aa_key_t &key,
   return true;
 }
 
+/*
+ * The objects epoch a change of the entry key is based on: that of the
+ * transaction's first change of it, whose read it built on; else, if
+ * fresh, the one the session's reads are as of (aa_object_settled()).
+ * Without a settled read, or for a change that reads nothing, the epoch
+ * now.
+ */
+static uint64_t base_epoch_of(aa_session_t *s, const aa_key_t &key,
+                              bool fresh) {
+  for (const aa_change_t &c : s->changes)
+    if (c.key == key)
+      return c.base_epoch;
+  return fresh && s->settled ? s->settled_epoch : s->env->objects_epoch.load();
+}
+
 /* Make object the entry of its key, at the subtransaction's level. */
 void aa_set_object(aa_session_t *s, int level, const aa_object_t &object) {
+  aa_key_t key(object.dbid, object.objid);
+
   s->version++;
-  s->changes.push_back(
-      {level, aa_key_t(object.dbid, object.objid), true, object});
+  s->changes.push_back({level, key, true, object, base_epoch_of(s, key, true)});
 }
 
 /* Remove the entry of key, if it has one, at the subtransaction's level. */
@@ -223,7 +239,8 @@ void aa_forget_object(aa_session_t *s, int level, const aa_key_t &key) {
 
   if (aa_find_object(s->env, s, key, &object)) {
     s->version++;
-    s->changes.push_back({level, key, false, object});
+    s->changes.push_back(
+        {level, key, false, object, base_epoch_of(s, key, false)});
   }
 }
 
@@ -522,6 +539,39 @@ void aa_object_settled(aa_session_t *s) {
     return;
   // Taken and let go at once: held only while a commit is in flight.
   std::lock_guard<std::mutex> wait(s->env->objects_commit_mutex);
+  // No commit is publishing: the epoch is of a whole snapshot, which the
+  // reads after this one see, or a newer one.
+  s->settled_epoch = s->env->objects_epoch.load();
+  s->settled = true;
+}
+
+/*
+ * Whether an entry the session's transaction changes has changed since
+ * the one the change is based on was read: another commit's, which the
+ * session's would then overwrite. Called holding the objects' commit
+ * order, so no commit publishes meanwhile.
+ * 1. For each entry the transaction changes, take the epoch of its
+ *    first change.
+ * 2. If the log of changes lost an epoch after it, say changed: what
+ *    was lost is not known.
+ * 3. If the log has the entry at a later epoch, say changed.
+ */
+static bool objects_changed_since_read(aa_session_t *s) {
+  std::map<aa_key_t, uint64_t> base;
+  aa_env_t *env = s->env;
+
+  for (const aa_change_t &c : s->changes)
+    base.emplace(c.key, c.base_epoch);
+  std::lock_guard<std::mutex> lock(env->mutex);
+  for (const auto &[key, epoch] : base)
+    if (env->changed_lost > epoch)
+      return true;
+  for (const aa_changed_t &c : env->changed) {
+    auto it = base.find(c.key);
+    if (base.end() != it && c.epoch > it->second)
+      return true;
+  }
+  return false;
 }
 
 /*
@@ -529,14 +579,16 @@ void aa_object_settled(aa_session_t *s) {
  * write its changes to pg_global.
  * 1. If objects' entries changed, take the objects' commit order, held
  *    to the end of aa_post_commit() or aa_abort().
- * 2. Find each entry that is to grant less (intermediates()).
- * 3. If the roles changed, take the role commits' order.
- * 4. In one transaction of pg_global's, write the role changes, and each
+ * 2. If another commit changed an entry since the transaction read it,
+ *    fail with AA_ERR_CONFLICT, writing nothing.
+ * 3. Find each entry that is to grant less (intermediates()).
+ * 4. If the roles changed, take the role commits' order.
+ * 5. In one transaction of pg_global's, write the role changes, and each
  *    entry that is to grant less as granting only what it grants before
  *    and after; read the roles back, and commit.
- * 5. Keep those entries as they were, for aa_abort() to put back if the
+ * 6. Keep those entries as they were, for aa_abort() to put back if the
  *    database's commit fails.
- * 6. If the roles changed, replace the roles' snapshot with those read.
+ * 7. If the roles changed, replace the roles' snapshot with those read.
  */
 int aa_commit(aa_session_t *s) {
   bool roles = nullptr != s->working;
@@ -550,6 +602,12 @@ int aa_commit(aa_session_t *s) {
     s->env->objects_commit_mutex.lock();
     s->objects_committing = true;
   }
+  // Under the commit order no commit publishes: an entry changed since it
+  // was read would be overwritten, with what another's commit left lost.
+  if (s->objects_committing && objects_changed_since_read(s))
+    return aa_seterr(AA_ERR_CONFLICT,
+                     "Another session changed an owner or ACL since this "
+                     "one read it.");
   std::vector<intermediate_t> before = intermediates(s);
   if (!roles && before.empty())
     return 0;
@@ -595,7 +653,7 @@ int aa_commit(aa_session_t *s) {
   /* Put back if the database's commit fails (aa_abort()). */
   s->to_restore.clear();
   for (const intermediate_t &i : before)
-    s->to_restore.push_back({i.key, i.base, i.base_present});
+    s->to_restore.push_back({i.key, i.base, i.base_present, i.middle});
   if (!roles)
     return 0;
   s->base.reset();
@@ -631,6 +689,7 @@ int aa_abort(aa_session_t *s) {
   s->version++;
   s->dropped_dbs.clear();
   s->to_restore.clear();
+  s->settled = false;
   // The temporary objects' owners and ACLs, as the transaction began.
   undo_temp(s, 0);
   if (restore.empty())
@@ -681,22 +740,46 @@ static void publish_objects(aa_env_t *env,
 }
 
 /*
+ * The final write failed: pg_global keeps the entries aa_commit() wrote,
+ * which grant less. Replace the objects' snapshot with them, so the
+ * privileges in force are those a restart reads.
+ */
+static void publish_intermediates(aa_env_t *env,
+                                  const std::vector<aa_restore_t> &written) {
+  std::vector<aa_change_t> changes;
+  std::map<aa_key_t, const aa_change_t *> last;
+
+  // Reserved so the pointers in last stay valid.
+  changes.reserve(written.size());
+  for (const aa_restore_t &r : written) {
+    changes.push_back({0, r.key, true, r.middle, 0});
+    last[r.key] = &changes.back();
+  }
+  publish_objects(env, last, std::vector<uint64_t>());
+}
+
+/*
  * After the database's commit: write the transaction's changes to
  * objects' entries, in one transaction of pg_global's.
  * 1. Write each object's entry as the transaction left it.
  * 2. Remove the entries of the databases it dropped.
  * 3. If the writes succeed, replace the objects' snapshot
  *    (publish_objects()).
- * 4. Forget the changes, whether the writes succeed or not.
+ * 4. If they fail, replace it with the entries aa_commit() wrote, which
+ *    pg_global keeps (publish_intermediates()): less is granted, as
+ *    after a restart.
+ * 5. Forget the changes, whether the writes succeed or not.
  */
 int aa_post_commit(aa_session_t *s) {
   // The commit order goes once the snapshot is replaced.
   objects_order_release_t release{s};
   std::map<aa_key_t, const aa_change_t *> last;
   std::shared_ptr<const aa_objects_t> all;
+  std::vector<aa_restore_t> written = std::move(s->to_restore);
   int rc;
 
   s->to_restore.clear();
+  s->settled = false;
   // The temporary objects' owners and ACLs stand: the transaction
   // committed.
   s->temp_undo.clear();
@@ -717,6 +800,8 @@ int aa_post_commit(aa_session_t *s) {
   });
   if (0 == rc)
     publish_objects(s->env, last, s->dropped_dbs);
+  else if (!written.empty())
+    publish_intermediates(s->env, written);
   s->changes.clear();
   s->dropped_dbs.clear();
   s->version++;

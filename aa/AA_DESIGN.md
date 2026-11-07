@@ -187,7 +187,9 @@ commits can only leave **fewer** privileges granted, never more:
    increases the objects epoch. If this step fails, the server
    only logs a warning: the transaction has already committed,
    and the objects keep their intermediate, more restrictive,
-   versions.
+   versions. aa also replaces the objects snapshot with those
+   versions and increases the epoch, so the privileges in force
+   are those a restart reads. It does not retry the write.
 4. **`aa_abort()`, if the database's commit failed** (or the
    transaction aborted): discards the session's changes and
    writes back the old versions saved in step 1.
@@ -208,6 +210,16 @@ database's commit:
   change, read the entry as that commit leaves it. Without the
   wait, a GRANT could build on the ACL as it was before another
   session's, and lose it.
+- a statement that reads an entry to change it also notes the
+  objects epoch it read at. In step 1, under the mutex,
+  `aa_commit()` fails with `AA_ERR_CONFLICT` if the log of
+  changes shows that another commit changed the entry after
+  that epoch, or if the log lost entries after it. Without the
+  check, two transactions that read one ACL before either
+  commits would let the second restore a right the first
+  revoked. PostgreSQL fails the same case with "tuple
+  concurrently updated". The statement does not wait, so the
+  conflict shows at the commit.
 
 A transaction that changes no entry, DML or a temporary object's,
 never takes it. Commits that change entries wait for one another,
