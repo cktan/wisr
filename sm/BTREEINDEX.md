@@ -783,6 +783,10 @@ latch and one write a page (`BTREELOAD_PLAN.md`):
   all visible. The pages stay after an abort, and an old
   snapshot can scan the tree once the table's lock goes at the
   commit. The cleaner reads each row once.
+- **Each entry's key is a write for SSI**, as an insert's is
+  (§2.3). `idx_load()` reports the whole key before the Sort
+  drops the row's key from a unique tree's record. A committed
+  reader can keep an SIREAD after the table's lock ends.
 - **A page holds two entries at least**, so each level above
   has half the pages or fewer. A page whose high key does not
   fit gives its last entries to the next page.
