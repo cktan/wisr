@@ -7,10 +7,11 @@
 # Both servers must be running on this machine: digres, a release
 # build, and PostgreSQL 18, each with its socket in PGHOST (/tmp by
 # default). On each, load.sql makes the database bench again, then
-# mkregidx.sql, q0 to q4, mkbtidx.sql, q0 to q4. Each query is pgbench,
-# prepared, one client, for Q_SECONDS (10). PGBIN is PostgreSQL 18's
-# bin, for psql and pgbench (~/p/postgres18/install/bin). The logs go
-# to build/run.
+# q0, q4, mkregidx.sql, q1 to q3, mkbtidx.sql, q1 to q3. q0 reads the
+# primary key and q4 uses no index, so each runs once, before any
+# secondary index. Each query is pgbench, prepared, one client, for
+# Q_SECONDS (10). PGBIN is PostgreSQL 18's bin, for psql and pgbench
+# (~/p/postgres18/install/bin). The logs go to build/run.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -75,13 +76,16 @@ for sys in dg pg; do
     echo "run: load.sql failed; see $work/$sys-load.log" >&2
     exit 1
   }
+  # q0 and q4 use no secondary index: measure them once, before any.
+  measure $sys "$port" q0 none
+  measure $sys "$port" q4 none
   for kind in regular btree; do
     if [ $kind = regular ]; then mk=mkregidx.sql; else mk=mkbtidx.sql; fi
     sql "$port" -d bench -f $mk > "$work/$sys-$kind.log" 2>&1 || {
       echo "run: $mk failed; see $work/$sys-$kind.log" >&2
       exit 1
     }
-    for q in q0 q1 q2 q3 q4; do
+    for q in q1 q2 q3; do
       measure $sys "$port" $q $kind
     done
   done
@@ -94,14 +98,13 @@ echo "| query | index | dg tps | dg ms | pg tps | pg ms | dg/pg |"
 echo "| --- | --- | --: | --: | --: | --: | --: |"
 awk '
   { tps[$1, $2, $3] = $4; ms[$1, $2, $3] = $5 }
+  function row(q, k) {
+    printf "| %s | %s | %.0f | %.3f | %.0f | %.3f | %.2f |\n", q, k,
+      tps["dg", k, q], ms["dg", k, q], tps["pg", k, q], ms["pg", k, q],
+      ms["dg", k, q] / ms["pg", k, q]
+  }
   END {
-    n = split("q0 q1 q2 q3 q4", qs, " ")
-    split("regular btree", ks, " ")
-    for (i = 1; i <= n; i++)
-      for (j = 1; j <= 2; j++) {
-        q = qs[i]; k = ks[j]
-        printf "| %s | %s | %.0f | %.3f | %.0f | %.3f | %.2f |\n", q, k,
-          tps["dg", k, q], ms["dg", k, q], tps["pg", k, q], ms["pg", k, q],
-          ms["dg", k, q] / ms["pg", k, q]
-      }
+    row("q0", "none")
+    for (i = 1; i <= 3; i++) { row("q" i, "regular"); row("q" i, "btree") }
+    row("q4", "none")
   }' "$work/results"
