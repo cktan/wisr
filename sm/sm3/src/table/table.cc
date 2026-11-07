@@ -2240,6 +2240,13 @@ int tbl_scan_cols(scan_t *scan, std::span<sm2::datum_t> values,
                              scan->cuts[i], scan->datums, values, isnull);
 }
 
+/* Whether the last tree entry's key gives its columns back; see sm3.h. */
+bool tbl_scan_plain(const scan_t *scan) {
+  return !scan->closed && scan->entries && 0 != scan->n &&
+         !scan->cuts[scan->last] &&
+         sm2::idx_decodable(scan->table->indexes[scan->index]);
+}
+
 /* The next row's bytes; see sm3.h. */
 int tbl_scannxt(scan_t *scan, uint64_t &id, std::string_view &tuple) {
   pin_ref_t ref;

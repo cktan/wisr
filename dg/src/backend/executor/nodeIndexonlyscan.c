@@ -42,6 +42,20 @@ static TupleTableSlot *IndexOnlyNext(IndexOnlyScanState *node);
 static void StoreIndexTuple(IndexOnlyScanState *node, TupleTableSlot *slot,
                             IndexScanDesc scandesc);
 
+/*
+ * Begin the scan of a table in sm, and tell it if nothing above reads a
+ * column of an entry and the plan checks none, as count(*)'s plan does.
+ */
+static smstore_scan_t *begin_sm_scan(IndexOnlyScanState *node) {
+  smstore_scan_t *scan = smstore_index_beginscan(
+      node->ss.ss_currentRelation, node->ioss_RelationDesc,
+      node->ioss_ScanKeys, node->ioss_NumScanKeys);
+
+  if (((IndexOnlyScan *)node->ss.ps.plan)->nocols)
+    smstore_index_nocols(scan);
+  return scan;
+}
+
 /* ----------------------------------------------------------------
  *		IndexOnlyNext
  *
@@ -77,9 +91,7 @@ static TupleTableSlot *IndexOnlyNext(IndexOnlyScanState *node) {
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("an index scan runs forwards only")));
     if (node->ioss_SmScan == NULL)
-      node->ioss_SmScan = smstore_index_beginscan(
-          node->ss.ss_currentRelation, node->ioss_RelationDesc,
-          node->ioss_ScanKeys, node->ioss_NumScanKeys);
+      node->ioss_SmScan = begin_sm_scan(node);
     while (smstore_index_getentry(node->ioss_SmScan, slot)) {
       /*
        * A key on an expression is checked here, by the quals on the index's
@@ -605,9 +617,7 @@ IndexOnlyScanState *ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate,
   /* One of a table in sm begins now, as an index scan's (nodeIndexscan.c). */
   if (RelationIsSm(indexstate->ss.ss_currentRelation) &&
       indexstate->ioss_NumRuntimeKeys == 0)
-    indexstate->ioss_SmScan = smstore_index_beginscan(
-        indexstate->ss.ss_currentRelation, indexstate->ioss_RelationDesc,
-        indexstate->ioss_ScanKeys, indexstate->ioss_NumScanKeys);
+    indexstate->ioss_SmScan = begin_sm_scan(indexstate);
 
   /*
    * all done.

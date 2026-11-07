@@ -293,6 +293,7 @@ extern int smstore_expr_natts(Node *expr, Index varno, Relation rel);
 extern smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
                                                ScanKey keys, int nkeys);
 extern bool smstore_index_recheck(smstore_scan_t *scan);
+extern void smstore_index_nocols(smstore_scan_t *scan);
 extern bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot);
 extern bool smstore_index_getrowno(smstore_scan_t *scan);
 extern bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot);

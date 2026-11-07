@@ -2698,6 +2698,16 @@ struct smstore_scan_t {
    * recheck()), and keys_met() leaves it alone.
    */
   bool recheck;
+  /*
+   * Which keys are an equality on a short text value, in a column of a
+   * deterministic collation: the scan's bounds hold such a key of every
+   * entry whose key is whole (smstore_index_nocols()).
+   */
+  bool *text_eq;
+  /* Every key is bounded or text_eq, on a tree, with no recheck. */
+  bool nocols_ok;
+  /* The executor reads no column of an entry, so none is decoded. */
+  bool nocols;
   /* An index scan's: its index, and its last entry's value. */
   Oid index;
   Form_pg_index form;
@@ -7604,6 +7614,19 @@ static bool plain_key(ScanKey key, Oid coltype) {
          int_key_datum(key, coltype, &d);
 }
 
+/* The longest text value a bound may have for the scan to trust it. */
+static const size_t text_eq_max = 64;
+
+/*
+ * Tell an index-only scan that its executor reads no column of an entry
+ * (its plan lists none, and checks none). An entry whose key is whole then
+ * is returned unread: the scan's bounds hold every key it has, so nothing
+ * of the entry is needed (smstore_index_getentry()).
+ */
+void smstore_index_nocols(smstore_scan_t *scan) {
+  scan->nocols = scan->nocols_ok;
+}
+
 /*
  * Whether the row in slot meets every scan key: each compares the row's
  * value in the key's column, by the key's operator, with the key's value.
@@ -7799,6 +7822,7 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   sm_datum_t *hi_vals = (sm_datum_t *)palloc0(ncols * sizeof(sm_datum_t));
   bool *nulls = (bool *)palloc0(ncols * sizeof(bool));
   bool *bounded = (bool *)palloc0(Max(nkeys, 1) * sizeof(bool));
+  bool *text_eq = (bool *)palloc0(Max(nkeys, 1) * sizeof(bool));
   sm_bound_t lo = {lo_vals, nulls, 0, true};
   sm_bound_t hi = {hi_vals, nulls, 0, true};
   int neq = 0; /* the leading columns an equality gives one value */
@@ -7890,6 +7914,19 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
       hi_vals[c] = bound(eq, true);
       lo.n = hi.n = c + 1;
       bounded[eq - keys] = exact;
+      /*
+       * A short text value is a bound's whole key; a longer one is cut in
+       * the tree (../sm/BTREEINDEX.md section 3), and the entries it
+       * reaches are not all equal to it.
+       */
+      text_eq[eq - keys] =
+          (TEXTOID == coltype || VARCHAROID == coltype) &&
+          BTEqualStrategyNumber == eq->sk_strategy &&
+          (InvalidOid == eq->sk_subtype || coltype == eq->sk_subtype) &&
+          get_collation_isdeterministic(index->rd_indcollation[c]) &&
+          VARSIZE_ANY_EXHDR(pg_detoast_datum_packed(
+              (struct varlena *)DatumGetPointer(eq->sk_argument))) <=
+              text_eq_max;
       /* A numeric's bounds may differ: no later column narrows them. */
       if (numeric_col && lo_vals[c] != hi_vals[c]) {
         lo.inclusive = hi.inclusive = true;
@@ -7987,6 +8024,7 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   scan->keys = keys;
   scan->nkeys = nkeys;
   scan->bounded = bounded;
+  scan->text_eq = text_eq;
   scan->index = RelationGetRelid(index);
   scan->tree = tree;
   scan->form = form;
@@ -8005,6 +8043,9 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
     if (!bounded[i])
       scan->nchecked++;
   }
+  scan->nocols_ok = tree && !scan->recheck;
+  for (int i = 0; i < nkeys; i++)
+    scan->nocols_ok = scan->nocols_ok && (bounded[i] || text_eq[i]);
   /* An equality on each of the primary key's columns: a read by key. */
   scan->point = form->indisprimary && ncols == neq;
   /*
@@ -8378,6 +8419,18 @@ bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
     uint64 rowno = scan->cur_rowno;
 
     ExecClearTuple(slot);
+    /*
+     * Nothing of a whole entry is read: the bounds hold its keys, and the
+     * plan wants no column (smstore_index_nocols()).
+     */
+    if (scan->nocols && scan->entries_only && scan->cursor != NULL &&
+        sm_rel_scan_plain(scan->cursor)) {
+      memset(slot->tts_isnull, true,
+             slot->tts_tupleDescriptor->natts * sizeof(bool));
+      ExecStoreVirtualTuple(slot);
+      slot->tts_rowno = rowno;
+      return true;
+    }
     switch (scan->point ? 1
             : scan->cursor != NULL
                 ? (scan->entries_only

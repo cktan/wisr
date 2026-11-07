@@ -2676,6 +2676,14 @@ static Scan *create_indexscan_plan(PlannerInfo *root, IndexPath *best_path,
         stripped_indexquals, fixed_indexorderbys, indexorderbys,
         indexorderbyops, best_path->indexscandir);
 
+  /*
+   * An index-only scan whose parent reads no column of it, as count(*)'s
+   * does, and that checks none, needs no column of its entries; sm then
+   * decodes none (smstore_index_nocols()).
+   */
+  if (indexonly && NIL == qpqual && NIL == best_path->path.pathtarget->exprs)
+    ((IndexOnlyScan *)scan_plan)->nocols = true;
+
   copy_generic_path_info(&scan_plan->plan, &best_path->path);
 
   return scan_plan;

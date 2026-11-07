@@ -1135,6 +1135,21 @@ give them back and the row, which the cursor read, has them.
 Errors: `SM_ERR_INVALID` (not a tree's cursor, no entry yet, or
 the wrong `n`).
 
+### `sm_rel_scan_plain`
+
+```cpp
+int sm_rel_scan_plain(const sm_rel_scan_t* scan);
+```
+
+Tells whether the entry of a tree's rows that `sm_rel_scannxt`
+last gave is whole. Returns 1 if its key is not cut and gives its
+columns back, so that `sm_rel_scan_cols` would return 0. Returns 0
+otherwise, and if the cursor has no entry. It decodes nothing.
+
+A host whose scan bounds already hold a key of every whole entry,
+and whose plan reads no column, calls this in place of
+`sm_rel_scan_cols`. A cut entry still needs its row.
+
 ### `sm_rel_scan_rebound`
 
 ```cpp
