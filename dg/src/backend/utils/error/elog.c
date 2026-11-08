@@ -105,6 +105,7 @@ thread_local /*LOCAL*/ bool PG_exception_handled = false;
 /* GUC parameters */
 thread_local /*LOCAL*/ int Log_error_verbosity = PGERROR_DEFAULT;
 thread_local /*LOCAL*/ char *Log_line_prefix = NULL; /* format for extra log line info */
+/* log_destination's variables: read pcb->Log_destination, not this one */
 thread_local /*LOCAL*/ int Log_destination = LOG_DESTINATION_STDERR;
 thread_local /*LOCAL*/ char *Log_destination_string = NULL;
 thread_local /*LOCAL*/ bool syslog_sequence_numbers = true;
@@ -2958,7 +2959,7 @@ static void send_message_to_server_log(ErrorData *edata) {
 
 #ifdef HAVE_SYSLOG
   /* Write to syslog, if enabled */
-  if (Log_destination & LOG_DESTINATION_SYSLOG) {
+  if (pcb->Log_destination & LOG_DESTINATION_SYSLOG) {
     int syslog_level;
 
     switch (edata->elevel) {
@@ -2997,13 +2998,13 @@ static void send_message_to_server_log(ErrorData *edata) {
 
 #ifdef WIN32
   /* Write to eventlog, if enabled */
-  if (Log_destination & LOG_DESTINATION_EVENTLOG) {
+  if (pcb->Log_destination & LOG_DESTINATION_EVENTLOG) {
     write_eventlog(edata->elevel, buf.data, buf.len);
   }
 #endif /* WIN32 */
 
   /* Write to stderr, if enabled */
-  if ((Log_destination & LOG_DESTINATION_STDERR) ||
+  if ((pcb->Log_destination & LOG_DESTINATION_STDERR) ||
       whereToSendOutput == DestDebug) {
 #ifdef WIN32
 

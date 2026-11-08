@@ -3136,7 +3136,7 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
    * the common help() function in main/main.c.
    */
   pg_getopt_start(&optctx, argc, argv,
-                  "B:bC:c:D:d:EeFf:h:ijk:lN:nOPp:r:S:sTt:v:W:-:");
+                  "B:bC:c:D:d:Eef:h:ijk:lN:nOPp:r:S:sTt:v:W:-:");
 
   /*
    * Turn this off because it's either printed to stderr and not the log
@@ -3208,10 +3208,6 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
 
     case 'e':
       SetConfigOption("datestyle", "euro", ctx, gucsource);
-      break;
-
-    case 'F':
-      SetConfigOption("fsync", "false", ctx, gucsource);
       break;
 
     case 'f':
@@ -3379,6 +3375,9 @@ void PostgresSingleUserMain(int argc, char *argv[], const char *username) {
   /* Acquire configuration parameters */
   if (!SelectConfigFiles(userDoption, pcb->progname))
     proc_exit(1);
+
+  /* The standalone backend also reads process settings from pcb. */
+  publish_postmaster_settings();
 
   /*
    * Validate we have been given a reasonable-looking DataDir and change

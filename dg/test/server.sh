@@ -6001,6 +6001,11 @@ grep -Eq '^[-0-9: .]+ \+09 \[[0-9]+\] LOG:  starting ' "$work/logfile.all" ||
   fail "log_timezone: the server's lines"
 [ "$(local_psql -c 'show log_timezone')" = Etc/GMT-9 ] ||
   fail "log_timezone: SHOW"
+# log_destination changes only with a restart: no session may set it.
+[ "$(local_psql -c 'show log_destination')" = stderr ] ||
+  fail "log_destination: SHOW"
+local_psql -c "set log_destination = 'syslog'" 2>&1 |
+  grep -q 'cannot be changed without restarting' || fail "log_destination: SET is refused"
 [ "$(stat -c %a "$lfdir"/lf-*.log | sort -u)" = 600 ] ||
   fail "logging_collector: log_file_mode"
 # A new second, so that the next file's name differs from the first's.

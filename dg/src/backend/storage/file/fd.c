@@ -370,14 +370,10 @@ int pg_fsync(int fd) {
 }
 
 /*
- * pg_fsync_no_writethrough --- same as fsync except does nothing if
- *	enableFsync is off
+ * pg_fsync_no_writethrough --- same as fsync except it retries on EINTR
  */
 int pg_fsync_no_writethrough(int fd) {
   int rc;
-
-  if (!enableFsync)
-    return 0;
 
 retry:
   rc = fsync(fd);
@@ -392,15 +388,12 @@ retry:
  * pg_fsync_writethrough
  */
 int pg_fsync_writethrough(int fd) {
-  if (enableFsync) {
 #if defined(F_FULLFSYNC)
-    return (fcntl(fd, F_FULLFSYNC, 0) == -1) ? -1 : 0;
+  return (fcntl(fd, F_FULLFSYNC, 0) == -1) ? -1 : 0;
 #else
-    errno = ENOSYS;
-    return -1;
+  errno = ENOSYS;
+  return -1;
 #endif
-  } else
-    return 0;
 }
 
 /*
@@ -430,18 +423,9 @@ bool pg_file_exists(const char *name) {
  */
 void pg_flush_data(int fd, off_t offset, off_t nbytes) {
   /*
-   * Right now file flushing is primarily used to avoid making later
-   * fsync()/fdatasync() calls have less impact. Thus don't trigger flushes
-   * if fsyncs are disabled - that's a decision we might want to make
-   * configurable at some point.
+   * We compile all alternatives that are supported on the current platform,
+   * to find portability problems more easily.
    */
-  if (!enableFsync)
-    return;
-
-    /*
-     * We compile all alternatives that are supported on the current platform,
-     * to find portability problems more easily.
-     */
 #if defined(HAVE_SYNC_FILE_RANGE)
   {
     int rc;
