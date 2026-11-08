@@ -2882,8 +2882,8 @@ cmp -s "$work/sqlbodies.out" "$work/sqlbodies.expected" ||
 #    after it commits; one rolled back leaves al2 as it was.
 # 6. While that session reads the empty ale2 in a transaction, a NOT NULL
 #    column with no DEFAULT is refused at once, ale2 being in use.
-# 7. ALTER COLUMN, SET SCHEMA and ALTER INDEX are refused, each naming
-#    what it is.
+# 7. ALTER COLUMN SET STATISTICS, SET SCHEMA and ALTER INDEX are refused,
+#    each naming what it is.
 local_psql -c 'create table al1 (a int4, b text)' \
   -c "insert into al1 values (1, 'x'), (2, 'y')" \
   -c 'create index al1a on al1 (a)' \
@@ -3040,10 +3040,10 @@ exec 4>&-
 wait $alter
 [ "$(tr '\n' ' ' < "$work/alter2.out")" = "3 BEGIN 0 COMMIT 1|7|hi|4 " ] ||
   fail "ALTER TABLE seen by another session"
-local_psql -c 'alter table al2 alter column a set not null' \
+local_psql -c 'alter table al2 alter column a set statistics 10' \
   -c 'alter table al2 set schema s7' \
   -c 'alter index al1a rename to al1b' > "$work/alter3.out" 2>&1
-grep -q "ERROR:  ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet" \
+grep -q "ERROR:  ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet" \
   "$work/alter3.out" &&
   grep -q 'ERROR:  ALTER TABLE is not supported yet' "$work/alter3.out" &&
   grep -q 'ERROR:  ALTER INDEX is not supported yet' "$work/alter3.out" ||
@@ -5913,6 +5913,10 @@ source test/parked_tables.sh
 source test/acl_overlap.sh
 source test/acl_owner_overlap.sh
 source test/tree_load_ssi.sh
+# Check a check constraint against rows committed after the snapshot.
+source test/check_rr_validate.sh
+# ALTER COLUMN at REPEATABLE READ, and of an identity column.
+source test/alter_column.sh
 
 kill -INT $server
 wait $server || fail "crashed retype: shutdown status"

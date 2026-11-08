@@ -382,8 +382,7 @@ SELECT * FROM target ORDER BY tid;
 
 -- remove constraints
 alter table target drop CONSTRAINT target_pkey;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg alter table target alter column tid drop not null;
+alter table target alter column tid drop not null;
 
 -- multiple actions
 BEGIN;

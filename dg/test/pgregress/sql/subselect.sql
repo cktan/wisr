@@ -481,6 +481,18 @@ from
   join
   int4_tbl i4 on dummy = i4.f1;
 
+-- Likewise, but with the sublink inserted into a whole-row reference.
+
+select 1 from ((select (select 1) as x) ss1 cross join int4_tbl i4) j
+  where (select 1 where j is null) is null;
+
+select 1 from ((select (select 1) as x) ss1 cross join int4_tbl i4) j
+  where (1, 1) in (select (j is null)::int, count(*) from int4_tbl);
+
+select 1 from ((select (select 1) as x) ss1 cross join int4_tbl i4) j
+  where exists (select 1 from int4_tbl
+                tablesample system ((j is null)::int * 100));
+
 --
 -- Test case for subselect within UPDATE of INSERT...ON CONFLICT DO UPDATE
 --
@@ -1029,6 +1041,19 @@ BEGIN;
 --dg-cascade
 --dg SELECT * FROM (SELECT DISTINCT ON (a) id, a FROM pdt ORDER BY a, id) s
 --dg WHERE a = ROW(1.0)::t_rec;
+
+-- Simple CASE: the arg is compared by each WHEN, so the same rules apply.
+-- The relabeled arg is compared by oid's "=", not the grouping eqop.
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT * FROM (SELECT DISTINCT id FROM pdt) s
+--dg WHERE (CASE id::oid WHEN 1 THEN 1 ELSE 0 END) = 1;
+
+-- Positive: compatible opfamily, safe to push past the grouping
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT * FROM (SELECT DISTINCT id FROM pdt) s
+--dg WHERE (CASE id WHEN 1 THEN 1 ELSE 0 END) = 1;
 
 -- Set operations: any operation other than UNION ALL groups rows by equality,
 -- so the same opfamily-mismatch rules apply.

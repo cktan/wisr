@@ -55,68 +55,44 @@ DROP TABLE error_tbl;
 -- CHECK syntax
 --
 
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE CHECK_TBL (x int,
---dg 	CONSTRAINT CHECK_CON CHECK (x > 3));
+CREATE TABLE CHECK_TBL (x int,
+	CONSTRAINT CHECK_CON CHECK (x > 3));
 
---dg-cascade
---dg INSERT INTO CHECK_TBL VALUES (5);
---dg-cascade
---dg INSERT INTO CHECK_TBL VALUES (4);
---dg-cascade
---dg INSERT INTO CHECK_TBL VALUES (3);
---dg-cascade
---dg INSERT INTO CHECK_TBL VALUES (2);
---dg-cascade
---dg INSERT INTO CHECK_TBL VALUES (6);
---dg-cascade
---dg INSERT INTO CHECK_TBL VALUES (1);
+INSERT INTO CHECK_TBL VALUES (5);
+INSERT INTO CHECK_TBL VALUES (4);
+INSERT INTO CHECK_TBL VALUES (3);
+INSERT INTO CHECK_TBL VALUES (2);
+INSERT INTO CHECK_TBL VALUES (6);
+INSERT INTO CHECK_TBL VALUES (1);
 
---dg-cascade
---dg SELECT * FROM CHECK_TBL;
+SELECT * FROM CHECK_TBL;
 
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE NE_CHECK_TBL (x int,
---dg 	CONSTRAINT CHECK_CON CHECK (x > 3) NOT ENFORCED);
+CREATE TABLE NE_CHECK_TBL (x int,
+	CONSTRAINT CHECK_CON CHECK (x > 3) NOT ENFORCED);
 
---dg-cascade
---dg INSERT INTO NE_CHECK_TBL VALUES (5);
---dg-cascade
---dg INSERT INTO NE_CHECK_TBL VALUES (4);
---dg-cascade
---dg INSERT INTO NE_CHECK_TBL VALUES (3);
---dg-cascade
---dg INSERT INTO NE_CHECK_TBL VALUES (2);
---dg-cascade
---dg INSERT INTO NE_CHECK_TBL VALUES (6);
---dg-cascade
---dg INSERT INTO NE_CHECK_TBL VALUES (1);
+INSERT INTO NE_CHECK_TBL VALUES (5);
+INSERT INTO NE_CHECK_TBL VALUES (4);
+INSERT INTO NE_CHECK_TBL VALUES (3);
+INSERT INTO NE_CHECK_TBL VALUES (2);
+INSERT INTO NE_CHECK_TBL VALUES (6);
+INSERT INTO NE_CHECK_TBL VALUES (1);
 
---dg-cascade
---dg SELECT * FROM NE_CHECK_TBL;
+SELECT * FROM NE_CHECK_TBL;
 
 CREATE SEQUENCE CHECK_SEQ;
 
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE CHECK2_TBL (x int, y text, z int,
---dg 	CONSTRAINT SEQUENCE_CON
---dg 	CHECK (x > 3 and y <> 'check failed' and z < 8));
+CREATE TABLE CHECK2_TBL (x int, y text, z int,
+	CONSTRAINT SEQUENCE_CON
+	CHECK (x > 3 and y <> 'check failed' and z < 8));
 
---dg-cascade
---dg INSERT INTO CHECK2_TBL VALUES (4, 'check ok', -2);
---dg-cascade
---dg INSERT INTO CHECK2_TBL VALUES (1, 'x check failed', -2);
---dg-cascade
---dg INSERT INTO CHECK2_TBL VALUES (5, 'z check failed', 10);
---dg-cascade
---dg INSERT INTO CHECK2_TBL VALUES (0, 'check failed', -2);
---dg-cascade
---dg INSERT INTO CHECK2_TBL VALUES (6, 'check failed', 11);
---dg-cascade
---dg INSERT INTO CHECK2_TBL VALUES (7, 'check ok', 7);
+INSERT INTO CHECK2_TBL VALUES (4, 'check ok', -2);
+INSERT INTO CHECK2_TBL VALUES (1, 'x check failed', -2);
+INSERT INTO CHECK2_TBL VALUES (5, 'z check failed', 10);
+INSERT INTO CHECK2_TBL VALUES (0, 'check failed', -2);
+INSERT INTO CHECK2_TBL VALUES (6, 'check failed', 11);
+INSERT INTO CHECK2_TBL VALUES (7, 'check ok', 7);
 
---dg-cascade
---dg SELECT * from CHECK2_TBL;
+SELECT * from CHECK2_TBL;
 
 --
 -- Check constraints on INSERT
@@ -124,94 +100,68 @@ CREATE SEQUENCE CHECK_SEQ;
 
 CREATE SEQUENCE INSERT_SEQ;
 
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE INSERT_TBL (x INT DEFAULT nextval('insert_seq'),
---dg 	y TEXT DEFAULT '-NULL-',
---dg 	z INT DEFAULT -1 * currval('insert_seq'),
---dg 	CONSTRAINT INSERT_TBL_CON CHECK (x >= 3 AND y <> 'check failed' AND x < 8),
---dg 	CHECK (x + z = 0) ENFORCED, /* no change it is a default */
---dg 	CONSTRAINT NE_INSERT_TBL_CON CHECK (x + z = 1) NOT ENFORCED);
+CREATE TABLE INSERT_TBL (x INT DEFAULT nextval('insert_seq'),
+	y TEXT DEFAULT '-NULL-',
+	z INT DEFAULT -1 * currval('insert_seq'),
+	CONSTRAINT INSERT_TBL_CON CHECK (x >= 3 AND y <> 'check failed' AND x < 8),
+	CHECK (x + z = 0) ENFORCED, /* no change it is a default */
+	CONSTRAINT NE_INSERT_TBL_CON CHECK (x + z = 1) NOT ENFORCED);
 
---dg-cascade
---dg INSERT INTO INSERT_TBL(x,z) VALUES (2, -2);
+INSERT INTO INSERT_TBL(x,z) VALUES (2, -2);
 
---dg-cascade
---dg SELECT * FROM INSERT_TBL;
+SELECT * FROM INSERT_TBL;
 
 SELECT 'one' AS one, nextval('insert_seq');
 
---dg-cascade
---dg INSERT INTO INSERT_TBL(y) VALUES ('Y');
---dg-cascade
---dg INSERT INTO INSERT_TBL(y) VALUES ('Y');
---dg-cascade
---dg INSERT INTO INSERT_TBL(x,z) VALUES (1, -2);
---dg-cascade
---dg INSERT INTO INSERT_TBL(z,x) VALUES (-7,  7);
---dg-cascade
---dg INSERT INTO INSERT_TBL VALUES (5, 'check failed', -5);
---dg-cascade
---dg INSERT INTO INSERT_TBL VALUES (7, '!check failed', -7);
---dg-cascade
---dg INSERT INTO INSERT_TBL(y) VALUES ('-!NULL-');
+INSERT INTO INSERT_TBL(y) VALUES ('Y');
+INSERT INTO INSERT_TBL(y) VALUES ('Y');
+INSERT INTO INSERT_TBL(x,z) VALUES (1, -2);
+INSERT INTO INSERT_TBL(z,x) VALUES (-7,  7);
+INSERT INTO INSERT_TBL VALUES (5, 'check failed', -5);
+INSERT INTO INSERT_TBL VALUES (7, '!check failed', -7);
+INSERT INTO INSERT_TBL(y) VALUES ('-!NULL-');
 
---dg-cascade
---dg SELECT * FROM INSERT_TBL;
+SELECT * FROM INSERT_TBL;
 
---dg-cascade
---dg INSERT INTO INSERT_TBL(y,z) VALUES ('check failed', 4);
---dg-cascade
---dg INSERT INTO INSERT_TBL(x,y) VALUES (5, 'check failed');
---dg-cascade
---dg INSERT INTO INSERT_TBL(x,y) VALUES (5, '!check failed');
---dg-cascade
---dg INSERT INTO INSERT_TBL(y) VALUES ('-!NULL-');
+INSERT INTO INSERT_TBL(y,z) VALUES ('check failed', 4);
+INSERT INTO INSERT_TBL(x,y) VALUES (5, 'check failed');
+INSERT INTO INSERT_TBL(x,y) VALUES (5, '!check failed');
+INSERT INTO INSERT_TBL(y) VALUES ('-!NULL-');
 
---dg-cascade
---dg SELECT * FROM INSERT_TBL;
+SELECT * FROM INSERT_TBL;
 
---dg-cascade
---dg SELECT 'seven' AS one, nextval('insert_seq');
+SELECT 'seven' AS one, nextval('insert_seq');
 
---dg-cascade
---dg INSERT INTO INSERT_TBL(y) VALUES ('Y');
+INSERT INTO INSERT_TBL(y) VALUES ('Y');
 
---dg-cascade
---dg SELECT 'eight' AS one, currval('insert_seq');
+SELECT 'eight' AS one, currval('insert_seq');
 
 -- According to SQL, it is OK to insert a record that gives rise to NULL
 -- constraint-condition results.  Postgres used to reject this, but it
 -- was wrong:
---dg-cascade
---dg INSERT INTO INSERT_TBL VALUES (null, null, null);
+INSERT INTO INSERT_TBL VALUES (null, null, null);
 
---dg-cascade
---dg SELECT * FROM INSERT_TBL;
+SELECT * FROM INSERT_TBL;
 
 --
 -- Check constraints on system columns
 --
 
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE SYS_COL_CHECK_TBL (city text, state text, is_capital bool,
---dg                   altitude int,
---dg                   CHECK (NOT (is_capital AND tableoid::regclass::text = 'sys_col_check_tbl')));
+CREATE TABLE SYS_COL_CHECK_TBL (city text, state text, is_capital bool,
+                  altitude int,
+                  CHECK (NOT (is_capital AND tableoid::regclass::text = 'sys_col_check_tbl')));
 
---dg-cascade
---dg INSERT INTO SYS_COL_CHECK_TBL VALUES ('Seattle', 'Washington', false, 100);
---dg-cascade
---dg INSERT INTO SYS_COL_CHECK_TBL VALUES ('Olympia', 'Washington', true, 100);
+INSERT INTO SYS_COL_CHECK_TBL VALUES ('Seattle', 'Washington', false, 100);
+INSERT INTO SYS_COL_CHECK_TBL VALUES ('Olympia', 'Washington', true, 100);
 
---dg-cascade
---dg SELECT *, tableoid::regclass::text FROM SYS_COL_CHECK_TBL;
+SELECT *, tableoid::regclass::text FROM SYS_COL_CHECK_TBL;
 
---dg-cascade
---dg DROP TABLE SYS_COL_CHECK_TBL;
+DROP TABLE SYS_COL_CHECK_TBL;
 
 --
 -- Check constraints on system columns other then TableOid should return error
 --
---dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg-differs: another error: column "?" does not exist
 --dg CREATE TABLE SYS_COL_CHECK_TBL (city text, state text, is_capital bool,
 --dg                   altitude int,
 --dg 				  CHECK (NOT (is_capital AND ctid::text = 'sys_col_check_tbl')));
@@ -220,7 +170,7 @@ SELECT 'one' AS one, nextval('insert_seq');
 -- Check inheritance of defaults and constraints
 --
 
---dg-cascade
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE INSERT_CHILD (cx INT default 42,
 --dg 	cy INT CHECK (cy > x))
 --dg 	INHERITS (INSERT_TBL);
@@ -244,26 +194,24 @@ SELECT 'one' AS one, nextval('insert_seq');
 -- Check NO INHERIT type of constraints and inheritance
 --
 
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE ATACC1 (TEST INT
---dg 	CHECK (TEST > 0) NO INHERIT);
+CREATE TABLE ATACC1 (TEST INT
+	CHECK (TEST > 0) NO INHERIT);
 
---dg-cascade
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE ATACC2 (TEST2 INT) INHERITS (ATACC1);
 -- check constraint is not there on child
 --dg-cascade
 --dg INSERT INTO ATACC2 (TEST) VALUES (-3);
 -- check constraint is there on parent
---dg-cascade
---dg INSERT INTO ATACC1 (TEST) VALUES (-3);
+INSERT INTO ATACC1 (TEST) VALUES (-3);
 --dg-cascade
 --dg DROP TABLE ATACC1 CASCADE;
 
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg-cascade
 --dg CREATE TABLE ATACC1 (TEST INT, TEST2 INT
 --dg 	CHECK (TEST > 0), CHECK (TEST2 > 10) NO INHERIT);
 
---dg-cascade
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE ATACC2 () INHERITS (ATACC1);
 -- check constraint is there on child
 --dg-cascade
@@ -284,8 +232,7 @@ SELECT 'one' AS one, nextval('insert_seq');
 -- Check constraints on INSERT INTO
 --
 
---dg-cascade
---dg DELETE FROM INSERT_TBL;
+DELETE FROM INSERT_TBL;
 
 --dg-skip: ALTER SEQUENCE is not supported yet
 --dg ALTER SEQUENCE INSERT_SEQ RESTART WITH 4;
@@ -301,8 +248,7 @@ INSERT INTO tmp VALUES (null, 'try again', null);
 --dg-cascade
 --dg SELECT * FROM INSERT_TBL;
 
---dg-cascade
---dg INSERT INTO INSERT_TBL SELECT * FROM tmp WHERE yd = 'try again';
+INSERT INTO INSERT_TBL SELECT * FROM tmp WHERE yd = 'try again';
 --dg-cascade
 --dg INSERT INTO INSERT_TBL(y,z) SELECT yd, -7 FROM tmp WHERE yd = 'try again';
 --dg-cascade
@@ -317,12 +263,9 @@ DROP TABLE tmp;
 -- Check constraints on UPDATE
 --
 
---dg-cascade
---dg UPDATE INSERT_TBL SET x = NULL WHERE x = 5;
---dg-cascade
---dg UPDATE INSERT_TBL SET x = 6 WHERE x = 6;
---dg-cascade
---dg UPDATE INSERT_TBL SET x = -z, z = -x;
+UPDATE INSERT_TBL SET x = NULL WHERE x = 5;
+UPDATE INSERT_TBL SET x = 6 WHERE x = 6;
+UPDATE INSERT_TBL SET x = -z, z = -x;
 --dg-cascade
 --dg UPDATE INSERT_TBL SET x = z, z = x;
 
@@ -335,24 +278,19 @@ DROP TABLE tmp;
 -- Check constraints on COPY FROM
 --
 
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE COPY_TBL (x INT, y TEXT, z INT,
---dg 	CONSTRAINT COPY_CON
---dg 	CHECK (x > 3 AND y <> 'check failed' AND x < 7 ));
+CREATE TABLE COPY_TBL (x INT, y TEXT, z INT,
+	CONSTRAINT COPY_CON
+	CHECK (x > 3 AND y <> 'check failed' AND x < 7 ));
 
 \set filename :abs_srcdir '/data/constro.data'
---dg-cascade
---dg COPY COPY_TBL FROM :'filename';
+COPY COPY_TBL FROM :'filename';
 
---dg-cascade
---dg SELECT * FROM COPY_TBL;
+SELECT * FROM COPY_TBL;
 
 \set filename :abs_srcdir '/data/constrf.data'
---dg-cascade
---dg COPY COPY_TBL FROM :'filename';
+COPY COPY_TBL FROM :'filename';
 
---dg-cascade
---dg SELECT * FROM COPY_TBL;
+SELECT * FROM COPY_TBL;
 
 --
 -- Primary keys
@@ -593,13 +531,12 @@ BEGIN;
 --dg     PRIMARY KEY (id)
 --dg )
 --dg PARTITION BY LIST (id);
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE parted_fk_naming_1 (
---dg     id bigint NOT NULL default 1,
---dg     id_abc bigint,
---dg     PRIMARY KEY (id),
---dg     CONSTRAINT dummy_constr CHECK (true)
---dg );
+CREATE TABLE parted_fk_naming_1 (
+    id bigint NOT NULL default 1,
+    id_abc bigint,
+    PRIMARY KEY (id),
+    CONSTRAINT dummy_constr CHECK (true)
+);
 --dg-cascade
 --dg ALTER TABLE parted_fk_naming ATTACH PARTITION parted_fk_naming_1 FOR VALUES IN ('1');
 --dg-cascade
@@ -839,41 +776,28 @@ COMMIT; -- should not fail
 
 -- verify constraints created for NOT NULL clauses
 CREATE TABLE notnull_tbl1 (a INTEGER NOT NULL NOT NULL);
---dg-differs: the result
---dg \d+ notnull_tbl1
+\d+ notnull_tbl1
 -- specifying an existing constraint is a no-op
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg ALTER TABLE notnull_tbl1 ADD CONSTRAINT notnull_tbl1_a_not_null NOT NULL a;
+ALTER TABLE notnull_tbl1 ADD CONSTRAINT notnull_tbl1_a_not_null NOT NULL a;
 -- but using a different constraint name is not allowed
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg ALTER TABLE notnull_tbl1 ADD CONSTRAINT nn NOT NULL a;
---dg-differs: the result
---dg \d+ notnull_tbl1
+ALTER TABLE notnull_tbl1 ADD CONSTRAINT nn NOT NULL a;
+\d+ notnull_tbl1
 -- duplicate name
---dg-differs: no error where PostgreSQL has: constraint "?" for relation "?" already exists
+--dg-differs: another error: column "?" of relation "?" already exists
 --dg ALTER TABLE notnull_tbl1 ADD COLUMN b INT CONSTRAINT notnull_tbl1_a_not_null NOT NULL;
 -- DROP NOT NULL gets rid of both the attnotnull flag and the constraint itself
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE notnull_tbl1 ALTER a DROP NOT NULL;
---dg-cascade
---dg \d+ notnull_tbl1
+ALTER TABLE notnull_tbl1 ALTER a DROP NOT NULL;
+\d+ notnull_tbl1
 -- SET NOT NULL puts both back
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE notnull_tbl1 ALTER a SET NOT NULL;
---dg-differs: the result
---dg \d+ notnull_tbl1
+ALTER TABLE notnull_tbl1 ALTER a SET NOT NULL;
+\d+ notnull_tbl1
 -- Doing it twice doesn't create a redundant constraint
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE notnull_tbl1 ALTER a SET NOT NULL;
---dg-differs: the result
---dg select conname, contype, conkey from pg_constraint where conrelid = 'notnull_tbl1'::regclass;
+ALTER TABLE notnull_tbl1 ALTER a SET NOT NULL;
+select conname, contype, conkey from pg_constraint where conrelid = 'notnull_tbl1'::regclass;
 -- Using the "table constraint" syntax also works
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE notnull_tbl1 ALTER a DROP NOT NULL;
---dg-cascade
---dg ALTER TABLE notnull_tbl1 ADD CONSTRAINT foobar NOT NULL a;
---dg-cascade
---dg \d+ notnull_tbl1
+ALTER TABLE notnull_tbl1 ALTER a DROP NOT NULL;
+ALTER TABLE notnull_tbl1 ADD CONSTRAINT foobar NOT NULL a;
+\d+ notnull_tbl1
 DROP TABLE notnull_tbl1;
 
 -- Verify that constraint names and NO INHERIT are properly considered when
@@ -884,20 +808,15 @@ create table notnull_tbl1 (a int primary key constraint foo not null);
 --dg-differs: the result
 --dg \d+ notnull_tbl1
 create table notnull_tbl2 (a serial, constraint foo not null a);
---dg-differs: the result
---dg \d+ notnull_tbl2
+\d+ notnull_tbl2
 create table notnull_tbl3 (constraint foo not null a, a int generated by default as identity);
---dg-differs: the result
---dg \d+ notnull_tbl3
+\d+ notnull_tbl3
 create table notnull_tbl4 (a int not null constraint foo not null);
---dg-differs: the result
---dg \d+ notnull_tbl4
+\d+ notnull_tbl4
 create table notnull_tbl5 (a int constraint foo not null constraint foo not null);
---dg-differs: the result
---dg \d+ notnull_tbl5
+\d+ notnull_tbl5
 create table notnull_tbl6 (like notnull_tbl1, constraint foo not null a);
---dg-differs: the result
---dg \d+ notnull_tbl6
+\d+ notnull_tbl6
 drop table notnull_tbl2, notnull_tbl3, notnull_tbl4, notnull_tbl5, notnull_tbl6;
 
 -- error cases:
@@ -926,7 +845,8 @@ create table notnull_tbl_fail (a int generated by default as identity not null n
 drop table notnull_tbl1;
 
 -- NOT NULL NO INHERIT
-CREATE TABLE ATACC1 (a int, NOT NULL a NO INHERIT);
+--dg-cascade
+--dg CREATE TABLE ATACC1 (a int, NOT NULL a NO INHERIT);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE ATACC2 () INHERITS (ATACC1);
 --dg-cascade
@@ -935,7 +855,7 @@ CREATE TABLE ATACC1 (a int, NOT NULL a NO INHERIT);
 --dg DROP TABLE ATACC1, ATACC2;
 --dg-cascade
 --dg CREATE TABLE ATACC1 (a int);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg-cascade
 --dg ALTER TABLE ATACC1 ADD NOT NULL a NO INHERIT;
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE ATACC2 () INHERITS (ATACC1);
@@ -947,11 +867,11 @@ CREATE TABLE ATACC1 (a int, NOT NULL a NO INHERIT);
 --dg CREATE TABLE ATACC1 (a int);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE ATACC2 () INHERITS (ATACC1);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg-cascade
 --dg ALTER TABLE ATACC1 ADD NOT NULL a NO INHERIT;
 --dg-cascade
 --dg \d+ ATACC2
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg-cascade
 --dg CREATE TABLE ATACC3 (PRIMARY KEY (a)) INHERITS (ATACC1);
 --dg-cascade
 --dg \d+ ATACC3
@@ -969,18 +889,19 @@ CREATE TABLE ATACC1 (a int, NOT NULL a NO INHERIT) PARTITION BY LIST (a);
 --dg DROP TABLE ATACC1;
 
 -- it's not possible to override a no-inherit constraint with an inheritable one
-CREATE TABLE ATACC2 (a int, CONSTRAINT a_is_not_null NOT NULL a NO INHERIT);
+--dg-cascade
+--dg CREATE TABLE ATACC2 (a int, CONSTRAINT a_is_not_null NOT NULL a NO INHERIT);
 --dg-cascade
 --dg CREATE TABLE ATACC1 (a int);
 --dg-cascade
 --dg CREATE TABLE ATACC3 (a int) INHERITS (ATACC2);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-cascade
 --dg ALTER TABLE ATACC2 INHERIT ATACC1;
 -- can't override
 --dg-cascade
 --dg ALTER TABLE ATACC1 ADD CONSTRAINT ditto NOT NULL a;
 -- dropping the NO INHERIT constraint allows this to work
---dg-skip: constraint "?" of relation "?" does not exist
+--dg-cascade
 --dg ALTER TABLE ATACC2 DROP CONSTRAINT a_is_not_null;
 --dg-cascade
 --dg ALTER TABLE ATACC1 ADD CONSTRAINT ditto NOT NULL a;
@@ -990,27 +911,20 @@ CREATE TABLE ATACC2 (a int, CONSTRAINT a_is_not_null NOT NULL a NO INHERIT);
 --dg DROP TABLE ATACC1, ATACC2, ATACC3;
 
 -- Can't have two constraints with the same name
---dg-differs: no error where PostgreSQL has: constraint "?" for relation "?" already exists
---dg CREATE TABLE notnull_tbl2 (a INTEGER CONSTRAINT blah NOT NULL, b INTEGER CONSTRAINT blah NOT NULL);
+CREATE TABLE notnull_tbl2 (a INTEGER CONSTRAINT blah NOT NULL, b INTEGER CONSTRAINT blah NOT NULL);
 
 -- can't drop not-null in primary key
 CREATE TABLE notnull_tbl2 (a INTEGER PRIMARY KEY);
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE notnull_tbl2 ALTER a DROP NOT NULL;
+ALTER TABLE notnull_tbl2 ALTER a DROP NOT NULL;
 DROP TABLE notnull_tbl2;
 
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE notnull_tbl3 (a INTEGER NOT NULL, CHECK (a IS NOT NULL));
---dg-cascade
---dg ALTER TABLE notnull_tbl3 ALTER A DROP NOT NULL;
---dg-cascade
---dg ALTER TABLE notnull_tbl3 ADD b int, ADD CONSTRAINT pk PRIMARY KEY (a, b);
---dg-cascade
+CREATE TABLE notnull_tbl3 (a INTEGER NOT NULL, CHECK (a IS NOT NULL));
+ALTER TABLE notnull_tbl3 ALTER A DROP NOT NULL;
+ALTER TABLE notnull_tbl3 ADD b int, ADD CONSTRAINT pk PRIMARY KEY (a, b);
+--dg-differs: the result
 --dg \d notnull_tbl3
---dg-cascade
---dg ALTER TABLE notnull_tbl3 DROP CONSTRAINT pk;
---dg-cascade
---dg \d notnull_tbl3
+ALTER TABLE notnull_tbl3 DROP CONSTRAINT pk;
+\d notnull_tbl3
 
 -- Primary keys cause not-null constraints to be created.
 CREATE TABLE cnn_pk (a int, b int);
@@ -1128,10 +1042,8 @@ CREATE TABLE notnull_tbl5 (a int CONSTRAINT ann NOT NULL,
 	b int CONSTRAINT bnn NOT NULL);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE notnull_tbl5_child () INHERITS (notnull_tbl5);
---dg-skip: constraint "?" of relation "?" does not exist
---dg ALTER TABLE ONLY notnull_tbl5 DROP CONSTRAINT ann;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE ONLY notnull_tbl5 ALTER b DROP NOT NULL;
+ALTER TABLE ONLY notnull_tbl5 DROP CONSTRAINT ann;
+ALTER TABLE ONLY notnull_tbl5 ALTER b DROP NOT NULL;
 --dg-cascade
 --dg \d+ notnull_tbl5_child
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
@@ -1156,9 +1068,8 @@ ORDER BY conrelid::regclass::text COLLATE "C", conname;
 
 CREATE TABLE notnull_tbl1 (a int, b int);
 INSERT INTO notnull_tbl1 VALUES (NULL, 1), (300, 3);
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg ALTER TABLE notnull_tbl1 ADD CONSTRAINT nn NOT NULL a; -- error
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+ALTER TABLE notnull_tbl1 ADD CONSTRAINT nn NOT NULL a; -- error
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_tbl1 ADD CONSTRAINT nn NOT NULL a NOT VALID; -- ok
 -- even an invalid not-null forbids new nulls
 --dg-cascade
@@ -1202,7 +1113,7 @@ CREATE TABLE notnull_tbl1_copy (LIKE notnull_tbl1);
 CREATE TABLE notnull_tbl1_child2 (c int, b int, a int);
 --dg-cascade
 --dg ALTER TABLE notnull_tbl1_child2 INHERIT notnull_tbl1;	-- nope
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_tbl1_child2 ADD NOT NULL a NOT VALID;
 --dg-cascade
 --dg ALTER TABLE notnull_tbl1_child2 INHERIT notnull_tbl1;
@@ -1230,11 +1141,10 @@ UPDATE notnull_tbl1 SET a = 100 WHERE b = 1;
 -- dropping an invalid constraint is possible
 --dg-cascade
 --dg CREATE TABLE notnull_tbl1 (a int, b int);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_tbl1 ADD NOT NULL a NOT VALID,
 --dg 	ADD NOT NULL b NOT VALID;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE notnull_tbl1 ALTER a DROP NOT NULL;
+ALTER TABLE notnull_tbl1 ALTER a DROP NOT NULL;
 --dg-cascade
 --dg ALTER TABLE notnull_tbl1 DROP CONSTRAINT notnull_tbl1_b_not_null;
 DROP TABLE notnull_tbl1;
@@ -1243,7 +1153,7 @@ DROP TABLE notnull_tbl1;
 CREATE TABLE notnull_tbl1 (a int);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE notnull_tbl1_chld () INHERITS (notnull_tbl1);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_tbl1 ADD CONSTRAINT nntbl1_a NOT NULL a NOT VALID;
 --dg-cascade
 --dg ALTER TABLE notnull_tbl1 ALTER CONSTRAINT nntbl1_a NO INHERIT;
@@ -1260,17 +1170,16 @@ CREATE TABLE notnull_tbl1 (a int);
 -- have an invalid one
 --dg-cascade
 --dg CREATE TABLE notnull_tbl1 (a int);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_tbl1 ADD CONSTRAINT nn_parent NOT NULL a not valid;
 CREATE TABLE notnull_chld0 (a int, CONSTRAINT nn_chld0 NOT NULL a);
 --dg-cascade
 --dg ALTER TABLE notnull_tbl1 INHERIT notnull_chld0; --error
 
---dg-skip: constraint "?" of relation "?" does not exist
---dg ALTER TABLE notnull_chld0 DROP CONSTRAINT nn_chld0;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+ALTER TABLE notnull_chld0 DROP CONSTRAINT nn_chld0;
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_chld0 ADD CONSTRAINT nn_chld0 NOT NULL a not valid;
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE notnull_tbl1 INHERIT notnull_chld0; --now ok
 
 -- parents and child not-null will all be validated.
@@ -1286,14 +1195,13 @@ CREATE TABLE notnull_inhparent (i int);
 --dg CREATE TABLE notnull_inhchild (i int) INHERITS (notnull_inhparent);
 --dg-cascade
 --dg CREATE TABLE notnull_inhgrand () INHERITS (notnull_inhparent, notnull_inhchild);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_inhparent ADD CONSTRAINT nn NOT NULL i NOT VALID;
 --dg-cascade
 --dg ALTER TABLE notnull_inhchild ADD CONSTRAINT nn1 NOT NULL i; -- error
 --dg-cascade
 --dg EXECUTE get_nnconstraint_info('{notnull_inhparent, notnull_inhchild, notnull_inhgrand}');
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE notnull_inhparent ALTER i SET NOT NULL; -- ok
+ALTER TABLE notnull_inhparent ALTER i SET NOT NULL; -- ok
 --dg-cascade
 --dg EXECUTE get_nnconstraint_info('{notnull_inhparent, notnull_inhchild, notnull_inhgrand}');
 --dg-cascade
@@ -1313,7 +1221,7 @@ CREATE TABLE notnull_tbl1_2(a int, CONSTRAINT nn2 NOT NULL a, b int);
 
 CREATE TABLE notnull_tbl1_3(a int, b int);
 INSERT INTO notnull_tbl1_3 values(NULL,1);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_tbl1_3 add CONSTRAINT nn3 NOT NULL a NOT VALID;
 --dg-cascade
 --dg ALTER TABLE notnull_tbl1 ATTACH PARTITION notnull_tbl1_3 FOR VALUES IN (NULL,5);
@@ -1339,7 +1247,7 @@ INSERT INTO notnull_tbl1_3 values(NULL,1);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE pp_nn (a int, b int, NOT NULL a) PARTITION BY LIST (a);
 CREATE TABLE pp_nn_1(a int, b int);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE pp_nn_1 ADD CONSTRAINT nn1 NOT NULL a NOT VALID;
 --dg-cascade
 --dg ALTER TABLE pp_nn ATTACH PARTITION pp_nn_1 FOR VALUES IN (NULL,5); --error
@@ -1355,7 +1263,7 @@ CREATE TABLE pp_nn_1(a int, b int);
 --dg CREATE TABLE pp_nn (a int) PARTITION BY HASH (a);
 --dg-cascade
 --dg CREATE TABLE pp_nn_1 PARTITION OF pp_nn FOR VALUES WITH (MODULUS 2, REMAINDER 0);
---dg-cascade
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE pp_nn_1 ADD CONSTRAINT nn NOT NULL a NOT VALID;
 --dg-cascade
 --dg ALTER TABLE ONLY pp_nn ADD PRIMARY KEY (a);
@@ -1367,8 +1275,7 @@ CREATE TABLE pp_nn_1(a int, b int);
 --dg CREATE TABLE pp_nn (a int) PARTITION BY HASH (a);
 --dg-cascade
 --dg CREATE TABLE pp_nn_1 PARTITION OF pp_nn FOR VALUES WITH (MODULUS 2, REMAINDER 0);
---dg-cascade
---dg ALTER TABLE pp_nn_1 ADD CONSTRAINT nn NOT NULL a NO INHERIT;
+ALTER TABLE pp_nn_1 ADD CONSTRAINT nn NOT NULL a NO INHERIT;
 --dg-cascade
 --dg ALTER TABLE ONLY pp_nn ADD PRIMARY KEY (a);
 --dg-cascade
@@ -1377,7 +1284,7 @@ CREATE TABLE pp_nn_1(a int, b int);
 -- Create table with NOT NULL INVALID constraint, for pg_upgrade.
 CREATE TABLE notnull_tbl1_upg (a int, b int);
 INSERT INTO notnull_tbl1_upg VALUES (NULL, 1), (NULL, 2), (300, 3);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_tbl1_upg ADD CONSTRAINT nn NOT NULL a NOT VALID;
 -- Inherit test for pg_upgrade
 CREATE TABLE notnull_parent_upg (a int);
@@ -1385,7 +1292,7 @@ CREATE TABLE notnull_parent_upg (a int);
 --dg CREATE TABLE notnull_child_upg () INHERITS (notnull_parent_upg);
 --dg-cascade
 --dg ALTER TABLE notnull_child_upg ADD CONSTRAINT nn NOT NULL a;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_parent_upg ADD CONSTRAINT nn NOT NULL a NOT VALID;
 --dg-cascade
 --dg SELECT conrelid::regclass, contype, convalidated, conislocal
@@ -1405,7 +1312,7 @@ CREATE TABLE notnull_part1_2_upg (a int, CONSTRAINT nn2 NOT NULL a, b int);
 --dg ALTER TABLE notnull_part1_upg ATTACH PARTITION notnull_part1_2_upg FOR VALUES IN (3,4);
 CREATE TABLE notnull_part1_3_upg (a int, b int);
 INSERT INTO notnull_part1_3_upg values(NULL,1);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_part1_3_upg add CONSTRAINT nn3 NOT NULL a NOT VALID;
 --dg-cascade
 --dg ALTER TABLE notnull_part1_upg ATTACH PARTITION notnull_part1_3_upg FOR VALUES IN (NULL,5);
@@ -1416,7 +1323,7 @@ INSERT INTO notnull_part1_3_upg values(NULL,1);
 create table constr_parent (a int);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table constr_child (a int) inherits (constr_parent);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg alter table constr_parent add not null a not valid;
 --dg-cascade
 --dg alter table constr_child validate constraint constr_parent_a_not_null;
@@ -1426,7 +1333,7 @@ create table constr_parent (a int);
 create table constr_parent2 (a int);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table constr_child2 () inherits (constr_parent2);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg alter table constr_parent2 add not null a not valid;
 --dg-cascade
 --dg alter table constr_child2 validate constraint constr_parent2_a_not_null;

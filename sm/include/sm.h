@@ -773,6 +773,15 @@ struct sm_column_spec_t {
     char        identity = 0;     /* 'a', 'd' or 0 (sm3::column_spec_t) */
     uint64_t    identity_seq = 0; /* an identity column's sequence */
     const char* on_update_expr = nullptr; /* the host's update default */
+    /* Its NOT NULL constraint's name; nullptr: sm3 makes one. */
+    const char* not_null_name = nullptr;
+    /*
+     * A generated column's kind, 's' or 'v', or 0 (GENERATED.md):
+     * default_expr is its expression, generated_reads the 0-based
+     * places of the columns it reads.
+     */
+    char                 generated = 0;
+    std::vector<int32_t> generated_reads = {};
 };
 
 /*
@@ -801,6 +810,10 @@ struct sm_column_def_t {
     uint64_t    identity_seq; /* an identity column's sequence */
     bool        has_on_update;
     std::string on_update_expr; /* the host's update default; "" if none */
+    uint64_t    not_null_oid;   /* its NOT NULL constraint; 0 if none */
+    std::string not_null_name;  /* its name (NOTNULL.md) */
+    char        generated = 0;  /* 's', 'v' or 0 (GENERATED.md) */
+    std::vector<int32_t> generated_reads; /* the columns it reads */
 };
 
 /* Where an index's build stands (sm3::index_state_t). */
@@ -865,6 +878,20 @@ struct sm_fkey_def_t {
     std::string          host;
 };
 
+/*
+ * A check constraint of a table (CHECK.md): the columns its
+ * expression reads, by 0-based place, and host, the host's bytes:
+ * the expression and its flags, which sm never reads. The host checks
+ * the rows; validated is its word that the rows there were checked.
+ */
+struct sm_check_def_t {
+    uint64_t             oid = 0;
+    std::string          name;
+    std::vector<int32_t> columns;
+    bool                 validated = true;
+    std::string          host;
+};
+
 /* A foreign key that references a table: its child, and its oid. */
 struct sm_fkey_ref_t {
     uint64_t table;
@@ -896,6 +923,7 @@ struct sm_table_def_t {
     uint64_t                     version = 0;
     std::vector<sm_fkey_def_t>   fkeys;         /* its own */
     std::vector<sm_fkey_ref_t>   referenced_by; /* those that reference it */
+    std::vector<sm_check_def_t>  checks;        /* its check constraints */
 };
 
 /*
@@ -1835,10 +1863,42 @@ int sm_cat_add_column(sm_session_t* session, uint64_t oid,
 
 /*
  * Make the column name of the table oid NOT NULL, SM_ERR_NOTNULL if
- * a row holds a null in it (sm3::set_not_null).
+ * a row holds a null in it, its constraint named constraint, or by
+ * sm3 if nullptr; a name taken is SM_ERR_DUPKEY (sm3::set_not_null).
  */
 int sm_cat_set_not_null(sm_session_t* session, uint64_t oid,
-                        const char* name);
+                        const char* name, const char* constraint = nullptr);
+
+/*
+ * Rename the NOT NULL constraint of the column name of the table oid
+ * to to (sm3::rename_not_null).
+ */
+int sm_cat_rename_not_null(sm_session_t* session, uint64_t oid,
+                           const char* name, const char* to);
+
+/*
+ * Let the column name of the table oid hold a null: SM_ERR_INUSE
+ * for a primary key's column, SM_ERR_INVALID for an identity
+ * column (sm3::drop_not_null).
+ */
+int sm_cat_drop_not_null(sm_session_t* session, uint64_t oid,
+                         const char* name);
+
+/*
+ * Set the default of the column name of the table oid to the host's
+ * expr, or drop it with expr nullptr; the update default stays.
+ * SM_ERR_INVALID for an identity column (sm3::set_default).
+ */
+int sm_cat_set_default(sm_session_t* session, uint64_t oid, const char* name,
+                       const char* expr);
+
+/*
+ * Make the column name of the table oid generated, kind 's' or 'v',
+ * its expression expr reading the columns reads (sm3::set_generated).
+ */
+int sm_cat_set_generated(sm_session_t* session, uint64_t oid,
+                         const char* name, char kind, const char* expr,
+                         const std::vector<int32_t>& reads);
 
 /*
  * A column's new type, as sm_cat_alter_column_type takes it: sm2's
@@ -1903,7 +1963,9 @@ typedef enum sm_column_use_t {
     SM_COLUMN_USE_FKEY,       /* a foreign key of the table names it */
     SM_COLUMN_USE_REFERENCED, /* a foreign key referencing it names it */
     SM_COLUMN_USE_VIEW,       /* a view reads it */
-    SM_COLUMN_USE_IDENTITY    /* it is an identity column */
+    SM_COLUMN_USE_IDENTITY,   /* it is an identity column */
+    SM_COLUMN_USE_CHECK,      /* a check constraint reads it */
+    SM_COLUMN_USE_GENERATED   /* it is generated, or a generated one reads it */
 } sm_column_use_t;
 
 /*
@@ -2013,5 +2075,28 @@ int sm_cat_rename_fkey(sm_session_t* session, uint64_t table, uint64_t fkey,
  */
 int sm_cat_fkey(sm_session_t* session, uint64_t fkey, uint64_t* table,
                 sm_fkey_def_t* out);
+
+/*
+ * Add the check constraint def to the table (CHECK.md §5.1), in the
+ * session's transaction, under its table-oid lock X; its oid, def.oid
+ * ignored, is set in oid. Every column of def.columns must be live,
+ * else SM_ERR_INVALID, and its name free among the table's
+ * constraints, else SM_ERR_DUPKEY. No row is read: def.validated is
+ * the caller's word, after checking them. Once it is there, dropping
+ * or retyping a column it reads is SM_ERR_INUSE.
+ */
+int sm_cat_create_check(sm_session_t* session, uint64_t table,
+                        const sm_check_def_t& def, uint64_t* oid);
+
+/* Drop the check constraint check of the table, under its lock X. */
+int sm_cat_drop_check(sm_session_t* session, uint64_t table, uint64_t check);
+
+/* Mark the check constraint check of the table validated, under its lock X. */
+int sm_cat_validate_check(sm_session_t* session, uint64_t table,
+                          uint64_t check);
+
+/* Rename the check constraint check of the table; a taken name is DUPKEY. */
+int sm_cat_rename_check(sm_session_t* session, uint64_t table, uint64_t check,
+                        const char* name);
 
 #endif /* SM_H */

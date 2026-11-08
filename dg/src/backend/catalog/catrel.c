@@ -232,7 +232,7 @@ static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
                       const char *name, Oid nspoid, Oid reltype, Oid owner,
                       char kind, int natts, bool hasindex, bool temp,
                       Datum reloptions = (Datum)0, bool hastriggers = false,
-                      Datum acl = (Datum)0) {
+                      Datum acl = (Datum)0, int16 relchecks = 0) {
   Datum values[Natts_pg_class];
   bool nulls[Natts_pg_class];
 
@@ -258,6 +258,7 @@ static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
   values[Anum_pg_class_relnatts - 1] = Int16GetDatum(natts);
   values[Anum_pg_class_relhasrules - 1] = BoolGetDatum(kind == RELKIND_VIEW);
   values[Anum_pg_class_relhastriggers - 1] = BoolGetDatum(hastriggers);
+  values[Anum_pg_class_relchecks - 1] = Int16GetDatum(relchecks);
   values[Anum_pg_class_relispopulated - 1] = BoolGetDatum(true);
   values[Anum_pg_class_relreplident - 1] =
       CharGetDatum(kind == RELKIND_RELATION ? REPLICA_IDENTITY_DEFAULT
@@ -320,7 +321,8 @@ static void gen_pg_class(Tuplestorestate *ts, TupleDesc desc, Oid only) {
     class_row(ts, desc, r->oid, r->name, r->nspoid, InvalidOid,
               relation_owner(r), r->kind, r->natts, r->hasindex, r->temp,
               smstore_view_reloptions(r->options),
-              r->nfkeys > 0 || r->referenced, relation_acl(r));
+              r->nfkeys > 0 || r->referenced, relation_acl(r),
+              (int16)r->nchecks);
   }
 }
 
@@ -467,6 +469,99 @@ static void fkey_row(Tuplestorestate *ts, TupleDesc desc, Oid nspoid,
 }
 
 /*
+ * A check constraint's row of pg_constraint, into ts, from what sm keeps of
+ * it (../sm/CHECK.md): in the namespace of its table, local, not
+ * deferrable, with no parent; conkey the columns it reads, conbin its
+ * expression.
+ */
+static void check_row(Tuplestorestate *ts, TupleDesc desc, Oid nspoid,
+                      Oid table, const smstore_check_t *c) {
+  Datum values[Natts_pg_constraint];
+  bool nulls[Natts_pg_constraint];
+
+  memset(values, 0, sizeof(values));
+  memset(nulls, false, sizeof(nulls));
+  values[Anum_pg_constraint_oid - 1] = ObjectIdGetDatum(c->oid);
+  values[Anum_pg_constraint_conname - 1] = NameGetDatum(&c->name);
+  values[Anum_pg_constraint_connamespace - 1] = ObjectIdGetDatum(nspoid);
+  values[Anum_pg_constraint_contype - 1] = CharGetDatum(CONSTRAINT_CHECK);
+  values[Anum_pg_constraint_condeferrable - 1] = BoolGetDatum(false);
+  values[Anum_pg_constraint_condeferred - 1] = BoolGetDatum(false);
+  values[Anum_pg_constraint_conenforced - 1] = BoolGetDatum(c->enforced);
+  values[Anum_pg_constraint_convalidated - 1] = BoolGetDatum(c->validated);
+  values[Anum_pg_constraint_conrelid - 1] = ObjectIdGetDatum(table);
+  values[Anum_pg_constraint_contypid - 1] = ObjectIdGetDatum(InvalidOid);
+  values[Anum_pg_constraint_conindid - 1] = ObjectIdGetDatum(InvalidOid);
+  values[Anum_pg_constraint_conparentid - 1] = ObjectIdGetDatum(InvalidOid);
+  values[Anum_pg_constraint_confrelid - 1] = ObjectIdGetDatum(InvalidOid);
+  values[Anum_pg_constraint_confupdtype - 1] = CharGetDatum(' ');
+  values[Anum_pg_constraint_confdeltype - 1] = CharGetDatum(' ');
+  values[Anum_pg_constraint_confmatchtype - 1] = CharGetDatum(' ');
+  values[Anum_pg_constraint_conislocal - 1] = BoolGetDatum(true);
+  values[Anum_pg_constraint_coninhcount - 1] = Int16GetDatum(0);
+  values[Anum_pg_constraint_connoinherit - 1] = BoolGetDatum(c->noinherit);
+  values[Anum_pg_constraint_conperiod - 1] = BoolGetDatum(false);
+  if (c->nreads > 0)
+    values[Anum_pg_constraint_conkey - 1] = int2_array(c->reads, c->nreads);
+  else
+    nulls[Anum_pg_constraint_conkey - 1] = true;
+  nulls[Anum_pg_constraint_confkey - 1] = true;
+  nulls[Anum_pg_constraint_conpfeqop - 1] = true;
+  nulls[Anum_pg_constraint_conppeqop - 1] = true;
+  nulls[Anum_pg_constraint_conffeqop - 1] = true;
+  nulls[Anum_pg_constraint_confdelsetcols - 1] = true;
+  nulls[Anum_pg_constraint_conexclop - 1] = true;
+  values[Anum_pg_constraint_conbin - 1] = CStringGetTextDatum(c->ccbin);
+  tuplestore_putvalues(ts, desc, values, nulls);
+}
+
+/*
+ * A NOT NULL constraint's row of pg_constraint, into ts, for column i of
+ * r, a table (../sm/NOTNULL.md): in the table's namespace, local, not
+ * deferrable, valid and enforced; conkey the column, no conbin.
+ */
+static void not_null_row(Tuplestorestate *ts, TupleDesc desc,
+                         const smstore_relation_t *r, int i) {
+  Datum values[Natts_pg_constraint];
+  bool nulls[Natts_pg_constraint];
+  NameData name;
+  int16 attnum = (int16)(i + 1);
+
+  memset(values, 0, sizeof(values));
+  memset(nulls, false, sizeof(nulls));
+  namestrcpy(&name, r->nnnames[i]);
+  values[Anum_pg_constraint_oid - 1] = ObjectIdGetDatum(r->nnoids[i]);
+  values[Anum_pg_constraint_conname - 1] = NameGetDatum(&name);
+  values[Anum_pg_constraint_connamespace - 1] = ObjectIdGetDatum(r->nspoid);
+  values[Anum_pg_constraint_contype - 1] = CharGetDatum(CONSTRAINT_NOTNULL);
+  values[Anum_pg_constraint_condeferrable - 1] = BoolGetDatum(false);
+  values[Anum_pg_constraint_condeferred - 1] = BoolGetDatum(false);
+  values[Anum_pg_constraint_conenforced - 1] = BoolGetDatum(true);
+  values[Anum_pg_constraint_convalidated - 1] = BoolGetDatum(true);
+  values[Anum_pg_constraint_conrelid - 1] = ObjectIdGetDatum(r->oid);
+  values[Anum_pg_constraint_contypid - 1] = ObjectIdGetDatum(InvalidOid);
+  values[Anum_pg_constraint_conindid - 1] = ObjectIdGetDatum(InvalidOid);
+  values[Anum_pg_constraint_conparentid - 1] = ObjectIdGetDatum(InvalidOid);
+  values[Anum_pg_constraint_confrelid - 1] = ObjectIdGetDatum(InvalidOid);
+  values[Anum_pg_constraint_confupdtype - 1] = CharGetDatum(' ');
+  values[Anum_pg_constraint_confdeltype - 1] = CharGetDatum(' ');
+  values[Anum_pg_constraint_confmatchtype - 1] = CharGetDatum(' ');
+  values[Anum_pg_constraint_conislocal - 1] = BoolGetDatum(true);
+  values[Anum_pg_constraint_coninhcount - 1] = Int16GetDatum(0);
+  values[Anum_pg_constraint_connoinherit - 1] = BoolGetDatum(false);
+  values[Anum_pg_constraint_conperiod - 1] = BoolGetDatum(false);
+  values[Anum_pg_constraint_conkey - 1] = int2_array(&attnum, 1);
+  nulls[Anum_pg_constraint_confkey - 1] = true;
+  nulls[Anum_pg_constraint_conpfeqop - 1] = true;
+  nulls[Anum_pg_constraint_conppeqop - 1] = true;
+  nulls[Anum_pg_constraint_conffeqop - 1] = true;
+  nulls[Anum_pg_constraint_confdelsetcols - 1] = true;
+  nulls[Anum_pg_constraint_conexclop - 1] = true;
+  nulls[Anum_pg_constraint_conbin - 1] = true;
+  tuplestore_putvalues(ts, desc, values, nulls);
+}
+
+/*
  * A primary key's or unique constraint's row of pg_constraint, into ts, for
  * r, the index of sm's it made: named as its index, on the index's key
  * columns, not deferrable, enforced and validated.
@@ -512,9 +607,10 @@ static void key_row(Tuplestorestate *ts, TupleDesc desc,
 /*
  * pg_constraint's rows, for the tables of sm's, those of the table only if
  * it is given (a scan by conrelid), else every table's: a primary key's or
- * unique constraint's, its index's (key_row()), and each foreign key's.  A
- * unique index CREATE UNIQUE INDEX made has none, as in PostgreSQL; nor
- * does NOT NULL, which is pg_attribute's.
+ * unique constraint's, its index's (key_row()), each foreign key's, and each
+ * check constraint's (check_row()).  A
+ * unique index CREATE UNIQUE INDEX made has none, as in PostgreSQL.  A
+ * NOT NULL column has its NOT NULL constraint's (not_null_row()).
  */
 static void gen_pg_constraint(Tuplestorestate *ts, TupleDesc desc, Oid only) {
   ListCell *l;
@@ -526,14 +622,20 @@ static void gen_pg_constraint(Tuplestorestate *ts, TupleDesc desc, Oid only) {
     if (r->kind == RELKIND_INDEX && r->constraint &&
         (!OidIsValid(only) || r->table == only))
       key_row(ts, desc, r);
-    if (r->kind != RELKIND_RELATION || r->nfkeys == 0 ||
-        (OidIsValid(only) && r->oid != only))
+    if (r->kind != RELKIND_RELATION || (OidIsValid(only) && r->oid != only))
+      continue;
+    for (int i = 0; i < r->natts; i++)
+      if (OidIsValid(r->nnoids[i]))
+        not_null_row(ts, desc, r, i);
+    if (r->nfkeys == 0 && r->nchecks == 0)
       continue;
     t = smstore_table_desc(r->oid);
     if (t == NULL)
       continue;
     for (int i = 0; i < t->nfkeys; i++)
       fkey_row(ts, desc, t->nspoid, &t->fkeys[i]);
+    for (int i = 0; i < t->nchecks; i++)
+      check_row(ts, desc, t->nspoid, t->oid, &t->checks[i]);
   }
 }
 
@@ -545,7 +647,8 @@ static void gen_pg_constraint(Tuplestorestate *ts, TupleDesc desc, Oid only) {
  */
 static void attribute_row(Tuplestorestate *ts, TupleDesc desc, Oid relid,
                           int attnum, const char *name, Oid typid, int32 typmod,
-                          bool notnull, bool hasdef, char identity) {
+                          bool notnull, bool hasdef, char identity,
+                          char generated) {
   Datum values[Natts_pg_attribute];
   bool nulls[Natts_pg_attribute];
   char dropped[NAMEDATALEN];
@@ -582,7 +685,7 @@ static void attribute_row(Tuplestorestate *ts, TupleDesc desc, Oid relid,
   values[Anum_pg_attribute_atthasdef - 1] = BoolGetDatum(hasdef);
   values[Anum_pg_attribute_atthasmissing - 1] = BoolGetDatum(false);
   values[Anum_pg_attribute_attidentity - 1] = CharGetDatum(identity);
-  values[Anum_pg_attribute_attgenerated - 1] = CharGetDatum('\0');
+  values[Anum_pg_attribute_attgenerated - 1] = CharGetDatum(generated);
   values[Anum_pg_attribute_attisdropped - 1] = BoolGetDatum(!OidIsValid(typid));
   values[Anum_pg_attribute_attislocal - 1] = BoolGetDatum(true);
   values[Anum_pg_attribute_attinhcount - 1] = Int16GetDatum(0);
@@ -604,7 +707,7 @@ static void gen_pg_attribute(Tuplestorestate *ts, TupleDesc desc, Oid only) {
   for (int i = 0; i < count; i++)
     for (int a = 0; a < cats[i].natts; a++)
       attribute_row(ts, desc, cats[i].oid, a + 1, cats[i].columns[a].name,
-                    cats[i].columns[a].typid, -1, false, false, '\0');
+                    cats[i].columns[a].typid, -1, false, false, '\0', '\0');
   foreach (l, sm_relations(only)) {
     smstore_relation_t *r = (smstore_relation_t *)lfirst(l);
 
@@ -613,7 +716,7 @@ static void gen_pg_attribute(Tuplestorestate *ts, TupleDesc desc, Oid only) {
     for (int a = 0; a < r->natts; a++)
       attribute_row(ts, desc, r->oid, a + 1, r->attnames[a], r->typids[a],
                     r->typmods[a], r->notnull[a], r->defaults[a] != NULL,
-                    r->identity[a]);
+                    r->identity[a], r->generated[a]);
   }
 }
 
@@ -859,7 +962,9 @@ static void gen_pg_sequence(Tuplestorestate *ts, TupleDesc desc, Oid only) {
 /*
  * pg_depend's rows: digres records no dependencies but a sequence's on the
  * column that owns it -- automatic for a serial's, internal for an identity
- * column's, as PostgreSQL records them.
+ * column's -- and a primary key's or unique constraint's index's on the
+ * constraint, internal, as PostgreSQL records them.  The constraint's oid
+ * is its index's (key_row()).  get_index_constraint() reads the latter.
  */
 static void gen_pg_depend(Tuplestorestate *ts, TupleDesc desc, Oid only) {
   Datum values[Natts_pg_depend];
@@ -870,6 +975,18 @@ static void gen_pg_depend(Tuplestorestate *ts, TupleDesc desc, Oid only) {
   foreach (l, sm_relations(only)) {
     smstore_relation_t *r = (smstore_relation_t *)lfirst(l);
 
+    if (r->kind == RELKIND_INDEX && r->constraint) {
+      values[Anum_pg_depend_classid - 1] = ObjectIdGetDatum(RelationRelationId);
+      values[Anum_pg_depend_objid - 1] = ObjectIdGetDatum(r->oid);
+      values[Anum_pg_depend_objsubid - 1] = Int32GetDatum(0);
+      values[Anum_pg_depend_refclassid - 1] =
+          ObjectIdGetDatum(ConstraintRelationId);
+      values[Anum_pg_depend_refobjid - 1] = ObjectIdGetDatum(r->oid);
+      values[Anum_pg_depend_refobjsubid - 1] = Int32GetDatum(0);
+      values[Anum_pg_depend_deptype - 1] = CharGetDatum(DEPENDENCY_INTERNAL);
+      tuplestore_putvalues(ts, desc, values, nulls);
+      continue;
+    }
     if (r->kind != RELKIND_SEQUENCE || !OidIsValid(r->owner))
       continue;
     values[Anum_pg_depend_classid - 1] = ObjectIdGetDatum(RelationRelationId);

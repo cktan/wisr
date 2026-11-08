@@ -259,8 +259,8 @@ steps behind each entry).
 | --- | --- | --- | --- |
 | Users, authentication, authorization: roles, owners, GRANT and REVOKE are built ([`../aa/ROLE.md`](../aa/ROLE.md)); a column's privileges, a function's, ALTER DEFAULT PRIVILEGES and row-level security fail; peer on the socket and SCRAM over TCP only, no `pg_hba.conf`, no TLS, no GSSAPI | policies about 90 | encryption on the wire; compliance | medium: TLS by one setting ([`../aa/ROLE.md`](../aa/ROLE.md#8-decisions) §8); row-level security, now that roles exist; `pg_hba` is not planned |
 | Code in the server: no PL/pgSQL, no `sql` functions, no `DO`, so no triggers | 820, triggers 48, rules 132 | stored procedures, audit and `updated_at` triggers | large: waits for the scripting language SPI is kept for |
-| CREATE TABLE beyond columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY: CHECK, generated columns, `OF type`, UNLOGGED | 604, column-level 113 | CHECK is in most schemas | medium: constraints stored in sm's catalog, checked in the executor as PostgreSQL does |
-| ALTER TABLE: constraints added later, `SET`/`DROP NOT NULL`, `SET DEFAULT` | 264 | schema migrations | medium a subcommand; PRIMARY KEY and ALTER COLUMN TYPE are built (item 1 above) |
+| CREATE TABLE beyond columns, NOT NULL, PRIMARY KEY, UNIQUE, CHECK, generated columns and TEMPORARY: `OF type`, UNLOGGED; ADD COLUMN of a generated column, SET and DROP EXPRESSION | not counted yet | computed columns added to a table | small: ADD COLUMN computes each row's value from its own columns; CHECK and generated columns are built ([`CHECK.md`](CHECK.md), [`GENERATED.md`](GENERATED.md)) |
+| ALTER TABLE: `SET SCHEMA`, `ADD CONSTRAINT ... USING INDEX`, `SET STATISTICS`, storage, replica identity | 180 | schema migrations | small a subcommand; PRIMARY KEY, CHECK, ALTER COLUMN TYPE, SET/DROP NOT NULL and SET/DROP DEFAULT are built (item 1 above) |
 | Partitioning | refused | large time-series tables | large |
 
 - **Largest for adoption:** users and the scripting language;

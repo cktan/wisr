@@ -1321,14 +1321,10 @@ select * from defc;
 delete from defp where f1 = 2;
 select * from defc;
 delete from defp where f1 = 0; -- fail
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg alter table defc alter column f1 set default 1;
---dg-cascade
---dg delete from defp where f1 = 0;
---dg-cascade
---dg select * from defc;
---dg-cascade
---dg delete from defp where f1 = 1; -- fail
+alter table defc alter column f1 set default 1;
+delete from defp where f1 = 0;
+select * from defc;
+delete from defp where f1 = 1; -- fail
 
 --
 -- Test the difference between NO ACTION and RESTRICT
@@ -2697,7 +2693,7 @@ ABORT;
 --dg CREATE TABLE pt2 PARTITION OF pt FOR VALUES IN (2);
 CREATE TABLE ref(f1 int, f2 int, f3 int);
 ALTER TABLE ref ADD FOREIGN KEY(f1,f2) REFERENCES pt;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ref ALTER CONSTRAINT ref_f1_f2_fkey
 --dg   DEFERRABLE INITIALLY DEFERRED;
 --dg-cascade

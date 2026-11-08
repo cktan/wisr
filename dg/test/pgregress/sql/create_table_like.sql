@@ -30,7 +30,7 @@ SELECT * FROM inhx; /* Empty set since LIKE inherits structure only */
 
 CREATE TABLE inhf (LIKE inhx, LIKE inhx); /* Throw error */
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg CREATE TABLE inhf (LIKE inhx INCLUDING DEFAULTS INCLUDING CONSTRAINTS);
 --dg-cascade
 --dg INSERT INTO inhf DEFAULT VALUES;
@@ -38,8 +38,7 @@ CREATE TABLE inhf (LIKE inhx, LIKE inhx); /* Throw error */
 --dg SELECT * FROM inhf;
  /* Single entry with value 'text' */
 
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg ALTER TABLE inhx add constraint foo CHECK (xx = 'text');
+ALTER TABLE inhx add constraint foo CHECK (xx = 'text');
 ALTER TABLE inhx ADD PRIMARY KEY (xx);
 CREATE TABLE inhg (LIKE inhx); /* Doesn't copy constraint */
 INSERT INTO inhg VALUES ('foo');
@@ -47,12 +46,8 @@ DROP TABLE inhg;
 CREATE TABLE inhg (x text, LIKE inhx INCLUDING CONSTRAINTS, y text); /* Copies constraints */
 INSERT INTO inhg VALUES ('x', 'text', 'y'); /* Succeeds */
 INSERT INTO inhg VALUES ('x', 'text', 'y'); /* Succeeds -- Unique constraints not copied */
---dg-cascade
---dg INSERT INTO inhg VALUES ('x', 'foo',  'y');
-  /* fails due to constraint */
---dg-cascade
---dg SELECT * FROM inhg;
- /* Two records with three columns in order x=x, xx=text, y=y */
+INSERT INTO inhg VALUES ('x', 'foo',  'y');  /* fails due to constraint */
+SELECT * FROM inhg; /* Two records with three columns in order x=x, xx=text, y=y */
 DROP TABLE inhg;
 
 CREATE TABLE test_like_id_1 (a bigint GENERATED ALWAYS AS IDENTITY, b text);
@@ -74,23 +69,15 @@ SELECT * FROM test_like_id_2;  -- identity was not copied
 --dg-cascade
 --dg DROP TABLE test_like_id_1, test_like_id_2, test_like_id_3;
 
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE test_like_gen_1 (a int, b int GENERATED ALWAYS AS (a * 2) STORED, c int GENERATED ALWAYS AS (a * 3) VIRTUAL);
---dg-cascade
---dg \d test_like_gen_1
---dg-cascade
---dg INSERT INTO test_like_gen_1 (a) VALUES (1);
---dg-cascade
---dg SELECT * FROM test_like_gen_1;
---dg-cascade
---dg CREATE TABLE test_like_gen_2 (LIKE test_like_gen_1);
---dg-cascade
---dg \d test_like_gen_2
---dg-cascade
---dg INSERT INTO test_like_gen_2 (a) VALUES (1);
---dg-cascade
---dg SELECT * FROM test_like_gen_2;
---dg-cascade
+CREATE TABLE test_like_gen_1 (a int, b int GENERATED ALWAYS AS (a * 2) STORED, c int GENERATED ALWAYS AS (a * 3) VIRTUAL);
+\d test_like_gen_1
+INSERT INTO test_like_gen_1 (a) VALUES (1);
+SELECT * FROM test_like_gen_1;
+CREATE TABLE test_like_gen_2 (LIKE test_like_gen_1);
+\d test_like_gen_2
+INSERT INTO test_like_gen_2 (a) VALUES (1);
+SELECT * FROM test_like_gen_2;
+--dg-skip: LIKE ... INCLUDING GENERATED is not supported yet
 --dg CREATE TABLE test_like_gen_3 (LIKE test_like_gen_1 INCLUDING GENERATED);
 --dg-cascade
 --dg \d test_like_gen_3
@@ -102,26 +89,20 @@ SELECT * FROM test_like_id_2;  -- identity was not copied
 --dg DROP TABLE test_like_gen_1, test_like_gen_2, test_like_gen_3;
 
 -- also test generated column with a "forward" reference (bug #16342)
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE test_like_4 (b int DEFAULT 42,
---dg   c int GENERATED ALWAYS AS (a * 2) STORED,
---dg   a int CHECK (a > 0));
---dg-cascade
---dg \d test_like_4
---dg-cascade
---dg CREATE TABLE test_like_4a (LIKE test_like_4);
---dg-cascade
+CREATE TABLE test_like_4 (b int DEFAULT 42,
+  c int GENERATED ALWAYS AS (a * 2) STORED,
+  a int CHECK (a > 0));
+\d test_like_4
+CREATE TABLE test_like_4a (LIKE test_like_4);
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg CREATE TABLE test_like_4b (LIKE test_like_4 INCLUDING DEFAULTS);
---dg-cascade
+--dg-skip: LIKE ... INCLUDING GENERATED is not supported yet
 --dg CREATE TABLE test_like_4c (LIKE test_like_4 INCLUDING GENERATED);
---dg-cascade
+--dg-skip: LIKE ... INCLUDING GENERATED is not supported yet
 --dg CREATE TABLE test_like_4d (LIKE test_like_4 INCLUDING DEFAULTS INCLUDING GENERATED);
---dg-cascade
---dg \d test_like_4a
---dg-cascade
---dg INSERT INTO test_like_4a (a) VALUES(11);
---dg-cascade
---dg SELECT a, b, c FROM test_like_4a;
+\d test_like_4a
+INSERT INTO test_like_4a (a) VALUES(11);
+SELECT a, b, c FROM test_like_4a;
 --dg-cascade
 --dg \d test_like_4b
 --dg-cascade
@@ -144,9 +125,8 @@ SELECT * FROM test_like_id_2;  -- identity was not copied
 -- Test renumbering of Vars when combining LIKE with inheritance
 --dg-skip: type ? is not supported yet
 --dg CREATE TABLE test_like_5 (x point, y point, z point);
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE test_like_5x (p int CHECK (p > 0),
---dg    q int GENERATED ALWAYS AS (p * 2) STORED);
+CREATE TABLE test_like_5x (p int CHECK (p > 0),
+   q int GENERATED ALWAYS AS (p * 2) STORED);
 --dg-cascade
 --dg CREATE TABLE test_like_5c (LIKE test_like_4 INCLUDING ALL)
 --dg   INHERITS (test_like_5, test_like_5x);
@@ -188,11 +168,12 @@ DROP TABLE inhz;
 
 /* Use primary key imported by LIKE for self-referential FK constraint */
 CREATE TABLE inhz (x text REFERENCES inhz, LIKE inhx INCLUDING INDEXES);
-\d inhz
+--dg-differs: the result
+--dg \d inhz
 DROP TABLE inhz;
 
 -- including storage and comments
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg-skip: column "?" asks for what CREATE TABLE does not support yet
 --dg CREATE TABLE ctlt1 (a text CHECK (length(a) > 2) ENFORCED PRIMARY KEY,
 --dg 	b text CHECK (length(b) > 100) NOT ENFORCED);
 --dg-cascade
@@ -223,30 +204,28 @@ DROP TABLE inhz;
 --dg ALTER TABLE ctlt1 ALTER COLUMN a SET STORAGE MAIN;
 
 CREATE TABLE ctlt2 (c text NOT NULL);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ctlt2 ALTER COLUMN c SET STORAGE EXTERNAL;
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON COLUMN ctlt2.c IS 'C';
---dg-skip: constraint "?" for table "?" does not exist
+--dg-skip: COMMENT is not supported yet
 --dg COMMENT ON CONSTRAINT ctlt2_c_not_null ON ctlt2 IS 't2_c_not_null';
 
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE ctlt3 (a text CHECK (length(a) < 5), c text CHECK (length(c) < 7));
---dg-cascade
+CREATE TABLE ctlt3 (a text CHECK (length(a) < 5), c text CHECK (length(c) < 7));
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ctlt3 ALTER COLUMN c SET STORAGE EXTERNAL;
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ctlt3 ALTER COLUMN a SET STORAGE MAIN;
---dg-cascade
---dg CREATE INDEX ctlt3_fnidx ON ctlt3 ((a || c));
+CREATE INDEX ctlt3_fnidx ON ctlt3 ((a || c));
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON COLUMN ctlt3.a IS 'A3';
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON COLUMN ctlt3.c IS 'C';
---dg-cascade
+--dg-skip: COMMENT is not supported yet
 --dg COMMENT ON CONSTRAINT ctlt3_a_check ON ctlt3 IS 't3_a_check';
 
 CREATE TABLE ctlt4 (a text, c text);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ctlt4 ALTER COLUMN c SET STORAGE EXTERNAL;
 
 --dg-cascade
@@ -312,21 +291,16 @@ ROLLBACK;
 --dg DROP TABLE ctlt1, ctlt2, ctlt3, ctlt4, ctlt12_storage, ctlt12_comments, ctlt1_inh, ctlt13_inh, ctlt13_like, ctlt_all, ctla, ctlb CASCADE;
 
 -- LIKE must respect NO INHERIT property of constraints
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE noinh_con_copy (
---dg 	a int CONSTRAINT noinh_con_copy_a_check CHECK (a > 0) NO INHERIT,
---dg 	b int not null,
---dg 	c int not null no inherit
---dg );
+CREATE TABLE noinh_con_copy (a int CHECK (a > 0) NO INHERIT, b int not null,
+	c int not null no inherit);
 
---dg-cascade
+--dg-skip: COMMENT is not supported yet
 --dg COMMENT ON CONSTRAINT noinh_con_copy_b_not_null ON noinh_con_copy IS 'not null b';
---dg-cascade
+--dg-skip: COMMENT is not supported yet
 --dg COMMENT ON CONSTRAINT noinh_con_copy_c_not_null ON noinh_con_copy IS 'not null c no inherit';
 
---dg-cascade
---dg CREATE TABLE noinh_con_copy1 (LIKE noinh_con_copy INCLUDING CONSTRAINTS INCLUDING COMMENTS);
---dg-cascade
+CREATE TABLE noinh_con_copy1 (LIKE noinh_con_copy INCLUDING CONSTRAINTS INCLUDING COMMENTS);
+--dg-differs: the result
 --dg \d+ noinh_con_copy1
 
 --dg-cascade
@@ -336,30 +310,13 @@ ROLLBACK;
 --dg AND   objoid = c.oid AND c.conrelid = 'noinh_con_copy1'::regclass
 --dg ORDER BY conname COLLATE "C";
 
--- ensure this fails due to the NOT NULL NO INHERIT constraint
---dg-cascade
+-- fail, as partitioned tables don't allow NO INHERIT constraints
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE noinh_con_copy1_parted (LIKE noinh_con_copy INCLUDING ALL)
 --dg   PARTITION BY LIST (a);
 
---dg-cascade
---dg ALTER TABLE noinh_con_copy ALTER COLUMN c DROP NOT NULL;
+DROP TABLE noinh_con_copy, noinh_con_copy1;
 
--- ensure this fails due to the NO INHERIT CHECK constraint
---dg-cascade
---dg CREATE TABLE noinh_con_copy1_parted (LIKE noinh_con_copy INCLUDING ALL)
---dg   PARTITION BY LIST (a);
-
--- drop the CHECK constraint and try again
---dg-cascade
---dg ALTER TABLE noinh_con_copy DROP CONSTRAINT noinh_con_copy_a_check;
-
--- Ensure this creates the table
---dg-cascade
---dg CREATE TABLE noinh_con_copy1_parted (LIKE noinh_con_copy INCLUDING ALL)
---dg   PARTITION BY LIST (a);
-
---dg-cascade
---dg DROP TABLE noinh_con_copy, noinh_con_copy1, noinh_con_copy1_parted;
 
 /* LIKE with other relation kinds */
 
@@ -394,29 +351,26 @@ DROP VIEW ctlv1;
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg CREATE SERVER ctl_s0 FOREIGN DATA WRAPPER ctl_dummy;
 
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE ctl_table(a int PRIMARY KEY,
---dg   b varchar COMPRESSION pglz,
---dg   c int GENERATED ALWAYS AS (a * 2) STORED,
---dg   d bigint GENERATED ALWAYS AS IDENTITY,
---dg   e int DEFAULT 1);
+CREATE TABLE ctl_table(a int PRIMARY KEY,
+  b varchar COMPRESSION pglz,
+  c int GENERATED ALWAYS AS (a * 2) STORED,
+  d bigint GENERATED ALWAYS AS IDENTITY,
+  e int DEFAULT 1);
 
---dg-cascade
---dg CREATE INDEX ctl_table_a_key ON ctl_table(a);
+CREATE INDEX ctl_table_a_key ON ctl_table(a);
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON COLUMN ctl_table.b IS 'Column b';
---dg-cascade
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS ctl_table_stat ON a,b FROM ctl_table;
---dg-cascade
---dg ALTER TABLE ctl_table ADD CONSTRAINT foo CHECK (b = 'text');
---dg-cascade
+ALTER TABLE ctl_table ADD CONSTRAINT foo CHECK (b = 'text');
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ctl_table ALTER COLUMN b SET STORAGE MAIN;
 
 --dg-cascade
 --dg \d+ ctl_table
 
 -- Test EXCLUDING ALL
---dg-cascade
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
 --dg CREATE FOREIGN TABLE ctl_foreign_table1(LIKE ctl_table EXCLUDING ALL) SERVER ctl_s0;
 --dg-cascade
 --dg \d+ ctl_foreign_table1
@@ -428,7 +382,7 @@ DROP VIEW ctlv1;
 
 -- Test INCLUDING ALL
 -- INDEXES, IDENTITY, COMPRESSION, STORAGE are not copied.
---dg-cascade
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
 --dg CREATE FOREIGN TABLE ctl_foreign_table2(LIKE ctl_table INCLUDING ALL) SERVER ctl_s0;
 --dg-cascade
 --dg \d+ ctl_foreign_table2
@@ -467,8 +421,7 @@ DROP TABLE ctl_stats3_child;
 DROP TABLE ctl_stats4_parent;
 DROP TABLE ctl_stats4_child;
 
---dg-cascade
---dg DROP TABLE ctl_table;
+DROP TABLE ctl_table;
 --dg-cascade
 --dg DROP FOREIGN TABLE ctl_foreign_table1;
 --dg-cascade

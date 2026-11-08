@@ -2,15 +2,13 @@
 CREATE SCHEMA generated_virtual_tests;
 GRANT USAGE ON SCHEMA generated_virtual_tests TO PUBLIC;
 SET search_path = generated_virtual_tests;
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest0 (a int PRIMARY KEY, b int GENERATED ALWAYS AS (55) VIRTUAL);
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest1 (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
---dg-cascade
+CREATE TABLE gtest0 (a int PRIMARY KEY, b int GENERATED ALWAYS AS (55) VIRTUAL);
+CREATE TABLE gtest1 (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
+--dg-skip: relation "?" does not exist
 --dg SELECT table_name, column_name, column_default, is_nullable, is_generated, generation_expression FROM information_schema.columns WHERE table_schema = 'generated_virtual_tests' ORDER BY 1, 2;
---dg-cascade
+--dg-skip: relation "?" does not exist
 --dg SELECT table_name, column_name, dependent_column FROM information_schema.column_column_usage WHERE table_schema = 'generated_virtual_tests' ORDER BY 1, 2, 3;
---dg-cascade
+--dg-differs: the result
 --dg \d gtest1
 -- duplicate generated
 CREATE TABLE gtest_err_1 (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL GENERATED ALWAYS AS (a * 3) VIRTUAL);
@@ -18,22 +16,22 @@ ERROR:  multiple generation clauses specified for column "b" of table "gtest_err
 LINE 1: ...RY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL GENERATED ...
                                                              ^
 -- references to other generated columns, including self-references
---dg-differs: another error: column "?" asks for what CREATE TABLE does not support yet
+--dg-differs: another error: cannot use generated column "?" in column generation expression
 --dg CREATE TABLE gtest_err_2a (a int PRIMARY KEY, b int GENERATED ALWAYS AS (b * 2) VIRTUAL);
---dg-differs: another error: column "?" asks for what CREATE TABLE does not support yet
+--dg-differs: another error: cannot use generated column "?" in column generation expression
 --dg CREATE TABLE gtest_err_2b (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL, c int GENERATED ALWAYS AS (b * 3) VIRTUAL);
 -- a whole-row var is a self-reference on steroids, so disallow that too
---dg-differs: another error: column "?" asks for what CREATE TABLE does not support yet
+--dg-differs: another error: relation "?" does not have a composite type
 --dg CREATE TABLE gtest_err_2c (a int PRIMARY KEY,
 --dg     b int GENERATED ALWAYS AS (num_nulls(gtest_err_2c)) VIRTUAL);
 -- invalid reference
---dg-differs: another error: column "?" asks for what CREATE TABLE does not support yet
+--dg-differs: another error: column "?" does not exist
 --dg CREATE TABLE gtest_err_3 (a int PRIMARY KEY, b int GENERATED ALWAYS AS (c * 2) VIRTUAL);
 -- generation expression must be immutable
---dg-differs: another error: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest_err_4 (a int PRIMARY KEY, b double precision GENERATED ALWAYS AS (random()) VIRTUAL);
+CREATE TABLE gtest_err_4 (a int PRIMARY KEY, b double precision GENERATED ALWAYS AS (random()) VIRTUAL);
+ERROR:  generation expression is not immutable
 -- ... but be sure that the immutability test is accurate
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
+--dg-skip: generation expression is not immutable
 --dg CREATE TABLE gtest2 (a int, b text GENERATED ALWAYS AS (a || ' sec') VIRTUAL);
 --dg-cascade
 --dg DROP TABLE gtest2;
@@ -48,127 +46,174 @@ LINE 1: ...t PRIMARY KEY, b int GENERATED ALWAYS AS identity GENERATED ...
                                                              ^
 -- reference to system column not allowed in generated column
 -- (except tableoid, which we test below)
---dg-differs: another error: column "?" asks for what CREATE TABLE does not support yet
+--dg-differs: another error: column "?" does not exist
 --dg CREATE TABLE gtest_err_6a (a int PRIMARY KEY, b bool GENERATED ALWAYS AS (xmin <> 37) VIRTUAL);
 -- various prohibited constructs
---dg-differs: another error: column "?" asks for what CREATE TABLE does not support yet
+--dg-differs: another error: aggregate functions are not allowed in column generation expressions
 --dg CREATE TABLE gtest_err_7a (a int PRIMARY KEY, b int GENERATED ALWAYS AS (avg(a)) VIRTUAL);
---dg-differs: another error: column "?" asks for what CREATE TABLE does not support yet
+--dg-differs: another error: window functions are not allowed in column generation expressions
 --dg CREATE TABLE gtest_err_7b (a int PRIMARY KEY, b int GENERATED ALWAYS AS (row_number() OVER (ORDER BY a)) VIRTUAL);
---dg-differs: another error: column "?" asks for what CREATE TABLE does not support yet
+--dg-differs: another error: cannot use subquery in column generation expression
 --dg CREATE TABLE gtest_err_7c (a int PRIMARY KEY, b int GENERATED ALWAYS AS ((SELECT a)) VIRTUAL);
---dg-differs: another error: column "?" asks for what CREATE TABLE does not support yet
+--dg-differs: another error: set-returning functions are not allowed in column generation expressions
 --dg CREATE TABLE gtest_err_7d (a int PRIMARY KEY, b int GENERATED ALWAYS AS (generate_series(1, a)) VIRTUAL);
 -- GENERATED BY DEFAULT not allowed
 CREATE TABLE gtest_err_8 (a int PRIMARY KEY, b int GENERATED BY DEFAULT AS (a * 2) VIRTUAL);
 ERROR:  for a generated column, GENERATED ALWAYS must be specified
 LINE 1: ...E gtest_err_8 (a int PRIMARY KEY, b int GENERATED BY DEFAULT...
                                                              ^
---dg-cascade
---dg INSERT INTO gtest1 VALUES (1);
---dg-cascade
---dg INSERT INTO gtest1 VALUES (2, DEFAULT);  -- ok
---dg-cascade
---dg INSERT INTO gtest1 VALUES (3, 33);  -- error
---dg-cascade
---dg INSERT INTO gtest1 VALUES (3, 33), (4, 44);  -- error
---dg-cascade
---dg INSERT INTO gtest1 VALUES (3, DEFAULT), (4, 44);  -- error
---dg-cascade
---dg INSERT INTO gtest1 VALUES (3, 33), (4, DEFAULT);  -- error
---dg-cascade
---dg INSERT INTO gtest1 VALUES (3, DEFAULT), (4, DEFAULT);  -- ok
---dg-cascade
---dg SELECT * FROM gtest1 ORDER BY a;
---dg-cascade
+INSERT INTO gtest1 VALUES (1);
+INSERT INTO gtest1 VALUES (2, DEFAULT);  -- ok
+INSERT INTO gtest1 VALUES (3, 33);  -- error
+ERROR:  cannot insert a non-DEFAULT value into column "b"
+DETAIL:  Column "b" is a generated column.
+INSERT INTO gtest1 VALUES (3, 33), (4, 44);  -- error
+ERROR:  cannot insert a non-DEFAULT value into column "b"
+DETAIL:  Column "b" is a generated column.
+INSERT INTO gtest1 VALUES (3, DEFAULT), (4, 44);  -- error
+ERROR:  cannot insert a non-DEFAULT value into column "b"
+DETAIL:  Column "b" is a generated column.
+INSERT INTO gtest1 VALUES (3, 33), (4, DEFAULT);  -- error
+ERROR:  cannot insert a non-DEFAULT value into column "b"
+DETAIL:  Column "b" is a generated column.
+INSERT INTO gtest1 VALUES (3, DEFAULT), (4, DEFAULT);  -- ok
+SELECT * FROM gtest1 ORDER BY a;
+ a | b 
+---+---
+ 1 | 2
+ 2 | 4
+ 3 | 6
+ 4 | 8
+(4 rows)
+
+--dg-skip: relation "?" does not have a composite type
 --dg SELECT gtest1 FROM gtest1 ORDER BY a;  -- whole-row reference
---dg-cascade
---dg SELECT a, (SELECT gtest1.b) FROM gtest1 ORDER BY a;  -- sublink
---dg-cascade
---dg DELETE FROM gtest1 WHERE a >= 3;
---dg-cascade
---dg UPDATE gtest1 SET b = DEFAULT WHERE a = 1;
---dg-cascade
---dg UPDATE gtest1 SET b = 11 WHERE a = 1;  -- error
---dg-cascade
---dg SELECT * FROM gtest1 ORDER BY a;
---dg-cascade
---dg SELECT a, b, b * 2 AS b2 FROM gtest1 ORDER BY a;
---dg-cascade
---dg SELECT a, b FROM gtest1 WHERE b = 4 ORDER BY a;
+SELECT a, (SELECT gtest1.b) FROM gtest1 ORDER BY a;  -- sublink
+ a | b 
+---+---
+ 1 | 2
+ 2 | 4
+ 3 | 6
+ 4 | 8
+(4 rows)
+
+DELETE FROM gtest1 WHERE a >= 3;
+UPDATE gtest1 SET b = DEFAULT WHERE a = 1;
+UPDATE gtest1 SET b = 11 WHERE a = 1;  -- error
+ERROR:  column "b" can only be updated to DEFAULT
+DETAIL:  Column "b" is a generated column.
+SELECT * FROM gtest1 ORDER BY a;
+ a | b 
+---+---
+ 1 | 2
+ 2 | 4
+(2 rows)
+
+SELECT a, b, b * 2 AS b2 FROM gtest1 ORDER BY a;
+ a | b | b2 
+---+---+----
+ 1 | 2 |  4
+ 2 | 4 |  8
+(2 rows)
+
+SELECT a, b FROM gtest1 WHERE b = 4 ORDER BY a;
+ a | b 
+---+---
+ 2 | 4
+(1 row)
+
 -- test that overflow error happens on read
---dg-cascade
---dg INSERT INTO gtest1 VALUES (2000000000);
---dg-cascade
---dg SELECT * FROM gtest1;
---dg-cascade
---dg DELETE FROM gtest1 WHERE a = 2000000000;
+INSERT INTO gtest1 VALUES (2000000000);
+SELECT * FROM gtest1;
+ERROR:  integer out of range
+DELETE FROM gtest1 WHERE a = 2000000000;
 -- test with joins
 CREATE TABLE gtestx (x int, y int);
 INSERT INTO gtestx VALUES (11, 1), (22, 2), (33, 3);
---dg-cascade
---dg SELECT * FROM gtestx, gtest1 WHERE gtestx.y = gtest1.a;
+SELECT * FROM gtestx, gtest1 WHERE gtestx.y = gtest1.a;
+ x  | y | a | b 
+----+---+---+---
+ 11 | 1 | 1 | 2
+ 22 | 2 | 2 | 4
+(2 rows)
+
 DROP TABLE gtestx;
 -- test UPDATE/DELETE quals
---dg-cascade
---dg SELECT * FROM gtest1 ORDER BY a;
---dg-cascade
---dg UPDATE gtest1 SET a = 3 WHERE b = 4 RETURNING old.*, new.*;
---dg-cascade
---dg SELECT * FROM gtest1 ORDER BY a;
---dg-cascade
---dg DELETE FROM gtest1 WHERE b = 2;
---dg-cascade
---dg SELECT * FROM gtest1 ORDER BY a;
+SELECT * FROM gtest1 ORDER BY a;
+ a | b 
+---+---
+ 1 | 2
+ 2 | 4
+(2 rows)
+
+UPDATE gtest1 SET a = 3 WHERE b = 4 RETURNING old.*, new.*;
+ a | b | a | b 
+---+---+---+---
+ 2 | 4 | 3 | 6
+(1 row)
+
+SELECT * FROM gtest1 ORDER BY a;
+ a | b 
+---+---
+ 1 | 2
+ 3 | 6
+(2 rows)
+
+DELETE FROM gtest1 WHERE b = 2;
+SELECT * FROM gtest1 ORDER BY a;
+ a | b 
+---+---
+ 3 | 6
+(1 row)
+
 -- test MERGE
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtestm (
---dg   id int PRIMARY KEY,
---dg   f1 int,
---dg   f2 int,
---dg   f3 int GENERATED ALWAYS AS (f1 * 2) VIRTUAL,
---dg   f4 int GENERATED ALWAYS AS (f2 * 2) VIRTUAL
---dg );
---dg-cascade
---dg INSERT INTO gtestm VALUES (1, 5, 100);
---dg-cascade
+CREATE TABLE gtestm (
+  id int PRIMARY KEY,
+  f1 int,
+  f2 int,
+  f3 int GENERATED ALWAYS AS (f1 * 2) VIRTUAL,
+  f4 int GENERATED ALWAYS AS (f2 * 2) VIRTUAL
+);
+INSERT INTO gtestm VALUES (1, 5, 100);
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO gtestm t USING (VALUES (1, 10), (2, 20)) v(id, f1) ON t.id = v.id
 --dg   WHEN MATCHED THEN UPDATE SET f1 = v.f1
 --dg   WHEN NOT MATCHED THEN INSERT VALUES (v.id, v.f1, 200)
 --dg   RETURNING merge_action(), old.*, new.*;
 --dg-cascade
 --dg SELECT * FROM gtestm ORDER BY id;
---dg-cascade
---dg DROP TABLE gtestm;
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtestm (
---dg   a int PRIMARY KEY,
---dg   b int GENERATED ALWAYS AS (a * 2) VIRTUAL
---dg );
---dg-cascade
---dg INSERT INTO gtestm (a) SELECT g FROM generate_series(1, 10) g;
---dg-cascade
+DROP TABLE gtestm;
+CREATE TABLE gtestm (
+  a int PRIMARY KEY,
+  b int GENERATED ALWAYS AS (a * 2) VIRTUAL
+);
+INSERT INTO gtestm (a) SELECT g FROM generate_series(1, 10) g;
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO gtestm t USING gtestm AS s ON 2 * t.a = s.b WHEN MATCHED THEN DELETE RETURNING *;
---dg-cascade
---dg DROP TABLE gtestm;
+DROP TABLE gtestm;
 -- views
---dg-cascade
---dg CREATE VIEW gtest1v AS SELECT * FROM gtest1;
---dg-cascade
---dg SELECT * FROM gtest1v;
---dg-cascade
---dg INSERT INTO gtest1v VALUES (4, 8);  -- error
---dg-cascade
---dg INSERT INTO gtest1v VALUES (5, DEFAULT);  -- ok
---dg-cascade
---dg INSERT INTO gtest1v VALUES (6, 66), (7, 77);  -- error
---dg-cascade
---dg INSERT INTO gtest1v VALUES (6, DEFAULT), (7, 77);  -- error
---dg-cascade
---dg INSERT INTO gtest1v VALUES (6, 66), (7, DEFAULT);  -- error
---dg-cascade
---dg INSERT INTO gtest1v VALUES (6, DEFAULT), (7, DEFAULT);  -- ok
---dg-cascade
+CREATE VIEW gtest1v AS SELECT * FROM gtest1;
+SELECT * FROM gtest1v;
+ a | b 
+---+---
+ 3 | 6
+(1 row)
+
+INSERT INTO gtest1v VALUES (4, 8);  -- error
+ERROR:  cannot insert a non-DEFAULT value into column "b"
+DETAIL:  Column "b" is a generated column.
+INSERT INTO gtest1v VALUES (5, DEFAULT);  -- ok
+INSERT INTO gtest1v VALUES (6, 66), (7, 77);  -- error
+ERROR:  cannot insert a non-DEFAULT value into column "b"
+DETAIL:  Column "b" is a generated column.
+INSERT INTO gtest1v VALUES (6, DEFAULT), (7, 77);  -- error
+ERROR:  cannot insert a non-DEFAULT value into column "b"
+DETAIL:  Column "b" is a generated column.
+INSERT INTO gtest1v VALUES (6, 66), (7, DEFAULT);  -- error
+ERROR:  cannot insert a non-DEFAULT value into column "b"
+DETAIL:  Column "b" is a generated column.
+INSERT INTO gtest1v VALUES (6, DEFAULT), (7, DEFAULT);  -- ok
+--dg-skip: ALTER VIEW supports only SET and RESET of options, and RENAME yet
 --dg ALTER VIEW gtest1v ALTER COLUMN b SET DEFAULT 100;
 --dg-cascade
 --dg INSERT INTO gtest1v VALUES (8, DEFAULT);  -- error
@@ -176,15 +221,17 @@ DROP TABLE gtestx;
 --dg INSERT INTO gtest1v VALUES (8, DEFAULT), (9, DEFAULT);  -- error
 --dg-cascade
 --dg SELECT * FROM gtest1v;
---dg-cascade
---dg DELETE FROM gtest1v WHERE a >= 5;
---dg-cascade
---dg DROP VIEW gtest1v;
+DELETE FROM gtest1v WHERE a >= 5;
+DROP VIEW gtest1v;
 -- CTEs
---dg-cascade
---dg WITH foo AS (SELECT * FROM gtest1) SELECT * FROM foo;
+WITH foo AS (SELECT * FROM gtest1) SELECT * FROM foo;
+ a | b 
+---+---
+ 3 | 6
+(1 row)
+
 -- inheritance
---dg-cascade
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE gtest1_1 () INHERITS (gtest1);
 --dg-cascade
 --dg SELECT * FROM gtest1_1;
@@ -200,20 +247,18 @@ DROP TABLE gtestx;
 CREATE TABLE gtest_normal (a int, b int);
 --dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE gtest_normal_child (a int, b int GENERATED ALWAYS AS (a * 2) VIRTUAL) INHERITS (gtest_normal);  -- error
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest_normal_child (a int, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
---dg-cascade
+CREATE TABLE gtest_normal_child (a int, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtest_normal_child INHERIT gtest_normal;  -- error
---dg-cascade
---dg DROP TABLE gtest_normal, gtest_normal_child;
+DROP TABLE gtest_normal, gtest_normal_child;
 -- test inheritance mismatches between parent and child
---dg-cascade
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE gtestx (x int, b int DEFAULT 10) INHERITS (gtest1);  -- error
---dg-cascade
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE gtestx (x int, b int GENERATED ALWAYS AS IDENTITY) INHERITS (gtest1);  -- error
---dg-cascade
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE gtestx (x int, b int GENERATED ALWAYS AS (a * 22) STORED) INHERITS (gtest1);  -- error
---dg-cascade
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE gtestx (x int, b int GENERATED ALWAYS AS (a * 22) VIRTUAL) INHERITS (gtest1);  -- ok, overrides parent
 --dg-cascade
 --dg \d+ gtestx
@@ -224,30 +269,27 @@ CREATE TABLE gtest_normal (a int, b int);
 --dg-cascade
 --dg SELECT * FROM gtestx;
 CREATE TABLE gtestxx_1 (a int NOT NULL, b int);
---dg-cascade
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtestxx_1 INHERIT gtest1;  -- error
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtestxx_3 (a int NOT NULL, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
---dg-cascade
+CREATE TABLE gtestxx_3 (a int NOT NULL, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtestxx_3 INHERIT gtest1;  -- ok
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtestxx_4 (b int GENERATED ALWAYS AS (a * 2) VIRTUAL, a int NOT NULL);
---dg-cascade
+CREATE TABLE gtestxx_4 (b int GENERATED ALWAYS AS (a * 2) VIRTUAL, a int NOT NULL);
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtestxx_4 INHERIT gtest1;  -- ok
 -- test multiple inheritance mismatches
 CREATE TABLE gtesty (x int, b int DEFAULT 55);
---dg-cascade
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE gtest1_y () INHERITS (gtest0, gtesty);  -- error
 DROP TABLE gtesty;
 CREATE TABLE gtesty (x int, b int);
---dg-cascade
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE gtest1_y () INHERITS (gtest1, gtesty);  -- error
 DROP TABLE gtesty;
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtesty (x int, b int GENERATED ALWAYS AS (x * 22) VIRTUAL);
---dg-cascade
+CREATE TABLE gtesty (x int, b int GENERATED ALWAYS AS (x * 22) VIRTUAL);
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE gtest1_y () INHERITS (gtest1, gtesty);  -- error
---dg-cascade
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE gtest1_y (b int GENERATED ALWAYS AS (x + 1) VIRTUAL) INHERITS (gtest1, gtesty);  -- ok
 --dg-cascade
 --dg \d gtest1_y
@@ -265,87 +307,118 @@ UPDATE gtestp SET f1 = f1 * 10;
 --dg-cascade
 --dg DROP TABLE gtestp CASCADE;
 -- test update
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest3 (a int, b int GENERATED ALWAYS AS (a * 3) VIRTUAL);
---dg-cascade
---dg INSERT INTO gtest3 (a) VALUES (1), (2), (3), (NULL);
---dg-cascade
---dg SELECT * FROM gtest3 ORDER BY a;
---dg-cascade
---dg UPDATE gtest3 SET a = 22 WHERE a = 2;
---dg-cascade
---dg SELECT * FROM gtest3 ORDER BY a;
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest3a (a text, b text GENERATED ALWAYS AS (a || '+' || a) VIRTUAL);
---dg-cascade
---dg INSERT INTO gtest3a (a) VALUES ('a'), ('b'), ('c'), (NULL);
---dg-cascade
---dg SELECT * FROM gtest3a ORDER BY a;
---dg-cascade
---dg UPDATE gtest3a SET a = 'bb' WHERE a = 'b';
---dg-cascade
---dg SELECT * FROM gtest3a ORDER BY a;
+CREATE TABLE gtest3 (a int, b int GENERATED ALWAYS AS (a * 3) VIRTUAL);
+INSERT INTO gtest3 (a) VALUES (1), (2), (3), (NULL);
+SELECT * FROM gtest3 ORDER BY a;
+ a | b 
+---+---
+ 1 | 3
+ 2 | 6
+ 3 | 9
+   |  
+(4 rows)
+
+UPDATE gtest3 SET a = 22 WHERE a = 2;
+SELECT * FROM gtest3 ORDER BY a;
+ a  | b  
+----+----
+  1 |  3
+  3 |  9
+ 22 | 66
+    |   
+(4 rows)
+
+CREATE TABLE gtest3a (a text, b text GENERATED ALWAYS AS (a || '+' || a) VIRTUAL);
+INSERT INTO gtest3a (a) VALUES ('a'), ('b'), ('c'), (NULL);
+SELECT * FROM gtest3a ORDER BY a;
+ a |  b  
+---+-----
+ a | a+a
+ b | b+b
+ c | c+c
+   | 
+(4 rows)
+
+UPDATE gtest3a SET a = 'bb' WHERE a = 'b';
+SELECT * FROM gtest3a ORDER BY a;
+ a  |   b   
+----+-------
+ a  | a+a
+ bb | bb+bb
+ c  | c+c
+    | 
+(4 rows)
+
 -- COPY
---dg-cascade
---dg TRUNCATE gtest1;
---dg-cascade
---dg INSERT INTO gtest1 (a) VALUES (1), (2);
---dg-cascade
---dg COPY gtest1 TO stdout;
---dg-cascade
---dg COPY gtest1 (a, b) TO stdout;
---dg-cascade
---dg COPY gtest1 FROM stdin;
---dg 3
---dg 4
---dg \.
---dg-cascade
---dg COPY gtest1 (a, b) FROM stdin;
---dg \.
---dg-cascade
---dg COPY gtest1 FROM stdin WHERE b <> 10;
---dg \.
---dg-cascade
+TRUNCATE gtest1;
+INSERT INTO gtest1 (a) VALUES (1), (2);
+COPY gtest1 TO stdout;
+1
+2
+COPY gtest1 (a, b) TO stdout;
+ERROR:  column "b" is a generated column
+DETAIL:  Generated columns cannot be used in COPY.
+COPY gtest1 FROM stdin;
+COPY gtest1 (a, b) FROM stdin;
+ERROR:  column "b" is a generated column
+DETAIL:  Generated columns cannot be used in COPY.
+COPY gtest1 FROM stdin WHERE b <> 10;
+ERROR:  generated columns are not supported in COPY FROM WHERE conditions
+DETAIL:  Column "b" is a generated column.
+--dg-differs: another error: relation "?" does not have a composite type
 --dg COPY gtest1 FROM stdin WHERE gtest1 IS NULL;
 --dg \.
---dg-cascade
---dg SELECT * FROM gtest1 ORDER BY a;
---dg-cascade
---dg TRUNCATE gtest3;
---dg-cascade
---dg INSERT INTO gtest3 (a) VALUES (1), (2);
---dg-cascade
---dg COPY gtest3 TO stdout;
---dg-cascade
---dg COPY gtest3 (a, b) TO stdout;
---dg-cascade
---dg COPY gtest3 FROM stdin;
---dg 3
---dg 4
---dg \.
---dg-cascade
---dg COPY gtest3 (a, b) FROM stdin;
---dg \.
---dg-cascade
---dg SELECT * FROM gtest3 ORDER BY a;
+SELECT * FROM gtest1 ORDER BY a;
+ a | b 
+---+---
+ 1 | 2
+ 2 | 4
+ 3 | 6
+ 4 | 8
+(4 rows)
+
+TRUNCATE gtest3;
+INSERT INTO gtest3 (a) VALUES (1), (2);
+COPY gtest3 TO stdout;
+1
+2
+COPY gtest3 (a, b) TO stdout;
+ERROR:  column "b" is a generated column
+DETAIL:  Generated columns cannot be used in COPY.
+COPY gtest3 FROM stdin;
+COPY gtest3 (a, b) FROM stdin;
+ERROR:  column "b" is a generated column
+DETAIL:  Generated columns cannot be used in COPY.
+SELECT * FROM gtest3 ORDER BY a;
+ a | b  
+---+----
+ 1 |  3
+ 2 |  6
+ 3 |  9
+ 4 | 12
+(4 rows)
+
 -- null values
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest2 (a int PRIMARY KEY, b int GENERATED ALWAYS AS (NULL) VIRTUAL);
---dg-cascade
---dg INSERT INTO gtest2 VALUES (1);
---dg-cascade
---dg SELECT * FROM gtest2;
+CREATE TABLE gtest2 (a int PRIMARY KEY, b int GENERATED ALWAYS AS (NULL) VIRTUAL);
+INSERT INTO gtest2 VALUES (1);
+SELECT * FROM gtest2;
+ a | b 
+---+---
+ 1 |  
+(1 row)
+
 -- simple column reference for varlena types
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest_varlena (a varchar, b varchar GENERATED ALWAYS AS (a) VIRTUAL);
---dg-cascade
---dg INSERT INTO gtest_varlena (a) VALUES('01234567890123456789');
---dg-cascade
---dg INSERT INTO gtest_varlena (a) VALUES(NULL);
---dg-cascade
---dg SELECT * FROM gtest_varlena ORDER BY a;
---dg-cascade
---dg DROP TABLE gtest_varlena;
+CREATE TABLE gtest_varlena (a varchar, b varchar GENERATED ALWAYS AS (a) VIRTUAL);
+INSERT INTO gtest_varlena (a) VALUES('01234567890123456789');
+INSERT INTO gtest_varlena (a) VALUES(NULL);
+SELECT * FROM gtest_varlena ORDER BY a;
+          a           |          b           
+----------------------+----------------------
+ 01234567890123456789 | 01234567890123456789
+                      | 
+(2 rows)
+
+DROP TABLE gtest_varlena;
 -- composite types
 --dg-skip: a relation's storage cannot be made: digres has no catalog tables
 --dg CREATE TYPE double_int as (a int, b int);
@@ -360,40 +433,34 @@ UPDATE gtestp SET f1 = f1 * 10;
 --dg-cascade
 --dg DROP TYPE double_int;
 -- using tableoid is allowed
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest_tableoid (
---dg   a int PRIMARY KEY,
---dg   b bool GENERATED ALWAYS AS (tableoid = 'gtest_tableoid'::regclass) VIRTUAL
---dg );
---dg-cascade
---dg INSERT INTO gtest_tableoid VALUES (1), (2);
---dg-cascade
+CREATE TABLE gtest_tableoid (
+  a int PRIMARY KEY,
+  b bool GENERATED ALWAYS AS (tableoid = 'gtest_tableoid'::regclass) VIRTUAL
+);
+INSERT INTO gtest_tableoid VALUES (1), (2);
+--dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL, DEFAULT and CHECK yet
 --dg ALTER TABLE gtest_tableoid ADD COLUMN
 --dg   c regclass GENERATED ALWAYS AS (tableoid) VIRTUAL;
 --dg-cascade
 --dg SELECT * FROM gtest_tableoid;
 -- drop column behavior
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest10 (a int PRIMARY KEY, b int, c int GENERATED ALWAYS AS (b * 2) VIRTUAL);
---dg-cascade
---dg ALTER TABLE gtest10 DROP COLUMN b;  -- fails
---dg-cascade
---dg ALTER TABLE gtest10 DROP COLUMN b CASCADE;  -- drops c too
---dg-cascade
+CREATE TABLE gtest10 (a int PRIMARY KEY, b int, c int GENERATED ALWAYS AS (b * 2) VIRTUAL);
+ALTER TABLE gtest10 DROP COLUMN b;  -- fails
+ERROR:  cannot drop column b of table gtest10 because other objects depend on it
+DETAIL:  column c of table gtest10 depends on column b of table gtest10
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+ALTER TABLE gtest10 DROP COLUMN b CASCADE;  -- drops c too
+NOTICE:  drop cascades to column c of table gtest10
+--dg-differs: the result
 --dg \d gtest10
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest10a (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
---dg-cascade
---dg ALTER TABLE gtest10a DROP COLUMN b;
---dg-cascade
---dg INSERT INTO gtest10a (a) VALUES (1);
+CREATE TABLE gtest10a (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
+ALTER TABLE gtest10a DROP COLUMN b;
+INSERT INTO gtest10a (a) VALUES (1);
 -- privileges
 CREATE USER regress_user11;
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest11 (a int PRIMARY KEY, b int, c int GENERATED ALWAYS AS (b * 2) VIRTUAL);
---dg-cascade
---dg INSERT INTO gtest11 VALUES (1, 10), (2, 20);
---dg-cascade
+CREATE TABLE gtest11 (a int PRIMARY KEY, b int, c int GENERATED ALWAYS AS (b * 2) VIRTUAL);
+INSERT INTO gtest11 VALUES (1, 10), (2, 20);
+--dg-skip: column privileges are not supported yet
 --dg GRANT SELECT (a, c) ON gtest11 TO regress_user11;
 --dg-skip: language "?" does not exist
 --dg CREATE FUNCTION gf1(a int) RETURNS int AS $$ SELECT a * 3 $$ IMMUTABLE LANGUAGE SQL;
@@ -404,8 +471,8 @@ CREATE USER regress_user11;
 --INSERT INTO gtest12 VALUES (1, 10), (2, 20);
 --GRANT SELECT (a, c), INSERT ON gtest12 TO regress_user11;
 SET ROLE regress_user11;
---dg-cascade
---dg SELECT a, b FROM gtest11;  -- not allowed
+SELECT a, b FROM gtest11;  -- not allowed
+ERROR:  permission denied for table gtest11
 --dg-cascade
 --dg SELECT a, c FROM gtest11;  -- allowed
 --dg-cascade
@@ -414,64 +481,52 @@ SET ROLE regress_user11;
 --SELECT a, c FROM gtest12;  -- currently not allowed because of function permissions, should arguably be allowed
 RESET ROLE;
 --DROP FUNCTION gf1(int);  -- fail
---dg-cascade
---dg DROP TABLE gtest11;
+DROP TABLE gtest11;
 --DROP TABLE gtest12;
 --dg-cascade
 --dg DROP FUNCTION gf1(int);
 DROP USER regress_user11;
 -- check constraints
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE gtest20 (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL CHECK (b < 50));
---dg-cascade
---dg INSERT INTO gtest20 (a) VALUES (10);  -- ok
---dg-cascade
---dg INSERT INTO gtest20 (a) VALUES (30);  -- violates constraint
---dg-cascade
+CREATE TABLE gtest20 (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL CHECK (b < 50));
+INSERT INTO gtest20 (a) VALUES (10);  -- ok
+INSERT INTO gtest20 (a) VALUES (30);  -- violates constraint
+ERROR:  new row for relation "gtest20" violates check constraint "gtest20_b_check"
+DETAIL:  Failing row contains (30, virtual).
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtest20 ALTER COLUMN b SET EXPRESSION AS (a * 100);  -- violates constraint (currently not supported)
---dg-cascade
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtest20 ALTER COLUMN b SET EXPRESSION AS (a * 3);  -- ok (currently not supported)
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest20a (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
---dg-cascade
---dg INSERT INTO gtest20a (a) VALUES (10);
---dg-cascade
---dg INSERT INTO gtest20a (a) VALUES (30);
---dg-cascade
---dg ALTER TABLE gtest20a ADD CHECK (b < 50);  -- fails on existing row
+CREATE TABLE gtest20a (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
+INSERT INTO gtest20a (a) VALUES (10);
+INSERT INTO gtest20a (a) VALUES (30);
+ALTER TABLE gtest20a ADD CHECK (b < 50);  -- fails on existing row
+ERROR:  check constraint "gtest20a_b_check" of relation "gtest20a" is violated by some row
 -- table rewrite cases
---dg-cascade
---dg ALTER TABLE gtest20a ADD COLUMN c float8 DEFAULT random() CHECK (b < 50); -- fails on existing row
---dg-cascade
---dg ALTER TABLE gtest20a ADD COLUMN c float8 DEFAULT random() CHECK (b < 61); -- ok
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest20b (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
---dg-cascade
---dg INSERT INTO gtest20b (a) VALUES (10);
---dg-cascade
---dg INSERT INTO gtest20b (a) VALUES (30);
---dg-cascade
---dg ALTER TABLE gtest20b ADD CONSTRAINT chk CHECK (b < 50) NOT VALID;
---dg-cascade
---dg ALTER TABLE gtest20b VALIDATE CONSTRAINT chk;  -- fails on existing row
+ALTER TABLE gtest20a ADD COLUMN c float8 DEFAULT random() CHECK (b < 50); -- fails on existing row
+ERROR:  check constraint "gtest20a_b_check" of relation "gtest20a" is violated by some row
+ALTER TABLE gtest20a ADD COLUMN c float8 DEFAULT random() CHECK (b < 61); -- ok
+CREATE TABLE gtest20b (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
+INSERT INTO gtest20b (a) VALUES (10);
+INSERT INTO gtest20b (a) VALUES (30);
+ALTER TABLE gtest20b ADD CONSTRAINT chk CHECK (b < 50) NOT VALID;
+ALTER TABLE gtest20b VALIDATE CONSTRAINT chk;  -- fails on existing row
+ERROR:  check constraint "chk" of relation "gtest20b" is violated by some row
 -- check with whole-row reference
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest20c (a int, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
---dg-cascade
+CREATE TABLE gtest20c (a int, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
+--dg-skip: relation "?" does not have a composite type
 --dg ALTER TABLE gtest20c ADD CONSTRAINT whole_row_check CHECK (gtest20c IS NOT NULL);
---dg-cascade
---dg INSERT INTO gtest20c VALUES (1);  -- ok
+INSERT INTO gtest20c VALUES (1);  -- ok
 --dg-cascade
 --dg INSERT INTO gtest20c VALUES (NULL);  -- fails
 -- not-null constraints
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
+--dg-skip: a NOT NULL virtual generated column is not supported yet
 --dg CREATE TABLE gtest21a (a int PRIMARY KEY, b int GENERATED ALWAYS AS (nullif(a, 0)) VIRTUAL NOT NULL);
 --dg-cascade
 --dg INSERT INTO gtest21a (a) VALUES (1);  -- ok
 --dg-cascade
 --dg INSERT INTO gtest21a (a) VALUES (0);  -- violates constraint
 -- also check with table constraint syntax
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
+--dg-skip: a NOT NULL virtual generated column is not supported yet
 --dg CREATE TABLE gtest21ax (a int PRIMARY KEY, b int GENERATED ALWAYS AS (nullif(a, 0)) VIRTUAL, CONSTRAINT cc NOT NULL b);
 --dg-cascade
 --dg INSERT INTO gtest21ax (a) VALUES (0);  -- violates constraint
@@ -482,30 +537,24 @@ DROP USER regress_user11;
 --dg ALTER TABLE gtest21ax ALTER COLUMN b SET EXPRESSION AS (nullif(a, 1)); --error
 --dg-cascade
 --dg DROP TABLE gtest21ax;
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest21ax (a int PRIMARY KEY, b int GENERATED ALWAYS AS (nullif(a, 0)) VIRTUAL);
---dg-cascade
+CREATE TABLE gtest21ax (a int PRIMARY KEY, b int GENERATED ALWAYS AS (nullif(a, 0)) VIRTUAL);
+--dg-skip: could not set a column NOT NULL: set not null: b is a virtual generated column
 --dg ALTER TABLE gtest21ax ADD CONSTRAINT cc NOT NULL b;
 --dg-cascade
 --dg INSERT INTO gtest21ax (a) VALUES (0);  -- violates constraint
---dg-cascade
---dg DROP TABLE gtest21ax;
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest21b (a int, b int GENERATED ALWAYS AS (nullif(a, 0)) VIRTUAL);
---dg-cascade
+DROP TABLE gtest21ax;
+CREATE TABLE gtest21b (a int, b int GENERATED ALWAYS AS (nullif(a, 0)) VIRTUAL);
+--dg-skip: could not set a column NOT NULL: set not null: b is a virtual generated column
 --dg ALTER TABLE gtest21b ALTER COLUMN b SET NOT NULL;
---dg-cascade
---dg INSERT INTO gtest21b (a) VALUES (1);  -- ok
+INSERT INTO gtest21b (a) VALUES (1);  -- ok
 --dg-cascade
 --dg INSERT INTO gtest21b (a) VALUES (2), (0);  -- violates constraint
 --dg-cascade
 --dg INSERT INTO gtest21b (a) VALUES (NULL);  -- error
---dg-cascade
---dg ALTER TABLE gtest21b ALTER COLUMN b DROP NOT NULL;
---dg-cascade
---dg INSERT INTO gtest21b (a) VALUES (0);  -- ok now
+ALTER TABLE gtest21b ALTER COLUMN b DROP NOT NULL;
+INSERT INTO gtest21b (a) VALUES (0);  -- ok now
 -- virtual generated columns are not physically stored, even when not null
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
+--dg-skip: a NOT NULL virtual generated column is not supported yet
 --dg CREATE TABLE gtest21c (a int NOT NULL, b int GENERATED ALWAYS AS (a * 2) VIRTUAL NOT NULL, c int NOT NULL);
 --dg-cascade
 --dg INSERT INTO gtest21c (a, c) VALUES (10, 42);
@@ -518,7 +567,7 @@ DROP USER regress_user11;
 -- column.
 CREATE TABLE gtest21d (a int NOT NULL);
 INSERT INTO gtest21d (a) VALUES(10);
---dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL and DEFAULT yet
+--dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL, DEFAULT and CHECK yet
 --dg ALTER TABLE gtest21d ADD COLUMN b INT GENERATED ALWAYS AS (a * 10) VIRTUAL NOT NULL;
 --dg-cascade
 --dg SELECT * FROM gtest21d ORDER BY a;
@@ -563,18 +612,17 @@ DROP TABLE gtest21d;
 --dg-cascade
 --dg ALTER TABLE gtestnn_parent ADD COLUMN c int NOT NULL GENERATED ALWAYS AS (nullif(f1, 4) + nullif(f2, 6)) VIRTUAL;  -- ok
 -- index constraints
---dg-differs: another error: column "?" asks for what CREATE TABLE does not support yet
+--dg-differs: another error: indexes on virtual generated columns are not supported
 --dg CREATE TABLE gtest22a (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a / 2) VIRTUAL UNIQUE);
 --INSERT INTO gtest22a VALUES (2);
 --INSERT INTO gtest22a VALUES (3);
 --INSERT INTO gtest22a VALUES (4);
---dg-differs: another error: column "?" asks for what CREATE TABLE does not support yet
+--dg-differs: another error: a NOT NULL virtual generated column is not supported yet
 --dg CREATE TABLE gtest22b (a int, b int GENERATED ALWAYS AS (a / 2) VIRTUAL, PRIMARY KEY (a, b));
 --INSERT INTO gtest22b VALUES (2);
 --INSERT INTO gtest22b VALUES (2);
 -- indexes
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest22c (a int, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
+CREATE TABLE gtest22c (a int, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
 --CREATE INDEX gtest22c_b_idx ON gtest22c (b);
 --CREATE INDEX gtest22c_expr_idx ON gtest22c ((b * 3));
 --CREATE INDEX gtest22c_pred_idx ON gtest22c (a) WHERE b > 0;
@@ -601,11 +649,11 @@ DROP TABLE gtest21d;
 -- foreign keys
 CREATE TABLE gtest23a (x int PRIMARY KEY, y int);
 --INSERT INTO gtest23a VALUES (1, 11), (2, 22), (3, 33);
---dg-differs: another error: column "?" asks for what CREATE TABLE does not support yet
+--dg-differs: no error where PostgreSQL has: invalid ON UPDATE action for foreign key constraint containing generated column
 --dg CREATE TABLE gtest23x (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL REFERENCES gtest23a (x) ON UPDATE CASCADE);  -- error
---dg-differs: another error: column "?" asks for what CREATE TABLE does not support yet
+--dg-differs: no error where PostgreSQL has: invalid ON DELETE action for foreign key constraint containing generated column
 --dg CREATE TABLE gtest23x (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL REFERENCES gtest23a (x) ON DELETE SET NULL);  -- error
---dg-differs: another error: column "?" asks for what CREATE TABLE does not support yet
+--dg-differs: no error where PostgreSQL has: foreign key constraints on virtual generated columns are not supported
 --dg CREATE TABLE gtest23b (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL REFERENCES gtest23a (x));
 --\d gtest23b
 --INSERT INTO gtest23b VALUES (1);  -- ok
@@ -614,7 +662,7 @@ CREATE TABLE gtest23a (x int PRIMARY KEY, y int);
 --ALTER TABLE gtest23b ALTER COLUMN b SET EXPRESSION AS (a * 1); -- ok
 --DROP TABLE gtest23b;
 --DROP TABLE gtest23a;
---dg-differs: another error: column "?" asks for what CREATE TABLE does not support yet
+--dg-differs: another error: a NOT NULL virtual generated column is not supported yet
 --dg CREATE TABLE gtest23p (x int, y int GENERATED ALWAYS AS (x * 2) VIRTUAL, PRIMARY KEY (y));
 --INSERT INTO gtest23p VALUES (1), (2), (3);
 CREATE TABLE gtest23q (a int PRIMARY KEY, b int REFERENCES gtest23p (y));
@@ -637,8 +685,7 @@ ERROR:  relation "gtest23p" does not exist
 CREATE TABLE gtest24at (a int PRIMARY KEY);
 --dg-cascade
 --dg ALTER TABLE gtest24at ADD COLUMN b gtestdomain1 GENERATED ALWAYS AS (a * 2) VIRTUAL;  -- error
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest24ata (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
+CREATE TABLE gtest24ata (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
 --dg-cascade
 --dg ALTER TABLE gtest24ata ALTER COLUMN b TYPE gtestdomain1;  -- error
 --dg-skip: relation pg_type cannot be written: digres has no catalog tables
@@ -664,8 +711,7 @@ CREATE TABLE gtest24at (a int PRIMARY KEY);
 --dg CREATE TABLE gtest_child PARTITION OF gtest_parent (
 --dg     f3 WITH OPTIONS GENERATED ALWAYS AS (f2 * 2) VIRTUAL
 --dg ) FOR VALUES FROM ('2016-07-01') TO ('2016-08-01'); -- error
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest_child (f1 date NOT NULL, f2 bigint, f3 bigint GENERATED ALWAYS AS (f2 * 2) VIRTUAL);
+CREATE TABLE gtest_child (f1 date NOT NULL, f2 bigint, f3 bigint GENERATED ALWAYS AS (f2 * 2) VIRTUAL);
 --dg-cascade
 --dg ALTER TABLE gtest_parent ATTACH PARTITION gtest_child FOR VALUES FROM ('2016-07-01') TO ('2016-08-01'); -- error
 --dg-cascade
@@ -703,14 +749,11 @@ CREATE TABLE gtest_child3 (f1 date NOT NULL, f2 bigint, f3 bigint GENERATED ALWA
 --dg-cascade
 --dg ALTER TABLE gtest_parent ATTACH PARTITION gtest_child3 FOR VALUES FROM ('2016-09-01') TO ('2016-10-01'); -- error
 DROP TABLE gtest_child3;
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest_child3 (f1 date NOT NULL, f2 bigint, f3 bigint GENERATED ALWAYS AS (f2 * 33) STORED);
+CREATE TABLE gtest_child3 (f1 date NOT NULL, f2 bigint, f3 bigint GENERATED ALWAYS AS (f2 * 33) STORED);
 --dg-cascade
 --dg ALTER TABLE gtest_parent ATTACH PARTITION gtest_child3 FOR VALUES FROM ('2016-09-01') TO ('2016-10-01'); -- error
---dg-cascade
---dg DROP TABLE gtest_child3;
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest_child3 (f1 date NOT NULL, f2 bigint, f3 bigint GENERATED ALWAYS AS (f2 * 33) VIRTUAL);
+DROP TABLE gtest_child3;
+CREATE TABLE gtest_child3 (f1 date NOT NULL, f2 bigint, f3 bigint GENERATED ALWAYS AS (f2 * 33) VIRTUAL);
 --dg-cascade
 --dg ALTER TABLE gtest_parent ATTACH PARTITION gtest_child3 FOR VALUES FROM ('2016-09-01') TO ('2016-10-01');
 --dg-cascade
@@ -731,8 +774,11 @@ DROP TABLE gtest_child3;
 --dg SELECT tableoid::regclass, * FROM gtest_child ORDER BY 1, 2, 3;
 --dg-cascade
 --dg SELECT tableoid::regclass, * FROM gtest_child2 ORDER BY 1, 2, 3;  -- uses child's generation expression, not parent's
---dg-cascade
---dg SELECT tableoid::regclass, * FROM gtest_child3 ORDER BY 1, 2, 3;
+SELECT tableoid::regclass, * FROM gtest_child3 ORDER BY 1, 2, 3;
+ tableoid | f1 | f2 | f3 
+----------+----+----+----
+(0 rows)
+
 --dg-cascade
 --dg UPDATE gtest_parent SET f1 = f1 + 60 WHERE f2 = 1;
 --dg-cascade
@@ -740,7 +786,7 @@ DROP TABLE gtest_child3;
 -- alter only parent's and one child's generation expression
 --dg-cascade
 --dg ALTER TABLE ONLY gtest_parent ALTER COLUMN f3 SET EXPRESSION AS (f2 * 4);
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtest_child ALTER COLUMN f3 SET EXPRESSION AS (f2 * 10);
 --dg-cascade
 --dg \d gtest_parent
@@ -780,19 +826,19 @@ DROP TABLE gtest_child3;
 -- ALTER TABLE ... ADD COLUMN
 CREATE TABLE gtest25 (a int PRIMARY KEY);
 INSERT INTO gtest25 VALUES (3), (4);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtest25 ADD COLUMN b int GENERATED ALWAYS AS (a * 2) VIRTUAL, ALTER COLUMN b SET EXPRESSION AS (a * 3);
 --dg-cascade
 --dg SELECT * FROM gtest25 ORDER BY a;
 --dg-cascade
 --dg ALTER TABLE gtest25 ADD COLUMN x int GENERATED ALWAYS AS (b * 4) VIRTUAL;  -- error
---dg-differs: another error: ALTER TABLE ... ADD COLUMN supports only NOT NULL and DEFAULT yet
+--dg-differs: another error: ALTER TABLE ... ADD COLUMN supports only NOT NULL, DEFAULT and CHECK yet
 --dg ALTER TABLE gtest25 ADD COLUMN x int GENERATED ALWAYS AS (z * 4) VIRTUAL;  -- error
---dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL and DEFAULT yet
+--dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL, DEFAULT and CHECK yet
 --dg ALTER TABLE gtest25 ADD COLUMN c int DEFAULT 42,
 --dg   ADD COLUMN x int GENERATED ALWAYS AS (c * 4) VIRTUAL;
 ALTER TABLE gtest25 ADD COLUMN d int DEFAULT 101;
---dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL and DEFAULT yet
+--dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL, DEFAULT and CHECK yet
 --dg ALTER TABLE gtest25 ALTER COLUMN d SET DATA TYPE float8,
 --dg   ADD COLUMN y float8 GENERATED ALWAYS AS (d * 4) VIRTUAL;
 --dg-cascade
@@ -800,39 +846,41 @@ ALTER TABLE gtest25 ADD COLUMN d int DEFAULT 101;
 --dg-cascade
 --dg \d gtest25
 -- ALTER TABLE ... ALTER COLUMN
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest27 (
---dg     a int,
---dg     b int,
---dg     x int GENERATED ALWAYS AS ((a + b) * 2) VIRTUAL
---dg );
---dg-cascade
---dg INSERT INTO gtest27 (a, b) VALUES (3, 7), (4, 11);
---dg-cascade
---dg ALTER TABLE gtest27 ALTER COLUMN a TYPE text;  -- error
---dg-cascade
+CREATE TABLE gtest27 (
+    a int,
+    b int,
+    x int GENERATED ALWAYS AS ((a + b) * 2) VIRTUAL
+);
+INSERT INTO gtest27 (a, b) VALUES (3, 7), (4, 11);
+ALTER TABLE gtest27 ALTER COLUMN a TYPE text;  -- error
+ERROR:  cannot alter type of a column used by a generated column
+DETAIL:  Column "a" is used by generated column "x".
+--dg-skip: ALTER COLUMN TYPE of a generated column is not supported yet
 --dg ALTER TABLE gtest27 ALTER COLUMN x TYPE numeric;
 --dg-cascade
 --dg \d gtest27
---dg-cascade
---dg SELECT * FROM gtest27;
---dg-cascade
+SELECT * FROM gtest27;
+ a | b  | x  
+---+----+----
+ 3 |  7 | 20
+ 4 | 11 | 30
+(2 rows)
+
+--dg-differs: another error: default for column "?" cannot be cast automatically to type boolean
 --dg ALTER TABLE gtest27 ALTER COLUMN x TYPE boolean USING x <> 0;  -- error
---dg-cascade
---dg ALTER TABLE gtest27 ALTER COLUMN x DROP DEFAULT;  -- error
+ALTER TABLE gtest27 ALTER COLUMN x DROP DEFAULT;  -- error
+ERROR:  column "x" of relation "gtest27" is a generated column
 -- test not-null checking during table rewrite
---dg-cascade
---dg INSERT INTO gtest27 (a, b) VALUES (NULL, NULL);
---dg-cascade
+INSERT INTO gtest27 (a, b) VALUES (NULL, NULL);
+--dg-differs: another error: ALTER TABLE ... ADD COLUMN supports only NOT NULL, DEFAULT and CHECK yet
 --dg ALTER TABLE gtest27
 --dg   DROP COLUMN x,
 --dg   ALTER COLUMN a TYPE bigint,
 --dg   ALTER COLUMN b TYPE bigint,
 --dg   ADD COLUMN x bigint GENERATED ALWAYS AS ((a + b) * 2) VIRTUAL NOT NULL;  -- error
---dg-cascade
---dg DELETE FROM gtest27 WHERE a IS NULL AND b IS NULL;
+DELETE FROM gtest27 WHERE a IS NULL AND b IS NULL;
 -- It's possible to alter the column types this way:
---dg-cascade
+--dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL, DEFAULT and CHECK yet
 --dg ALTER TABLE gtest27
 --dg   DROP COLUMN x,
 --dg   ALTER COLUMN a TYPE bigint,
@@ -841,45 +889,59 @@ ALTER TABLE gtest25 ADD COLUMN d int DEFAULT 101;
 --dg-cascade
 --dg \d gtest27
 -- Ideally you could just do this, but not today (and should x change type?):
---dg-cascade
---dg ALTER TABLE gtest27
---dg   ALTER COLUMN a TYPE float8,
---dg   ALTER COLUMN b TYPE float8;  -- error
+ALTER TABLE gtest27
+  ALTER COLUMN a TYPE float8,
+  ALTER COLUMN b TYPE float8;  -- error
+ERROR:  cannot alter type of a column used by a generated column
+DETAIL:  Column "a" is used by generated column "x".
 --dg-cascade
 --dg \d gtest27
---dg-cascade
---dg SELECT * FROM gtest27;
+SELECT * FROM gtest27;
+ a | b  | x  
+---+----+----
+ 3 |  7 | 20
+ 4 | 11 | 30
+(2 rows)
+
 -- ALTER TABLE ... ALTER COLUMN ... DROP EXPRESSION
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest29 (
---dg     a int,
---dg     b int GENERATED ALWAYS AS (a * 2) VIRTUAL
---dg );
---dg-cascade
---dg INSERT INTO gtest29 (a) VALUES (3), (4);
---dg-cascade
---dg SELECT * FROM gtest29;
---dg-cascade
---dg \d gtest29
---dg-cascade
+CREATE TABLE gtest29 (
+    a int,
+    b int GENERATED ALWAYS AS (a * 2) VIRTUAL
+);
+INSERT INTO gtest29 (a) VALUES (3), (4);
+SELECT * FROM gtest29;
+ a | b 
+---+---
+ 3 | 6
+ 4 | 8
+(2 rows)
+
+\d gtest29
+                Table "generated_virtual_tests.gtest29"
+ Column |  Type   | Collation | Nullable |           Default           
+--------+---------+-----------+----------+-----------------------------
+ a      | integer |           |          | 
+ b      | integer |           |          | generated always as (a * 2)
+
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtest29 ALTER COLUMN a SET EXPRESSION AS (a * 3);  -- error
---dg-cascade
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtest29 ALTER COLUMN a DROP EXPRESSION;  -- error
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtest29 ALTER COLUMN a DROP EXPRESSION IF EXISTS;  -- notice
 -- Change the expression
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtest29 ALTER COLUMN b SET EXPRESSION AS (a * 3);
 --dg-cascade
 --dg SELECT * FROM gtest29;
 --dg-cascade
 --dg \d gtest29
---dg-cascade
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtest29 ALTER COLUMN b DROP EXPRESSION;  -- not supported
---dg-cascade
---dg INSERT INTO gtest29 (a) VALUES (5);
---dg-cascade
---dg INSERT INTO gtest29 (a, b) VALUES (6, 66);
+INSERT INTO gtest29 (a) VALUES (5);
+INSERT INTO gtest29 (a, b) VALUES (6, 66);
+ERROR:  cannot insert a non-DEFAULT value into column "b"
+DETAIL:  Column "b" is a generated column.
 --dg-cascade
 --dg SELECT * FROM gtest29;
 --dg-cascade
@@ -888,14 +950,13 @@ ALTER TABLE gtest25 ADD COLUMN d int DEFAULT 101;
 --ALTER TABLE gtest29 DROP COLUMN a;  -- should not drop b
 --\d gtest29
 -- with inheritance
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest30 (
---dg     a int,
---dg     b int GENERATED ALWAYS AS (a * 2) VIRTUAL
---dg );
---dg-cascade
+CREATE TABLE gtest30 (
+    a int,
+    b int GENERATED ALWAYS AS (a * 2) VIRTUAL
+);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE gtest30_1 () INHERITS (gtest30);
---dg-cascade
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtest30 ALTER COLUMN b DROP EXPRESSION;
 --dg-cascade
 --dg \d gtest30
@@ -903,12 +964,12 @@ ALTER TABLE gtest25 ADD COLUMN d int DEFAULT 101;
 --dg \d gtest30_1
 --dg-cascade
 --dg DROP TABLE gtest30 CASCADE;
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
+--dg-cascade
 --dg CREATE TABLE gtest30 (
 --dg     a int,
 --dg     b int GENERATED ALWAYS AS (a * 2) VIRTUAL
 --dg );
---dg-cascade
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE gtest30_1 () INHERITS (gtest30);
 --dg-cascade
 --dg ALTER TABLE ONLY gtest30 ALTER COLUMN b DROP EXPRESSION;  -- error
@@ -919,46 +980,44 @@ ALTER TABLE gtest25 ADD COLUMN d int DEFAULT 101;
 --dg-cascade
 --dg ALTER TABLE gtest30_1 ALTER COLUMN b DROP EXPRESSION;  -- error
 -- composite type dependencies
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest31_1 (a int, b text GENERATED ALWAYS AS ('hello') VIRTUAL, c text);
---dg-cascade
+CREATE TABLE gtest31_1 (a int, b text GENERATED ALWAYS AS ('hello') VIRTUAL, c text);
+--dg-skip: type "?" does not exist
 --dg CREATE TABLE gtest31_2 (x int, y gtest31_1);
 --dg-cascade
 --dg ALTER TABLE gtest31_1 ALTER COLUMN b TYPE varchar;  -- fails
 -- bug #18970
 --dg-cascade
 --dg ALTER TABLE gtest31_2 ADD CONSTRAINT cc CHECK ((y).b IS NOT NULL);
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtest31_1 ALTER COLUMN b SET EXPRESSION AS ('hello1');
 --dg-cascade
 --dg ALTER TABLE gtest31_2 DROP CONSTRAINT cc;
 --dg-cascade
 --dg CREATE STATISTICS gtest31_2_stat ON ((y).b is not null) FROM gtest31_2;
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtest31_1 ALTER COLUMN b SET EXPRESSION AS ('hello2');
 --dg-cascade
 --dg DROP STATISTICS gtest31_2_stat;
 --dg-cascade
 --dg CREATE INDEX gtest31_2_y_idx ON gtest31_2(((y).b));
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE gtest31_1 ALTER COLUMN b SET EXPRESSION AS ('hello3');
 --dg-cascade
 --dg DROP TABLE gtest31_1, gtest31_2;
 -- Check it for a partitioned table, too
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE gtest31_1 (a int, b text GENERATED ALWAYS AS ('hello') VIRTUAL, c text) PARTITION BY LIST (a);
 --dg-cascade
+--dg CREATE TABLE gtest31_1 (a int, b text GENERATED ALWAYS AS ('hello') VIRTUAL, c text) PARTITION BY LIST (a);
+--dg-skip: type "?" does not exist
 --dg CREATE TABLE gtest31_2 (x int, y gtest31_1);
 --dg-cascade
 --dg ALTER TABLE gtest31_1 ALTER COLUMN b TYPE varchar;  -- fails
 --dg-cascade
 --dg DROP TABLE gtest31_1, gtest31_2;
 -- triggers
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest26 (
---dg     a int PRIMARY KEY,
---dg     b int GENERATED ALWAYS AS (a * 2) VIRTUAL
---dg );
+CREATE TABLE gtest26 (
+    a int PRIMARY KEY,
+    b int GENERATED ALWAYS AS (a * 2) VIRTUAL
+);
 --dg-skip: language "?" does not exist
 --dg CREATE FUNCTION gtest_trigger_func() RETURNS trigger
 --dg   LANGUAGE plpgsql
@@ -982,12 +1041,15 @@ ALTER TABLE gtest25 ADD COLUMN d int DEFAULT 101;
 --dg   FOR EACH ROW
 --dg   WHEN (OLD.b < 0)  -- ok
 --dg   EXECUTE PROCEDURE gtest_trigger_func();
---dg-cascade
---dg CREATE TRIGGER gtest2a BEFORE INSERT OR UPDATE ON gtest26
---dg   FOR EACH ROW
---dg   WHEN (NEW.b < 0)  -- error
---dg   EXECUTE PROCEDURE gtest_trigger_func();
---dg-cascade
+CREATE TRIGGER gtest2a BEFORE INSERT OR UPDATE ON gtest26
+  FOR EACH ROW
+  WHEN (NEW.b < 0)  -- error
+  EXECUTE PROCEDURE gtest_trigger_func();
+ERROR:  BEFORE trigger's WHEN condition cannot reference NEW generated columns
+LINE 3:   WHEN (NEW.b < 0)  -- error
+                ^
+DETAIL:  Column "b" is a generated column.
+--dg-differs: another error: relation "?" does not have a composite type
 --dg CREATE TRIGGER gtest2b BEFORE INSERT OR UPDATE ON gtest26
 --dg   FOR EACH ROW
 --dg   WHEN (NEW.* IS NOT NULL)  -- error
@@ -1044,8 +1106,7 @@ ALTER TABLE gtest25 ADD COLUMN d int DEFAULT 101;
 --dg UPDATE gtest26 SET a = 1 WHERE a = 0;
 --dg-cascade
 --dg DROP TRIGGER gtest11 ON gtest26;
---dg-cascade
---dg TRUNCATE gtest26;
+TRUNCATE gtest26;
 -- check that modifications of generated columns in triggers do
 -- not get propagated
 --dg-skip: language "?" does not exist
@@ -1079,36 +1140,30 @@ ALTER TABLE gtest25 ADD COLUMN d int DEFAULT 101;
 --dg-cascade
 --dg SELECT * FROM gtest26 ORDER BY a;
 -- LIKE INCLUDING GENERATED and dropped column handling
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest28a (
---dg   a int,
---dg   b int,
---dg   c int,
---dg   x int GENERATED ALWAYS AS (b * 2) VIRTUAL
---dg );
---dg-cascade
---dg ALTER TABLE gtest28a DROP COLUMN a;
---dg-cascade
+CREATE TABLE gtest28a (
+  a int,
+  b int,
+  c int,
+  x int GENERATED ALWAYS AS (b * 2) VIRTUAL
+);
+ALTER TABLE gtest28a DROP COLUMN a;
+--dg-skip: LIKE ... INCLUDING GENERATED is not supported yet
 --dg CREATE TABLE gtest28b (LIKE gtest28a INCLUDING GENERATED);
 --dg-cascade
 --dg \d gtest28*
 -- rule actions referring to generated columns:
 -- NEW.b in a rule action should reflect the generated column's new value
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE gtest_rule (a int, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
+CREATE TABLE gtest_rule (a int, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
 CREATE TABLE gtest_rule_log (op text, old_b int, new_b int);
---dg-cascade
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE gtest_rule_upd AS ON UPDATE TO gtest_rule
 --dg   DO ALSO INSERT INTO gtest_rule_log VALUES ('UPD', OLD.b, NEW.b);
---dg-cascade
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE gtest_rule_ins AS ON INSERT TO gtest_rule
 --dg   DO ALSO INSERT INTO gtest_rule_log VALUES ('INS', NULL, NEW.b);
---dg-cascade
---dg INSERT INTO gtest_rule (a) VALUES (1);
---dg-cascade
---dg UPDATE gtest_rule SET a = 10;
---dg-cascade
---dg UPDATE gtest_rule SET a = (SELECT max(b) FROM gtest_rule);
+INSERT INTO gtest_rule (a) VALUES (1);
+UPDATE gtest_rule SET a = 10;
+UPDATE gtest_rule SET a = (SELECT max(b) FROM gtest_rule);
 --dg-cascade
 --dg SELECT * FROM gtest_rule_log;
 --dg-cascade
@@ -1118,15 +1173,13 @@ CREATE TABLE gtest_rule_log (op text, old_b int, new_b int);
 DROP TABLE gtest_rule_log;
 -- rule quals referring to generated columns:
 -- NEW.b in the rule qual should reflect the generated column's new value
---dg-cascade
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE gtest_rule_qual AS ON UPDATE TO gtest_rule WHERE NEW.b > 100
 --dg   DO INSTEAD NOTHING;
---dg-cascade
---dg UPDATE gtest_rule SET a = 100;
+UPDATE gtest_rule SET a = 100;
 --dg-cascade
 --dg SELECT * FROM gtest_rule;
---dg-cascade
---dg DROP TABLE gtest_rule;
+DROP TABLE gtest_rule;
 -- sanity check of system catalog
 SELECT attrelid, attname, attgenerated FROM pg_attribute WHERE attgenerated NOT IN ('', 's', 'v');
  attrelid | attname | attgenerated 
@@ -1138,65 +1191,138 @@ SELECT attrelid, attname, attgenerated FROM pg_attribute WHERE attgenerated NOT 
 --
 -- these tests are specific to generated_virtual.sql
 --
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg create table gtest32 (
---dg   a int primary key,
---dg   b int generated always as (a * 2),
---dg   c int generated always as (10 + 10),
---dg   d int generated always as (coalesce(a, 100)),
---dg   e int
---dg );
---dg-cascade
---dg insert into gtest32 values (1), (2);
---dg-cascade
---dg analyze gtest32;
+create table gtest32 (
+  a int primary key,
+  b int generated always as (a * 2),
+  c int generated always as (10 + 10),
+  d int generated always as (coalesce(a, 100)),
+  e int
+);
+insert into gtest32 values (1), (2);
+analyze gtest32;
 -- Ensure that nullingrel bits are propagated into the generation expressions
---dg-cascade
---dg explain (costs off)
---dg select sum(t2.b) over (partition by t2.a),
---dg        sum(t2.c) over (partition by t2.a),
---dg        sum(t2.d) over (partition by t2.a)
---dg from gtest32 as t1 left join gtest32 as t2 on (t1.a = t2.a)
---dg order by t1.a;
---dg-cascade
---dg select sum(t2.b) over (partition by t2.a),
---dg        sum(t2.c) over (partition by t2.a),
---dg        sum(t2.d) over (partition by t2.a)
---dg from gtest32 as t1 left join gtest32 as t2 on (t1.a = t2.a)
---dg order by t1.a;
+explain (costs off)
+select sum(t2.b) over (partition by t2.a),
+       sum(t2.c) over (partition by t2.a),
+       sum(t2.d) over (partition by t2.a)
+from gtest32 as t1 left join gtest32 as t2 on (t1.a = t2.a)
+order by t1.a;
+                      QUERY PLAN                      
+------------------------------------------------------
+ Sort
+   Sort Key: t1.a
+   ->  WindowAgg
+         Window: w1 AS (PARTITION BY t2.a)
+         ->  Sort
+               Sort Key: t2.a
+               ->  Nested Loop Left Join
+                     Join Filter: (t1.a = t2.a)
+                     ->  Seq Scan on gtest32 t1
+                     ->  Materialize
+                           ->  Seq Scan on gtest32 t2
+(11 rows)
+
+select sum(t2.b) over (partition by t2.a),
+       sum(t2.c) over (partition by t2.a),
+       sum(t2.d) over (partition by t2.a)
+from gtest32 as t1 left join gtest32 as t2 on (t1.a = t2.a)
+order by t1.a;
+ sum | sum | sum 
+-----+-----+-----
+   2 |  20 |   1
+   4 |  20 |   2
+(2 rows)
+
 -- Ensure that outer-join removal functions correctly after the propagation of nullingrel bits
---dg-cascade
---dg explain (costs off)
---dg select t1.a from gtest32 t1 left join gtest32 t2 on t1.a = t2.a
---dg where coalesce(t2.b, 1) = 2;
---dg-cascade
---dg select t1.a from gtest32 t1 left join gtest32 t2 on t1.a = t2.a
---dg where coalesce(t2.b, 1) = 2;
---dg-cascade
---dg explain (costs off)
---dg select t1.a from gtest32 t1 left join gtest32 t2 on t1.a = t2.a
---dg where coalesce(t2.b, 1) = 2 or t1.a is null;
---dg-cascade
---dg select t1.a from gtest32 t1 left join gtest32 t2 on t1.a = t2.a
---dg where coalesce(t2.b, 1) = 2 or t1.a is null;
+explain (costs off)
+select t1.a from gtest32 t1 left join gtest32 t2 on t1.a = t2.a
+where coalesce(t2.b, 1) = 2;
+               QUERY PLAN                
+-----------------------------------------
+ Hash Left Join
+   Hash Cond: (t1.a = t2.a)
+   Filter: (COALESCE((t2.a * 2), 1) = 2)
+   ->  Seq Scan on gtest32 t1
+   ->  Hash
+         ->  Seq Scan on gtest32 t2
+(6 rows)
+
+select t1.a from gtest32 t1 left join gtest32 t2 on t1.a = t2.a
+where coalesce(t2.b, 1) = 2;
+ a 
+---
+ 1
+(1 row)
+
+explain (costs off)
+select t1.a from gtest32 t1 left join gtest32 t2 on t1.a = t2.a
+where coalesce(t2.b, 1) = 2 or t1.a is null;
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Hash Left Join
+   Hash Cond: (t1.a = t2.a)
+   Filter: ((COALESCE((t2.a * 2), 1) = 2) OR (t1.a IS NULL))
+   ->  Seq Scan on gtest32 t1
+   ->  Hash
+         ->  Seq Scan on gtest32 t2
+(6 rows)
+
+select t1.a from gtest32 t1 left join gtest32 t2 on t1.a = t2.a
+where coalesce(t2.b, 1) = 2 or t1.a is null;
+ a 
+---
+ 1
+(1 row)
+
 -- Ensure that the generation expressions are wrapped into PHVs if needed
---dg-cascade
---dg explain (verbose, costs off)
---dg select t2.* from gtest32 t1 left join gtest32 t2 on false;
---dg-cascade
---dg select t2.* from gtest32 t1 left join gtest32 t2 on false;
---dg-cascade
---dg explain (verbose, costs off)
---dg select * from gtest32 t group by grouping sets (a, b, c, d, e) having c = 20;
---dg-cascade
---dg select * from gtest32 t group by grouping sets (a, b, c, d, e) having c = 20;
+explain (verbose, costs off)
+select t2.* from gtest32 t1 left join gtest32 t2 on false;
+                      QUERY PLAN                      
+------------------------------------------------------
+ Nested Loop Left Join
+   Output: a, (a * 2), (20), (COALESCE(a, 100)), e
+   Join Filter: false
+   ->  Seq Scan on generated_virtual_tests.gtest32 t1
+         Output: t1.a, t1.b, t1.c, t1.d, t1.e
+   ->  Result
+         Output: a, e, 20, COALESCE(a, 100)
+         One-Time Filter: false
+(8 rows)
+
+select t2.* from gtest32 t1 left join gtest32 t2 on false;
+ a | b | c | d | e 
+---+---+---+---+---
+   |   |   |   |  
+   |   |   |   |  
+(2 rows)
+
+explain (verbose, costs off)
+select * from gtest32 t group by grouping sets (a, b, c, d, e) having c = 20;
+                     QUERY PLAN                      
+-----------------------------------------------------
+ HashAggregate
+   Output: a, ((a * 2)), (20), (COALESCE(a, 100)), e
+   Hash Key: t.a
+   Hash Key: (t.a * 2)
+   Hash Key: 20
+   Hash Key: COALESCE(t.a, 100)
+   Hash Key: t.e
+   Filter: ((20) = 20)
+   ->  Seq Scan on generated_virtual_tests.gtest32 t
+         Output: a, (a * 2), 20, COALESCE(a, 100), e
+(10 rows)
+
+select * from gtest32 t group by grouping sets (a, b, c, d, e) having c = 20;
+ a | b | c  | d | e 
+---+---+----+---+---
+   |   | 20 |   |  
+(1 row)
+
 -- Ensure that the virtual generated columns in ALTER COLUMN TYPE USING expression are expanded
---dg-cascade
---dg alter table gtest32 alter column e type bigint using b;
---dg-cascade
---dg drop table gtest32;
+alter table gtest32 alter column e type bigint using b;
+drop table gtest32;
 -- Ensure that virtual generated columns in constraint expressions are expanded
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg-skip: a NOT NULL virtual generated column is not supported yet
 --dg create table gtest33 (a int, b int generated always as (a * 2) virtual not null, check (b > 10));
 set constraint_exclusion to on;
 -- should get a dummy Result, not a seq scan
@@ -1213,22 +1339,31 @@ reset constraint_exclusion;
 -- Ensure that EXCLUDED.<virtual-generated-column> in INSERT ... ON CONFLICT
 -- DO UPDATE is expanded to the generation expression, both for plain and
 -- partitioned target relations.
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg create table gtest34 (id int primary key, a int,
---dg                       c int generated always as (a * 10) virtual);
---dg-cascade
---dg insert into gtest34 values (1, 5);
---dg-cascade
---dg insert into gtest34 values (1, 7)
---dg     on conflict (id) do update set a = excluded.c returning *;
---dg-cascade
---dg insert into gtest34 values (1, 2)
---dg     on conflict (id) do update set a = gtest34.c + excluded.c returning *;
---dg-cascade
---dg insert into gtest34 values (1, 3)
---dg     on conflict (id) do update set a = 999 where excluded.c > 20 returning *;
---dg-cascade
---dg drop table gtest34;
+create table gtest34 (id int primary key, a int,
+                      c int generated always as (a * 10) virtual);
+insert into gtest34 values (1, 5);
+insert into gtest34 values (1, 7)
+    on conflict (id) do update set a = excluded.c returning *;
+ id | a  |  c  
+----+----+-----
+  1 | 70 | 700
+(1 row)
+
+insert into gtest34 values (1, 2)
+    on conflict (id) do update set a = gtest34.c + excluded.c returning *;
+ id |  a  |  c   
+----+-----+------
+  1 | 720 | 7200
+(1 row)
+
+insert into gtest34 values (1, 3)
+    on conflict (id) do update set a = 999 where excluded.c > 20 returning *;
+ id |  a  |  c   
+----+-----+------
+  1 | 999 | 9990
+(1 row)
+
+drop table gtest34;
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table gtest34p (id int primary key, a int,
 --dg                        c int generated always as (a * 10) virtual)
@@ -1246,23 +1381,32 @@ reset constraint_exclusion;
 --dg-cascade
 --dg drop table gtest34p;
 -- Ensure that virtual generated columns work with WHERE CURRENT OF
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg create table gtest_cursor (id int primary key, a int, b int generated always as (a * 2) virtual);
---dg-cascade
---dg insert into gtest_cursor values (1, 10), (2, 20), (3, 30);
+create table gtest_cursor (id int primary key, a int, b int generated always as (a * 2) virtual);
+insert into gtest_cursor values (1, 10), (2, 20), (3, 30);
 begin;
---dg-cascade
---dg declare curs cursor for select * from gtest_cursor order by id for update;
---dg-cascade
---dg fetch 1 from curs;
---dg-cascade
---dg update gtest_cursor set a = 99 where current of curs;
---dg-cascade
---dg select * from gtest_cursor order by id;
---dg-cascade
---dg delete from gtest_cursor where current of curs;
---dg-cascade
---dg select * from gtest_cursor order by id;
+declare curs cursor for select * from gtest_cursor order by id for update;
+fetch 1 from curs;
+ id | a  | b  
+----+----+----
+  1 | 10 | 20
+(1 row)
+
+update gtest_cursor set a = 99 where current of curs;
+select * from gtest_cursor order by id;
+ id | a  |  b  
+----+----+-----
+  1 | 99 | 198
+  2 | 20 |  40
+  3 | 30 |  60
+(3 rows)
+
+delete from gtest_cursor where current of curs;
+select * from gtest_cursor order by id;
+ id | a  | b  
+----+----+----
+  2 | 20 | 40
+  3 | 30 | 60
+(2 rows)
+
 commit;
---dg-cascade
---dg drop table gtest_cursor;
+drop table gtest_cursor;

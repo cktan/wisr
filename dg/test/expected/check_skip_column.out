@@ -1,0 +1,52 @@
+-- Verify that a skipped ADD COLUMN does not install or validate CHECKs.
+-- 1. Skip plain, serial and identity additions with a failing CHECK.
+-- 2. Skip an empty column and confirm that no check was installed.
+-- 3. Add a new checked column, then skip that column in the same ALTER.
+-- 4. Confirm the new check remains and rejects an invalid value.
+\set ON_ERROR_STOP off
+create temp table check_skip (a int);
+insert into check_skip values (-1);
+alter table check_skip add column if not exists a int check (a > 0);
+psql:test/check_skip_column.sql:9: NOTICE:  column "a" of relation "check_skip" already exists, skipping
+alter table check_skip add column if not exists a serial check (a > 0);
+psql:test/check_skip_column.sql:10: NOTICE:  column "a" of relation "check_skip" already exists, skipping
+alter table check_skip add column if not exists a int
+  generated always as identity check (a > 0);
+psql:test/check_skip_column.sql:12: NOTICE:  column "a" of relation "check_skip" already exists, skipping
+select count(*) from pg_constraint
+  where conrelid = 'check_skip'::regclass and contype = 'c';
+ count 
+-------
+     0
+(1 row)
+
+create temp table check_skip_empty (a int);
+alter table check_skip_empty add column if not exists a int check (a > 0);
+psql:test/check_skip_column.sql:16: NOTICE:  column "a" of relation "check_skip_empty" already exists, skipping
+insert into check_skip_empty values (-1);
+select count(*) from pg_constraint
+  where conrelid = 'check_skip_empty'::regclass and contype = 'c';
+ count 
+-------
+     0
+(1 row)
+
+alter table check_skip add column if not exists b int default 1 check (b > 0),
+  add column if not exists b int check (b < 0);
+psql:test/check_skip_column.sql:21: NOTICE:  column "b" of relation "check_skip" already exists, skipping
+select a, b from check_skip;
+ a  | b 
+----+---
+ -1 | 1
+(1 row)
+
+select count(*) from pg_constraint
+  where conrelid = 'check_skip'::regclass and contype = 'c';
+ count 
+-------
+     1
+(1 row)
+
+insert into check_skip values (2, -1);
+psql:test/check_skip_column.sql:25: ERROR:  new row for relation "check_skip" violates check constraint "check_skip_b_check"
+DETAIL:  Failing row contains (2, -1).

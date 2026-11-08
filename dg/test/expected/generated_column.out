@@ -1,0 +1,159 @@
+-- Verify generated columns as PostgreSQL 18 has them (../sm/GENERATED.md):
+-- a stored one computed by the executor on every write, a virtual one by
+-- the rewriter on every read, sm3 keeping the kind, the expression and
+-- the columns it reads.  Temporary tables, as the 8 sessions run.sh
+-- starts share one database.
+-- 1. A table with a stored and a virtual column: INSERT, UPDATE and COPY
+--    give the stored one its value; a read computes the virtual one.
+-- 2. A value given for either is refused; an index on the stored one is
+--    used, one on the virtual one refused.
+-- 3. ALTER COLUMN TYPE of a column an expression reads, and of a
+--    generated column, SET DEFAULT of one, and a NOT NULL virtual column
+--    are refused.
+-- 4. DROP COLUMN of a column an expression reads is refused; with
+--    CASCADE the generated columns go too, once no index is on them.
+-- 5. pg_attribute and pg_attrdef show them.
+-- 6. A table whose stored column is dropped takes rows; LIKE ... INCLUDING
+--    GENERATED is refused.
+-- 7. An expression reading its own column or another generated one is
+--    refused; one reading tableoid is taken; a check on a virtual column
+--    reads its expression when it checks the rows there.
+-- The refusals are what is tested, so an error goes on to the next
+-- statement.
+\set ON_ERROR_STOP off
+create temp table item (id int primary key, price int8, qty int4,
+  total int8 generated always as (price * qty) stored,
+  label text generated always as ('#' || qty::text));
+insert into item (id, price, qty) values (1, 25, 4);
+update item set qty = 5 where id = 1;
+copy item (id, price, qty) from stdin;
+select * from item order by id;
+ id | price | qty | total | label 
+----+-------+-----+-------+-------
+  1 |    25 |   5 |   125 | #5
+  2 |    10 |   2 |    20 | #2
+(2 rows)
+
+select id, label from item where total > 50 order by id;
+ id | label 
+----+-------
+  1 | #5
+(1 row)
+
+insert into item (id, total) values (3, 1);
+psql:test/generated_column.sql:34: ERROR:  cannot insert a non-DEFAULT value into column "total"
+DETAIL:  Column "total" is a generated column.
+update item set label = 'x';
+psql:test/generated_column.sql:35: ERROR:  column "label" can only be updated to DEFAULT
+DETAIL:  Column "label" is a generated column.
+create index item_label on item (label);
+psql:test/generated_column.sql:36: ERROR:  indexes on virtual generated columns are not supported
+create index item_total on item (total);
+set enable_seqscan = off;
+select id from item where total = 20;
+ id 
+----
+  2
+(1 row)
+
+reset enable_seqscan;
+alter table item alter column qty type int8;
+psql:test/generated_column.sql:41: ERROR:  cannot alter type of a column used by a generated column
+DETAIL:  Column "qty" is used by generated column "total".
+alter table item alter column total type int4;
+psql:test/generated_column.sql:42: ERROR:  ALTER COLUMN TYPE of a generated column is not supported yet
+alter table item alter column total set default 1;
+psql:test/generated_column.sql:43: ERROR:  column "total" of relation "item" is a generated column
+HINT:  Use ALTER TABLE ... ALTER COLUMN ... SET EXPRESSION instead.
+alter table item alter column label drop default;
+psql:test/generated_column.sql:44: ERROR:  column "label" of relation "item" is a generated column
+create temp table bad (a int, b int generated always as (a * 2) virtual not null);
+psql:test/generated_column.sql:45: ERROR:  a NOT NULL virtual generated column is not supported yet
+alter table item drop column qty;
+psql:test/generated_column.sql:46: ERROR:  cannot drop column qty of table item because other objects depend on it
+DETAIL:  column label of table item depends on column qty of table item
+column total of table item depends on column qty of table item
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+select attname, attgenerated from pg_attribute
+  where attrelid = 'item'::regclass and attnum > 0 order by attnum;
+ attname | attgenerated 
+---------+--------------
+ id      | 
+ price   | 
+ qty     | 
+ total   | s
+ label   | v
+(5 rows)
+
+select pg_get_expr(adbin, adrelid) from pg_attrdef
+  where adrelid = 'item'::regclass order by adnum;
+        pg_get_expr         
+----------------------------
+ (price * qty)
+ ('#'::text || (qty)::text)
+(2 rows)
+
+drop index item_total;
+alter table item drop column qty cascade;
+psql:test/generated_column.sql:52: NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to column label of table item
+drop cascades to column total of table item
+select * from item order by id;
+ id | price 
+----+-------
+  1 |    25
+  2 |    10
+(2 rows)
+
+drop table item;
+create temp table gd (a int primary key, b int generated always as (a * 2) stored);
+alter table gd drop column b;
+insert into gd values (1);
+select * from gd;
+ a 
+---
+ 1
+(1 row)
+
+drop table gd;
+create temp table gs (a int, b int generated always as (a * 2) stored);
+create temp table gl (like gs including generated);
+psql:test/generated_column.sql:61: ERROR:  LIKE ... INCLUDING GENERATED is not supported yet
+create temp table gp (like gs);
+select attname, attgenerated from pg_attribute
+  where attrelid = 'gp'::regclass and attnum > 0 order by attnum;
+ attname | attgenerated 
+---------+--------------
+ a       | 
+ b       | 
+(2 rows)
+
+drop table gs;
+drop table gp;
+create temp table e2 (a int, b int generated always as (b * 2) stored);
+psql:test/generated_column.sql:67: ERROR:  cannot use generated column "b" in column generation expression
+DETAIL:  A generated column cannot reference another generated column.
+create temp table e3 (a int, b int generated always as (c * 2) stored,
+                      c int generated always as (a * 2));
+psql:test/generated_column.sql:69: ERROR:  cannot use generated column "c" in column generation expression
+DETAIL:  A generated column cannot reference another generated column.
+create temp table gto (a int, b bool generated always as
+                       (tableoid = 'gto'::regclass) stored);
+insert into gto values (1);
+select * from gto;
+ a | b 
+---+---
+ 1 | t
+(1 row)
+
+drop table gto;
+create temp table g20 (a int, b int generated always as (a * 2) virtual);
+insert into g20 (a) values (10), (30);
+alter table g20 add check (b < 50);
+psql:test/generated_column.sql:77: ERROR:  check constraint "g20_b_check" of relation "g20" is violated by some row
+alter table g20 add constraint chk check (b < 70) not valid;
+alter table g20 validate constraint chk;
+insert into g20 (a) values (40);
+psql:test/generated_column.sql:80: ERROR:  new row for relation "g20" violates check constraint "chk"
+DETAIL:  Failing row contains (40, virtual).
+drop table g20;

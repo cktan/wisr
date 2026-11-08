@@ -289,6 +289,7 @@ runs the psql command and reads its output.
 | 10. Foreign keys | `pg_constraint`'s rows of type `f`, `relhastriggers`, `\d`'s Foreign-key constraints and Referenced by, `pg_get_constraintdef()`, step 246; a primary key's and a unique constraint's, `\d`'s UNIQUE CONSTRAINT, step 248 |
 | 11. Roles | `pg_authid`, step 318; owners, step 322; ACLs, step 323, and a function's, step 334 |
 | 12. Partial and expression indexes | `pg_index`'s `indexprs` and `indpred`, step 311; `indpred` one expression, step 336 |
+| 13. Check constraints | `pg_constraint`'s rows of type `c`, with `conbin`, `relchecks`, `\d`'s Check constraints, `pg_get_constraintdef()`, step 411 |
 
 ---
 

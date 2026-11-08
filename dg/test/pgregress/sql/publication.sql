@@ -480,9 +480,9 @@ UPDATE rf_tbl_abcd_pk SET a = 1;
 --dg UPDATE rf_tbl_abcd_nopk SET a = 1;
 
 -- Case 2. REPLICA IDENTITY FULL
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rf_tbl_abcd_pk REPLICA IDENTITY FULL;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rf_tbl_abcd_nopk REPLICA IDENTITY FULL;
 --dg-skip: publications are not supported
 --dg ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_pk WHERE (c > 99);
@@ -494,9 +494,9 @@ UPDATE rf_tbl_abcd_pk SET a = 1;
 UPDATE rf_tbl_abcd_nopk SET a = 1;
 
 -- Case 3. REPLICA IDENTITY NOTHING
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rf_tbl_abcd_pk REPLICA IDENTITY NOTHING;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rf_tbl_abcd_nopk REPLICA IDENTITY NOTHING;
 --dg-skip: publications are not supported
 --dg ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_pk WHERE (a > 99);
@@ -515,15 +515,13 @@ UPDATE rf_tbl_abcd_nopk SET a = 1;
 --dg UPDATE rf_tbl_abcd_nopk SET a = 1;
 
 -- Case 4. REPLICA IDENTITY INDEX
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE rf_tbl_abcd_pk ALTER COLUMN c SET NOT NULL;
+ALTER TABLE rf_tbl_abcd_pk ALTER COLUMN c SET NOT NULL;
 CREATE UNIQUE INDEX idx_abcd_pk_c ON rf_tbl_abcd_pk(c);
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rf_tbl_abcd_pk REPLICA IDENTITY USING INDEX idx_abcd_pk_c;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE rf_tbl_abcd_nopk ALTER COLUMN c SET NOT NULL;
+ALTER TABLE rf_tbl_abcd_nopk ALTER COLUMN c SET NOT NULL;
 CREATE UNIQUE INDEX idx_abcd_nopk_c ON rf_tbl_abcd_nopk(c);
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rf_tbl_abcd_nopk REPLICA IDENTITY USING INDEX idx_abcd_nopk_c;
 --dg-skip: publications are not supported
 --dg ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_pk WHERE (a > 99);
@@ -784,7 +782,7 @@ RESET client_min_messages;
 
 -- tests with REPLICA IDENTITY FULL
 CREATE TABLE testpub_tbl6 (a int, b text, c text);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE testpub_tbl6 REPLICA IDENTITY FULL;
 
 --dg-skip: publications are not supported
@@ -902,12 +900,12 @@ RESET client_min_messages;
 -- first partition has replica identity "a"
 CREATE TABLE testpub_tbl8_0 (a int, b text, c text);
 ALTER TABLE testpub_tbl8_0 ADD PRIMARY KEY (a);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE testpub_tbl8_0 REPLICA IDENTITY USING INDEX testpub_tbl8_0_pkey;
 -- second partition has replica identity "b"
 CREATE TABLE testpub_tbl8_1 (a int, b text, c text);
 ALTER TABLE testpub_tbl8_1 ADD PRIMARY KEY (c);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE testpub_tbl8_1 REPLICA IDENTITY USING INDEX testpub_tbl8_1_pkey;
 
 -- ok: attaching first partition works, because (a) is in column list
@@ -921,7 +919,7 @@ ALTER TABLE testpub_tbl8_1 ADD PRIMARY KEY (c);
 
 -- failure: changing replica identity to FULL for partition fails, because
 -- of the column list on the parent
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE testpub_tbl8_0 REPLICA IDENTITY FULL;
 --dg-cascade
 --dg UPDATE testpub_tbl8 SET a = 1;
@@ -969,7 +967,7 @@ SET client_min_messages = 'ERROR';
 --dg CREATE PUBLICATION testpub_both_filters;
 RESET client_min_messages;
 CREATE TABLE testpub_tbl_both_filters (a int, b int, c int, PRIMARY KEY (a,c));
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE testpub_tbl_both_filters REPLICA IDENTITY USING INDEX testpub_tbl_both_filters_pkey;
 --dg-skip: publications are not supported
 --dg ALTER PUBLICATION testpub_both_filters ADD TABLE testpub_tbl_both_filters (a,c) WHERE (c != 1);
@@ -1026,9 +1024,9 @@ UPDATE rf_tbl_abcd_pk SET a = 1;
 --dg UPDATE rf_tbl_abcd_nopk SET a = 1;
 
 -- Case 2. REPLICA IDENTITY FULL
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rf_tbl_abcd_pk REPLICA IDENTITY FULL;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rf_tbl_abcd_nopk REPLICA IDENTITY FULL;
 --dg-skip: publications are not supported
 --dg ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_pk (c);
@@ -1042,9 +1040,9 @@ UPDATE rf_tbl_abcd_pk SET a = 1;
 --dg UPDATE rf_tbl_abcd_nopk SET a = 1;
 
 -- Case 3. REPLICA IDENTITY NOTHING
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rf_tbl_abcd_pk REPLICA IDENTITY NOTHING;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rf_tbl_abcd_nopk REPLICA IDENTITY NOTHING;
 --dg-skip: publications are not supported
 --dg ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_pk (a);
@@ -1066,15 +1064,13 @@ UPDATE rf_tbl_abcd_pk SET a = 1;
 --dg UPDATE rf_tbl_abcd_nopk SET a = 1;
 
 -- Case 4. REPLICA IDENTITY INDEX
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE rf_tbl_abcd_pk ALTER COLUMN c SET NOT NULL;
+ALTER TABLE rf_tbl_abcd_pk ALTER COLUMN c SET NOT NULL;
 CREATE UNIQUE INDEX idx_abcd_pk_c ON rf_tbl_abcd_pk(c);
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rf_tbl_abcd_pk REPLICA IDENTITY USING INDEX idx_abcd_pk_c;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE rf_tbl_abcd_nopk ALTER COLUMN c SET NOT NULL;
+ALTER TABLE rf_tbl_abcd_nopk ALTER COLUMN c SET NOT NULL;
 CREATE UNIQUE INDEX idx_abcd_nopk_c ON rf_tbl_abcd_nopk(c);
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rf_tbl_abcd_nopk REPLICA IDENTITY USING INDEX idx_abcd_nopk_c;
 --dg-skip: publications are not supported
 --dg ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_pk (a);
@@ -1421,7 +1417,7 @@ DROP SCHEMA pub_test3;
 --dg \dRp+ testpub2_forschema
 
 -- renaming the schema should reflect the change in publication
---dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
+--dg-skip: ALTER SCHEMA ... RENAME is not supported yet
 --dg ALTER SCHEMA pub_test1 RENAME to pub_test1_renamed;
 --dg-cascade
 --dg \dRp+ testpub2_forschema

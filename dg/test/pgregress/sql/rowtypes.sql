@@ -213,7 +213,7 @@ set enable_sort = off;
 explain (costs off)
 select a,b from test_table where (a,b) > ('a','a') order by a,b;
 
---dg-skip: an index scan in sm takes no row comparison or array yet
+--dg-skip: an index scan in sm takes no row comparison yet
 --dg select a,b from test_table where (a,b) > ('a','a') order by a,b;
 
 reset enable_sort;

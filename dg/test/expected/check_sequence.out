@@ -1,0 +1,36 @@
+-- Verify that CHECK constraints reject sequence-related functions.
+-- 1. Reject nextval in a CREATE TABLE check.
+-- 2. Reject sequence functions in ALTER TABLE checks.
+\set ON_ERROR_STOP off
+create temp table check_sequence_create (a int check
+  (nextval(0::regclass) > 0));
+psql:test/check_sequence.sql:6: ERROR:  sequence calls are not supported in CHECK constraints
+DETAIL:  digres does not track CHECK dependencies on sequences.
+create temp table check_sequence_alter (a int);
+alter table check_sequence_alter add check
+  (currval(0::regclass) > 0);
+psql:test/check_sequence.sql:9: ERROR:  sequence calls are not supported in CHECK constraints
+DETAIL:  digres does not track CHECK dependencies on sequences.
+alter table check_sequence_alter add check (lastval() > 0);
+psql:test/check_sequence.sql:10: ERROR:  sequence calls are not supported in CHECK constraints
+DETAIL:  digres does not track CHECK dependencies on sequences.
+alter table check_sequence_alter add check (setval(0::regclass, 1) > 0);
+psql:test/check_sequence.sql:11: ERROR:  sequence calls are not supported in CHECK constraints
+DETAIL:  digres does not track CHECK dependencies on sequences.
+alter table check_sequence_alter add check
+  (pg_sequence_parameters(0::regclass) is null);
+psql:test/check_sequence.sql:13: ERROR:  sequence calls are not supported in CHECK constraints
+DETAIL:  digres does not track CHECK dependencies on sequences.
+alter table check_sequence_alter add check
+  (pg_sequence_last_value(0::regclass) is null);
+psql:test/check_sequence.sql:15: ERROR:  sequence calls are not supported in CHECK constraints
+DETAIL:  digres does not track CHECK dependencies on sequences.
+alter table check_sequence_alter add check
+  (pg_get_sequence_data(0::regclass) is null);
+psql:test/check_sequence.sql:17: ERROR:  sequence calls are not supported in CHECK constraints
+DETAIL:  digres does not track CHECK dependencies on sequences.
+alter table check_sequence_alter add check
+  (pg_get_serial_sequence('check_sequence_alter', 'a') is null);
+psql:test/check_sequence.sql:19: ERROR:  sequence calls are not supported in CHECK constraints
+DETAIL:  digres does not track CHECK dependencies on sequences.
+drop table check_sequence_alter;

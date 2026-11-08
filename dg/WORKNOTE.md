@@ -12490,3 +12490,237 @@ ran 1.52 times PostgreSQL's instructions, against a goal of 1.5.
   level and through `rel`. All 124 scenarios match for both
   versioned and chained stores. All concurrency stress tests
   pass. No existing scenario or expected result was changed.
+
+## Step 411: check constraints
+
+[`../sm/CHECK.md`](../sm/CHECK.md): a check constraint is kept
+by sm3 and checked by PostgreSQL's executor.
+
+- **sm3** (`create_check()`, `drop_check()`, `validate_check()`,
+  `rename_check()` in `../sm/sm3/src/ddl/ddl.cc`): a check is a
+  `CONSTRAINT` entry of kind `c`, its oid, name, validated flag,
+  the columns it reads and the host's bytes. `table_def_t` holds
+  it in `checks`. A name is unique among the table's
+  constraints (`constraint_name_taken()`). DROP COLUMN of a
+  column a check reads is `SM_ERR_INUSE`, and so is ALTER COLUMN
+  TYPE (`find_column_use()`).
+- **sm.h**: `sm_check_def_t`, `sm_table_def_t::checks`, and
+  `sm_cat_create_check()` and the rest. rel takes
+  `check-create`, `check-drop`, `check-validate`, `check-rename`
+  and `checks`.
+- **digres** (`access/sm/smstore.c`):
+  - CREATE TABLE takes a column's and a table's checks, cooked by
+    PostgreSQL's `cookConstraint()` and named by
+    `ChooseConstraintName()`. The host bytes are a flags byte,
+    `NOT ENFORCED` and `NO INHERIT`, then `nodeToString()` of the
+    expression.
+  - ALTER TABLE takes ADD CONSTRAINT ... CHECK, with and without
+    NOT VALID, ADD COLUMN ... CHECK, VALIDATE, DROP and RENAME
+    CONSTRAINT. DROP COLUMN drops the checks that read the
+    column first.
+  - The rows are checked at sm's latest view (`check_rows()`):
+    a REPEATABLE READ transaction's snapshot would miss a row
+    committed since it was taken.
+- **The relation cache** (`RelationBuildSmDesc()`) sets
+  `relchecks` and fills `constr->check`, so `ExecConstraints()`
+  checks every write path: INSERT, UPDATE, ON CONFLICT DO
+  UPDATE, COPY and the bulk load.
+- **`pg_constraint`** (`catrel.c`) has a row of type `c` for each
+  check, so `\d` and `pg_get_constraintdef()` show it.
+- **A constraint's name** is free among the table's constraints:
+  sm3's `create_index()` of a UNIQUE or PRIMARY KEY constraint
+  refuses a check's or a foreign key's name, and digres says so
+  as PostgreSQL does. `ChooseRelationName()` in
+  `commands/indexcmds.c` skips a constraint's name again, as
+  PostgreSQL's does, so `ADD UNIQUE` passes a check's by.
+- **LIKE ... INCLUDING CONSTRAINTS** copies a check valid: the
+  copy skips the new table's rows, and is not NOT VALID.
+- **The regression files**: 68 files that skipped CHECK were
+  trimmed again; about 250 statements run now. What differs
+  that was hidden behind a CHECK is mostly PostgreSQL 18's named
+  NOT NULL constraints, which `pg_constraint` lacks
+  ([`../sm/NEXT.md`](../sm/NEXT.md#feature-gaps-against-postgresql)).
+- **Tests**: `../sm/sm3/test/test_check.cc`,
+  `../sm/rel/test/test_check.rel`, `test/check_constraint.sql`,
+  and `test/check_rr_validate.sh`, which commits a row that
+  breaks the check after a REPEATABLE READ transaction's
+  snapshot: ADD CONSTRAINT and VALIDATE CONSTRAINT both refuse
+  it.
+
+## Step 412: ALTER COLUMN SET/DROP NOT NULL and SET/DROP DEFAULT
+
+The decisions are in [`../QUESTION.md`](../QUESTION.md).
+
+- **sm3** (`drop_not_null()`, `set_default()` in
+  `../sm/sm3/src/ddl/ddl.cc`): each changes the column's record
+  alone, under the table's lock X. DROP NOT NULL of a primary
+  key's column is `SM_ERR_INUSE`; of an identity column, and a
+  default for one, `SM_ERR_INVALID`, as sm3 keeps an identity
+  column NOT NULL with no default. SET NOT NULL is
+  `set_not_null()`, which reads every row at the latest view.
+- **sm.h**: `sm_cat_drop_not_null()`, `sm_cat_set_default()`.
+  rel takes `set-not-null`, `drop-not-null` and `set-default`,
+  and `table-create` and `describe-table` a column's `:default`.
+- **digres** (`alter_not_null()`, `alter_column_default()` in
+  `access/sm/smstore.c`): PostgreSQL's errors, a primary key's
+  column, an identity column and null values among them. SET
+  DEFAULT cooks the default for the column's type. A column with
+  an update default takes only the defaults
+  [`ONUPDATE.md`](ONUPDATE.md#2-what-it-means) §2 takes, and
+  after DROP DEFAULT its update default is its insert default.
+  The gate in `AlterTableLookupRelation()` lets the three
+  subcommands through.
+- **Tests**: `../sm/sm3/test/test_table.cc`,
+  `../sm/rel/test/test_alter_column.rel`,
+  `test/alter_column.sql`, and `test/alter_column.sh`: SET NOT
+  NULL at REPEATABLE READ fails on a null committed after the
+  snapshot, and an identity column's refusals. server.sh's
+  refused ALTER is SET STATISTICS now.
+- **The regression files**: the 34 that skipped the ALTER TABLE
+  subcommands were trimmed again, with alter_table and
+  create_table_like: about 100 statements run now. The skips for
+  the subcommands left, `SET SCHEMA` and storage among them, are
+  180.
+
+## Step 413: NOT NULL constraints by name
+
+[`../sm/NOTNULL.md`](../sm/NOTNULL.md): PostgreSQL 18 makes each
+NOT NULL column a constraint with a name and an oid, a row of type
+`n` in `pg_constraint`, and its own code reads them.
+
+- **sm3**: a NOT NULL column's record keeps its constraint's oid
+  and name, which `make_table()`, `add_column()` and
+  `set_not_null()` give it (`name_not_null()`), the caller's name
+  or `table_column_not_null`. `drop_not_null()` and DROP COLUMN
+  take them away; `rename_not_null()` renames one. A name is
+  unique among the table's constraints
+  (`constraint_name_taken()`).
+- **sm.h and rel**: `sm_column_spec_t::not_null_name`,
+  `sm_column_def_t::not_null_oid` and `not_null_name`,
+  `sm_cat_set_not_null()`'s name, `sm_cat_rename_not_null()`;
+  rel's `not-nulls`, `rename-not-null`, and `set-not-null`'s name.
+- **digres**:
+  - CREATE TABLE names each one as PostgreSQL's
+    `AddRelationNotNullConstraints()` does (`name_not_nulls()`):
+    the names the statement gives, a name given twice an error,
+    then `ChooseConstraintName()` for the rest, free of the
+    names given to the checks. ADD COLUMN, SET NOT NULL and ADD
+    PRIMARY KEY name theirs the same way.
+  - `ADD CONSTRAINT n NOT NULL a`; a column whose constraint has
+    another name is refused with PostgreSQL's error, and NOT
+    VALID is refused. DROP CONSTRAINT of one is DROP NOT NULL;
+    RENAME CONSTRAINT renames one.
+  - `pg_constraint` has a row of type `n` for each
+    (`not_null_row()` in `catalog/catrel.c`), and
+    `RelationGetNotNullConstraints()` reads the names and oids
+    from sm, so `LIKE ... INCLUDING ALL` works and copies them.
+- **Tests**: `../sm/sm3/test/test_table.cc`,
+  `../sm/rel/test/test_notnull.rel`,
+  `test/not_null_constraint.sql`, which gave PostgreSQL 18's
+  output but for `lsm` and NOT VALID. `test/check_constraint.out`
+  shows a LIKE copy's NOT NULL row, and
+  `slt/key_constraint_catalog.test` reads only key constraints.
+
+## Step 414: a constraint's index depends on its constraint
+
+`CREATE TABLE ... (LIKE t INCLUDING INDEXES)` made the copy of a
+primary key or a unique constraint a plain index:
+PostgreSQL's `generateClonedIndexStmt()` asks
+`get_index_constraint()`, which reads `pg_depend`, and digres
+had no row there for one.
+
+- **`pg_depend`** (`gen_pg_depend()` in `catalog/catrel.c`) has a
+  row for each primary key's or unique constraint's index: the
+  index depends on its constraint, internal, as PostgreSQL
+  records it. The constraint's oid is its index's.
+- **So LIKE copies them as constraints**, and DROP INDEX of one
+  is refused with PostgreSQL's error, `cannot drop index t_pkey
+  because constraint t_pkey on table t requires it`, which
+  PostgreSQL's dependency code raises.
+- **Tests**: `slt/key_constraint_catalog.test` reads a LIKE
+  copy's constraints, its results PostgreSQL 18's;
+  `test/not_null_constraint.sql` shows the copy's primary key.
+- **The regression files**: the 8 that NOT NULL constraints by
+  name reach most (step 413) were trimmed again: about 40
+  statements run now.
+
+## Step 415: generated columns
+
+[`../sm/GENERATED.md`](../sm/GENERATED.md): a STORED or VIRTUAL
+generated column, kept by sm3, its values computed by
+PostgreSQL's own code, as a check's rows are checked by it.
+
+- **sm3**: a column's record keeps its kind, `s` or `v`, and the
+  columns its expression reads; the expression is its default.
+  `set_generated()` makes a plain column generated. A virtual
+  column is nullable, holds a null, and takes no index; a
+  generated column takes no default; DROP COLUMN of a column an
+  expression reads is `SM_ERR_INUSE`, and so is ALTER COLUMN
+  TYPE of it or of a generated column (`column_use_t::generated`).
+- **sm.h**: `sm_column_spec_t` and `sm_column_def_t` carry
+  `generated` and `generated_reads`; `sm_cat_set_generated()`,
+  `SM_COLUMN_USE_GENERATED`.
+- **digres** (`access/sm/smstore.c`):
+  - CREATE TABLE makes a generated column plain, then cooks its
+    expression against the new table with `cookDefault()`, which
+    checks it as PostgreSQL does, and calls `set_generated()`.
+  - The relation cache sets `attgenerated` and
+    `has_generated_stored` and `has_generated_virtual`, so the
+    executor computes a stored column on INSERT, UPDATE and
+    COPY, and the rewriter a virtual one on a read.
+    `pg_attribute` has `attgenerated`.
+  - PostgreSQL's errors for an index on a virtual column, SET or
+    DROP DEFAULT of a generated column, ALTER COLUMN TYPE of a
+    column an expression reads, and DROP COLUMN of one, whose
+    CASCADE drops the generated columns.
+  - Refused: ADD COLUMN of a generated column, ALTER COLUMN TYPE
+    of one, a NOT NULL virtual one, and `LIKE ... INCLUDING
+    GENERATED`, whose copy PostgreSQL gives its expression after
+    the table is made, as a cooked default.
+- **DROP COLUMN of a generated column** takes its kind and reads
+  with it, and the relation cache counts live columns alone:
+  a dropped stored column had left `has_generated_stored` set,
+  and the next INSERT crashed the server. The regression files
+  found it.
+- **Tests**: `../sm/sm3/test/test_table.cc`, and
+  `test/generated_column.sql`, which gives PostgreSQL 18's output
+  but for the refusals, a dropped stored column among its cases.
+- **The regression files**: the 9 with generated columns were
+  trimmed again: about 500 statements run now.
+
+## Step 416: A skipped column skips its CHECKs
+
+- **Found**: `ADD COLUMN IF NOT EXISTS` skipped a column but
+  still installed its CHECKs. It could reject existing rows or
+  silently add a new constraint.
+- **Change**: `add_column()` reports whether it added the
+  column. A skipped addition skips that column's CHECKs and
+  leaves later ALTER subcommands to run. A skipped serial or
+  identity column returns before creating its sequence.
+- **Tests**: `test/check_skip_column.sql` checks existing rows,
+  empty tables, and repeated additions in one ALTER. It fails
+  before the fix. Its expected output comes from PostgreSQL 18.
+  The storage layers cannot express IF NOT EXISTS: it is a
+  digres command option.
+- **Validation**: the new test and the existing CHECK test pass
+  alone and in eight sessions. The full debug digres suite
+  passes parsing, SQL, initdb, server and SQL logic tests.
+  All 231 PostgreSQL regression files pass with the installed
+  PostgreSQL 18 binaries.
+
+## Step 417: refuse sequence calls in CHECK constraints
+
+- **Found**: a CHECK could call a sequence without recording a
+  dependency. `DROP SEQUENCE` then succeeded, and a later write
+  failed when it evaluated the CHECK.
+- **Change**: digres rejects sequence value and metadata functions
+  while it cooks a CHECK. This runs only during DDL. Full sequence
+  dependency tracking needs catalog and drop-path changes, so the
+  supported SQL is now narrower.
+- **Tests**: `test/check_sequence.sql` covers sequence functions
+  in `CREATE TABLE` and `ALTER TABLE`. The skipped-column
+  regression remains in `test/check_skip_column.sql`.
+- **Validation**: the full debug digres suite passes. The SQL
+  tests pass alone and in eight sessions, and `server.sh` and all
+  65 SQL logic test files pass. All 231 PostgreSQL regressions
+  also pass with the installed PostgreSQL 18 binaries.

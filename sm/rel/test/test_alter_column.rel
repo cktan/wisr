@@ -1,0 +1,84 @@
+# test_alter_column.rel -- ALTER COLUMN's SET and DROP NOT NULL and
+# SET and DROP DEFAULT, through the C API: each changes the column's
+# record, and it is kept across a reopen. sm keeps a default as the
+# host's text, unread, so no default is evaluated here.
+#
+# 1. A NOT NULL column is made nullable, and takes a null; SET NOT
+#    NULL of it then fails: ERR_NOTNULL.
+# 2. SET NOT NULL of another column that holds a null fails too; once
+#    the row holds a value, SET NOT NULL succeeds and refuses a null.
+# 3. A primary key's column keeps NOT NULL: ERR_INUSE.
+# 4. A default is set, then replaced; the update default stays.
+# 5. After a reopen, the columns are as they were left; a default is
+#    dropped, the update default kept.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_alter_column"))
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "acdb")
+(db-open "acdb")
+
+(begin :rc)
+(table-create t
+  (columns (k :int4)
+           (a :int4 :not-null)
+           (b :text)
+           (c :timestamptz :default "CURRENT_TIMESTAMP"
+              :on-update "CURRENT_TIMESTAMP"))
+  (primary-key k))
+(commit)
+
+# 1. NOT NULL dropped, then set again.
+(begin :rc)
+(drop-not-null t a)
+(def r1 (insert t [1 nil nil nil]))
+(commit)
+(begin :rc)
+(insert t [2 2 nil nil])
+(assert-err :err-notnull (set-not-null t a))
+(abort)
+
+# 2. A column with a null keeps nullable; one without is NOT NULL.
+(begin :rc)
+(assert-err :err-notnull (set-not-null t b))
+(abort)
+(begin :rc)
+(update t r1 [1 1 "x" nil])
+(set-not-null t a)
+(assert-err :err-notnull (insert t [3 nil "y" nil]))
+(abort)
+
+# 3. A primary key's column.
+(begin :rc)
+(assert-err :err-inuse (drop-not-null t k))
+(abort)
+
+# 4. A default set, then replaced.
+(begin :rc)
+(set-default t b "'none'")
+(set-default t b "'empty'")
+(set-default t c "LOCALTIMESTAMP")
+(commit)
+
+# 5. After a reopen; then a default dropped.
+(db-close)
+(env-detach)
+(env-attach test-dir)
+(db-open "acdb")
+(begin :rc)
+(assert-eq ((describe-table t) :columns)
+           '[[k :int4 :not-null]
+             [a :int4]
+             [b :text :default "'empty'"]
+             [c :timestamptz :default "LOCALTIMESTAMP"
+                :on-update "CURRENT_TIMESTAMP"]])
+(set-default t c)
+(assert-eq (((describe-table t) :columns) 3)
+           '[c :timestamptz :on-update "CURRENT_TIMESTAMP"])
+(commit)
+
+(db-close)
+(env-detach)
+(rm-rf test-dir)
+(print "test_alter_column.rel passed")

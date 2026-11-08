@@ -3126,7 +3126,7 @@ INSERT INTO num_variance VALUES (0);
 --dg SELECT trim_scale(variance(a) * 1e1000) FROM num_variance;
 -- check that parallel execution produces the same result
 BEGIN;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE num_variance SET (parallel_workers = 4);
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET LOCAL parallel_setup_cost = 0;
@@ -3143,7 +3143,7 @@ DELETE FROM num_variance;
 --dg SELECT variance(a) FROM num_variance;
 -- check that parallel execution produces the same result
 BEGIN;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE num_variance SET (parallel_workers = 4);
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET LOCAL parallel_setup_cost = 0;

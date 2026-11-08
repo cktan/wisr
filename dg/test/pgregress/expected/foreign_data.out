@@ -1051,25 +1051,21 @@ ALTER TABLE fd_pt1 ADD COLUMN c8 integer;
 --dg-cascade
 --dg \d+ ft3
 -- alter attributes recursively
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE fd_pt1 ALTER COLUMN c4 SET DEFAULT 0;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE fd_pt1 ALTER COLUMN c5 DROP DEFAULT;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE fd_pt1 ALTER COLUMN c6 SET NOT NULL;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE fd_pt1 ALTER COLUMN c7 DROP NOT NULL;
+ALTER TABLE fd_pt1 ALTER COLUMN c4 SET DEFAULT 0;
+ALTER TABLE fd_pt1 ALTER COLUMN c5 DROP DEFAULT;
+ALTER TABLE fd_pt1 ALTER COLUMN c6 SET NOT NULL;
+ALTER TABLE fd_pt1 ALTER COLUMN c7 DROP NOT NULL;
 --dg-cascade
 --dg ALTER TABLE fd_pt1 ALTER COLUMN c8 TYPE char(10) USING '0';        -- ERROR
 ALTER TABLE fd_pt1 ALTER COLUMN c8 TYPE char(10);
 ALTER TABLE fd_pt1 ALTER COLUMN c8 SET DATA TYPE text;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE fd_pt1 ALTER COLUMN c1 SET STATISTICS 10000;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE fd_pt1 ALTER COLUMN c1 SET (n_distinct = 100);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE fd_pt1 ALTER COLUMN c8 SET STATISTICS -1;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE fd_pt1 ALTER COLUMN c8 SET STORAGE EXTERNAL;
 --dg-cascade
 --dg \d+ fd_pt1
@@ -1086,12 +1082,10 @@ ALTER TABLE fd_pt1 DROP COLUMN c8;
 --dg-cascade
 --dg \d+ ft2
 -- add constraints recursively
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg ALTER TABLE fd_pt1 ADD CONSTRAINT fd_pt1chk1 CHECK (c1 > 0) NO INHERIT;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg ALTER TABLE fd_pt1 ADD CONSTRAINT fd_pt1chk2 CHECK (c2 <> '');
+ALTER TABLE fd_pt1 ADD CONSTRAINT fd_pt1chk1 CHECK (c1 > 0) NO INHERIT;
+ALTER TABLE fd_pt1 ADD CONSTRAINT fd_pt1chk2 CHECK (c2 <> '');
 -- connoinherit should be true for NO INHERIT constraint
---dg-cascade
+--dg-differs: the result
 --dg SELECT relname, conname, contype, conislocal, coninhcount, connoinherit
 --dg   FROM pg_class AS pc JOIN pg_constraint AS pgc ON (conrelid = pc.oid)
 --dg   WHERE pc.relname = 'fd_pt1'
@@ -1124,21 +1118,17 @@ ALTER TABLE fd_pt1 DROP COLUMN c8;
 --dg-cascade
 --dg \d+ ft2
 -- drop constraints recursively
---dg-cascade
---dg ALTER TABLE fd_pt1 DROP CONSTRAINT fd_pt1chk1 CASCADE;
---dg-cascade
---dg ALTER TABLE fd_pt1 DROP CONSTRAINT fd_pt1chk2 CASCADE;
+ALTER TABLE fd_pt1 DROP CONSTRAINT fd_pt1chk1 CASCADE;
+ALTER TABLE fd_pt1 DROP CONSTRAINT fd_pt1chk2 CASCADE;
 -- NOT VALID case
 INSERT INTO fd_pt1 VALUES (1, 'fd_pt1'::text, '1994-01-01'::date);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg ALTER TABLE fd_pt1 ADD CONSTRAINT fd_pt1chk3 CHECK (c2 <> '') NOT VALID;
+ALTER TABLE fd_pt1 ADD CONSTRAINT fd_pt1chk3 CHECK (c2 <> '') NOT VALID;
 --dg-cascade
 --dg \d+ fd_pt1
 --dg-cascade
 --dg \d+ ft2
 -- VALIDATE CONSTRAINT need do nothing on foreign tables
---dg-cascade
---dg ALTER TABLE fd_pt1 VALIDATE CONSTRAINT fd_pt1chk3;
+ALTER TABLE fd_pt1 VALIDATE CONSTRAINT fd_pt1chk3;
 --dg-cascade
 --dg \d+ fd_pt1
 --dg-cascade
@@ -1148,8 +1138,7 @@ ALTER TABLE fd_pt1 RENAME COLUMN c1 TO f1;
 ALTER TABLE fd_pt1 RENAME COLUMN c2 TO f2;
 ALTER TABLE fd_pt1 RENAME COLUMN c3 TO f3;
 -- changes name of a constraint recursively
---dg-cascade
---dg ALTER TABLE fd_pt1 RENAME CONSTRAINT fd_pt1chk3 TO f2_check;
+ALTER TABLE fd_pt1 RENAME CONSTRAINT fd_pt1chk3 TO f2_check;
 --dg-cascade
 --dg \d+ fd_pt1
 --dg-cascade

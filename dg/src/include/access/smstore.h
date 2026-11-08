@@ -40,6 +40,7 @@ typedef struct smstore_relation_t {
   /* A table's foreign keys, and whether one of any table references it. */
   int nfkeys;
   bool referenced;
+  int nchecks; /* a table's check constraints, pg_class's relchecks */
   /* A table's and an index's columns, natts of them, for pg_attribute. */
   char **attnames;
   Oid *typids; /* InvalidOid for a dropped column */
@@ -47,6 +48,10 @@ typedef struct smstore_relation_t {
   bool *notnull;
   char **defaults; /* a table column's DEFAULT, nodeToString()'s, or NULL */
   char *identity;  /* a table column's identity kind, or 0 */
+  char *generated; /* a table column's attgenerated: 's', 'v' or 0 */
+  /* A table column's NOT NULL constraint, or InvalidOid (NOTNULL.md). */
+  Oid *nnoids;
+  char **nnnames; /* its name */
   /* An index's, as pg_index lists it. */
   Oid table;
   bool unique;
@@ -80,6 +85,9 @@ typedef struct smstore_column_t {
   bool dropped;
   const char *default_expr; /* its DEFAULT, nodeToString()'s, or NULL */
   char identity;            /* attidentity's: 'a', 'd', or 0 */
+  char generated;           /* attgenerated's: 's', 'v', or 0 */
+  Oid not_null_oid;         /* its NOT NULL constraint, or InvalidOid */
+  const char *not_null_name; /* its name, or NULL (../sm/NOTNULL.md) */
 } smstore_column_t;
 
 /*
@@ -140,6 +148,22 @@ typedef struct smstore_fkey_t {
   bool validated;
 } smstore_fkey_t;
 
+/*
+ * A check constraint of a table in sm (../sm/CHECK.md), as the relation
+ * cache and pg_constraint give it: its expression, nodeToString()'s, and
+ * its flags, from sm's host bytes; the columns it reads, from 1.
+ */
+typedef struct smstore_check_t {
+  Oid oid;
+  NameData name;
+  char *ccbin;
+  bool validated; /* convalidated */
+  bool enforced;  /* conenforced: false for NOT ENFORCED */
+  bool noinherit; /* connoinherit: NO INHERIT */
+  int nreads;
+  AttrNumber *reads;
+} smstore_check_t;
+
 /* A table in sm, as its relation descriptor is built from it. */
 typedef struct smstore_table_t {
   Oid oid;
@@ -154,6 +178,8 @@ typedef struct smstore_table_t {
   smstore_fkey_t *fkeys;
   int nreferenced; /* those of other tables, and its own, that reference it */
   smstore_fkey_t *referenced;
+  int nchecks; /* its check constraints */
+  smstore_check_t *checks;
 } smstore_table_t;
 
 /*

@@ -562,9 +562,9 @@ CREATE TABLE rls_t1 (a int, b int, c int);
 COPY rls_t1 (a, b, c) from stdin;
 --dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON rls_t1 FOR SELECT USING (a % 2 = 0);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_t1 ENABLE ROW LEVEL SECURITY;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_t1 FORCE ROW LEVEL SECURITY;
 GRANT SELECT ON TABLE rls_t1 TO regress_rls_copy_user;
 --dg-skip: column privileges are not supported yet

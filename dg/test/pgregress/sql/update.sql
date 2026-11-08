@@ -690,12 +690,9 @@ DROP TABLE mintab;
 
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table utrtest (a int, b text) partition by list (a);
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg create table utr1 (a int check (a in (1)), q text, b text);
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg create table utr2 (a int check (a in (2)), b text);
---dg-cascade
---dg alter table utr1 drop column q;
+create table utr1 (a int check (a in (1)), q text, b text);
+create table utr2 (a int check (a in (2)), b text);
+alter table utr1 drop column q;
 --dg-cascade
 --dg alter table utrtest attach partition utr1 for values in (1);
 --dg-cascade

@@ -82,6 +82,9 @@ InsertPgAttributeTuples(Relation pg_attribute_rel, TupleDesc tupdesc,
 extern void InsertPgClassTuple(Relation pg_class_desc, Relation new_rel_desc,
                                Oid new_rel_oid, Datum relacl, Datum reloptions);
 
+extern Node *cookConstraint(ParseState *pstate, Node *raw_constraint,
+                            char *relname);
+
 extern List *AddRelationNewConstraints(Relation rel, List *newColDefaults,
                                        List *newConstraints, bool allow_merge,
                                        bool is_local, bool is_internal,

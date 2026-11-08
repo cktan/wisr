@@ -1509,6 +1509,8 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
                             : RELPERSISTENCE_PERMANENT;
   form.relispopulated = true;
   form.relnatts = desc->ncolumns;
+  /* Its checks: the executor tests them when there are any (ExecRelCheck). */
+  form.relchecks = (int16)desc->nchecks;
   form.relreplident = REPLICA_IDENTITY_NOTHING;
   relation = AllocateRelationDesc(&form);
   RelationGetRelid(relation) = targetRelId;
@@ -1542,6 +1544,8 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
       has_not_null |= col->not_null;
       att->atthasdef = col->default_expr != NULL;
       att->attidentity = col->identity;
+      /* A generated column's expression is its default (GENERATED.md). */
+      att->attgenerated = col->generated;
     }
     att->attrelid = targetRelId;
     populate_compact_attribute(relation->rd_att, i);
@@ -1552,6 +1556,14 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
   }
   constr = (TupleConstr *)palloc0(sizeof(TupleConstr));
   constr->has_not_null = has_not_null;
+  for (int i = 0; i < desc->ncolumns; i++) {
+    if (desc->columns[i].dropped)
+      continue;
+    constr->has_generated_stored |=
+        ATTRIBUTE_GENERATED_STORED == desc->columns[i].generated;
+    constr->has_generated_virtual |=
+        ATTRIBUTE_GENERATED_VIRTUAL == desc->columns[i].generated;
+  }
   /* The columns' defaults, as pg_attrdef's rows would give them. */
   for (int i = 0; i < desc->ncolumns; i++)
     if (!desc->columns[i].dropped && desc->columns[i].default_expr != NULL)
@@ -1567,6 +1579,25 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
         constr->defval[n].adbin = pstrdup(desc->columns[i].default_expr);
         n++;
       }
+  }
+  /*
+   * Its check constraints, as CheckConstraintFetch() gives pg_constraint's:
+   * sorted by name, so the executor tests them in PostgreSQL's order.
+   */
+  if (desc->nchecks > 0) {
+    constr->num_check = (uint16)desc->nchecks;
+    constr->check = (ConstrCheck *)palloc0(desc->nchecks * sizeof(ConstrCheck));
+    for (int i = 0; i < desc->nchecks; i++) {
+      const smstore_check_t *c = &desc->checks[i];
+
+      constr->check[i].ccname = pstrdup(NameStr(c->name));
+      constr->check[i].ccbin = pstrdup(c->ccbin);
+      constr->check[i].ccenforced = c->enforced;
+      constr->check[i].ccvalid = c->validated;
+      constr->check[i].ccnoinherit = c->noinherit;
+    }
+    qsort(constr->check, constr->num_check, sizeof(ConstrCheck),
+          CheckConstraintCmp);
   }
   relation->rd_att->constr = constr;
   MemoryContextSwitchTo(oldcxt);

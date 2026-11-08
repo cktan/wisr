@@ -139,13 +139,11 @@ COMMIT;
 DROP TABLE remember_node_subid;
 
 -- generated NOT NULL constraint names must not collide with explicitly named constraints
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE two_not_null_constraints (
---dg    col integer NOT NULL,
---dg    CONSTRAINT two_not_null_constraints_col_not_null CHECK (col IS NOT NULL)
---dg );
---dg-cascade
---dg DROP TABLE two_not_null_constraints;
+CREATE TABLE two_not_null_constraints (
+   col integer NOT NULL,
+   CONSTRAINT two_not_null_constraints_col_not_null CHECK (col IS NOT NULL)
+);
+DROP TABLE two_not_null_constraints;
 
 --
 -- Partitioned tables
@@ -1013,8 +1011,7 @@ create table defcheck_def (a int, c int, b int);
 alter table defcheck_def drop c;
 --dg-cascade
 --dg alter table defcheck attach partition defcheck_def default;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg alter table defcheck_def add check (b <= 0 and b is not null);
+alter table defcheck_def add check (b <= 0 and b is not null);
 --dg-cascade
 --dg create table defcheck_1 partition of defcheck for values in (1, null);
 

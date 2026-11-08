@@ -41,7 +41,7 @@ drop table inserttest;
 -- tuple larger than fillfactor
 --
 CREATE TABLE large_tuple_test (a int, b text) WITH (fillfactor = 10);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE large_tuple_test ALTER COLUMN b SET STORAGE plain;
 
 -- create page w/ free space in range [nearlyEmptyFreeSpace, MaxHeapTupleSize)

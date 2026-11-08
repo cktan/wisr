@@ -1,0 +1,98 @@
+-- Verify NOT NULL constraints by name as PostgreSQL 18 has them
+-- (../sm/NOTNULL.md): each NOT NULL column is a constraint of
+-- pg_constraint, named by PostgreSQL's rule or by the statement, and
+-- DROP, RENAME and ADD CONSTRAINT take it.  Temporary tables, as the 8
+-- sessions run.sh starts share one database.
+-- 1. A table's NOT NULL columns, a primary key's among them, are rows
+--    of type n, one named by the statement; \d+ lists them.
+-- 2. LIKE ... INCLUDING ALL copies them.
+-- 3. DROP CONSTRAINT of one is DROP NOT NULL; RENAME CONSTRAINT renames
+--    one; SET NOT NULL and ADD CONSTRAINT ... NOT NULL make one.
+-- 4. A primary key's keeps its column NOT NULL; a name given twice, or
+--    taken by another constraint, is refused; a column's second name
+--    and NOT VALID are refused.
+-- The refusals are what is tested, so an error goes on to the next
+-- statement.
+\set ON_ERROR_STOP off
+create temp table job (id int primary key, owner text not null,
+                       note text constraint note_set not null, x int);
+select conname, contype, conkey from pg_constraint
+  where conrelid = 'job'::regclass order by conname;
+      conname       | contype | conkey 
+--------------------+---------+--------
+ job_id_not_null    | n       | {1}
+ job_owner_not_null | n       | {2}
+ job_pkey           | p       | {1}
+ note_set           | n       | {3}
+(4 rows)
+
+\d+ job
+                                           Table "pg_temp.job"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Compression | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+-------------+--------------+-------------
+ id     | integer |           | not null |         | plain    |             |              | 
+ owner  | text    |           | not null |         | extended |             |              | 
+ note   | text    |           | not null |         | extended |             |              | 
+ x      | integer |           |          |         | plain    |             |              | 
+Indexes:
+    "job_pkey" PRIMARY KEY, lsm (id)
+Access method: heap
+
+create temp table job2 (like job including all);
+select conname, contype, conkey from pg_constraint
+  where conrelid = 'job2'::regclass order by conname;
+      conname       | contype | conkey 
+--------------------+---------+--------
+ job2_pkey          | p       | {1}
+ job_id_not_null    | n       | {1}
+ job_owner_not_null | n       | {2}
+ note_set           | n       | {3}
+(4 rows)
+
+alter table job drop constraint job_owner_not_null;
+insert into job values (1, null, 'n', 1);
+alter table job rename constraint note_set to note_given;
+alter table job alter column x set not null;
+alter table job add constraint x_set not null owner;
+psql:test/not_null_constraint.sql:29: ERROR:  column "owner" of relation "job" contains null values
+select conname, contype, conkey from pg_constraint
+  where conrelid = 'job'::regclass order by conname;
+     conname     | contype | conkey 
+-----------------+---------+--------
+ job_id_not_null | n       | {1}
+ job_pkey        | p       | {1}
+ job_x_not_null  | n       | {4}
+ note_given      | n       | {3}
+(4 rows)
+
+delete from job;
+alter table job add constraint x_set not null owner;
+alter table job drop constraint job_id_not_null;
+psql:test/not_null_constraint.sql:34: ERROR:  column "id" is in a primary key
+create temp table bad (a int constraint blah not null,
+                       b int constraint blah not null);
+psql:test/not_null_constraint.sql:36: ERROR:  constraint "blah" for relation "bad" already exists
+alter table job add constraint note_given check (x > 0);
+psql:test/not_null_constraint.sql:37: ERROR:  constraint "note_given" for relation "job" already exists
+alter table job add constraint other not null x;
+psql:test/not_null_constraint.sql:38: ERROR:  cannot create not-null constraint "other" on column "x" of table "job"
+DETAIL:  A not-null constraint named "job_x_not_null" already exists for this column.
+alter table job add constraint nv not null note not valid;
+psql:test/not_null_constraint.sql:39: ERROR:  cannot create not-null constraint "nv" on column "note" of table "job"
+DETAIL:  A not-null constraint named "note_given" already exists for this column.
+alter table job add column y int;
+alter table job add constraint nv not null y not valid;
+psql:test/not_null_constraint.sql:41: ERROR:  a NOT VALID NOT NULL constraint is not supported yet
+select conname, contype, conkey from pg_constraint
+  where conrelid = 'job'::regclass order by conname;
+     conname     | contype | conkey 
+-----------------+---------+--------
+ job_id_not_null | n       | {1}
+ job_pkey        | p       | {1}
+ job_x_not_null  | n       | {4}
+ note_given      | n       | {3}
+ x_set           | n       | {2}
+(5 rows)
+
+drop table job;
+drop table job2;

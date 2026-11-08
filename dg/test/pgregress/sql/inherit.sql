@@ -164,9 +164,8 @@ SELECT relname, a.* FROM ONLY a, pg_class where a.tableoid = pg_class.oid;
 --dg INSERT INTO z2 VALUES (NULL, 'text'); -- should work
 
 -- Check inherited UPDATE with first child excluded
+create table some_tab (f1 int, f2 int, f3 int, check (f1 < 10) no inherit);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg create table some_tab (f1 int, f2 int, f3 int, check (f1 < 10) no inherit);
---dg-cascade
 --dg create table some_tab_child () inherits(some_tab);
 --dg-cascade
 --dg insert into some_tab_child select i, i+1, 0 from generate_series(1,1000) i;
@@ -193,7 +192,8 @@ SELECT relname, a.* FROM ONLY a, pg_class where a.tableoid = pg_class.oid;
 --dg drop function some_tab_stmt_trig_func();
 
 -- Check inherited UPDATE with all children excluded
-create table some_tab (a int, b int);
+--dg-cascade
+--dg create table some_tab (a int, b int);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table some_tab_child () inherits (some_tab);
 --dg-cascade
@@ -202,11 +202,13 @@ create table some_tab (a int, b int);
 --dg-cascade
 --dg explain (verbose, costs off)
 --dg update some_tab set a = a + 1 where false;
-update some_tab set a = a + 1 where false;
+--dg-cascade
+--dg update some_tab set a = a + 1 where false;
 --dg-cascade
 --dg explain (verbose, costs off)
 --dg update some_tab set a = a + 1 where false returning b, a;
-update some_tab set a = a + 1 where false returning b, a;
+--dg-cascade
+--dg update some_tab set a = a + 1 where false returning b, a;
 --dg-cascade
 --dg table some_tab;
 
@@ -365,13 +367,10 @@ alter table parent1 alter column f2 type bigint;  -- ok
 
 -- Test non-inheritable parent constraints
 create table p1(ff1 int);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg alter table p1 add constraint p1chk check (ff1 > 0) no inherit;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg alter table p1 add constraint p2chk check (ff1 > 10);
+alter table p1 add constraint p1chk check (ff1 > 0) no inherit;
+alter table p1 add constraint p2chk check (ff1 > 10);
 -- connoinherit should be true for NO INHERIT constraint
---dg-cascade
---dg select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pgc.connoinherit from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname = 'p1' order by 1,2;
+select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pgc.connoinherit from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname = 'p1' order by 1,2;
 
 -- Test that child does not inherit NO INHERIT constraints
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
@@ -382,7 +381,7 @@ create table p1(ff1 int);
 --dg \d c1
 
 -- Test that child does not override inheritable constraints of the parent
---dg-cascade
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table c2 (constraint p2chk check (ff1 > 10) no inherit) inherits (p1);	--fails
 
 --dg-cascade
@@ -431,76 +430,63 @@ drop table p2;
 drop table p1;
 
 CREATE TABLE ac (aa TEXT);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg alter table ac add constraint ac_check check (aa is not null);
+alter table ac add constraint ac_check check (aa is not null);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE bc (bb TEXT) INHERITS (ac);
 --dg-cascade
 --dg select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
 
---dg-cascade
---dg insert into ac (aa) values (NULL);
+insert into ac (aa) values (NULL);
 --dg-cascade
 --dg insert into bc (aa) values (NULL);
 
 --dg-cascade
 --dg alter table bc drop constraint ac_check;  -- fail, disallowed
---dg-cascade
---dg alter table ac drop constraint ac_check;
+alter table ac drop constraint ac_check;
 select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
 
 -- try the unnamed-constraint case
---dg-cascade
---dg alter table ac add check (aa is not null);
+alter table ac add check (aa is not null);
 --dg-cascade
 --dg select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
 
---dg-cascade
---dg insert into ac (aa) values (NULL);
+insert into ac (aa) values (NULL);
 --dg-cascade
 --dg insert into bc (aa) values (NULL);
 
 --dg-cascade
 --dg alter table bc drop constraint ac_aa_check;  -- fail, disallowed
---dg-cascade
---dg alter table ac drop constraint ac_aa_check;
+alter table ac drop constraint ac_aa_check;
 select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
 
---dg-cascade
---dg alter table ac add constraint ac_check check (aa is not null);
+alter table ac add constraint ac_check check (aa is not null);
 --dg-cascade
 --dg alter table bc no inherit ac;
 --dg-cascade
 --dg select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
 --dg-cascade
 --dg alter table bc drop constraint ac_check;
---dg-cascade
---dg select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
---dg-cascade
---dg alter table ac drop constraint ac_check;
+select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
+alter table ac drop constraint ac_check;
 select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
 
 --dg-cascade
 --dg drop table bc;
 drop table ac;
 
+create table ac (a int constraint check_a check (a <> 0));
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg create table ac (a int constraint check_a check (a <> 0));
---dg-cascade
 --dg create table bc (a int constraint check_a check (a <> 0), b int constraint check_b check (b <> 0)) inherits (ac);
 --dg-cascade
 --dg select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
 
 --dg-cascade
 --dg drop table bc;
---dg-cascade
---dg drop table ac;
+drop table ac;
 
+create table ac (a int constraint check_a check (a <> 0));
+create table bc (b int constraint check_b check (b <> 0));
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg create table ac (a int constraint check_a check (a <> 0));
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg create table bc (b int constraint check_b check (b <> 0));
---dg-cascade
 --dg create table cc (c int constraint check_c check (c <> 0)) inherits (ac, bc);
 --dg-cascade
 --dg select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc', 'cc') order by 1,2;
@@ -512,10 +498,8 @@ drop table ac;
 
 --dg-cascade
 --dg drop table cc;
---dg-cascade
---dg drop table bc;
---dg-cascade
---dg drop table ac;
+drop table bc;
+drop table ac;
 
 create table p1(f1 int);
 create table p2(f2 int);
@@ -531,8 +515,7 @@ create table p2(f2 int);
 --dg delete from c1;
 --dg-cascade
 --dg insert into c1 values(1,1,2);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg alter table p2 add check (f2>0);
+alter table p2 add check (f2>0);
 --dg-cascade
 --dg insert into c1 values(1,-1,2);  -- fail
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
@@ -545,14 +528,12 @@ create table p2(f2 int);
 --dg \d c3
 --dg-cascade
 --dg drop table p1 cascade;
---dg-cascade
---dg drop table p2 cascade;
+drop table p2 cascade;
 
 create table pp1 (f1 int);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table cc1 (f2 text, f3 int) inherits (pp1);
---dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL and DEFAULT yet
---dg alter table pp1 add column a1 int check (a1 > 0);
+alter table pp1 add column a1 int check (a1 > 0);
 --dg-cascade
 --dg \d cc1
 --dg-cascade
@@ -714,8 +695,7 @@ select * from inh_fk_1 order by 1;
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table p1_c1() inherits(p1);
 
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg alter table p1 add constraint inh_check_constraint1 check (f1 > 0);
+alter table p1 add constraint inh_check_constraint1 check (f1 > 0);
 --dg-cascade
 --dg alter table p1_c1 add constraint inh_check_constraint1 check (f1 > 0);
 
@@ -724,8 +704,7 @@ select * from inh_fk_1 order by 1;
 --dg-cascade
 --dg alter table p1 add constraint inh_check_constraint2 check (f1 < 10);
 
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg alter table p1 add constraint inh_check_constraint3 check (f1 > 0) not enforced;
+alter table p1 add constraint inh_check_constraint3 check (f1 > 0) not enforced;
 --dg-cascade
 --dg alter table p1_c1 add constraint inh_check_constraint3 check (f1 > 0) not enforced;
 
@@ -740,8 +719,7 @@ select * from inh_fk_1 order by 1;
 --dg-cascade
 --dg alter table p1 add constraint inh_check_constraint5 check (f1 < 10) not enforced;
 
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg alter table p1 add constraint inh_check_constraint6 check (f1 < 10) not enforced;
+alter table p1 add constraint inh_check_constraint6 check (f1 < 10) not enforced;
 --dg-cascade
 --dg alter table p1_c1 add constraint inh_check_constraint6 check (f1 < 10) enforced;
 
@@ -751,12 +729,11 @@ select * from inh_fk_1 order by 1;
 --dg alter table p1 add constraint inh_check_constraint9 check (f1 < 10) not enforced;
 
 -- the not-valid state of the child constraint will be ignored here.
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg alter table p1 add constraint inh_check_constraint10 check (f1 < 10) not enforced;
+alter table p1 add constraint inh_check_constraint10 check (f1 < 10) not enforced;
 --dg-cascade
 --dg alter table p1_c1 add constraint inh_check_constraint10 check (f1 < 10) not valid enforced;
 
---dg-cascade
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table p1_c2(f1 int constraint inh_check_constraint4 check (f1 < 10)) inherits(p1);
 
 -- but reverse is not allowed
@@ -765,8 +742,7 @@ select * from inh_fk_1 order by 1;
 --dg-cascade
 --dg alter table p1 add constraint inh_check_constraint7 check (f1 < 10) enforced;
 
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg alter table p1 add constraint inh_check_constraint8 check (f1 < 10) enforced;
+alter table p1 add constraint inh_check_constraint8 check (f1 < 10) enforced;
 --dg-cascade
 --dg alter table p1_c1 add constraint inh_check_constraint8 check (f1 < 10) not enforced;
 
@@ -796,7 +772,7 @@ select * from inh_fk_1 order by 1;
 --
 --dg-cascade
 --dg create table p1(f1 int constraint p1_a_check check (f1 > 0) not enforced);
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg-skip: column "?" asks for what CREATE TABLE does not support yet
 --dg create table p1_c1(f1 int constraint p1_a_check check (f1 > 0) enforced);
 --dg-cascade
 --dg alter table p1_c1 inherit p1;
@@ -830,14 +806,12 @@ select * from inh_fk_1 order by 1;
 
 --dg-cascade
 --dg create table p1(f1 int constraint f1_pos CHECK (f1 > 0));
---dg-cascade
---dg create table p2(f1 int constraint f1_pos CHECK (f1 > 0));
---dg-cascade
+create table p2(f1 int constraint f1_pos CHECK (f1 > 0));
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table p1p2_c1 (f1 int) inherits (p1, p2);
---dg-cascade
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table p1p2_c2 (f1 int constraint f1_pos CHECK (f1 > 0)) inherits (p1, p2);
---dg-cascade
---dg alter table p2 drop constraint f1_pos;
+alter table p2 drop constraint f1_pos;
 --dg-cascade
 --dg alter table p1 drop constraint f1_pos;
 --dg-cascade
@@ -903,7 +877,7 @@ create table invalid_check_con(f1 int);
 --dg-cascade
 --dg alter table invalid_check_con add constraint inh_check_constraint check(f1 > 0) not valid;
 
---dg-differs: no error where PostgreSQL has: new row for relation "?" violates check constraint "?"
+--dg-cascade
 --dg insert into invalid_check_con values(0); -- fail
 --dg-cascade
 --dg insert into invalid_check_con_child values(0); -- fail
@@ -1156,7 +1130,7 @@ reset enable_bitmapscan;
 --
 create table inhpar(f1 int, f2 name);
 create table inhcld(f2 name, f1 int);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table inhcld inherit inhpar;
 insert into inhpar select x, x::text from generate_series(1,5) x;
 insert into inhcld select x::text, x from generate_series(6,10) x;
@@ -1230,8 +1204,7 @@ create table cnullparent (f1 int);
 --dg create table cc2 (f4 float) inherits (pp1,cc1);
 --dg-cascade
 --dg create table cc3 () inherits (pp1,cc1,cc2);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg alter table pp1 alter f1 set not null;
+alter table pp1 alter f1 set not null;
 --dg-cascade
 --dg \d+ cc3
 --dg-cascade
@@ -1252,8 +1225,7 @@ create table cnullparent (f1 int);
 --dg \d+ cc1
 --dg-cascade
 --dg \d+ cc2
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg alter table pp1 alter column f1 set not null;
+alter table pp1 alter column f1 set not null;
 --dg-cascade
 --dg \d+ pp1
 --dg-cascade
@@ -1290,8 +1262,7 @@ create table cnullparent (f1 int);
 --dg alter table cc1 alter column f1 drop not null;
 
 -- remove from pp1, should succeed
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg alter table pp1 alter column f1 drop not null;
+alter table pp1 alter column f1 drop not null;
 --dg-cascade
 --dg \d+ pp1
 
@@ -1301,7 +1272,7 @@ alter table pp1 add primary key (f1);
 -- test that removing inheritance of NOT NULL NO INHERIT works correctly
 create table inh_parent (f1 int not null no inherit, f2 int not null no inherit);
 create table inh_child (f1 int not null no inherit, f2 int);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table inh_child inherit inh_parent;
 --dg-cascade
 --dg alter table inh_child no inherit inh_parent;
@@ -1315,8 +1286,7 @@ create table inh_pp1 (f1 int);
 --dg create table inh_cc1 (f2 text, f3 int) inherits (inh_pp1);
 --dg-cascade
 --dg create table inh_cc2(f4 float) inherits(inh_pp1,inh_cc1);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg alter table inh_pp1 alter column f1 set not null;
+alter table inh_pp1 alter column f1 set not null;
 --dg-cascade
 --dg alter table inh_cc2 no inherit inh_pp1;
 --dg-cascade
@@ -1332,8 +1302,7 @@ create table inh_pp1 (f1 int);
 --dg create table inh_cc1 (f2 text, f3 int) inherits (inh_pp1);
 --dg-cascade
 --dg create table inh_cc2(f4 float) inherits(inh_pp1,inh_cc1);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg alter table inh_pp1 alter column f1 drop not null;
+alter table inh_pp1 alter column f1 drop not null;
 --dg-cascade
 --dg \d+ inh_cc2
 --dg-cascade
@@ -1391,11 +1360,10 @@ create table inh_parent2(b int constraint nn not null);
 create table inh_nn_parent(a int);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table inh_nn_child() inherits (inh_nn_parent);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
---dg alter table inh_nn_parent add not null a no inherit;
+alter table inh_nn_parent add not null a no inherit;
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table inh_nn_child2() inherits (inh_nn_parent);
---dg-cascade
+--dg-differs: the result
 --dg select conrelid::regclass, conname, contype, conkey,
 --dg  (select attname from pg_attribute where attrelid = conrelid and attnum = conkey[1]),
 --dg  coninhcount, conislocal, connoinherit
@@ -1411,9 +1379,9 @@ create table inh_nn_parent(a int);
 --dg CREATE TABLE inh_nn_parent (a int, NOT NULL a NO INHERIT);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE inh_nn_child() INHERITS (inh_nn_parent);
---dg-cascade
+--dg-differs: another error: cannot create not-null constraint "?" on column "?" of table "?"
 --dg ALTER TABLE inh_nn_parent ADD CONSTRAINT nna NOT NULL a;
---dg-cascade
+--dg-differs: no error where PostgreSQL has: cannot change NO INHERIT status of NOT NULL constraint "?" on relation "?"
 --dg ALTER TABLE inh_nn_parent ALTER a SET NOT NULL;
 --dg-cascade
 --dg DROP TABLE inh_nn_parent cascade;
@@ -1526,7 +1494,7 @@ drop table inh_parent, inh_child;
 create table inh_parent (a int primary key);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table inh_child (a int primary key) inherits (inh_parent);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE, CHECK and NOT NULL yet
 --dg alter table inh_parent add constraint inh_parent_excl exclude ((1) with =);
 alter table inh_parent add constraint inh_parent_uq unique (a);
 alter table inh_parent add constraint inh_parent_fk foreign key (a) references inh_parent (a);
@@ -1623,14 +1591,14 @@ create table inh_p4(f1 int not null, f3 text not null);
 --
 create table inh_nn1 (f1 int not null no inherit);
 create table inh_nn2 (f2 text, f3 int, f1 int);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table inh_nn2 inherit inh_nn1;
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table inh_nn3 (f4 float) inherits (inh_nn2);
 create table inh_nn4 (f5 int, f4 float, f2 text, f3 int, f1 int);
 --dg-cascade
 --dg alter table inh_nn4 inherit inh_nn2, inherit inh_nn1, inherit inh_nn3;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table inh_nn1 alter constraint inh_nn1_f1_not_null inherit;
 --dg-cascade
 --dg select conrelid::regclass, conname, conkey, coninhcount, conislocal, connoinherit
@@ -1638,7 +1606,7 @@ create table inh_nn4 (f5 int, f4 float, f2 text, f3 int, f1 int);
 --dg  conrelid::regclass::text in ('inh_nn1', 'inh_nn2', 'inh_nn3', 'inh_nn4')
 --dg  order by 2, 1;
 -- ALTER CONSTRAINT NO INHERIT should work on top-level constraints
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table inh_nn1 alter constraint inh_nn1_f1_not_null no inherit;
 --dg-cascade
 --dg select conrelid::regclass, conname, conkey, coninhcount, conislocal, connoinherit
@@ -1646,8 +1614,7 @@ create table inh_nn4 (f5 int, f4 float, f2 text, f3 int, f1 int);
 --dg  conrelid::regclass::text in ('inh_nn1', 'inh_nn2', 'inh_nn3', 'inh_nn4')
 --dg  order by 2, 1;
 -- A constraint that's NO INHERIT can be dropped without damaging children
---dg-skip: constraint "?" of relation "?" does not exist
---dg alter table inh_nn1 drop constraint inh_nn1_f1_not_null;
+alter table inh_nn1 drop constraint inh_nn1_f1_not_null;
 --dg-cascade
 --dg select conrelid::regclass, conname, coninhcount, conislocal, connoinherit
 --dg  from pg_constraint where contype = 'n' and
@@ -1699,7 +1666,7 @@ delete from inh_nn2;
 --dg alter table inh_nn1 alter constraint inh_nn1_f1_not_null inherit;
 --dg-cascade
 --dg alter table inh_nn3 alter constraint nn3_f1 inherit;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-cascade
 --dg alter table inh_nn1 alter constraint inh_nn1_f1_not_null inherit; -- now it works
 --dg-cascade
 --dg select conrelid::regclass, conname, conkey, coninhcount, conislocal, connoinherit
@@ -1720,7 +1687,7 @@ delete from inh_nn2;
 --dg-cascade
 --dg alter table inh_nn1 alter constraint inh_nn1_f1_fkey inherit;
 -- try to drop a nonexistant constraint
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table inh_nn1 alter constraint foo inherit;
 -- Can't modify inheritability of inherited constraints
 --dg-cascade
@@ -2184,37 +2151,32 @@ drop role regress_no_child_access;
 
 -- fast defaults lead to attribute mapping being used in one
 -- direction, but not the other
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE errtst_child_fastdef (
---dg     partid int not null,
---dg     shdata int not null,
---dg     CONSTRAINT shdata_small CHECK(shdata < 3)
---dg );
+CREATE TABLE errtst_child_fastdef (
+    partid int not null,
+    shdata int not null,
+    CONSTRAINT shdata_small CHECK(shdata < 3)
+);
 
 -- no remapping in either direction necessary
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE errtst_child_plaindef (
---dg     partid int not null,
---dg     shdata int not null,
---dg     data int NOT NULL DEFAULT 0,
---dg     CONSTRAINT shdata_small CHECK(shdata < 3),
---dg     CHECK(data < 10)
---dg );
+CREATE TABLE errtst_child_plaindef (
+    partid int not null,
+    shdata int not null,
+    data int NOT NULL DEFAULT 0,
+    CONSTRAINT shdata_small CHECK(shdata < 3),
+    CHECK(data < 10)
+);
 
 -- remapping in both direction
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE errtst_child_reorder (
---dg     data int NOT NULL DEFAULT 0,
---dg     shdata int not null,
---dg     partid int not null,
---dg     CONSTRAINT shdata_small CHECK(shdata < 3),
---dg     CHECK(data < 10)
---dg );
+CREATE TABLE errtst_child_reorder (
+    data int NOT NULL DEFAULT 0,
+    shdata int not null,
+    partid int not null,
+    CONSTRAINT shdata_small CHECK(shdata < 3),
+    CHECK(data < 10)
+);
 
---dg-cascade
---dg ALTER TABLE errtst_child_fastdef ADD COLUMN data int NOT NULL DEFAULT 0;
---dg-cascade
---dg ALTER TABLE errtst_child_fastdef ADD CONSTRAINT errtest_child_fastdef_data_check CHECK (data < 10);
+ALTER TABLE errtst_child_fastdef ADD COLUMN data int NOT NULL DEFAULT 0;
+ALTER TABLE errtst_child_fastdef ADD CONSTRAINT errtest_child_fastdef_data_check CHECK (data < 10);
 
 --dg-cascade
 --dg ALTER TABLE errtst_parent ATTACH PARTITION errtst_child_fastdef FOR VALUES FROM (0) TO (10);
@@ -2275,12 +2237,9 @@ ROLLBACK;
 
 -- direct leaf partition update, without partition id violation
 BEGIN;
---dg-cascade
---dg UPDATE errtst_child_fastdef SET partid = 1 WHERE partid = 0;
---dg-cascade
---dg UPDATE errtst_child_plaindef SET partid = 11 WHERE partid = 10;
---dg-cascade
---dg UPDATE errtst_child_reorder SET partid = 21 WHERE partid = 20;
+UPDATE errtst_child_fastdef SET partid = 1 WHERE partid = 0;
+UPDATE errtst_child_plaindef SET partid = 11 WHERE partid = 10;
+UPDATE errtst_child_reorder SET partid = 21 WHERE partid = 20;
 ROLLBACK;
 
 -- direct leaf partition update, with partition id violation

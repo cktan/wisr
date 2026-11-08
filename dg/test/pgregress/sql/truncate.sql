@@ -188,7 +188,7 @@ SELECT count(*) as "Row count in test table" FROM trunc_trigger_test;
 --dg-cascade
 --dg SELECT * FROM trunc_trigger_log;
 
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP TRIGGER t ON trunc_trigger_test;
 
 truncate trunc_trigger_log;

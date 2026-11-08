@@ -4,9 +4,12 @@
 # 1. A table with a primary key, a unique constraint on one column and one
 #    on two with INCLUDE, and a unique index made by CREATE UNIQUE INDEX.
 # 2. The primary key is a row of type p, each unique constraint one of type
-#    u, named as its index, on its key columns; the index has none.
+#    u, named as its index, on its key columns; the index has none.  The NOT
+#    NULL rows, of type n, are not_null_constraint.sql's.
 # 3. pg_get_constraintdef() writes each, INCLUDE columns too.
-# 4. Dropping the table drops its rows.
+# 4. LIKE ... INCLUDING INDEXES copies the constraints as constraints, and
+#    the unique index as an index.
+# 5. Dropping the table drops its rows.
 
 statement ok
 create table kp (a int4 primary key, b int4 unique, c int4, d text,
@@ -17,7 +20,8 @@ create unique index kp_c on kp (c)
 
 query TTTT nosort
 select conname, contype, conindid::regclass::text, conkey::text
-  from pg_constraint where conrelid = 'kp'::regclass order by conname
+  from pg_constraint where conrelid = 'kp'::regclass and contype in ('p', 'u')
+  order by conname
 ----
 kp_b_c_d_key	u	kp_b_c_d_key	{2,3}
 kp_b_key	u	kp_b_key	{2}
@@ -25,11 +29,25 @@ kp_pkey	p	kp_pkey	{1}
 
 query TT nosort
 select conname, pg_get_constraintdef(oid) from pg_constraint
- where conrelid = 'kp'::regclass order by conname
+ where conrelid = 'kp'::regclass and contype in ('p', 'u') order by conname
 ----
 kp_b_c_d_key	UNIQUE (b, c) INCLUDE (d)
 kp_b_key	UNIQUE (b)
 kp_pkey	PRIMARY KEY (a)
+
+statement ok
+create table kp2 (like kp including indexes)
+
+query TT nosort
+select conname, contype from pg_constraint
+ where conrelid = 'kp2'::regclass and contype in ('p', 'u') order by conname
+----
+kp2_b_c_d_key	u
+kp2_b_key	u
+kp2_pkey	p
+
+statement ok
+drop table kp2
 
 statement ok
 drop table kp

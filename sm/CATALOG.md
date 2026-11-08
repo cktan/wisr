@@ -370,7 +370,7 @@ frozen.
 | `INDEX_STATE` | 9 | table oid `int8`, index oid `int8` | one index's state, with why its build failed; none for a pending index |
 | `STATS` | 10 | table oid `int8`, index oid `int8`, n `int8` | the table's statistics: an entry for the table, (0, 0), and one a statistic, a column's (0, attnum + 1), an index expression's (index oid, place + 1) |
 | `SEQUENCE` | 11 | oid `int8` | a sequence: its namespace, name, start, increment and owner |
-| `CONSTRAINT` | 12 | table oid `int8`, constraint oid `int8` | one constraint of the table, its child: a foreign key ([`FOREIGNKEY.md`](FOREIGNKEY.md)) |
+| `CONSTRAINT` | 12 | table oid `int8`, constraint oid `int8` | one constraint of the table: a foreign key, of its child ([`FOREIGNKEY.md`](FOREIGNKEY.md)), or a check ([`CHECK.md`](CHECK.md)) |
 | `VIEW` | 13 | oid `int8` | a view: its namespace, name, the host's query and options, and the relations it reads ([`VIEW.md`](VIEW.md)) |
 
 ### 3.4 What the keys mean
@@ -422,6 +422,7 @@ INDEX value       = index | key × nkey | include × ninclude | read × nread
 INDEX_STATE value = index state
 SEQUENCE value    = sequence
 CONSTRAINT value  = constraint | fkey | fkey pair × npairs
+                  | constraint | check | check read × nread
 VIEW value        = view | view read × nread | view query × npiece
 STATS value       = table stats | index stats × nindex
                   | statistic | mcv × nmcv | bound × nbound
@@ -437,7 +438,7 @@ under "What is recorded".
 | meta | format version `int4` |
 | name | kind `int2`, oid `int8`, table oid `int8` or null |
 | table | namespace `int8`, name `text`, storeid `int8`, `_id` sequence `text`, next index relid `int2` |
-| column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null, default `bytea` or null: the host's expression, opaque, kept and never run; identity kind `int2` (`a` or `d`) or null, identity sequence `int8` or null, update default `bytea` or null: the host's expression for what an UPDATE that does not assign the column writes, opaque, kept and never run ([`../dg/ONUPDATE.md`](../dg/ONUPDATE.md)) |
+| column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null, default `bytea` or null: the host's expression, opaque, kept and never run; identity kind `int2` (`a` or `d`) or null, identity sequence `int8` or null, update default `bytea` or null: the host's expression for what an UPDATE that does not assign the column writes, opaque, kept and never run ([`../dg/ONUPDATE.md`](../dg/ONUPDATE.md)); NOT NULL constraint oid `int8` or null, and its name `text` or null, both set for a NOT NULL column ([`NOTNULL.md`](NOTNULL.md)) |
 | index | oid `int8`, name `text`, relid `int2`, unique `bool`, nkey `int4`, ninclude `int4`, three retired and null, eval `bytea` or null, nread `int4` or null, primary `bool` or null, constraint `bool` or null, tree `bool` or null: true, or null for false |
 | index state | state `int2`, error `int2` or null, reason `text` or null, the key of a row that holds a duplicated key, `bytea` or null |
 | key | attnum `int4`, desc `bool`, nulls first `bool`, collation oid `int8` or null, type code `int2` or null, typmod `int4` or null |
@@ -446,9 +447,11 @@ under "What is recorded".
 | namespace | name `text` |
 | collation | name `text`, locale `text`, deterministic `bool`, ICU version `text` |
 | sequence | namespace `int8`, name `text`, start `int8`, increment `int8`, owner table `int8` or null, owner column `int4` or null |
-| constraint | oid `int8`, name `text`, type `int2` (`f`), validated `bool`, host `bytea` or null |
+| constraint | oid `int8`, name `text`, type `int2` (`f` a foreign key, `c` a check), validated `bool`, host `bytea` or null |
 | fkey | parent table `int8`, parent index `int8`, npairs `int4`, on update `int2`, on delete `int2`, match `int2`, deferrable `bool`, deferred `bool` |
 | fkey pair | child attnum `int4`, parent attnum `int4` |
+| check | nread `int4`: the columns its expression reads ([`CHECK.md`](CHECK.md)) |
+| check read | attnum `int4` |
 | view | namespace `int8`, name `text`, options `bytea` or null: the host's; nread `int4`, npiece `int4` |
 | view read | relation `int8`, attnum `int4`: a table's column, 0-based, or -1 for the relation whole |
 | view query | a piece of the host's query, opaque, `bytea` of at most 60,000 bytes |

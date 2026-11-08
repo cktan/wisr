@@ -564,7 +564,7 @@ INSERT INTO dedup_unique_test_table SELECT i FROM generate_series(0,450) i;
 -- truncation would otherwise truncate tuples on internal pages, leaving us
 -- with a short tree.
 create table btree_tall_tbl(id int4, t text);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table btree_tall_tbl alter COLUMN t set storage plain;
 --dg-skip: storage parameter "?" is not supported
 --dg create index btree_tall_idx on btree_tall_tbl (t, id) with (fillfactor = 10);

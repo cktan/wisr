@@ -1003,6 +1003,251 @@ TEST_CASE("set_identity makes a filled NOT NULL column an identity column") {
   REQUIRE(0 == sm3::commit(f.a));
 }
 
+TEST_CASE("a generated column keeps its kind and the columns it reads") {
+  // Verify generated columns in sm3's catalog (../GENERATED.md).
+  // 1. A table with a, b, a stored g reading both and a virtual v
+  //    reading a: each keeps its kind and reads, after a restart too.
+  // 2. A virtual NOT NULL column, one reading itself, a generated
+  //    column or no column is SM_ERR_INVALID.
+  // 3. A default for g, NOT NULL for v, an index on v: SM_ERR_INVALID.
+  // 4. Dropping a is SM_ERR_INUSE, and column_use names g for a and g.
+  // 5. A virtual column added with a missing value is SM_ERR_INVALID;
+  //    without one it is added.
+  // 6. set_generated makes a plain column generated, once; one that
+  //    would read a generated column is SM_ERR_INVALID.
+  // 7. A generated column dropped keeps no kind and no reads.
+  jobs_t f;
+  auto col = [](std::string name, uint8_t code, char kind,
+                std::vector<int32_t> reads) {
+    sm3::column_spec_t c{name, code, -1, false};
+    if (kind != 0) {
+      c.default_expr = "expr";
+      c.generated = kind;
+      c.generated_reads = std::move(reads);
+    }
+    return c;
+  };
+  std::vector<sm3::column_spec_t> cols = {
+      col("a", sm2::type_int4.code, 0, {}),
+      col("b", sm2::type_int4.code, 0, {}),
+      col("g", sm2::type_int8.code, 's', {0, 1}),
+      col("v", sm2::type_text.code, 'v', {0})};
+  uint64_t gt = 0;
+  start(f.a);
+  REQUIRE_MESSAGE(0 == sm3::create_table(f.a, sm3::nsp_public, "gt", cols, gt),
+                  sm1::errmsg());
+  REQUIRE(0 == sm3::commit(f.a));
+  f.reload();
+  start(f.a);
+  {
+    sm3::table_rec_t rec;
+    REQUIRE(0 == sm3::cat_get_table_rec(f.a, gt, rec));
+    CHECK('s' == rec.columns[2].generated);
+    CHECK(std::vector<int32_t>{0, 1} == rec.columns[2].generated_reads);
+    CHECK('v' == rec.columns[3].generated);
+    CHECK(std::vector<int32_t>{0} == rec.columns[3].generated_reads);
+    CHECK(0 == rec.columns[0].generated);
+  }
+
+  uint64_t bad = 0;
+  for (auto bad_cols : {std::vector<sm3::column_spec_t>{
+                            col("a", sm2::type_int4.code, 0, {}),
+                            col("v", sm2::type_int4.code, 'v', {0})},
+                        std::vector<sm3::column_spec_t>{
+                            col("a", sm2::type_int4.code, 's', {0})},
+                        std::vector<sm3::column_spec_t>{
+                            col("a", sm2::type_int4.code, 's', {}),
+                            col("b", sm2::type_int4.code, 's', {0})},
+                        std::vector<sm3::column_spec_t>{
+                            col("a", sm2::type_int4.code, 's', {5})}}) {
+    if (bad_cols.size() == 2 && bad_cols[1].generated == 'v') {
+      bad_cols[1].not_null = true;
+    }
+    CHECK(-1 == sm3::create_table(f.a, sm3::nsp_public, "bad", bad_cols, bad));
+    CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  }
+
+  CHECK(-1 == sm3::set_default(f.a, gt, "g", "1"));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  CHECK(-1 == sm3::set_not_null(f.a, gt, "v"));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  std::vector<sm3::index_key_spec_t> on_v = {{3, false, false, std::nullopt}};
+  uint64_t ix = 0;
+  CHECK(-1 == sm3::create_index(f.a, gt, "gt_v", on_v, {}, false, ix));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+
+  CHECK(-1 == sm3::drop_column(f.a, gt, "a"));
+  CHECK(sm1::SM_ERR_INUSE == sm1::errnum());
+  sm3::column_use_t use = sm3::column_use_t::none;
+  std::string by;
+  REQUIRE(0 == sm3::column_use(f.a, gt, 0, use, by));
+  CHECK(sm3::column_use_t::generated == use);
+  REQUIRE(0 == sm3::column_use(f.a, gt, 2, use, by));
+  CHECK(sm3::column_use_t::generated == use);
+  CHECK("g" == by);
+
+  sm3::column_spec_t w = col("w", sm2::type_int4.code, 'v', {1});
+  std::string four(4, '\0');
+  CHECK(-1 == sm3::add_column(f.a, gt, w, four));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  REQUIRE_MESSAGE(0 == sm3::add_column(f.a, gt, w, std::nullopt),
+                  sm1::errmsg());
+
+  // set_generated makes a plain column generated, once.
+  REQUIRE(0 == sm3::add_column(f.a, gt, col("p", sm2::type_int4.code, 0, {}),
+                               std::nullopt));
+  const int32_t on_a[] = {0}, on_g[] = {2};
+  REQUIRE_MESSAGE(0 == sm3::set_generated(f.a, gt, "p", 's', "e", on_a),
+                  sm1::errmsg());
+  CHECK(-1 == sm3::set_generated(f.a, gt, "p", 's', "e", on_a));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  CHECK(-1 == sm3::set_generated(f.a, gt, "b", 'v', "e", on_g));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+
+  // A generated column dropped keeps no kind.
+  REQUIRE_MESSAGE(0 == sm3::drop_column(f.a, gt, "p"), sm1::errmsg());
+  {
+    sm3::table_rec_t rec;
+    REQUIRE(0 == sm3::cat_get_table_rec(f.a, gt, rec));
+    CHECK(0 == rec.columns.back().generated);
+    CHECK(rec.columns.back().generated_reads.empty());
+  }
+  REQUIRE(0 == sm3::commit(f.a));
+}
+
+TEST_CASE("a NOT NULL column's constraint has an oid and a name") {
+  // Verify NOT NULL constraints by name (../NOTNULL.md).
+  // 1. jobs's id, NOT NULL at create_table, has jobs_id_not_null and an
+  //    oid; state, nullable, has neither.
+  // 2. A check cannot take jobs_id_not_null: SM_ERR_DUPKEY.
+  // 3. state made NOT NULL as state_set; owner made NOT NULL with no
+  //    name, its default taken by a check, gets jobs_owner_not_null1.
+  //    A name taken is SM_ERR_DUPKEY, and owner stays nullable.
+  // 4. rename_not_null renames state_set; a name taken, or a column
+  //    with none, fails.
+  // 5. After a restart the names and oids are as they were.
+  // 6. DROP NOT NULL and DROP COLUMN take the constraint away.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  const sm3::column_def_t id = sm3::tbl_def(t).columns[0];
+  CHECK("jobs_id_not_null" == id.not_null_name);
+  CHECK(0 != id.not_null_oid);
+  CHECK(0 == sm3::tbl_def(t).columns[1].not_null_oid);
+  CHECK(sm3::tbl_def(t).columns[1].not_null_name.empty());
+  sm3::tbl_close(t);
+
+  sm3::check_rec_t k;
+  k.name = "jobs_id_not_null";
+  k.reads = {0};
+  uint64_t k_oid = 0;
+  CHECK(-1 == sm3::create_check(f.a, f.jobs, k, k_oid));
+  CHECK(sm1::SM_ERR_DUPKEY == sm1::errnum());
+  k.name = "jobs_owner_not_null";
+  REQUIRE(0 == sm3::create_check(f.a, f.jobs, k, k_oid));
+
+  REQUIRE(0 == sm3::set_not_null(f.a, f.jobs, "state", "state_set"));
+  CHECK(-1 == sm3::set_not_null(f.a, f.jobs, "owner", "state_set"));
+  CHECK(sm1::SM_ERR_DUPKEY == sm1::errnum());
+  t = f.write(f.a);
+  CHECK(!sm3::tbl_def(t).columns[2].not_null);
+  sm3::tbl_close(t);
+  REQUIRE(0 == sm3::set_not_null(f.a, f.jobs, "owner"));
+
+  REQUIRE(0 == sm3::rename_not_null(f.a, f.jobs, "state", "state_given"));
+  CHECK(-1 == sm3::rename_not_null(f.a, f.jobs, "state", "jobs_id_not_null"));
+  CHECK(sm1::SM_ERR_DUPKEY == sm1::errnum());
+  REQUIRE(0 == sm3::commit(f.a));
+
+  f.reload();
+  start(f.a);
+  t = f.write(f.a);
+  const sm3::table_def_t &d = sm3::tbl_def(t);
+  CHECK(id.not_null_oid == d.columns[0].not_null_oid);
+  CHECK("state_given" == d.columns[1].not_null_name);
+  CHECK("jobs_owner_not_null1" == d.columns[2].not_null_name);
+  CHECK(d.columns[1].not_null_oid != d.columns[2].not_null_oid);
+  sm3::tbl_close(t);
+
+  REQUIRE(0 == sm3::drop_not_null(f.a, f.jobs, "state"));
+  CHECK(-1 == sm3::rename_not_null(f.a, f.jobs, "state", "x"));
+  CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+  REQUIRE(0 == sm3::drop_check(f.a, f.jobs, k_oid));
+  REQUIRE(0 == sm3::drop_index(f.a, f.jobs, f.jobs_state));
+  REQUIRE_MESSAGE(0 == sm3::drop_column(f.a, f.jobs, "owner"), sm1::errmsg());
+  t = f.write(f.a);
+  CHECK(0 == sm3::tbl_def(t).columns[1].not_null_oid);
+  CHECK(0 == sm3::tbl_def(t).columns[2].not_null_oid);
+  sm3::tbl_close(t);
+  REQUIRE(0 == sm3::commit(f.a));
+}
+
+TEST_CASE("drop_not_null and set_default change a column's record") {
+  // Verify drop_not_null and set_default, ALTER COLUMN's DROP NOT NULL,
+  // SET DEFAULT and DROP DEFAULT.
+  // 1. id, NOT NULL, is made nullable, and again; a row with id null
+  //    is then inserted.
+  // 2. state takes a default, then another; after a restart it has the
+  //    second; then it is dropped.
+  // 3. A primary key's column keeps NOT NULL: SM_ERR_INUSE.
+  // 4. An identity column keeps NOT NULL and takes no default:
+  //    SM_ERR_INVALID.
+  // 5. A column not there is SM_ERR_NOTFOUND for both.
+  jobs_t f;
+  start(f.a);
+  REQUIRE_MESSAGE(0 == sm3::drop_not_null(f.a, f.jobs, "id"), sm1::errmsg());
+  CHECK(0 == sm3::drop_not_null(f.a, f.jobs, "id"));
+  sm3::table_t *t = f.write(f.a);
+  CHECK(!sm3::tbl_def(t).columns[0].not_null);
+  std::string state = sm2::make_varlena("s"), owner = sm2::make_varlena("o");
+  std::vector<sm2::datum_t> v = {sm2::datum_from_int32(0),
+                                 sm2::datum_from_ptr(state.data()),
+                                 sm2::datum_from_ptr(owner.data())};
+  const bool id_null[3] = {true, false, false};
+  uint64_t rowno = 0;
+  CHECK_MESSAGE(0 == sm3::tbl_insert(t, v, id_null, rowno), sm1::errmsg());
+  sm3::tbl_close(t);
+
+  REQUIRE(0 == sm3::set_default(f.a, f.jobs, "state", "'free'"));
+  REQUIRE(0 == sm3::set_default(f.a, f.jobs, "state", "'taken'"));
+  REQUIRE(0 == sm3::commit(f.a));
+  f.reload();
+  start(f.a);
+  t = f.write(f.a);
+  CHECK(std::optional<std::string>("'taken'") ==
+        sm3::tbl_def(t).columns[1].default_expr);
+  sm3::tbl_close(t);
+  REQUIRE(0 == sm3::set_default(f.a, f.jobs, "state", std::nullopt));
+  t = f.write(f.a);
+  CHECK(!sm3::tbl_def(t).columns[1].default_expr);
+  sm3::tbl_close(t);
+
+  std::vector<sm3::column_spec_t> cols = {{"k", sm2::type_int4.code, -1, true},
+                                          {"g", sm2::type_int8.code, -1, true}};
+  std::vector<sm3::index_key_spec_t> on_k = {{0, false, false, std::nullopt}};
+  uint64_t keyed = 0, pk = 0, seq = 0;
+  REQUIRE(0 == sm3::create_table(f.a, sm3::nsp_public, "keyed", cols, keyed));
+  REQUIRE_MESSAGE(0 == sm3::create_index(f.a, keyed, "keyed_pkey", on_k, {},
+                                         true, pk, true, true),
+                  sm1::errmsg());
+  CHECK(-1 == sm3::drop_not_null(f.a, keyed, "k"));
+  CHECK(sm1::SM_ERR_INUSE == sm1::errnum());
+
+  REQUIRE(0 == sm3::create_sequence(f.a, sm3::nsp_public, "s", 1, 1, seq));
+  REQUIRE_MESSAGE(0 == sm3::set_identity(f.a, keyed, "g", 'a', seq),
+                  sm1::errmsg());
+  CHECK(-1 == sm3::drop_not_null(f.a, keyed, "g"));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  CHECK(-1 == sm3::set_default(f.a, keyed, "g", "1"));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+
+  CHECK(-1 == sm3::drop_not_null(f.a, keyed, "nope"));
+  CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+  CHECK(-1 == sm3::set_default(f.a, keyed, "nope", "1"));
+  CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+  REQUIRE(0 == sm3::commit(f.a));
+}
+
 TEST_CASE("a scanned row outlives other calls on its session") {
   // Verify how long a cursor's row is good for (include/sm.h).
   // 1. Three rows are committed. A cursor over the heap is opened,

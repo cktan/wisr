@@ -82,6 +82,19 @@ struct column_spec_t {
      * does not assign the column writes in it. Kept, not run.
      */
     std::optional<std::string> on_update_expr = std::nullopt;
+    /*
+     * A NOT NULL column's constraint's name (../NOTNULL.md §1), the
+     * host's choice; empty, sm3 makes one, table_column_not_null.
+     */
+    std::string not_null_name = {};
+    /*
+     * A generated column's kind, the host's, 's' (STORED) or 'v'
+     * (VIRTUAL), or 0 for none (../GENERATED.md): default_expr is its
+     * expression, and generated_reads the 0-based places of the
+     * columns it reads, none of them generated.
+     */
+    char generated = 0;
+    std::vector<int32_t> generated_reads = {};
 };
 
 /*
@@ -151,6 +164,10 @@ struct column_rec_t {
   char identity = 0;         /* 'a', 'd', or 0: column_spec_t's */
   uint64_t identity_seq = 0; /* its sequence, with an identity */
   std::optional<std::string> on_update_expr; /* the host's, opaque */
+  uint64_t not_null_oid = 0;  /* its NOT NULL constraint; 0 if none */
+  std::string not_null_name;  /* its name (../NOTNULL.md §2) */
+  char generated = 0;         /* column_spec_t's (../GENERATED.md §2) */
+  std::vector<int32_t> generated_reads; /* column_spec_t's */
   bool operator==(const column_rec_t&) const = default;
 };
 
@@ -205,6 +222,21 @@ struct fkey_rec_t {
   bool operator==(const fkey_rec_t &) const = default;
 };
 
+/*
+ * A check constraint of a table (CHECK.md at the top level): the
+ * columns its expression reads, 0-based, and the host's blob, the
+ * expression and its flags, which no level reads. The host checks
+ * the rows; validated is its word that the rows there were checked.
+ */
+struct check_rec_t {
+  uint64_t oid;
+  std::string name;
+  std::vector<int32_t> reads; /* 0-based */
+  bool validated = true;
+  std::string host;
+  bool operator==(const check_rec_t &) const = default;
+};
+
 /* A foreign key that references a table: its child, and its oid. */
 struct fkey_ref_t {
   uint64_t table;
@@ -228,6 +260,7 @@ struct table_rec_t {
   std::vector<column_rec_t> columns;
   std::vector<index_rec_t> indexes;
   std::vector<fkey_rec_t> fkeys;
+  std::vector<check_rec_t> checks;
   std::vector<fkey_ref_t> referenced_by;
 };
 
@@ -244,6 +277,10 @@ struct column_def_t {
     char                       identity = 0;     /* column_spec_t's */
     uint64_t                   identity_seq = 0; /* its sequence */
     std::optional<std::string> on_update_expr; /* the host's, opaque */
+    uint64_t    not_null_oid = 0; /* its NOT NULL constraint; 0 if none */
+    std::string not_null_name;    /* its name (../NOTNULL.md §2) */
+    char        generated = 0;    /* column_spec_t's */
+    std::vector<int32_t> generated_reads; /* column_spec_t's */
 };
 
 /* An index of a loaded table. */
@@ -828,11 +865,59 @@ int add_column(session_t* session, uint64_t oid,
  * changes nothing: the table is opened exclusive (tbl_open), so no
  * row is written meanwhile, and a scan reads each as it is now, one
  * committed since the transaction's snapshot among them
- * (sm1::view_latest). One NOT NULL already is no error. ADD COLUMN
+ * (sm1::view_latest). One NOT NULL already is no error, and keeps
+ * its constraint's name; one made NOT NULL takes constraint as its
+ * constraint's name, or with none table_column_not_null
+ * (../NOTNULL.md §1), a name taken SM_ERR_DUPKEY. ADD COLUMN
  * with a volatile default makes the column, gives each row its
  * value, and then calls this.
  */
-int set_not_null(session_t* session, uint64_t oid, std::string_view name);
+int set_not_null(session_t* session, uint64_t oid, std::string_view name,
+                 std::string_view constraint = {});
+
+/*
+ * Rename the NOT NULL constraint of the column name of the table oid
+ * to to (../NOTNULL.md §3): SM_ERR_NOTFOUND if the column is not
+ * there or not NOT NULL, SM_ERR_DUPKEY if a constraint of the table
+ * has the name.
+ */
+int rename_not_null(session_t* session, uint64_t oid, std::string_view name,
+                    std::string_view to);
+
+/*
+ * Let the live column name of the table oid hold a null: the
+ * record alone changes, under the table's lock X. One nullable
+ * already is no error. A column of the primary key fails with
+ * SM_ERR_INUSE, and an identity column with SM_ERR_INVALID: both
+ * are NOT NULL. No such column is SM_ERR_NOTFOUND.
+ */
+int drop_not_null(session_t* session, uint64_t oid, std::string_view name);
+
+/*
+ * Set the default of the live column name of the table oid to the
+ * host's expr, opaque to sm, or drop it with std::nullopt: the
+ * record alone changes, under the table's lock X. A row already
+ * there keeps its value, and one written before the column was
+ * added its missing value. The update default stays. An identity
+ * column, which has none, fails with SM_ERR_INVALID; no such column
+ * is SM_ERR_NOTFOUND.
+ */
+int set_default(session_t* session, uint64_t oid, std::string_view name,
+                std::optional<std::string_view> expr);
+
+/*
+ * Make the live column name of the table oid generated, of kind 's' or
+ * 'v', its expression expr, the host's, reading the columns reads
+ * (../GENERATED.md): what CREATE TABLE and ADD COLUMN do once the
+ * host has cooked the expression against the table. The column must
+ * be plain, with no default and no identity, and a virtual one
+ * nullable; each column read live, plain and not itself; else
+ * SM_ERR_INVALID. No row is read: the host gives a stored column's
+ * values, and a virtual one's place holds a null.
+ */
+int set_generated(session_t* session, uint64_t oid, std::string_view name,
+                  char kind, std::string_view expr,
+                  std::span<const int32_t> reads);
 
 /*
  * A column's new type, as alter_column_type takes it: sm2's code
@@ -894,7 +979,9 @@ enum class column_use_t {
     fkey,       /* a foreign key of the table names it */
     referenced, /* a foreign key that references the table names it */
     view,       /* a view reads it */
-    identity    /* it is an identity column */
+    identity,   /* it is an identity column */
+    check,      /* a check constraint reads it */
+    generated   /* it is a generated column, or one's expression reads it */
 };
 
 /*
@@ -987,7 +1074,8 @@ int drop_namespace(session_t* session, uint64_t oid);
  * of it does too (../CLUSTER.md §8). Two rows
  * with one key fail it with SM_ERR_DUPKEY. A constraint one is a
  * UNIQUE or PRIMARY KEY constraint's, another mark the host reads:
- * it must be unique and on columns alone.
+ * it must be unique and on columns alone, and its name free among
+ * the table's constraints, else SM_ERR_DUPKEY.
  */
 int create_index(session_t* session, uint64_t table,
                  std::string_view name,
@@ -1093,6 +1181,29 @@ int validate_fkey(session_t* session, uint64_t table, uint64_t oid);
 /* Rename the foreign key oid of the table; a taken name is DUPKEY. */
 int rename_fkey(session_t* session, uint64_t table, uint64_t oid,
                 std::string_view name);
+
+/*
+ * Add the check constraint def to the table (CHECK.md §5.1), under
+ * its lock X; its oid, def.oid ignored, is set in oid. Every column
+ * def.reads names must be live, else SM_ERR_INVALID, and its name
+ * free among the table's constraints, else SM_ERR_DUPKEY. No row is
+ * read: def.validated is the caller's word.
+ */
+int create_check(session_t* session, uint64_t table, const check_rec_t& def,
+                 uint64_t& oid);
+
+/* Drop the check constraint oid of the table, under its lock X. */
+int drop_check(session_t* session, uint64_t table, uint64_t oid);
+
+/*
+ * Mark the check constraint oid of the table validated, its rows
+ * checked by the caller, under the table's lock X.
+ */
+int validate_check(session_t* session, uint64_t table, uint64_t oid);
+
+/* Rename the check constraint oid of the table; a taken name is DUPKEY. */
+int rename_check(session_t* session, uint64_t table, uint64_t oid,
+                 std::string_view name);
 
 /*
  * The foreign key oid as s sees it, and its table, the child, into

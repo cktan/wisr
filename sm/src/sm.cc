@@ -319,13 +319,14 @@ sm_fkey_def_t api_fkey(const sm3::fkey_rec_t &fk) {
 sm_table_def_t api_def(const sm3::session_t *ss, const sm3::table_def_t &d) {
   sm_table_def_t out{
       d.oid, d.nspoid, d.name, {}, {}, {}, sm3::cat_table_version(ss, d.oid),
-      {},    {}};
+      {},    {},       {}};
   for (const sm3::column_def_t &c : d.columns) {
     out.columns.push_back({c.name, c.type->code, c.typmod, c.not_null,
                            c.dropped, c.default_expr.has_value(),
                            c.default_expr.value_or(""), c.identity,
                            c.identity_seq, c.on_update_expr.has_value(),
-                           c.on_update_expr.value_or("")});
+                           c.on_update_expr.value_or(""), c.not_null_oid,
+                           c.not_null_name, c.generated, c.generated_reads});
   }
   for (const sm2::attribute_t &a : d.schema) {
     out.schema.push_back(api_attribute(a));
@@ -359,6 +360,9 @@ sm_table_def_t api_def(const sm3::session_t *ss, const sm3::table_def_t &d) {
   }
   for (const sm3::fkey_ref_t &r : d.rec.referenced_by) {
     out.referenced_by.push_back({r.table, r.fkey});
+  }
+  for (const sm3::check_rec_t &c : d.rec.checks) {
+    out.checks.push_back({c.oid, c.name, c.reads, c.validated, c.host});
   }
   return out;
 }
@@ -2753,7 +2757,9 @@ int sm_cat_create_table(sm_session_t *session, uint64_t nspoid,
                           : std::nullopt,
            c.identity, c.identity_seq,
            c.on_update_expr ? std::optional<std::string>(c.on_update_expr)
-                            : std::nullopt});
+                            : std::nullopt,
+           c.not_null_name ? c.not_null_name : "", c.generated,
+           c.generated_reads});
     }
     return sm3::create_table(session->sm3, nspoid, name_of(name), cols, *oid);
   });
@@ -2775,7 +2781,9 @@ int sm_cat_create_temp_table(sm_session_t *session, const char *name,
                           : std::nullopt,
            c.identity, c.identity_seq,
            c.on_update_expr ? std::optional<std::string>(c.on_update_expr)
-                            : std::nullopt});
+                            : std::nullopt,
+           c.not_null_name ? c.not_null_name : "", c.generated,
+           c.generated_reads});
     }
     return sm3::create_temp_table(session->sm3, name_of(name), cols, *oid);
   });
@@ -2821,7 +2829,10 @@ int sm_cat_add_column(sm_session_t *session, uint64_t oid,
         col.identity,
         col.identity_seq,
         col.on_update_expr ? std::optional<std::string>(col.on_update_expr)
-                           : std::nullopt};
+                           : std::nullopt,
+        col.not_null_name ? col.not_null_name : "",
+        col.generated,
+        col.generated_reads};
     return sm3::add_column(session->sm3, oid, c, bytes);
   });
 }
@@ -2862,9 +2873,47 @@ const char *sm_build_flags(void) {
 }
 
 /* Make a column NOT NULL in the session's transaction. */
-int sm_cat_set_not_null(sm_session_t *session, uint64_t oid, const char *name) {
+int sm_cat_set_not_null(sm_session_t *session, uint64_t oid, const char *name,
+                        const char *constraint) {
   return guard(session, [&] {
-    return sm3::set_not_null(session->sm3, oid, name_of(name));
+    return sm3::set_not_null(session->sm3, oid, name_of(name),
+                             constraint ? constraint : "");
+  });
+}
+
+/* Rename a column's NOT NULL constraint in the session's transaction. */
+int sm_cat_rename_not_null(sm_session_t *session, uint64_t oid,
+                           const char *name, const char *to) {
+  return guard(session, [&] {
+    return sm3::rename_not_null(session->sm3, oid, name_of(name), name_of(to));
+  });
+}
+
+/* Let a column hold a null in the session's transaction. */
+int sm_cat_drop_not_null(sm_session_t *session, uint64_t oid,
+                         const char *name) {
+  return guard(session, [&] {
+    return sm3::drop_not_null(session->sm3, oid, name_of(name));
+  });
+}
+
+/* Make a column generated in the session's transaction. */
+int sm_cat_set_generated(sm_session_t *session, uint64_t oid, const char *name,
+                         char kind, const char *expr,
+                         const std::vector<int32_t> &reads) {
+  return guard(session, [&] {
+    return sm3::set_generated(session->sm3, oid, name_of(name), kind,
+                              name_of(expr), reads);
+  });
+}
+
+/* Set or drop a column's default in the session's transaction. */
+int sm_cat_set_default(sm_session_t *session, uint64_t oid, const char *name,
+                       const char *expr) {
+  return guard(session, [&] {
+    return sm3::set_default(session->sm3, oid, name_of(name),
+                            expr ? std::optional<std::string_view>(expr)
+                                 : std::nullopt);
   });
 }
 
@@ -2921,6 +2970,12 @@ int sm_cat_column_use(sm_session_t *session, uint64_t oid, int32_t at,
       break;
     case sm3::column_use_t::identity:
       *use = SM_COLUMN_USE_IDENTITY;
+      break;
+    case sm3::column_use_t::check:
+      *use = SM_COLUMN_USE_CHECK;
+      break;
+    case sm3::column_use_t::generated:
+      *use = SM_COLUMN_USE_GENERATED;
       break;
     }
     return 0;
@@ -3017,6 +3072,43 @@ int sm_cat_rename_fkey(sm_session_t *session, uint64_t table, uint64_t fkey,
                        const char *name) {
   return guard(session, [&] {
     return sm3::rename_fkey(session->sm3, table, fkey, name_of(name));
+  });
+}
+
+/* Add a check constraint in the session's transaction. */
+int sm_cat_create_check(sm_session_t *session, uint64_t table,
+                        const sm_check_def_t &def, uint64_t *oid) {
+  return guard(session, [&] {
+    if (!oid) {
+      return null_arg("sm_cat_create_check", "oid");
+    }
+    sm3::check_rec_t c;
+    c.name = def.name;
+    c.reads = def.columns;
+    c.validated = def.validated;
+    c.host = def.host;
+    return sm3::create_check(session->sm3, table, c, *oid);
+  });
+}
+
+/* Drop a check constraint in the session's transaction. */
+int sm_cat_drop_check(sm_session_t *session, uint64_t table, uint64_t check) {
+  return guard(session,
+               [&] { return sm3::drop_check(session->sm3, table, check); });
+}
+
+/* Mark a check constraint validated in the session's transaction. */
+int sm_cat_validate_check(sm_session_t *session, uint64_t table,
+                          uint64_t check) {
+  return guard(session,
+               [&] { return sm3::validate_check(session->sm3, table, check); });
+}
+
+/* Rename a check constraint in the session's transaction. */
+int sm_cat_rename_check(sm_session_t *session, uint64_t table, uint64_t check,
+                        const char *name) {
+  return guard(session, [&] {
+    return sm3::rename_check(session->sm3, table, check, name_of(name));
   });
 }
 

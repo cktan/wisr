@@ -17,6 +17,7 @@
 #include "access/genam.h"
 #include "access/htup_details.h"
 #include "access/relation.h"
+#include "access/smstore.h"
 #include "access/sysattr.h"
 #include "access/table.h"
 #include "catalog/catalog.h"
@@ -734,10 +735,10 @@ bool AdjustNotNullInheritance(Oid relid, AttrNumber attnum,
  *
  * Caller can request cooked constraints, or raw.
  *
- * digres keeps a not-null constraint as its column's attnotnull alone, with
- * no row of pg_constraint (catrel.c), so each is made from its column, named
- * as PostgreSQL names one.  None is NO INHERIT, as digres has no inheritance,
- * so 'include_noinh' changes nothing.
+ * digres keeps a not-null constraint with its column in sm, its name and
+ * oid sm's (../sm/NOTNULL.md), so each is made from the table's
+ * descriptor.  None is NO INHERIT, as digres has no inheritance, so
+ * 'include_noinh' changes nothing.
  */
 List *RelationGetNotNullConstraints(Oid relid, bool cooked,
                                     bool include_noinh) {
@@ -745,15 +746,16 @@ List *RelationGetNotNullConstraints(Oid relid, bool cooked,
   /* The caller holds the relation's lock. */
   Relation rel = relation_open(relid, NoLock);
   TupleDesc tupdesc = RelationGetDescr(rel);
+  smstore_table_t *t = smstore_table_desc(relid);
 
-  for (int i = 0; i < tupdesc->natts; i++) {
+  for (int i = 0; NULL != t && i < tupdesc->natts && i < t->ncolumns; i++) {
     Form_pg_attribute att = TupleDescAttr(tupdesc, i);
+    const smstore_column_t *col = &t->columns[i];
     char *conname;
 
-    if (att->attisdropped || !att->attnotnull)
+    if (att->attisdropped || !OidIsValid(col->not_null_oid))
       continue;
-    conname = makeObjectName(RelationGetRelationName(rel),
-                             NameStr(att->attname), "not_null");
+    conname = pstrdup(col->not_null_name);
 
     if (cooked) {
       CookedConstraint *cooked;
@@ -761,7 +763,7 @@ List *RelationGetNotNullConstraints(Oid relid, bool cooked,
       cooked = (CookedConstraint *)palloc(sizeof(CookedConstraint));
 
       cooked->contype = CONSTR_NOTNULL;
-      cooked->conoid = InvalidOid;
+      cooked->conoid = col->not_null_oid;
       cooked->name = conname;
       cooked->attnum = att->attnum;
       cooked->expr = NULL;

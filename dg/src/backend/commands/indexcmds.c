@@ -2280,10 +2280,11 @@ char *ChooseRelationName(const char *name1, const char *name2,
 
     /*
      * Is there any conflicting relation name?  A relation is sm's, which also
-     * sees what this transaction made; a constraint is an index there, so
-     * its name is a relation's too.
+     * sees what this transaction made.  A constraint's name is not always a
+     * relation's: a check's and a foreign key's are not.
      */
-    if (!OidIsValid(get_relname_relid(relname, namespaceid)))
+    if (!OidIsValid(get_relname_relid(relname, namespaceid)) &&
+        (!isconstraint || !ConstraintNameExists(relname, namespaceid)))
       break;
 
     /* found a conflict, so try a new name component */

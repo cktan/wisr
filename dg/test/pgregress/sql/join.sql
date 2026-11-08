@@ -890,6 +890,31 @@ where (hundred, thousand) in (select twothousand, twothousand from onek);
 reset enable_memoize;
 
 --
+-- Test that quals made redundant by reducing an outer join to an antijoin are
+-- removed from the jointree
+-- (fallout from the fix for bug #19560)
+--
+
+begin;
+
+create temp table tbl_anti_pk (a int primary key);
+
+-- t3.a IS NULL is redundant, and the t2/t3 join can be removed
+explain (costs off)
+select 1 from tbl_anti_pk t1 left join
+  (tbl_anti_pk t2 left join tbl_anti_pk t3 on t3.a = t2.a) on t2.a = t1.a
+where t2.a is null and t3.a is null;
+
+-- the redundant qual can also be a degenerate ON clause of an upper join
+explain (costs off)
+select 1 from tbl_anti_pk t1 left join
+  (tbl_anti_pk t2 left join
+   (tbl_anti_pk t3 left join tbl_anti_pk t5 on t5.a = t3.a) on t3.a = t2.a)
+  on t3.a is null and t5.a is null;
+
+rollback;
+
+--
 -- regression test for bogus RTE_GROUP entries
 --
 
@@ -1061,6 +1086,102 @@ from int8_tbl t1 left join
   (select q1, case when q2=1 then 1 else q2 end as q2 from int8_tbl) t2
   on (t1.q2 = t2.q1)
 group by t1.q2 order by 1;
+
+-- nulled whole-row Var of a join alias in aggregate queries
+select t1.q2, count(t23)
+from int8_tbl t1 left join
+  (int8_tbl t2 join int4_tbl t3 on t3.f1 = 0) t23
+  on (t1.q2 = t23.q1)
+group by t1.q2 order by 1;
+
+select t23, count(*)
+from int8_tbl t1 left join
+  (int8_tbl t2 join int4_tbl t3 on t3.f1 = 0) t23
+  on (t1.q2 = t23.q1)
+group by t23 order by 1;
+
+-- nulled whole-row Var of a zero-column join, referenced from a subquery
+--dg-differs: the plan
+--dg explain (verbose, costs off)
+--dg select t1.q1, t1.q2, (select t23::text)
+--dg from int8_tbl t1 left join
+--dg   ((select from int4_tbl where f1 = 0) t2
+--dg    cross join (select from int4_tbl where f1 = 0) t3) t23
+--dg   on (t1.q1 = 123)
+--dg order by 1, 2;
+select t1.q1, t1.q2, (select t23::text)
+from int8_tbl t1 left join
+  ((select from int4_tbl where f1 = 0) t2
+   cross join (select from int4_tbl where f1 = 0) t3) t23
+  on (t1.q1 = 123)
+order by 1, 2;
+
+-- nulled whole-row Var of a zero-column outer join
+--dg-differs: the plan
+--dg explain (verbose, costs off)
+--dg select t1.q1, t1.q2, f
+--dg from int8_tbl t1 left join
+--dg   ((select from int4_tbl where f1 = 0) t2
+--dg    left join (select from int4_tbl where f1 = 0) t3 on true) t23
+--dg   on (t1.q1 = 123),
+--dg   length(t23::text) f
+--dg order by 1, 2;
+select t1.q1, t1.q2, f
+from int8_tbl t1 left join
+  ((select from int4_tbl where f1 = 0) t2
+   left join (select from int4_tbl where f1 = 0) t3 on true) t23
+  on (t1.q1 = 123),
+  length(t23::text) f
+order by 1, 2;
+
+-- nulled whole-row Var of a join with a variable-free merged column
+explain (verbose, costs off)
+select 1 from (unnest(array[1, (select sum(f1) from int4_tbl)]) as u(b)
+               right join (values (1)) as v(b) using (b)
+               full join int8_tbl i8 on true) as j,
+  length(j::text) f;
+select 1 from (unnest(array[1, (select sum(f1) from int4_tbl)]) as u(b)
+               right join (values (1)) as v(b) using (b)
+               full join int8_tbl i8 on true) as j,
+  length(j::text) f;
+
+-- nulled whole-row Var of a join containing a lateral reference
+explain (verbose, costs off)
+select (j is null) from int4_tbl i4
+  left join (int8_tbl i8 join lateral (select i4.f1 from (values (3)) v) ss(x) on true) as j
+  on false;
+select (j is null) from int4_tbl i4
+  left join (int8_tbl i8 join lateral (select i4.f1 from (values (3)) v) ss(x) on true) as j
+  on false;
+
+-- same, but the PHV must be passed up through another join
+--dg-differs: the plan
+--dg explain (verbose, costs off)
+--dg select j from int4_tbl i4
+--dg   left join (lateral (values (i4.f1)) as v(a) cross join int8_tbl i8) as j
+--dg   on (j.q1 = 123 and j.q2 = 456),
+--dg   int4_tbl i4b
+--dg where i4.f1 = 0
+--dg order by 1;
+select j from int4_tbl i4
+  left join (lateral (values (i4.f1)) as v(a) cross join int8_tbl i8) as j
+  on (j.q1 = 123 and j.q2 = 456),
+  int4_tbl i4b
+where i4.f1 = 0
+order by 1;
+
+-- same, referenced from a subquery, with only lateral references and constants
+explain (verbose, costs off)
+select i4.f1, (select j::text)
+from int4_tbl i4
+  left join (lateral (select i4.f1) ss(x) cross join (select 1) s2(y)) j
+  on (i4.f1 = 0)
+order by 1;
+select i4.f1, (select j::text)
+from int4_tbl i4
+  left join (lateral (select i4.f1) ss(x) cross join (select 1) s2(y)) j
+  on (i4.f1 = 0)
+order by 1;
 
 --
 -- test incorrect failure to NULL pulled-up subexpressions
@@ -1536,6 +1657,21 @@ select * from int4_tbl left join (
   select text 'foo' union all select text 'bar'
 ) ss(x) on true
 where ss.x is null;
+
+-- Test a join qual referencing a nulled appendrel output only within a PHV
+explain (verbose, costs off)
+select 1 from int4_tbl t1
+  left join (select 1 as x union all select 2) s on true
+  left join lateral (select s.x as y from int4_tbl t2) ss on true
+  left join int4_tbl t3 on ss.y is null;
+
+-- Same, but the join qual's required_relids don't include the nulling OJ
+--dg-differs: the plan
+--dg explain (verbose, costs off)
+--dg select 1 from ((int4_tbl t1 left join (select 1 as x union all select 2) s on t1.f1 < s.x)
+--dg    join lateral (select coalesce(s.x, t2.f1) as y from int4_tbl t2) ss on true)
+--dg   full join int4_tbl t3 on t3.f1 = t1.f1 and ss.y = t3.f1
+--dg   right join int4_tbl t4 on t3.f1 = t4.f1;
 
 -- Test computation of varnullingrels when translating appendrel Var
 begin;
@@ -2116,6 +2252,87 @@ select ss2.* from
 where ss1.c2 = 0;
 
 --
+-- check that a join is disallowed when a lateral reference to an outer-join
+-- output would have to be passed down into that outer join's own input
+--
+
+--dg-differs: the plan
+--dg explain (costs off)
+--dg select count(*) from int4_tbl t1 left join
+--dg   (select b.q1 as bx, 1 as one from int4_tbl a left join int8_tbl b on a.f1 = b.q2) t2
+--dg     on true
+--dg   left join lateral
+--dg     (select c.f1 as cnt from int4_tbl c where c.f1 = t2.one offset 0) t3
+--dg     on t2.bx = t3.cnt;
+
+select count(*) from int4_tbl t1 left join
+  (select b.q1 as bx, 1 as one from int4_tbl a left join int8_tbl b on a.f1 = b.q2) t2
+    on true
+  left join lateral
+    (select c.f1 as cnt from int4_tbl c where c.f1 = t2.one offset 0) t3
+    on t2.bx = t3.cnt;
+
+--
+-- check that a join is disallowed when its lateral reference can only be
+-- satisfied by way of a rel that laterally references the join itself
+--
+
+--dg-differs: the plan
+--dg explain (costs off)
+--dg select 1 from int4_tbl t1 left join int4_tbl t2 on true,
+--dg   lateral (select t2.f1 offset 0) s1 left join int8_tbl t3 on s1.f1 = t3.q1,
+--dg   lateral (select t3.q2 offset 0) s2
+--dg where s2.q2 > t1.f1;
+
+select 1 from int4_tbl t1 left join int4_tbl t2 on true,
+  lateral (select t2.f1 offset 0) s1 left join int8_tbl t3 on s1.f1 = t3.q1,
+  lateral (select t3.q2 offset 0) s2
+where s2.q2 > t1.f1;
+
+-- likewise when the outer join above the lateral referencer is a full join
+explain (costs off)
+select count(*) from int4_tbl t1 left join int4_tbl t2 on true,
+  lateral (select t2.f1 offset 0) s1 full join int8_tbl t3 on s1.f1 = t3.q1,
+  lateral (select t3.q2 offset 0) s2
+where s2.q2 > t1.f1;
+
+select count(*) from int4_tbl t1 left join int4_tbl t2 on true,
+  lateral (select t2.f1 offset 0) s1 full join int8_tbl t3 on s1.f1 = t3.q1,
+  lateral (select t3.q2 offset 0) s2
+where s2.q2 > t1.f1;
+
+-- likewise when the lateral referencer is part of a sub-joinlist
+set from_collapse_limit to 4;
+
+explain (costs off)
+select count(*) from int4_tbl t1 left join int4_tbl t2 on true,
+  lateral (select t2.f1 offset 0) s1 join int8_tbl t3 on s1.f1 = t3.q1,
+  lateral (select t3.q2 offset 0) s2
+where s2.q2 > t1.f1;
+
+select count(*) from int4_tbl t1 left join int4_tbl t2 on true,
+  lateral (select t2.f1 offset 0) s1 join int8_tbl t3 on s1.f1 = t3.q1,
+  lateral (select t3.q2 offset 0) s2
+where s2.q2 > t1.f1;
+
+reset from_collapse_limit;
+
+--
+-- check that an outer join is not taken to commute with a lower outer join
+-- when its clause references the lower join's RHS only laterally within a
+-- PlaceHolderVar
+--
+
+--dg-differs: the plan
+--dg explain (costs off)
+--dg select 1 from int4_tbl t1
+--dg   left join int4_tbl t2 on true
+--dg   left join lateral (select t2.f1, 1 from int4_tbl t3) s(x, y) on true
+--dg   left join int4_tbl t4 on t4.f1 = s.x
+--dg   join int4_tbl t5 on true
+--dg where s.y is not null;
+
+--
 -- test successful handling of full join underneath left join (bug #14105)
 --
 
@@ -2346,6 +2563,98 @@ full join
   ) as rhs
 on lhs.id = rhs.id;
 
+-- check handling of a removed Var that's pushed down into a subquery
+-- (fallout from the fix for bug #19560)
+explain (verbose, costs off)
+select c1, c2
+from (select case when false then remov.id end as c1
+      from int4_tbl i41 left join a remov on i41.f1 = remov.id) ss1
+     right join int4_tbl i42 on false,
+     lateral (select ss1.c1 as c2 from int4_tbl i43 offset 0) ss2;
+
+-- likewise, where the subquery is a UNION ALL whose arms are appendrel
+-- children that are not simple enough to be pulled up
+explain (verbose, costs off)
+select c1, c2
+from (select case when false then remov.id end as c1
+      from int4_tbl i41 left join a remov on i41.f1 = remov.id) ss1
+     right join int4_tbl i42 on false,
+     lateral ((select ss1.c1 as c2 from int4_tbl i43 offset 0)
+              union all
+              (select ss1.c1 from int4_tbl i44 offset 0)) ss2;
+
+-- likewise, where the PHV contains a SubPlan and the subquery has a join, so
+-- that its planner runs flatten_join_alias_vars over the outer-level PHV
+--dg-differs: the plan
+--dg explain (verbose, costs off)
+--dg select c1, c2
+--dg from (select case when false then remov.id else (select i41.f1) end as c1
+--dg       from int4_tbl i41 left join a remov on i41.f1 = remov.id) ss1
+--dg      right join int4_tbl i42 on false,
+--dg      lateral (select ss1.c1 as c2 from int4_tbl i43 join int4_tbl i44 on true
+--dg               offset 0) ss2;
+
+-- likewise, where the PHV copy is pushed into a SubLink's subselect rather
+-- than a LATERAL subquery
+explain (verbose, costs off)
+select (select ss1.c1 from int4_tbl i43 offset 0) as c2
+from (select case when false then remov.id end as c1
+      from int4_tbl i41 left join a remov on i41.f1 = remov.id) ss1
+     right join int4_tbl i42 on true;
+
+-- likewise, where the pushed-down PHV's expression itself contains a SubLink,
+-- so it must be preprocessed once at the outer level rather than again while
+-- building the SubPlan that references it
+explain (verbose, costs off)
+select (select ss1.c1 from int4_tbl i43 offset 0) as c2
+from (select case when false then remov.id else (select i41.f1) end as c1
+      from int4_tbl i41 left join a remov on i41.f1 = remov.id) ss1
+     right join int4_tbl i42 on true;
+
+-- likewise, where the pushed-down PHV sits within an outer-level aggregate
+explain (verbose, costs off)
+select (select sum(ss1.c1) from int4_tbl i43) as c2
+from (select (select i41.f1) as c1 from int4_tbl i41) ss1
+     right join int4_tbl i42 on true;
+
+-- likewise, where the pushed-down PHV's expression contains another PHV of
+-- the same level, which must not be preprocessed separately from its parent
+--dg-differs: the plan
+--dg explain (verbose, costs off)
+--dg select ss3.c2
+--dg from int4_tbl i41
+--dg      left join (select coalesce(ss1.c1, 0) as c1
+--dg                 from int4_tbl i42
+--dg                      left join (select (select i43.f1) as c1
+--dg                                 from int4_tbl i43) ss1 on true) ss2
+--dg        on true,
+--dg      lateral (select ss2.c1 as c2 from int4_tbl i44 offset 0) ss3;
+
+-- likewise, where the PHV copy is only inserted into the LATERAL subquery by
+-- expanding a join alias Var of the outer level
+--dg-differs: the plan
+--dg explain (verbose, costs off)
+--dg select ss2.c2
+--dg from ((select (select i41.f1) as c1 from int4_tbl i41) ss1
+--dg       full join int4_tbl i42(c1) using (c1)) j,
+--dg      lateral (select j.c1 as c2 from int4_tbl i43 offset 0) ss2;
+
+-- likewise, where the join alias is expanded within a SubLink's subselect
+--dg-differs: the plan
+--dg explain (verbose, costs off)
+--dg select (select j.c1 from int4_tbl i43 offset 0) as c2
+--dg from ((select (select i41.f1) as c1 from int4_tbl i41) ss1
+--dg       full join int4_tbl i42(c1) using (c1)) j;
+
+-- likewise, where the SubLink holding the copy ends up in the translated
+-- Vars of an appendrel child pulled up from a LATERAL UNION ALL subquery
+explain (verbose, costs off)
+select ss2.c2
+from (select case when false then remov.id end as c1
+      from int4_tbl i41 left join a remov on i41.f1 = remov.id) ss1
+     right join int4_tbl i42 on true,
+     lateral ((select (select ss1.c1) as c2) union all (select (select ss1.c1))) ss2;
+
 -- More tests of correct placement of pseudoconstant quals
 
 -- simple constant-false condition
@@ -2395,6 +2704,18 @@ explain (costs off)
 select d.* from d left join (select distinct * from b) s
   on d.a = s.id;
 
+-- join removal is not possible when the subquery has DISTINCT ON and a
+-- set-returning function that is not a DISTINCT ON column
+explain (costs off)
+select d.* from d left join
+  (select distinct on (id) id, generate_series(1, 2) as g from b order by id) s
+  on d.a = s.id
+  order by 1, 2;
+select d.* from d left join
+  (select distinct on (id) id, generate_series(1, 2) as g from b order by id) s
+  on d.a = s.id
+  order by 1, 2;
+
 -- join removal is not possible here
 explain (costs off)
 select 1 from a t1
@@ -2422,6 +2743,10 @@ select 1 from (select a.id FROM a left join b on a.b_id = b.id) q,
 --dg select c.id, ss.a from c
 --dg   left join (select d.a from onerow, d left join b on d.a = b.id) ss
 --dg   on c.id = ss.a;
+
+-- check join removal when Vars reference the removed join via its alias
+explain (verbose, costs off)
+select j.b_id, (select j.b_id) from (a left join b on a.b_id = b.id) j;
 
 -- check the case when the placeholder relates to an outer join and its
 -- inner in the press field but actually uses only the outer side of the join
@@ -2620,6 +2945,31 @@ where t1.a = s.c;
 
 rollback;
 
+-- join removal bug #19560: removing a join can leave an EquivalenceClass that
+-- now yields a base restriction clause, so we must redo equivalence
+-- processing from scratch
+begin;
+
+create temp table items (id text, owner text);
+create temp table follows (item_id text, user_id text,
+                           unique (user_id, item_id));
+insert into items values ('item1', 'alice');
+
+explain (costs off)
+with viewer as (select 'bob' as id)
+select count(*) from items
+  left join follows on follows.item_id = items.id and follows.user_id = 'bob'
+  left join viewer on true
+where items.owner = viewer.id;
+
+with viewer as (select 'bob' as id)
+select count(*) from items
+  left join follows on follows.item_id = items.id and follows.user_id = 'bob'
+  left join viewer on true
+where items.owner = viewer.id;
+
+rollback;
+
 -- check handling of semijoins after join removal: we must suppress
 -- unique-ification of known-constant values
 begin;
@@ -2627,15 +2977,14 @@ begin;
 create temp table t (a int unique, b int);
 insert into t values (1, 2);
 
---dg-differs: the plan
---dg explain (verbose, costs off)
---dg select t1.a from t t1
---dg   left join t t2 on t1.a = t2.a
---dg        join t t3 on true
---dg where exists (select 1 from t t4
---dg                 join t t5 on t4.b = t5.b
---dg                 join t t6 on t5.b = t6.b
---dg               where t1.a = t4.a and t3.a = t5.a and t4.a = 1);
+explain (verbose, costs off)
+select t1.a from t t1
+  left join t t2 on t1.a = t2.a
+       join t t3 on true
+where exists (select 1 from t t4
+                join t t5 on t4.b = t5.b
+                join t t6 on t5.b = t6.b
+              where t1.a = t4.a and t3.a = t5.a and t4.a = 1);
 
 select t1.a from t t1
   left join t t2 on t1.a = t2.a
@@ -2861,15 +3210,14 @@ explain (costs off)
 select * from sj x join sj y on x.a = y.a
 left join int8_tbl z on y.a = z.q1;
 
---dg-differs: the plan
---dg explain (costs off)
---dg select * from (
---dg   select t1.*, t2.a as ax from sj t1 join sj t2
---dg   on (t1.a = t2.a and t1.c * t1.c = t2.c + 2 and t2.b is null)
---dg ) as q1
---dg left join
---dg   (select t3.* from sj t3, sj t4 where t3.c = t4.c) as q2
---dg on q1.ax = q2.a;
+explain (costs off)
+select * from (
+  select t1.*, t2.a as ax from sj t1 join sj t2
+  on (t1.a = t2.a and t1.c * t1.c = t2.c + 2 and t2.b is null)
+) as q1
+left join
+  (select t3.* from sj t3, sj t4 where t3.c = t4.c) as q2
+on q1.ax = q2.a;
 
 -- Test that placeholders are updated correctly after join removal
 explain (costs off)
@@ -2898,10 +3246,27 @@ select t4.a from sj t1
 
 -- Check updating of semi_rhs_exprs links from upper-level semi join to
 -- the removing relation
---dg-differs: the plan
---dg explain (verbose, costs off)
---dg select t1.a from sj t1 where t1.b in (
---dg   select t2.b from sj t2 join sj t3 on t2.c=t3.c);
+explain (verbose, costs off)
+select t1.a from sj t1 where t1.b in (
+  select t2.b from sj t2 join sj t3 on t2.c=t3.c);
+
+-- Check that quals get hoisted to the appropriate join level after SJE removal
+explain (verbose, costs off)
+select a2.a
+from sj b1
+  join sj a1 on b1.b = a1.a
+  join sj a2 on a2.a = a1.a and a2.b = a1.b;
+
+-- Same, when a semijoin removal happens first
+explain (verbose, costs off)
+select a1.a from sj b1 join sj a1 on a1.a = b1.b
+  where exists (select 1 from sj s where s.a = a1.a);
+
+-- A different case, where modified qual is on a lower join level
+explain (verbose, costs off)
+select a2.a
+from ((sj b1 join sj a1 on true) join sj c1 on c1.b = a1.a)
+  join sj a2 on a2.a = a1.a and a2.b = a1.b;
 
 --
 -- SJE corner case: uniqueness of an inner is [partially] derived from
@@ -3051,11 +3416,9 @@ select 1 from (select y.* from sj x, sj y where x.a = y.a) q,
 explain (costs off) select * from sj p join sj q on p.a = q.a
   left join sj r on p.a + q.a = r.a;
 
--- FIXME this constant false filter doesn't look good. Should we merge
--- equivalence classes?
---dg-differs: the plan
---dg explain (costs off)
---dg select * from sj p, sj q where p.a = q.a and p.b = 1 and q.b = 2;
+-- Check that we detect constant-false condition after merging ECs.
+explain (costs off)
+select * from sj p, sj q where p.a = q.a and p.b = 1 and q.b = 2;
 
 -- Check that attr_needed is updated correctly after self-join removal. In this
 -- test, the join of j1 with j2 is removed. k1.b is required at either j1 or j2.
@@ -3114,13 +3477,12 @@ on true;
 
 -- Try PHV, which could potentially be removed completely by SJE, but that's
 -- not implemented yet.
---dg-differs: the plan
---dg explain (verbose, costs off)
---dg select 1 from emp1 t1 left join
---dg     ((select 1 as x, * from emp1 t2) s1 inner join
---dg         (select * from emp1 t3) s2 on s1.id = s2.id)
---dg     on true
---dg where s1.x = 1;
+explain (verbose, costs off)
+select 1 from emp1 t1 left join
+    ((select 1 as x, * from emp1 t2) s1 inner join
+        (select * from emp1 t3) s2 on s1.id = s2.id)
+    on true
+where s1.x = 1;
 
 -- Check that PHVs do not impose any constraints on removing self joins
 explain (verbose, costs off)
@@ -3144,13 +3506,12 @@ CREATE INDEX tbl_phv_idx ON tbl_phv(x);
 INSERT INTO tbl_phv (x, y)
   SELECT gs, gs FROM generate_series(1,100) AS gs;
 VACUUM ANALYZE tbl_phv;
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF, VERBOSE)
---dg SELECT 1 FROM tbl_phv t1 LEFT JOIN
---dg   (SELECT 1 extra, x, y FROM tbl_phv tl) t3 JOIN
---dg     (SELECT y FROM tbl_phv tr) t4
---dg   ON t4.y = t3.y
---dg ON true WHERE t3.extra IS NOT NULL AND t3.x = t1.x % 2;
+EXPLAIN (COSTS OFF, VERBOSE)
+SELECT 1 FROM tbl_phv t1 LEFT JOIN
+  (SELECT 1 extra, x, y FROM tbl_phv tl) t3 JOIN
+    (SELECT y FROM tbl_phv tr) t4
+  ON t4.y = t3.y
+ON true WHERE t3.extra IS NOT NULL AND t3.x = t1.x % 2;
 DROP TABLE IF EXISTS tbl_phv;
 
 -- Check that SJE replaces join clauses involving the removed rel correctly
@@ -3261,6 +3622,19 @@ ALTER TABLE sl ADD COLUMN bool_col boolean;
 --dg SELECT 1 AS c1 FROM sl sl1 LEFT JOIN (sl AS sl2 NATURAL JOIN sl AS sl3)
 --dg   ON sl2.bool_col LEFT JOIN sl AS sl4 ON sl2.bool_col;
 
+-- Check that quals of a jointree node that becomes empty when the self-join
+-- is removed are not lost, and that they don't migrate above an outer join
+EXPLAIN (COSTS OFF)
+SELECT s.a FROM (SELECT * FROM sl WHERE c IS NOT NULL) s, sl t
+WHERE t.a = s.a AND t.b = s.b;
+
+--dg-differs: the plan
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT t1.a, ss.a FROM sl t1
+--dg   LEFT JOIN (SELECT s.a FROM (SELECT * FROM sl WHERE c IS NOT NULL) s
+--dg                              JOIN sl t ON t.a = s.a AND t.b = s.b) ss
+--dg     ON ss.a = t1.a;
+
 -- Check optimization disabling if it will violate special join conditions.
 -- Two identical joined relations satisfies self join removal conditions but
 -- stay in different special join infos.
@@ -3290,6 +3664,21 @@ JOIN (
 		)
 	) _t2t3t4
 ON sj_t1.id = _t2t3t4.id;
+
+-- Check SJE interaction with aggpresorted optimization.
+CREATE TEMP TABLE sje_agg (id int PRIMARY KEY, p int, q int);
+INSERT INTO sje_agg SELECT i, i % 3, (i * 7) % 10 FROM generate_series(1, 30) i;
+--dg-differs: the result
+--dg ANALYZE sje_agg;
+
+EXPLAIN (COSTS OFF)
+SELECT count(DISTINCT a.p) AS dp, count(DISTINCT a.q) AS dq,
+       sum(DISTINCT a2.q) AS sq
+FROM sje_agg a JOIN sje_agg a2 ON a.id = a2.id;
+
+SELECT count(DISTINCT a.p) AS dp, count(DISTINCT a.q) AS dq,
+       sum(DISTINCT a2.q) AS sq
+FROM sje_agg a JOIN sje_agg a2 ON a.id = a2.id;
 
 --
 -- Test RowMarks-related code
@@ -3384,6 +3773,13 @@ select * from generate_series(100,200) g,
   lateral (select * from int8_tbl a where g = q1 union all
            select * from int8_tbl b where g = q2) ss;
 
+-- lateral with UNION ALL subselect, where a member is a subquery whose
+-- output contains a lateral reference
+explain (costs off)
+  select ss.v from int8_tbl x,
+    lateral (select x.q1 from (select distinct q2 from int8_tbl) s union all
+             select q2 from int8_tbl) ss(v);
+
 -- lateral with VALUES
 explain (costs off)
   select count(*) from tenk1 a,
@@ -3463,6 +3859,33 @@ select * from
 select * from
   int8_tbl a left join
   lateral (select *, coalesce(a.q2, 42) as x from int8_tbl b) ss on a.q2 = ss.q1;
+
+-- check EC-derived clauses for a UNION ALL member with nullable lateral refs
+--dg-differs: the plan
+--dg explain (costs off)
+--dg select * from
+--dg   int8_tbl x left join int8_tbl y on x.q2 = y.q1,
+--dg   lateral (select x.q1 as v union all select x.q1 + y.q2) ss
+--dg where x.q2 = ss.v;
+select * from
+  int8_tbl x left join int8_tbl y on x.q2 = y.q1,
+  lateral (select x.q1 as v union all select x.q1 + y.q2) ss
+where x.q2 = ss.v;
+
+-- likewise when the member is scanned below the outer join nulling those refs
+explain (costs off)
+select * from
+  int8_tbl x left join int8_tbl y on true
+  left join (int8_tbl z join
+             lateral (select z.q1 as v union all select y.q1 + z.q1) ss
+             on z.q2 = ss.v)
+    on y.q1 = 1;
+select * from
+  int8_tbl x left join int8_tbl y on true
+  left join (int8_tbl z join
+             lateral (select z.q1 as v union all select y.q1 + z.q1) ss
+             on z.q2 = ss.v)
+    on y.q1 = 1;
 
 -- lateral can result in join conditions appearing below their
 -- real semantic level
@@ -3612,6 +4035,40 @@ lateral (select * from int8_tbl t1,
                                      where q2 = (select greatest(t1.q1,t2.q2))
                                        and (select v.id=0)) offset 0) ss2) ss
          where t1.q1 = ss.q2) ss0;
+
+-- check that lateral references hidden in a whole-row join alias Var
+-- prevent pullup of a LATERAL subquery
+--dg-differs: the plan
+--dg explain (verbose, costs off)
+--dg select i4.f1, ss.x, i8.q1
+--dg from int4_tbl i4,
+--dg   lateral (select (j is null)::int
+--dg            from ((select i4.f1) s left join (select 1) v on false) j) ss(x)
+--dg   left join int8_tbl i8 on ss.x = i8.q1
+--dg order by 1;
+select i4.f1, ss.x, i8.q1
+from int4_tbl i4,
+  lateral (select (j is null)::int
+           from ((select i4.f1) s left join (select 1) v on false) j) ss(x)
+  left join int8_tbl i8 on ss.x = i8.q1
+order by 1;
+
+-- same, with the lateral reference hidden in the subquery's quals
+explain (verbose, costs off)
+select i4.f1, i8.q1, ss.y
+from int4_tbl i4,
+  int8_tbl i8 left join
+  lateral (select 1 from ((select i4.f1) s left join (select 1) v on false) j
+           where length(j::text) > 3) ss(y) on true
+where i4.f1 = 0
+order by 1, 2;
+select i4.f1, i8.q1, ss.y
+from int4_tbl i4,
+  int8_tbl i8 left join
+  lateral (select 1 from ((select i4.f1) s left join (select 1) v on false) j
+           where length(j::text) > 3) ss(y) on true
+where i4.f1 = 0
+order by 1, 2;
 
 -- test some error cases where LATERAL should have been used but wasn't
 select f1,g from int4_tbl a, (select f1 as g) ss;
@@ -3996,3 +4453,22 @@ SELECT COUNT(*) FROM onek t1 LEFT JOIN tenk1 t2
     ON (t2.thousand = t1.tenthous OR t2.thousand = t1.thousand);
 SELECT COUNT(*) FROM onek t1 LEFT JOIN tenk1 t2
     ON (t2.thousand = t1.tenthous OR t2.thousand = t1.thousand);
+
+--
+-- Test that a qual from above an antijoin made from a sublink is not pushed
+-- down into the antijoin's RHS.
+--
+
+--dg-differs: the plan
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT s.*
+--dg FROM (VALUES (1)) AS v(z) LEFT JOIN
+--dg   (SELECT 123456 AS c, t1.f1 AS x FROM int4_tbl t1
+--dg    WHERE NOT EXISTS (SELECT 1 FROM tenk1 t2 WHERE t2.unique1 = t1.f1)) s ON true
+--dg WHERE s.x = s.c;
+
+SELECT s.*
+FROM (VALUES (1)) AS v(z) LEFT JOIN
+  (SELECT 123456 AS c, t1.f1 AS x FROM int4_tbl t1
+   WHERE NOT EXISTS (SELECT 1 FROM tenk1 t2 WHERE t2.unique1 = t1.f1)) s ON true
+WHERE s.x = s.c;

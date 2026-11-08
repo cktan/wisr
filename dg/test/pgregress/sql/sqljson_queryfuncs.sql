@@ -359,7 +359,7 @@ SELECT JSON_QUERY(jsonb 'null', '$ts' PASSING timestamptz '2018-02-21 12:34:56 +
 
 -- Test constraints
 
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg-skip: type ? is not supported yet
 --dg CREATE TABLE test_jsonb_constraints (
 --dg 	js text,
 --dg 	i int,
@@ -578,6 +578,26 @@ SELECT JSON_QUERY(jsonb 'null', '$xyz' PASSING 1 AS xyz);
 SELECT JSON_QUERY(jsonb 'null', '$Xyz' PASSING 1 AS Xyz);
 SELECT JSON_QUERY(jsonb 'null', '$Xyz' PASSING 1 AS "Xyz");
 SELECT JSON_QUERY(jsonb 'null', '$"Xyz"' PASSING 1 AS "Xyz");
+
+-- Test PASSING and toasted values
+CREATE TABLE test_passing_toast (t text);
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE test_passing_toast ALTER COLUMN t SET STORAGE EXTENDED;
+INSERT INTO test_passing_toast(t)
+  SELECT repeat(string_agg(to_char(g.i, 'FM0000'), ''), 50)
+  FROM generate_series(1, 500) g(i);
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE test_passing_toast ALTER COLUMN t SET STORAGE EXTERNAL;
+INSERT INTO test_passing_toast(t)
+  SELECT repeat(string_agg(to_char(g.i, 'FM0000'), ''), 50)
+  FROM generate_series(1, 500) g(i);
+--dg-differs: the result
+--dg SELECT count(*) AS toasted_chunks
+--dg   FROM test_passing_toast WHERE pg_column_toast_chunk_id(t) IS NOT NULL;
+--dg-differs: the result
+--dg SELECT JSON_VALUE(jsonb 'null', '$a' PASSING t AS a) = t AS ok
+--dg   FROM test_passing_toast;
+DROP TABLE test_passing_toast;
 
 -- Test ON ERROR / EMPTY value validity for the function; all fail.
 SELECT JSON_EXISTS(jsonb '1', '$' DEFAULT 1 ON ERROR);
