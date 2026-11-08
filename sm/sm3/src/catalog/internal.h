@@ -232,6 +232,11 @@ struct sm3::session_t {
   std::vector<sequence_change_t> sequences;
   std::vector<stats_change_t> stats;
   std::vector<view_change_t> views;
+  /*
+   * The namespaces this transaction dropped a table in, for the
+   * sweep of orphan sequences after its commit (../SEQUENCE.md §3.5).
+   */
+  std::vector<uint64_t> drop_nsps;
   bool in_txn = false;      /* between begin and commit or abort */
   uint64_t snap_seq = 0;    /* cat->seq, noted before the snapshot */
   bool stmt_pinned = false; /* stmt_begin was called: statement snapshots */
@@ -305,6 +310,12 @@ int in_own_txn(sm1::env_t *env, std::string_view dbname,
   }
   return sm1::closedb(s);
 }
+
+/*
+ * Drop the sequences in nspoid whose owner table is gone, in
+ * session's transaction (../SEQUENCE.md §3.5). Returns 0, or -1.
+ */
+int reap_orphan_sequences(session_t *session, uint64_t nspoid);
 
 /* The collation oid names, as session sees it; false if unknown. */
 using collation_lookup_t =

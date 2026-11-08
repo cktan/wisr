@@ -3,11 +3,13 @@
  * is not transactional, so what a draw sees is the newest state, not the
  * transaction's snapshot.
  */
+#include "../src/catalog/internal.h"
 #include "db.h"
 #include "doctest.h"
 #include "sm3.h"
 
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -104,4 +106,77 @@ TEST_CASE("drop_table passes over a sequence newer than its snapshot") {
   REQUIRE(sm3::commit(f.b) == 0);
   CHECK_MESSAGE(0 == sm3::drop_table(f.a, t), sm1::errmsg());
   sm3::abort(f.a);
+}
+
+TEST_CASE("drop_table drops a sequence made its own since the snapshot") {
+  // Verify a table's drop takes the sequences it owns, though the
+  // ownership was committed after the drop's snapshot.
+  // 1. Make a table t and a free sequence q, committed.
+  // 2. a begins at repeatable read, and reads.
+  // 3. b makes t own q, and commits.
+  // 4. a drops t and commits.
+  // 5. q is gone, as t owned it when the drop committed.
+  cat_t f;
+  std::vector<sm3::column_spec_t> cols = {
+      {"id", sm2::type_int4.code, -1, true}};
+  uint64_t t = 0, q = 0, seen = 0;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::create_table(f.a, sm3::nsp_public, "t", cols, t) == 0);
+  REQUIRE(sm3::create_sequence(f.a, sm3::nsp_public, "q", 1, 1, q) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::repeatable_read) == 0);
+  std::vector<std::string> names;
+  REQUIRE(sm3::cat_list_sequences(f.a, sm3::nsp_public, names) == 0);
+  REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE_MESSAGE(sm3::own_sequence(f.b, q, t, 0) == 0, sm1::errmsg());
+  REQUIRE(sm3::commit(f.b) == 0);
+  REQUIRE_MESSAGE(sm3::drop_table(f.a, t) == 0, sm1::errmsg());
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(1 == sm3::cat_get_sequence(f.a, sm3::nsp_public, "q", seen));
+  sm3::abort(f.a);
+}
+
+TEST_CASE("opening a database drops a sequence whose owner table is gone") {
+  // Verify the sweep at open reaps what a crash between a drop's
+  // commit and its sweep left (../SEQUENCE.md §3.5).
+  // 1. Make a table t and a free sequence q, committed.
+  // 2. a begins at repeatable read; b makes t own q and commits.
+  // 3. a drops t, with its sweep list emptied as a crash would
+  //    leave it, and commits: q is still there, owned by t.
+  // 4. Open the database again: q is gone.
+  std::vector<sm3::column_spec_t> cols = {
+      {"id", sm2::type_int4.code, -1, true}};
+  uint64_t t = 0, q = 0, seen = 0;
+  cat_t f;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::create_table(f.a, sm3::nsp_public, "t", cols, t) == 0);
+  REQUIRE(sm3::create_sequence(f.a, sm3::nsp_public, "q", 1, 1, q) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::repeatable_read) == 0);
+  std::vector<std::string> names;
+  REQUIRE(sm3::cat_list_sequences(f.a, sm3::nsp_public, names) == 0);
+  REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::own_sequence(f.b, q, t, 0) == 0);
+  REQUIRE(sm3::commit(f.b) == 0);
+  REQUIRE(sm3::drop_table(f.a, t) == 0);
+  f.a->drop_nsps.clear();
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(0 == sm3::cat_get_sequence(f.a, sm3::nsp_public, "q", seen));
+  sm3::abort(f.a);
+
+  // Open again: the sweep at open drops q.
+  sm3::session_close(f.a);
+  sm3::session_close(f.b);
+  f.a = f.b = nullptr;
+  sm3::builder_detach(f.cat);
+  sm3::cat_close(f.cat);
+  f.restart();
+  REQUIRE_MESSAGE(sm3::cat_open(f.env(), "db", f.cat) == 0, sm1::errmsg());
+  REQUIRE(sm3::session_open(f.cat, f.open(), f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(1 == sm3::cat_get_sequence(f.a, sm3::nsp_public, "q", seen));
+  sm3::abort(f.a);
+  REQUIRE(sm3::session_open(f.cat, f.open(), f.b) == 0);
 }

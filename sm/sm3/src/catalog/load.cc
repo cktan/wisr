@@ -6,10 +6,12 @@
  */
 
 #include "internal.h"
+#include "sm0_log.h"
 
 #include <algorithm>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -368,6 +370,52 @@ int load(sm2::catkv_t *kv, sm3::catalog_t &cat) {
 
 namespace sm3 {
 
+/*
+ * Drop the sequences whose owner table is gone, left by a process
+ * that ended between a drop's commit and its sweep
+ * (../SEQUENCE.md §3.5). A failure is logged, and does not fail the
+ * open: the next open sweeps again.
+ * 1. Skip a database with no sequence.
+ * 2. Open a session of its own, and begin a transaction.
+ * 3. Reap each namespace that has a sequence.
+ * 4. Commit, or abort if a reap failed.
+ */
+static void reap_at_open(sm1::env_t *env, std::string_view dbname,
+                         catalog_t *cat) {
+  std::set<uint64_t> found;
+  for (const auto &[name, oid] : cat->sequence_names) {
+    found.insert(name.first);
+  }
+  if (found.empty()) {
+    return;
+  }
+  std::vector<uint64_t> nsps(found.begin(), found.end());
+  sm1::session_t *s1 = nullptr;
+  session_t *s = nullptr;
+  int rc = sm1::opendb(env, dbname, s1, nullptr);
+  if (rc == 0 && (rc = session_open(cat, s1, s)) == 0) {
+    rc = begin(s, sm1::xctlevel_t::read_committed);
+    for (size_t i = 0; rc == 0 && i < nsps.size(); i++) {
+      rc = reap_orphan_sequences(s, nsps[i]);
+    }
+    if (rc == 0) {
+      rc = commit(s);
+    }
+    if (rc != 0) {
+      std::string why = sm1::errmsg();
+      abort(s);
+      sm0::log_msg(sm1::loglevel_t::warn, "orphan sequence sweep: {}", why);
+    }
+    session_close(s);
+  } else if (rc != 0) {
+    sm0::log_msg(sm1::loglevel_t::warn, "orphan sequence sweep: {}",
+                 sm1::errmsg());
+  }
+  if (s1) {
+    sm1::closedb(s1);
+  }
+}
+
 /* Load a database's catalog; see sm3.h. */
 int cat_open(sm1::env_t *env, std::string_view dbname, catalog_t *&out) {
   std::unique_ptr<catalog_t> cat;
@@ -385,6 +433,8 @@ int cat_open(sm1::env_t *env, std::string_view dbname, catalog_t *&out) {
   });
   // Hand it over only once its transaction has committed.
   if (rc == 0) {
+    // A crash may have left a sequence a dropped table owned.
+    reap_at_open(env, dbname, cat.get());
     out = cat.release();
   }
   return rc;

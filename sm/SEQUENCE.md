@@ -365,6 +365,60 @@ The list is from memory because a scan of the store in a
 statement misses the statement's own drops. So two tables dropped
 in one statement do not trip on each other's Sequences.
 
+### 3.5 Orphan Sequences
+
+CAUTION: the drop above can miss a Sequence. A table's drop reads
+each record at its snapshot. A concurrent `own_sequence` that
+commits after that snapshot is not seen, and the Sequence stays.
+Its owner is then a table that no longer exists, and nothing in
+the API removes it: `drop_sequence` refuses a Sequence with an
+owner, and `own_sequence` reads the owner's table first. sm1
+does not read the newest version above READ COMMITTED
+(`sm1::read_latest`), so the drop cannot see the owner at
+REPEATABLE READ or SERIALIZABLE.
+
+So a transaction that drops a table sweeps for these. It is a
+net, not a prevention:
+
+1. `drop_table` notes the table's Namespace in the session.
+   A temporary table's is not noted.
+2. After the commit and its publication, `sm3::commit` begins a
+   READ COMMITTED transaction of its own. Its snapshot sees
+   every ownership committed before the drop.
+3. For each noted Namespace, `reap_orphan_sequences()` lists the
+   Sequences from memory and reads each record with no lock.
+4. A Sequence with an owner that is not in the catalog is read
+   again under its key's lock, and dropped if still an orphan.
+5. If the sweep fails, it logs a warning. The commit stands. The
+   next drop in the Namespace sweeps again.
+
+Once the drop has committed, no new orphan can come:
+`own_sequence` takes a lock on the table, and finds none.
+
+At open, `cat_open()` runs the same sweep over every Namespace
+that has a Sequence, in a transaction of its own. It removes
+what a process left when it ended between a drop's commit and
+the sweep. A failure is logged and does not fail the open.
+
+Limits:
+
+- For a short time after the commit, other sessions can see the
+  orphan. A crash in that time leaves it until the next open.
+- A drop of a table that sm1 prepared cannot happen: a
+  transaction that made DDL cannot be prepared.
+- The sweep reads one record for each Sequence in the Namespace,
+  at each transaction that drops a table, and at each open for
+  every Sequence in the database. A Namespace with 100,000
+  Sequences pays 100,000 reads.
+
+Improvement, not built: keep the owner of each Sequence in
+memory, beside its name in `sequence_names`, 8 bytes a Sequence.
+The sweep then finds the orphans without a read of the store, and
+reads only a record it will drop. The same list could be kept by
+`own_sequence` alone: a Sequence enters it when a table becomes
+its owner, and leaves it when it is dropped or disowned. A sweep
+then costs nothing in a database with no owned Sequence.
+
 ---
 
 ## 4. The Sequences sm3 makes for itself
@@ -448,7 +502,7 @@ the host.
 | Old REPEATABLE READ snapshot, a Sequence committed after it | `cat_get_sequence` finds it from memory, and `nextval` draws from it, as a draw reads the newest state; `cat_get_sequence_def` gives 1, as it reads at the snapshot |
 | Old REPEATABLE READ snapshot, a Sequence dropped after it | `cat_get_sequence` does not find it, and a `nextval` by a held oid is `SM_ERR_NOTFOUND`, as a draw reads the newest state |
 | Old snapshot at `drop_table`, a Sequence committed in the Namespace after it | `drop_owned_sequences` lists it from memory, finds no record at the snapshot, and passes over it: the table cannot own it |
-| `own_sequence` committed after `drop_table`'s snapshot | the drop waits on the table lock, then its first read, at the snapshot, sees no owner; the Sequence stays, naming a table that is gone |
+| `own_sequence` committed after `drop_table`'s snapshot | the drop waits on the table lock, then its first read, at the snapshot, sees no owner; the Sequence stays for a moment, naming a table that is gone, until the sweep after the commit drops it (§3.5) |
 | Sequence dropped with a ref held | the ref's draws go on, with new state; a holder must keep the Sequence from being dropped |
 | Last value handed out | the next draw fails with `SM_ERR_INVALID`, and every one after |
 | Exhausted, then a reopen | the lease on disk is `UINT64_MAX`, the last block's, so the state is built exhausted: the draw fails, and the last value is not handed out twice |
@@ -490,6 +544,9 @@ the host.
   by name and counting; read back by oid; holding its Namespace;
   found as committed and not as of a snapshot; owned by a column;
   two owners dropped in one transaction; an identity column.
+- `sm3/test/test_sequence.cc`: a drop of a table takes a Sequence
+  made its own after the drop's snapshot; opening a database
+  drops one a crash left (§3.5).
 - `rel/test/test_seq.rel`: values across aborts, savepoints and
   2PC, and `_id`s across aborts.
 - `rel/test/test_doomed.rel`: a draw refused in a doomed

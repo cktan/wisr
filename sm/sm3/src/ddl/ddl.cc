@@ -405,6 +405,51 @@ static int drop_owned_sequences(session_t *session, uint64_t oid,
   return 0;
 }
 
+/*
+ * Drop the sequences in nspoid whose owner table is gone; see
+ * internal.h. A drop can miss a sequence a concurrent own_sequence
+ * made the table's after the drop's snapshot (../SEQUENCE.md §3.5).
+ * 1. List the sequences of the namespace.
+ * 2. Read each record, skipping one with no owner or a live owner.
+ * 3. Lock the record, read it again, and drop it if its owner is
+ *    still gone.
+ */
+int reap_orphan_sequences(session_t *session, uint64_t nspoid) {
+  std::vector<std::string> names;
+  if (nspoid == nsp_temp || cat_list_sequences(session, nspoid, names) != 0) {
+    return nspoid == nsp_temp ? 0 : -1;
+  }
+  for (const std::string &name : names) {
+    uint64_t q;
+    sequence_rec_t rec;
+    if (cat_get_sequence(session, nspoid, name, q) != 0) {
+      return -1;
+    }
+    // One gone since the list has nothing to reap.
+    if (cat_get_sequence_rec(session, q, false, rec) != 0) {
+      if (sm1::SM_ERR_NOTFOUND == sm1::errnum()) {
+        continue;
+      }
+      return -1;
+    }
+    if (!rec.owner || cat_get_table(session, *rec.owner)) {
+      continue;
+    }
+    // Locked and read again: the drop is of the newest record.
+    if (cat_get_sequence_rec(session, q, true, rec) != 0) {
+      if (sm1::SM_ERR_NOTFOUND == sm1::errnum()) {
+        continue;
+      }
+      return -1;
+    }
+    if (rec.owner && !cat_get_table(session, *rec.owner) &&
+        cat_del_sequence(session, q) != 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
 /* Drop a table; see sm3.h. */
 int drop_table(session_t *session, uint64_t oid) {
   table_rec_t rec;
@@ -444,6 +489,12 @@ int drop_table(session_t *session, uint64_t oid) {
       sm1::rmseq(session->sm1, rec.id_seq) != 0 ||
       sm1::rmseq(session->sm1, toast_seq_name(oid)) != 0) {
     return -1;
+  }
+  // Its commit sweeps the namespace for sequences it missed.
+  if (rec.nspoid != nsp_temp &&
+      std::find(session->drop_nsps.begin(), session->drop_nsps.end(),
+                rec.nspoid) == session->drop_nsps.end()) {
+    session->drop_nsps.push_back(rec.nspoid);
   }
   return 0;
 }

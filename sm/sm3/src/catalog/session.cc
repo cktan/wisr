@@ -8,6 +8,7 @@
 
 #include "../table/pin.h"
 #include "internal.h"
+#include "sm0_log.h"
 
 #include <algorithm>
 #include <map>
@@ -422,6 +423,7 @@ int begin(session_t *s, sm1::xctlevel_t level, bool read_only) {
   if (s->has_doomed.load()) {
     drop_doomed(s);
   }
+  s->drop_nsps.clear();
   s->level = level;
   s->depth = 0;
   s->snap_seq = seq;
@@ -582,7 +584,7 @@ int forget(session_t *s, int depth) {
  *    step 2 waits on the mutex to read the definition, so it sees
  *    the new one, never the old.
  */
-int commit(session_t *s) {
+static int commit_txn(session_t *s) {
   // The transaction is over, and its pins with it. If sm1 refuses, a
   // load open or the transaction doomed, it stays active with this
   // side torn down: the caller can only abort it, and abort works.
@@ -609,6 +611,52 @@ int commit(session_t *s) {
   return 0;
 }
 
+/*
+ * Sweep the namespaces nsps for sequences whose owner table is gone
+ * (../SEQUENCE.md §3.5), in a transaction of its own after the
+ * commit that dropped a table. A failure is logged: the commit
+ * stands, and the next drop in the namespace, or the next open of
+ * the database, sweeps again.
+ * 1. Begin a READ COMMITTED transaction, so its snapshot sees every
+ *    ownership committed before the drop did.
+ * 2. Reap each namespace.
+ * 3. Commit, or abort if a reap failed.
+ */
+static void reap_after_commit(session_t *s, const std::vector<uint64_t> &nsps) {
+  if (begin(s, sm1::xctlevel_t::read_committed) != 0) {
+    sm0::log_msg(sm1::loglevel_t::warn, "orphan sequence sweep: {}",
+                 sm1::errmsg());
+    return;
+  }
+  int rc = 0;
+  for (size_t i = 0; rc == 0 && i < nsps.size(); i++) {
+    rc = reap_orphan_sequences(s, nsps[i]);
+  }
+  if (rc == 0) {
+    rc = commit(s);
+  }
+  if (rc != 0) {
+    std::string why = sm1::errmsg();
+    abort(s);
+    sm0::log_msg(sm1::loglevel_t::warn, "orphan sequence sweep: {}", why);
+  }
+}
+
+/* Commit; after a drop of a table, sweep for orphan sequences. */
+int commit(session_t *s) {
+  // Taken first: a failed commit, and the sweep's own, clear it.
+  std::vector<uint64_t> nsps = std::move(s->drop_nsps);
+  s->drop_nsps.clear();
+  if (commit_txn(s) != 0) {
+    return -1;
+  }
+  // The drop is durable; a sequence it missed is dropped now.
+  if (!nsps.empty()) {
+    reap_after_commit(s, nsps);
+  }
+  return 0;
+}
+
 /* Prepare, if s's transaction made no DDL; see sm3.h. */
 int prepare(session_t *s, std::string_view gid) {
   if (made_ddl(s)) {
@@ -630,6 +678,7 @@ int prepare(session_t *s, std::string_view gid) {
 
 /* Abort, dropping the overlay. */
 int abort(session_t *s) {
+  s->drop_nsps.clear();
   close_tree_scans(s);
   release_all_pins(s);
   drop_from(s, 0);

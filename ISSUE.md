@@ -50,6 +50,16 @@ in doubt, and only its gid could resolve it. The session now
 clears the gid only once the transaction is resolved, or gone. A
 test fails the lease by a hook, then commits again.
 
+**Closed 2026-11-08:** `drop_owned_sequences()` could miss an
+`own_sequence` committed after the drop's snapshot, and leave a
+Sequence that named a dropped table, which nothing could remove.
+A test reproduced it at REPEATABLE READ. A commit that dropped a
+table now sweeps the table's Namespace for such orphans, and
+opening a database sweeps all Namespaces, for a crash between the
+commit and the sweep (`sm/SEQUENCE.md` §3.5). The sweep costs a
+read of each Sequence record in the Namespace; keeping the owners
+in memory would remove that cost (§3.5, "Improvement").
+
 **Closed:** `find_now()` at READ COMMITTED, with a row moved
 since the statement's snapshot, gives the conflict with both
 kinds of index. A test showed no failure. A move in the narrower
@@ -65,9 +75,6 @@ Smaller points:
   It takes no key latch, so it looks harmless, but it drops
   stores there, and `LOCKMGR.md` says the latch is held only to
   check a key and put a version.
-- `drop_owned_sequences()` can miss an `own_sequence` committed
-  after the snapshot, and leave a Sequence that names a dropped
-  table. Not tested.
 - A cursor ended after its transaction is a double free. The end
   of a transaction frees sm1's cursor, and `sm_rel_scanend` and
   `sm_idx_scanend` then use it: valgrind shows it, and the
