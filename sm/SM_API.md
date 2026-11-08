@@ -11,6 +11,30 @@ results back. The wrapper adds no concept of its own: it keeps
 each database's sm3 catalog and each session's sm3 session.
 [`sm1/API.md`](sm1/API.md) is the contract of the level below.
 
+## Directory
+
+Each section lists its entries, one `###` heading for each call.
+The count is the number of entries.
+
+| Section | Covers | Entries |
+|---|---|---|
+| [Conventions](#conventions) | Rules for every entry: return values, error state, handles, memory, threads | 0 |
+| [Build](#build) | The flags the library was built with | 1 |
+| [Errors](#errors) | Read, keep and set the thread's error state | 7 |
+| [The log hook](#the-log-hook) | Receive the log lines of the stack | 1 |
+| [Home directories and databases](#home-directories-and-databases) | Make, attach and detach a home; make, list, open and close a database | 11 |
+| [Transactions](#transactions) | Transactions, statements, pins, lock waits, savepoints | 22 |
+| [Two-phase commit](#two-phase-commit) | Prepare, list, commit and abort a prepared transaction | 4 |
+| [Sequences, below the catalog](#sequences-below-the-catalog) | Counters with a name and no namespace | 3 |
+| [Types and collations](#types-and-collations) | Types, collations, datums, text in and out | 12 |
+| [Cursors over rows and index entries](#cursors-over-rows-and-index-entries) | Scan a table or an index; encode a tuple | 15 |
+| [The catalog](#the-catalog) | Look up and create namespaces, relations, sequences | 22 |
+| [Views](#views) | Create, read and drop a view | 9 |
+| [Index builds, TOAST and the btree cleaner](#index-builds-toast-and-the-btree-cleaner) | Build an index; TOAST; clean a B-tree | 6 |
+| [Tables](#tables) | Open a table; read and write rows | 36 |
+| [Statistics](#statistics) | Sizes, counters and planner statistics | 9 |
+| [Table and index DDL](#table-and-index-ddl) | Create, alter and drop a table or an index | 19 |
+
 ## Conventions
 
 These rules hold for every entry. An entry states only what
