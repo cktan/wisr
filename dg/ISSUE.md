@@ -27,9 +27,11 @@ issue 26, a column's NULL constraint refused, in step 390; issue
 24, a missing schema reported as a missing relation, in step 391;
 issue 19, ALTER SCHEMA RENAME failing with an internal error, in
 step 392, where it is now refused; issue 22, the purge of a mass
-delete stalling every writer, in step 419; and issues 15 and 17,
-ALTER COLUMN TYPE losing a committed update and ADD COLUMN NOT
-NULL counting deleted rows, in step 394. Issue 12, the hash access
+delete stalling every writer, in step 419; issue 27, sm's log
+messages dropped, by `datadir_set_sm_log()`, which the postmaster
+and initdb install; and issues 15 and 17, ALTER COLUMN TYPE
+losing a committed update and ADD COLUMN NOT NULL counting
+deleted rows, in step 394. Issue 12, the hash access
 method saying it cannot exclude, was closed as digres's answer,
 not a bug, in step 310: digres has no hash index. Issue 21, a
 bare numeric rounding its places past 17 digits, was closed so in
@@ -84,17 +86,3 @@ one of:
 - **Run `_PG_init()` once per process**, with process-wide
   hooks under a lock. Undoes the per-session hooks
   ([`WORKNOTE.md`](WORKNOTE.md) step 222).
-
-## Issue 27: sm's log messages are dropped
-
-sm reports what fails where no caller hears it, a failed purge
-among them, through a log hook (`sm_set_log()`, `sm.h`). digres
-installs none, so every such message is lost: an error of the GC
-thread leaves no trace in the server's log. Found while measuring
-issue 22's fix ([`WORKNOTE.md`](WORKNOTE.md) step 419): a probe
-logged by sm1 reached no file.
-
-The fix: install a hook at startup that passes each message to
-the server's log, at `LOG` for sm's information and warnings and
-`WARNING` for its errors. The hook runs on sm's threads, so it must
-write without `ereport()`, which needs a session.
