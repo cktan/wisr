@@ -73,12 +73,46 @@ static void close_sm_session(int code, Datum arg) {
 }
 
 /*
+ * Write one message of sm to stderr, as PostgreSQL words a level. sm calls
+ * this on its own threads too, which have no memory context and no error
+ * stack, so it uses neither palloc() nor ereport().
+ */
+static void sm_log(void *arg, sm_loglevel_t level,
+                   const char *msg) noexcept {
+  const char *label = level == SM_LOG_ERROR  ? "ERROR"
+                      : level == SM_LOG_WARN ? "WARNING"
+                                             : "LOG";
+  char line[1024];
+
+  int len = snprintf(line, sizeof(line), "%s:  sm: %s\n", label, msg);
+  if (len >= (int)sizeof(line)) {
+    /* Cut a long message, and keep the newline. */
+    len = sizeof(line) - 1;
+    line[len - 1] = '\n';
+  }
+  if (len > 0)
+    write_console(line, len);
+}
+
+/*
+ * Install the hook that writes sm's messages to stderr: 0 on success. The
+ * postmaster and initdb call this before sm_attach(), which may log.
+ */
+int datadir_set_sm_log(void) { return sm_set_log(sm_log, NULL); }
+
+/*
  * Attach sm's home directory and read the roles. The postmaster calls this
  * once it is in the data directory.
  */
 void datadir_load(void) {
   int rc;
 
+  /*
+   * Before sm_attach(), which recovers every database and may log: without
+   * a hook, sm's messages go nowhere.
+   */
+  if (datadir_set_sm_log() != 0)
+    ereport(FATAL, (errmsg("could not set the sm log hook: %s", sm_errmsg())));
   /*
    * Once for the process: every session opens its database on it, and reads
    * through one block cache of shared_buffers.

@@ -11,6 +11,7 @@
 
 #include "nodes/pg_list.h"
 
+extern int datadir_set_sm_log(void);
 extern void datadir_load(void);
 extern Oid datadir_database_oid(const char *dbname);
 extern void datadir_open_session(const char *dbname);

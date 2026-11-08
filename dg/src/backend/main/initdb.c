@@ -45,6 +45,7 @@
 #include "libpq/scram.h"
 #include "mb/pg_wchar.h"
 #include "postmaster/initdb.h"
+#include "utils/datadir.h"
 #include "utils/pg_global.h"
 
 /* The data directory, and what to undo if making it fails. */
@@ -214,6 +215,9 @@ static void make_storage(const char *username, const char *secret) {
 
   printf("creating database \"postgres\" ... ");
   fflush(stdout);
+  /* Before sm_attach(), which may log: with no hook, the messages are lost. */
+  if (datadir_set_sm_log() != 0)
+    fatal("could not set the sm log hook: %s", sm_errmsg());
   /* Attach, since a database is made through an attached home directory. */
   if (sm_attach(datadir, &env) != 0)
     fatal("could not attach storage: %s", sm_errmsg());
