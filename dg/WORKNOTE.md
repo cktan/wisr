@@ -12834,3 +12834,20 @@ could read it before the thread has it.
   `pqcomm.c`, `pmchild.c`, `fd.c`, `miscinit.c`, `ps_status.c`,
   `datadir.c`, `backend_startup.c`, `logfile.c`,
   `signalfuncs.c`, `variable.c`, `elog.c` and `guc.c`.
+
+## Step 420: preset settings are read from pcb
+
+The seven `PGC_INTERNAL` settings never change: the build fixes
+them. They join the restart-only ones in `pcb_t`, and
+`publish_postmaster_settings()` copies them.
+
+- **In `pcb_t`**: `assert_enabled` (the `debug_assertions`
+  setting), `integer_datetimes`, `max_function_args`,
+  `max_index_keys`, `max_identifier_length`, `block_size` and
+  `ssl_library`. A comment on each names the file its variable
+  was defined in: `guc_tables.c`, but for `ssl_library`, which
+  was in `be-secure.c`.
+- **`ssl_library` is `static` in `guc_tables.c`** now; its
+  `extern` in `libpq.h` and its definition are gone. No code
+  read it. None read the other six either, so nothing else
+  changed.

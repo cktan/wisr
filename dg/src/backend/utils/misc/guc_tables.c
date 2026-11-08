@@ -390,11 +390,19 @@ static thread_local /*LOCAL*/ char *Unix_socket_group;
 static thread_local /*LOCAL*/ char *Unix_socket_directories;
 static thread_local /*LOCAL*/ char *ListenAddresses;
 static thread_local /*LOCAL*/ char *session_authorization_string;
+#ifdef USE_ASSERT_CHECKING
+#define DEFAULT_ASSERT_ENABLED true
+#else
+#define DEFAULT_ASSERT_ENABLED false
+#endif
+
 static thread_local /*LOCAL*/ int max_function_args;
 static thread_local /*LOCAL*/ int max_index_keys;
 static thread_local /*LOCAL*/ int max_identifier_length;
 static thread_local /*LOCAL*/ int block_size;
 static thread_local /*LOCAL*/ bool integer_datetimes;
+static thread_local /*LOCAL*/ bool assert_enabled = DEFAULT_ASSERT_ENABLED;
+static thread_local /*LOCAL*/ char *ssl_library;
 
 /* A malloc'd copy of a string setting, or NULL if it has no value. */
 static char *postmaster_setting_dup(const char *value) {
@@ -402,10 +410,11 @@ static char *postmaster_setting_dup(const char *value) {
 }
 
 /*
- * Copy the settings that change only with a restart into the process control
- * block. The postmaster calls this once it has read its settings, before it
- * starts a thread: from then on every thread reads pcb, not its own copy of
- * the GUC variable, which no code outside this file can name.
+ * Copy the settings that change only with a restart, and the preset ones that
+ * never change, into the process control block. The postmaster calls this once
+ * it has read its settings, before it starts a thread: from then on every
+ * thread reads pcb, not its own copy of the GUC variable, which no code outside
+ * this file can name.
  */
 void publish_postmaster_settings(void) {
   pcb_t *b = pcb_main();
@@ -429,14 +438,15 @@ void publish_postmaster_settings(void) {
   b->ListenAddresses = postmaster_setting_dup(ListenAddresses);
   b->external_pid_file = postmaster_setting_dup(external_pid_file);
   b->cluster_name = postmaster_setting_dup(cluster_name);
-}
 
-#ifdef USE_ASSERT_CHECKING
-#define DEFAULT_ASSERT_ENABLED true
-#else
-#define DEFAULT_ASSERT_ENABLED false
-#endif
-static thread_local /*LOCAL*/ bool assert_enabled = DEFAULT_ASSERT_ENABLED;
+  b->assert_enabled = assert_enabled;
+  b->integer_datetimes = integer_datetimes;
+  b->max_function_args = max_function_args;
+  b->max_index_keys = max_index_keys;
+  b->max_identifier_length = max_identifier_length;
+  b->block_size = block_size;
+  b->ssl_library = postmaster_setting_dup(ssl_library);
+}
 
 /* should be static, but commands/variable.c needs to get at this */
 thread_local /*LOCAL*/ char *role_string;

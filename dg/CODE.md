@@ -209,7 +209,10 @@ digres is one process; each session is a thread of it.
     into `pcb_t` once the postmaster has read its settings; the
     variable is `static` there, so no other file can name it.
     A new such setting adds a `pcb_t` field and a line in that
-    function.
+    function. The same holds for a preset one (`PGC_INTERNAL`,
+    such as `block_size`), which the build fixes. Each `pcb_t`
+    field of a preset setting names, in a comment, the file
+    the variable was defined in.
   - **A LOCAL global moves into `tcb_t`** when a change
     touches it. Put new state in a block from the start.
 - **`src/tools/process_wide.txt`** lists the writable globals

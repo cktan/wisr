@@ -33,7 +33,6 @@
 #include "utils/injection_point.h"
 #include "utils/wait_event.h"
 
-thread_local /*LOCAL*/ char *ssl_library;
 thread_local /*LOCAL*/ char *ssl_cert_file;
 thread_local /*LOCAL*/ char *ssl_key_file;
 thread_local /*LOCAL*/ char *ssl_ca_file;

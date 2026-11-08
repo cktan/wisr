@@ -206,6 +206,20 @@ typedef struct pcb_t {
   char *cluster_name = nullptr;
   char *ConfigFileName = nullptr;
 
+  /*
+   * -- preset settings (PGC_INTERNAL) --
+   * They never change: the build fixes them. guc_tables.c copies them from
+   * the GUC variables with the settings above; the file in each comment is
+   * where the variable was defined.
+   */
+  bool assert_enabled = false;    /* guc_tables.c */
+  bool integer_datetimes = false; /* guc_tables.c */
+  int max_function_args = 0;      /* guc_tables.c */
+  int max_index_keys = 0;         /* guc_tables.c */
+  int max_identifier_length = 0;  /* guc_tables.c */
+  int block_size = 0;             /* guc_tables.c */
+  char *ssl_library = nullptr;    /* be-secure.c */
+
   /* -- how the process runs -- */
   /*
    * globals.c: true in the postmaster and its sessions; false in a
