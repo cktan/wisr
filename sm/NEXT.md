@@ -261,8 +261,9 @@ steps behind each entry).
 | --- | --- | --- | --- |
 | Users, authentication, authorization: roles, owners, GRANT and REVOKE are built ([`../aa/ROLE.md`](../aa/ROLE.md)); a column's privileges, a function's, ALTER DEFAULT PRIVILEGES and row-level security fail; peer on the socket and SCRAM over TCP only, no `pg_hba.conf`, no TLS, no GSSAPI | policies about 90 | encryption on the wire; compliance | medium: TLS by one setting ([`../aa/ROLE.md`](../aa/ROLE.md#8-decisions) §8); row-level security, now that roles exist; `pg_hba` is not planned |
 | Code in the server: no PL/pgSQL, no `sql` functions, no `DO`, so no triggers | 820, triggers 48, rules 132 | stored procedures, audit and `updated_at` triggers | large: waits for the scripting language SPI is kept for |
-| CREATE TABLE beyond columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY: CHECK, generated columns, `OF type`, UNLOGGED | 604, column-level 113 | CHECK is in most schemas | medium: constraints stored in sm's catalog, checked in the executor as PostgreSQL does |
-| ALTER TABLE: constraints added later, `SET`/`DROP NOT NULL`, `SET DEFAULT` | 264 | schema migrations | medium a subcommand; PRIMARY KEY and ALTER COLUMN TYPE are built (item 1 above) |
+| CREATE TABLE beyond columns, NOT NULL, PRIMARY KEY, UNIQUE, CHECK and TEMPORARY: generated columns, `OF type`, UNLOGGED | generated columns about 113 | computed columns | medium; CHECK is built ([`CHECK.md`](CHECK.md)) |
+| ALTER TABLE: `SET`/`DROP NOT NULL`, `SET DEFAULT` | 234 | schema migrations | medium a subcommand; PRIMARY KEY, CHECK and ALTER COLUMN TYPE are built (item 1 above) |
+| NOT NULL constraints are not in `pg_constraint`: PostgreSQL 18 names each one; `CREATE TABLE ... (LIKE t INCLUDING ALL)` of a table with a NOT NULL column fails, looking one up, and `\d` lists none | not counted | `LIKE ... INCLUDING ALL` in migrations | small: a row of type `n` for each NOT NULL column, named as PostgreSQL names it |
 | Partitioning | refused | large time-series tables | large |
 
 - **Largest for adoption:** users and the scripting language;

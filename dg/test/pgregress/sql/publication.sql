@@ -1421,7 +1421,7 @@ DROP SCHEMA pub_test3;
 --dg \dRp+ testpub2_forschema
 
 -- renaming the schema should reflect the change in publication
---dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
+--dg-skip: ALTER SCHEMA ... RENAME is not supported yet
 --dg ALTER SCHEMA pub_test1 RENAME to pub_test1_renamed;
 --dg-cascade
 --dg \dRp+ testpub2_forschema

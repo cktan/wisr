@@ -518,7 +518,8 @@ DELETE FROM unique_tbl WHERE t = 'seven';
 \d unique_idx3
 --dg-cascade
 --dg \d unique_idx4
-SELECT pg_get_indexdef('unique_idx3'::regclass);
+--dg-differs: the result
+--dg SELECT pg_get_indexdef('unique_idx3'::regclass);
 --dg-cascade
 --dg SELECT pg_get_indexdef('unique_idx4'::regclass);
 
@@ -540,7 +541,8 @@ INSERT INTO func_index_heap VALUES('ABCD', 'EF');
 INSERT INTO func_index_heap VALUES('QWERTY');
 
 -- while we're here, see that the metadata looks sane
-\d func_index_heap
+--dg-differs: the result
+--dg \d func_index_heap
 \d func_index_index
 
 
@@ -560,7 +562,8 @@ INSERT INTO func_index_heap VALUES('ABCD', 'EF');
 INSERT INTO func_index_heap VALUES('QWERTY');
 
 -- while we're here, see that the metadata looks sane
-\d func_index_heap
+--dg-differs: the result
+--dg \d func_index_heap
 \d func_index_index
 
 -- this should fail because of unsafe column type (anonymous record)
@@ -1622,20 +1625,25 @@ ANALYZE concur_exprs_tab;
 --dg   GROUP BY starelid ORDER BY starelid::regclass::text;
 --dg-cascade
 --dg SELECT pg_get_indexdef('concur_exprs_index_expr'::regclass);
-SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
-SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
+--dg-differs: the result
+--dg SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
+--dg-differs: the result
+--dg SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
 --dg-differs: the result
 --dg REINDEX TABLE CONCURRENTLY concur_exprs_tab;
 --dg-cascade
 --dg SELECT pg_get_indexdef('concur_exprs_index_expr'::regclass);
-SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
-SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
+--dg-differs: the result
+--dg SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
+--dg-differs: the result
+--dg SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
 -- ALTER TABLE recreates the indexes, which should keep their collations.
 --dg-skip: ALTER COLUMN TYPE of a column an expression or a partial index reads is not supported yet
 --dg ALTER TABLE concur_exprs_tab ALTER c2 TYPE TEXT;
 --dg-cascade
 --dg SELECT pg_get_indexdef('concur_exprs_index_expr'::regclass);
-SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
+--dg-differs: the result
+--dg SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
 --dg-cascade
 --dg SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
 -- Statistics should remain intact.

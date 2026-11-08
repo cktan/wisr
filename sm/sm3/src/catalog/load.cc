@@ -298,17 +298,29 @@ int load(sm2::catkv_t *kv, sm3::catalog_t &cat) {
                  }) != 0) {
     return -1;
   }
-  // Each table's foreign keys, in the order of their oids; then each
-  // table's referenced_by, which is derived from them and stored
-  // nowhere (FOREIGNKEY.md §4).
+  // Each table's foreign keys and checks, in the order of their oids;
+  // then each table's referenced_by, which is derived from the foreign
+  // keys and stored nowhere (FOREIGNKEY.md §4).
   if (scan_parts(kv, sm3::kind_t::constraint,
                  [&](uint64_t table, uint64_t oid, std::string_view v) {
                    auto it = recs.find(table);
+                   char kind = 0;
+                   if (it == recs.end() || sm3::constraint_kind(v, kind) != 0) {
+                     return corrupt("a constraint of no table, or of no "
+                                    "known kind");
+                   }
+                   // A check constraint (CHECK.md §3).
+                   if ('c' == kind) {
+                     sm3::check_rec_t c;
+                     if (sm3::decode_check(v, c) != 0 || c.oid != oid) {
+                       return corrupt("a check under another's key");
+                     }
+                     it->second.checks.push_back(std::move(c));
+                     return 0;
+                   }
                    sm3::fkey_rec_t fk;
-                   if (it == recs.end() || sm3::decode_constraint(v, fk) != 0 ||
-                       fk.oid != oid) {
-                     return corrupt("a constraint of no table, or under "
-                                    "another's key");
+                   if (sm3::decode_constraint(v, fk) != 0 || fk.oid != oid) {
+                     return corrupt("a constraint under another's key");
                    }
                    it->second.fkeys.push_back(std::move(fk));
                    return 0;

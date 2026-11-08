@@ -394,7 +394,7 @@ DELETE FROM undroppable_objs WHERE object_identity = 'schema_one.table_three';
 --dg ALTER TABLE evttrig.one DROP CONSTRAINT one_pkey;
 --dg-cascade
 --dg ALTER TABLE evttrig.one DROP COLUMN col_c;
---dg-cascade
+--dg-skip: ALTER COLUMN TYPE of an identity column is not supported yet
 --dg ALTER TABLE evttrig.id ALTER COLUMN col_d SET DATA TYPE bigint;
 --dg-cascade
 --dg ALTER TABLE evttrig.id ALTER COLUMN col_d DROP IDENTITY,

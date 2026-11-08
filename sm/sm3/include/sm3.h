@@ -205,6 +205,21 @@ struct fkey_rec_t {
   bool operator==(const fkey_rec_t &) const = default;
 };
 
+/*
+ * A check constraint of a table (CHECK.md at the top level): the
+ * columns its expression reads, 0-based, and the host's blob, the
+ * expression and its flags, which no level reads. The host checks
+ * the rows; validated is its word that the rows there were checked.
+ */
+struct check_rec_t {
+  uint64_t oid;
+  std::string name;
+  std::vector<int32_t> reads; /* 0-based */
+  bool validated = true;
+  std::string host;
+  bool operator==(const check_rec_t &) const = default;
+};
+
 /* A foreign key that references a table: its child, and its oid. */
 struct fkey_ref_t {
   uint64_t table;
@@ -228,6 +243,7 @@ struct table_rec_t {
   std::vector<column_rec_t> columns;
   std::vector<index_rec_t> indexes;
   std::vector<fkey_rec_t> fkeys;
+  std::vector<check_rec_t> checks;
   std::vector<fkey_ref_t> referenced_by;
 };
 
@@ -894,7 +910,8 @@ enum class column_use_t {
     fkey,       /* a foreign key of the table names it */
     referenced, /* a foreign key that references the table names it */
     view,       /* a view reads it */
-    identity    /* it is an identity column */
+    identity,   /* it is an identity column */
+    check       /* a check constraint reads it */
 };
 
 /*
@@ -987,7 +1004,8 @@ int drop_namespace(session_t* session, uint64_t oid);
  * of it does too (../CLUSTER.md §8). Two rows
  * with one key fail it with SM_ERR_DUPKEY. A constraint one is a
  * UNIQUE or PRIMARY KEY constraint's, another mark the host reads:
- * it must be unique and on columns alone.
+ * it must be unique and on columns alone, and its name free among
+ * the table's constraints, else SM_ERR_DUPKEY.
  */
 int create_index(session_t* session, uint64_t table,
                  std::string_view name,
@@ -1093,6 +1111,29 @@ int validate_fkey(session_t* session, uint64_t table, uint64_t oid);
 /* Rename the foreign key oid of the table; a taken name is DUPKEY. */
 int rename_fkey(session_t* session, uint64_t table, uint64_t oid,
                 std::string_view name);
+
+/*
+ * Add the check constraint def to the table (CHECK.md §5.1), under
+ * its lock X; its oid, def.oid ignored, is set in oid. Every column
+ * def.reads names must be live, else SM_ERR_INVALID, and its name
+ * free among the table's constraints, else SM_ERR_DUPKEY. No row is
+ * read: def.validated is the caller's word.
+ */
+int create_check(session_t* session, uint64_t table, const check_rec_t& def,
+                 uint64_t& oid);
+
+/* Drop the check constraint oid of the table, under its lock X. */
+int drop_check(session_t* session, uint64_t table, uint64_t oid);
+
+/*
+ * Mark the check constraint oid of the table validated, its rows
+ * checked by the caller, under the table's lock X.
+ */
+int validate_check(session_t* session, uint64_t table, uint64_t oid);
+
+/* Rename the check constraint oid of the table; a taken name is DUPKEY. */
+int rename_check(session_t* session, uint64_t table, uint64_t oid,
+                 std::string_view name);
 
 /*
  * The foreign key oid as s sees it, and its table, the child, into

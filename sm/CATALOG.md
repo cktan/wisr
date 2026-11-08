@@ -370,7 +370,7 @@ frozen.
 | `INDEX_STATE` | 9 | table oid `int8`, index oid `int8` | one index's state, with why its build failed; none for a pending index |
 | `STATS` | 10 | table oid `int8`, index oid `int8`, n `int8` | the table's statistics: an entry for the table, (0, 0), and one a statistic, a column's (0, attnum + 1), an index expression's (index oid, place + 1) |
 | `SEQUENCE` | 11 | oid `int8` | a sequence: its namespace, name, start, increment and owner |
-| `CONSTRAINT` | 12 | table oid `int8`, constraint oid `int8` | one constraint of the table, its child: a foreign key ([`FOREIGNKEY.md`](FOREIGNKEY.md)) |
+| `CONSTRAINT` | 12 | table oid `int8`, constraint oid `int8` | one constraint of the table: a foreign key, of its child ([`FOREIGNKEY.md`](FOREIGNKEY.md)), or a check ([`CHECK.md`](CHECK.md)) |
 | `VIEW` | 13 | oid `int8` | a view: its namespace, name, the host's query and options, and the relations it reads ([`VIEW.md`](VIEW.md)) |
 
 ### 3.4 What the keys mean
@@ -422,6 +422,7 @@ INDEX value       = index | key × nkey | include × ninclude | read × nread
 INDEX_STATE value = index state
 SEQUENCE value    = sequence
 CONSTRAINT value  = constraint | fkey | fkey pair × npairs
+                  | constraint | check | check read × nread
 VIEW value        = view | view read × nread | view query × npiece
 STATS value       = table stats | index stats × nindex
                   | statistic | mcv × nmcv | bound × nbound
@@ -446,9 +447,11 @@ under "What is recorded".
 | namespace | name `text` |
 | collation | name `text`, locale `text`, deterministic `bool`, ICU version `text` |
 | sequence | namespace `int8`, name `text`, start `int8`, increment `int8`, owner table `int8` or null, owner column `int4` or null |
-| constraint | oid `int8`, name `text`, type `int2` (`f`), validated `bool`, host `bytea` or null |
+| constraint | oid `int8`, name `text`, type `int2` (`f` a foreign key, `c` a check), validated `bool`, host `bytea` or null |
 | fkey | parent table `int8`, parent index `int8`, npairs `int4`, on update `int2`, on delete `int2`, match `int2`, deferrable `bool`, deferred `bool` |
 | fkey pair | child attnum `int4`, parent attnum `int4` |
+| check | nread `int4`: the columns its expression reads ([`CHECK.md`](CHECK.md)) |
+| check read | attnum `int4` |
 | view | namespace `int8`, name `text`, options `bytea` or null: the host's; nread `int4`, npiece `int4` |
 | view read | relation `int8`, attnum `int4`: a table's column, 0-based, or -1 for the relation whole |
 | view query | a piece of the host's query, opaque, `bytea` of at most 60,000 bytes |

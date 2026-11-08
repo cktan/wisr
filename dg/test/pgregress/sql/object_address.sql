@@ -25,18 +25,16 @@ SET search_path TO 'addr_nsp';
 --dg-skip: text search is not supported
 --dg CREATE TEXT SEARCH PARSER addr_ts_prs
 --dg     (start = prsd_start, gettoken = prsd_nexttoken, end = prsd_end, lextypes = prsd_lextype);
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
---dg CREATE TABLE addr_nsp.gentable (
---dg     a serial primary key CONSTRAINT a_chk CHECK (a > 0),
---dg     b text DEFAULT 'hello'
---dg );
+CREATE TABLE addr_nsp.gentable (
+    a serial primary key CONSTRAINT a_chk CHECK (a > 0),
+    b text DEFAULT 'hello'
+);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE addr_nsp.parttable (
 --dg     a int PRIMARY KEY
 --dg ) PARTITION BY RANGE (a);
---dg-cascade
---dg CREATE VIEW addr_nsp.genview AS SELECT * from addr_nsp.gentable;
---dg-cascade
+CREATE VIEW addr_nsp.genview AS SELECT * from addr_nsp.gentable;
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
 --dg CREATE MATERIALIZED VIEW addr_nsp.genmatview AS SELECT * FROM addr_nsp.gentable;
 --dg-skip: a relation's storage cannot be made: digres has no catalog tables
 --dg CREATE TYPE addr_nsp.gencomptype AS (a int);
@@ -52,7 +50,7 @@ SET search_path TO 'addr_nsp';
 --dg CREATE FUNCTION addr_nsp.trig() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN END; $$;
 --dg-cascade
 --dg CREATE TRIGGER t BEFORE INSERT ON addr_nsp.gentable FOR EACH ROW EXECUTE PROCEDURE addr_nsp.trig();
---dg-cascade
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY genpol ON addr_nsp.gentable;
 --dg-skip: language "?" does not exist
 --dg CREATE PROCEDURE addr_nsp.proc(int4) LANGUAGE SQL AS $$ $$;
@@ -84,7 +82,7 @@ SET client_min_messages = 'ERROR';
 RESET client_min_messages;
 --dg-skip: subscriptions are not supported
 --dg CREATE SUBSCRIPTION regress_addr_sub CONNECTION '' PUBLICATION bar WITH (connect = false, slot_name = NONE);
---dg-cascade
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS addr_nsp.gentable_stat ON a, b FROM addr_nsp.gentable;
 
 -- test some error cases

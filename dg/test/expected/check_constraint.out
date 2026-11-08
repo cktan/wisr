@@ -1,0 +1,170 @@
+-- Verify that CHECK constraints are kept in sm and enforced as PostgreSQL
+-- enforces them (../sm/CHECK.md): every write path refuses a row for which
+-- one is false, a null passes, ALTER TABLE adds, validates, renames and
+-- drops them, and pg_constraint shows them.  Temporary tables, as the 8
+-- sessions run.sh starts share one database.
+-- 1. Make a table with a column's check, a table's check over two columns,
+--    and a named one; show how they are named, read and listed, and that
+--    LIKE ... INCLUDING CONSTRAINTS copies them, valid.
+-- 2. Insert, update, upsert, COPY and INSERT ... SELECT: a row that fails
+--    one is refused, naming it; a null passes.
+-- 3. ADD CONSTRAINT checks the rows there; NOT VALID does not, but checks
+--    new rows; VALIDATE checks them, and passes once they hold.
+-- 4. RENAME CONSTRAINT, and a name already taken; a UNIQUE constraint may
+--    not take a check's name, and the name chosen for one skips a check's.
+-- 5. ADD COLUMN with a check: the rows there are checked with its value.
+-- 6. ALTER COLUMN TYPE of a column a check reads is refused; NOT ENFORCED
+--    is kept, and not checked, and VALIDATE of it is refused.
+-- 7. DROP COLUMN takes the checks that read it; DROP CONSTRAINT drops one.
+-- The refusals are what is tested, so an error goes on to the next
+-- statement.
+\set ON_ERROR_STOP off
+create temp table ord (id int8 primary key, qty int4 check (qty > 0),
+  price numeric, disc numeric, check (disc <= price),
+  constraint id_small check (id < 1000000));
+select conname, contype, convalidated, conkey, pg_get_constraintdef(oid)
+  from pg_constraint where conrelid = 'ord'::regclass and contype = 'c'
+  order by conname;
+    conname    | contype | convalidated | conkey |  pg_get_constraintdef   
+---------------+---------+--------------+--------+-------------------------
+ id_small      | c       | t            | {1}    | CHECK ((id < 1000000))
+ ord_check     | c       | t            | {3,4}  | CHECK ((disc <= price))
+ ord_qty_check | c       | t            | {2}    | CHECK ((qty > 0))
+(3 rows)
+
+select relchecks from pg_class where oid = 'ord'::regclass;
+ relchecks 
+-----------
+         3
+(1 row)
+
+create temp table ord_copy (like ord including constraints);
+select conname, convalidated, pg_get_constraintdef(oid) from pg_constraint
+  where conrelid = 'ord_copy'::regclass order by conname;
+    conname    | convalidated |  pg_get_constraintdef   
+---------------+--------------+-------------------------
+ id_small      | t            | CHECK ((id < 1000000))
+ ord_check     | t            | CHECK ((disc <= price))
+ ord_qty_check | t            | CHECK ((qty > 0))
+(3 rows)
+
+drop table ord_copy;
+insert into ord values (1, 2, 10, 1);
+insert into ord values (2, 0, 10, 1);
+psql:test/check_constraint.sql:34: ERROR:  new row for relation "ord" violates check constraint "ord_qty_check"
+DETAIL:  Failing row contains (2, 0, 10.000, 1.000).
+insert into ord values (3, 1, 10, 20);
+psql:test/check_constraint.sql:35: ERROR:  new row for relation "ord" violates check constraint "ord_check"
+DETAIL:  Failing row contains (3, 1, 10.000, 20.000).
+insert into ord values (4, null, 10, 1);
+update ord set qty = -1 where id = 1;
+psql:test/check_constraint.sql:37: ERROR:  new row for relation "ord" violates check constraint "ord_qty_check"
+DETAIL:  Failing row contains (1, -1, 10.000, 1.000).
+insert into ord values (1, 5, 10, 1) on conflict (id) do update set qty = 0;
+psql:test/check_constraint.sql:38: ERROR:  new row for relation "ord" violates check constraint "ord_qty_check"
+DETAIL:  Failing row contains (1, 0, 10.000, 1.000).
+copy ord from stdin;
+psql:test/check_constraint.sql:42: ERROR:  new row for relation "ord" violates check constraint "ord_qty_check"
+DETAIL:  Failing row contains (7, -5, 10.000, 2.000).
+CONTEXT:  COPY ord, line 2: "7	-5	10	2"
+insert into ord select g, g, 10, 1 from generate_series(10, 12) g;
+insert into ord select g, g - 21, 10, 1 from generate_series(20, 22) g;
+psql:test/check_constraint.sql:44: ERROR:  new row for relation "ord" violates check constraint "ord_qty_check"
+DETAIL:  Failing row contains (20, -1, 10.000, 1.000).
+select * from ord order by id;
+ id | qty | price  | disc  
+----+-----+--------+-------
+  1 |   2 | 10.000 | 1.000
+  4 |     | 10.000 | 1.000
+ 10 |  10 | 10.000 | 1.000
+ 11 |  11 | 10.000 | 1.000
+ 12 |  12 | 10.000 | 1.000
+(5 rows)
+
+create temp table chk (x int, y int);
+insert into chk values (1, 10), (2, -5), (3, null);
+alter table chk add constraint y_pos check (y > 0);
+psql:test/check_constraint.sql:48: ERROR:  check constraint "y_pos" of relation "chk" is violated by some row
+alter table chk add constraint y_pos check (y > 0) not valid;
+insert into chk values (4, -1);
+psql:test/check_constraint.sql:50: ERROR:  new row for relation "chk" violates check constraint "y_pos"
+DETAIL:  Failing row contains (4, -1).
+alter table chk validate constraint y_pos;
+psql:test/check_constraint.sql:51: ERROR:  check constraint "y_pos" of relation "chk" is violated by some row
+update chk set y = 5 where y < 0;
+alter table chk validate constraint y_pos;
+alter table chk add check (x < 100);
+select conname, convalidated from pg_constraint
+  where conrelid = 'chk'::regclass order by conname;
+   conname   | convalidated 
+-------------+--------------
+ chk_x_check | t
+ y_pos       | t
+(2 rows)
+
+alter table chk rename constraint y_pos to y_positive;
+alter table chk rename constraint chk_x_check to y_positive;
+psql:test/check_constraint.sql:58: ERROR:  constraint "y_positive" for relation "chk" already exists
+alter table chk add constraint y_positive unique (x);
+psql:test/check_constraint.sql:59: ERROR:  constraint "y_positive" for relation "chk" already exists
+alter table chk add constraint chk_x_key check (x > -1);
+alter table chk add unique (x);
+select conname, contype from pg_constraint
+  where conrelid = 'chk'::regclass and conname like 'chk_x_key%'
+  order by conname;
+  conname   | contype 
+------------+---------
+ chk_x_key  | c
+ chk_x_key1 | u
+(2 rows)
+
+alter table chk drop constraint chk_x_key1;
+alter table chk drop constraint chk_x_key;
+alter table chk add column w int check (w <> 0) default 7;
+alter table chk add column v int default 0 check (v <> 0);
+psql:test/check_constraint.sql:68: ERROR:  check constraint "chk_v_check" of relation "chk" is violated by some row
+alter table chk alter column y type bigint;
+psql:test/check_constraint.sql:69: ERROR:  ALTER COLUMN TYPE of a column a check constraint reads is not supported yet
+DETAIL:  Check constraint "y_positive" reads column "y".
+alter table chk add constraint not_nine check (x <> 9) not enforced;
+insert into chk values (9, 1, 1);
+alter table chk validate constraint not_nine;
+psql:test/check_constraint.sql:72: ERROR:  cannot validate NOT ENFORCED constraint
+select conname, conenforced, convalidated from pg_constraint
+  where conrelid = 'chk'::regclass order by conname;
+   conname   | conenforced | convalidated 
+-------------+-------------+--------------
+ chk_w_check | t           | t
+ chk_x_check | t           | t
+ not_nine    | f           | f
+ y_positive  | t           | t
+(4 rows)
+
+alter table chk drop column y;
+alter table chk drop constraint chk_x_check;
+alter table chk drop constraint no_such;
+psql:test/check_constraint.sql:77: ERROR:  constraint "no_such" of relation "chk" does not exist
+select conname from pg_constraint where conrelid = 'chk'::regclass
+  order by conname;
+   conname   
+-------------
+ chk_w_check
+ not_nine
+(2 rows)
+
+insert into chk values (200, 1);
+insert into chk values (201, 0);
+psql:test/check_constraint.sql:81: ERROR:  new row for relation "chk" violates check constraint "chk_w_check"
+DETAIL:  Failing row contains (201, 0).
+select * from chk order by x;
+  x  | w 
+-----+---
+   1 | 7
+   2 | 7
+   3 | 7
+   9 | 1
+ 200 | 1
+(5 rows)
+
+drop table ord;
+drop table chk;

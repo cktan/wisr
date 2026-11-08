@@ -197,7 +197,7 @@ ALTER TABLE test_replica_identity5 DROP CONSTRAINT test_replica_identity5_pkey;
 -- identity until the constraint is validated.
 CREATE TABLE test_replica_identity6 (id int);
 INSERT INTO test_replica_identity6 VALUES (1), (NULL);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
 --dg ALTER TABLE test_replica_identity6 ADD CONSTRAINT id_nn NOT NULL id NOT VALID;
 CREATE UNIQUE INDEX test_replica_identity6_idx ON test_replica_identity6 (id);
 -- should fail

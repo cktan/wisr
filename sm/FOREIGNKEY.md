@@ -95,9 +95,9 @@ CONSTRAINT value = constraint | fkey | pair × npairs
   child's constraints, and `DROP CONSTRAINT` names it on the
   child. Nothing is written under the parent.
 - **The kind is a constraint's, not a foreign key's.** A `CHECK`
-  is the other kind of constraint; it would be type `c`, with a
-  part of its own in place of `fkey`, the host's expression in
-  `host`. It is not built here.
+  is the other kind of constraint, type `c`, with a part of its
+  own in place of `fkey` and the host's expression in `host`
+  ([`CHECK.md`](CHECK.md)).
 - **Its name is not a `NAME` key.** A constraint's name is unique
   per table, not per namespace, in PostgreSQL; sm3 checks it
   against the child's constraints, under the child's lock X,

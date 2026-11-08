@@ -215,6 +215,17 @@ int put_fkey(sm3::session_t *session, sm2::catkv_t *kv, uint64_t oid,
   return put_key(session, kv, key, blob);
 }
 
+/* Write the check constraint c of the table oid. */
+int put_check(sm3::session_t *session, sm2::catkv_t *kv, uint64_t oid,
+              const sm3::check_rec_t &c) {
+  std::string key, blob;
+  if (sm3::part_key(sm3::kind_t::constraint, oid, c.oid, key) != 0 ||
+      sm3::encode_check(c, blob) != 0) {
+    return -1;
+  }
+  return put_key(session, kv, key, blob);
+}
+
 /*
  * Erase the state of the index x of the table oid, if it has one:
  * its entry, and in session's view. A pending index has none.
@@ -546,6 +557,11 @@ int cat_put_table(session_t *session, uint64_t oid, const table_rec_t &rec) {
         return -1;
       }
     }
+    for (const check_rec_t &c : rec.checks) {
+      if (put_check(session, kv.get(), oid, c) != 0) {
+        return -1;
+      }
+    }
     if (record_table(session, oid, rec) != 0) {
       return -1;
     }
@@ -643,6 +659,24 @@ int cat_put_table(session_t *session, uint64_t oid, const table_rec_t &rec) {
   for (const fkey_rec_t &fk : old.fkeys) {
     if (fkey_of(rec, fk.oid) == rec.fkeys.end() &&
         del_part(session, kv.get(), kind_t::constraint, oid, fk.oid) != 0) {
+      return -1;
+    }
+  }
+  // A check new or changed is written, and one gone erased.
+  auto check_of = [](const table_rec_t &r, uint64_t c) {
+    return std::find_if(r.checks.begin(), r.checks.end(),
+                        [c](const check_rec_t &k) { return k.oid == c; });
+  };
+  for (const check_rec_t &c : rec.checks) {
+    auto was = check_of(old, c.oid);
+    if ((was == old.checks.end() || !(c == *was)) &&
+        put_check(session, kv.get(), oid, c) != 0) {
+      return -1;
+    }
+  }
+  for (const check_rec_t &c : old.checks) {
+    if (check_of(rec, c.oid) == rec.checks.end() &&
+        del_part(session, kv.get(), kind_t::constraint, oid, c.oid) != 0) {
       return -1;
     }
   }
@@ -832,6 +866,11 @@ int cat_del_table(session_t *session, uint64_t oid) {
   }
   for (const fkey_rec_t &fk : rec.fkeys) {
     if (del_part(session, kv.get(), kind_t::constraint, oid, fk.oid) != 0) {
+      return -1;
+    }
+  }
+  for (const check_rec_t &c : rec.checks) {
+    if (del_part(session, kv.get(), kind_t::constraint, oid, c.oid) != 0) {
       return -1;
     }
   }

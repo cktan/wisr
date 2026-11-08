@@ -119,6 +119,7 @@ same type code, or `text` and `varchar`.
 | An expression or a partial index reads it | §8, question 3 |
 | A foreign key's column, either side | §8, question 3 |
 | An identity column | §8, question 3 |
+| A check constraint reads it | refused, "not supported yet" ([`../sm/CHECK.md`](../sm/CHECK.md) §7) |
 | An index key changed to interval | refused, as CREATE INDEX refuses an interval key: sm orders intervals PostgreSQL calls equal as two keys. An INCLUDE column, or one no index has, is taken |
 | The column's statistics | dropped: ANALYZE makes them again |
 | `COLLATE` | the collations digres takes at CREATE TABLE; PostgreSQL's error for a type with none |
@@ -165,8 +166,8 @@ same type code, or `text` and `varchar`.
 2. **The change without a rewrite** (§4): in this build.
 3. **Dependents PostgreSQL makes again** (an expression or a
    partial index, a foreign key on either side, an identity
-   column's sequence): refused, "not supported yet", in this
-   build. Making each again is a step of its own.
+   column's sequence, a check constraint): refused, "not
+   supported yet", in this build. Making each again is a step of its own.
 4. **Two in one statement**: one rewrite each. A later `USING`
    would then read a column an earlier one converted, where
    PostgreSQL reads every column as it was; so a `USING` that

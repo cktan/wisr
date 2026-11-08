@@ -1,0 +1,82 @@
+# test_check.rel -- check constraints in sm's catalog, through the C API
+# (CHECK.md): kept with the columns they read, loaded back, and kept true
+# by the DDL on those columns. sm keeps them; the host evaluates them, so
+# no row is checked here.
+#
+# 1. Two checks are kept, one NOT VALID, with the columns each reads.
+# 2. A taken name is refused: ERR_DUPKEY.
+# 3. Retyping a column a check reads is refused: ERR_INUSE; a column no
+#    check reads is retyped.
+# 4. A check is validated, renamed and dropped; then its column retypes.
+# 5. After a restart the check left is there, as it was.
+# 6. A table dropped takes its checks: the catalog loads after a restart.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_check"))
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "chkdb")
+(db-open "chkdb")
+
+(begin :rc)
+(table-create t (columns (a :int4) (b :int4) (c :text)))
+(commit)
+
+# 1. Kept, with the columns each reads.
+(begin :rc)
+(check-create t t_ac [a c] :not-valid)
+(check-create t t_b [b])
+(commit)
+(begin :rc)
+(assert-eq (map (fn [k] [(k :name) (k :columns) (k :validated)]) (checks t))
+           @[["t_ac" ['a 'c] false] ["t_b" ['b] true]])
+(commit)
+
+# 2. A name taken among t's constraints.
+(begin :rc)
+(assert-err :err-dupkey (check-create t t_b [a]))
+(abort)
+
+# 3. A column a check reads keeps its type; one no check reads changes.
+(begin :rc)
+(assert-err :err-inuse (alter-column-type t b :int8))
+(abort)
+
+# 4. Validated, renamed and dropped; then b retypes.
+(begin :rc)
+(check-validate t t_ac)
+(check-rename t t_ac t_pos)
+(check-drop t t_b)
+(alter-column-type t b :int8)
+(commit)
+(begin :rc)
+(assert-eq (map (fn [k] [(k :name) (k :validated)]) (checks t))
+           @[["t_pos" true]])
+(commit)
+
+# 5. After a restart, as it was.
+(db-close)
+(env-detach)
+(env-attach test-dir)
+(db-open "chkdb")
+(begin :rc)
+(assert-eq (map (fn [k] [(k :name) (k :columns)]) (checks t))
+           @[["t_pos" ['a 'c]]])
+(commit)
+
+# 6. A table dropped takes its checks.
+(begin :rc)
+(table-drop t)
+(commit)
+(db-close)
+(env-detach)
+(env-attach test-dir)
+(db-open "chkdb")
+(begin :rc)
+(assert-eq (list-tables) @[])
+(commit)
+
+(db-close)
+(env-detach)
+(rm-rf test-dir)
+(print "test_check.rel passed")

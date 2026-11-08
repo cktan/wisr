@@ -103,9 +103,6 @@ static bool MergeWithExistingConstraint(Relation rel, const char *ccname,
                                         bool is_initially_valid,
                                         bool is_no_inherit);
 static void SetRelationNumChecks(Relation rel, int numchecks);
-static Node *cookConstraint(ParseState *pstate, Node *raw_constraint,
-                            char *relname);
-
 /* ----------------------------------------------------------------
  *				XXX UGLY HARD CODED BADNESS FOLLOWS XXX
  *
@@ -3078,8 +3075,12 @@ Node *cookDefault(ParseState *pstate, Node *raw_default, Oid atttypid,
  * Parse state must be set up to recognize any vars that might appear
  * in the expression.
  */
-static Node *cookConstraint(ParseState *pstate, Node *raw_constraint,
-                            char *relname) {
+/*
+ * A CHECK constraint's raw expression, transformed, made boolean and its
+ * collations assigned; extern for digres's tables in sm (smstore.c), whose
+ * checks are cooked as these are.
+ */
+Node *cookConstraint(ParseState *pstate, Node *raw_constraint, char *relname) {
   Node *expr;
 
   /*

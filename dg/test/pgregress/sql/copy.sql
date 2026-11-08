@@ -169,7 +169,7 @@ rollback;
 --dg truncate table parted_copytest;
 --dg-cascade
 --dg create index on parted_copytest (b);
---dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop trigger part_ins_trig on parted_copytest_a2;
 
 --dg-cascade

@@ -118,7 +118,7 @@
 --dg 	lsncol pg_lsn_minmax_multi_ops
 --dg ) with (pages_per_range = 1);
 
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg-skip: type ? is not supported yet
 --dg CREATE TABLE brinopers_multi (colname name, typ text,
 --dg 	op text[], value text[], matches int[],
 --dg 	check (cardinality(op) = cardinality(value)),

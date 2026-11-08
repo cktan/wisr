@@ -1760,6 +1760,121 @@ static Janet cfun_fkeys(int32_t argc, Janet *argv) {
   return tuple_of(out);
 }
 
+/* The check constraint named name of the table def, for op; a panic if none. */
+static const sm_check_def_t &
+need_check(const sm_table_def_t &def, const std::string &name, const char *op) {
+  for (const sm_check_def_t &c : def.checks) {
+    if (c.name == name) {
+      return c;
+    }
+  }
+  janet_panicf("%s: no check '%s' of table '%s'", op, name.c_str(),
+               def.name.c_str());
+}
+
+/* The check name of the table tbl, with its table, for op. */
+static std::pair<uint64_t, uint64_t> check_oid_of(session_ctx_t *s,
+                                                  const std::string &tbl,
+                                                  const std::string &name,
+                                                  const char *op) {
+  const sm_table_def_t &def = *need_table(s, tbl, SM_LOCKMODE_IS, op)->def;
+  return {def.oid, need_check(def, name, op).oid};
+}
+
+/*
+ * (check-create table name [column...] [:not-valid]): a check
+ * constraint reading the columns, with no expression: sm keeps the
+ * host's, which rel has none of (CHECK.md).
+ */
+static Janet cfun_check_create(int32_t argc, Janet *argv) {
+  janet_arity(argc, 3, 4);
+  session_ctx_t *s = require_session();
+  const sm_table_def_t &def =
+      *need_table(s, identifier_of(argv[0]), SM_LOCKMODE_IS, "check-create")
+           ->def;
+  sm_check_def_t c;
+  c.name = identifier_of(argv[1]);
+  JanetView cols = janet_getindexed(argv, 2);
+  for (int32_t i = 0; i < cols.len; i++) {
+    c.columns.push_back(
+        column_place(def, identifier_of(cols.items[i]), "check-create"));
+  }
+  if (4 == argc) {
+    if (!janet_keyeq(argv[3], "not-valid")) {
+      janet_panic("check-create: the one option is :not-valid");
+    }
+    c.validated = false;
+  }
+  uint64_t oid = 0;
+  if (sm_cat_create_check(s->session, def.oid, c, &oid) != 0) {
+    panic_sm_error("check-create");
+  }
+  return janet_wrap_nil();
+}
+
+/* (check-drop table name) */
+static Janet cfun_check_drop(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 2);
+  session_ctx_t *s = require_session();
+  auto [table, check] = check_oid_of(s, identifier_of(argv[0]),
+                                     identifier_of(argv[1]), "check-drop");
+  if (sm_cat_drop_check(s->session, table, check) != 0) {
+    panic_sm_error("check-drop");
+  }
+  return janet_wrap_nil();
+}
+
+/* (check-validate table name): its rows checked, as the host says. */
+static Janet cfun_check_validate(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 2);
+  session_ctx_t *s = require_session();
+  auto [table, check] = check_oid_of(s, identifier_of(argv[0]),
+                                     identifier_of(argv[1]), "check-validate");
+  if (sm_cat_validate_check(s->session, table, check) != 0) {
+    panic_sm_error("check-validate");
+  }
+  return janet_wrap_nil();
+}
+
+/* (check-rename table name new_name) */
+static Janet cfun_check_rename(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 3);
+  session_ctx_t *s = require_session();
+  auto [table, check] = check_oid_of(s, identifier_of(argv[0]),
+                                     identifier_of(argv[1]), "check-rename");
+  std::string name = identifier_of(argv[2]);
+  if (sm_cat_rename_check(s->session, table, check, name.c_str()) != 0) {
+    panic_sm_error("check-rename");
+  }
+  return janet_wrap_nil();
+}
+
+/*
+ * (checks table): the table's check constraints, each a struct of its
+ * name, the columns it reads, and whether its rows were checked.
+ */
+static Janet cfun_checks(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  const sm_table_def_t &def =
+      *need_table(s, identifier_of(argv[0]), SM_LOCKMODE_IS, "checks")->def;
+  std::vector<Janet> out;
+  for (const sm_check_def_t &c : def.checks) {
+    std::vector<Janet> cols;
+    for (int32_t a : c.columns) {
+      cols.push_back(janet_csymbolv(def.columns[a].name.c_str()));
+    }
+    JanetKV *st = janet_struct_begin(3);
+    janet_struct_put(st, janet_ckeywordv("name"),
+                     janet_cstringv(c.name.c_str()));
+    janet_struct_put(st, janet_ckeywordv("columns"), tuple_of(cols));
+    janet_struct_put(st, janet_ckeywordv("validated"),
+                     janet_wrap_boolean(c.validated));
+    out.push_back(janet_wrap_struct(janet_struct_end(st)));
+  }
+  return tuple_of(out);
+}
+
 /*
  * (referenced-by table): the foreign keys that reference the table, its
  * own among them, each [child-table fkey-name], sorted.
@@ -3225,6 +3340,11 @@ static const JanetReg s_rel_cfuns[] = {
     {"_fkey-rename", cfun_fkey_rename, "internal"},
     {"_fkeys", cfun_fkeys, "internal"},
     {"_referenced-by", cfun_referenced_by, "internal"},
+    {"_check-create", cfun_check_create, "internal"},
+    {"_check-drop", cfun_check_drop, "internal"},
+    {"_check-validate", cfun_check_validate, "internal"},
+    {"_check-rename", cfun_check_rename, "internal"},
+    {"_checks", cfun_checks, "internal"},
 
     {"_insert", cfun_insert, "internal"},
     {"_read", cfun_read, "internal"},
@@ -3331,6 +3451,21 @@ static const char *s_prelude = R"janet(
 
 (defmacro referenced-by [tbl]
   ~(_referenced-by (string ',tbl)))
+
+(defmacro check-create [tbl name cols & opts]
+  ~(_check-create (string ',tbl) (string ',name) ',cols ,;opts))
+
+(defmacro check-drop [tbl name]
+  ~(_check-drop (string ',tbl) (string ',name)))
+
+(defmacro check-validate [tbl name]
+  ~(_check-validate (string ',tbl) (string ',name)))
+
+(defmacro check-rename [tbl name new-name]
+  ~(_check-rename (string ',tbl) (string ',name) (string ',new-name)))
+
+(defmacro checks [tbl]
+  ~(_checks (string ',tbl)))
 
 (defmacro insert [tbl row]
   ~(_insert (string ',tbl) ,row))

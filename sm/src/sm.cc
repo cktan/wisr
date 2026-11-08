@@ -360,6 +360,9 @@ sm_table_def_t api_def(const sm3::session_t *ss, const sm3::table_def_t &d) {
   for (const sm3::fkey_ref_t &r : d.rec.referenced_by) {
     out.referenced_by.push_back({r.table, r.fkey});
   }
+  for (const sm3::check_rec_t &c : d.rec.checks) {
+    out.checks.push_back({c.oid, c.name, c.reads, c.validated, c.host});
+  }
   return out;
 }
 
@@ -2911,6 +2914,9 @@ int sm_cat_column_use(sm_session_t *session, uint64_t oid, int32_t at,
     case sm3::column_use_t::identity:
       *use = SM_COLUMN_USE_IDENTITY;
       break;
+    case sm3::column_use_t::check:
+      *use = SM_COLUMN_USE_CHECK;
+      break;
     }
     return 0;
   });
@@ -3006,6 +3012,43 @@ int sm_cat_rename_fkey(sm_session_t *session, uint64_t table, uint64_t fkey,
                        const char *name) {
   return guard(session, [&] {
     return sm3::rename_fkey(session->sm3, table, fkey, name_of(name));
+  });
+}
+
+/* Add a check constraint in the session's transaction. */
+int sm_cat_create_check(sm_session_t *session, uint64_t table,
+                        const sm_check_def_t &def, uint64_t *oid) {
+  return guard(session, [&] {
+    if (!oid) {
+      return null_arg("sm_cat_create_check", "oid");
+    }
+    sm3::check_rec_t c;
+    c.name = def.name;
+    c.reads = def.columns;
+    c.validated = def.validated;
+    c.host = def.host;
+    return sm3::create_check(session->sm3, table, c, *oid);
+  });
+}
+
+/* Drop a check constraint in the session's transaction. */
+int sm_cat_drop_check(sm_session_t *session, uint64_t table, uint64_t check) {
+  return guard(session,
+               [&] { return sm3::drop_check(session->sm3, table, check); });
+}
+
+/* Mark a check constraint validated in the session's transaction. */
+int sm_cat_validate_check(sm_session_t *session, uint64_t table,
+                          uint64_t check) {
+  return guard(session,
+               [&] { return sm3::validate_check(session->sm3, table, check); });
+}
+
+/* Rename a check constraint in the session's transaction. */
+int sm_cat_rename_check(sm_session_t *session, uint64_t table, uint64_t check,
+                        const char *name) {
+  return guard(session, [&] {
+    return sm3::rename_check(session->sm3, table, check, name_of(name));
   });
 }
 

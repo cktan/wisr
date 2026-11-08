@@ -280,6 +280,8 @@ const std::vector<attribute_t> &schema_of(sm3::part_t part) {
        att(type_int4)},
       /* view_read */ {att(type_int8), att(type_int4)},
       /* view_query */ {att(type_bytea)},
+      /* check */ {att(type_int4)},
+      /* check_read */ {att(type_int4)},
   };
   return schemas[static_cast<size_t>(part)];
 }
@@ -311,6 +313,7 @@ const sm2::tup_desc_t &part_desc(part_t part) {
       schema_of(part_t::constraint),  schema_of(part_t::fkey),
       schema_of(part_t::fkey_pair),   schema_of(part_t::view),
       schema_of(part_t::view_read),   schema_of(part_t::view_query),
+      schema_of(part_t::check),       schema_of(part_t::check_read),
   };
   return descs[static_cast<size_t>(part)];
 }
@@ -790,6 +793,90 @@ int decode_constraint(std::string_view blob, fkey_rec_t &rec) {
     }
   }
   return at_end(blob, pos);
+}
+
+/*
+ * A check constraint's value (CHECK.md §3): the constraint, its type
+ * 'c'; the check, its count of columns read; a part a column it reads.
+ */
+int encode_check(const check_rec_t &rec, std::string &blob) {
+  blob.clear();
+  writer_t c(5);
+  c.i8(0, rec.oid);
+  c.bytes(1, rec.name);
+  c.i2(2, 'c');
+  c.b(3, rec.validated);
+  if (!rec.host.empty()) {
+    c.bytes(4, rec.host);
+  }
+  if (c.append(part_desc(part_t::constraint), blob) != 0) {
+    return -1;
+  }
+  writer_t k(1);
+  k.i4(0, static_cast<int32_t>(rec.reads.size()));
+  if (k.append(part_desc(part_t::check), blob) != 0) {
+    return -1;
+  }
+  for (int32_t at : rec.reads) {
+    writer_t r(1);
+    r.i4(0, at);
+    if (r.append(part_desc(part_t::check_read), blob) != 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+/* Read a check constraint's value. */
+int decode_check(std::string_view blob, check_rec_t &rec) {
+  size_t pos = 0;
+  rec = check_rec_t{};
+  reader_t c;
+  if (c.read(blob, pos, part_t::constraint) != 0) {
+    return -1;
+  }
+  rec.oid = c.i8(0);
+  rec.name = c.bytes(1);
+  int16_t type = c.i2(2);
+  rec.validated = c.b(3);
+  rec.host = c.opt_bytes(4).value_or("");
+  if (!c.ok || type != 'c') {
+    return corrupt("a constraint part cut short, or not a check");
+  }
+  reader_t k;
+  if (k.read(blob, pos, part_t::check) != 0) {
+    return -1;
+  }
+  int32_t nreads = k.i4(0);
+  if (!k.ok || nreads < 0) {
+    return corrupt("a check part cut short");
+  }
+  for (int32_t i = 0; i < nreads; i++) {
+    reader_t r;
+    if (r.read(blob, pos, part_t::check_read) != 0) {
+      return -1;
+    }
+    rec.reads.push_back(r.i4(0));
+    if (!r.ok) {
+      return corrupt("a check's column cut short");
+    }
+  }
+  return at_end(blob, pos);
+}
+
+/* A constraint value's kind; see catalog.h. */
+int constraint_kind(std::string_view blob, char &kind) {
+  size_t pos = 0;
+  reader_t c;
+  if (c.read(blob, pos, part_t::constraint) != 0) {
+    return -1;
+  }
+  int16_t type = c.i2(2);
+  if (!c.ok || (type != 'f' && type != 'c')) {
+    return corrupt("a constraint of no known kind");
+  }
+  kind = static_cast<char>(type);
+  return 0;
 }
 
 /*

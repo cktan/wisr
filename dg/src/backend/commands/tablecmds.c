@@ -4196,8 +4196,8 @@ Oid AlterTableLookupRelation(AlterTableStmt *stmt, LOCKMODE lockmode) {
                     errhint("Use ALTER TABLE instead.")));
   /*
    * sm's tables take ADD COLUMN, DROP COLUMN and ALTER COLUMN TYPE, and ADD,
-   * DROP and VALIDATE CONSTRAINT, of a foreign key, a primary key or a
-   * unique constraint; its
+   * DROP and VALIDATE CONSTRAINT, of a foreign key, a primary key, a
+   * unique constraint or a check; its
    * views SET and RESET of their options; and every relation OWNER TO
    * (smstore_alter_table()).
    */

@@ -5819,6 +5819,8 @@ source test/parked_tables.sh
 source test/acl_overlap.sh
 source test/acl_owner_overlap.sh
 source test/tree_load_ssi.sh
+# Check a check constraint against rows committed after the snapshot.
+source test/check_rr_validate.sh
 
 kill -INT $server
 wait $server || fail "crashed retype: shutdown status"

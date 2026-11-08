@@ -484,7 +484,7 @@ RESET ROLE;
 --dg DROP USER regress_user11;
 
 -- check constraints
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg-skip: column "?" asks for what CREATE TABLE does not support yet
 --dg CREATE TABLE gtest20 (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) STORED CHECK (b < 50));
 --dg-cascade
 --dg INSERT INTO gtest20 (a) VALUES (10);  -- ok
@@ -823,13 +823,13 @@ INSERT INTO gtest25 VALUES (3), (4);
 --dg SELECT * FROM gtest25 ORDER BY a;
 --dg-cascade
 --dg ALTER TABLE gtest25 ADD COLUMN x int GENERATED ALWAYS AS (b * 4) STORED;  -- error
---dg-differs: another error: ALTER TABLE ... ADD COLUMN supports only NOT NULL and DEFAULT yet
+--dg-differs: another error: ALTER TABLE ... ADD COLUMN supports only NOT NULL, DEFAULT and CHECK yet
 --dg ALTER TABLE gtest25 ADD COLUMN x int GENERATED ALWAYS AS (z * 4) STORED;  -- error
---dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL and DEFAULT yet
+--dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL, DEFAULT and CHECK yet
 --dg ALTER TABLE gtest25 ADD COLUMN c int DEFAULT 42,
 --dg   ADD COLUMN x int GENERATED ALWAYS AS (c * 4) STORED;
 ALTER TABLE gtest25 ADD COLUMN d int DEFAULT 101;
---dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL and DEFAULT yet
+--dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL, DEFAULT and CHECK yet
 --dg ALTER TABLE gtest25 ALTER COLUMN d SET DATA TYPE float8,
 --dg   ADD COLUMN y float8 GENERATED ALWAYS AS (d * 4) STORED;
 --dg-cascade

@@ -12416,3 +12416,59 @@ ran 1.52 times PostgreSQL's instructions, against a goal of 1.5.
   `idx_scan_row()` of a tree against the row's key, and the
   tree tests of sm3, rel and dg read rows and keys across
   leaves.
+
+## Step 408: check constraints
+
+[`../sm/CHECK.md`](../sm/CHECK.md): a check constraint is kept
+by sm3 and checked by PostgreSQL's executor.
+
+- **sm3** (`create_check()`, `drop_check()`, `validate_check()`,
+  `rename_check()` in `../sm/sm3/src/ddl/ddl.cc`): a check is a
+  `CONSTRAINT` entry of kind `c`, its oid, name, validated flag,
+  the columns it reads and the host's bytes. `table_def_t` holds
+  it in `checks`. A name is unique among the table's
+  constraints (`constraint_name_taken()`). DROP COLUMN of a
+  column a check reads is `SM_ERR_INUSE`, and so is ALTER COLUMN
+  TYPE (`find_column_use()`).
+- **sm.h**: `sm_check_def_t`, `sm_table_def_t::checks`, and
+  `sm_cat_create_check()` and the rest. rel takes
+  `check-create`, `check-drop`, `check-validate`, `check-rename`
+  and `checks`.
+- **digres** (`access/sm/smstore.c`):
+  - CREATE TABLE takes a column's and a table's checks, cooked by
+    PostgreSQL's `cookConstraint()` and named by
+    `ChooseConstraintName()`. The host bytes are a flags byte,
+    `NOT ENFORCED` and `NO INHERIT`, then `nodeToString()` of the
+    expression.
+  - ALTER TABLE takes ADD CONSTRAINT ... CHECK, with and without
+    NOT VALID, ADD COLUMN ... CHECK, VALIDATE, DROP and RENAME
+    CONSTRAINT. DROP COLUMN drops the checks that read the
+    column first.
+  - The rows are checked at sm's latest view (`check_rows()`):
+    a REPEATABLE READ transaction's snapshot would miss a row
+    committed since it was taken.
+- **The relation cache** (`RelationBuildSmDesc()`) sets
+  `relchecks` and fills `constr->check`, so `ExecConstraints()`
+  checks every write path: INSERT, UPDATE, ON CONFLICT DO
+  UPDATE, COPY and the bulk load.
+- **`pg_constraint`** (`catrel.c`) has a row of type `c` for each
+  check, so `\d` and `pg_get_constraintdef()` show it.
+- **A constraint's name** is free among the table's constraints:
+  sm3's `create_index()` of a UNIQUE or PRIMARY KEY constraint
+  refuses a check's or a foreign key's name, and digres says so
+  as PostgreSQL does. `ChooseRelationName()` in
+  `commands/indexcmds.c` skips a constraint's name again, as
+  PostgreSQL's does, so `ADD UNIQUE` passes a check's by.
+- **LIKE ... INCLUDING CONSTRAINTS** copies a check valid: the
+  copy skips the new table's rows, and is not NOT VALID.
+- **The regression files**: 68 files that skipped CHECK were
+  trimmed again; about 250 statements run now. What differs
+  that was hidden behind a CHECK is mostly PostgreSQL 18's named
+  NOT NULL constraints, which `pg_constraint` lacks
+  ([`../sm/NEXT.md`](../sm/NEXT.md#feature-gaps-against-postgresql)).
+- **Tests**: `../sm/sm3/test/test_check.cc`,
+  `../sm/rel/test/test_check.rel`, `test/check_constraint.sql`,
+  and `test/check_rr_validate.sh`, which commits a row that
+  breaks the check after a REPEATABLE READ transaction's
+  snapshot: ADD CONSTRAINT and VALIDATE CONSTRAINT both refuse
+  it.

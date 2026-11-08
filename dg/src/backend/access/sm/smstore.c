@@ -60,7 +60,7 @@
 #include "access/stratnum.h"
 #include "catalog/pg_am_d.h"
 #include "catalog/pg_collation_d.h"
-#include "catalog/pg_constraint_d.h"
+#include "catalog/pg_constraint.h"
 #include "catalog/pg_rewrite_d.h"
 #include "catalog/pg_sequence_d.h"
 #include "commands/trigger.h"
@@ -1211,6 +1211,7 @@ static void add_table(const sm_table_def_t &def, List **out) {
 
   r->nfkeys = (int)def.fkeys.size();
   r->referenced = !def.referenced_by.empty();
+  r->nchecks = (int)def.checks.size();
   for (size_t i = 0; i < def.columns.size(); i++) {
     const sm_column_def_t &c = def.columns[i];
 
@@ -1600,8 +1601,9 @@ void smstore_drop_namespaces(DropStmt *stmt) {
  * NULL, and NULL, which parse analysis has checked against it and which
  * asks nothing; a PRIMARY KEY or UNIQUE, which parse analysis has made an
  * index statement of its own, a DEFAULT, which it has made the column's
- * raw_default, and a REFERENCES, which it has made an ALTER TABLE ... ADD
- * FOREIGN KEY to follow.
+ * raw_default, a REFERENCES, which it has made an ALTER TABLE ... ADD
+ * FOREIGN KEY to follow, and a CHECK, which it has put in the statement's
+ * constraints.
  */
 static bool only_taken(List *constraints) {
   ListCell *l;
@@ -1612,7 +1614,7 @@ static bool only_taken(List *constraints) {
     if (type != CONSTR_NOTNULL && type != CONSTR_NULL &&
         type != CONSTR_PRIMARY && type != CONSTR_UNIQUE &&
         type != CONSTR_DEFAULT && type != CONSTR_IDENTITY &&
-        type != CONSTR_FOREIGN)
+        type != CONSTR_FOREIGN && type != CONSTR_CHECK)
       return false;
   }
   return true;
@@ -1675,11 +1677,24 @@ static void check_storage_options(List *options) {
         transformRelOptions((Datum)0, fill, NULL, NULL, false, false), true);
 }
 
+/*
+ * Whether constraints, a CREATE TABLE's after parse analysis, are CHECKs
+ * alone, the table's and its columns' (../sm/CHECK.md).
+ */
+static bool only_checks(List *constraints) {
+  ListCell *l;
+
+  foreach (l, constraints)
+    if (lfirst_node(Constraint, l)->contype != CONSTR_CHECK)
+      return false;
+  return true;
+}
+
 /* Refuse what a CREATE TABLE asks that sm's tables do not have yet. */
 static void check_create_table(const CreateStmt *stmt) {
   if (stmt->inhRelations != NIL || stmt->partbound != NULL ||
       stmt->partspec != NULL || stmt->ofTypename != NULL ||
-      stmt->constraints != NIL || stmt->tablespacename != NULL ||
+      !only_checks(stmt->constraints) || stmt->tablespacename != NULL ||
       stmt->accessMethod != NULL ||
       stmt->relation->relpersistence == RELPERSISTENCE_UNLOGGED)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -1787,6 +1802,257 @@ static void check_column_name(const char *name);
  * Create the table a CREATE TABLE, after parse analysis, describes, in sm,
  * in this transaction: its columns and their NOT NULL.  Returns its address.
  */
+/* A check's host bytes' first byte: its flags (../sm/CHECK.md §3). */
+constexpr uint8_t check_not_enforced = 0x01; /* NOT ENFORCED */
+constexpr uint8_t check_no_inherit = 0x02;   /* NO INHERIT */
+
+/*
+ * A check's host bytes, as sm keeps them for digres: a byte of its flags,
+ * then its expression, nodeToString()'s.
+ */
+static std::string check_host(const char *ccbin, bool enforced,
+                              bool noinherit) {
+  std::string host(1, (char)((enforced ? 0 : check_not_enforced) |
+                             (noinherit ? check_no_inherit : 0)));
+  host.append(ccbin);
+  return host;
+}
+
+static bool table_def_now(Oid oid, sm_table_def_t &out);
+static void forget_table(Oid relid);
+
+/*
+ * Whether name is taken among the constraints of the table def or among
+ * chosen, names a statement has given already: a constraint's name is
+ * unique per table, as in PostgreSQL.
+ */
+static bool constraint_name_taken(const sm_table_def_t *def, const char *name,
+                                  List *chosen) {
+  ListCell *l;
+
+  for (const sm_fkey_def_t &f : def->fkeys)
+    if (f.name == name)
+      return true;
+  for (const sm_check_def_t &c : def->checks)
+    if (c.name == name)
+      return true;
+  for (const sm_index_def_t &x : def->indexes)
+    if (x.constraint && x.name == name)
+      return true;
+  foreach (l, chosen)
+    if (strcmp((const char *)lfirst(l), name) == 0)
+      return true;
+  return false;
+}
+
+/*
+ * A name for a check of the table relname, as AddRelationNewConstraints()
+ * makes one: relname_colname_check if it reads one column, else
+ * relname_check, numbered until it is free.
+ */
+static char *check_name(const char *relname, const char *colname,
+                        const sm_table_def_t *def, List *chosen) {
+  for (int n = 0;; n++) {
+    char suffix[NAMEDATALEN];
+    char *name;
+
+    if (n == 0)
+      strlcpy(suffix, "check", sizeof(suffix));
+    else
+      snprintf(suffix, sizeof(suffix), "check%d", n);
+    name = makeObjectName(relname, colname, suffix);
+    if (!constraint_name_taken(def, name, chosen))
+      return name;
+    pfree(name);
+  }
+}
+
+/*
+ * The CHECK constraint con's expression for the table rel, cooked as
+ * AddRelationNewConstraints() cooks one (cookConstraint()), or as given
+ * cooked, as a LIKE's copy gives it.
+ */
+static Node *cook_check(Relation rel, Constraint *con) {
+  Node *expr;
+
+  if (con->raw_expr == NULL)
+    return (Node *)stringToNode(con->cooked_expr);
+  ParseState *pstate = make_parsestate(NULL);
+  ParseNamespaceItem *nsitem = addRangeTableEntryForRelation(
+      pstate, rel, AccessShareLock, NULL, false, true);
+
+  addNSItemToQuery(pstate, nsitem, true, true, true);
+  expr = cookConstraint(pstate, con->raw_expr,
+                        (char *)RelationGetRelationName(rel));
+  free_parsestate(pstate);
+  return expr;
+}
+
+/*
+ * The check con of the table rel, its expression expr, as sm keeps it
+ * (../sm/CHECK.md), validated as the caller says.
+ * 1. Name it, if it has no name, as PostgreSQL names one; *chosen, the
+ *    names this statement gave, gains it.
+ * 2. Find the columns it reads, every live one for a whole-row reference.
+ * 3. Its expression and flags go in the host bytes.
+ */
+static sm_check_def_t make_check(Relation rel, Constraint *con, Node *expr,
+                                 bool validated, List **chosen) {
+  const char *relname = RelationGetRelationName(rel);
+  Oid relid = RelationGetRelid(rel);
+  sm_table_def_t def;
+  sm_check_def_t check;
+  Bitmapset *attnos = NULL;
+  int attno = -1;
+
+  if (!table_def_now(relid, def))
+    elog(ERROR, "table %u is not in sm", relid);
+  if (con->conname != NULL)
+    check.name = con->conname;
+  else {
+    List *vars = list_union(NIL, pull_var_clause(expr, 0));
+    const char *colname =
+        list_length(vars) == 1
+            ? get_attname(relid, ((Var *)linitial(vars))->varattno, true)
+            : NULL;
+
+    check.name = check_name(relname, colname, &def, *chosen);
+  }
+  *chosen = lappend(*chosen, pstrdup(check.name.c_str()));
+  pull_varattnos(expr, 1, &attnos);
+  while ((attno = bms_next_member(attnos, attno)) >= 0) {
+    AttrNumber at = attno + FirstLowInvalidHeapAttributeNumber;
+
+    if (at == InvalidAttrNumber) {
+      /* The whole row: it reads every live column. */
+      check.columns.clear();
+      for (size_t i = 0; i < def.columns.size(); i++)
+        if (!def.columns[i].dropped)
+          check.columns.push_back((int32_t)i);
+      break;
+    }
+    if (at > 0)
+      check.columns.push_back(at - 1);
+  }
+  check.validated = validated;
+  check.host =
+      check_host(nodeToString(expr), con->is_enforced, con->is_no_inherit);
+  return check;
+}
+
+/* Put the check of the table rel in sm, which takes the table's lock X. */
+static void put_check(Relation rel, const sm_check_def_t &check) {
+  sm_session_t *s = xact_session();
+  Oid relid = RelationGetRelid(rel);
+  uint64_t oid = 0;
+
+  if (waiting([&] { return sm_cat_create_check(s, relid, check, &oid); }) !=
+      0) {
+    if (sm_errnum() == SM_ERR_DUPKEY)
+      ereport(ERROR,
+              (errcode(ERRCODE_DUPLICATE_OBJECT),
+               errmsg("constraint \"%s\" for relation \"%s\" already "
+                      "exists",
+                      check.name.c_str(), RelationGetRelationName(rel))));
+    sm_error("create a check constraint");
+  }
+}
+
+/*
+ * Add the CHECK constraint con to the table rel, in sm (../sm/CHECK.md):
+ * cooked, named and stored, validated as the caller says, having checked
+ * the rows or found the table new.
+ */
+static void add_check(Relation rel, Constraint *con, bool validated,
+                      List **chosen) {
+  put_check(rel, make_check(rel, con, cook_check(rel, con), validated, chosen));
+}
+
+/*
+ * Check every row of the table rel against the check conname, its
+ * expression expr, as PostgreSQL's validateCheckConstraint() does: a row
+ * for which it is false fails; one for which it is null passes.
+ * 1. Make the expression ready, and a slot for the table's rows.
+ * 2. Scan the table, evaluating it on each row.
+ * 3. Fail at the first row that does not meet it.
+ */
+static void scan_check(Relation rel, Node *expr, const char *conname) {
+  EState *estate = CreateExecutorState();
+  ExprState *exprstate =
+      ExecPrepareCheck(make_ands_implicit((Expr *)expr), estate);
+  ExprContext *econtext = GetPerTupleExprContext(estate);
+  TupleTableSlot *slot = table_slot_create(rel, NULL);
+  /* sm reads at its own view (check_rows()), not a PostgreSQL snapshot. */
+  TableScanDesc scan = table_beginscan(rel, NULL, 0, NULL);
+  MemoryContext oldcxt =
+      MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+
+  econtext->ecxt_scantuple = slot;
+  while (table_scan_getnextslot(scan, ForwardScanDirection, slot)) {
+    if (!ExecCheck(exprstate, econtext))
+      ereport(ERROR, (errcode(ERRCODE_CHECK_VIOLATION),
+                      errmsg("check constraint \"%s\" of relation \"%s\" is "
+                             "violated by some row",
+                             conname, RelationGetRelationName(rel)),
+                      errtableconstraint(rel, conname)));
+    ResetExprContext(econtext);
+    CHECK_FOR_INTERRUPTS();
+  }
+  MemoryContextSwitchTo(oldcxt);
+  table_endscan(scan);
+  ExecDropSingleTupleTableSlot(slot);
+  FreeExecutorState(estate);
+}
+
+/*
+ * scan_check() of the table rel at the newest committed rows, as
+ * validateCheckConstraint() reads at a new snapshot: past the snapshot of
+ * a REPEATABLE READ transaction, so a row committed since it is checked
+ * too.  The caller holds sm's table lock X, so no write comes between.
+ */
+static void check_rows(Relation rel, Node *expr, const char *conname) {
+  sm_session_t *s = xact_session();
+  bool previous;
+
+  if (0 != sm_view_latest(s, true, &previous))
+    sm_error("read current rows for a check constraint");
+  try {
+    scan_check(rel, expr, conname);
+  } catch (...) {
+    sm_view_latest(s, previous, nullptr);
+    throw;
+  }
+  if (0 != sm_view_latest(s, previous, nullptr))
+    sm_error("restore the read view after a check constraint's check");
+}
+
+/*
+ * ALTER TABLE ... ADD CONSTRAINT ... CHECK, and ADD COLUMN's, which parse
+ * analysis makes one of (../sm/CHECK.md §5.2).
+ * 1. Cook and name it, and put it in sm, which takes the table's lock X:
+ *    no other writer adds a row while the rows are checked.
+ * 2. Unless it is NOT VALID or NOT ENFORCED, or its rows are to be
+ *    skipped, check the rows there, in this transaction; a row that fails
+ *    it aborts the check with it.
+ */
+static void alter_add_check(Oid relid, Constraint *con) {
+  /* Locked, as parse analysis opens it; sm's lock X comes with the put. */
+  Relation rel = relation_open(relid, AccessShareLock);
+  Node *expr = cook_check(rel, con);
+  List *chosen = NIL;
+  /* LIKE's copy skips its new table's rows, and is valid as its source. */
+  bool check = !con->skip_validation && con->initially_valid;
+  sm_check_def_t def =
+      make_check(rel, con, expr, con->initially_valid, &chosen);
+
+  put_check(rel, def);
+  forget_table(relid);
+  CommandCounterIncrement();
+  if (check)
+    check_rows(rel, expr, def.name.c_str());
+  relation_close(rel, NoLock);
+}
+
 ObjectAddress smstore_create_table(CreateStmt *stmt) {
   std::vector<sm_column_spec_t> columns;
   Oid nspoid;
@@ -1858,6 +2124,22 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
                       errmsg("relation \"%s\" already exists",
                              stmt->relation->relname)));
     sm_error("create a table");
+  }
+  /* Its checks, cooked against the table now that it is there. */
+  if (stmt->constraints != NIL) {
+    Relation rel;
+    List *chosen = NIL;
+
+    CommandCounterIncrement();
+    rel = relation_open((Oid)oid, NoLock);
+    foreach (l, stmt->constraints) {
+      Constraint *con = lfirst_node(Constraint, l);
+
+      /* A new table has no rows: each holds, as parse analysis marks it. */
+      add_check(rel, con, con->initially_valid, &chosen);
+    }
+    relation_close(rel, NoLock);
+    forget_table((Oid)oid);
   }
   /* What its ON COMMIT asks is done before each commit (xact.c). */
   register_on_commit_action((Oid)oid, stmt->oncommit);
@@ -2249,6 +2531,27 @@ static Oid type_oid(uint8_t code) {
 static void fkey_from_sm(const sm_fkey_def_t &def, uint64_t table,
                          smstore_fkey_t *fk);
 
+/* *out, palloc'd, from sm's check def of a table. */
+static void check_from_sm(const sm_check_def_t &def, smstore_check_t *out) {
+  uint8_t flags;
+
+  if (def.host.empty())
+    ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
+                    errmsg("check constraint \"%s\" has no expression",
+                           def.name.c_str())));
+  flags = (uint8_t)def.host[0];
+  out->oid = (Oid)def.oid;
+  namestrcpy(&out->name, def.name.c_str());
+  out->ccbin = pnstrdup(def.host.data() + 1, def.host.size() - 1);
+  out->validated = def.validated;
+  out->enforced = 0 == (flags & check_not_enforced);
+  out->noinherit = 0 != (flags & check_no_inherit);
+  out->nreads = (int)def.columns.size();
+  out->reads = (AttrNumber *)palloc(Max(out->nreads, 1) * sizeof(AttrNumber));
+  for (int i = 0; i < out->nreads; i++)
+    out->reads[i] = (AttrNumber)(def.columns[i] + 1);
+}
+
 /*
  * The table oid as sm3 defines it, palloc'd in the current context, or
  * NULL if there is no such table.  It opens the table to read, in this
@@ -2327,6 +2630,12 @@ smstore_table_t *smstore_table_desc(Oid oid) {
   for (const sm_fkey_ref_t &r : def->referenced_by)
     if (smstore_get_fkey((Oid)r.fkey, &desc->referenced[desc->nreferenced]))
       desc->nreferenced++;
+  /* Its check constraints, which the executor evaluates (../sm/CHECK.md). */
+  desc->nchecks = (int)def->checks.size();
+  desc->checks = (smstore_check_t *)palloc0(Max(desc->nchecks, 1) *
+                                            sizeof(smstore_check_t));
+  for (int i = 0; i < desc->nchecks; i++)
+    check_from_sm(def->checks[i], &desc->checks[i]);
   return desc;
 }
 
@@ -3992,16 +4301,18 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
                       errmsg("multiple default values specified for column "
                              "\"%s\" of table \"%s\"",
                              col->colname, relname)));
-    else if (c->contype != CONSTR_NULL && c->contype != CONSTR_DEFAULT)
+    /* A CHECK is a subcommand of its own, which parse analysis made. */
+    else if (c->contype != CONSTR_NULL && c->contype != CONSTR_DEFAULT &&
+             c->contype != CONSTR_CHECK)
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("ALTER TABLE ... ADD COLUMN supports only NOT "
-                             "NULL and DEFAULT yet")));
+                             "NULL, DEFAULT and CHECK yet")));
   }
   if (NULL != col->collClause || 0 != col->generated ||
       NULL != col->compression || NULL != col->storage_name)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("ALTER TABLE ... ADD COLUMN supports only NOT "
-                           "NULL and DEFAULT yet")));
+                           "NULL, DEFAULT and CHECK yet")));
   /* What parse analysis made of a serial's: its nextval() and NOT NULL. */
   if (NULL != col->raw_default)
     raw_default = col->raw_default;
@@ -4124,10 +4435,20 @@ static void drop_column(Oid relid, const char *relname, const char *name,
 
   if (table_def_now(relid, def))
     for (size_t i = 0; i < def.columns.size(); i++)
-      if (!def.columns[i].dropped && def.columns[i].name == name)
+      if (!def.columns[i].dropped && def.columns[i].name == name) {
         drop_readers(relid, (int32_t)i,
                      std::string("column ") + name + " of table " + relname,
                      cascade, {}, nullptr);
+        /* The checks that read it go with it, as in PostgreSQL. */
+        for (const sm_check_def_t &c : def.checks) {
+          uint64_t oid = c.oid;
+
+          if (std::find(c.columns.begin(), c.columns.end(), (int32_t)i) !=
+                  c.columns.end() &&
+              waiting([&] { return sm_cat_drop_check(s, relid, oid); }) != 0)
+            sm_error("drop a check constraint");
+        }
+      }
 
   if (waiting([&] { return sm_cat_drop_column(s, relid, name); }) == 0)
     return;
@@ -4213,6 +4534,12 @@ static void add_generated_column(Oid relid, const char *relname,
   foreach_node(AlterTableCmd, c, one->cmds) {
     if (AT_AddColumn == c->subtype)
       add_column(relid, relname, castNode(ColumnDef, c->def), c->missing_ok);
+    /* The column's CHECK, once the column is there. */
+    else if (AT_AddConstraint == c->subtype &&
+             CONSTR_CHECK == castNode(Constraint, c->def)->contype) {
+      CommandCounterIncrement();
+      alter_add_check(relid, castNode(Constraint, c->def));
+    }
     /* The column's NOT NULL, which add_column() made already. */
     else if (AT_AddConstraint != c->subtype ||
              CONSTR_NOTNULL != castNode(Constraint, c->def)->contype)
@@ -4409,18 +4736,33 @@ void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
     alter_table_rel(relid, relname);
     if (AT_AddColumn == cmd->subtype && generated_column(cmd))
       add_generated_column(relid, relname, stmt, cmd);
-    else if (AT_AddColumn == cmd->subtype)
-      add_column(relid, relname, castNode(ColumnDef, cmd->def),
-                 cmd->missing_ok);
-    else if (cmd->subtype == AT_AddConstraint) {
+    else if (AT_AddColumn == cmd->subtype) {
+      ColumnDef *col = castNode(ColumnDef, cmd->def);
+
+      add_column(relid, relname, col, cmd->missing_ok);
+      /*
+       * Its CHECKs, which this statement still holds in the column, once
+       * the column is there: the rows already there checked with its value.
+       */
+      foreach_node(Constraint, c, col->constraints) {
+        if (CONSTR_CHECK == c->contype) {
+          forget_table(relid);
+          CommandCounterIncrement();
+          alter_add_check(relid, c);
+        }
+      }
+    } else if (cmd->subtype == AT_AddConstraint) {
       Constraint *con = castNode(Constraint, cmd->def);
 
       if (CONSTR_PRIMARY == con->contype || CONSTR_UNIQUE == con->contype)
         add_index_constraint(relid, relname, stmt, cmd);
+      else if (CONSTR_CHECK == con->contype)
+        alter_add_check(relid, con);
       else if (con->contype != CONSTR_FOREIGN)
         ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                         errmsg("ALTER TABLE ... ADD CONSTRAINT supports only "
-                               "FOREIGN KEY, PRIMARY KEY and UNIQUE yet")));
+                               "FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK "
+                               "yet")));
       else
         add_fkey(relid, relname, con);
     } else if (cmd->subtype == AT_DropConstraint)
@@ -4834,7 +5176,7 @@ static void fkey_column(Relation rel, const char *name, int i,
 
 /*
  * A name for a foreign key of the table relname on the columns cols, free
- * among the table's foreign keys, as ChooseConstraintName() makes one.
+ * among the table's constraints, as ChooseConstraintName() makes one.
  */
 static char *fkey_name(const char *relname, List *cols,
                        const sm_table_def_t *def) {
@@ -4862,8 +5204,7 @@ static char *fkey_name(const char *relname, List *cols,
     else
       snprintf(suffix, sizeof(suffix), "fkey%d", n);
     name = makeObjectName(relname, buf, suffix);
-    for (const sm_fkey_def_t &f : def->fkeys)
-      taken |= f.name == name;
+    taken = constraint_name_taken(def, name, NIL);
     if (!taken)
       return name;
     n++;
@@ -5212,6 +5553,20 @@ static bool fkey_named(Oid relid, const char *name, sm_fkey_def_t &out) {
   return false;
 }
 
+/* The table relid's check constraint named name, into out; false if none. */
+static bool check_named(Oid relid, const char *name, sm_check_def_t &out) {
+  sm_table_def_t def;
+
+  if (!table_def_now(relid, def))
+    return false;
+  for (const sm_check_def_t &c : def.checks)
+    if (c.name == name) {
+      out = c;
+      return true;
+    }
+  return false;
+}
+
 /* An error for a constraint name the table relname has none of. */
 static void no_constraint(const char *name, const char *relname) {
   ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
@@ -5244,7 +5599,18 @@ static void drop_index(uint64_t table, uint64_t index);
 static void drop_constraint(Oid relid, const char *relname, const char *name,
                             bool missing_ok, bool cascade) {
   sm_fkey_def_t f;
+  sm_check_def_t c;
 
+  /* A check: nothing depends on one (../sm/CHECK.md). */
+  if (check_named(relid, name, c)) {
+    uint64_t oid = c.oid;
+    sm_session_t *s = xact_session();
+
+    if (waiting([&] { return sm_cat_drop_check(s, relid, oid); }) != 0)
+      sm_error("drop a check constraint");
+    forget_table(relid);
+    return;
+  }
   if (!fkey_named(relid, name, f)) {
     uint64_t index = constraint_index(relid, name);
 
@@ -5273,7 +5639,29 @@ static void drop_constraint(Oid relid, const char *relname, const char *name,
 static void validate_constraint(Oid relid, const char *relname,
                                 const char *name) {
   sm_fkey_def_t f;
+  sm_check_def_t c;
 
+  /* A check: its rows checked against its expression, then it is valid. */
+  if (check_named(relid, name, c)) {
+    if (0 != (c.host[0] & check_not_enforced))
+      ereport(ERROR, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                      errmsg("cannot validate NOT ENFORCED constraint")));
+    if (c.validated)
+      return;
+    uint64_t oid = c.oid;
+    /* Locked, as the scan reads it; sm's lock X comes with the validate. */
+    Relation rel = relation_open(relid, AccessShareLock);
+    Node *expr = (Node *)stringToNode(c.host.c_str() + 1);
+    sm_session_t *s = xact_session();
+
+    /* The table's lock X first, so no writer adds a row meanwhile. */
+    if (waiting([&] { return sm_cat_validate_check(s, relid, oid); }) != 0)
+      sm_error("validate a check constraint");
+    check_rows(rel, expr, c.name.c_str());
+    relation_close(rel, NoLock);
+    forget_table(relid);
+    return;
+  }
   if (!fkey_named(relid, name, f))
     no_constraint(name, relname);
   if (f.validated)
@@ -5303,14 +5691,17 @@ ObjectAddress smstore_rename_constraint(RenameStmt *stmt) {
     ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
                     errmsg("\"%s\" is not a table", stmt->relation->relname)));
   sm_fkey_def_t f;
+  sm_check_def_t c;
+  bool is_check = check_named(relid, stmt->subname, c);
 
-  if (!fkey_named(relid, stmt->subname, f))
+  if (!is_check && !fkey_named(relid, stmt->subname, f))
     no_constraint(stmt->subname, stmt->relation->relname);
-  uint64_t oid = f.oid;
+  uint64_t oid = is_check ? c.oid : f.oid;
   sm_session_t *s = xact_session();
 
   if (waiting([&] {
-        return sm_cat_rename_fkey(s, relid, oid, stmt->newname);
+        return is_check ? sm_cat_rename_check(s, relid, oid, stmt->newname)
+                        : sm_cat_rename_fkey(s, relid, oid, stmt->newname);
       }) != 0) {
     if (sm_errnum() == SM_ERR_DUPKEY)
       ereport(ERROR, (errcode(ERRCODE_DUPLICATE_OBJECT),
@@ -7024,6 +7415,12 @@ static void check_retype(Oid relid, int32_t at, const char *colname) {
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("ALTER COLUMN TYPE of an identity column is not "
                            "supported yet")));
+  case SM_COLUMN_USE_CHECK:
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("ALTER COLUMN TYPE of a column a check constraint "
+                           "reads is not supported yet"),
+                    errdetail("Check constraint \"%s\" reads column \"%s\".",
+                              by.c_str(), colname)));
   }
 }
 
@@ -7336,6 +7733,13 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
     ereport(ERROR, (errcode(ERRCODE_DUPLICATE_TABLE),
                     errmsg("relation \"%s\" already exists", name)));
   }
+  /* A constraint's name is the table's, a check's or a foreign key's too. */
+  if (stmt->isconstraint &&
+      ConstraintNameIsUsed(CONSTRAINT_RELATION, relid, name))
+    ereport(ERROR, (errcode(ERRCODE_DUPLICATE_OBJECT),
+                    errmsg("constraint \"%s\" for relation \"%s\" already "
+                           "exists",
+                           name, RelationGetRelationName(rel))));
   /* Every session's descriptor of the table relearns its indexes. */
   CacheInvalidateRelcache(rel);
   relation_close(rel, NoLock);

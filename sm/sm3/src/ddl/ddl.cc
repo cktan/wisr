@@ -669,6 +669,11 @@ static int find_column_use(session_t *session, uint64_t oid,
       return found(column_use_t::fkey, fk.name);
     }
   }
+  for (const check_rec_t &c : rec.checks) {
+    if (in(c.reads)) {
+      return found(column_use_t::check, c.name);
+    }
+  }
   for (const fkey_ref_t &ref : rec.referenced_by) {
     table_rec_t child;
     if (cat_get_table_rec(session, ref.table, child) != 0) {
@@ -907,6 +912,13 @@ int drop_column(session_t *session, uint64_t oid, std::string_view name) {
                                                 std::string(name));
     }
   }
+  // A check reading it is the host's to drop first (../CHECK.md §5).
+  for (const check_rec_t &c : rec.checks) {
+    if (std::find(c.reads.begin(), c.reads.end(), at) != c.reads.end()) {
+      return sm1::seterr(sm1::SM_ERR_INUSE, "drop column: check " + c.name +
+                                                " reads " + std::string(name));
+    }
+  }
   // A column a view reads stays (../VIEW.md §5).
   // Another session's temporary view among them (../VIEW.md §12.3).
   for (const view_reader_t &v : cat_view_readers(session, oid)) {
@@ -949,6 +961,9 @@ static int rekey(session_t *session, uint64_t oid, table_rec_t rec) {
   return empty ? cat_put_table(session, oid, rec)
                : rewrite_table(session, oid, std::move(rec));
 }
+
+static bool constraint_name_taken(const table_rec_t &rec, std::string_view name,
+                                  uint64_t oid);
 
 /* Create a plain index; see sm3.h. */
 int create_index(session_t *session, uint64_t table, std::string_view name,
@@ -1005,6 +1020,11 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
       return invalid("create index: the table has a primary key, " +
                      other.name);
     }
+  }
+  // A constraint's name is unique among the table's constraints.
+  if (constraint && constraint_name_taken(rec, name, 0)) {
+    return sm1::seterr(sm1::SM_ERR_DUPKEY,
+                       "create index: constraint " + x.name + " is taken");
   }
   for (int32_t a : reads) {
     if (!live_attnum(rec, a)) {
@@ -1328,6 +1348,31 @@ int nextval(session_t *session, uint64_t oid, uint64_t &out) {
   return sm1::nextseq(session->sm1, sequence_counter(oid), out);
 }
 
+/*
+ * Whether name is taken among rec's constraints, but by the one of
+ * oid: its foreign keys, its checks, and its primary key's and unique
+ * constraints' indexes, as a constraint's name is unique per table.
+ */
+static bool constraint_name_taken(const table_rec_t &rec, std::string_view name,
+                                  uint64_t oid) {
+  for (const fkey_rec_t &fk : rec.fkeys) {
+    if (fk.oid != oid && fk.name == name) {
+      return true;
+    }
+  }
+  for (const check_rec_t &c : rec.checks) {
+    if (c.oid != oid && c.name == name) {
+      return true;
+    }
+  }
+  for (const index_rec_t &x : rec.indexes) {
+    if (x.constraint && x.oid != oid && x.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /* The foreign key oid of rec, or nullptr. */
 static fkey_rec_t *fkey_in(table_rec_t &rec, uint64_t oid) {
   for (fkey_rec_t &fk : rec.fkeys) {
@@ -1372,11 +1417,9 @@ int create_fkey(session_t *session, uint64_t table, const fkey_rec_t &def,
       return invalid("create foreign key: a column that is not there");
     }
   }
-  for (const fkey_rec_t &fk : child.fkeys) {
-    if (fk.name == def.name) {
-      return sm1::seterr(sm1::SM_ERR_DUPKEY,
-                         "create foreign key: " + def.name + " is taken");
-    }
+  if (constraint_name_taken(child, def.name, 0)) {
+    return sm1::seterr(sm1::SM_ERR_DUPKEY,
+                       "create foreign key: " + def.name + " is taken");
   }
   // The parent's unique index on its columns, in any order, plain and
   // valid, which a check finds the parent row by.
@@ -1454,15 +1497,104 @@ int rename_fkey(session_t *session, uint64_t table, uint64_t oid,
                        "rename foreign key: no foreign key " +
                            std::to_string(oid));
   }
-  for (const fkey_rec_t &k : child.fkeys) {
-    if (k.oid != oid && k.name == name) {
-      return sm1::seterr(sm1::SM_ERR_DUPKEY,
-                         "rename foreign key: " + std::string(name) +
-                             " is taken");
-    }
+  if (constraint_name_taken(child, name, oid)) {
+    return sm1::seterr(sm1::SM_ERR_DUPKEY, "rename foreign key: " +
+                                               std::string(name) + " is taken");
   }
   fk->name = name;
   return cat_put_table(session, table, child);
+}
+
+/* The check constraint oid of rec, or nullptr. */
+static check_rec_t *check_in(table_rec_t &rec, uint64_t oid) {
+  for (check_rec_t &c : rec.checks) {
+    if (c.oid == oid) {
+      return &c;
+    }
+  }
+  return nullptr;
+}
+
+/* The table's record, under its lock X, and its check oid in out. */
+static int check_of(session_t *session, uint64_t table, uint64_t oid,
+                    const char *what, table_rec_t &rec, check_rec_t *&out) {
+  if (cat_get_table_rec(session, table, rec) != 0) {
+    return -1;
+  }
+  out = check_in(rec, oid);
+  if (!out) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       std::string(what) + ": no check " + std::to_string(oid));
+  }
+  return 0;
+}
+
+/* Add a check constraint to the table table; see sm3.h. */
+int create_check(session_t *session, uint64_t table, const check_rec_t &def,
+                 uint64_t &oid) {
+  if (def.name.empty()) {
+    return invalid("create check: no name");
+  }
+  table_rec_t rec;
+  if (cat_get_table_rec(session, table, rec) != 0) {
+    return -1;
+  }
+  for (int32_t at : def.reads) {
+    if (!live_attnum(rec, at)) {
+      return invalid("create check: a column that is not there");
+    }
+  }
+  if (constraint_name_taken(rec, def.name, 0)) {
+    return sm1::seterr(sm1::SM_ERR_DUPKEY,
+                       "create check: " + def.name + " is taken");
+  }
+  if (cat_new_oid(session, oid) != 0) {
+    return -1;
+  }
+  rec.checks.push_back(def);
+  rec.checks.back().oid = oid;
+  return cat_put_table(session, table, rec);
+}
+
+/* Drop a check constraint of the table table; see sm3.h. */
+int drop_check(session_t *session, uint64_t table, uint64_t oid) {
+  table_rec_t rec;
+  check_rec_t *c = nullptr;
+  if (check_of(session, table, oid, "drop check", rec, c) != 0) {
+    return -1;
+  }
+  std::erase_if(rec.checks, [&](const check_rec_t &k) { return k.oid == oid; });
+  return cat_put_table(session, table, rec);
+}
+
+/* Mark a check constraint's rows checked; see sm3.h. */
+int validate_check(session_t *session, uint64_t table, uint64_t oid) {
+  table_rec_t rec;
+  check_rec_t *c = nullptr;
+  if (check_of(session, table, oid, "validate check", rec, c) != 0) {
+    return -1;
+  }
+  c->validated = true;
+  return cat_put_table(session, table, rec);
+}
+
+/* Rename a check constraint; see sm3.h. */
+int rename_check(session_t *session, uint64_t table, uint64_t oid,
+                 std::string_view name) {
+  if (name.empty()) {
+    return invalid("rename check: no name");
+  }
+  table_rec_t rec;
+  check_rec_t *c = nullptr;
+  if (check_of(session, table, oid, "rename check", rec, c) != 0) {
+    return -1;
+  }
+  if (constraint_name_taken(rec, name, oid)) {
+    return sm1::seterr(sm1::SM_ERR_DUPKEY,
+                       "rename check: " + std::string(name) + " is taken");
+  }
+  c->name = name;
+  return cat_put_table(session, table, rec);
 }
 
 } // namespace sm3

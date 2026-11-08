@@ -991,6 +991,136 @@ SELECT pg_catalog.pg_restore_attribute_stats(
 --dg   'range_bounds_histogram', '{"[1,30)","[11,30)","[21,130)"}'::text
 --dg );
 
+-- test for domains over range and multirange types
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE DOMAIN stats_import.dom_int4 AS int4;
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE DOMAIN stats_import.dom_range AS int4range;
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE DOMAIN stats_import.dom_mrange AS int4multirange;
+
+--dg-cascade
+--dg CREATE TABLE stats_import.test_dom(
+--dg     id stats_import.dom_int4,
+--dg     drange stats_import.dom_range,
+--dg     dmrange stats_import.dom_mrange
+--dg ) WITH (autovacuum_enabled = false);
+
+--dg-cascade
+--dg INSERT INTO stats_import.test_dom
+--dg VALUES (1, '[1,3)', '{[1,3),[5,9),[20,30)}'),
+--dg   (2, '[5,9)', '{[11,13),[15,19),[20,30)}'),
+--dg   (3, '[11,15)', '{[21,23),[25,29),[120,130)}');
+
+-- warn: domain over a scalar type cannot have range stats
+--dg-cascade
+--dg SELECT pg_catalog.pg_restore_attribute_stats(
+--dg   'schemaname', 'stats_import',
+--dg   'relname', 'test_dom',
+--dg   'attname', 'id',
+--dg   'inherited', false,
+--dg   'null_frac', 0.25::real,
+--dg   'range_length_histogram', '{2,4,4}'::text,
+--dg   'range_empty_frac', '0'::real,
+--dg   'range_bounds_histogram', '{"[1,3)","[5,9)","[11,15)"}'::text
+--dg );
+
+--dg-cascade
+--dg SELECT *
+--dg FROM pg_stats
+--dg WHERE schemaname = 'stats_import'
+--dg AND tablename = 'test_dom'
+--dg AND inherited = false
+--dg AND attname = 'id';
+
+-- ok: range stats for a domain over a range type
+--dg-cascade
+--dg SELECT pg_catalog.pg_restore_attribute_stats(
+--dg   'schemaname', 'stats_import',
+--dg   'relname', 'test_dom',
+--dg   'attname', 'drange',
+--dg   'inherited', false,
+--dg   'range_length_histogram', '{2,4,4}'::text,
+--dg   'range_empty_frac', '0'::real,
+--dg   'range_bounds_histogram', '{"[1,3)","[5,9)","[11,15)"}'::text
+--dg );
+
+--dg-cascade
+--dg SELECT *
+--dg FROM pg_stats
+--dg WHERE schemaname = 'stats_import'
+--dg AND tablename = 'test_dom'
+--dg AND inherited = false
+--dg AND attname = 'drange';
+
+-- ok: range stats for a domain over a multirange type.
+--dg-cascade
+--dg SELECT pg_catalog.pg_restore_attribute_stats(
+--dg   'schemaname', 'stats_import',
+--dg   'relname', 'test_dom',
+--dg   'attname', 'dmrange',
+--dg   'inherited', false,
+--dg   'range_length_histogram', '{29,29,109}'::text,
+--dg   'range_empty_frac', '0'::real,
+--dg   'range_bounds_histogram', '{"[1,30)","[11,30)","[21,130)"}'::text
+--dg );
+
+--dg-cascade
+--dg SELECT *
+--dg FROM pg_stats
+--dg WHERE schemaname = 'stats_import'
+--dg AND tablename = 'test_dom'
+--dg AND inherited = false
+--dg AND attname = 'dmrange';
+
+-- warn: multirange values in the bounds histogram of a domain.  These
+-- must be ranges.
+--dg-cascade
+--dg SELECT pg_catalog.pg_restore_attribute_stats(
+--dg   'schemaname', 'stats_import',
+--dg   'relname', 'test_dom',
+--dg   'attname', 'dmrange',
+--dg   'inherited', false,
+--dg   'range_length_histogram', '{29,29,109}'::text,
+--dg   'range_empty_frac', '0'::real,
+--dg   'range_bounds_histogram', '{"{[1,30)}","{[11,30)}"}'::text
+--dg );
+
+-- test for a domain over tsvector.
+--dg-skip: type "?" does not exist
+--dg CREATE DOMAIN stats_import.dom_tsvector AS tsvector;
+
+--dg-cascade
+--dg CREATE TABLE stats_import.test_dom_ts(
+--dg     id int,
+--dg     v stats_import.dom_tsvector
+--dg ) WITH (autovacuum_enabled = false);
+
+--dg-cascade
+--dg INSERT INTO stats_import.test_dom_ts
+--dg SELECT g, to_tsvector('english', 'the quick brown fox ' || g)
+--dg FROM generate_series(1, 20) AS g;
+
+-- ok: mcelem and elem_count_histogram for a domain over tsvector
+--dg-cascade
+--dg SELECT pg_catalog.pg_restore_attribute_stats(
+--dg   'schemaname', 'stats_import',
+--dg   'relname', 'test_dom_ts',
+--dg   'attname', 'v',
+--dg   'inherited', false,
+--dg   'most_common_elems', '{brown,fox,quick}'::text,
+--dg   'most_common_elem_freqs', '{0.3,0.2,0.2,0.3,0.0}'::real[],
+--dg   'elem_count_histogram', '{4,4,4,4,4,4,4,4,4,4}'::real[]
+--dg );
+
+--dg-cascade
+--dg SELECT *
+--dg FROM pg_stats
+--dg WHERE schemaname = 'stats_import'
+--dg AND tablename = 'test_dom_ts'
+--dg AND inherited = false
+--dg AND attname = 'v';
+
 --
 -- Test the ability to exactly copy data from one table to an identical table,
 -- correctly reconstructing the stakind order as well as the staopN and

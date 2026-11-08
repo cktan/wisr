@@ -52,13 +52,14 @@ regression files are taken out for it (`test/pgregress`,
   primary key, an `int8`, its rows' key in sm; a table with
   one has none (step 299). No table may have a column named
   `_id`.
-- **CREATE TABLE beyond columns, NOT NULL, PRIMARY KEY, UNIQUE
-  and TEMPORARY** — refused (pgregress: 605): table CHECK and
-  EXCLUDE constraints, `OF type`, `UNLOGGED`, `TABLESPACE`,
-  `USING`. Generated columns, column CHECK, column `COLLATE`
-  and a DEFERRABLE `REFERENCES` are refused too (pgregress:
-  114). `WITH` takes only `fillfactor` and
-  `autovacuum_enabled`, and ignores them (step 208).
+- **CREATE TABLE beyond columns, NOT NULL, PRIMARY KEY, UNIQUE,
+  CHECK and TEMPORARY** — refused: EXCLUDE constraints, `OF
+  type`, `UNLOGGED`, `TABLESPACE`, `USING`. Generated columns,
+  column `COLLATE` and a DEFERRABLE `REFERENCES` are refused too.
+  CHECK constraints are built
+  ([`../sm/CHECK.md`](../sm/CHECK.md), step 408). `WITH` takes
+  only `fillfactor` and `autovacuum_enabled`, and ignores them
+  (step 208).
 - **Unlogged tables, temporary sequences, ON COMMIT on a
   permanent table** — refused (step 80).
 - **Materialized views, foreign tables, composite types,
@@ -135,10 +136,10 @@ regression files are taken out for it (`test/pgregress`,
 ## 3. DDL
 
 - **ALTER TABLE beyond ADD COLUMN, DROP COLUMN, ALTER COLUMN
-  TYPE, ADD and DROP CONSTRAINT of a foreign key, a primary key
-  or a unique constraint, a foreign key's VALIDATE CONSTRAINT,
-  and RENAME** — refused (pgregress: 271): CHECK constraints
-  added later, `ADD CONSTRAINT ... USING INDEX`, `SET SCHEMA`,
+  TYPE, ADD and DROP CONSTRAINT of a foreign key, a primary key,
+  a unique or a check constraint, a foreign key's or a check's
+  VALIDATE CONSTRAINT, and RENAME** — refused:
+  `ADD CONSTRAINT ... USING INDEX`, `SET SCHEMA`,
   `SET`/`DROP NOT NULL`, `SET DEFAULT`, row level security,
   replica identity (step 231); dropping a column an index uses
   (step 110). A primary key added or dropped re-keys the rows,

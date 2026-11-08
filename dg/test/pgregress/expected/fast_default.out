@@ -65,7 +65,7 @@ ALTER TABLE has_volatile ADD col3 timestamptz DEFAULT current_timestamp;
 --dg-cascade
 --dg ALTER TABLE has_volatile ADD col4 int DEFAULT (random() * 10000)::int;
 -- virtual generated columns don't need a rewrite
---dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL and DEFAULT yet
+--dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL, DEFAULT and CHECK yet
 --dg ALTER TABLE has_volatile ADD col5 int GENERATED ALWAYS AS (tableoid::int + col2) VIRTUAL;
 --dg-cascade
 --dg ALTER TABLE has_volatile ALTER COLUMN col5 TYPE float8;

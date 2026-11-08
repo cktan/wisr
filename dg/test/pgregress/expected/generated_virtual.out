@@ -421,7 +421,7 @@ RESET ROLE;
 --dg DROP FUNCTION gf1(int);
 DROP USER regress_user11;
 -- check constraints
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg-skip: column "?" asks for what CREATE TABLE does not support yet
 --dg CREATE TABLE gtest20 (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL CHECK (b < 50));
 --dg-cascade
 --dg INSERT INTO gtest20 (a) VALUES (10);  -- ok
@@ -518,7 +518,7 @@ DROP USER regress_user11;
 -- column.
 CREATE TABLE gtest21d (a int NOT NULL);
 INSERT INTO gtest21d (a) VALUES(10);
---dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL and DEFAULT yet
+--dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL, DEFAULT and CHECK yet
 --dg ALTER TABLE gtest21d ADD COLUMN b INT GENERATED ALWAYS AS (a * 10) VIRTUAL NOT NULL;
 --dg-cascade
 --dg SELECT * FROM gtest21d ORDER BY a;
@@ -786,13 +786,13 @@ INSERT INTO gtest25 VALUES (3), (4);
 --dg SELECT * FROM gtest25 ORDER BY a;
 --dg-cascade
 --dg ALTER TABLE gtest25 ADD COLUMN x int GENERATED ALWAYS AS (b * 4) VIRTUAL;  -- error
---dg-differs: another error: ALTER TABLE ... ADD COLUMN supports only NOT NULL and DEFAULT yet
+--dg-differs: another error: ALTER TABLE ... ADD COLUMN supports only NOT NULL, DEFAULT and CHECK yet
 --dg ALTER TABLE gtest25 ADD COLUMN x int GENERATED ALWAYS AS (z * 4) VIRTUAL;  -- error
---dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL and DEFAULT yet
+--dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL, DEFAULT and CHECK yet
 --dg ALTER TABLE gtest25 ADD COLUMN c int DEFAULT 42,
 --dg   ADD COLUMN x int GENERATED ALWAYS AS (c * 4) VIRTUAL;
 ALTER TABLE gtest25 ADD COLUMN d int DEFAULT 101;
---dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL and DEFAULT yet
+--dg-skip: ALTER TABLE ... ADD COLUMN supports only NOT NULL, DEFAULT and CHECK yet
 --dg ALTER TABLE gtest25 ALTER COLUMN d SET DATA TYPE float8,
 --dg   ADD COLUMN y float8 GENERATED ALWAYS AS (d * 4) VIRTUAL;
 --dg-cascade
@@ -1196,7 +1196,7 @@ SELECT attrelid, attname, attgenerated FROM pg_attribute WHERE attgenerated NOT 
 --dg-cascade
 --dg drop table gtest32;
 -- Ensure that virtual generated columns in constraint expressions are expanded
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg-skip: column "?" asks for what CREATE TABLE does not support yet
 --dg create table gtest33 (a int, b int generated always as (a * 2) virtual not null, check (b > 10));
 set constraint_exclusion to on;
 -- should get a dummy Result, not a seq scan
