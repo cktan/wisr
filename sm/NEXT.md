@@ -24,59 +24,6 @@ and so are the catalog tables psql reads
    PostgreSQL makes again, an expression or a partial index, a
    foreign key, an identity column's sequence, which digres
    refuses (`ALTERTYPE.md` §8). This item is done.
-2. **What a role pays that a superuser does not**
-   (`../aa/ROLE.md`).
-   A role that is not a superuser runs every privilege check a
-   superuser skips, and pays for it, measured on 2026-10-28 on
-   `digres-release`: `narrow`, a million rows; pgbench, 20
-   seconds a run, two runs each; the same role granted SELECT
-   and UPDATE.
-
-   | Workload | Protocol | Clients | Superuser tps | Role tps | Lost |
-   | --- | --- | --- | --- | --- | --- |
-   | read by key | simple | 1 | 11,011 | 9,758 | 11% |
-   | read by key | simple | 16 | 101,805 | 88,024 | 14% |
-   | read by key | prepared | 1 | 14,502 | 12,955 | 11% |
-   | read by key | prepared | 16 | 132,451 | 111,254 | 16% |
-   | 9 reads, 1 update | prepared | 1 | 6,562 | 6,040 | 8% |
-   | 9 reads, 1 update | prepared | 16 | 45,051 | 43,332 | 4% |
-
-   About 8 µs a statement, and more as clients are added, so
-   some of it is contention.
-
-   **Profiled, and the most of it gone** (`../dg/WORKNOTE.md`
-   step 329): 19% of a role's busy time was the syscache
-   missing the table's `pg_class` row at each check, which is
-   now read from `pg_global` and the relation cache instead,
-   and an ACL's text is read without `sscanf()` (step 330), and
-   a role's privileges on an object are kept in its session
-   (step 331): an object's check costs a role 0.07 µs more than
-   the superuser (`../bench.old/roles.sh`).
-
-   **Done** (`../dg/WORKNOTE.md` steps 381, 395 and 400). sm's
-   catalog rows are kept in the syscache, and `aa_roles()` and
-   `aa_objects()` read without the mutex. A function's EXECUTE
-   check is kept in the session, as a table's is:
-   `object_aclmask_ext()` asks aa's `aa_kept_mask()` first, and a
-   repeated check is a lookup. The answer is PostgreSQL's, as the
-   check still runs, once.
-
-   The goal was a role's prepared point read within 3% of the
-   superuser's. Instructions a statement, measured by
-   `../bench/privcheck.sh` on 2026-11-06:
-
-   | Statement | System | Superuser | Role | Gap |
-   | --- | --- | --- | --- | --- |
-   | one table, `WHERE false` | digres | 25,600 | 25,953 | 354 |
-   | | PostgreSQL | 22,763 | 23,082 | 318 |
-   | one table, one function, `WHERE false` | digres | 26,358 | 26,851 | 493 |
-   | | PostgreSQL | 23,765 | 24,792 | 1,027 |
-   | point read of `narrow` | digres | 45,089 | 45,576 | 487 (1.1%) |
-   | | PostgreSQL | 43,168 | 44,201 | 1,033 (2.4%) |
-
-   A kept EXECUTE check costs a role 139 instructions, and
-   PostgreSQL's check costs 713. This item is done.
-
 3. **A secondary index's scan, within 1.5 times PostgreSQL's**
    (`BTREEINDEX.md`, `../PARITY.md`, `../PERF.md`). An index
    scan may cost digres no more than 1.5 times what it costs
