@@ -4051,6 +4051,8 @@ CREATE SEQUENCE
  b      | text    |           |          | 'x'::text | extended |             |              |
 Indexes:
     "t_pkey" PRIMARY KEY, lsm (a)
+Not-null constraints:
+    "t_a_not_null" NOT NULL "a"
 Access method: heap
 
 dp1|t|table|$me|permanent|heap|0 bytes|

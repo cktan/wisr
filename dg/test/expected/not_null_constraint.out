@@ -36,6 +36,10 @@ select conname, contype, conkey from pg_constraint
  x      | integer |           |          |         | plain    |             |              | 
 Indexes:
     "job_pkey" PRIMARY KEY, lsm (id)
+Not-null constraints:
+    "job_id_not_null" NOT NULL "id"
+    "job_owner_not_null" NOT NULL "owner"
+    "note_set" NOT NULL "note"
 Access method: heap
 
 create temp table job2 (like job including all);
