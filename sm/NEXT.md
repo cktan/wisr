@@ -141,8 +141,7 @@ and so are the catalog tables psql reads
      commits a sync, against 7.6). The cause is the handoff
      between syncs: `notify_all()` wakes every waiter before
      one leads the next sync. A commit also waits 11% of its
-     time in `db_commit_wait()` for an older commit that missed
-     its sync.
+     time for an older commit that missed its sync.
    - **The handoff wakes one leader**: built (step 377). The
      sync is busy 90% to 95% of the time.
    - **A visible commit wakes only the commits it makes
@@ -150,13 +149,14 @@ and so are the catalog tables psql reads
      covers about 6.7 commits, from 5.9, against PostgreSQL's
      7.5; with the disk steady, `ins` and `fk` at 16 clients run
      about even with PostgreSQL, as a sync of digres is shorter.
-   - **Left: the wait for an older commit's sync**
-     (`XCTMGR.md` §8.5). Two commits in three wait about 220 µs,
-     0.4 of a sync, as records reach the WAL out of `commit_ts`
-     order. The remedy, records written in `commit_ts` order by
-     the sync's leader, changes the commit protocol: a design
-     note first. Also left: twice PostgreSQL's CPU a
-     transaction.
+   - **Records in `commit_ts` order**: built
+     (`COMMITORDER_PLAN.md`, `XCTMGR.md` §8.5,
+     `../dg/WORKNOTE.md` step 406). The sync's leader writes the
+     queued commits' records in one batch, in `commit_ts` order,
+     so no commit waits for an older commit's sync. A sync covers
+     7.6 to 7.9 commits, PostgreSQL's 7.3 to 7.8 in the same
+     runs.
+   - **Left: twice PostgreSQL's CPU a transaction.**
 6. **An lsm index's entry as a key alone**: dropped
    (2026-11-04). An entry's value must keep its version's
    flags and xid or `commit_ts`: the compaction filter stamps

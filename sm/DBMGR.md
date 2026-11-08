@@ -875,11 +875,11 @@ status record**.
 | a temporary store's write | not logged |
 
 XCTMGR.md gives the commit sequence, and its commit point. A
-commit calls `db_sync_wal()` after it writes its record, unless
-`durability_sync` is 0. That setting trades a bounded window of
-committed-transaction loss for throughput. The database stays
-crash-consistent, and is no longer crash-durable. Isolation does
-not weaken.
+commit's record is written and synced by the leader of its batch
+(§8.2); the sync is skipped if `durability_sync` is 0. That
+setting trades a bounded window of committed-transaction loss for
+throughput. The database stays crash-consistent, and is no longer
+crash-durable. Isolation does not weaken.
 
 ### 8.2 Group sync
 
@@ -897,38 +897,41 @@ its WAL record to a buffer and does not wait. Only the commit
 waits, in `XLogFlush()`, and one backend's flush covers every
 record before it.
 
-**Design.** The record is written unsynced. The commit then waits
-for a sync past its record, as `XLogFlush()` does.
-`db_sync_wal()` does these steps:
+**Design.** A commit does not write its record itself. It joins
+the commit queue, and one commit, the leader, writes the records
+of every commit queued, in `commit_ts` order, and syncs once for
+all, as `XLogFlush()` does (`XCTMGR.md` §8.2, §8.5). The commit
+queue is `commit_head`, under `commit_mu`. `lead_batch()` does
+these steps:
 
-1. Read `GetLatestSequenceNumber()`: the target. RocksDB sets it
-   after a group's WAL write and memtable insert, before its
-   writers return, so it covers the record.
-2. Lock `sync_mu`.
-3. If `synced_seq` is at or past the target, return: another
-   commit's sync covered this record.
-4. If another commit leads a sync, join the line, unlock, and
-   sleep on a semaphore of its own. Woken as covered, return.
-   Woken as the next leader, go to step 6.
-5. Become the leader, and unlock.
-6. Read `GetLatestSequenceNumber()` again, as `upto`. Every write
-   at or below `upto` is in the WAL file now.
-7. Call `FlushWAL(true)`, outside the write queue. Writers go on
-   meanwhile. Under `manual_wal_flush` it first writes RocksDB's
-   WAL buffer to the file, which `SyncWAL()` alone does not. Then
-   it calls `SyncWAL()`, which syncs every log up to the current
-   one.
-8. If the sync failed, abort the process (§8.3).
-9. Lock `sync_mu`, and set `synced_seq` to `upto`. Take the
-   commits at or below `upto` out of the line. Hand the next sync
-   to the oldest commit left, if any: `syncing` stays set for it.
-10. Unlock. Wake the next leader first, then the covered commits.
+1. Under `commit_mu`, take the whole queue: the batch.
+2. Write the batch's COMMITTED records in one `WriteBatch`,
+   unsynced, through RocksDB's write queue: one trip for the
+   batch.
+3. Call `FlushWAL(true)`, outside the write queue, unless
+   `durability_sync` is off. Under `manual_wal_flush` it first
+   writes RocksDB's WAL buffer to the file, which `SyncWAL()`
+   alone does not. Then it calls `SyncWAL()`, which syncs every
+   log up to the current one.
+4. If the write or the sync failed, abort the process (§8.3).
+5. Enter each member into the commit cache.
+6. Under `commit_mu`, raise `visible_ts`, and hand the next batch
+   to the queue's first commit, if any: `commit_leading` stays
+   set for it.
+7. Unlock. Wake the next leader first, then the batch's members.
+
+A commit that joins the queue while no commit leads leads at
+once. Else it sleeps on a semaphore of its own, until a leader
+publishes it or hands it the next batch.
 
 Rules of this design:
 
 - **The handoff wakes one leader.** PostgreSQL's
   `LWLockRelease()` also wakes each backend on a semaphore of its
   own. A woken commit takes no lock.
+- **The records go in `commit_ts` order.** A sync that covers a
+  commit then covers every older one, so no commit waits for an
+  older commit's sync (`XCTMGR.md` §8.5).
 - **The xid stays in the active table until the sync is done.**
   So every reader, the compaction filter too, finds it in flight
   before it reaches `CF:txn` (`xct_status()` step 1), and no
@@ -938,10 +941,11 @@ Rules of this design:
   are rare, and a group led by one of them syncs inside the
   queue.
 - **The wait is not cut short by an interrupt,** unlike every
-  other wait in sm (`CODE.md`). The record is written, so an
+  other wait in sm (`CODE.md`). The record may be written, so an
   interrupted commit has an unknown outcome, and only an abort
-  could settle it. The wait is bounded by two syncs: the one that
-  runs, and the next. Each finishes or aborts the process.
+  could settle it. The wait is bounded by two batches: the one
+  being written, and the next. Each finishes or aborts the
+  process.
 - **A leader does not wait for followers.** The waiters behind a
   sync make the next group. So `group_commit_us` is accepted and
   unused.
@@ -1371,9 +1375,10 @@ Paths are relative to `sm1/`.
 include/sm1.h           public C++ API, namespace sm1
 src/env.cc              init/attach/detach, root db, db sweep, reaper
 src/db.cc               mkdb/rmdb, CF setup, CF create/drop, storeid→CF map,
-                        allocators, sequencer, db_sync_wal
+                        allocators
 src/session.cc          opendb/closedb, the registry of open databases
-src/xct.cc              Transaction Manager: timestamps, status, commit, 2PC
+src/xct.cc              Transaction Manager: timestamps, status, commit
+                        and its queue, 2PC
 src/version.cc          key/value codec, comparator, prefix extractor
 src/access.cc           read / scan / insert / update / delete, visibility
 src/chain.cc            chained stores: codec, chain_ calls, chain_restore,
@@ -1418,10 +1423,11 @@ parts are the Database Manager's:
 | `opts`, `rocksdb_options` | set at open | what `other_options()` compares |
 | `stores`, `had_temp` | `store_mu` | §7.6 |
 | `stores_version`, `last_ddl_ts` | atomic | §7.6, §7.4 |
-| `synced_seq`, `syncing`, `sync_head`, `sync_tail` | `sync_mu` | §8.2 |
+| `commit_head`, `commit_tail`, `commit_leading` | `commit_mu` | §8.2 |
 
-A `sync_waiter_t` lives on a waiting commit's stack: the target,
-the `lead` flag, the next waiter, and a binary semaphore. The
+A `commit_entry_t` lives on a queued commit's stack: its xid,
+`commit_ts` and record, the `lead` flag, the next entry, and a
+binary semaphore. The
 hooks `test_before_commit`, `test_before_sync`,
 `test_before_prepare` and `test_before_abort_prepared` stand in
 for a failed write, and are empty outside tests.
@@ -1527,8 +1533,12 @@ GC.md gives the trade-off of reclaiming space by compaction.
   crash keeps the record and loses the versions.
 - **`enable_pipelined_write`.** It does not help the queue.
 - **A wake of every waiter when a sync ends.** Each woken commit
-  took `sync_mu` in turn before one of them led, and the WAL sync
-  sat idle 27% of the time. So a leader hands off to one commit.
+  would take the mutex in turn before one of them led, and the
+  WAL sync would sit idle: 27% of the time at 16 clients. So a
+  leader hands off to one commit.
+- **Each commit writing its own record.** Records then reach the
+  WAL out of `commit_ts` order, and a commit whose sync missed an
+  older record waits one more sync (`XCTMGR.md` §8.5).
 - **`recycle_log_file_num`.** It reuses old log files at full
   size, and RocksDB turns it off under `kPointInTimeRecovery`,
   the mode sm1 runs.

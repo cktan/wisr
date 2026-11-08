@@ -12013,3 +12013,44 @@ why, and removes half of it.
   older is released, a release of the newer stalled one wakes
   none, and all four are then seen. No rel, dg or isolation
   test can stall a commit's record write.
+
+## Step 406: commit records in commit_ts order
+
+`../sm/COMMITORDER_PLAN.md`, after step 405: two commits in three
+still waited about 220 µs for an older commit's sync, as a
+commit claimed its `commit_ts` and then wrote its own record
+through RocksDB's write queue, so records reached the WAL out of
+`commit_ts` order.
+
+- **sm1** (`enter_queue()`, `lead_batch()`, `finish_commit()` in
+  `../sm/sm1/src/xct.cc`; `../sm/XCTMGR.md` §3.2, §8.2, §8.5):
+  1. A commit claims its `commit_ts`, passes SSI, raises
+     `last_ddl_ts` if it made or dropped a store, and joins the
+     commit queue's tail, in one hold of `commit_mu`. So the
+     queue is in `commit_ts` order.
+  2. The leader takes the whole queue, writes its records in one
+     `WriteBatch`, in `commit_ts` order, and syncs the WAL once.
+  3. It enters each commit into the commit cache, raises
+     `visible_ts` to below the queue's first `commit_ts`, hands
+     the next batch to that commit, and wakes the batch.
+  - `committing`, `db_claim_commit_ts()`, `db_commit_done()`,
+    `db_commit_wait()`, `db_sync_wal()`, the sync's line and the
+    visible waiters are gone. `durability_sync` off takes the
+    same path, with no sync.
+- **Measured**, as step 405, two rounds alternated; the disk's
+  sync time swung from 731 µs to 4,943 µs, so commits a sync is
+  the measure:
+
+  | | commits a sync |
+  | --- | --- |
+  | digres, step 405 | 6.6 to 6.8 |
+  | digres, this step | 7.6 to 7.9 |
+  | PostgreSQL, same runs | 7.3 to 7.8 |
+
+  A stack sample of `ins` finds no session waiting for an older
+  commit.
+- **Tests**: sm1's `test_xct.cc`, four commits behind a stalled
+  leader: none returns or is seen until it goes, and the records
+  then go in `commit_ts` order. `test_groupsync.cc` counts the
+  commit queue, and its test of the handoff checks that the next
+  leader's batch holds all five commits behind it.

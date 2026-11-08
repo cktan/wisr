@@ -49,12 +49,8 @@ constexpr uint8_t txn_prepared = 1;
 constexpr uint8_t txn_committed = 2;
 constexpr uint8_t txn_aborted = 3;
 
-/* Status record size: state, snapshot_ts, commit_ts. */
-constexpr size_t txn_record_size = 1 + 8 + 8;
-
-int finish_commit(sm1::session_t *s, uint64_t commit_ts);
-void publish_commit(sm1::session_t *s, uint64_t xid,
-                    uint64_t commit_ts) noexcept;
+int finish_commit(sm1::session_t *s, bool prepared);
+void publish_commit(sm1::session_t *s, uint64_t commit_ts) noexcept;
 int resolve(db_t *db, const std::string &gid, bool commit_it);
 
 /*
@@ -731,84 +727,224 @@ int commit(sm1::session_t *s) {
     return 0;
   }
 
-  uint64_t commit_ts;
-  // Claim commit_ts from the sequencer.
-  if (db_claim_commit_ts(db, &commit_ts) != 0) {
-    // No record was written, so the transaction is dead.
+  // Claim commit_ts, validate under SSI, write the record, publish,
+  // and release (../XCTMGR.md §8.2).
+  int rc = finish_commit(s, false);
+  if (rc < 0) {
+    // The claim failed and no record was queued: the transaction is
+    // dead.
     discard(s);
     return -1;
   }
-  // Validate under SSI before the commit point; on failure give
-  // the commit_ts back to the sequencer unused (../XCTMGR.md §7.4, §8.2).
-  if (ssi_precommit(s, commit_ts) != 0) {
-    // Hand the commit_ts back to the sequencer unused.
-    db_commit_done(db, commit_ts);
+  if (1 == rc) {
+    // SSI failed it before the commit point; its commit_ts goes
+    // unused (../XCTMGR.md §7.4).
     return xct_fail_retryable(s, sm1::SM_ERR_SERIALIZATION, "not serializable");
   }
-  // Write the record, publish, and release.
-  return finish_commit(s, commit_ts);
+  return 0;
 }
 
 /*
- * Commit a transaction that holds a claimed commit_ts and has
- * passed validation (../XCTMGR.md §8.2 steps 3-6). Shared by sm1::commit and
- * the commit of a prepared transaction, whose record this
- * overwrites.
- * 1. Write the status record, and sync the WAL past it.
- * 2. Resolve the xid.
- * 3. Publish.
- * 4. Release. publish_commit() does steps 2-4.
+ * Claim commit_ts, validate, and join the commit queue, in one hold
+ * of commit_mu (../XCTMGR.md §8.2): 0, with lead set if the caller
+ * is to lead the next batch; 1 if SSI fails the transaction; -1 if
+ * the claim fails. On 1 or -1 nothing is queued.
+ * 1. Claim commit_ts, under its lease.
+ * 2. A prepared transaction, validated at its prepare, records its
+ *    end; another is validated under SSI with commit_ts.
+ * 3. Raise last_ddl_ts if it made or dropped a store: before its
+ *    publication, which a leader may make at once.
+ * 4. Build the COMMITTED record, and append the entry at the tail.
+ * 5. Lead if no commit leads.
  */
-int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
+int enter_queue(sm1::session_t *s, commit_entry_t &e, bool prepared,
+                bool &lead) {
   db_t *db = s->db;
-  // Keep the xid past reset.
-  uint64_t xid = s->xid;
-  // Build the COMMITTED record -- state, snapshot, commit_ts --
-  // and its key on the stack.
-  char val[txn_record_size];
-  val[0] = static_cast<char>(txn_committed);
+  // Hold commit_mu: the queue stays in commit_ts order, and no
+  // claimed commit_ts is outside it.
+  std::lock_guard<std::mutex> guard(db->commit_mu);
+  uint64_t commit_ts;
+  if (db_alloc_ts(db, &commit_ts) != 0) {
+    return -1;
+  }
+  if (prepared) {
+    // Validated at prepare: the node only learns its end.
+    ssi_prepared_committed(s, commit_ts);
+  } else if (ssi_precommit(s, commit_ts) != 0) {
+    return 1;
+  }
+  // A commit that made or dropped a store raises last_ddl_ts
+  // before its commit_ts is published, so no store cache trusts an
+  // entry across it (../DBMGR.md §7). A prepared one restored from
+  // the log has both lists from its record (../DBMGR.md §6.5).
+  if (!s->created.empty() || !s->dropped.empty()) {
+    uint64_t ddl_ts = db->last_ddl_ts.load();
+    while (ddl_ts < commit_ts &&
+           !db->last_ddl_ts.compare_exchange_weak(ddl_ts, commit_ts)) {
+    }
+  }
+  // The COMMITTED record: state, snapshot, commit_ts.
+  e.xid = s->xid;
+  e.commit_ts = commit_ts;
+  e.record[0] = static_cast<char>(txn_committed);
   uint64_t be = sm0::to_be64(s->snapshot_ts);
-  memcpy(val + 1, &be, sizeof(be));
+  memcpy(e.record + 1, &be, sizeof(be));
   be = sm0::to_be64(commit_ts);
-  memcpy(val + 1 + sizeof(be), &be, sizeof(be));
-  char key[sizeof(uint64_t)];
-  be = sm0::to_be64(xid);
-  memcpy(key, &be, sizeof(be));
-  // No error unless the hook or the write says so.
+  memcpy(e.record + 1 + sizeof(be), &be, sizeof(be));
+  // Join the queue, newest.
+  if (db->commit_tail) {
+    db->commit_tail->next = &e;
+  } else {
+    db->commit_head = &e;
+  }
+  db->commit_tail = &e;
+  lead = !db->commit_leading;
+  db->commit_leading = true;
+  return 0;
+}
+
+/*
+ * Write, sync and publish a batch of the commit queue, as its leader,
+ * whose own entry is self; then hand the next batch on
+ * (../XCTMGR.md §8.2).
+ * 1. Take the whole queue, under commit_mu: the batch.
+ * 2. Write the batch's records in one WriteBatch, unsynced, in
+ *    commit_ts order.
+ * 3. Sync the WAL, unless durability was traded away.
+ * 4. Enter each commit into the commit cache, so a reader that misses
+ *    its xid in the active table finds it (../DBMGR.md §6.6).
+ * 5. Under commit_mu, raise visible_ts to one below the queue's first
+ *    commit_ts, or to global_ts - 1 if the queue is empty; hand the
+ *    next batch to the queue's first commit, if any.
+ * 6. Wake the next leader first, then the batch's other commits.
+ *
+ * A failed write or sync aborts the process: the batch's outcome is
+ * unknown, and WAL replay decides (../XCTMGR.md §8.3). A WriteBatch
+ * reaches the WAL whole or not at all.
+ */
+void lead_batch(db_t *db, commit_entry_t *self) {
+  commit_entry_t *batch = nullptr;
+  {
+    // Hold commit_mu to take the queue.
+    std::lock_guard<std::mutex> guard(db->commit_mu);
+    batch = db->commit_head;
+    db->commit_head = nullptr;
+    db->commit_tail = nullptr;
+  }
+  rocksdb::WriteBatch wb;
   rocksdb::Status st;
-  // Let a test stall or fail the status write.
-  if (db->test_before_commit) {
-    st = db->test_before_commit(commit_ts);
+  for (commit_entry_t *e = batch; nullptr != e && st.ok(); e = e->next) {
+    // Let a test stall or fail a commit's record.
+    if (db->test_before_commit) {
+      st = db->test_before_commit(e->commit_ts);
+    }
+    if (st.ok()) {
+      uint64_t be = sm0::to_be64(e->xid);
+      st = wb.Put(
+          db->cf_txn,
+          rocksdb::Slice(reinterpret_cast<const char *>(&be), sizeof(be)),
+          rocksdb::Slice(e->record, sizeof(e->record)));
+    }
   }
-  // Write the record unless the hook failed it.
+  // Write the records unsynced: a synced write in RocksDB's queue
+  // makes the writes grouped with it wait for its sync (../DBMGR.md).
   if (st.ok()) {
-    // Write the status record unsynced: a synced write in RocksDB's
-    // queue makes the writes grouped with it wait for its sync
-    // (../DBMGR.md).
-    st = db->rdb->Put(rocksdb::WriteOptions(), db->cf_txn,
-                      rocksdb::Slice(key, sizeof(key)),
-                      rocksdb::Slice(val, sizeof(val)));
+    st = db->rdb->Write(rocksdb::WriteOptions(), &wb);
   }
-  // The record's fate is unknown: it may have reached the WAL.
-  // Abort, and let WAL replay decide (../DBMGR.md §8.2).
   if (!st.ok()) {
     fatal("database {}: commit record write failed, so the outcome of "
-          "the commit is unknown: {}. The process is aborting; reopen "
-          "the database: WAL replay recovers every committed "
-          "transaction.",
+          "the commits it carries is unknown: {}. The process is "
+          "aborting; reopen the database: WAL replay recovers every "
+          "committed transaction.",
           db->name.c_str(), st.ToString().c_str());
   }
-  // Sync the WAL past it, unless durability was traded away: the
-  // commit point (../XCTMGR.md §8.2). Until then the xid is in the active
-  // table, so no reader takes the record for a commit. A failed
-  // sync aborts the process.
+  // Sync the WAL past the records: the commit point. Until then each
+  // xid is in the active table, so no reader takes a record for a
+  // commit.
   if (db->durability_sync) {
-    db_sync_wal(db);
+    // Let a test stall or fail the sync.
+    if (db->test_before_sync) {
+      st = db->test_before_sync();
+    }
+    // FlushWAL(true) writes the WAL buffer of manual_wal_flush out
+    // first, which SyncWAL() alone leaves unsynced.
+    if (st.ok()) {
+      st = db->rdb->FlushWAL(true);
+    }
+    if (!st.ok()) {
+      fatal("database {}: WAL sync failed, so the outcome of the commits "
+            "it covers is unknown: {}. The process is aborting; reopen "
+            "the database: WAL replay recovers every committed "
+            "transaction.",
+            db->name.c_str(), st.ToString().c_str());
+    }
+  }
+  // Resolve before publishing.
+  for (commit_entry_t *e = batch; nullptr != e; e = e->next) {
+    enter_cache(db, e->xid, e->commit_ts);
+  }
+  commit_entry_t *next_lead = nullptr;
+  {
+    // Hold commit_mu to publish and hand on: no claim runs meanwhile.
+    std::lock_guard<std::mutex> guard(db->commit_mu);
+    uint64_t v = db->commit_head ? db->commit_head->commit_ts - 1
+                                 : db->global_ts.load() - 1;
+    // Never move visible_ts backwards.
+    if (v > db->visible_ts.load()) {
+      db->visible_ts.store(v);
+    }
+    next_lead = db->commit_head;
+    if (next_lead) {
+      next_lead->lead = true;
+    } else {
+      db->commit_leading = false;
+    }
+  }
+  // Wake the next leader first: the WAL idles until it runs.
+  if (next_lead) {
+    next_lead->wake.release();
+  }
+  // A woken commit may return at once, its entry gone: read next first.
+  while (nullptr != batch) {
+    commit_entry_t *next = batch->next;
+    if (batch != self) {
+      batch->wake.release();
+    }
+    batch = next;
+  }
+}
+
+/*
+ * Commit a transaction that holds no claimed commit_ts yet, through
+ * the commit queue (../XCTMGR.md §8.2 steps 3-6): 0; 1 if SSI fails
+ * it; -1 if the claim fails. Shared by sm1::commit and the commit of
+ * a prepared transaction, whose record this overwrites.
+ * 1. Claim commit_ts, validate, and join the queue.
+ * 2. Lead a batch, or sleep until a leader publishes this commit or
+ *    hands it the next batch to lead.
+ * 3. Release (publish_commit()).
+ */
+int finish_commit(sm1::session_t *s, bool prepared) {
+  db_t *db = s->db;
+  commit_entry_t e;
+  bool lead = false;
+  int rc = enter_queue(s, e, prepared, lead);
+  if (0 != rc) {
+    return rc;
+  }
+  if (!lead) {
+    // Sleep until a leader publishes this commit, or hands it the
+    // next batch.
+    e.wake.acquire();
+    lead = e.lead;
+  }
+  if (lead) {
+    lead_batch(db, &e);
   }
   // Keep its on_commit functions for the entry point to run.
   committed_fns.swap(s->on_commit);
-  // Past the commit point: publish, and report success.
-  publish_commit(s, xid, commit_ts);
+  // Past the commit point, and visible: release, and report success.
+  publish_commit(s, e.commit_ts);
   return 0;
 }
 
@@ -821,31 +957,11 @@ int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
  * aborts the process (env.cc's new-handler), and the next open's WAL
  * replay finds the commit.
  */
-void publish_commit(sm1::session_t *s, uint64_t xid,
-                    uint64_t commit_ts) noexcept {
+void publish_commit(sm1::session_t *s, uint64_t commit_ts) noexcept {
   db_t *db = s->db;
-  // A commit that made or dropped a store raises last_ddl_ts
-  // before its commit_ts is published, so no store cache trusts
-  // an entry across it (../DBMGR.md §7). A prepared one restored from the
-  // log has both lists from its record (../DBMGR.md §6.5).
-  if (!s->created.empty() || !s->dropped.empty()) {
-    // Only ever raise it: commits reach here out of order.
-    uint64_t ddl_ts = db->last_ddl_ts.load();
-    while (ddl_ts < commit_ts &&
-           !db->last_ddl_ts.compare_exchange_weak(ddl_ts, commit_ts)) {
-    }
-  }
-  // Resolve before publishing: a reader that misses the xid in
-  // the active table finds it in the cache or CF:txn (../DBMGR.md §6.6).
-  enter_cache(db, xid, commit_ts);
-  // Publish: advance visible_ts past this commit, as far as the
-  // older commits still in progress allow.
-  db_commit_done(db, commit_ts);
-  // And wait until it is visible: until the older commits are done
-  // too, so the session's next snapshot sees what it committed
-  // (db_commit_wait(), ../XCTMGR.md).
-  db_commit_wait(db, commit_ts);
-  // Release the locks only once the commit is visible, and
+  // The leader of its batch entered it into the commit cache and
+  // raised visible_ts past it (lead_batch()). Release the locks only
+  // once the commit is visible, and
   // queue dropped stores for removal once no snapshot can
   // see them (../XCTMGR.md §8.4).
   lock_release_all(s);
@@ -1111,15 +1227,9 @@ int prepare(sm1::session_t *s, const char *gid) {
 /* Commit a prepared transaction g (../XCTMGR.md §10: ../XCTMGR.md §8.2 from
  * step 2). */
 int commit_prepared_txn(sm1::session_t *g) {
-  uint64_t commit_ts;
-  // Claim commit_ts.
-  if (db_claim_commit_ts(g->db, &commit_ts) != 0) {
-    return -1;
-  }
-  // Validated at prepare: the node only learns its end.
-  ssi_prepared_committed(g, commit_ts);
-  // Write COMMITTED over PREPARED, publish, and release.
-  return finish_commit(g, commit_ts);
+  // Claim commit_ts, write COMMITTED over PREPARED, publish, and
+  // release. A failed claim leaves it in doubt.
+  return finish_commit(g, true);
 }
 
 /*

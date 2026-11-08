@@ -14,6 +14,7 @@
 #include <signal.h>
 #include <string.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <future>
@@ -207,90 +208,98 @@ TEST_CASE("a stalled commit holds back every later commit's visibility") {
   sm1::closedb(c);
 }
 
-TEST_CASE("commits wait behind every older commit, and wake once visible") {
-  // Verify each waiting commit is woken only when visible_ts reaches
-  // its commit_ts, with several waiting and two older ones stalled
-  // (db_commit_wait(), ../XCTMGR.md §8.4).
-  // 1. A claims its commit_ts, and its status record write stalls.
-  // 2. B commits: it waits behind A.
-  // 3. C claims its commit_ts, and its record write stalls too.
-  // 4. D commits: it waits behind A and C.
-  // 5. Release C: B, C and D still wait, as A is older than all.
-  // 6. Release A: every commit returns, and a new snapshot sees all
+TEST_CASE("a batch's records go in commit_ts order, after the older batch") {
+  // Verify the commits queued behind a stalled leader wait for it,
+  // and are then written in one batch in commit_ts order and seen
+  // together (../XCTMGR.md §8.2).
+  // 1. A commits, and its record's write stalls in its leader.
+  // 2. B, C and D commit meanwhile: each waits in the commit queue.
+  // 3. None of the four has returned, and a new snapshot sees none.
+  // 4. Release A: every commit returns, and a new snapshot sees all
   //    four rows.
+  // 5. The records went in commit_ts order: A's, then B's, C's and
+  //    D's in one batch.
   xct_fixture_t f;
   sm1::session_t *a = f.first();
-  sm1::session_t *b = f.open();
-  sm1::session_t *c = f.open();
-  sm1::session_t *d = f.open();
+  std::vector<sm1::session_t *> others = {f.open(), f.open(), f.open()};
   sm1::session_t *r = f.open();
 
-  std::promise<void> a_in, c_in, a_go, c_go;
+  std::promise<void> a_in, a_go;
   std::shared_future<void> a_went = a_go.get_future().share();
-  std::shared_future<void> c_went = c_go.get_future().share();
-  std::atomic<int> calls{0};
-  f.db()->test_before_commit = [&](uint64_t) {
-    int n = calls++;
-    if (0 == n) {
+  std::mutex mu;
+  std::vector<uint64_t> written;
+  f.db()->test_before_commit = [&](uint64_t commit_ts) {
+    bool first;
+    {
+      std::lock_guard<std::mutex> guard(mu);
+      first = written.empty();
+      written.push_back(commit_ts);
+    }
+    if (first) {
       a_in.set_value();
       a_went.wait();
-    } else if (2 == n) {
-      c_in.set_value();
-      c_went.wait();
     }
     return rocksdb::Status::OK();
   };
-  // A commit on a thread of its own, done once it returns.
-  auto run = [&](sm1::session_t *s, const char *key, std::atomic<bool> &done) {
-    return std::thread([&f, s, key, &done] {
-      CHECK(commit_one(s, f.store(), key) == 0);
-      done = true;
-    });
-  };
-  // Until the hook has been called n times.
-  auto reach = [&](int n) {
-    while (calls < n) {
+  // Until n commits wait in the commit queue.
+  auto queued = [&](int n) {
+    for (;;) {
+      {
+        std::lock_guard<std::mutex> guard(f.db()->commit_mu);
+        int k = 0;
+        for (wisr::commit_entry_t *e = f.db()->commit_head; e; e = e->next) {
+          k++;
+        }
+        if (k == n) {
+          return;
+        }
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   };
-  std::atomic<bool> a_done{false}, b_done{false}, c_done{false}, d_done{false};
-  std::thread ta = run(a, "a", a_done);
+  std::atomic<int> done{0};
+  std::thread ta([&] {
+    CHECK(commit_one(a, f.store(), "a") == 0);
+    done++;
+  });
   a_in.get_future().wait();
-  std::thread tb = run(b, "b", b_done);
-  reach(2);
-  std::thread tc = run(c, "c", c_done);
-  c_in.get_future().wait();
-  std::thread td = run(d, "d", d_done);
-  reach(4);
-  // Time for B and D to have returned, were they not to wait.
+  std::vector<std::thread> ts;
+  const char *keys[] = {"b", "c", "d"};
+  for (int i = 0; i < 3; i++) {
+    ts.emplace_back([&, i] {
+      CHECK(commit_one(others[i], f.store(), keys[i]) == 0);
+      done++;
+    });
+    // In the queue before the next one starts, so it is in order.
+    queued(i + 1);
+  }
+  // Time for the others to have returned, were they not to wait.
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
-  CHECK_FALSE(b_done);
-  CHECK_FALSE(d_done);
-
-  c_go.set_value();
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
-  CHECK_FALSE(b_done);
-  CHECK_FALSE(c_done);
-  CHECK_FALSE(d_done);
+  CHECK(0 == done);
+  REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
+  for (const char *key : {"a", "b", "c", "d"}) {
+    CHECK(get(r, f.store(), key) == "<none>");
+  }
+  REQUIRE(sm1::commit(r) == 0);
 
   a_go.set_value();
   ta.join();
-  tb.join();
-  tc.join();
-  td.join();
+  for (std::thread &t : ts) {
+    t.join();
+  }
   f.db()->test_before_commit = nullptr;
-  CHECK(a_done);
-  CHECK(b_done);
-  CHECK(c_done);
-  CHECK(d_done);
+  CHECK(4 == done);
   REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
   for (const char *key : {"a", "b", "c", "d"}) {
     CHECK(get(r, f.store(), key) == "v");
   }
   REQUIRE(sm1::commit(r) == 0);
-  for (sm1::session_t *s : {b, c, d, r}) {
+  REQUIRE(4u == written.size());
+  CHECK(std::is_sorted(written.begin(), written.end()));
+  for (sm1::session_t *s : others) {
     sm1::closedb(s);
   }
+  sm1::closedb(r);
 }
 
 /*

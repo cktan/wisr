@@ -212,18 +212,21 @@ int commit_one(sm1::session_t *s, uint64_t store, const std::string &key) {
   return sm1::commit(s);
 }
 
-/* How many commits wait in line for a sync, read under sync_mu. */
+/*
+ * How many commits wait in the commit queue, not yet in a leader's
+ * batch, read under commit_mu.
+ */
 int sync_line_length(wisr::db_t *db) {
-  // Hold sync_mu to walk the line the commits keep under it.
-  std::lock_guard<std::mutex> guard(db->sync_mu);
+  // Hold commit_mu to walk the queue the commits keep under it.
+  std::lock_guard<std::mutex> guard(db->commit_mu);
   int n = 0;
-  for (wisr::sync_waiter_t *w = db->sync_head; w; w = w->next) {
+  for (wisr::commit_entry_t *e = db->commit_head; e; e = e->next) {
     n++;
   }
   return n;
 }
 
-/* Wait up to 10 seconds for n commits to wait in line for a sync. */
+/* Wait up to 10 seconds for n commits to wait in the commit queue. */
 bool wait_for_waiters(wisr::db_t *db, int n) {
   auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
   while (std::chrono::steady_clock::now() < until) {
@@ -424,12 +427,12 @@ TEST_CASE("a failed sync aborts the process") {
 
 TEST_CASE("one sync serves the commits that wait while another runs") {
   // Verify the commits waiting behind a sync share the next one, as
-  // PostgreSQL's XLogFlush() does (../DBMGR.md §8.2).
+  // PostgreSQL's XLogFlush() does (../XCTMGR.md §8.2).
   // 1. Session A commits "a"; its sync stalls.
-  // 2. Fifteen sessions commit meanwhile: each writes its record
-  //    and waits for A's sync.
-  // 3. Let A's sync go: the fifteen share a second sync, whichever
-  //    of them leads it.
+  // 2. Fifteen sessions commit meanwhile: each joins the commit
+  //    queue and waits for A's sync.
+  // 3. Let A's sync go: the fifteen share a second batch and sync,
+  //    the oldest of them leading it.
   sync_fixture_t f;
   sm1::session_t *a = f.first();
   std::vector<sm1::session_t *> others;
@@ -467,7 +470,7 @@ TEST_CASE("one sync serves the commits that wait while another runs") {
       return commit_one(others[i], f.store(), "k" + std::to_string(i));
     }));
   }
-  // Every one has written its record once it waits for the sync.
+  // Every one is in the queue once it waits for the sync.
   REQUIRE(wait_for_waiters(f.db(), (int)others.size()));
 
   let_go.dismiss();
@@ -484,14 +487,15 @@ TEST_CASE("one sync serves the commits that wait while another runs") {
 }
 
 TEST_CASE("the next sync goes to the oldest commit waiting") {
-  // Verify the leader that ends a sync hands the next one to the
-  // oldest commit in line, and wakes no other (../DBMGR.md §8.2).
+  // Verify the leader that ends a sync hands the next batch to the
+  // oldest commit in the queue, and returns no other before that
+  // batch's sync (../XCTMGR.md §8.2).
   // 1. Session A commits "a"; its sync stalls.
-  // 2. Five sessions commit in turn, each in line before the next
-  //    starts.
+  // 2. Five sessions commit in turn, each in the queue before the
+  //    next starts.
   // 3. Let A's sync go; the second sync stalls.
-  // 4. The first of the five leads it; the other four are still in
-  //    line.
+  // 4. The first of the five leads it, its batch all five: the queue
+  //    is empty, and none of the five has returned.
   // 5. Let it go: every commit returns, after two syncs in all.
   sync_fixture_t f;
   sm1::session_t *a = f.first();
@@ -541,7 +545,7 @@ TEST_CASE("the next sync goes to the oldest commit waiting") {
       t_index = (int)i;
       return commit_one(others[i], f.store(), "k" + std::to_string(i));
     }));
-    // In line before the next one starts, so the line is in order.
+    // In the queue before the next one starts, so it is in order.
     REQUIRE(wait_for_waiters(f.db(), (int)i + 1));
   }
 
@@ -551,7 +555,11 @@ TEST_CASE("the next sync goes to the oldest commit waiting") {
           std::future_status::ready);
   CHECK(a_rc.get() == 0);
   CHECK(second_leader == 0);
-  CHECK(sync_line_length(f.db()) == 4);
+  CHECK(sync_line_length(f.db()) == 0);
+  for (std::future<int> &rc : rcs) {
+    CHECK(rc.wait_for(std::chrono::milliseconds(0)) !=
+          std::future_status::ready);
+  }
 
   let_go2.dismiss();
   release2.set_value();

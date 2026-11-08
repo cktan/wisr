@@ -278,27 +278,21 @@ using lock_mark_t = lock_lists_t::mark_t;
  * One open database, shared by every session on it and held
  * in the environment's registry (../DBMGR.md §1).
  */
-/*
- * A commit waiting in line for a WAL sync (db_sync_wal()), on its
- * own stack. The leader that ends a sync takes it out of the line
- * and releases wake: covered by that sync, or, with lead set, to
- * lead the next one.
- */
-struct sync_waiter_t {
-  uint64_t target = 0;           /* the sequence number to sync past */
-  bool lead = false;             /* set by the leader: lead the next sync */
-  sync_waiter_t *next = nullptr; /* the next in line, under sync_mu */
-  std::binary_semaphore wake{0};
-};
+/* A COMMITTED record's size: its state, snapshot_ts and commit_ts. */
+constexpr size_t txn_record_size = 1 + 8 + 8;
 
 /*
- * A commit waiting for visible_ts to reach its commit_ts
- * (db_commit_wait()), on its own stack. The commit that raises
- * visible_ts past it takes it out of the list and releases wake.
+ * A commit in the commit queue (../XCTMGR.md §8.2), on its session's
+ * stack: its xid, commit_ts and COMMITTED record. The leader of its
+ * batch releases wake once the batch is published, or with lead set,
+ * for it to lead the next batch.
  */
-struct visible_waiter_t {
-  uint64_t commit_ts = 0;           /* the commit_ts to be visible */
-  visible_waiter_t *next = nullptr; /* the next newer, under alloc_mu */
+struct commit_entry_t {
+  uint64_t xid = 0;
+  uint64_t commit_ts = 0;
+  char record[txn_record_size];
+  bool lead = false;              /* set by a leader: lead the next batch */
+  commit_entry_t *next = nullptr; /* the next newer, under commit_mu */
   std::binary_semaphore wake{0};
 };
 
@@ -356,16 +350,11 @@ struct db_t {
 
   /* The ts and object-id allocators and their leases (../DBMGR.md §17.1). */
   std::mutex alloc_mu;
-  /*
-   * The commits waiting for their commit_ts to be visible, oldest
-   * first, under alloc_mu (db_commit_wait(), ../XCTMGR.md §8.4).
-   */
-  visible_waiter_t *visible_head = nullptr;
   uint64_t lease = 0;
   /*
    * The timestamp counter. Values are taken with fetch_add and
-   * no lock, except a commit_ts, which is taken under alloc_mu
-   * with its insert into committing (../XCTMGR.md §14). ts_limit is written
+   * no lock; a commit_ts is taken under commit_mu, with its entry
+   * into the commit queue (../XCTMGR.md §3.2). ts_limit is written
    * only under alloc_mu.
    */
   std::atomic<uint64_t> global_ts{0}; /* next ts to hand out */
@@ -385,14 +374,6 @@ struct db_t {
     bool exhausted = false; /* the last value is handed out */
   };
   std::unordered_map<uint64_t, seq_state_t> seqs;
-
-  /*
-   * The commit sequencer (../XCTMGR.md §3.2): commit_ts values claimed and
-   * not yet published. Guarded by alloc_mu, the mutex that
-   * hands out timestamps, so no commit_ts is ever outside both
-   * this set and the advancer's view of global_ts.
-   */
-  std::set<uint64_t> committing;
 
   /* Every commit_ts at or below this is published (../XCTMGR.md §3.2). */
   std::atomic<uint64_t> visible_ts{0};
@@ -434,24 +415,25 @@ struct db_t {
   size_t load_file_bytes = 0;
 
   /*
-   * Test hook: called after a commit claims its commit_ts and
-   * before it writes the status record. A non-OK status stands
+   * Test hook: called by a batch's leader for each commit in it,
+   * before it writes the batch's records. A non-OK status stands
    * in for the write's failure. Empty outside tests.
    */
   std::function<rocksdb::Status(uint64_t commit_ts)> test_before_commit;
 
   /*
-   * The commits' WAL sync, outside RocksDB's write queue
-   * (db_sync_wal(), ../DBMGR.md). Under sync_mu: the last
-   * sequence number a finished sync covers, whether a commit
-   * leads a sync now or has been handed the next one, and the
-   * line of commits waiting, oldest first.
+   * The commit queue (../XCTMGR.md §8.2): the commits claimed and
+   * not yet taken by a leader, oldest first, and whether a commit
+   * leads a batch now or has been handed the next one. Under
+   * commit_mu, which a commit holds to claim its commit_ts, pass
+   * SSI and join the queue, so the queue is in commit_ts order and
+   * every commit_ts not yet published is in it or in the batch
+   * being written.
    */
-  std::mutex sync_mu;
-  uint64_t synced_seq = 0;
-  bool syncing = false;
-  sync_waiter_t *sync_head = nullptr;
-  sync_waiter_t *sync_tail = nullptr;
+  std::mutex commit_mu;
+  commit_entry_t *commit_head = nullptr;
+  commit_entry_t *commit_tail = nullptr;
+  bool commit_leading = false;
 
   /*
    * Test hook: called by a commit leading a sync, before
@@ -667,32 +649,6 @@ db_t *db_open(const std::string &path, const char *dbname,
 
 /* Allocate a timestamp: lock-free within the lease. Returns 0 or -1. */
 int db_alloc_ts(db_t *db, uint64_t *out);
-
-/*
- * Claim a commit_ts: allocate it and enter it into the
- * sequencer, under one lock (../DBMGR.md §17.1). Returns 0 or -1.
- */
-int db_claim_commit_ts(db_t *db, uint64_t *out);
-
-/*
- * Mark commit_ts done: leave the sequencer and advance
- * visible_ts to one below the oldest commit still in progress.
- */
-void db_commit_done(db_t *db, uint64_t commit_ts);
-
-/*
- * Wait until commit_ts, done, is visible: visible_ts at or past
- * it (../XCTMGR.md).
- */
-void db_commit_wait(db_t *db, uint64_t commit_ts);
-
-/*
- * Wait until the WAL is synced past every write that returned
- * before the call, one commit syncing for all that wait
- * (../DBMGR.md §8.2). A failed sync aborts the process
- * (../XCTMGR.md §8.2).
- */
-void db_sync_wal(db_t *db);
 
 /* Allocate an object id -- a storeid or a seqid. Returns 0 or -1. */
 int db_alloc_objid(db_t *db, uint64_t *out);

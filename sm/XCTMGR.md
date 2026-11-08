@@ -70,8 +70,10 @@ every timestamp and transaction id.
 - `snapshot_ts <= visible_ts < xid` always holds.
 - `commit_ts > wts` for every write of the transaction, and
   `commit_ts > xid`.
-- An `xid` or a `wts` is a bare `fetch_add` (`db_alloc_ts`). Only
-  a `commit_ts` and a lease renewal take `alloc_mu`.
+- An `xid`, a `wts` or a `commit_ts` is a bare `fetch_add`
+  (`db_alloc_ts`). Only a lease renewal takes `alloc_mu`. A
+  `commit_ts` is taken under `commit_mu`, with the commit's entry
+  into the commit queue (§3.2).
 - Every write takes a value, so consecutive transactions' ids are
   several apart.
 
@@ -159,49 +161,47 @@ registered for the transaction's whole life, at every level. A
 statement snapshot is at or above it, so it needs no
 registration.
 
-### 3.2 `visible_ts` and the commit sequencer
+### 3.2 `visible_ts` and the commit queue
 
 **Warning: a snapshot must not see a gap**, a transaction with
 `commit_ts <= snapshot_ts` that has not yet published its status.
 So commits publish in `commit_ts` order.
 
 ```
-commit sequencer: the commit_ts values in progress
+commit queue: the commits claimed and not yet published
 
-  in progress: { 106 }          done: 104, 105, 107
+  queued: 106, 107              published: 104, 105
 
-  visible_ts = 105: one below the smallest in progress,
-               so 107 stays hidden until 106 is done
+  visible_ts = 105: one below the first queued,
+               so 107 stays hidden until 106 is published
 ```
 
-The sequencer is `db_t::committing`, an ordered set under
-`alloc_mu`.
+The queue is `db_t::commit_head`, a list oldest first, under
+`commit_mu` (§8.2).
 
-- `db_claim_commit_ts` takes the value and inserts it in the set
-  under one hold of `alloc_mu`. The advance reads the set and
-  `global_ts` under the same mutex. So no `commit_ts` is ever
-  outside both the set and what the advance saw.
-- `db_commit_done` removes the value. It then sets `visible_ts`
-  to one below the smallest value left, or to `global_ts - 1` if
-  the set is empty. No thread does this: each commit advances
-  `visible_ts` itself.
+- A commit claims its `commit_ts`, passes SSI and joins the
+  queue's tail in one hold of `commit_mu`. So the queue is in
+  `commit_ts` order, and no claimed `commit_ts` is outside the
+  queue and the batch a leader is writing.
+- The leader of a batch, once the batch is written and synced,
+  sets `visible_ts` under `commit_mu`: to one below the queue's
+  first `commit_ts`, or to `global_ts - 1` if the queue is empty.
 - New values are above what was handed out, so `visible_ts` never
   moves backwards.
-- An `xid` or a `wts` never enters the set, so only commits in
+- An `xid` or a `wts` never enters the queue, so only commits in
   progress hold back `visible_ts`. The advance may pass such a
   value. That is harmless: a version it keys resolves through its
   writer's status.
-- If a status write or sync fails, the process aborts (§8.3), so
-  no value stays in the set for ever.
-- The set holds at most one entry a session, so it needs no
-  sizing and no back-pressure. A stalled commit holds back
-  `visible_ts` but never blocks allocation.
+- If a record write or sync fails, the process aborts (§8.3), so
+  no commit stays queued for ever.
+- The queue holds at most one entry a session, so it needs no
+  sizing and no back-pressure. A stalled batch holds back
+  `visible_ts`, and every commit behind it.
 - Every commit at or below `visible_ts` has its record written,
   and synced unless `durability_sync` is off.
 
-The cost is that one slow commit holds back new snapshots
-briefly. The WAL sync bounds this, and group sync shares one sync
-across the batch.
+The cost is that one slow batch holds back new snapshots
+briefly. The WAL sync bounds this.
 
 ### 3.3 The visibility test
 
@@ -983,27 +983,37 @@ crash-consistent. DBMGR.md has the WAL and group sync.
    RocksDB snapshots, and narrows SIREAD ranges before
    validation.
 4. With `xid` 0, take the read-only path below, and stop.
-5. Claim `commit_ts`. If the lease renewal fails, discard the
-   transaction and report the error.
-6. Run `ssi_precommit`. On a failure, hand `commit_ts` back with
-   `db_commit_done`, abort, and report `SM_ERR_SERIALIZATION`.
-7. Write the `COMMITTED` record, unsynced.
-8. Sync the WAL past it, unless `durability_sync` is off. This is
-   the commit point.
-9. Keep the `on_commit` functions for the entry point.
-10. If the transaction made or dropped a store, raise
-    `last_ddl_ts` to `commit_ts`, so no store cache trusts an
-    entry across it.
-11. Move the `xid` from the active table to the commit cache
-    (`enter_cache`), and wake the writers that wait for it.
-12. Mark `commit_ts` done, which advances `visible_ts`.
-13. Wait until `visible_ts` reaches `commit_ts` (§8.4).
-14. Release the locks.
-15. Drop the temporary stores it dropped, queue its dropped
+5. Under `commit_mu` (`enter_queue`): claim `commit_ts`. If the
+   lease renewal fails, discard the transaction and report the
+   error.
+6. Still under it, run `ssi_precommit`. On a failure, abort, and
+   report `SM_ERR_SERIALIZATION`: the `commit_ts` goes unused.
+7. Still under it, if the transaction made or dropped a store,
+   raise `last_ddl_ts` to `commit_ts`, so no store cache trusts
+   an entry across it.
+8. Still under it, build the `COMMITTED` record, and join the
+   commit queue's tail. Lead if no commit leads.
+9. If not leading, sleep until a leader publishes this commit, or
+   hands it the next batch to lead.
+10. To lead (`lead_batch`): take the whole queue, the batch.
+    Write its records in one `WriteBatch`, unsynced, in
+    `commit_ts` order.
+11. Sync the WAL past them, unless `durability_sync` is off. This
+    is the commit point of every commit in the batch.
+12. Move each batch member's `xid` from the active table to the
+    commit cache (`enter_cache`), and wake the writers that wait
+    for it.
+13. Under `commit_mu`, raise `visible_ts` to one below the
+    queue's first `commit_ts`, or to `global_ts - 1`; hand the
+    next batch to the queue's first commit. Then wake the next
+    leader, and the batch's other members.
+14. Keep the `on_commit` functions for the entry point.
+15. Release the locks.
+16. Drop the temporary stores it dropped, queue its dropped
     stores for GC, and forget its dropped sequences' leases.
-16. End the SSI node, which stays while others overlap it.
-17. Forget the transaction.
-18. Back at the entry point, run the `on_commit` functions.
+17. End the SSI node, which stays while others overlap it.
+18. Forget the transaction.
+19. Back at the entry point, run the `on_commit` functions.
 
 The read-only path runs `ssi_precommit` at `visible_ts + 1`, and
 a failure aborts. It then ends the SSI node, releases the locks,
@@ -1023,6 +1033,9 @@ wrote can still hold locks from `sm1::lock_row` and
   the commit while a lookup would miss it.
 - A writer takes `commit_ts` before it leaves the active table,
   which §2.2 needs.
+- The claim and the join are one hold of `commit_mu`, so the
+  records reach the WAL in `commit_ts` order, and a sync that
+  covers a commit covers every older one (§8.5).
 - Everything after the commit point is `noexcept`. Otherwise
   `sm1::commit` could report a failure for a committed
   transaction, and a caller's `sm1::abort` would drop the stores
@@ -1054,8 +1067,8 @@ as PostgreSQL found in 2018.
 
 ### 8.4 A commit returns once it is visible
 
-Commits are not serialized. Only their two ends take `alloc_mu`,
-and between them each writes and syncs its record with no lock.
+PostgreSQL makes a commit visible before COMMIT returns: any
+snapshot taken after, in any session, sees it.
 
 ```sql
 -- session A                         -- session B, at once
@@ -1064,60 +1077,52 @@ insert into uc values (1), (2), (3); commit;  -- claims 99, syncing
 select count(*) from uc;  -- 0 now and then; 3 is right
 ```
 
-A's INSERT commits at 100 while B's commit at 99 writes its
-record. With no wait, A's commit would return with `visible_ts`
-still 98. A's next statement would take its snapshot at 98, and
-miss its own rows. PostgreSQL makes a commit visible before
-COMMIT returns: any snapshot taken after, in any session, sees
-it.
+A's INSERT commits at 100 while B's commit at 99 is still in the
+queue. If A's commit returned with `visible_ts` still 98, A's
+next statement would take its snapshot at 98, and miss its own
+rows.
 
-So after `db_commit_done`, `db_commit_wait` waits until
-`visible_ts >= commit_ts`:
+So a commit returns only once a leader has raised `visible_ts`
+past it (§8.2 steps 9 to 13):
 
-1. Under `alloc_mu`, it checks `visible_ts`, and returns if it is
-   past its `commit_ts`.
-2. Else it joins `visible_head`, a list of waiting commits,
-   oldest first, still under `alloc_mu`.
-3. It sleeps on a semaphore of its own.
-4. The `db_commit_done` that raises `visible_ts` past it takes it
-   out of the list and releases the semaphore, once `alloc_mu` is
-   let go.
-5. The woken commit returns: it takes no lock.
+1. The leader raises `visible_ts` under `commit_mu`, after its
+   batch is written and synced, and before it wakes anyone.
+2. The queue is in `commit_ts` order, so every commit older than
+   a batch member is in the batch or in an earlier one, and the
+   raise covers the whole batch.
+3. A member sleeps on a semaphore of its own, and the leader
+   releases it after the raise. The woken commit takes no lock.
 
-Each waiter has a semaphore of its own, so a raise wakes only the
-commits it makes visible. One condition variable for all would
-make every waiter take `alloc_mu` in turn, with the claims of new
-commits behind them: at 16 clients a waiting commit then waits
-about 450 µs, against 225 µs (`../dg/WORKNOTE.md` step 405).
-
-- It waits only behind older commits in progress, with group sync
-  often on the same sync. With none older it does not wait.
+- It waits only for its batch's sync, and for the batch before it
+  if one is being written. With none, it leads at once.
 - It holds its locks through the wait, as it held them through
   its own sync.
-- An older commit's failed write or sync aborts the process, so
-  no waiter waits for ever.
+- A failed write or sync aborts the process, so no commit waits
+  for ever.
 - **An interrupt does not cut it short**, unlike every other wait
-  in sm. The transaction has committed, and an older commit's
-  sync bounds the wait. A cancel would leave a committed
-  transaction that its own next statement does not see.
+  in sm. Its record may be written already, so an interrupted
+  commit would have an unknown outcome. Two syncs bound the wait.
 - A commit of a prepared transaction waits alike.
-- A validation failure after the claim calls `db_commit_done`
-  with nothing published, which raises `visible_ts` for the
-  commits behind it.
+- A validation failure under `commit_mu` queues nothing, so no
+  commit waits for it.
 
-### 8.5 Shortcoming: a commit waits for an older commit's sync
+### 8.5 Records in `commit_ts` order
 
-**Warning: this wait is a significant shortcoming of digres
-against PostgreSQL.** Under many concurrent writers, two commits
-in three wait for an older commit's sync after their own, and a
-sync covers about a ninth fewer commits than PostgreSQL's.
-PostgreSQL has no such wait. The cause is the snapshot itself,
-one number (§3.1), so no tuning removes it.
+**Warning: keep the claim of `commit_ts` and the join of the
+commit queue in one hold of `commit_mu`** (§8.2 steps 5 to 8). If
+a commit's record could reach the WAL after a newer commit's, a
+sync could cover the newer commit and miss the older one. The
+newer commit would then wait one more sync, its record durable
+but not visible (§3.2). Under many writers that is most commits,
+a significant loss against PostgreSQL. A PostgreSQL snapshot is a
+set of xids, so a commit there is visible once its own flush
+ends, in any order; a digres snapshot is one number (§3.1), so
+order is needed.
 
-**A worked example: the failure.** Three sessions, each statement
-its own transaction, and a WAL sync of 600 µs. A inserts an
-order; B and C each take one pen from stock, so C needs B's row
-lock:
+**A worked example: the failure the order prevents.** Three
+sessions, each statement its own transaction, and a WAL sync of
+600 µs. A inserts an order; B and C each take one pen from stock,
+so C needs B's row lock:
 
 ```sql
 -- session A
@@ -1128,87 +1133,41 @@ update stock set n = n - 1 where item = 'pen';
 update stock set n = n - 1 where item = 'pen';  -- waits for B's lock
 ```
 
-What digres does, in µs:
+With records out of `commit_ts` order, in µs:
 
 ```
-t=0     A claims commit_ts 100; its record waits in RocksDB's write queue
-t=5     B claims 101, writes its record, and leads sync S1
+t=0     A claims commit_ts 100; its record is not in the WAL yet
+t=5     B claims 101, its record reaches the WAL, B leads sync S1
         S1 covers what the WAL holds now: B's record, not A's
-t=20    A's record reaches the WAL; A waits in line for the next sync
+t=20    A's record reaches the WAL; A waits for the next sync
 t=605   S1 ends: B's record is durable
-        visible_ts stays 99, as A, at 100, is still in progress
-        B waits in db_commit_wait(), and still holds its lock on 'pen'
-        S2 starts, for A
-t=1205  S2 ends: A is done, and visible_ts rises to 101
+        visible_ts stays 99, as A, at 100, is not published
+        B waits, and still holds its lock on 'pen'
+t=1205  A's sync S2 ends; visible_ts rises to 101
         B returns, 600 µs after its record was durable,
-        and lets its lock on 'pen' go
-        C takes the lock only now
+        and lets its lock on 'pen' go; C takes it only now
 ```
 
-B's commit took two syncs, not one, for a row of A's that it
-never read. C waited for A's sync too, through B's lock. In
-PostgreSQL B returns at t=605, and C's update runs then. B cannot
-return at t=605 in digres either: a snapshot taken then, at
-`visible_ts` 99, would not see B's update, so B's next statement
-would read `n` as it was before (§8.4).
+B's commit took two syncs for a row of A's that it never read,
+and C waited for A's sync too, through B's lock.
 
-**The cause**, in the order a commit runs:
+What digres does, the records in one batch in `commit_ts` order:
 
-1. It claims its `commit_ts` (`db_claim_commit_ts()`).
-2. It validates under SSI, then writes its record through
-   RocksDB's write queue (`finish_commit()`, §8.2).
-3. So the records reach the WAL in an order that is not
-   `commit_ts` order. A sync covers what the WAL holds when the
-   sync starts.
-4. `visible_ts` rises only to one below the oldest commit still
-   in progress (§3.2).
-5. So a commit whose sync ends before an older commit's sync
-   waits for that sync too (§8.4).
+```
+t=0     A claims 100, and joins the commit queue; A leads
+t=5     B claims 101, and joins the queue behind A
+        A takes the batch, 100 and 101, writes it, and syncs: S1
+t=605   S1 ends: both durable, none older missing
+        visible_ts rises to 101; A and B return; C takes the lock
+```
 
-With syncs back to back, as under load, a sync almost always
-starts while some older commit is still in the write queue.
-
-**Measured** (`../dg/WORKNOTE.md` step 405): 16 clients, each
-insert its own transaction (`../bench.old/rowlocks.sh`, `ins`
-and `fk`), on aarch64 under WSL2:
-
-- 67% of commits wait in `db_commit_wait()`, about 220 µs each:
-  0.4 of a sync of about 600 µs.
-- A sync covers about 6.7 commits, PostgreSQL's about 7.5. So a
-  digres commit spans about 2.4 sync times, and PostgreSQL's
-  about 2.1.
-- At equal sync times digres commits about 0.89 as many
-  transactions a second as PostgreSQL. On this machine a sync
-  of digres is shorter, about 600 µs against 770 µs, which hides
-  the loss: with the disk steady, the two run about even.
-
-**Why PostgreSQL does not wait.** A PostgreSQL snapshot is a set
-of xids. A commit becomes visible when its xid leaves the proc
-array (`ProcArrayEndTransaction()`), just after its own WAL
-flush, in any order. Its only wait on other writers, in
-`XLogFlush()`, is for WAL inserts at lower positions to finish
-their copy into the WAL buffers: microseconds, not a sync.
-
-**What else it costs:**
-
-- A commit's latency grows by up to one sync.
-- A commit holds its row locks through the wait (§8.4). So the
-  next writer of a hot row, a foreign key's parent among them,
-  waits that sync too.
-- One stalled sync holds back every newer commit, and every new
-  snapshot stays below it.
-
-**What could remove it.** Neither is designed yet:
-
-1. **Records in `commit_ts` order in the WAL.** The commit that
-   leads a sync writes the waiting commits' records in one batch,
-   in `commit_ts` order, then syncs. Each commit a sync covers
-   then has every older one covered. It also saves one trip
-   through RocksDB's write queue a commit. It changes the commit
-   protocol of §8.2.
-2. **A snapshot that is a set**, PostgreSQL's way. It removes the
-   order, but makes snapshots expensive to take and visibility
-   expensive to test (§13.1).
+**Measured** (`../dg/WORKNOTE.md` steps 405 and 406): 16 clients,
+each insert its own transaction (`../bench.old/rowlocks.sh`,
+`ins` and `fk`), on aarch64 under WSL2. With records out of
+order, a sync covered about 6.7 commits, PostgreSQL's 7.5, and
+two commits in three waited about 220 µs for an older commit's
+sync. With the commit queue, a sync covers 7.6 to 7.9 commits,
+PostgreSQL's 7.3 to 7.8 in the same runs.
 
 ---
 
@@ -1566,11 +1525,11 @@ each `PREPARED` record:
 
 | File | Holds |
 | --- | --- |
-| `sm1/src/xct.cc` | begin, commit, abort, statements, savepoints, prepare and resolve, `xct_status`, the commit cache, the status records |
+| `sm1/src/xct.cc` | begin, commit and the commit queue (`enter_queue`, `lead_batch`), abort, statements, savepoints, prepare and resolve, `xct_status`, the commit cache, the status records |
 | `sm1/src/ssi.cc` | the SSI tracker |
 | `sm1/src/session.h` | `session_t`, `scan_t`, `view_t`, the internal calls between the modules |
 | `sm1/src/db.h` | `db_t`, `ssi_node_t`, `ssi_range_t` |
-| `sm1/src/db.cc` | `db_alloc_ts`, `db_claim_commit_ts`, `db_commit_done`, `db_commit_wait`, the leases |
+| `sm1/src/db.cc` | `db_alloc_ts`, the leases |
 | `sm1/src/gc.cc` | `db_take_snapshot`, `db_release_snapshot`, `db_watermark` |
 | `sm1/src/access.cc` | `visible`, `concurrent_writer`, `skip_version`, `access_undo_add`, the `SM_ERR_SELFMODIFIED` check |
 | `sm1/src/recover.cc` | `restore_prepared` |
@@ -1579,7 +1538,8 @@ each `PREPARED` record:
 
 | Mutex | Guards |
 | --- | --- |
-| `alloc_mu` | the leases, `committing`, and `visible_head`, the commits waiting to be visible |
+| `alloc_mu` | the leases |
+| `commit_mu` | the commit queue and `commit_leading`; a commit's claim of `commit_ts` and SSI check; `visible_ts`'s raise |
 | `snap_mu` | `snapshots`, the registered begin snapshots |
 | `txn_mu` | `active`, `xid_owner`, the commit cache |
 | `ssi_mu` | `ssi_nodes`, `ssi_points`, `ssi_ranges`, `ssi_by_xid`, `ssi_restored` |
@@ -1624,12 +1584,11 @@ dropped       4-byte count, then 8-byte storeids
 
 ### 11.4 Trade-offs
 
-- **`visible_ts` serializes publication.** A stalled commit holds
-  back new snapshots, and under many writers two commits in three
-  wait for an older commit's sync: a sync covers about a ninth
-  fewer commits than PostgreSQL's at 16 clients (§8.5). The
-  alternative makes snapshots expensive to take and visibility
-  expensive to test (§13.1).
+- **`visible_ts` serializes publication.** A stalled batch holds
+  back new snapshots and every commit behind it, and commits pass
+  one at a time through `commit_mu` to claim and queue (§8.5).
+  The alternative makes snapshots expensive to take and
+  visibility expensive to test (§13.1).
 - **SSI fails transactions that would have been fine.** That is
   the price of readers that never block and never deadlock
   (§7.4). Callers must be able to retry.
@@ -1675,7 +1634,7 @@ dropped       4-byte count, then 8-byte storeids
 | Case | What happens |
 | --- | --- |
 | a transaction that wrote only a temporary store commits | it has an `xid`, so it commits as any writer; it cannot prepare |
-| a commit behind an older commit in progress | it waits for that commit's sync |
+| a commit behind a batch being written | it waits in the queue, and is in the next batch |
 | the lease renewal fails at a commit | `SM_ERR_IO`, no record, the transaction aborts |
 | the lease renewal fails at a commit of a prepared transaction | the error is reported, and the transaction stays in doubt |
 | a commit with a bulk load open | `SM_ERR_INVALID`, and the transaction stays active |
