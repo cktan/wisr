@@ -5843,6 +5843,9 @@
 { oid => '2621', descr => 'reload configuration files',
   proname => 'pg_reload_conf', provolatile => 'v', prorettype => 'bool',
   proargtypes => '', prosrc => 'pg_reload_conf' },
+{ oid => '2622', descr => 'rotate log file',
+  proname => 'pg_rotate_logfile', provolatile => 'v', prorettype => 'bool',
+  proargtypes => '', prosrc => 'pg_rotate_logfile' },
 
 { oid => '2623', descr => 'get information about file',
   proname => 'pg_stat_file', provolatile => 'v', prorettype => 'record',

@@ -5957,6 +5957,75 @@ if kill -0 $server 2> /dev/null; then
 fi
 wait $server || fail "smart shutdown: status"
 
+# Verify that with logging_collector on the log is in files that rotate, and
+# that sm's messages carry a thread id (WORKNOTE.md step 418).
+# 1. Start the server with logging_collector on, a 64 kB rotation size, and
+#    a file name pattern with the second in it.
+# 2. The old stderr says where the log went, and holds no server message;
+#    the file holds sm's recovery messages, each with a thread id, and the
+#    server's ready message.
+# 3. The file is readable by its owner alone.
+# 4. Log more than 64 kB, and a second file appears.
+# 5. pg_rotate_logfile() in a later second makes a third file.
+# 6. Change log_filename in postgresql.conf and reload: the next file has
+#    the new pattern.
+# 7. Stop the server.
+lfdir=$work/data/log
+echo "log_filename = 'lf-%Y%m%d_%H%M%S.log'" > "$work/data/postgresql.conf"
+$digres -D "$work/data" -k "$work" -p "$port" -c logging_collector=on \
+  -c log_rotation_size=64 > "$work/logfile.err" 2>&1 &
+server=$!
+for _ in $(seq 300); do
+  cat "$lfdir"/lf-*.log 2> /dev/null | grep -q "ready to accept connections" &&
+    break
+  kill -0 $server 2> /dev/null || break
+  sleep 0.1
+done
+grep -q "redirecting log output to the log file" "$work/logfile.err" ||
+  fail "logging_collector: stderr says where the log went"
+grep -q "ready to accept connections" "$work/logfile.err" &&
+  fail "logging_collector: the server logs to stderr"
+cat "$lfdir"/lf-*.log 2> /dev/null > "$work/logfile.all"
+grep -Eq '\[[0-9]+\] LOG:  sm: recovering database' "$work/logfile.all" ||
+  fail "logging_collector: sm's message has a thread id"
+grep -q "ready to accept connections" "$work/logfile.all" ||
+  fail "logging_collector: the file holds the server's messages"
+[ "$(stat -c %a "$lfdir"/lf-*.log | sort -u)" = 600 ] ||
+  fail "logging_collector: log_file_mode"
+# A new second, so that the next file's name differs from the first's.
+sleep 1
+( echo "set log_statement = 'all';"
+  for i in $(seq 1200); do echo "select $i, repeat('x', 60);"; done
+) | local_psql > /dev/null 2>&1
+[ "$(ls "$lfdir"/lf-*.log | wc -l)" -ge 2 ] ||
+  fail "logging_collector: rotation by size"
+before=$(ls "$lfdir" | wc -l)
+sleep 1
+[ "$(local_psql -c 'select pg_rotate_logfile()')" = t ] ||
+  fail "logging_collector: pg_rotate_logfile()"
+[ "$(ls "$lfdir" | wc -l)" -gt "$before" ] ||
+  fail "logging_collector: pg_rotate_logfile() makes a file"
+sleep 1
+echo "log_filename = 'moved-%Y%m%d_%H%M%S.log'" >> "$work/data/postgresql.conf"
+local_psql -c 'select pg_reload_conf()' > /dev/null
+for _ in $(seq 100); do
+  ls "$lfdir"/moved-*.log > /dev/null 2>&1 && break
+  sleep 0.1
+done
+ls "$lfdir"/moved-*.log > /dev/null 2>&1 ||
+  fail "logging_collector: a new log_filename on reload"
+kill $server
+for _ in $(seq 100); do
+  kill -0 $server 2> /dev/null || break
+  sleep 0.1
+done
+if kill -0 $server 2> /dev/null; then
+  fail "logging_collector: the server stops"
+  kill -KILL $server
+fi
+wait $server || fail "logging_collector: status"
+rm "$work/data/postgresql.conf"
+
 grep -q "terminated by signal" "$work/log" "$work/log2" "$work/log3" \
   "$work/log4" "$work/log5" "$work/log6" "$work/log7" "$work/log8" \
   "$work/log9" "$work/log10" &&

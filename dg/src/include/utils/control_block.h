@@ -72,6 +72,13 @@ struct sequence_state_free_t {
 };
 extern sequence_state_t *sequence_state_new(void);
 
+/* logfile.c: the log file written, the process's. */
+struct logfile_state_t;
+struct logfile_free_t {
+  void operator()(logfile_state_t *state) const;
+};
+extern logfile_state_t *logfile_state_new(void);
+
 /* pg_global.c: aa's state of pg_global, as last committed, that every
  * session reads, and a session's changes not yet committed (aa.h). */
 struct aa_env_t;
@@ -219,7 +226,10 @@ typedef struct pcb_t {
  * here, and never freed: the block itself never is.
  */
 typedef struct shmem_t {
-  std::mutex stderr_mutex; /* elog.c: one message at a time to stderr */
+  /* logfile.c: one message at a time to the log, and its state, below */
+  std::mutex stderr_mutex;
+  /* logfile.c: the log file now written; guarded by stderr_mutex */
+  std::unique_ptr<logfile_state_t, logfile_free_t> logfile;
 
   /* injection_point.c: one attach or detach at a time */
   std::mutex injection_point_mutex;

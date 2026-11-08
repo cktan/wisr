@@ -25,6 +25,7 @@
 #include "utils/acl.h"
 #include "utils/control_block.h"
 #include "utils/fmgrprotos.h"
+#include "utils/logfile.h"
 #include "utils/wait_event.h"
 
 /*
@@ -232,4 +233,21 @@ Datum pg_reload_conf(PG_FUNCTION_ARGS) {
   }
 
   PG_RETURN_BOOL(true);
+}
+
+/*
+ * Rotate log file
+ *
+ * Permission checking for this function is managed through the normal
+ * GRANT system.
+ */
+Datum pg_rotate_logfile(PG_FUNCTION_ARGS) {
+  if (!Logging_collector) {
+    ereport(
+        WARNING,
+        (errmsg("rotation not possible because log collection not active")));
+    PG_RETURN_BOOL(false);
+  }
+
+  PG_RETURN_BOOL(logfile_rotate());
 }

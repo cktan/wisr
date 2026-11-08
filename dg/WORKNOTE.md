@@ -12724,3 +12724,42 @@ PostgreSQL's own code, as a check's rows are checked by it.
   tests pass alone and in eight sessions, and `server.sh` and all
   65 SQL logic test files pass. All 231 PostgreSQL regressions
   also pass with the installed PostgreSQL 18 binaries.
+
+## Step 418: the log goes to files again
+
+Step 20 left every message on stderr. The log can now go to
+files, without a process, a thread or a pipe.
+
+- **`logfile.c`** (`utils/error/logfile.c`, from PostgreSQL's
+  `syslogger.c`: the file name, the rotation time, the open)
+  holds the log file's state in `shmem->logfile`, guarded by
+  `shmem->stderr_mutex`. `logfile_write()` is the one door to
+  the log; `write_console()` calls it.
+- **A write rotates when due**: before it, if the planned time
+  has passed; after it, if the file holds `log_rotation_size`.
+  An idle server rotates by age at its next message.
+- **fd 2 is the log file** once `logfile_open()` has run: each
+  rotation opens the next file and `dup2()`s it onto fd 2. A
+  stray `fprintf(stderr)` lands in the file, and is not counted.
+- **Settings**, back from step 20: `logging_collector` (on
+  restart), `log_directory` (default `log` in the home
+  directory), `log_filename`, `log_file_mode`,
+  `log_rotation_age`, `log_rotation_size`,
+  `log_truncate_on_rotation`. The postmaster copies them into
+  the state at start and on each SIGHUP; a new directory or
+  name rotates at once.
+- **`pg_rotate_logfile()`** is back. `pg_current_logfile()`,
+  `pg_ls_logdir()` and the `current_logfiles` file are not.
+- **`write_stderr()` goes through the log**: it formats into a
+  4 kB buffer and calls `write_console()`, so it keeps lines
+  whole.
+- **sm's log hook** (`sm_log`, `datadir.c`) is installed by the
+  postmaster and by initdb (`datadir_set_sm_log()`), before
+  `sm_attach()`. A line reads `time [thread id] LEVEL:  sm: text`,
+  the form of the default `log_line_prefix`. In a session's
+  call the id is the session's `%p`. It uses the system's time
+  zone, not `log_timezone`, which sm's threads cannot read.
+- **Test**: `test/server.sh` runs a server with
+  `logging_collector` on and checks the files, the thread id,
+  the mode, rotation by size, `pg_rotate_logfile()` and a new
+  `log_filename` on reload.

@@ -109,6 +109,7 @@
 #include "utils/control_block.h"
 #include "utils/datadir.h"
 #include "utils/datetime.h"
+#include "utils/logfile.h"
 #include "utils/memutils.h"
 #include "utils/pidfile.h"
 #include "utils/timestamp.h"
@@ -692,6 +693,12 @@ void PostmasterMain(int argc, char *argv[]) {
 
   /* And switch working directory into it */
   ChangeToDataDir();
+
+  /*
+   * Put the log in its file, if logging_collector is on, before sm attaches
+   * and logs: from here on stderr is the log file.
+   */
+  logfile_open();
 
   /* Read the superuser and the databases, which every backend inherits */
   datadir_load();
@@ -1445,6 +1452,8 @@ static void process_pm_reload_request(void) {
   if (pms().Shutdown <= SmartShutdown) {
     ereport(LOG, (errmsg("received SIGHUP, reloading configuration files")));
     ProcessConfigFile(PGC_SIGHUP);
+    /* The log file's directory, name or limits may have changed. */
+    logfile_reload();
     SignalChildren(SIGHUP, btmask_all_except(B_DEAD_END_BACKEND));
 
 #ifdef USE_SSL

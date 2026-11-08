@@ -274,10 +274,21 @@ digres is one process; each session is a thread of it.
 
 ## 6. Logging
 
-- **Every message goes to stderr**, through `write_console()`
-  in `elog.c`, one `write()` under `shmem->stderr_mutex`. There
-  is no log collector, no csvlog and no jsonlog; a logger
-  that writes files is to come.
+- **Every message goes to the log**, through `write_console()`
+  in `elog.c` and `logfile_write()` in `logfile.c`: one
+  `write()` under `shmem->stderr_mutex`, to stderr, or, with
+  `logging_collector` on, to the log file. There is no log
+  collector process, no pipe, no csvlog and no jsonlog.
+- **`logfile.c` rotates in the writer's thread**, on size, on
+  age and on `pg_rotate_logfile()`; age is tested as a message
+  arrives. It points fd 2 at the log file, so a stray write to
+  stderr lands there too.
+- **Write to the log with `write_console()`, `ereport()` or
+  `write_stderr()`**, never `fprintf(stderr)`: only those keep
+  a message whole and count it toward `log_rotation_size`.
+- **A thread sm owns has no memory context or GUC values**
+  (`sm_log` in `datadir.c`): there, write with `write_console()`
+  and a line you format yourself.
 
 ## 7. Deleting PostgreSQL code
 

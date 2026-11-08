@@ -65,6 +65,7 @@
 #include "utils/guc_hooks.h"
 #include "utils/guc_tables.h"
 #include "utils/inval.h"
+#include "utils/logfile.h"
 #include "utils/memutils.h"
 #include "utils/pg_locale.h"
 #include "utils/plancache.h"
@@ -970,7 +971,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL},
 
-
     {{"log_hostname", PGC_SIGHUP, LOGGING_WHAT,
       gettext_noop("Logs the host name in the connection logs."),
       gettext_noop(
@@ -1072,6 +1072,23 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      &default_with_oids,
      false,
      check_default_with_oids,
+     NULL,
+     NULL},
+
+    {{"logging_collector", PGC_POSTMASTER, LOGGING_WHERE,
+      gettext_noop("Write log messages to log files instead of stderr."), NULL},
+     &Logging_collector,
+     false,
+     NULL,
+     NULL,
+     NULL},
+    {{"log_truncate_on_rotation", PGC_SIGHUP, LOGGING_WHERE,
+      gettext_noop(
+          "Truncate existing log files of same name during log rotation."),
+      NULL},
+     &Log_truncate_on_rotation,
+     false,
+     NULL,
      NULL,
      NULL},
 
@@ -1313,7 +1330,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-
     {{"max_connections", PGC_POSTMASTER, CONN_AUTH_SETTINGS,
       gettext_noop("Sets the maximum number of concurrent connections."), NULL},
      &MaxConnections,
@@ -1458,9 +1474,9 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-/*
- * See also CheckRequiredParameterValues() if this parameter changes
- */
+    /*
+     * See also CheckRequiredParameterValues() if this parameter changes
+     */
 
     {{"statement_timeout", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Sets the maximum allowed duration of any statement."),
@@ -1626,6 +1642,47 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      0,
      -1,
      INT_MAX / 2,
+     NULL,
+     NULL,
+     NULL},
+
+    {{"log_file_mode", PGC_SIGHUP, LOGGING_WHERE,
+      gettext_noop("Sets the file permissions for log files."),
+      gettext_noop("The parameter value is expected "
+                   "to be a numeric mode specification in the form "
+                   "accepted by the chmod and umask system calls. "
+                   "(To use the customary octal format the number must "
+                   "start with a 0 (zero).)")},
+     &Log_file_mode,
+     0600,
+     0000,
+     0777,
+     NULL,
+     NULL,
+     show_log_file_mode},
+
+    {{"log_rotation_age", PGC_SIGHUP, LOGGING_WHERE,
+      gettext_noop("Sets the amount of time to wait before forcing "
+                   "log file rotation."),
+      gettext_noop("0 disables time-based creation of new log files."),
+      GUC_UNIT_MIN},
+     &Log_RotationAge,
+     HOURS_PER_DAY * MINS_PER_HOUR,
+     0,
+     INT_MAX / SECS_PER_MINUTE,
+     NULL,
+     NULL,
+     NULL},
+
+    {{"log_rotation_size", PGC_SIGHUP, LOGGING_WHERE,
+      gettext_noop("Sets the maximum size a log file can reach before "
+                   "being rotated."),
+      gettext_noop("0 disables size-based creation of new log files."),
+      GUC_UNIT_KB},
+     &Log_RotationSize,
+     10 * 1024,
+     0,
+     INT_MAX,
      NULL,
      NULL,
      NULL},
@@ -2245,6 +2302,25 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
      "stderr",
      check_log_destination,
      assign_log_destination,
+     NULL},
+
+    {{"log_directory", PGC_SIGHUP, LOGGING_WHERE,
+      gettext_noop("Sets the destination directory for log files."),
+      gettext_noop("Can be specified as relative to the data directory "
+                   "or as absolute path."),
+      GUC_SUPERUSER_ONLY},
+     &Log_directory,
+     "log",
+     check_canonical_path,
+     NULL,
+     NULL},
+    {{"log_filename", PGC_SIGHUP, LOGGING_WHERE,
+      gettext_noop("Sets the file name pattern for log files."), NULL,
+      GUC_SUPERUSER_ONLY},
+     &Log_filename,
+     "postgresql-%Y-%m-%d_%H%M%S.log",
+     NULL,
+     NULL,
      NULL},
 
     {{"syslog_ident", PGC_SIGHUP, LOGGING_WHERE,

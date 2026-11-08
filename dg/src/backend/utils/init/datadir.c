@@ -27,6 +27,9 @@
 
 #include <pthread.h>
 #include <signal.h>
+#include <sys/time.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "access/smstore.h"
 #include "access/transam.h"
@@ -73,9 +76,12 @@ static void close_sm_session(int code, Datum arg) {
 }
 
 /*
- * Write one message of sm to stderr, as PostgreSQL words a level. sm calls
- * this on its own threads too, which have no memory context and no error
- * stack, so it uses neither palloc() nor ereport().
+ * Write one message of sm to the log, in the form of log_line_prefix's
+ * default, "%m [%p] ": the time, and the id of the calling thread. In a
+ * session's call that id is the session's %p, so the message can be matched
+ * to the session's other lines; in sm's own thread it is that thread's. sm
+ * calls this on threads that have no memory context, error stack or GUC
+ * values, so it uses none: not palloc(), ereport() or log_timezone.
  */
 static void sm_log(void *arg, sm_loglevel_t level,
                    const char *msg) noexcept {
@@ -83,8 +89,16 @@ static void sm_log(void *arg, sm_loglevel_t level,
                       : level == SM_LOG_WARN ? "WARNING"
                                              : "LOG";
   char line[1024];
+  char stamp[48];
+  struct timeval tv;
+  struct tm tm;
 
-  int len = snprintf(line, sizeof(line), "%s:  sm: %s\n", label, msg);
+  gettimeofday(&tv, NULL);
+  localtime_r(&tv.tv_sec, &tm);
+  strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tm);
+  int len =
+      snprintf(line, sizeof(line), "%s.%03d %s [%d] %s:  sm: %s\n", stamp,
+               (int)(tv.tv_usec / 1000), tm.tm_zone, (int)gettid(), label, msg);
   if (len >= (int)sizeof(line)) {
     /* Cut a long message, and keep the newline. */
     len = sizeof(line) - 1;
@@ -111,7 +125,7 @@ void datadir_load(void) {
    * Before sm_attach(), which recovers every database and may log: without
    * a hook, sm's messages go nowhere.
    */
-  if (datadir_set_sm_log() != 0)
+  if (0 != datadir_set_sm_log())
     ereport(FATAL, (errmsg("could not set the sm log hook: %s", sm_errmsg())));
   /*
    * Once for the process: every session opens its database on it, and reads

@@ -25,6 +25,7 @@
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "postmaster/postmaster.h"
+#include "utils/logfile.h"
 #include "utils/acl.h"
 #include "utils/datetime.h"
 #include "utils/fmgrprotos.h"
@@ -926,6 +927,16 @@ bool check_cluster_name(char **newval, void **extra, GucSource source) {
 /*
  * These show hooks just exist because we want to show the values in octal.
  */
+
+/*
+ * GUC show_hook for log_file_mode
+ */
+const char *show_log_file_mode(void) {
+  static thread_local /*LOCAL*/ char buf[12];
+
+  snprintf(buf, sizeof(buf), "%04o", Log_file_mode);
+  return buf;
+}
 
 /*
  * GUC show_hook for unix_socket_permissions

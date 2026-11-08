@@ -82,6 +82,7 @@
 #include "utils/ps_status.h"
 #include "utils/control_block.h"
 #include "utils/hooks.h"
+#include "utils/logfile.h"
 #include "utils/varlena.h"
 
 /* In this module, access gettext() via err_gettext() */
@@ -2342,11 +2343,10 @@ static void write_eventlog(int level, const char *line, int len) {
 #endif /* WIN32 */
 
 /*
- * Write one message to stderr.  Every thread of the process writes there,
- * so the write is made under one process-wide mutex.
+ * Write one message to the log: stderr, or the log file (logfile.c).  Every
+ * thread of the process writes there, one message at a time.
  */
 void write_console(const char *line, int len) {
-  int rc;
 
 #ifdef WIN32
 
@@ -2400,16 +2400,8 @@ void write_console(const char *line, int len) {
    */
 #endif
 
-  /*
-   * We ignore any error from write() here.  We have no useful way to report
-   * it ... certainly whining on stderr isn't likely to be productive.
-   */
-  {
-    /* One message at a time: the threads share stderr. */
-    std::lock_guard<std::mutex> guard(shmem->stderr_mutex);
-    rc = write(fileno(stderr), line, len);
-  }
-  (void)rc;
+  /* One message at a time, in the file if the log is in one. */
+  logfile_write(line, len);
 }
 
 /*
@@ -3435,17 +3427,14 @@ void write_stderr(const char *fmt, ...) {
  * not available) - va_list version
  */
 void vwrite_stderr(const char *fmt, va_list ap) {
-#ifdef WIN32
-  char errbuf[2048]; /* Arbitrary size? */
-#endif
+  char errbuf[4096]; /* a longer message is cut */
 
   fmt = _(fmt);
-#ifndef WIN32
-  /* On Unix, we just fprintf to stderr */
-  vfprintf(stderr, fmt, ap);
-  fflush(stderr);
-#else
   vsnprintf(errbuf, sizeof(errbuf), fmt, ap);
+#ifndef WIN32
+  /* One write() through the log, as ereport() does, so lines stay whole. */
+  write_console(errbuf, strlen(errbuf));
+#else
 
   /*
    * On Win32, we print to stderr if running on a console, or write to

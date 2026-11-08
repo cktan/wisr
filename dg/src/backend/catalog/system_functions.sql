@@ -658,6 +658,8 @@ REVOKE EXECUTE ON FUNCTION pg_wal_replay_pause() FROM public;
 
 REVOKE EXECUTE ON FUNCTION pg_wal_replay_resume() FROM public;
 
+REVOKE EXECUTE ON FUNCTION pg_rotate_logfile() FROM public;
+
 REVOKE EXECUTE ON FUNCTION pg_reload_conf() FROM public;
 
 REVOKE EXECUTE ON FUNCTION pg_promote(boolean, integer) FROM public;
