@@ -15,15 +15,7 @@
 #ifndef LOGFILE_H
 #define LOGFILE_H
 
-/* The settings (guc_tables.c). */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool Logging_collector;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_RotationAge;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_RotationSize;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *Log_directory;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *Log_filename;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool Log_truncate_on_rotation;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_file_mode;
-
+extern void publish_log_file_settings(void);
 extern void logfile_open(void);
 extern void logfile_reload(void);
 extern bool logfile_rotate(void);

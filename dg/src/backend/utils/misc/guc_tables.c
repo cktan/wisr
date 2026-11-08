@@ -61,6 +61,7 @@
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
 #include "utils/bytea.h"
+#include "utils/control_block.h"
 #include "utils/float.h"
 #include "utils/guc_hooks.h"
 #include "utils/guc_tables.h"
@@ -300,7 +301,7 @@ thread_local /*LOCAL*/ bool log_executor_stats = false;
 thread_local /*LOCAL*/ bool log_statement_stats =
     false; /* this is sort of all three
             * above together */
-thread_local /*LOCAL*/ char *event_source;
+static thread_local /*LOCAL*/ char *event_source;
 
 thread_local /*LOCAL*/ bool row_security;
 thread_local /*LOCAL*/ bool check_function_bodies = true;
@@ -329,9 +330,8 @@ thread_local /*LOCAL*/ int temp_file_limit = -1;
 
 thread_local /*LOCAL*/ int num_temp_buffers = 1024;
 
-thread_local /*LOCAL*/ char *cluster_name = "";
-thread_local /*LOCAL*/ char *ConfigFileName;
-thread_local /*LOCAL*/ char *external_pid_file;
+static thread_local /*LOCAL*/ char *cluster_name = "";
+static thread_local /*LOCAL*/ char *external_pid_file;
 
 thread_local /*LOCAL*/ char *application_name;
 
@@ -373,19 +373,111 @@ static thread_local /*LOCAL*/ char *timezone_string;
 static thread_local /*LOCAL*/ char *log_timezone_string;
 static thread_local /*LOCAL*/ char *timezone_abbreviations_string;
 static thread_local /*LOCAL*/ char *data_directory;
+static thread_local /*LOCAL*/ char *ConfigFileName;
+static thread_local /*LOCAL*/ bool enable_bonjour = false;
+static thread_local /*LOCAL*/ bool Trace_connection_negotiation = false;
+static thread_local /*LOCAL*/ bool Logging_collector = false;
+static thread_local /*LOCAL*/ int MaxConnections = 100;
+static thread_local /*LOCAL*/ int SuperuserReservedConnections;
+static thread_local /*LOCAL*/ int ReservedConnections;
+static thread_local /*LOCAL*/ int NBuffers = 16384;
+static thread_local /*LOCAL*/ int PostPortNumber = DEF_PGPORT;
+static thread_local /*LOCAL*/ int Unix_socket_permissions;
+static thread_local /*LOCAL*/ int max_files_per_process = 1000;
+static thread_local /*LOCAL*/ char *bonjour_name;
+static thread_local /*LOCAL*/ char *shared_preload_libraries_string = NULL;
+static thread_local /*LOCAL*/ char *Unix_socket_group;
+static thread_local /*LOCAL*/ char *Unix_socket_directories;
+static thread_local /*LOCAL*/ char *ListenAddresses;
 static thread_local /*LOCAL*/ char *session_authorization_string;
-static thread_local /*LOCAL*/ int max_function_args;
-static thread_local /*LOCAL*/ int max_index_keys;
-static thread_local /*LOCAL*/ int max_identifier_length;
-static thread_local /*LOCAL*/ int block_size;
-static thread_local /*LOCAL*/ bool integer_datetimes;
-
 #ifdef USE_ASSERT_CHECKING
 #define DEFAULT_ASSERT_ENABLED true
 #else
 #define DEFAULT_ASSERT_ENABLED false
 #endif
+
+static thread_local /*LOCAL*/ int max_function_args;
+static thread_local /*LOCAL*/ int max_index_keys;
+static thread_local /*LOCAL*/ int max_identifier_length;
+static thread_local /*LOCAL*/ int block_size;
+static thread_local /*LOCAL*/ bool integer_datetimes;
 static thread_local /*LOCAL*/ bool assert_enabled = DEFAULT_ASSERT_ENABLED;
+static thread_local /*LOCAL*/ char *ssl_library;
+static thread_local /*LOCAL*/ int Log_RotationAge =
+    HOURS_PER_DAY * MINS_PER_HOUR;
+static thread_local /*LOCAL*/ int Log_RotationSize = 10 * 1024;
+static thread_local /*LOCAL*/ char *Log_directory = NULL;
+static thread_local /*LOCAL*/ char *Log_filename = NULL;
+static thread_local /*LOCAL*/ bool Log_truncate_on_rotation = false;
+static thread_local /*LOCAL*/ int Log_file_mode = S_IRUSR | S_IWUSR;
+
+/*
+ * Copy the file logger's settings into the process control block. The
+ * postmaster calls this, with shmem->stderr_mutex held, at start and on each
+ * reload; logfile.c reads the copy under the same mutex.
+ */
+void publish_log_file_settings(void) {
+  pcb_t *b = pcb_main();
+
+  b->Log_directory = Log_directory ? Log_directory : "";
+  b->Log_filename = Log_filename ? Log_filename : "";
+  b->Log_file_mode = Log_file_mode;
+  b->Log_RotationAge = Log_RotationAge;
+  b->Log_RotationSize = Log_RotationSize;
+  b->Log_truncate_on_rotation = Log_truncate_on_rotation;
+}
+
+/* GUC show_hook for log_file_mode: the mode in octal, as chmod takes it. */
+static const char *show_log_file_mode(void) {
+  static thread_local /*LOCAL*/ char buf[12];
+
+  snprintf(buf, sizeof(buf), "%04o", Log_file_mode);
+  return buf;
+}
+
+/* A malloc'd copy of a string setting, or NULL if it has no value. */
+static char *postmaster_setting_dup(const char *value) {
+  return value ? strdup(value) : NULL;
+}
+
+/*
+ * Copy the settings that change only with a restart, and the preset ones that
+ * never change, into the process control block. The postmaster calls this once
+ * it has read its settings, before it starts a thread: from then on every
+ * thread reads pcb, not its own copy of the GUC variable, which no code outside
+ * this file can name.
+ */
+void publish_postmaster_settings(void) {
+  pcb_t *b = pcb_main();
+
+  b->enable_bonjour = enable_bonjour;
+  b->Trace_connection_negotiation = Trace_connection_negotiation;
+  b->Logging_collector = Logging_collector;
+  b->MaxConnections = MaxConnections;
+  b->SuperuserReservedConnections = SuperuserReservedConnections;
+  b->ReservedConnections = ReservedConnections;
+  b->NBuffers = NBuffers;
+  b->PostPortNumber = PostPortNumber;
+  b->Unix_socket_permissions = Unix_socket_permissions;
+  b->max_files_per_process = max_files_per_process;
+  b->bonjour_name = postmaster_setting_dup(bonjour_name);
+  b->shared_preload_libraries_string =
+      postmaster_setting_dup(shared_preload_libraries_string);
+  b->event_source = postmaster_setting_dup(event_source);
+  b->Unix_socket_group = postmaster_setting_dup(Unix_socket_group);
+  b->Unix_socket_directories = postmaster_setting_dup(Unix_socket_directories);
+  b->ListenAddresses = postmaster_setting_dup(ListenAddresses);
+  b->external_pid_file = postmaster_setting_dup(external_pid_file);
+  b->cluster_name = postmaster_setting_dup(cluster_name);
+
+  b->assert_enabled = assert_enabled;
+  b->integer_datetimes = integer_datetimes;
+  b->max_function_args = max_function_args;
+  b->max_index_keys = max_index_keys;
+  b->max_identifier_length = max_identifier_length;
+  b->block_size = block_size;
+  b->ssl_library = postmaster_setting_dup(ssl_library);
+}
 
 /* should be static, but commands/variable.c needs to get at this */
 thread_local /*LOCAL*/ char *role_string;

@@ -43,19 +43,10 @@ typedef struct {
 
 /* GUC options */
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool EnableSSL;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int SuperuserReservedConnections;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int ReservedConnections;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int PostPortNumber;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int Unix_socket_permissions;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *Unix_socket_group;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *Unix_socket_directories;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *ListenAddresses;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool ClientAuthInProgress;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int PreAuthDelay;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int AuthenticationTimeout;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_hostname;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_bonjour;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *bonjour_name;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_crash;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_kill;
 

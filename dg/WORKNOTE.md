@@ -12806,3 +12806,68 @@ plans.
   checked the old purge's flush by count is replaced.
 - **Found too**: digres installs no log hook for sm, so sm's
   errors are lost ([`ISSUE.md`](ISSUE.md) issue 27).
+
+## Step 419: restart-only settings are read from pcb
+
+A setting with context `PGC_POSTMASTER` cannot change while the
+server runs, so a thread copy of it is wasted, and a code path
+could read it before the thread has it.
+
+- **`pcb->name`** holds each one: `enable_bonjour`,
+  `Trace_connection_negotiation`, `Logging_collector`,
+  `MaxConnections`, `SuperuserReservedConnections`,
+  `ReservedConnections`, `NBuffers`, `PostPortNumber`,
+  `Unix_socket_permissions`, `max_files_per_process`,
+  `bonjour_name`, `shared_preload_libraries_string`,
+  `event_source`, `Unix_socket_group`, `Unix_socket_directories`,
+  `ListenAddresses`, `external_pid_file`, `cluster_name` and
+  `ConfigFileName`. `DataDir` and `log_timezone` were there.
+- **`publish_postmaster_settings()`** copies them from the GUC
+  variables, right after `SelectConfigFiles()`, before any
+  thread starts. A string is a `strdup()`, never freed.
+  `SelectConfigFiles()` sets `ConfigFileName` itself, as it
+  finds the file, because reading the file needs it.
+- **The GUC variables are `static` in `guc_tables.c`**, with
+  the table: they are the storage the GUC code writes, in each
+  thread, and no other file declares them.
+- **Reads changed** in `postmaster.c`, `postinit.c`,
+  `pqcomm.c`, `pmchild.c`, `fd.c`, `miscinit.c`, `ps_status.c`,
+  `datadir.c`, `backend_startup.c`, `logfile.c`,
+  `signalfuncs.c`, `variable.c`, `elog.c` and `guc.c`.
+
+## Step 420: preset settings are read from pcb
+
+The seven `PGC_INTERNAL` settings never change: the build fixes
+them. They join the restart-only ones in `pcb_t`, and
+`publish_postmaster_settings()` copies them.
+
+- **In `pcb_t`**: `assert_enabled` (the `debug_assertions`
+  setting), `integer_datetimes`, `max_function_args`,
+  `max_index_keys`, `max_identifier_length`, `block_size` and
+  `ssl_library`. A comment on each names the file its variable
+  was defined in: `guc_tables.c`, but for `ssl_library`, which
+  was in `be-secure.c`.
+- **`ssl_library` is `static` in `guc_tables.c`** now; its
+  `extern` in `libpq.h` and its definition are gone. No code
+  read it. None read the other six either, so nothing else
+  changed.
+
+## Step 421: the file logger's settings are read from pcb
+
+`log_directory`, `log_filename`, `log_file_mode`,
+`log_rotation_age`, `log_rotation_size` and
+`log_truncate_on_rotation` change on a reload. Only `logfile.c`
+reads them, and it kept its own copy in the logfile state.
+
+- **In `pcb_t`**: `Log_directory`, `Log_filename`,
+  `Log_file_mode`, `Log_RotationAge`, `Log_RotationSize` and
+  `Log_truncate_on_rotation`. A comment on each names
+  `logfile.c`, where its variable was defined.
+- **Guarded**: they change after threads have started, so the
+  postmaster writes them with `shmem->stderr_mutex` held, in
+  `publish_log_file_settings()` (`guc_tables.c`), and
+  `logfile.c` reads them with it held. The logfile state keeps
+  only the file now written, its size and the rotation plan.
+- **The GUC variables are `static` in `guc_tables.c`**, and
+  `show_log_file_mode()` moved there from `variable.c`, as it
+  reads the session's own copy.

@@ -2280,8 +2280,8 @@ static void write_eventlog(int level, const char *line, int len) {
   static HANDLE evtHandle = INVALID_HANDLE_VALUE;
 
   if (evtHandle == INVALID_HANDLE_VALUE) {
-    evtHandle = RegisterEventSource(NULL, event_source ? event_source
-                                                       : DEFAULT_EVENT_SOURCE);
+    evtHandle = RegisterEventSource(
+        NULL, pcb->event_source ? pcb->event_source : DEFAULT_EVENT_SOURCE);
     if (evtHandle == NULL) {
       evtHandle = INVALID_HANDLE_VALUE;
       return;

@@ -51,7 +51,6 @@
 typedef int File;
 
 /* GUC parameter */
-extern thread_local /*LOCAL*/ PGDLLIMPORT int max_files_per_process;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool data_sync_retry;
 
 /*

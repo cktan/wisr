@@ -42,6 +42,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <string>
 
 #include "common/file_perm.h"
 #include "datatype/timestamp.h"
@@ -177,6 +178,62 @@ typedef struct pcb_t {
   pid_t PostmasterPid = 0;
   TimestampTz PgStartTime = 0; /* timestamp.c: when the server started */
   pg_tz *log_timezone = nullptr; /* pgtz.c: timezone for log timestamps */
+
+  /*
+   * -- settings that change only with a restart (PGC_POSTMASTER) --
+   * guc_tables.c: copied from the GUC variables by
+   * publish_postmaster_settings() once the postmaster has read its
+   * settings, before the first thread starts; ConfigFileName by
+   * SelectConfigFiles().  Read these, never the GUC variables, which each
+   * thread has a copy of.  A string is malloc'd, never freed, or NULL.
+   */
+  bool enable_bonjour = false;
+  bool Trace_connection_negotiation = false;
+  bool Logging_collector = false;
+  int MaxConnections = 0;
+  int SuperuserReservedConnections = 0;
+  int ReservedConnections = 0;
+  int NBuffers = 0;
+  int PostPortNumber = 0;
+  int Unix_socket_permissions = 0;
+  int max_files_per_process = 0;
+  char *bonjour_name = nullptr;
+  char *shared_preload_libraries_string = nullptr;
+  char *event_source = nullptr;
+  char *Unix_socket_group = nullptr;
+  char *Unix_socket_directories = nullptr;
+  char *ListenAddresses = nullptr;
+  char *external_pid_file = nullptr;
+  char *cluster_name = nullptr;
+  char *ConfigFileName = nullptr;
+
+  /*
+   * -- preset settings (PGC_INTERNAL) --
+   * They never change: the build fixes them. guc_tables.c copies them from
+   * the GUC variables with the settings above; the file in each comment is
+   * where the variable was defined.
+   */
+  bool assert_enabled = false;    /* guc_tables.c */
+  bool integer_datetimes = false; /* guc_tables.c */
+  int max_function_args = 0;      /* guc_tables.c */
+  int max_index_keys = 0;         /* guc_tables.c */
+  int max_identifier_length = 0;  /* guc_tables.c */
+  int block_size = 0;             /* guc_tables.c */
+  char *ssl_library = nullptr;    /* be-secure.c */
+
+  /*
+   * -- the file logger's settings (PGC_SIGHUP) --
+   * They change on a reload, after threads have started, so they are
+   * guarded: the postmaster writes them with shmem->stderr_mutex held
+   * (publish_log_file_settings(), guc_tables.c), and logfile.c reads them
+   * with it held. The file in each comment is where the variable was defined.
+   */
+  std::string Log_directory;             /* logfile.c */
+  std::string Log_filename;              /* logfile.c, a strftime() pattern */
+  int Log_file_mode = 0600;              /* logfile.c */
+  int Log_RotationAge = 0;               /* logfile.c, minutes */
+  int Log_RotationSize = 0;              /* logfile.c, kB */
+  bool Log_truncate_on_rotation = false; /* logfile.c */
 
   /* -- how the process runs -- */
   /*

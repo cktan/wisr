@@ -112,8 +112,6 @@ thread_local /*LOCAL*/ int maintenance_work_mem = 65536;
  * chance to register background workers.  NBuffers sizes sm's block cache,
  * in blocks (datadir_load()).
  */
-thread_local /*LOCAL*/ int NBuffers = 16384;
-thread_local /*LOCAL*/ int MaxConnections = 100;
 
 /* GUC parameters for vacuum */
 

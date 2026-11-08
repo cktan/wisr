@@ -111,7 +111,6 @@ extern bool check_transaction_read_only(bool *newval, void **extra,
                                         GucSource source);
 extern void assign_transaction_timeout(int newval, void *extra);
 extern void assign_deadlock_timeout(int newval, void *extra);
-extern const char *show_log_file_mode(void);
 extern const char *show_unix_socket_permissions(void);
 
 #endif /* GUC_HOOKS_H */

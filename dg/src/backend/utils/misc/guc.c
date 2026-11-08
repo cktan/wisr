@@ -278,11 +278,11 @@ ConfigVariable *ProcessConfigFileInternal(GucContext context,
   GUCHashEntry *hentry;
 
   /* Parse the main config file into a list of option names and values */
-  ConfFileWithError = ConfigFileName;
+  ConfFileWithError = pcb->ConfigFileName;
   head = tail = NULL;
 
-  if (!ParseConfigFile(ConfigFileName, true, NULL, 0, CONF_FILE_START_DEPTH,
-                       elevel, &head, &tail)) {
+  if (!ParseConfigFile(pcb->ConfigFileName, true, NULL, 0,
+                       CONF_FILE_START_DEPTH, elevel, &head, &tail)) {
     /* Syntax error(s) detected in the file, so bail out */
     error = true;
     goto bail_out;
@@ -1569,6 +1569,7 @@ static void RemoveGUCFromLists(struct config_generic *gconf) {
 bool SelectConfigFiles(const char *userDoption, const char *progname) {
   char *configdir;
   char *fname;
+  const char *config_file_option;
   bool fname_is_malloced;
   bool have_config_file;
   struct stat stat_buf;
@@ -1595,8 +1596,10 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
    * ensure the result is an absolute path, so that it will be interpreted
    * the same way by future backends.
    */
-  if (ConfigFileName) {
-    fname = make_absolute_path(ConfigFileName);
+  /* GetConfigOption() gives "" for a string setting that has no value. */
+  config_file_option = GetConfigOption("config_file", false, false);
+  if (config_file_option && *config_file_option) {
+    fname = make_absolute_path(config_file_option);
     fname_is_malloced = true;
   } else if (configdir) {
     fname = (char *)guc_malloc(FATAL,
@@ -1617,6 +1620,8 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
    * it can't be overridden later.
    */
   SetConfigOption("config_file", fname, PGC_POSTMASTER, PGC_S_OVERRIDE);
+  /* The file name the process reads its settings from, for every thread. */
+  pcb_main()->ConfigFileName = strdup(fname);
 
   if (fname_is_malloced)
     free(fname);
@@ -1630,7 +1635,7 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
    * the data directory, so that we can read the PG_AUTOCONF_FILENAME file
    * next time.
    */
-  have_config_file = stat(ConfigFileName, &stat_buf) == 0;
+  have_config_file = stat(pcb->ConfigFileName, &stat_buf) == 0;
   if (have_config_file)
     ProcessConfigFile(PGC_POSTMASTER);
 
@@ -1652,7 +1657,7 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
                  "This can be specified as \"data_directory\" in \"%s\", "
                  "or by the -D invocation option, or by the "
                  "PGDATA environment variable.\n",
-                 progname, ConfigFileName);
+                 progname, pcb->ConfigFileName);
     return false;
   }
 

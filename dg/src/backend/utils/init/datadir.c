@@ -145,8 +145,8 @@ void datadir_load(void) {
    */
   sm_env_options_t opt;
   sm_env_options_init(&opt);
-  opt.block_cache_bytes = (long long)NBuffers * BLCKSZ;
-  opt.max_sessions = MaxConnections;
+  opt.block_cache_bytes = (long long)pcb->NBuffers * BLCKSZ;
+  opt.max_sessions = pcb->MaxConnections;
   rc = sm_attach(".", &dds_main().sm_env, &opt);
   if (rc != 0)
     ereport(FATAL, (errmsg("could not attach storage: %s", sm_errmsg())));

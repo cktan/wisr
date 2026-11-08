@@ -17,7 +17,6 @@
 #include "utils/timestamp.h"
 
 /* GUCs */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool Trace_connection_negotiation;
 extern thread_local /*LOCAL*/ PGDLLIMPORT uint32 log_connections;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *log_connections_string;
 
