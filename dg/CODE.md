@@ -213,6 +213,12 @@ digres is one process; each session is a thread of it.
     such as `block_size`), which the build fixes. Each `pcb_t`
     field of a preset setting names, in a comment, the file
     the variable was defined in.
+  - **A reloadable setting that one module alone reads** may be
+    a `pcb_t` field the postmaster rewrites on each reload,
+    guarded by a mutex the field's comment names. The file
+    logger's are: `publish_log_file_settings()` writes them
+    with `shmem->stderr_mutex` held, and `logfile.c` reads
+    them with it held.
   - **A LOCAL global moves into `tcb_t`** when a change
     touches it. Put new state in a block from the start.
 - **`src/tools/process_wide.txt`** lists the writable globals

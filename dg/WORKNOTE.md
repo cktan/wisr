@@ -12851,3 +12851,23 @@ them. They join the restart-only ones in `pcb_t`, and
   `extern` in `libpq.h` and its definition are gone. No code
   read it. None read the other six either, so nothing else
   changed.
+
+## Step 421: the file logger's settings are read from pcb
+
+`log_directory`, `log_filename`, `log_file_mode`,
+`log_rotation_age`, `log_rotation_size` and
+`log_truncate_on_rotation` change on a reload. Only `logfile.c`
+reads them, and it kept its own copy in the logfile state.
+
+- **In `pcb_t`**: `Log_directory`, `Log_filename`,
+  `Log_file_mode`, `Log_RotationAge`, `Log_RotationSize` and
+  `Log_truncate_on_rotation`. A comment on each names
+  `logfile.c`, where its variable was defined.
+- **Guarded**: they change after threads have started, so the
+  postmaster writes them with `shmem->stderr_mutex` held, in
+  `publish_log_file_settings()` (`guc_tables.c`), and
+  `logfile.c` reads them with it held. The logfile state keeps
+  only the file now written, its size and the rotation plan.
+- **The GUC variables are `static` in `guc_tables.c`**, and
+  `show_log_file_mode()` moved there from `variable.c`, as it
+  reads the session's own copy.

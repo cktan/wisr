@@ -403,6 +403,37 @@ static thread_local /*LOCAL*/ int block_size;
 static thread_local /*LOCAL*/ bool integer_datetimes;
 static thread_local /*LOCAL*/ bool assert_enabled = DEFAULT_ASSERT_ENABLED;
 static thread_local /*LOCAL*/ char *ssl_library;
+static thread_local /*LOCAL*/ int Log_RotationAge =
+    HOURS_PER_DAY * MINS_PER_HOUR;
+static thread_local /*LOCAL*/ int Log_RotationSize = 10 * 1024;
+static thread_local /*LOCAL*/ char *Log_directory = NULL;
+static thread_local /*LOCAL*/ char *Log_filename = NULL;
+static thread_local /*LOCAL*/ bool Log_truncate_on_rotation = false;
+static thread_local /*LOCAL*/ int Log_file_mode = S_IRUSR | S_IWUSR;
+
+/*
+ * Copy the file logger's settings into the process control block. The
+ * postmaster calls this, with shmem->stderr_mutex held, at start and on each
+ * reload; logfile.c reads the copy under the same mutex.
+ */
+void publish_log_file_settings(void) {
+  pcb_t *b = pcb_main();
+
+  b->Log_directory = Log_directory ? Log_directory : "";
+  b->Log_filename = Log_filename ? Log_filename : "";
+  b->Log_file_mode = Log_file_mode;
+  b->Log_RotationAge = Log_RotationAge;
+  b->Log_RotationSize = Log_RotationSize;
+  b->Log_truncate_on_rotation = Log_truncate_on_rotation;
+}
+
+/* GUC show_hook for log_file_mode: the mode in octal, as chmod takes it. */
+static const char *show_log_file_mode(void) {
+  static thread_local /*LOCAL*/ char buf[12];
+
+  snprintf(buf, sizeof(buf), "%04o", Log_file_mode);
+  return buf;
+}
 
 /* A malloc'd copy of a string setting, or NULL if it has no value. */
 static char *postmaster_setting_dup(const char *value) {

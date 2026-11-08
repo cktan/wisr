@@ -42,6 +42,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <string>
 
 #include "common/file_perm.h"
 #include "datatype/timestamp.h"
@@ -219,6 +220,20 @@ typedef struct pcb_t {
   int max_identifier_length = 0;  /* guc_tables.c */
   int block_size = 0;             /* guc_tables.c */
   char *ssl_library = nullptr;    /* be-secure.c */
+
+  /*
+   * -- the file logger's settings (PGC_SIGHUP) --
+   * They change on a reload, after threads have started, so they are
+   * guarded: the postmaster writes them with shmem->stderr_mutex held
+   * (publish_log_file_settings(), guc_tables.c), and logfile.c reads them
+   * with it held. The file in each comment is where the variable was defined.
+   */
+  std::string Log_directory;             /* logfile.c */
+  std::string Log_filename;              /* logfile.c, a strftime() pattern */
+  int Log_file_mode = 0600;              /* logfile.c */
+  int Log_RotationAge = 0;               /* logfile.c, minutes */
+  int Log_RotationSize = 0;              /* logfile.c, kB */
+  bool Log_truncate_on_rotation = false; /* logfile.c */
 
   /* -- how the process runs -- */
   /*

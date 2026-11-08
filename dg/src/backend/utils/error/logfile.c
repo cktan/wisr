@@ -42,28 +42,14 @@
 #include "utils/control_block.h"
 #include "utils/logfile.h"
 
-/* The settings, as guc_tables.c sets them: a thread's copy each. */
-thread_local /*LOCAL*/ int Log_RotationAge = HOURS_PER_DAY * MINS_PER_HOUR;
-thread_local /*LOCAL*/ int Log_RotationSize = 10 * 1024;
-thread_local /*LOCAL*/ char *Log_directory = NULL;
-thread_local /*LOCAL*/ char *Log_filename = NULL;
-thread_local /*LOCAL*/ bool Log_truncate_on_rotation = false;
-thread_local /*LOCAL*/ int Log_file_mode = S_IRUSR | S_IWUSR;
-
 /*
  * The process's log file, in shmem->logfile and guarded by
- * shmem->stderr_mutex.  It holds a copy of the settings, made by the
- * postmaster: a session thread has settings of its own, which it must not
+ * shmem->stderr_mutex.  Its settings are pcb's Log_* fields, guarded by the
+ * same mutex: a session thread has settings of its own, which it must not
  * use to rotate.
  */
 struct logfile_state_t {
   bool enabled = false;        /* logging_collector is on, and the file open */
-  std::string directory;       /* Log_directory */
-  std::string pattern;         /* Log_filename, a strftime() pattern */
-  int mode = 0600;             /* Log_file_mode */
-  int rotation_age = 0;        /* Log_RotationAge, minutes */
-  int rotation_size = 0;       /* Log_RotationSize, kB */
-  bool truncate = false;       /* Log_truncate_on_rotation */
   std::string name;            /* the file now written */
   off_t bytes = 0;             /* what the file holds */
   pg_time_t next_rotation = 0; /* when rotation_age next rotates */
@@ -106,10 +92,10 @@ static std::string logfile_getname(const logfile_state_t *st,
   char filename[MAXPGPATH];
   int len;
 
-  len = snprintf(filename, MAXPGPATH, "%s/", st->directory.c_str());
+  len = snprintf(filename, MAXPGPATH, "%s/", pcb->Log_directory.c_str());
   if (len >= MAXPGPATH)
     len = MAXPGPATH - 1;
-  pg_strftime(filename + len, MAXPGPATH - len, st->pattern.c_str(),
+  pg_strftime(filename + len, MAXPGPATH - len, pcb->Log_filename.c_str(),
               pg_localtime(&timestamp, pcb->log_timezone));
   return filename;
 }
@@ -124,7 +110,7 @@ static void set_next_rotation_time(logfile_state_t *st) {
   int rotinterval;
 
   /* nothing to do if time-based rotation is disabled */
-  if (st->rotation_age <= 0)
+  if (pcb->Log_RotationAge <= 0)
     return;
 
   /*
@@ -133,7 +119,7 @@ static void set_next_rotation_time(logfile_state_t *st) {
    * fairly loosely.  In this version we align to log_timezone rather than
    * GMT.
    */
-  rotinterval = st->rotation_age * SECS_PER_MINUTE; /* to seconds */
+  rotinterval = pcb->Log_RotationAge * SECS_PER_MINUTE; /* to seconds */
   now = (pg_time_t)time(NULL);
   tm = pg_localtime(&now, pcb->log_timezone);
   now += tm->tm_gmtoff;
@@ -141,19 +127,6 @@ static void set_next_rotation_time(logfile_state_t *st) {
   now += rotinterval;
   now -= tm->tm_gmtoff;
   st->next_rotation = now;
-}
-
-/*
- * Copy the settings of this thread, the postmaster's, into the state.  The
- * caller holds the mutex.
- */
-static void logfile_copy_settings(logfile_state_t *st) {
-  st->directory = Log_directory;
-  st->pattern = Log_filename;
-  st->mode = Log_file_mode;
-  st->rotation_age = Log_RotationAge;
-  st->rotation_size = Log_RotationSize;
-  st->truncate = Log_truncate_on_rotation;
 }
 
 /*
@@ -172,9 +145,9 @@ static void logfile_copy_settings(logfile_state_t *st) {
 static bool logfile_rotate_locked(logfile_state_t *st, bool time_based) {
   std::string filename =
       logfile_getname(st, time_based ? st->next_rotation : time(NULL));
-  bool truncate =
-      st->truncate && time_based && st->enabled && filename != st->name;
-  int mode = st->mode | S_IWUSR; /* the file must be ours to write */
+  bool truncate = pcb->Log_truncate_on_rotation && time_based && st->enabled &&
+                  filename != st->name;
+  int mode = pcb->Log_file_mode | S_IWUSR; /* the file must be ours to write */
   struct stat sb;
   int fd;
 
@@ -222,15 +195,15 @@ void logfile_write(const char *buf, int len) {
   ssize_t rc;
 
   std::lock_guard<std::mutex> guard(shmem->stderr_mutex);
-  if (st->enabled && !st->rotation_disabled && st->rotation_age > 0 &&
+  if (st->enabled && !st->rotation_disabled && pcb->Log_RotationAge > 0 &&
       time(NULL) >= st->next_rotation)
     logfile_rotate_locked(st, true);
   rc = write(STDERR_FILENO, buf, len);
   (void)rc;
   if (st->enabled) {
     st->bytes += len;
-    if (!st->rotation_disabled && st->rotation_size > 0 &&
-        st->bytes >= (off_t)st->rotation_size * 1024)
+    if (!st->rotation_disabled && pcb->Log_RotationSize > 0 &&
+        st->bytes >= (off_t)pcb->Log_RotationSize * 1024)
       logfile_rotate_locked(st, false);
   }
 }
@@ -248,27 +221,32 @@ void logfile_open(void) {
   if (!pcb->Logging_collector)
     return;
 
+  /* The settings the file is named and rotated by, under the mutex. */
+  {
+    std::lock_guard<std::mutex> guard(shmem->stderr_mutex);
+    publish_log_file_settings();
+  }
+
   /* The directory may exist; if not, the open below reports a failure. */
-  (void)MakePGDirectory(Log_directory);
+  (void)MakePGDirectory(pcb->Log_directory.c_str());
 
   /* Tell the old stderr where the log goes, as it is the last thing it gets. */
   ereport(LOG, (errmsg("redirecting log output to the log file"),
                 errhint("Future log output will appear in directory \"%s\".",
-                        Log_directory)));
+                        pcb->Log_directory.c_str())));
   {
     std::lock_guard<std::mutex> guard(shmem->stderr_mutex);
-    logfile_copy_settings(st);
     opened = logfile_rotate_locked(st, false);
   }
   if (!opened)
     ereport(FATAL, (errmsg("could not open a log file in directory \"%s\"",
-                           Log_directory)));
+                           pcb->Log_directory.c_str())));
 }
 
 /*
  * Apply the settings after the postmaster reloads its configuration.
  *
- * 1. Copy the new settings, and allow automatic rotation again.
+ * 1. Publish the new settings, and allow automatic rotation again.
  * 2. If the directory or the file name pattern changed, rotate to the new
  *    name, so that the log goes where the settings say.
  * 3. Otherwise plan the next time-based rotation again, as the age may have
@@ -282,11 +260,15 @@ void logfile_reload(void) {
     return;
 
   std::lock_guard<std::mutex> guard(shmem->stderr_mutex);
-  changed = st->directory != Log_directory || st->pattern != Log_filename;
-  logfile_copy_settings(st);
+  std::string old_directory = pcb->Log_directory;
+  std::string old_filename = pcb->Log_filename;
+
+  publish_log_file_settings();
+  changed =
+      old_directory != pcb->Log_directory || old_filename != pcb->Log_filename;
   st->rotation_disabled = false;
   if (changed) {
-    (void)MakePGDirectory(st->directory.c_str());
+    (void)MakePGDirectory(pcb->Log_directory.c_str());
     logfile_rotate_locked(st, false);
   } else
     set_next_rotation_time(st);
