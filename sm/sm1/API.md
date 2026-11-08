@@ -1802,11 +1802,11 @@ until it commits, and an abort leaves none.
   any other is sorted, in memory up to
   `options_t::load_sort_bytes`, then in runs on disk that the
   close merges.
-- **While a load is open its transaction cannot commit**, set
-  a savepoint or roll back to one, and after one it cannot
-  prepare: a load is whole. A rollback after the close to a
-  savepoint set before the load empties the store, which held
-  nothing else.
+- **While a load is open its transaction cannot commit**,
+  prepare, set a savepoint or roll back to one: a load is
+  whole. After the close it can prepare. A rollback after the
+  close to a savepoint set before the load empties the store,
+  which held nothing else.
 - **An abort of any kind ends an open load**, deletes its
   files and frees it.
 - **A load's files are temporary files**: the sorted files and

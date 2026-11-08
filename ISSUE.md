@@ -88,6 +88,16 @@ is never held with `alloc_mu`. A hook shows `alloc_mu` free
 during a renewal. No test at the mvcc, rel or dg layer can
 express it: each needs the hook inside a renewal.
 
+**Closed 2026-11-08:** a prepare after a bulk load was refused
+for a reason that no longer held: the PREPARED record lists
+explicit locks alone, not the keys written. A closed load now
+prepares; an open one still does not (`XCTMGR.md` §10.1). A test
+loads into two stores, as one batch and as files, prepares,
+restarts, shows a writer of a loaded key blocked, and commits or
+aborts by gid; `rel` prepares and aborts a load. The session's
+`loaded` flag, which only barred the prepare, is gone. digres
+refuses `PREPARE TRANSACTION`, so `dg` cannot reach it.
+
 **Closed:** `find_now()` at READ COMMITTED, with a row moved
 since the statement's snapshot, gives the conflict with both
 kinds of index. A test showed no failure. A move in the narrower
@@ -107,8 +117,6 @@ Smaller points:
   scans, and clear their sm1 cursors at commit and abort: then
   `tbl_scanend` frees only its wrapper, at the cost of a list
   update on every scan.
-- A prepare after a bulk load is refused, but the reason it had
-  no longer holds ([`XCTMGR.md`](sm/XCTMGR.md)).
 
 ## 2. Costs to profile
 

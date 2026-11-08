@@ -119,8 +119,6 @@ struct sm1::session_t {
   std::vector<page_copy_t> page_copies;
   /* The bulk load open in the transaction, if any (load.cc). */
   sm1::loader_t *loader = nullptr;
-  /* The transaction bulk loaded: it cannot prepare. */
-  bool loaded = false;
   /*
    * The stores it loaded while a savepoint was set, in load order
    * (BULKLOAD.md §3.5): a rollback to a mark set before a load

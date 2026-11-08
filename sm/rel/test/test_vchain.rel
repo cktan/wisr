@@ -323,8 +323,8 @@
 # 8.1 Load 10 rows into an empty table, one batch; set a savepoint,
 #     and commit: all 10 read back.
 # 8.2 Load them into another empty table and abort: it is empty.
-#     A transaction that loaded into a third cannot be prepared:
-#     ERR_INVALID.
+#     A transaction that loaded into a third prepares, and its
+#     abort by gid leaves the table empty.
 # 8.3 s1 begins at REPEATABLE READ; another session updates a
 #     loaded row and commits; s1 reads it as loaded, a new reader
 #     as updated.
@@ -356,8 +356,11 @@
 (commit)
 (begin :rc)
 (load small3 ten)
-(assert-err :err-invalid (prepare "load-gid"))
-(abort)
+(prepare "load-gid")
+(abort-prepared "load-gid")
+(begin :rc)
+(assert-count 0 (scan small3))
+(commit)
 
 (session-open c2 "vdb")
 (session-use c2)

@@ -454,7 +454,6 @@ int sm1::load_open(sm1::session_t *s, uint64_t storeid, sm1::loader_t *&out) {
   l->dir = s->db->tmp->GetName() + "/load/" + std::to_string(s->db->dbid) +
            "-" + std::to_string(s->xid) + "-" + std::to_string(storeid);
   s->loader = l;
-  s->loaded = true;
   // A rollback to a mark set now undoes the load by emptying the
   // store, which holds nothing else: it is empty, and its caller
   // keeps every other transaction out (BULKLOAD.md §3.5).

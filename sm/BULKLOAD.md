@@ -1238,7 +1238,9 @@ narrowed, with these differences.
 - **While a load is open**, the transaction cannot commit, and
   its other writes to that store are refused: they could not
   be checked against keys still on their way.
-- **A prepare is refused** after a load, as with one open
+- **A prepare is refused** with a load open, and allowed after
+  its close: the record lists explicit locks alone, so the
+  load's keys are no reason
   ([`XCTMGR.md`](XCTMGR.md#101-prepare) §10.1).
 - **An abort after the close** leaves a table that was
   committed empty with the load's versions in it, dead, for

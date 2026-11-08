@@ -1585,9 +1585,9 @@ int chain_scan(session_t* session, uint64_t storeid,
  * other is sorted, in memory up to options_t::load_sort_bytes and
  * then in runs on disk that the close merges.
  *
- * While a load is open its transaction may not commit, set a
- * savepoint or roll back to one, and after one it may not
- * prepare: a load is whole. A rollback after the close to a
+ * While a load is open its transaction may not commit, prepare,
+ * set a savepoint or roll back to one: a load is whole. After
+ * the close it may prepare. A rollback after the close to a
  * savepoint set before the load empties the store, which held
  * nothing else. An abort, of any kind, ends an open load and
  * frees it; the caller must not use it again.

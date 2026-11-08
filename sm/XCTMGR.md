@@ -1336,10 +1336,11 @@ doubt until a coordinator resolves it.
 2. Refuse a transaction that made, dropped or wrote a temporary
    store (`SM_ERR_INVALID`). A prepared transaction outlives its
    session, and those stores would not.
-3. Refuse a transaction with a bulk load open or done
-   (`SM_ERR_INVALID`). The record names explicit locks alone, so
-   a load's keys are no longer a reason. No other reason is
-   recorded, and the refusal stands.
+3. Refuse a transaction with a bulk load open
+   (`SM_ERR_INVALID`). A closed load does not bar a prepare: the
+   record names explicit locks alone, so a load's keys are no
+   reason. A prepared load blocks writers of its keys, after a
+   restart too, and commits or aborts by gid.
 4. Reserve the gid with a null entry in `db_t::prepared`. A gid
    in use among unresolved transactions fails with
    `SM_ERR_EXISTS`.

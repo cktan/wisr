@@ -486,13 +486,12 @@ TEST_CASE("a load open into a store refuses its chained writes and its drop") {
   REQUIRE(sm1::abort(f.s) == 0);
 }
 
-TEST_CASE("a transaction cannot commit with a load open, nor prepare after "
-          "one") {
+TEST_CASE("a transaction cannot commit or prepare with a load open") {
   // Verify how a load ties its transaction's hands.
   // 1. With a load open, commit and prepare are SM_ERR_INVALID, and
   //    the transaction goes on.
-  // 2. After the close, prepare is still SM_ERR_INVALID, and commit
-  //    succeeds.
+  // 2. After the close, prepare succeeds and the session's commit
+  //    resolves it (../XCTMGR.md §10.1).
   // 3. A savepoint set before a load opened is rolled back to, and
   //    the load is gone, after the commit too.
   load_fixture_t f;
@@ -504,8 +503,7 @@ TEST_CASE("a transaction cannot commit with a load open, nor prepare after "
   CHECK(sm1::prepare(f.s, "g") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   REQUIRE_MESSAGE(sm1::load_close(l) == 0, sm1::errmsg());
-  CHECK(sm1::prepare(f.s, "g") == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE_MESSAGE(sm1::prepare(f.s, "g") == 0, sm1::errmsg());
   commit_xct(f.s);
 
   begin_xct(f.s);

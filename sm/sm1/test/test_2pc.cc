@@ -38,9 +38,9 @@ uint64_t g_store = 0;
 /* A database "db" with one store holding "a" -> "0", "b" -> "0". */
 class tpc_fixture_t {
 public:
-  /* Create "db", the store, and the rows. */
-  tpc_fixture_t() {
-    REQUIRE(sm1::mkdb(m_home.env(), "db", nullptr) == 0);
+  /* Create "db" with opt, the store, and the rows. */
+  explicit tpc_fixture_t(const sm1::options_t *opt = nullptr) : m_opt(opt) {
+    REQUIRE(sm1::mkdb(m_home.env(), "db", opt) == 0);
     sm1::session_t *s = open();
     REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
     g_store = mkstore(s);
@@ -52,7 +52,7 @@ public:
 
   /* A new session on "db". */
   sm1::session_t *open() const {
-    sm1::session_t *s = opendb(m_home.env(), "db", nullptr);
+    sm1::session_t *s = opendb(m_home.env(), "db", m_opt);
     REQUIRE_MESSAGE(s, sm1::errmsg());
     return s;
   }
@@ -68,6 +68,7 @@ public:
 
 private:
   home_t m_home;
+  const sm1::options_t *m_opt;
 };
 
 /* Set key in store 1 to val; the result of sm1::update. */
@@ -90,6 +91,14 @@ std::vector<std::pair<std::string, long long>> listed(sm1::session_t *s) {
 std::string read_now(sm1::session_t *s, const std::string &key) {
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   std::string v = get(s, g_store, key);
+  REQUIRE(sm1::commit(s) == 0);
+  return v;
+}
+
+/* The value of key in store at a fresh RR snapshot. */
+std::string read_in(sm1::session_t *s, uint64_t store, const std::string &key) {
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  std::string v = get(s, store, key);
   REQUIRE(sm1::commit(s) == 0);
   return v;
 }
@@ -744,6 +753,89 @@ TEST_CASE(
   CHECK(read_now(w, "a") == "1");
   CHECK(read_now(w, "b") == "0");
   sm1::closedb(w);
+}
+
+/* Load keys "k0" to "k<n-1>" into an empty store, and close the load. */
+void load_keys(sm1::session_t *s, uint64_t store, int n) {
+  sm1::loader_t *l = nullptr;
+  REQUIRE_MESSAGE(sm1::load_open(s, store, l) == 0, sm1::errmsg());
+  size_t stream = 0;
+  REQUIRE(sm1::load_stream(l, true, stream) == 0);
+  // Zero-padded, so the keys are in order.
+  for (int i = 0; i < n; i++) {
+    char key[16];
+    snprintf(key, sizeof(key), "k%04d", i);
+    REQUIRE_MESSAGE(sm1::load_put(l, stream, key, "v") == 0, sm1::errmsg());
+  }
+  REQUIRE_MESSAGE(sm1::load_close(l) == 0, sm1::errmsg());
+}
+
+TEST_CASE("a transaction that bulk loaded prepares, and resolves after a "
+          "restart") {
+  // Verify a closed bulk load no longer bars a prepare: the record
+  // names explicit locks alone, so the load's keys are not a reason
+  // (../XCTMGR.md §10.1). Each of the two ways a load is written,
+  // as one batch and as files, commits and aborts.
+  // 1. Make an empty store and commit it. Load into it and into a
+  //    store made in the same transaction, then prepare.
+  // 2. Another session sees the old store empty.
+  // 3. After a restart the transaction is listed, and a writer of a
+  //    loaded key blocks.
+  // 4. If the transaction commits by gid, the writer fails and
+  //    every key of both stores reads back; if it aborts, the
+  //    writer goes ahead and the old store holds its row alone.
+  for (bool as_files : {false, true}) {
+    for (bool commit_it : {true, false}) {
+      sm1::options_t opt;
+      opt.load_small_bytes = as_files ? 1 : opt.load_small_bytes;
+      tpc_fixture_t f(&opt);
+      sm1::session_t *s = f.open();
+      REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+      uint64_t old_store = mkstore(s);
+      REQUIRE(sm1::commit(s) == 0);
+      REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+      uint64_t new_store = mkstore(s);
+      load_keys(s, old_store, 50);
+      load_keys(s, new_store, 50);
+      REQUIRE_MESSAGE(sm1::prepare(s, "gl") == 0, sm1::errmsg());
+
+      sm1::session_t *r = f.open();
+      CHECK(read_in(r, old_store, "k0007") == "<none>");
+      sm1::closedb(r);
+
+      f.restart();
+      s = f.open();
+      REQUIRE(listed(s).size() == 1);
+      sm1::session_t *u = f.open();
+      REQUIRE(sm1::begin(u, sm1::xctlevel_t::repeatable_read) == 0);
+      std::atomic<bool> returned{false};
+      int rc = 0;
+      std::thread tu([&] {
+        rc = sm1::insert(u, old_store, "k0007", "u");
+        returned = true;
+      });
+      std::this_thread::sleep_for(std::chrono::milliseconds(150));
+      CHECK_FALSE(returned);
+      if (commit_it) {
+        REQUIRE_MESSAGE(sm1::commit_prepared(s, "gl") == 0, sm1::errmsg());
+      } else {
+        REQUIRE_MESSAGE(sm1::abort_prepared(s, "gl") == 0, sm1::errmsg());
+      }
+      tu.join();
+      CHECK((rc == 0) == !commit_it);
+      CHECK(listed(s).empty());
+      if (!commit_it) {
+        REQUIRE(sm1::commit(u) == 0);
+      }
+      sm1::closedb(u);
+      CHECK(read_in(s, old_store, "k0007") == (commit_it ? "v" : "u"));
+      CHECK(read_in(s, old_store, "k0049") == (commit_it ? "v" : "<none>"));
+      if (commit_it) {
+        CHECK(read_in(s, new_store, "k0007") == "v");
+      }
+      sm1::closedb(s);
+    }
+  }
 }
 
 TEST_CASE("read-only prepares survive a restart and resolve") {

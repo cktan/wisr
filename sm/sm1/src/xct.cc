@@ -218,7 +218,6 @@ void reset(sm1::session_t *s) {
   s->dropped.clear();
   s->dropped_seqs.clear();
   s->temp_touched = false;
-  s->loaded = false;
   s->loaded_stores.clear();
   s->temp_seqs_made.clear();
   s->temp_seqs_dropped.clear();
@@ -1137,11 +1136,12 @@ int prepare(sm1::session_t *s, const char *gid) {
                      "a transaction that made, dropped or wrote a "
                      "temporary store cannot be prepared");
   }
-  // A load bars a prepare, though the record lists explicit locks
-  // alone, not the keys written (../XCTMGR.md §10.1).
-  if (s->loader || s->loaded) {
+  // An open load bars a prepare: its keys are not in the store yet.
+  // A closed one does not; the record lists explicit locks alone,
+  // not the keys written (../XCTMGR.md §10.1).
+  if (s->loader) {
     return set_error(sm1::SM_ERR_INVALID,
-                     "a transaction that bulk loaded cannot be prepared");
+                     "a transaction with a bulk load open cannot be prepared");
   }
   // Own the gid before reserving it: releasing the reservation,
   // and everything after the record is written, must not
