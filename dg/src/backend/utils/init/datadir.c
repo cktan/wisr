@@ -34,6 +34,7 @@
 #include "access/smstore.h"
 #include "access/transam.h"
 #include "miscadmin.h"
+#include "pgtime.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
 #include "utils/control_block.h"
@@ -77,11 +78,12 @@ static void close_sm_session(int code, Datum arg) {
 
 /*
  * Write one message of sm to the log, in the form of log_line_prefix's
- * default, "%m [%p] ": the time, and the id of the calling thread. In a
- * session's call that id is the session's %p, so the message can be matched
- * to the session's other lines; in sm's own thread it is that thread's. sm
- * calls this on threads that have no memory context, error stack or GUC
- * values, so it uses none: not palloc() or ereport().
+ * default, "%m [%p] ": the time, in the log timezone, and the id of the
+ * calling thread. In a session's call that id is the session's %p, so the
+ * message can be matched to the session's other lines; in sm's own thread
+ * it is that thread's. sm calls this on threads that have no memory context,
+ * error stack or GUC values, so it uses none: not palloc() or ereport().
+ * initdb has no log timezone, and the system's zone serves there.
  */
 static void sm_log(void *arg, sm_loglevel_t level,
                    const char *msg) noexcept {
@@ -90,15 +92,25 @@ static void sm_log(void *arg, sm_loglevel_t level,
                                              : "LOG";
   char line[1024];
   char stamp[48];
+  char zone[16];
   struct timeval tv;
-  struct tm tm;
 
   gettimeofday(&tv, NULL);
-  localtime_r(&tv.tv_sec, &tm);
-  strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tm);
-  int len =
-      snprintf(line, sizeof(line), "%s.%03d %s [%d] %s:  sm: %s\n", stamp,
-               (int)(tv.tv_usec / 1000), tm.tm_zone, (int)gettid(), label, msg);
+  if (NULL != pcb->log_timezone) {
+    pg_time_t t = (pg_time_t)tv.tv_sec;
+    struct pg_tm *tm = pg_localtime(&t, pcb->log_timezone);
+
+    pg_strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", tm);
+    pg_strftime(zone, sizeof(zone), "%Z", tm);
+  } else {
+    struct tm tm;
+
+    localtime_r(&tv.tv_sec, &tm);
+    strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tm);
+    strftime(zone, sizeof(zone), "%Z", &tm);
+  }
+  int len = snprintf(line, sizeof(line), "%s.%03d %s [%d] %s:  sm: %s\n", stamp,
+                     (int)(tv.tv_usec / 1000), zone, (int)gettid(), label, msg);
   if (len >= (int)sizeof(line)) {
     /* Cut a long message, and keep the newline. */
     len = sizeof(line) - 1;

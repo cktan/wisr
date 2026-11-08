@@ -25,11 +25,12 @@
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "postmaster/postmaster.h"
-#include "utils/logfile.h"
 #include "utils/acl.h"
+#include "utils/control_block.h"
 #include "utils/datetime.h"
 #include "utils/fmgrprotos.h"
 #include "utils/guc_hooks.h"
+#include "utils/logfile.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
@@ -342,6 +343,74 @@ const char *show_timezone(void) {
 
   /* Always show the zone's canonical name */
   tzn = pg_get_timezone_name(session_timezone);
+
+  if (tzn != NULL)
+    return tzn;
+
+  return "unknown";
+}
+
+/*
+ * LOG_TIMEZONE
+ *
+ * For log_timezone, we don't support the interval-based methods of setting a
+ * zone, which are only there for SQL spec compliance not because they're
+ * actually useful.
+ */
+
+/*
+ * check_log_timezone: GUC check_hook for log_timezone
+ */
+bool check_log_timezone(char **newval, void **extra, GucSource source) {
+  pg_tz *new_tz;
+
+  /*
+   * Assume it is a timezone name, and try to load it.
+   */
+  new_tz = pg_tzset(*newval);
+
+  if (!new_tz) {
+    /* Doesn't seem to be any great value in errdetail here */
+    return false;
+  }
+
+  if (!pg_tz_acceptable(new_tz)) {
+    GUC_check_errmsg("time zone \"%s\" appears to use leap seconds", *newval);
+    GUC_check_errdetail("PostgreSQL does not support leap seconds.");
+    return false;
+  }
+
+  /*
+   * Pass back data for assign_log_timezone to use
+   */
+  *extra = guc_malloc(LOG, sizeof(pg_tz *));
+  if (!*extra)
+    return false;
+  *((pg_tz **)*extra) = new_tz;
+
+  return true;
+}
+
+/*
+ * assign_log_timezone: GUC assign_hook for log_timezone
+ *
+ * The zone is the process's, in the process control block, which only the
+ * postmaster's thread writes. log_timezone changes with a restart, so a
+ * session thread meets only the value the postmaster has already set.
+ */
+void assign_log_timezone(const char *newval, void *extra) {
+  if (NULL != postmaster_tcb)
+    pcb_main()->log_timezone = *((pg_tz **)extra);
+}
+
+/*
+ * show_log_timezone: GUC show_hook for log_timezone
+ */
+const char *show_log_timezone(void) {
+  const char *tzn;
+
+  /* Always show the zone's canonical name */
+  tzn = pg_get_timezone_name(pcb->log_timezone);
 
   if (tzn != NULL)
     return tzn;

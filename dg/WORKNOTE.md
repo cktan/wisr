@@ -12757,8 +12757,13 @@ files, without a process, a thread or a pipe.
   postmaster and by initdb (`datadir_set_sm_log()`), before
   `sm_attach()`. A line reads `time [thread id] LEVEL:  sm: text`,
   the form of the default `log_line_prefix`. In a session's
-  call the id is the session's `%p`. It uses the system's time
-  zone, not `log_timezone`, which sm's threads cannot read.
+  call the id is the session's `%p`. The time is in
+  `pcb->log_timezone`, which any thread may read; initdb has
+  none, and uses the system's zone.
+- **`log_timezone` is a setting again**, `PGC_POSTMASTER`: it
+  changes with a restart. Its assign hook writes
+  `pcb->log_timezone` on the postmaster's thread only, and a
+  session thread, which meets the same value, writes nothing.
 - **Test**: `test/server.sh` runs a server with
   `logging_collector` on and checks the files, the thread id,
   the mode, rotation by size, `pg_rotate_logfile()` and a new

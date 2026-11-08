@@ -5959,12 +5959,14 @@ wait $server || fail "smart shutdown: status"
 
 # Verify that with logging_collector on the log is in files that rotate, and
 # that sm's messages carry a thread id (WORKNOTE.md step 418).
-# 1. Start the server with logging_collector on, a 64 kB rotation size, and
-#    a file name pattern with the second in it.
+# 1. Start the server with logging_collector on, a 64 kB rotation size, the
+#    log timezone Etc/GMT-9 (+09), and a file name pattern with the second
+#    in it.
 # 2. The old stderr says where the log went, and holds no server message;
 #    the file holds sm's recovery messages, each with a thread id, and the
 #    server's ready message.
-# 3. The file is readable by its owner alone.
+# 3. The file is readable by its owner alone; the server's lines and sm's
+#    carry the log timezone, which SHOW gives.
 # 4. Log more than 64 kB, and a second file appears.
 # 5. pg_rotate_logfile() in a later second makes a third file.
 # 6. Change log_filename in postgresql.conf and reload: the next file has
@@ -5973,7 +5975,8 @@ wait $server || fail "smart shutdown: status"
 lfdir=$work/data/log
 echo "log_filename = 'lf-%Y%m%d_%H%M%S.log'" > "$work/data/postgresql.conf"
 $digres -D "$work/data" -k "$work" -p "$port" -c logging_collector=on \
-  -c log_rotation_size=64 > "$work/logfile.err" 2>&1 &
+  -c log_rotation_size=64 -c log_timezone=Etc/GMT-9 \
+  > "$work/logfile.err" 2>&1 &
 server=$!
 for _ in $(seq 300); do
   cat "$lfdir"/lf-*.log 2> /dev/null | grep -q "ready to accept connections" &&
@@ -5990,6 +5993,12 @@ grep -Eq '\[[0-9]+\] LOG:  sm: recovering database' "$work/logfile.all" ||
   fail "logging_collector: sm's message has a thread id"
 grep -q "ready to accept connections" "$work/logfile.all" ||
   fail "logging_collector: the file holds the server's messages"
+grep -Eq '^[-0-9: .]+ \+09 \[[0-9]+\] LOG:  sm: recovering' \
+  "$work/logfile.all" || fail "log_timezone: sm's lines"
+grep -Eq '^[-0-9: .]+ \+09 \[[0-9]+\] LOG:  starting ' "$work/logfile.all" ||
+  fail "log_timezone: the server's lines"
+[ "$(local_psql -c 'show log_timezone')" = Etc/GMT-9 ] ||
+  fail "log_timezone: SHOW"
 [ "$(stat -c %a "$lfdir"/lf-*.log | sort -u)" = 600 ] ||
   fail "logging_collector: log_file_mode"
 # A new second, so that the next file's name differs from the first's.
