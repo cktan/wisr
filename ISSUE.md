@@ -98,6 +98,15 @@ aborts by gid; `rel` prepares and aborts a load. The session's
 `loaded` flag, which only barred the prepare, is gone. digres
 refuses `PREPARE TRANSACTION`, so `dg` cannot reach it.
 
+**Closed 2026-11-08:** a prepared `sm1::rmseq` leaked its lease
+row in `CF:meta`: the prepared transaction did not carry its
+dropped seqids, so its commit never deleted the leases. It
+carries them now, and the PREPARED record lists them after
+`dropped`, only if there are any, so an older record reads as
+none (`sm/DBMGR.md` §6.5). A test for each case, in one process
+and across a restart. Only sm1 can reach it: sm3 does not prepare
+DDL, and `rel` and `dg` cannot read `CF:meta`.
+
 **Closed:** `find_now()` at READ COMMITTED, with a row moved
 since the statement's snapshot, gives the conflict with both
 kinds of index. A test showed no failure. A move in the narrower
@@ -105,8 +114,6 @@ gap between its lookup and its read was not forced.
 
 Smaller points:
 
-- A prepared `sm1::rmseq` leaks its lease row in `CF:meta`. This
-  is harmless, as a seqid is not reused.
 - A cursor ended after its transaction is a double free. The end
   of a transaction frees sm1's cursor, and `sm_rel_scanend` and
   `sm_idx_scanend` then use it: valgrind shows it, and the

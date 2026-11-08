@@ -1584,6 +1584,7 @@ locks         4-byte count, then 20 bytes each: type byte, the two
               words of the lock id, mode byte, 2-byte kind
 created       4-byte count, then 8-byte storeids
 dropped       4-byte count, then 8-byte storeids
+dropped seqids  4-byte count, then 8-byte seqids; only if any
 ```
 
 - The record is one value, however many locks it lists.
@@ -1593,6 +1594,9 @@ dropped       4-byte count, then 8-byte storeids
   watermark.
 - `created` lets recovery keep those column families.
 - `dropped` lets a commit after a restart queue their removal.
+- The dropped seqids let a commit after a restart delete those
+  Sequences' leases. A record with none ends after `dropped`,
+  as older records do.
 
 ### 11.4 Trade-offs
 

@@ -348,6 +348,44 @@ TEST_CASE("dropping a sequence deletes its lease from CF:meta") {
   CHECK(meta_seq_keys(s) == 0);
 }
 
+TEST_CASE("a prepared drop of a sequence deletes its lease when it commits") {
+  // Verify the commit-time cleanup of a dropped sequence when the
+  // drop was prepared first.
+  // 1. Draw a value, which persists a lease keyed by seqid.
+  // 2. Drop the sequence and prepare: the lease stays.
+  // 3. Commit by gid: the lease is gone.
+  seq_fixture_t f;
+  sm1::session_t *s = f.s();
+  commit_mkseq(s, SEQ, 1000, 1);
+  CHECK(next(s) == 1000);
+  CHECK(meta_seq_keys(s) == 1);
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::rmseq(s, SEQ) == 0);
+  REQUIRE_MESSAGE(sm1::prepare(s, "g") == 0, sm1::errmsg());
+  CHECK(meta_seq_keys(s) == 1);
+  REQUIRE_MESSAGE(sm1::commit_prepared(s, "g") == 0, sm1::errmsg());
+  CHECK(meta_seq_keys(s) == 0);
+}
+
+TEST_CASE("a prepared drop of a sequence deletes its lease after a restart") {
+  // Verify the same when the process restarts between the prepare
+  // and the commit.
+  // 1. Draw a value, drop the sequence, and prepare.
+  // 2. Restart, and commit by gid: the lease is gone.
+  seq_fixture_t f;
+  sm1::session_t *s = f.s();
+  commit_mkseq(s, SEQ, 1000, 1);
+  CHECK(next(s) == 1000);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::rmseq(s, SEQ) == 0);
+  REQUIRE_MESSAGE(sm1::prepare(s, "g") == 0, sm1::errmsg());
+  f.reopen();
+  s = f.s();
+  REQUIRE_MESSAGE(sm1::commit_prepared(s, "g") == 0, sm1::errmsg());
+  CHECK(meta_seq_keys(s) == 0);
+}
+
 TEST_CASE("a sequence hands out its last value, then fails") {
   // Verify the end of the range, where a step would wrap.
   // 1. A sequence starting two steps below UINT64_MAX hands

@@ -1037,6 +1037,14 @@ std::string encode_prepared(const sm1::session_t *t, const std::string &gid,
       sm0::put_be64(v, storeid);
     }
   }
+  // The seqids dropped, counted: only if there are any, so a record
+  // without them is as it was, and an older one reads as none.
+  if (!t->dropped_seqs.empty()) {
+    sm0::put_be32(v, static_cast<uint32_t>(t->dropped_seqs.size()));
+    for (uint64_t seqid : t->dropped_seqs) {
+      sm0::put_be64(v, seqid);
+    }
+  }
   return v;
 }
 
@@ -1063,6 +1071,7 @@ std::unique_ptr<sm1::session_t> make_prepared(sm1::session_t *s,
   g->seq_hwm = s->seq_hwm;
   g->created = s->created;
   g->dropped = s->dropped;
+  g->dropped_seqs = s->dropped_seqs;
   g->begin_seq = s->begin_seq;
   // Name it by gid.
   g->prepared_gid = gid;
@@ -1649,6 +1658,16 @@ bool xct_decode_prepared(db_t *db, uint64_t xid, rocksdb::Slice val,
     // Take each storeid.
     for (uint32_t i = 0; i < count; i++) {
       stores->push_back(sm0::get_be64(p));
+      p += 8;
+    }
+  }
+  // The seqids dropped, if the record has them: older ones end here.
+  if (p < end) {
+    if (!take32(&count) || (size_t)(end - p) < (size_t)count * 8) {
+      return false;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+      g->dropped_seqs.push_back(sm0::get_be64(p));
       p += 8;
     }
   }

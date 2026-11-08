@@ -474,6 +474,7 @@ value = state (1B: PREPARED 1, COMMITTED 2, ABORTED 3)
       | locks (be32 count, then 20B each)
       | created (be32 count, then be64 storeids)
       | dropped (be32 count, then be64 storeids)
+      | dropped seqids (be32 count, then be64 seqids), only if any
 ```
 
 Only a writing transaction gets a record, and a read-only one
@@ -492,6 +493,9 @@ recovery:
   CFs.
 - `dropped` lists the stores it dropped, so a commit after a
   restart still queues their CFs for removal.
+- The dropped seqids let a commit after a restart delete the
+  leases of the Sequences it dropped. The list is there only if
+  a Sequence was dropped; a record without it reads as none.
 - `prepared_at` is the wall-clock time of `sm1::prepare`,
   reported by `sm1::list_prepared`. It must be durable, because
   the listing is mostly needed after a restart.
