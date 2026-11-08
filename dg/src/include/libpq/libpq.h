@@ -114,7 +114,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT char *SSLCipherList;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *SSLECDHCurve;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool SSLPreferServerCiphers;
 #ifdef USE_SSL
-extern PGDLLIMPORT bool ssl_loaded_verify_locations;
 #endif
 
 /*

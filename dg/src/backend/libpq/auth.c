@@ -428,6 +428,16 @@ void ClientAuthentication(Port *port) {
   /* The authentication method to use: fixed by how the client arrived. */
   hba_getauthmethod(port);
 
+  /*
+   * With ssl on, a client over TCP must use it, before any password crosses
+   * the network (../aa/ROLE.md section 8); the local socket never does.
+   */
+  if (ctHost == port->hba->conntype && !port->ssl_in_use && be_tls_loaded())
+    ereport(FATAL, (errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+                    errmsg("a connection over TCP must use SSL"),
+                    errdetail("ssl is on, so every client over TCP uses it."),
+                    errhint("Connect with sslmode=require.")));
+
   CHECK_FOR_INTERRUPTS();
 
   /*

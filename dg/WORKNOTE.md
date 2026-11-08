@@ -12871,3 +12871,41 @@ reads them, and it kept its own copy in the logfile state.
 - **The GUC variables are `static` in `guc_tables.c`**, and
   `show_log_file_mode()` moved there from `variable.c`, as it
   reads the session's own copy.
+
+## Step 422: TLS
+
+[`../aa/ROLE.md`](../aa/ROLE.md#8-decisions) §8 question 4: TLS by
+one setting; when `ssl` is on, every client over TCP must use it,
+and the local socket never does.
+
+- **The build always links OpenSSL**: `USE_OPENSSL` and the five
+  OpenSSL 3.0 features PostgreSQL asks of `configure`, in
+  `src/include/pg_config.h`; `be-secure-openssl.c` compiled;
+  `-lssl -lcrypto`. The hashes stay PostgreSQL's own
+  (`src/common/cryptohash.c`); `pg_strong_random()` takes
+  OpenSSL's `RAND_bytes()`. C++ asks a few casts of PostgreSQL's
+  code.
+- **One context for the process** (`be-secure-openssl.c`): every
+  session is a thread, so the context, the BIO method, and
+  whether the CA store was loaded are in `shmem->tls`, under
+  `shmem->tls_mutex`. The main thread makes the context and
+  replaces it on a reload; a session calls `SSL_new()` under the
+  mutex, which takes a reference, so a replaced context goes
+  with its last connection. The info and ALPN callbacks, which
+  PostgreSQL set on the context at each connection, are set once
+  as it is made: they hold no connection's state.
+  `cert_errdetail` and the error message buffer are a session's
+  own. `LoadedSSL` is gone: `be_tls_loaded()` asks the context.
+- **TCP without TLS is refused** with `ssl` on
+  (`ClientAuthentication()`), before any password crosses the
+  network: `a connection over TCP must use SSL`.
+- **Tests**: `test/tls.sh`, sourced by `server.sh`, against a
+  server of its own with two certificates a CA it makes signs:
+  TLS, `verify-full`, TCP without TLS refused, the local socket,
+  channel binding, a password set in cleartext over TLS, 16
+  sessions over TLS while the configuration is reloaded, a held
+  session across a reload to the second certificate, a bad
+  reload, and a missing key file. Direct TLS is tested by a
+  client of PostgreSQL 17 or later with TLS; PostgreSQL 18's is
+  now built `--with-ssl=openssl` (`../README.md`). Under the
+  thread sanitizer, `tls.sh` reports no race.

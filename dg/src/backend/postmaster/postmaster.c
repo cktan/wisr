@@ -312,11 +312,6 @@ void postmaster_state_free_t::operator()(postmaster_state_t *state) const {
   delete state;
 }
 
-#ifdef USE_SSL
-/* Set when and if SSL has been initialized properly */
-bool LoadedSSL = false;
-#endif
-
 #ifdef USE_BONJOUR
 static DNSServiceRef bonjour_sdref = NULL;
 #endif
@@ -778,10 +773,8 @@ void PostmasterMain(int argc, char *argv[]) {
    * Initialize SSL library, if specified.
    */
 #ifdef USE_SSL
-  if (EnableSSL) {
+  if (EnableSSL)
     (void)secure_initialize(true);
-    LoadedSSL = true;
-  }
 #endif
 
   /*
@@ -1459,14 +1452,10 @@ static void process_pm_reload_request(void) {
 #ifdef USE_SSL
     /* Reload SSL configuration as well */
     if (EnableSSL) {
-      if (secure_initialize(false) == 0)
-        LoadedSSL = true;
-      else
+      if (secure_initialize(false) != 0)
         ereport(LOG, (errmsg("SSL configuration was not reloaded")));
-    } else {
+    } else
       secure_destroy();
-      LoadedSSL = false;
-    }
 #endif
   }
 }

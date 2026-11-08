@@ -292,6 +292,13 @@ extern int be_tls_init(bool isServerStart);
 extern void be_tls_destroy(void);
 
 /*
+ * Whether the process's context is loaded, so a session may make a
+ * connection from it; and whether its CA store was (be-secure-openssl.c).
+ */
+extern bool be_tls_loaded(void);
+extern bool be_tls_loaded_verify_locations(void);
+
+/*
  * Attempt to negotiate SSL connection.
  */
 extern int be_tls_open_server(Port *port);
@@ -334,7 +341,8 @@ extern char *be_tls_get_certificate_hash(Port *port, size_t *len);
 /* init hook for SSL, the default sets the password callback if appropriate */
 #ifdef USE_OPENSSL
 typedef void (*openssl_tls_init_hook_typ)(SSL_CTX *context, bool isServerStart);
-extern PGDLLIMPORT openssl_tls_init_hook_typ openssl_tls_init_hook;
+extern thread_local /*LOCAL*/ PGDLLIMPORT openssl_tls_init_hook_typ
+    openssl_tls_init_hook;
 #endif
 
 #endif /* USE_SSL */

@@ -50,8 +50,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_hostname;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_crash;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_kill;
 
-extern PGDLLIMPORT bool LoadedSSL;
-
 pg_noreturn extern void PostmasterMain(int argc, char *argv[]);
 extern void InitProcessGlobals(void);
 

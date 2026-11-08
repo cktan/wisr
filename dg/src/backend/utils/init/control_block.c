@@ -42,6 +42,7 @@ void pcb_init(void) {
   pcb = block;
   shmem = new shmem_t();
   shmem->logfile.reset(logfile_state_new());
+  shmem->tls.reset(tls_state_new());
 }
 
 /* Make this thread's control block, as the thread starts. */

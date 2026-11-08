@@ -281,8 +281,14 @@ regression files are taken out for it (`test/pgregress`,
   [`../aa/ROLE.md`](../aa/ROLE.md#5-how-a-client-gets-in) §5's
   checks, peer or a password
   on the socket, a password over TCP (steps 320, 327).
-- **TLS, GSSAPI** — refused: their build options are off and
-  their files not compiled ([`README.md`](README.md)).
+- **GSSAPI** — refused: its build option is off and its files
+  not compiled ([`README.md`](README.md)).
+- **TLS** — differs: digres always links OpenSSL, and with
+  `ssl` on every client over TCP must use it, which PostgreSQL
+  asks of a `hostssl` line; the local socket never does
+  ([`../aa/ROLE.md`](../aa/ROLE.md#8-decisions) §8, step 422).
+  No client certificate is asked for, as no `pg_hba.conf` says
+  `clientcert`.
 - **Roles** — differs: roles, memberships, owners and ACLs are
   `pg_global`'s ([`../aa/ROLE.md`](../aa/ROLE.md), steps 318 to
   324), and role

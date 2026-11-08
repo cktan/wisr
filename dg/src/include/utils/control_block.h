@@ -74,6 +74,12 @@ struct sequence_state_free_t {
 };
 extern sequence_state_t *sequence_state_new(void);
 
+/* be-secure-openssl.c: the TLS context connections are made from. */
+struct tls_state_t;
+struct tls_state_free_t {
+  void operator()(tls_state_t *state) const;
+};
+extern tls_state_t *tls_state_new(void);
 /* logfile.c: the log file written, the process's. */
 struct logfile_state_t;
 struct logfile_free_t {
@@ -289,6 +295,14 @@ typedef struct shmem_t {
   std::mutex stderr_mutex;
   /* logfile.c: the log file now written; guarded by stderr_mutex */
   std::unique_ptr<logfile_state_t, logfile_free_t> logfile;
+
+  /*
+   * be-secure-openssl.c: the TLS context every connection is made from,
+   * which the main thread makes and replaces on a reload; guarded by
+   * tls_mutex
+   */
+  std::mutex tls_mutex;
+  std::unique_ptr<tls_state_t, tls_state_free_t> tls;
 
   /* injection_point.c: one attach or detach at a time */
   std::mutex injection_point_mutex;

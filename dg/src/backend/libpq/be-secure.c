@@ -42,10 +42,6 @@ thread_local /*LOCAL*/ char *ssl_dh_params_file;
 thread_local /*LOCAL*/ char *ssl_passphrase_command;
 thread_local /*LOCAL*/ bool ssl_passphrase_command_supports_reload;
 
-#ifdef USE_SSL
-bool ssl_loaded_verify_locations = false;
-#endif
-
 /* GUC variable controlling SSL cipher list */
 thread_local /*LOCAL*/ char *SSLCipherSuites = NULL;
 thread_local /*LOCAL*/ char *SSLCipherList = NULL;
@@ -93,7 +89,7 @@ void secure_destroy(void) {
  */
 bool secure_loaded_verify_locations(void) {
 #ifdef USE_SSL
-  return ssl_loaded_verify_locations;
+  return be_tls_loaded_verify_locations();
 #else
   return false;
 #endif
@@ -110,7 +106,7 @@ int secure_open_server(Port *port) {
   /* push unencrypted buffered data back through SSL setup */
   len = pq_buffer_remaining_data();
   if (len > 0) {
-    char *buf = palloc(len);
+    char *buf = (char *)palloc(len);
 
     pq_startmsgread();
     if (pq_getbytes(buf, len) == EOF)

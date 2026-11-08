@@ -366,16 +366,16 @@
 #define HAVE_SOCKLEN_T 1
 
 /* Define to 1 if you have the `SSL_CTX_set_cert_cb' function. */
-/* #undef HAVE_SSL_CTX_SET_CERT_CB */
+#define HAVE_SSL_CTX_SET_CERT_CB 1
 
 /* Define to 1 if you have the `SSL_CTX_set_ciphersuites' function. */
-/* #undef HAVE_SSL_CTX_SET_CIPHERSUITES */
+#define HAVE_SSL_CTX_SET_CIPHERSUITES 1
 
 /* Define to 1 if you have the `SSL_CTX_set_keylog_callback' function. */
-/* #undef HAVE_SSL_CTX_SET_KEYLOG_CALLBACK */
+#define HAVE_SSL_CTX_SET_KEYLOG_CALLBACK 1
 
 /* Define to 1 if you have the `SSL_CTX_set_num_tickets' function. */
-/* #undef HAVE_SSL_CTX_SET_NUM_TICKETS */
+#define HAVE_SSL_CTX_SET_NUM_TICKETS 1
 
 /* Define to 1 if you have the <stdint.h> header file. */
 #define HAVE_STDINT_H 1
@@ -495,7 +495,7 @@
 /* #undef HAVE_WCSTOMBS_L */
 
 /* Define to 1 if you have the `X509_get_signature_info' function. */
-/* #undef HAVE_X509_GET_SIGNATURE_INFO */
+#define HAVE_X509_GET_SIGNATURE_INFO 1
 
 /* Define to 1 if the assembler supports X86_64's POPCNTQ instruction. */
 /* #undef HAVE_X86_64_POPCNTQ */
@@ -722,7 +722,7 @@
 /* #undef USE_NAMED_POSIX_SEMAPHORES */
 
 /* Define to 1 to build with OpenSSL support. (--with-ssl=openssl) */
-/* #undef USE_OPENSSL */
+#define USE_OPENSSL 1
 
 /* Define to 1 to build with PAM support. (--with-pam) */
 /* #undef USE_PAM */

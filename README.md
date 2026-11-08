@@ -93,13 +93,14 @@ By hand, on Ubuntu:
 sudo apt install build-essential cmake git flex bison python3 \
     clang-format librocksdb-dev libicu-dev \
     libsnappy-dev liblz4-dev libzstd-dev zlib1g-dev libbz2-dev \
-    libreadline-dev libpq-dev libssl-dev pkg-config bc \
+    libreadline-dev libpq-dev libssl-dev openssl pkg-config bc \
     postgresql-client linux-tools-generic
 ```
 
-`libreadline-dev` is for building PostgreSQL 18, `libpq-dev`,
-`libssl-dev` and `pkg-config` for digres's test clients, `bc`
-for `bench.old/btree.sh`.
+`libssl-dev` is OpenSSL, which digres always links for TLS.
+`libreadline-dev` is for building PostgreSQL 18, `libpq-dev` and
+`pkg-config` for digres's test clients, `openssl` for the
+certificates its TLS tests make, `bc` for `bench.old/btree.sh`.
 
 - **RocksDB 8.9.1**: the system's (`librocksdb-dev` on 24.04)
   for the debug build; the release and TSan builds build their
@@ -129,14 +130,15 @@ for `bench.old/btree.sh`.
     built and installed into its own `install/`: pgregress,
     the isolation specs and the regression suite run its
     `psql` and `pg_regress`. Elsewhere, set `PG18_SRC`. Without
-    it those tests say SKIPPED. Clone it whole, as `724edf9`
-    below is in its history:
+    it those tests say SKIPPED. It is built with OpenSSL, so its
+    `psql` can test digres's TLS (`dg/test/tls.sh`). Clone it
+    whole, as `724edf9` below is in its history:
 
     ```
     git clone --branch REL_18_STABLE --single-branch \
         https://github.com/postgres/postgres.git ~/p/postgres18
     cd ~/p/postgres18
-    ./configure --prefix=$HOME/p/postgres18/install
+    ./configure --prefix=$HOME/p/postgres18/install --with-ssl=openssl
     make -j4 && make install && make -C src/test/isolation -j4
     ```
   - `bench/build/pg18`, PostgreSQL 18.6 itself (commit

@@ -35,7 +35,10 @@ PERL := perl
 LINK_ROCKSDB = -lrocksdb
 ROCKSDB_TSAN := ../rocksdb/tsan/librocksdb.a
 ROCKSDB_REL := ../rocksdb/release/librocksdb.a
-LDLIBS = $(LINK_ROCKSDB) -licui18n -licuuc -licudata -lm -lpthread -ldl -lrt
+# OpenSSL for TLS (../aa/ROLE.md section 8); the hashes stay PostgreSQL's
+# own (src/common/cryptohash.c), so cryptohash_openssl.c is skipped.
+LDLIBS = $(LINK_ROCKSDB) -lssl -lcrypto -licui18n -licuuc -licudata -lm \
+    -lpthread -ldl -lrt
 # The parser, a library of its own (../sq).
 SQ := ../sq
 LIBSQ := $(SQ)/build/libsq.a
@@ -133,7 +136,6 @@ $(OBJDIR)/backend/main/main.o: CPPFLAGS += -D'DG_BUILD_FLAGS="$(strip $(OPT) $(A
 # a generator's output that nodes/*.c #includes.
 SKIP := \
     $(B)/libpq/be-gssapi-common.c $(B)/libpq/be-secure-gssapi.c \
-    $(B)/libpq/be-secure-openssl.c \
     src/common/cryptohash_openssl.c src/common/hmac_openssl.c \
     $(B)/regex/regc_color.c $(B)/regex/regc_cvec.c $(B)/regex/regc_lex.c \
     $(B)/regex/regc_locale.c $(B)/regex/regc_nfa.c \

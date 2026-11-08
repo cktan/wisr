@@ -5919,6 +5919,8 @@ source test/tree_load_ssi.sh
 source test/check_rr_validate.sh
 # ALTER COLUMN at REPEATABLE READ, and of an identity column.
 source test/alter_column.sh
+# TLS: a server of its own, with ssl on.
+source test/tls.sh
 
 kill -INT $server
 wait $server || fail "crashed retype: shutdown status"

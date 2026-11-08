@@ -352,7 +352,7 @@ static int ProcessSSLStartup(Port *port) {
    */
 
 #ifdef USE_SSL
-  if (!LoadedSSL || port->laddr.addr.ss_family == AF_UNIX) {
+  if (!be_tls_loaded() || port->laddr.addr.ss_family == AF_UNIX) {
     /* SSL not supported */
     goto reject;
   }
@@ -488,7 +488,8 @@ retry:
      *
      * Also no SSL negotiation if we already have a direct SSL connection
      */
-    if (!LoadedSSL || port->laddr.addr.ss_family == AF_UNIX || port->ssl_in_use)
+    if (!be_tls_loaded() || port->laddr.addr.ss_family == AF_UNIX ||
+        port->ssl_in_use)
       SSLok = 'N';
     else
       SSLok = 'S'; /* Support for SSL */
