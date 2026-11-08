@@ -3136,7 +3136,7 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
    * the common help() function in main/main.c.
    */
   pg_getopt_start(&optctx, argc, argv,
-                  "B:bC:c:D:d:EeFf:h:ijk:lN:nOPp:r:S:sTt:v:W:-:");
+                  "B:bC:c:D:d:Eef:h:ijk:lN:nOPp:r:S:sTt:v:W:-:");
 
   /*
    * Turn this off because it's either printed to stderr and not the log
@@ -3208,10 +3208,6 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
 
     case 'e':
       SetConfigOption("datestyle", "euro", ctx, gucsource);
-      break;
-
-    case 'F':
-      SetConfigOption("fsync", "false", ctx, gucsource);
       break;
 
     case 'f':

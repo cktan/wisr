@@ -460,6 +460,7 @@ void publish_postmaster_settings(void) {
   b->PostPortNumber = PostPortNumber;
   b->Unix_socket_permissions = Unix_socket_permissions;
   b->max_files_per_process = max_files_per_process;
+  b->Log_destination = Log_destination;
   b->bonjour_name = postmaster_setting_dup(bonjour_name);
   b->shared_preload_libraries_string =
       postmaster_setting_dup(shared_preload_libraries_string);
@@ -469,6 +470,7 @@ void publish_postmaster_settings(void) {
   b->ListenAddresses = postmaster_setting_dup(ListenAddresses);
   b->external_pid_file = postmaster_setting_dup(external_pid_file);
   b->cluster_name = postmaster_setting_dup(cluster_name);
+  b->Log_destination_string = postmaster_setting_dup(Log_destination_string);
 
   b->assert_enabled = assert_enabled;
   b->integer_datetimes = integer_datetimes;
@@ -856,19 +858,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"ssl_prefer_server_ciphers", PGC_SIGHUP, CONN_AUTH_SSL,
       gettext_noop("Give priority to server ciphersuite order."), NULL},
      &SSLPreferServerCiphers,
-     true,
-     NULL,
-     NULL,
-     NULL},
-    {{"fsync", PGC_SIGHUP, RESOURCES_IO,
-      gettext_noop("Forces synchronization of updates to disk."),
-      gettext_noop(
-          "The server will use the fsync() system call in several places to "
-          "make "
-          "sure that updates are physically written to disk. This ensures "
-          "that a database cluster will recover to a consistent state after "
-          "an operating system or hardware crash.")},
-     &enableFsync,
      true,
      NULL,
      NULL,
@@ -2384,7 +2373,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
      assign_session_authorization,
      NULL},
 
-    {{"log_destination", PGC_SIGHUP, LOGGING_WHERE,
+    {{"log_destination", PGC_POSTMASTER, LOGGING_WHERE,
       gettext_noop("Sets the destination for server log output."),
       gettext_noop("Valid values are combinations of \"stderr\", "
                    "\"syslog\", and \"eventlog\", depending on the "

@@ -260,7 +260,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int IntervalStyle;
 
 #define MAXTZLEN		10 /* max TZ name len, not counting tr. null */
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enableFsync;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool allowSystemTableMods;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int work_mem;
 extern thread_local /*LOCAL*/ PGDLLIMPORT double hash_mem_multiplier;

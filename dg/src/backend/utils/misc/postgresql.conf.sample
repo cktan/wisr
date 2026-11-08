@@ -160,9 +160,6 @@
 
 #wal_level = replica			# minimal, replica, or logical
 					# (change requires restart)
-#fsync = on				# flush data to disk for crash safety
-					# (turning this off can cause
-					# unrecoverable data corruption)
 #synchronous_commit = on		# synchronization level;
 					# off, local, remote_write, remote_apply, or on
 #wal_sync_method = fsync		# the default is the first option
@@ -409,6 +406,7 @@
 #log_destination = 'stderr'		# Valid values are combinations of
 					# stderr, syslog, and eventlog,
 					# depending on platform.
+					# (change requires restart)
 
 #logging_collector = off		# Write the log to files instead of
 					# stderr.

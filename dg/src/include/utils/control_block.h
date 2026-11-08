@@ -197,6 +197,8 @@ typedef struct pcb_t {
   int PostPortNumber = 0;
   int Unix_socket_permissions = 0;
   int max_files_per_process = 0;
+  /* elog.c: the bitmask of LOG_DESTINATION_*, parsed from the string below */
+  int Log_destination = 1; /* LOG_DESTINATION_STDERR */
   char *bonjour_name = nullptr;
   char *shared_preload_libraries_string = nullptr;
   char *event_source = nullptr;
@@ -205,6 +207,7 @@ typedef struct pcb_t {
   char *ListenAddresses = nullptr;
   char *external_pid_file = nullptr;
   char *cluster_name = nullptr;
+  char *Log_destination_string = nullptr;
   char *ConfigFileName = nullptr;
 
   /*

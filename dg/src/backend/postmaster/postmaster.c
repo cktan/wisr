@@ -467,7 +467,7 @@ void PostmasterMain(int argc, char *argv[]) {
    * common help() function in main/main.c.
    */
   while ((opt = getopt(argc, argv,
-                       "B:bC:c:D:d:EeFf:h:ijk:lN:OPp:r:S:sTt:W:-:")) != -1) {
+                       "B:bC:c:D:d:Eef:h:ijk:lN:OPp:r:S:sTt:W:-:")) != -1) {
     switch (opt) {
     case 'B':
       SetConfigOption("shared_buffers", optarg, PGC_POSTMASTER, PGC_S_ARGV);
@@ -528,10 +528,6 @@ void PostmasterMain(int argc, char *argv[]) {
 
     case 'e':
       SetConfigOption("datestyle", "euro", PGC_POSTMASTER, PGC_S_ARGV);
-      break;
-
-    case 'F':
-      SetConfigOption("fsync", "false", PGC_POSTMASTER, PGC_S_ARGV);
       break;
 
     case 'f':
@@ -831,11 +827,11 @@ void PostmasterMain(int argc, char *argv[]) {
    * saying so, to provide a breadcrumb trail for users who may not remember
    * that their logging is configured to go somewhere else.
    */
-  if (!(Log_destination & LOG_DESTINATION_STDERR))
+  if (!(pcb->Log_destination & LOG_DESTINATION_STDERR))
     ereport(LOG,
             (errmsg("ending log output to stderr"),
              errhint("Future log output will go to log destination \"%s\".",
-                     Log_destination_string)));
+                     pcb->Log_destination_string)));
 
   whereToSendOutput = DestNone;
 

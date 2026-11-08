@@ -99,7 +99,6 @@ thread_local /*LOCAL*/ int DateStyle = USE_ISO_DATES;
 thread_local /*LOCAL*/ int DateOrder = DATEORDER_MDY;
 thread_local /*LOCAL*/ int IntervalStyle = INTSTYLE_POSTGRES;
 
-thread_local /*LOCAL*/ bool enableFsync = true;
 thread_local /*LOCAL*/ bool allowSystemTableMods = false;
 thread_local /*LOCAL*/ int work_mem = 4096;
 thread_local /*LOCAL*/ double hash_mem_multiplier = 2.0;
