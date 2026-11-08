@@ -45,6 +45,7 @@
 
 #include "common/file_perm.h"
 #include "datatype/timestamp.h"
+#include "pgtime.h"
 
 /* datadir.c: sm's home directory, the process's. */
 struct datadir_state_t;
@@ -175,6 +176,7 @@ typedef struct pcb_t {
   char OutputFileName[MAXPGPATH] = ""; /* debugging output file */
   pid_t PostmasterPid = 0;
   TimestampTz PgStartTime = 0; /* timestamp.c: when the server started */
+  pg_tz *log_timezone = nullptr; /* pgtz.c: timezone for log timestamps */
 
   /* -- how the process runs -- */
   /*

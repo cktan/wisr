@@ -350,69 +350,6 @@ const char *show_timezone(void) {
 }
 
 /*
- * LOG_TIMEZONE
- *
- * For log_timezone, we don't support the interval-based methods of setting a
- * zone, which are only there for SQL spec compliance not because they're
- * actually useful.
- */
-
-/*
- * check_log_timezone: GUC check_hook for log_timezone
- */
-bool check_log_timezone(char **newval, void **extra, GucSource source) {
-  pg_tz *new_tz;
-
-  /*
-   * Assume it is a timezone name, and try to load it.
-   */
-  new_tz = pg_tzset(*newval);
-
-  if (!new_tz) {
-    /* Doesn't seem to be any great value in errdetail here */
-    return false;
-  }
-
-  if (!pg_tz_acceptable(new_tz)) {
-    GUC_check_errmsg("time zone \"%s\" appears to use leap seconds", *newval);
-    GUC_check_errdetail("PostgreSQL does not support leap seconds.");
-    return false;
-  }
-
-  /*
-   * Pass back data for assign_log_timezone to use
-   */
-  *extra = guc_malloc(LOG, sizeof(pg_tz *));
-  if (!*extra)
-    return false;
-  *((pg_tz **)*extra) = new_tz;
-
-  return true;
-}
-
-/*
- * assign_log_timezone: GUC assign_hook for log_timezone
- */
-void assign_log_timezone(const char *newval, void *extra) {
-  log_timezone = *((pg_tz **)extra);
-}
-
-/*
- * show_log_timezone: GUC show_hook for log_timezone
- */
-const char *show_log_timezone(void) {
-  const char *tzn;
-
-  /* Always show the zone's canonical name */
-  tzn = pg_get_timezone_name(log_timezone);
-
-  if (tzn != NULL)
-    return tzn;
-
-  return "unknown";
-}
-
-/*
  * TIMEZONE_ABBREVIATIONS
  */
 

@@ -2428,14 +2428,13 @@ char *get_formatted_log_time(void) {
   stamp_time = (pg_time_t)saved_timeval.tv_sec;
 
   /*
-   * Note: we expect that guc.c will ensure that log_timezone is set up (at
-   * least with a minimal GMT value) before Log_line_prefix can become
-   * nonempty or CSV/JSON mode can be selected.
+   * pcb_t initializes the process log timezone before configuration can
+   * enable timestamps in log messages.
    */
   pg_strftime(formatted_log_time, FORMATTED_TS_LEN,
               /* leave room for milliseconds... */
               "%Y-%m-%d %H:%M:%S     %Z",
-              pg_localtime(&stamp_time, log_timezone));
+              pg_localtime(&stamp_time, pcb->log_timezone));
 
   /* 'paste' milliseconds into place... */
   sprintf(msbuf, ".%03d", (int)(saved_timeval.tv_usec / 1000));
@@ -2463,12 +2462,11 @@ char *get_formatted_start_time(void) {
     return formatted_start_time;
 
   /*
-   * Note: we expect that guc.c will ensure that log_timezone is set up (at
-   * least with a minimal GMT value) before Log_line_prefix can become
-   * nonempty or CSV/JSON mode can be selected.
+   * pcb_t initializes the process log timezone before configuration can
+   * enable timestamps in log messages.
    */
   pg_strftime(formatted_start_time, FORMATTED_TS_LEN, "%Y-%m-%d %H:%M:%S %Z",
-              pg_localtime(&stamp_time, log_timezone));
+              pg_localtime(&stamp_time, pcb->log_timezone));
 
   return formatted_start_time;
 }
@@ -2706,7 +2704,7 @@ void log_status_format(StringInfo buf, const char *format, ErrorData *edata) {
       char strfbuf[128];
 
       pg_strftime(strfbuf, sizeof(strfbuf), "%Y-%m-%d %H:%M:%S %Z",
-                  pg_localtime(&stamp_time, log_timezone));
+                  pg_localtime(&stamp_time, pcb->log_timezone));
       if (padding != 0)
         appendStringInfo(buf, "%*s", padding, strfbuf);
       else

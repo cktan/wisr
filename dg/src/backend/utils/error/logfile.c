@@ -111,7 +111,7 @@ static std::string logfile_getname(const logfile_state_t *st,
   if (len >= MAXPGPATH)
     len = MAXPGPATH - 1;
   pg_strftime(filename + len, MAXPGPATH - len, st->pattern.c_str(),
-              pg_localtime(&timestamp, log_timezone));
+              pg_localtime(&timestamp, pcb->log_timezone));
   return filename;
 }
 
@@ -136,7 +136,7 @@ static void set_next_rotation_time(logfile_state_t *st) {
    */
   rotinterval = st->rotation_age * SECS_PER_MINUTE; /* to seconds */
   now = (pg_time_t)time(NULL);
-  tm = pg_localtime(&now, log_timezone);
+  tm = pg_localtime(&now, pcb->log_timezone);
   now += tm->tm_gmtoff;
   now -= now % rotinterval;
   now += rotinterval;

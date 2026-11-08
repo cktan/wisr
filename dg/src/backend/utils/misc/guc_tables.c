@@ -370,7 +370,6 @@ static thread_local /*LOCAL*/ char *restrict_nonsystem_relation_kind_string;
 static thread_local /*LOCAL*/ int syslog_facility = DEFAULT_SYSLOG_FACILITY;
 
 static thread_local /*LOCAL*/ char *timezone_string;
-static thread_local /*LOCAL*/ char *log_timezone_string;
 static thread_local /*LOCAL*/ char *timezone_abbreviations_string;
 static thread_local /*LOCAL*/ char *data_directory;
 static thread_local /*LOCAL*/ char *session_authorization_string;
@@ -2090,14 +2089,6 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
      NULL,
      NULL,
      NULL},
-
-    {{"log_timezone", PGC_SIGHUP, LOGGING_WHAT,
-      gettext_noop("Sets the time zone to use in log messages."), NULL},
-     &log_timezone_string,
-     "GMT",
-     check_log_timezone,
-     assign_log_timezone,
-     show_log_timezone},
 
     {{"DateStyle", PGC_USERSET, CLIENT_CONN_LOCALE,
       gettext_noop("Sets the display format for date and time values."),

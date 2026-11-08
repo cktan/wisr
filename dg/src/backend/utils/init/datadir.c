@@ -81,7 +81,7 @@ static void close_sm_session(int code, Datum arg) {
  * session's call that id is the session's %p, so the message can be matched
  * to the session's other lines; in sm's own thread it is that thread's. sm
  * calls this on threads that have no memory context, error stack or GUC
- * values, so it uses none: not palloc(), ereport() or log_timezone.
+ * values, so it uses none: not palloc() or ereport().
  */
 static void sm_log(void *arg, sm_loglevel_t level,
                    const char *msg) noexcept {

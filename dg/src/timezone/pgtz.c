@@ -21,13 +21,11 @@
 #include "miscadmin.h"
 #include "pgtz.h"
 #include "storage/fd.h"
+#include "utils/control_block.h"
 #include "utils/hsearch.h"
 
 /* Current session timezone (controlled by TimeZone GUC) */
 thread_local /*LOCAL*/ pg_tz *session_timezone = NULL;
-
-/* Current log timezone (controlled by log_timezone GUC) */
-thread_local /*LOCAL*/ pg_tz *log_timezone = NULL;
 
 static bool scan_directory_ci(const char *dirname, const char *fname,
                               int fnamelen, char *canonname, int canonnamelen);
@@ -306,11 +304,9 @@ pg_tz *pg_tzset_offset(long gmtoffset) {
 /*
  * Initialize timezone library
  *
- * This is called before GUC variable initialization begins.  Its purpose
- * is to ensure that log_timezone has a valid value before any logging GUC
- * variables could become set to values that require elog.c to provide
- * timestamps (e.g., log_line_prefix).  We may as well initialize
- * session_timezone to something valid, too.
+ * This is called before GUC variable initialization begins. Set the
+ * process-wide log timezone on the main thread before configuration can
+ * enable timestamps. Each thread also gets a valid session_timezone.
  */
 void pg_timezone_initialize(void) {
   /*
@@ -321,7 +317,8 @@ void pg_timezone_initialize(void) {
    * principle it could be different.
    */
   session_timezone = pg_tzset("GMT");
-  log_timezone = session_timezone;
+  if (postmaster_tcb != NULL)
+    pcb_main()->log_timezone = session_timezone;
 }
 
 /*
