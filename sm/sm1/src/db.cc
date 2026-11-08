@@ -327,10 +327,10 @@ fixed_cf_options(const std::shared_ptr<rocksdb::Cache> &cache) {
  * The comparator and prefix extractor are part of the format
  * (../DBMGR.md §6.2). The bloom filter keys on the userkey prefix; whole
  * version keys are never looked up, so no whole-key filter. No
- * row_cache: DeleteRange, which the tombstone purge uses, is not
- * supported with one; and a memtable holding
- * store_max_range_deletions of the purge's range tombstones is
- * flushed, so reads stop re-examining them (../GC.md §1).
+ * row_cache: DeleteRange, which a loaded store's rollback and a tree's
+ * pages use, is not supported with one; and a memtable holding
+ * store_max_range_deletions of those range tombstones is flushed, so
+ * reads stop re-examining them (../GC.md §5).
  */
 rocksdb::ColumnFamilyOptions store_cf_options(db_t *db, uint64_t storeid) {
   // Start from a fixed CF's options: LZ4.

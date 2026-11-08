@@ -537,6 +537,8 @@ struct db_t {
     std::string key; /* the tombstone's version key */
   };
   std::vector<purge_t> purges;
+  /* The purges queued, each once, by purge_id() (../PURGE_PLAN.md §2.4). */
+  std::unordered_set<std::string> purge_ids;
   /*
    * Chained keys whose newest version is a dead transaction's (xid),
    * which the compaction filter found, for the worker to put back

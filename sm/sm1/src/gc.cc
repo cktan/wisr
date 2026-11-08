@@ -29,6 +29,14 @@ using namespace wisr;
 
 namespace {
 
+/* A queued purge's identity: its store, then its tombstone's key. */
+std::string purge_id(uint64_t storeid, const rocksdb::Slice &key) {
+  std::string id;
+  sm0::put_be64(id, storeid);
+  id.append(key.data(), key.size());
+  return id;
+}
+
 /*
  * One compaction's filter. RocksDB gives each compaction thread
  * its own instance, so the mutable per-key state needs no lock.
@@ -55,13 +63,34 @@ public:
   const char *Name() const override { return "wisr.gc.v1"; }
 
   /*
+   * Judge one version by judge(), and say how RocksDB is to remove one
+   * it drops (../PURGE_PLAN.md §3): a versioned key, written once, by a
+   * SingleDelete, as every deletion of one is; a chained key, written
+   * more than once, by a Delete. Only a plain value is judged.
+   */
+  Decision FilterV2(int level, const rocksdb::Slice &key, ValueType type,
+                    const rocksdb::Slice &value, std::string *new_value,
+                    std::string *) const override {
+    if (ValueType::kValue != type) {
+      return Decision::kKeep;
+    }
+    bool changed = false;
+    if (judge(level, key, value, new_value, &changed)) {
+      return !key.empty() && key[0] == key_class_versioned ? Decision::kPurge
+                                                           : Decision::kRemove;
+    }
+    return changed ? Decision::kChangeValue : Decision::kKeep;
+  }
+
+private:
+  /*
    * Apply ../GC.md §1 to one version: true drops it; false keeps it,
    * with *new_value set when it gains a commit_ts stamp. On
    * any doubt -- an undecodable value, a failed status lookup
    * -- keep the version untouched.
    */
-  bool Filter(int, const rocksdb::Slice &key, const rocksdb::Slice &value,
-              std::string *new_value, bool *value_changed) const override {
+  bool judge(int, const rocksdb::Slice &key, const rocksdb::Slice &value,
+             std::string *new_value, bool *value_changed) const {
     // A page is no version: it is the level above's, and kept as it
     // is (../BTREEINDEX.md §9).
     if (!key.empty() && key[0] == key_class_page) {
@@ -121,10 +150,14 @@ public:
       // Queue the delete for purging; dropping it here could
       // resurrect older versions outside this compaction.
       std::lock_guard<std::mutex> guard(m_db->gc_mu);
-      // Queue the tombstone's key for the purge worker.
-      m_db->purges.push_back({m_storeid, key.ToString()});
-      // Wake the worker.
-      m_db->gc_cv.notify_one();
+      // Queue the tombstone's key once: each compaction that meets it
+      // before the purge would queue it again (../PURGE_PLAN.md §2.4).
+      std::string id = purge_id(m_storeid, key);
+      if (m_db->purge_ids.insert(std::move(id)).second) {
+        m_db->purges.push_back({m_storeid, key.ToString()});
+        // Wake the worker.
+        m_db->gc_cv.notify_one();
+      }
     }
     // Stamp commit_ts into an unstamped version's header.
     if (!(v.flags & version_stamped)) {
@@ -142,7 +175,6 @@ public:
     return false;
   }
 
-private:
   /*
    * Judge a chained key's version, a current one or with old an old
    * one (../GC.md §4.2): true drops it (RocksDB writes a delete
@@ -324,10 +356,19 @@ private:
 };
 
 /*
- * Range-delete a purged key's tombstone and everything older:
- * [tombstone, userkey | FF x 12). Newer versions of the key sort
- * before the tombstone and survive. One range per key -- never
- * across keys, which would take other keys' rows with it.
+ * Erase a purged key's tombstone and every older version of the key,
+ * each by a SingleDelete (../PURGE_PLAN.md §3): every version key is
+ * written once, and every deletion of one is a SingleDelete, so the
+ * pair goes at the first compaction that meets both.
+ * 1. Skip a store already dropped.
+ * 2. Read the versions in [tombstone, userkey | FF x 12), with no
+ *    snapshot: newer versions of the key sort before the tombstone and
+ *    survive; one already erased is not read.
+ * 3. Write a SingleDelete of each in one batch, at low priority, so
+ *    RocksDB slows it, not the sessions' writes, when compaction is
+ *    behind.
+ * A version a compaction erases meanwhile gets a second SingleDelete,
+ * which a compaction skips (db/compaction/compaction_iterator.cc).
  */
 void purge_one(db_t *db, const db_t::purge_t &p) {
   // Find the store's CF.
@@ -338,15 +379,27 @@ void purge_one(db_t *db, const db_t::purge_t &p) {
   }
   // End the range just past the key's oldest version.
   std::string end = version_bound(version_userkey(p.key), '\xff');
-  // Delete the tombstone and every older version of the key.
-  rocksdb::Status s =
-      st.rdb->DeleteRange(store_write_options(st), st.cf, p.key, end);
-  // Done: RocksDB flushes the memtable once range tombstones
-  // pile up in it (store_max_range_deletions).
+  rocksdb::Slice upper(end);
+  rocksdb::ReadOptions ro;
+  ro.iterate_upper_bound = &upper;
+  // Read the tombstone and every older version still there.
+  std::unique_ptr<rocksdb::Iterator> it(st.rdb->NewIterator(ro, st.cf));
+  rocksdb::WriteBatch batch;
+  uint64_t bytes = 0;
+  for (it->Seek(p.key); it->Valid(); it->Next()) {
+    batch.SingleDelete(st.cf, it->key());
+    bytes += it->key().size();
+  }
+  rocksdb::Status s = it->status();
+  if (s.ok() && batch.Count() > 0) {
+    rocksdb::WriteOptions wo = store_write_options(st);
+    // Behind the sessions' writes when compaction is behind.
+    wo.low_pri = true;
+    s = st.rdb->Write(wo, &batch);
+  }
   if (s.ok()) {
     rocksdb::Slice userkey = version_userkey(p.key);
-    count_write(st, std::string_view(userkey.data(), userkey.size()),
-                p.key.size() + end.size());
+    count_write(st, std::string_view(userkey.data(), userkey.size()), bytes);
     return;
   }
   // On failure the tombstone stays; the next compaction that
@@ -648,8 +701,9 @@ void gc_run_once(db_t *db) {
   {
     // Hold gc_mu while taking work from the queues.
     std::lock_guard<std::mutex> guard(db->gc_mu);
-    // Take every queued purge.
+    // Take every queued purge; a key met again from now is queued again.
     purges.swap(db->purges);
+    db->purge_ids.clear();
     repairs.swap(db->repairs);
     // Take the drops the watermark has passed.
     auto end = db->drops.upper_bound(watermark);

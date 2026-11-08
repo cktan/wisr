@@ -1340,8 +1340,8 @@ So a job can carry its own answers:
 3. **Return the side effects.** The queued purges, the chained
    keys to repair and the doubt count become part of the job's
    result. The primary applies them when it installs the output.
-   The `DeleteRange` stays on the primary in any case: it is a
-   write.
+   The purge's SingleDeletes stay on the primary in any case:
+   they are writes.
 
 Step 1 is worth doing with no remote worker in sight. It replaces
 a status resolution for each key with one batch for each

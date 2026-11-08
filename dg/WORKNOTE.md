@@ -12763,3 +12763,41 @@ files, without a process, a thread or a pipe.
   `logging_collector` on and checks the files, the thread id,
   the mode, rotation by size, `pg_rotate_logfile()` and a new
   `log_filename` on reload.
+
+## Step 419: the tombstone purge erases by SingleDelete
+
+[`ISSUE.md`](ISSUE.md) issue 22, a mass delete's purge stalling
+every writer, fixed as [`../sm/PURGE_PLAN.md`](../sm/PURGE_PLAN.md)
+plans.
+
+- **Found**: `purge_one()` wrote a `DeleteRange` for each purged
+  key, and a store CF's memtable is flushed every 1,000 range
+  tombstones, so a mass delete's purge made a level-0 file every
+  1,000 keys, and RocksDB stalled every write behind them. And
+  the purge queue kept a key each time a compaction met its
+  tombstone: one batch held 24,932,620 entries for about
+  1,000,000 tombstones, which grew the server to 5.9 GB until the
+  kernel killed it.
+- **sm1** (`../sm/sm1/src/gc.cc`, `xct.cc`): every deletion of a
+  version key is a SingleDelete. A version key is written once,
+  and RocksDB forbids a Delete and a SingleDelete of one key, so:
+  - the filter moves to `FilterV2()`, removing a version key with
+    `kPurge`, a SingleDelete, and a chained key with `kRemove`;
+  - the purge reads the key's versions and writes a SingleDelete
+    of each, at `low_pri`; it writes no range tombstone;
+  - a savepoint's rollback erases its version by a SingleDelete.
+- **The queue holds a key once** (`purge_ids`).
+- **Measured** (`bench/build/purge/issue22.sh`,
+  `digres-release`): a DELETE of 100,000 indexed rows after a
+  DELETE and an UPDATE of 500,000 each, 64 s, 46 s and 60 s
+  before, 1.1 s and 1.3 s after, as on a new server; RocksDB's
+  stall lines 1,520 and 1,226 before, none after; the server's
+  peak memory 0.7 GB.
+- **Tests** (`../sm/sm1/test/test_gc.cc`): the purge forces no
+  flush; a compaction queues a key once; a version erased by the
+  purge and by the filter compacts cleanly, where one erased by a
+  Delete and a SingleDelete fails with RocksDB's `Corruption`;
+  a savepoint's rolled-back version compacts away. The test that
+  checked the old purge's flush by count is replaced.
+- **Found too**: digres installs no log hook for sm, so sm's
+  errors are lost ([`ISSUE.md`](ISSUE.md) issue 27).

@@ -375,33 +375,146 @@ uint64_t l0_files(gc_fixture_t &f) {
 
 } // namespace
 
-TEST_CASE("the purge's range tombstones are flushed by count, not per run") {
-  // Verify GC leaves flushing to RocksDB's range-deletion limit
-  // (../GC.md §1, store_max_range_deletions).
-  // 1. Queue a few purges and run GC: no flush, so level 0 stays
-  //    empty after the compaction.
-  // 2. Queue more purges than the limit and run GC: RocksDB
-  //    flushes the memtable by itself, and a level-0 file appears.
-  //    Level 0 is not checked first: the compaction that queues the
-  //    purges wakes the database's own GC thread, which may purge
-  //    them, and so cause the flush, before this test's run does.
-  // 3. The purged keys read as gone.
+TEST_CASE("the purge erases by SingleDelete, and forces no flush") {
+  // Verify the purge writes no range tombstone (../PURGE_PLAN.md §3).
+  // 1. Queue more purges than store_max_range_deletions and run GC.
+  // 2. Level 0 stays empty: no range tombstone forced a flush.
+  // 3. The keys read as gone, and after a full compaction no version
+  //    of them is left: each SingleDelete met its Put.
   gc_fixture_t f;
-  queue_purges(f, 10);
-  REQUIRE(l0_files(f) == 0);
+  queue_purges(f, store_max_range_deletions + 10);
   gc_run_once(f.db());
   CHECK(l0_files(f) == 0);
 
-  queue_purges(f, store_max_range_deletions + 10);
-  gc_run_once(f.db());
-  // The flush runs in the background; give it a few seconds.
-  for (int i = 0; i < 500 && l0_files(f) == 0; i++) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  CHECK(l0_files(f) >= 1);
-
   REQUIRE(sm1::begin(f.s(), sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(f.s(), g_store, "k000000") == "<none>");
+  REQUIRE(sm1::commit(f.s()) == 0);
+  f.compact(g_store);
+  CHECK(f.raw(g_store).empty());
+}
+
+TEST_CASE("a compaction queues a tombstone for the purge once") {
+  // Verify the purge queue holds a key once (../PURGE_PLAN.md §2.4).
+  // 1. Hold gc_run_mu, which a GC run takes first, so the database's
+  //    own GC thread takes nothing from the queue meanwhile.
+  // 2. Queue n purges by a compaction, then compact again: the second
+  //    compaction meets the same tombstones.
+  // 3. The queue holds n, not 2n.
+  // 4. Let GC run: the keys are gone after a compaction.
+  gc_fixture_t f;
+  {
+    std::lock_guard<std::mutex> run(f.db()->gc_run_mu);
+    queue_purges(f, 50);
+    f.compact(g_store);
+    std::lock_guard<std::mutex> guard(f.db()->gc_mu);
+    CHECK(f.db()->purges.size() == 50);
+  }
+  gc_run_once(f.db());
+  f.compact(g_store);
+  CHECK(f.raw(g_store).empty());
+}
+
+namespace {
+
+/* The version keys of the store's CF, in order. */
+std::vector<std::string> version_keys(gc_fixture_t &f) {
+  rocksdb::ReadOptions ro;
+  ro.total_order_seek = true;
+  std::unique_ptr<rocksdb::Iterator> it(
+      f.db()->rdb->NewIterator(ro, db_store(f.db(), g_store).cf));
+  std::vector<std::string> out;
+  for (it->SeekToFirst(); it->Valid(); it->Next()) {
+    out.push_back(it->key().ToString());
+  }
+  REQUIRE(it->status().ok());
+  return out;
+}
+
+/* Flush the store's memtable to a level-0 file. */
+void flush(gc_fixture_t &f) {
+  REQUIRE(
+      f.db()
+          ->rdb->Flush(rocksdb::FlushOptions(), db_store(f.db(), g_store).cf)
+          .ok());
+}
+
+} // namespace
+
+TEST_CASE("a version erased by the purge and by the filter compacts cleanly") {
+  // Verify a SingleDelete over the filter's SingleDelete is no breach
+  // of RocksDB's contract (../PURGE_PLAN.md §2.3), as a SingleDelete
+  // over a Delete would be: the filter erases a version key by kPurge.
+  // 1. Commit a and z, and compact to the bottom level: a file there
+  //    spans k's keys, so a tombstone above it is kept, not dropped.
+  //    Automatic compactions are off: the test alone compacts.
+  // 2. Commit k twice, and flush: file F1 holds both versions.
+  // 3. SingleDelete the older version, as a purge that read it would,
+  //    and flush: file F2 holds the SingleDelete.
+  // 4. Compact F1 alone into level 1: the filter erases the older
+  //    version, a SingleDelete of its own, which stays.
+  // 5. Compact F2 with that level-1 file, so the two SingleDeletes meet
+  //    in one compaction: it succeeds. A Delete under the SingleDelete,
+  //    as kRemove would leave, fails it with RocksDB's Corruption.
+  // 6. A full compaction leaves k's newer version.
+  gc_fixture_t f;
+  REQUIRE(f.db()
+              ->rdb
+              ->SetOptions(db_store(f.db(), g_store).cf,
+                           {{"disable_auto_compactions", "true"}})
+              .ok());
+  commit_put(f.s(), "a", "a");
+  commit_put(f.s(), "z", "z");
+  f.compact(g_store);
+  commit_put(f.s(), "k", "a");
+  commit_set(f.s(), "k", "b");
+  flush(f);
+  std::vector<std::string> keys = version_keys(f);
+  REQUIRE(keys.size() == 4);
+  // a's, k's two newest first, and z's.
+  keys = {keys[1], keys[2]};
+  rocksdb::ColumnFamilyHandle *cf = db_store(f.db(), g_store).cf;
+  REQUIRE(f.db()->rdb->SingleDelete(rocksdb::WriteOptions(), cf, keys[1]).ok());
+  flush(f);
+
+  rocksdb::ColumnFamilyMetaData meta;
+  f.db()->rdb->GetColumnFamilyMetaData(cf, &meta);
+  REQUIRE(meta.levels[0].files.size() == 2);
+  // Level 0 lists the newest file first: F1 is the last.
+  std::vector<std::string> f1 = {meta.levels[0].files.back().name};
+  std::string f2 = meta.levels[0].files.front().name;
+  REQUIRE_MESSAGE(
+      f.db()->rdb->CompactFiles(rocksdb::CompactionOptions(), cf, f1, 1).ok(),
+      "the filter's compaction of F1");
+  f.db()->rdb->GetColumnFamilyMetaData(cf, &meta);
+  REQUIRE(meta.levels[1].files.size() == 1);
+  std::vector<std::string> both = {f2, meta.levels[1].files.front().name};
+  rocksdb::Status met =
+      f.db()->rdb->CompactFiles(rocksdb::CompactionOptions(), cf, both, 1);
+  CHECK_MESSAGE(met.ok(), met.ToString());
+  f.compact(g_store);
+  std::vector<raw_t> raw = f.raw(g_store);
+  REQUIRE(raw.size() == 3);
+  REQUIRE(sm1::begin(f.s(), sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(f.s(), g_store, "k") == "b");
+  REQUIRE(sm1::commit(f.s()) == 0);
+}
+
+TEST_CASE("a savepoint's rolled-back version compacts away cleanly") {
+  // Verify a rollback erases its version by a SingleDelete that a
+  // compaction pairs with its Put (../PURGE_PLAN.md §3).
+  // 1. Put k, take a savepoint, update k, roll back to it, commit.
+  // 2. A full compaction succeeds, and k's one version is "a".
+  gc_fixture_t f;
+  REQUIRE(sm1::begin(f.s(), sm1::xctlevel_t::repeatable_read) == 0);
+  put(f.s(), g_store, "k", "a");
+  REQUIRE(sm1::savepoint(f.s()) == 1);
+  REQUIRE(sm1::update(f.s(), g_store, "k", "b") == 0);
+  REQUIRE(sm1::rollback(f.s(), 1) == 0);
+  REQUIRE(sm1::commit(f.s()) == 0);
+  f.compact(g_store);
+  CHECK(f.raw(g_store).size() == 1);
+  REQUIRE(sm1::begin(f.s(), sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(f.s(), g_store, "k") == "a");
   REQUIRE(sm1::commit(f.s()) == 0);
 }
 

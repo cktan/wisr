@@ -19,7 +19,7 @@ in `sm1/src/xct.cc`.
 | --- | --- | --- |
 | a version of an aborted or crashed transaction | the compaction filter | the filter (§4.1) |
 | a committed version superseded by a newer one every live snapshot sees | the filter | the filter (§4.1) |
-| a tombstone every live snapshot sees, and what it covers | the filter | the worker's `DeleteRange` (§5) |
+| a tombstone every live snapshot sees, and what it covers | the filter | the worker's SingleDeletes (§5) |
 | a chained key's newest version, left by a dead transaction | the filter | the worker's repair (§4.2) |
 | a chained key's older version no snapshot reaches | the filter | the filter (§4.2) |
 | a dropped store's column family | `sm1::rmstore`'s commit | the worker's `DropColumnFamily` (§6) |
@@ -95,9 +95,9 @@ say
 | tombstone, 90 | the newest at or below the watermark, and a tombstone | kept, stamped 90, queued for purge |
 | `"b"`, 80 | older than that | dropped |
 
-The worker then runs one `DeleteRange` from the tombstone's key
-to `k | FF×12`. That removes the tombstone, and every older
-version in a file the compaction never saw. The status records of
+The worker then writes a SingleDelete of each version from the
+tombstone's key to `k | FF×12`. That removes the tombstone, and
+every older version in a file the compaction never saw. The status records of
 T1, T2 and T3 stay in `CF:txn` until a sweep.
 
 ---
@@ -298,47 +298,63 @@ them.
 
 **The purge.** The worker drains the queue (`purge_one()`):
 
-```
-db.DeleteRange(cf(storeid), version_key, class | userkey | FF×12)
-```
+1. Read the versions in `[tombstone, class | userkey | FF×12)`,
+   with no snapshot: the tombstone and every older version of
+   the key still there. A later write of the key has a larger
+   `wts`, sorts before the tombstone, and survives.
+2. Write a SingleDelete of each, in one batch, at low priority
+   (`WriteOptions::low_pri`): when compaction is behind, RocksDB
+   slows the purge, not the sessions' writes.
 
-- The range covers the tombstone and every older version of the
-  key, at every level.
-- A later write of the key has a larger `wts`, sorts before the
-  tombstone, and survives.
-- A range deletion does not affect RocksDB snapshots taken before
-  it.
-- RocksDB drops the range tombstone itself at the bottommost
-  level.
 - A store already gone is skipped.
 - A failed purge is logged. The tombstone stays, and the next
   compaction that meets it queues it again.
+- A SingleDelete does not affect RocksDB snapshots taken before
+  it: a pin's or a cursor's iterator keeps what it sees.
+
+**Every deletion of a version key is a SingleDelete**
+([`PURGE_PLAN.md`](PURGE_PLAN.md)). A version key is written once:
+its `wts` is a new timestamp for each write. So a SingleDelete and
+its Put go together at the first compaction that meets both, at
+any level, where a Delete must reach the bottom level. RocksDB's
+contract forbids a Delete and a SingleDelete of one key, and
+enforces it (`enforce_single_del_contracts`): a compaction that
+meets both fails. So:
+
+- The filter removes a version key with `Decision::kPurge`,
+  which RocksDB turns into a SingleDelete (`FilterV2()`). A
+  chained key, CURR or OLD, is written more than once, and is
+  removed with `kRemove`, a Delete.
+- A savepoint's rollback erases its version by a SingleDelete.
+- The purge erases by SingleDelete. A version the filter erases
+  meanwhile gets two; RocksDB's compaction skips the first.
+
+**The queue holds a key once** (`purge_ids`). Each compaction
+that meets a tombstone before its purge queues it again; a mass
+delete's level-0 files are met by many, and a queue that kept
+every one held each key about 25 times. The worker empties the
+queue and the set together, so a key met again after that is
+queued again, and erased again, harmlessly.
 
 **The queue is volatile.** An entry lost to a crash is queued
-again by the next compaction that meets the tombstone. A repeated
-entry is harmless.
+again by the next compaction that meets the tombstone.
 
-**One range for each key.** Adjacent keys are never merged. A
-range from one purged key's tombstone to a later purged key's end
-would cover every version of any key between them. Those are live
-rows the filter never saw, as they may sit in files outside the
-compaction. It would also cover every version of the later key
-newer than its tombstone, because a key's versions sort newest
-first. Deleting `k1` and `k3` would take a live `k2` and a
-re-inserted `k3`. Only a lock on the whole span could make the
-merge safe.
+**One key's versions a purge.** The range ends with the key's
+oldest version. A range across keys would cover every version of
+any key between them: live rows the filter never saw, as they may
+sit in files outside the compaction.
 
 **Range tombstones are not free.** Each is one that
 `RangeDelAggregator` must consider on reads that overlap it, and
-RocksDB warns that many in a memtable degrade reads. So a store
-CF's memtable is flushed once it holds
-`store_max_range_deletions` (1,000) of them. That is RocksDB's
-`memtable_max_range_deletions`, set on every store CF, and
-RocksDB schedules the flush itself. The range tombstones then
-reach SST files, and every read stops examining them again.
+RocksDB warns that many in a memtable degrade reads. The purge
+writes none. A loaded store's rollback and a tree's pages write
+some, so a store CF's memtable is flushed once it holds
+`store_max_range_deletions` (1,000) of them: RocksDB's
+`memtable_max_range_deletions`, set on every store CF.
 
-**Warning: a store CF must have no `row_cache`.** `DeleteRange`
-returns `Status::NotSupported()` with one.
+**Warning: a store CF must have no `row_cache`.** `DeleteRange`,
+which a loaded store's rollback and a tree's pages use, returns
+`Status::NotSupported()` with one.
 
 ---
 
