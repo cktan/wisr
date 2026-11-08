@@ -230,10 +230,8 @@ Low priority:
 1. **Bulk load, the rest of it.** File mode into an empty
    table is built, and digres's `COPY` uses it
    ([`BULKLOAD.md`](BULKLOAD.md)
-   §13). Not built: `INSERT ... SELECT` into an empty table,
-   which digres inserts a row at a time
-   (`smtable_tuple_insert()` in
-   `../dg/src/backend/access/sm/smtable.c`); a load from
+   §13), and so do `CREATE TABLE AS` and an `INSERT ...
+   SELECT` whose rows come from a query. Not built: a load from
    files into a table that has rows, which inserts a row at a
    time today; rows stored out of line, which end a load's
    files; and batch mode and mini-batch, which matter less

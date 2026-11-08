@@ -248,6 +248,7 @@ extern bool smstore_index_usable(Relation rel, Oid indexoid);
 extern void smstore_insert(Relation rel, TupleTableSlot *slot);
 extern bool smstore_insert_arbiter(Relation rel, TupleTableSlot *slot,
                                    List *arbiters, struct RowKey *conflict);
+extern bool smstore_load_usable(Relation rel);
 extern void smstore_load(Relation rel, TupleTableSlot **slots, int n);
 extern void smstore_load_end(Relation rel);
 extern struct varlena *smstore_fetch_toast(struct varlena *attr);

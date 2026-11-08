@@ -507,6 +507,60 @@ printf '4,20\n' > "$work/copyu.csv"
 local_psql -c "\copy tcopyu from '$work/copyu.csv' with (format csv)" 2>&1 |
   grep -q "duplicate key" || fail "copy, unique btree: a duplicate"
 
+# Verify that INSERT ... SELECT into an empty table, a bulk load, fails on
+# a duplicate key as a row at a time insert does, and leaves the table empty.
+# 1. Make a table with a primary key.
+# 2. INSERT ... SELECT rows that share a key: a duplicate key error.
+# 3. The table is empty, and takes a valid INSERT ... SELECT after.
+# 4. An INSERT ... SELECT of a key the table holds fails too.
+local_psql -c 'create table tisl (id int8 primary key, k int8)' \
+  > "$work/isl.out" 2>&1
+local_psql -c 'insert into tisl select i % 50, i from generate_series(1, 100) i' \
+  2>&1 | grep -q "duplicate key" || fail "insert select: a duplicate"
+[ "$(local_psql -t -A -c 'select count(*) from tisl')" = 0 ] ||
+  fail "insert select: empty after a duplicate"
+local_psql -c 'insert into tisl select i, i from generate_series(1, 100) i' \
+  > "$work/isl.out" 2>&1
+[ "$(local_psql -t -A -c 'select count(*) from tisl')" = 100 ] ||
+  fail "insert select: rows"
+local_psql -c 'insert into tisl select i, i from generate_series(100, 110) i' \
+  2>&1 | grep -q "duplicate key" || fail "insert select: a duplicate, rows held"
+[ "$(local_psql -t -A -c 'select count(*) from tisl')" = 100 ] ||
+  fail "insert select: 100 rows after a duplicate"
+
+# Verify that INSERT ... SELECT into an empty table is a bulk load, which
+# holds the table exclusive to the transaction's end, and that a single-row
+# INSERT is not one.
+# 1. A held session INSERTs ... SELECTs rows into an empty table, in a
+#    transaction.
+# 2. With lock_timeout 200ms, a read of the table in another session fails
+#    with 55P03.
+# 3. After the held session commits, the read gives the rows.
+# 4. A held session INSERTs one row into an empty table, in a transaction:
+#    a read in another session does not wait.
+local_psql -c 'create table tisx (id int8 primary key)' \
+  -c 'create table tisy (id int8 primary key)' > /dev/null
+held_start isx
+held_send isx "begin; insert into tisx select i from generate_series(1, 10) i; select 'isx held';"
+held_wait isx 'isx held' || fail "insert select, load: the holder"
+local_psql -c '\set VERBOSITY verbose' -c "set lock_timeout = '200ms'" \
+  -c 'select count(*) from tisx' 2>&1 |
+  grep -q 'ERROR:  55P03: canceling statement due to lock timeout' ||
+  fail "insert select, load: a read waits for the load's transaction"
+held_send isx "commit; select 'isx done';"
+held_wait isx 'isx done' || fail "insert select, load: commit"
+[ "$(local_psql -t -A -c 'select count(*) from tisx')" = 10 ] ||
+  fail "insert select, load: rows after commit"
+held_end isx
+held_start isy
+held_send isy "begin; insert into tisy values (1); select 'isy held';"
+held_wait isy 'isy held' || fail "insert values: the holder"
+[ "$(local_psql -t -A -c "set lock_timeout = '200ms'" \
+  -c 'select count(*) from tisy' 2>&1 | tail -1)" = 0 ] ||
+  fail "insert values: a read does not wait"
+held_send isy "rollback;"
+held_end isy
+
 # Verify that a sequence newer than a snapshot neither fails a draw nor a
 # DROP TABLE: a sequence is not transactional.
 # 1. Make a table, and hold a REPEATABLE READ snapshot.

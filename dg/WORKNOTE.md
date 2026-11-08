@@ -12416,3 +12416,27 @@ ran 1.52 times PostgreSQL's instructions, against a goal of 1.5.
   `idx_scan_row()` of a tree against the row's key, and the
   tree tests of sm3, rel and dg read rows and keys across
   leaves.
+
+## Step 408: INSERT ... SELECT loads through sm's bulk load
+
+- **Found**: `sm/NEXT.md` said `INSERT ... SELECT` into an empty
+  table inserts a row at a time. `CREATE TABLE AS` already used
+  the load (`intorel_receive()` calls `table_multi_insert()`).
+- **Decision**: `ExecInitModifyTable()` sets `mt_sm_bulk` for an
+  `INSERT` into one table in sm whose subplan is not a `Result`
+  or `ValuesScan`. A single-row `INSERT` stays a row at a time:
+  a load takes the table exclusive to the transaction's end.
+- **Decision**: not a load: a partitioned target, `ON CONFLICT`,
+  or a row trigger (a foreign key is one). Such a row is read or
+  checked as it goes in, and the load holds it in files.
+- **Decision**: `smstore_load_usable()`: one load is open in a
+  session at a time. A second table in the same statement is
+  inserted row by row, not loaded.
+- **Decision**: the load ends in `ExecModifyTable()` when the
+  subplan is done, before the statement triggers fire. A
+  duplicate key now fails at that point, not at its row; the
+  error is the same.
+- **Tests**: `test/insert_select_load.sql` (rows, indexes,
+  rollback, self-select, RETURNING, foreign key, two statements
+  in a transaction); `test/server.sh` (duplicate key in an
+  empty table and in one with rows).

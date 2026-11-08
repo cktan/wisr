@@ -7,8 +7,9 @@ transaction, keeps readers out, and writes a file. For a one-row
 gain of nothing. A statement that may insert many rows is the
 right unit: `COPY`, `CREATE TABLE AS`, and `INSERT ... SELECT`,
 into an empty table. digres knows the statement's kind, not its
-row count, so `INSERT ... VALUES` stays a row at a time. Only
-`COPY` is a load today ([`NEXT.md`](NEXT.md)).
+row count, so `INSERT ... VALUES` stays a row at a time.
+`COPY`, `CREATE TABLE AS` and `INSERT ... SELECT` are loads
+today ([`NEXT.md`](NEXT.md)).
 
 `COPY`, `CREATE TABLE AS`, a large `INSERT ... SELECT` and a
 restore all put millions of rows into one table in one
@@ -26,7 +27,8 @@ in `sm1/src/load.cc`, `rel_load` and `idx_load` in sm2, and
 `sm3/src/table/table.cc`.
 
 **Status.** File mode into an empty table is built, at every
-level and in digres, whose `COPY` uses it (§13 below;
+level and in digres, whose `COPY`, `CREATE TABLE AS` and
+`INSERT ... SELECT` use it (§13 below;
 [`sm1/API.md`](sm1/API.md), `sm3/include/sm3.h`, `include/sm.h`,
 [`../dg/WORKNOTE.md`](../dg/WORKNOTE.md)). A load into a table
 with rows inserts
@@ -1265,3 +1267,16 @@ narrowed, with these differences.
   `tbl_load_close`; `sm_tbl_load_begin`, `sm_tbl_load_add`,
   `sm_tbl_load_end`; `rel`'s verb is `(load table rows)`
   ([`rel/REL.md`](rel/REL.md)).
+
+**digres's `INSERT ... SELECT`.** `ExecInitModifyTable()` marks an
+`INSERT` a load (`mt_sm_bulk`) when it has one result table in
+sm, not partitioned, a subplan that is neither a `Result` nor a
+`ValuesScan`, no `ON CONFLICT` and no row trigger. Foreign keys
+are row triggers, so a table with one is inserted row by row.
+`ExecInsert()` hands each row to `smstore_load()`, and
+`ExecModifyTable()` ends the load, before the statement
+triggers, when its rows are done. A duplicate key fails there,
+at the end of the statement, with PostgreSQL's error. Only one
+table is loaded at a time in a session: a statement that
+inserts into a second table while a load is open inserts that
+table's rows one by one.

@@ -2606,6 +2606,14 @@ static void load_error(Relation rel, TupleTableSlot *slot, const char *what) {
 }
 
 /*
+ * Whether a bulk load can take rows of rel now: no load is open, or the
+ * one open is of rel.  sm's loader tracks one table at a time here.
+ */
+bool smstore_load_usable(Relation rel) {
+  return load_oid == InvalidOid || load_oid == RelationGetRelid(rel);
+}
+
+/*
  * Hand the n slots' rows to sm's bulk load of rel, a table in sm, beginning
  * the load at the first: COPY's rows, a batch at a time.  Into an empty
  * table sm writes them to sorted files, which its store takes whole when the
@@ -2623,8 +2631,14 @@ void smstore_load(Relation rel, TupleTableSlot **slots, int n) {
                     errmsg("relation \"%s\" does not exist",
                            RelationGetRelationName(rel))));
   if (load_oid != oid) {
-    /* Tries the table's lock X, if it is empty: it never waits for it. */
-    if (waiting([&] { return sm_tbl_load_begin(tbl); }) != 0)
+    /*
+     * Tries the table's lock X, if it is empty: it never waits for it.  No
+     * call of a load arms lock_timeout: an add that sorts or writes a file
+     * takes long without a wait, and a timer that fires then cancels the
+     * statement.  Into a table with rows an add may wait for another
+     * transaction's key, and lock_timeout does not end that wait.
+     */
+    if (waiting([&] { return sm_tbl_load_begin(tbl); }, false) != 0)
       load_error(rel, NULL, "begin a bulk load");
     load_oid = oid;
   }
@@ -2636,10 +2650,12 @@ void smstore_load(Relation rel, TupleTableSlot **slots, int n) {
     const sm_datum_t *row =
         row_to_sm(tbl, slot->tts_tupleDescriptor, slot->tts_values,
                   slot->tts_isnull, slot->tts_nvalid, NULL);
-    if (waiting([&] {
-          return sm_tbl_load_add(tbl, row, slot->tts_isnull, slot->tts_nvalid,
-                                 &rowno);
-        }) != 0)
+    if (waiting(
+            [&] {
+              return sm_tbl_load_add(tbl, row, slot->tts_isnull,
+                                     slot->tts_nvalid, &rowno);
+            },
+            false) != 0)
       load_error(rel, slot, "load a row");
     slot->tts_rowno = rowno;
     slot->tts_tableOid = oid;

@@ -1022,6 +1022,13 @@ static TupleTableSlot *ExecInsert(ModifyTableContext *context,
        * sm's (smstore_insert_arbiter()), above.
        */
       elog(ERROR, "ON CONFLICT on a relation that is not in sm");
+    } else if (mtstate->mt_sm_bulk && smstore_load_usable(resultRelationDesc)) {
+      /*
+       * An INSERT ... SELECT: into an empty table, sm writes the rows to
+       * sorted files its store takes whole when ExecModifyTable() ends the
+       * load; into one with rows it inserts each.
+       */
+      smstore_load(resultRelationDesc, &slot, 1);
     } else {
       /*
        * The row goes to sm, which writes every index of the table with it
@@ -4010,6 +4017,14 @@ static TupleTableSlot *ExecModifyTable(PlanState *pstate) {
     ExecPendingInserts(estate);
 
   /*
+   * End the bulk load of the rows inserted, if one is open: a key two of
+   * them share fails here.  Done before the statement triggers fire, which
+   * may read the table.
+   */
+  if (node->mt_sm_bulk)
+    smstore_load_end(node->resultRelInfo->ri_RelationDesc);
+
+  /*
    * We're done, but fire AFTER STATEMENT triggers before exiting.
    */
   fireASTriggers(node);
@@ -4286,6 +4301,27 @@ ModifyTableState *ExecInitModifyTable(ModifyTable *node, EState *estate,
    * Now we may initialize the subplan.
    */
   outerPlanState(mtstate) = ExecInitNode(subplan, estate, eflags);
+
+  /*
+   * An INSERT whose rows come from a query is a bulk load into a table in
+   * sm.  Not one with a row from a single Result or VALUES (a statement
+   * that may insert many rows is the unit, ../sm/BULKLOAD.md), nor into a
+   * partitioned table or a table with ON CONFLICT or a row trigger: those
+   * read or route by the row at once.
+   */
+  if (CMD_INSERT == operation && 1 == mtstate->mt_nrels &&
+      0 == node->rootRelation && ONCONFLICT_NONE == node->onConflictAction &&
+      !IsA(subplan, Result) && !IsA(subplan, ValuesScan)) {
+    ResultRelInfo *rri = mtstate->resultRelInfo;
+    TriggerDesc *trig = rri->ri_TrigDesc;
+
+    mtstate->mt_sm_bulk =
+        RelationIsSm(rri->ri_RelationDesc) &&
+        RELKIND_RELATION == rri->ri_RelationDesc->rd_rel->relkind &&
+        (NULL == trig ||
+         (!trig->trig_insert_before_row && !trig->trig_insert_after_row &&
+          !trig->trig_insert_instead_row));
+  }
 
   /*
    * Do additional per-result-relation initialization.

@@ -1442,6 +1442,12 @@ typedef struct ModifyTableState
 	List	   *mt_updateColnosLists;
 	List	   *mt_mergeActionLists;
 	List	   *mt_mergeJoinConditions;
+
+	/*
+	 * An INSERT ... SELECT into one table in sm hands its rows to sm's bulk
+	 * load (smstore_load()), and ends the load when its rows are done.
+	 */
+	bool		mt_sm_bulk;
 } ModifyTableState;
 
 /* ----------------
