@@ -365,6 +365,36 @@ TEST_CASE("a snapshot older than a chained key's newest version follows the "
   CHECK(payloads == std::vector<std::string>{"v1", "v2"});
 }
 
+TEST_CASE("a conflicting chained write aborts with no key latch held") {
+  // Verify the engine-side abort of a conflicting chained write runs
+  // without the key's write latch (../LOCKMGR.md §3.5).
+  // 1. Under repeatable read, T reads "k"; another transaction changes
+  //    it and commits.
+  // 2. T's update of "k" conflicts. As T aborts, a hook looks at the
+  //    latch of "k" from another thread.
+  // 3. The latch is free.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  sm1::session_t *t = f.open();
+  begin_xct(t, sm1::xctlevel_t::repeatable_read);
+  CHECK(chain_get(t, c, "k") == "v1");
+  chain_put(f.s, c, "k", "v2", false);
+  bool held = true;
+  t->db->test_in_fail_retryable = [&] {
+    std::thread([&] {
+      std::mutex &m = lock_latch(t->db, c, "k");
+      held = !m.try_lock();
+      if (!held) {
+        m.unlock();
+      }
+    }).join();
+  };
+  CHECK(sm1::chain_update(t, c, "k", "x") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
+  CHECK_FALSE(held);
+}
+
 TEST_CASE("a chained write meets the conflicts a versioned one does") {
   // Verify first-committer-wins and read committed's SM_ERR_UPDATED.
   // 1. Under repeatable read, update a key another transaction changed

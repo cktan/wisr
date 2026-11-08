@@ -177,6 +177,48 @@ TEST_CASE("a retryable error aborts the transaction and releases everything") {
   sm1::closedb(u);
 }
 
+/*
+ * Whether another thread finds the latch of (store, key) held: the
+ * caller's own thread may not try a mutex it holds.
+ */
+bool latch_held(sm1::session_t *s, uint64_t store, const std::string &key) {
+  bool held = false;
+  std::thread([&] {
+    std::mutex &m = lock_latch(s->db, store, key);
+    if (m.try_lock()) {
+      m.unlock();
+    } else {
+      held = true;
+    }
+  }).join();
+  return held;
+}
+
+TEST_CASE("a conflicting write aborts with no key latch held") {
+  // Verify the engine-side abort of a conflicting write runs without
+  // the key's write latch (../LOCKMGR.md §3.5): the abort drops
+  // stores, and the latch is held only to check a key and put a version.
+  // 1. T begins at repeatable read; U commits a change to "x".
+  // 2. T's update of "x" conflicts. As T aborts, a hook looks at the
+  //    latch of "x" from another thread.
+  // 3. The latch is free.
+  lock_fixture_t f;
+  sm1::session_t *t = f.open();
+  sm1::session_t *u = f.open();
+  REQUIRE(sm1::begin(t, sm1::xctlevel_t::repeatable_read) == 0);
+  mkstore(t); // the abort has a store to drop
+  REQUIRE(sm1::begin(u, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(set(u, "x", "u") == 0);
+  REQUIRE(sm1::commit(u) == 0);
+  bool held = true;
+  t->db->test_in_fail_retryable = [&] { held = latch_held(t, g_store, "x"); };
+  CHECK(set(t, "x", "t") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
+  CHECK_FALSE(held);
+  sm1::closedb(t);
+  sm1::closedb(u);
+}
+
 TEST_CASE("concurrent sm1_mkstore hands out a storeid of its own to each") {
   // Verify two transactions creating stores do not collide;
   // the storeids themselves are what no scenario script can see.

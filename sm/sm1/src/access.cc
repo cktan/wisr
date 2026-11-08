@@ -1033,7 +1033,10 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
                          "after this one began; sm1_read_latest it first");
       }
     } else {
-      // First-committer-wins, aborting the loser.
+      // First-committer-wins, aborting the loser. The latch goes
+      // first: the abort drops stores, and the latch is held only
+      // to check a key and put a version (../LOCKMGR.md §3.5).
+      latch.unlock();
       return xct_fail_retryable(
           s, sm1::SM_ERR_CONFLICT,
           "key was changed by a transaction that committed after "

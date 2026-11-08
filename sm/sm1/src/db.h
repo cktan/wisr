@@ -627,6 +627,9 @@ struct db_t {
   /* Test hook, as test_before_commit, for a prepared one's ABORTED record. */
   std::function<rocksdb::Status()> test_before_abort_prepared;
 
+  /* Test hook: called by xct_fail_retryable before it aborts. */
+  std::function<void()> test_in_fail_retryable;
+
   /* Test hook, as test_before_commit, for a timestamp lease's write. */
   std::function<rocksdb::Status()> test_before_lease;
 

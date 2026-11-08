@@ -60,6 +60,16 @@ commit and the sweep (`sm/SEQUENCE.md` §3.5). The sweep costs a
 read of each Sequence record in the Namespace; keeping the owners
 in memory would remove that cost (§3.5, "Improvement").
 
+**Closed 2026-11-08:** a write that conflicted at REPEATABLE
+READ or above ran `xct_fail_retryable`, and so `discard`, with
+the key's write latch held, in versioned and in chained stores.
+`discard` takes no key latch, so it could not deadlock, but it
+drops stores, and `LOCKMGR.md` §3.5 says the latch is held only
+to check a key and put a version. Another writer of any key that
+hashed to the same latch waited for the drop. The latch is now
+released first. A hook shows the latch free during the abort, in
+a test for each kind of store. Only the error path changed.
+
 **Closed:** `find_now()` at READ COMMITTED, with a row moved
 since the statement's snapshot, gives the conflict with both
 kinds of index. A test showed no failure. A move in the narrower
@@ -71,10 +81,6 @@ Smaller points:
   is harmless, as a seqid is not reused.
 - A Sequence's lease renewal holds `alloc_mu`, the commit
   sequencer's mutex, across a synced write, once a block.
-- `xct_fail_retryable` runs `discard` with the write latch held.
-  It takes no key latch, so it looks harmless, but it drops
-  stores there, and `LOCKMGR.md` says the latch is held only to
-  check a key and put a version.
 - A cursor ended after its transaction is a double free. The end
   of a transaction frees sm1's cursor, and `sm_rel_scanend` and
   `sm_idx_scanend` then use it: valgrind shows it, and the

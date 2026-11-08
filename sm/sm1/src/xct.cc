@@ -1410,6 +1410,10 @@ int xct_check_active(sm1::session_t *s) {
 
 /* Abort on the engine's side, then report the retryable error. */
 int xct_fail_retryable(sm1::session_t *s, sm1::errnum_t e, const char *msg) {
+  // Let a test see what the caller still holds.
+  if (s->db->test_in_fail_retryable) {
+    s->db->test_in_fail_retryable();
+  }
   // Abort the transaction on the engine's side.
   discard(s);
   return set_error(e, "{}; the transaction was aborted", msg);
