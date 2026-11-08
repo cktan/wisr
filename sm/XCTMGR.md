@@ -645,7 +645,7 @@ admits the undone versions.
   address of one closed before the mark.
 - **Closed, not freed.** Each `sm1::scannxt` and `sm1::scan_seek`
   on a closed cursor fails with `SM_ERR_SCANCLOSED`, until
-  `sm1::scanend` or the transaction's end frees it. A caller may
+  `sm1::scanend` or the session's next begin frees it. A caller may
   not know that a rollback reached its cursor. A SQL cursor
   declared before a savepoint may begin a scan again inside it.
   Freeing that scan would leave the next `FETCH` a dangling

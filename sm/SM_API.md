@@ -119,8 +119,8 @@ After it, a failed allocation ends the process.
 | `sm_env_t` | `sm_attach` | `sm_detach` | the attached home directory, and each database's catalog |
 | `sm_session_t` | `sm_opendb` | `sm_closedb`, or a forced `sm_detach` | one session on one database |
 | `sm_tbl_t` | `sm_tbl_open`, `sm_tbl_tryopen` | `sm_tbl_close` | one transaction; close it before or after that transaction ends |
-| `sm_rel_scan_t` | `sm_tbl_scan`, `sm_tbl_scan_rows`, `sm_tbl_idx_scan_rows` | `sm_rel_scanend` | one transaction; end it before that transaction ends |
-| `sm_idx_scan_t` | `sm_tbl_idx_scan` | `sm_idx_scanend` | one transaction; end it before that transaction ends |
+| `sm_rel_scan_t` | `sm_tbl_scan`, `sm_tbl_scan_rows`, `sm_tbl_idx_scan_rows` | `sm_rel_scanend` | one transaction; end it before the session's next begin |
+| `sm_idx_scan_t` | `sm_tbl_idx_scan` | `sm_idx_scanend` | one transaction; end it before the session's next begin |
 | `sm_stmt_t` | `sm_stmt_begin_inner`, `sm_stmt_resume`, `sm_stmt_save` | `sm_stmt_end`, or `sm_stmt_free` for a saved view | one transaction |
 | `sm_collation_t` | `sm_collation_open` | `sm_collation_close` | no session or environment |
 

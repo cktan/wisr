@@ -332,10 +332,11 @@ TEST_CASE(
   sm1::closedb(s);
 }
 
-TEST_CASE("a cursor a rollback closed is freed by the transaction's end") {
+TEST_CASE("a cursor a rollback closed is freed by the next begin") {
   // Verify a closed cursor its caller never ends is no leak.
   // 1. Set a savepoint, open a cursor, and roll back.
-  // 2. The cursor is still the session's, until the commit.
+  // 2. The cursor is still the session's after the commit.
+  // 3. The next begin frees it.
   sp_fixture_t f;
   sm1::session_t *s = f.open();
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
@@ -345,7 +346,10 @@ TEST_CASE("a cursor a rollback closed is freed by the transaction's end") {
 
   CHECK(s->scans.size() == 1);
   REQUIRE(sm1::commit(s) == 0);
+  CHECK(s->scans.size() == 1);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(s->scans.empty());
+  REQUIRE(sm1::commit(s) == 0);
   sm1::closedb(s);
 }
 

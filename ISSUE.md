@@ -107,6 +107,18 @@ none (`sm/DBMGR.md` §6.5). A test for each case, in one process
 and across a restart. Only sm1 can reach it: sm3 does not prepare
 DDL, and `rel` and `dg` cannot read `CF:meta`.
 
+**Closed 2026-11-08:** a cursor ended after its transaction was a
+double free: the end of a transaction freed sm1's cursor, and
+`sm_rel_scanend` and `sm_idx_scanend` then freed it again. The
+end of a transaction now closes its cursors and frees none. A read
+on one fails with `SM_ERR_SCANCLOSED`; the caller's end frees it,
+and the session's next begin or its close frees one nobody ended.
+So a cursor ended between the end and the next begin is safe, for
+sm2, sm3 and raw handles alike; one ended after the next begin is
+still a double free. The cost is that a cursor nobody ends lives
+until the next begin. A test in sm1 and one in sm3 crashed with
+SIGSEGV before the change (`sm/XCTMGR.md`, `sm/include/sm.h`).
+
 **Closed:** `find_now()` at READ COMMITTED, with a row moved
 since the statement's snapshot, gives the conflict with both
 kinds of index. A test showed no failure. A move in the narrower
@@ -114,16 +126,6 @@ gap between its lookup and its read was not forced.
 
 Smaller points:
 
-- A cursor ended after its transaction is a double free. The end
-  of a transaction frees sm1's cursor, and `sm_rel_scanend` and
-  `sm_idx_scanend` then use it: valgrind shows it, and the
-  process aborts. digres cannot reach it, as its portals end
-  scans first. `sm.h` and [`SM_API.md`](sm/SM_API.md) state the
-  rule. If sm gets
-  a second host, sm3 could keep a list of each session's open
-  scans, and clear their sm1 cursors at commit and abort: then
-  `tbl_scanend` frees only its wrapper, at the cost of a list
-  update on every scan.
 
 ## 2. Costs to profile
 

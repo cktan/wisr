@@ -1359,3 +1359,50 @@ TEST_CASE("a rollback within a statement keeps its mark below the writes "
   CHECK(scan_all(s, store) == rows_t{{"b", "1"}});
   REQUIRE(sm1::commit(s) == 0);
 }
+
+TEST_CASE("a cursor the end of its transaction closed is the caller's to end") {
+  // Verify a cursor survives its transaction's end as a closed shell:
+  // ending it then is not a double free, and using it is an error.
+  // 1. Open a cursor, read a row, and commit: the cursor fails with
+  //    SM_ERR_SCANCLOSED, and the session still lists it.
+  // 2. End it: the session lists none.
+  // 3. Do the same with an abort.
+  // 4. Open a cursor and commit, and never end it: the next begin
+  //    frees it.
+  // 5. Leave a cursor and close the session: nothing leaks or fails.
+  db_fixture_t f;
+  sm1::session_t *s = f.session();
+  uint64_t store = mkstore_committed(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  put(s, store, "a", "1");
+  put(s, store, "b", "2");
+  REQUIRE(sm1::commit(s) == 0);
+
+  std::string_view k, d;
+  for (bool commit_it : {true, false}) {
+    REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+    sm1::scan_t *c = scan(s, store, nullptr, 0, 0, nullptr, 0, 0);
+    REQUIRE_MESSAGE(c, sm1::errmsg());
+    REQUIRE(sm1::scannxt(c, k, d) == 0);
+    if (commit_it) {
+      REQUIRE(sm1::commit(s) == 0);
+    } else {
+      REQUIRE(sm1::abort(s) == 0);
+    }
+    CHECK(s->scans.size() == 1);
+    CHECK(sm1::scan_rolled_back(c));
+    CHECK(sm1::scannxt(c, k, d) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_SCANCLOSED);
+    sm1::scanend(c);
+    CHECK(s->scans.empty());
+  }
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(scan(s, store, nullptr, 0, 0, nullptr, 0, 0) != nullptr);
+  REQUIRE(sm1::commit(s) == 0);
+  CHECK(s->scans.size() == 1);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(s->scans.empty());
+  CHECK(scan(s, store, nullptr, 0, 0, nullptr, 0, 0) != nullptr);
+  REQUIRE(sm1::commit(s) == 0);
+}

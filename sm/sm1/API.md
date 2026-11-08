@@ -1247,8 +1247,8 @@ before it are kept. The transaction remains active.
 
 **Scan cursors opened after the savepoint are closed**: a
 read or seek on one fails with `SM_ERR_SCANCLOSED` until it
-is ended with `sm1::scanend`, which frees it, as the
-transaction's end does. A cursor opened before the
+is ended with `sm1::scanend`, which frees it, as after the
+transaction's end. A cursor opened before the
 savepoint stays open and keeps its position. A cursor's
 view is fixed when it is created, so one opened after the
 mark would otherwise go on returning rows this call just
@@ -2084,6 +2084,11 @@ tracking. A cursor abandoned early registers the shorter
 range it really read, which is both correct and tighter
 than the requested range — so closing early is preferable
 to draining a scan whose rows are not needed.
+
+A transaction's end closes its cursors: each read then fails with
+`SM_ERR_SCANCLOSED`. It frees none. The session's next
+`sm1::begin` and its close free those nobody ended, so call
+`sm1::scanend` before the next `sm1::begin`.
 
 `scan` is invalid after this call. Closing a cursor never
 fails, which is why it returns nothing: a caller has no

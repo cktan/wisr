@@ -346,8 +346,9 @@ struct sm1::scan_t {
   int state = 0; /* 0 open, 1 at end, -1 failed */
   /*
    * Closed by a rollback to a savepoint set before it opened
-   * (../XCTMGR.md §6): what it held is released, and it waits only for
-   * sm1::scanend to free it.
+   * (../XCTMGR.md §6), or by the end of its transaction: what it held
+   * is released, and it waits only for sm1::scanend to free it. The
+   * session's next begin, or its close, frees one nobody ended.
    */
   bool rolled_back = false;
 
@@ -718,8 +719,15 @@ xct_state_t xct_status(wisr::db_t *db, uint64_t xid, uint64_t *commit_ts);
  */
 int xct_resolve(wisr::db_t *db, uint64_t xid, uint64_t *commit_ts);
 
-/* Close every cursor open on session, and its batch iterators'. */
+/*
+ * End the hold of every cursor open on session, and its batch
+ * iterators'. The cursors stay listed, closed, until their callers end
+ * them or xct_free_scans frees them.
+ */
 void xct_end_scans(sm1::session_t *session);
+
+/* Free the cursors the session lists: those no caller ended. */
+void xct_free_scans(sm1::session_t *session);
 
 /* Let go of the iterator iter holds, if any, off its session's list. */
 void batch_iter_release(sm1::batch_iter_t *iter);

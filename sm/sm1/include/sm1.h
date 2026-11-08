@@ -916,8 +916,8 @@ int savepoint(session_t* session);
  *
  * Scan cursors opened AFTER the savepoint are closed: a
  * sm1::scannxt() or sm1::scan_seek() on one fails with
- * SM_ERR_SCANCLOSED until sm1::scanend() frees it, as the
- * transaction's end does. One opened before it stays open
+ * SM_ERR_SCANCLOSED until sm1::scanend() frees it, as it does
+ * after the transaction's end. One opened before it stays open
  * and keeps its position. A cursor's view is fixed when it
  * is created, so a later one would otherwise go on returning
  * rows this call just undid.
@@ -1411,6 +1411,11 @@ int scan_seek(scan_t* scan, std::string_view key, int inclusive);
  * read, which is both correct and tighter than the range
  * requested -- so closing early is preferable to draining a
  * scan whose rows are not needed.
+ *
+ * A transaction's end closes its cursors: each read then fails
+ * with SM_ERR_SCANCLOSED. It frees none; the session's next begin
+ * and its close free those nobody ended, so call this before the
+ * next begin.
  *
  * scan is invalid afterwards. Closing never fails, which is
  * why it returns nothing: a caller has no useful recovery from

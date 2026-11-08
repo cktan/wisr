@@ -680,8 +680,10 @@ int sm_rel_scan_seek_key(sm_rel_scan_t* scan, const void* key, size_t len);
 
 /*
  * Close a cursor; NULL is a no-op.
- * Call it before the transaction ends: the end frees the cursor, and
- * a call after it is a double free.
+ * Call it before the session's next begin. The transaction's end
+ * only closes the cursor, so a read then fails with
+ * SM_ERR_SCANCLOSED; the next begin frees one nobody closed, and a
+ * call after that is a double free.
  */
 void sm_rel_scanend(sm_rel_scan_t* scan);
 
@@ -732,8 +734,10 @@ int sm_idx_scan_row(sm_idx_scan_t* scan, const void** key, size_t* len);
 
 /*
  * Close a cursor; NULL is a no-op.
- * Call it before the transaction ends: the end frees the cursor, and
- * a call after it is a double free.
+ * Call it before the session's next begin. The transaction's end
+ * only closes the cursor, so a read then fails with
+ * SM_ERR_SCANCLOSED; the next begin frees one nobody closed, and a
+ * call after that is a double free.
  */
 void sm_idx_scanend(sm_idx_scan_t* scan);
 

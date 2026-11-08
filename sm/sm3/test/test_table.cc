@@ -1052,6 +1052,46 @@ TEST_CASE("a scanned row outlives other calls on its session") {
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
+TEST_CASE("a cursor left open at the end of its transaction is ended safely") {
+  // Verify the cursors of a table and of an index, ended after their
+  // transaction commits or aborts, are not a double free: sm1 keeps
+  // them closed for the caller to end.
+  // 1. Commit three rows.
+  // 2. Open a heap cursor and an index cursor, read one entry of
+  //    each, and commit: both fail with SM_ERR_SCANCLOSED, and ending
+  //    them is safe.
+  // 3. Do the same with an abort.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  put(t, 1, "free", "a");
+  put(t, 2, "taken", "b");
+  put(t, 3, "free", "c");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  for (bool commit_it : {true, false}) {
+    start(f.a);
+    t = f.write(f.a);
+    sm3::scan_t *heap = nullptr;
+    sm2::index_scan_t *idx = nullptr;
+    REQUIRE(sm3::tbl_scan(t, 0, UINT64_MAX, heap) == 0);
+    REQUIRE(sm3::tbl_idx_scan(t, f.jobs_id, nullptr, nullptr, idx) == 0);
+    uint64_t rowno = 0, xrow = 0;
+    bool cut = false;
+    std::string_view row, entry;
+    REQUIRE(sm3::tbl_scannxt(heap, rowno, row) == 0);
+    REQUIRE(sm2::idx_scannxt(idx, xrow, cut, entry) == 0);
+    sm3::tbl_close(t);
+    REQUIRE((commit_it ? sm3::commit(f.a) : sm3::abort(f.a)) == 0);
+
+    CHECK(sm3::tbl_scannxt(heap, rowno, row) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_SCANCLOSED);
+    sm3::tbl_scanend(heap);
+    sm2::idx_scanend(idx);
+  }
+}
+
 TEST_CASE("an index cursor begun after a savepoint fails once rolled back "
           "to it") {
   // Verify a cursor a rollback closed fails with SM_ERR_SCANCLOSED,

@@ -660,6 +660,8 @@ int begin(sm1::session_t *s, sm1::xctlevel_t level, bool read_only) {
   }
   // Clear any state of an earlier transaction.
   reset(s);
+  // Free the cursors it ended that their callers did not.
+  xct_free_scans(s);
   // Record the level, and whether it may write.
   s->level = level;
   s->read_only = read_only;
@@ -1766,15 +1768,33 @@ int sm1::stmt_end(sm1::session_t *session, const sm1::stmt_t &outer) {
 
 namespace wisr {
 
-/* Close every open cursor of the session. */
+/*
+ * End the hold of every open cursor of the session, and free none:
+ * each stays the session's, failing every read, until its caller
+ * ends it or the next begin frees it (xct_free_scans).
+ */
 void xct_end_scans(sm1::session_t *s) {
-  // Close cursors until none is left.
-  while (!s->scans.empty()) {
-    sm1::scanend(*s->scans.begin());
+  for (sm1::scan_t *c : s->scans) {
+    // Not closed by a rollback already.
+    if (!c->rolled_back) {
+      scan_release(c);
+      c->rolled_back = true;
+    }
   }
   // A batch iterator's caller may not end it: dg drops a scan on an
   // error. Let go of its iterator, so no RocksDB file stays held.
   batch_iters_release(s);
+}
+
+/*
+ * Free the cursors an earlier transaction ended that no caller has
+ * ended: all that the session lists between transactions.
+ */
+void xct_free_scans(sm1::session_t *s) {
+  for (sm1::scan_t *c : s->scans) {
+    delete c;
+  }
+  s->scans.clear();
 }
 
 } // namespace wisr

@@ -700,8 +700,8 @@ namespace {
 
 /* What a cursor a rollback closed says when it is used (../XCTMGR.md §6). */
 constexpr const char *rolled_back_msg =
-    "the cursor was closed by a rollback to a savepoint set before it opened; "
-    "its old view cannot be recreated";
+    "the cursor was closed by a rollback to a savepoint set before it opened, "
+    "or by the end of its transaction; its old view cannot be recreated";
 
 /* sm1::scan_seek, minus the out-of-memory guard. */
 int scan_seek(sm1::scan_t *c, const char *key, size_t klen, int inclusive) {
