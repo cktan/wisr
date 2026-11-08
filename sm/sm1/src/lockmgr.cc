@@ -606,8 +606,8 @@ int lock_wait(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
       return 1;
     }
     if (!notice.started()) {
-      // Name no holder while unlocked: a cycle search must not see an
-      // edge of a wait that has not begun. The next pass names them again.
+      // Clear the list so the scenario driver cannot report a wait before
+      // the hook returns. The next pass records the current holders again.
       s->waiting_for.clear();
       // Timer cancellation may wait for a wakeup that needs this mutex.
       guard.unlock();
