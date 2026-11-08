@@ -12440,3 +12440,18 @@ ran 1.52 times PostgreSQL's instructions, against a goal of 1.5.
   rollback, self-select, RETURNING, foreign key, two statements
   in a transaction); `test/server.sh` (duplicate key in an
   empty table and in one with rows).
+
+## Step 409: Data-modifying CTEs use ordinary inserts
+
+- **Found**: a data-modifying CTE is a write inside `WITH`.
+  Its `RETURNING` rows can feed another write to the same table
+  while its bulk load remains open. Storage rejects that write.
+- **Decision**: statements with data-modifying CTEs use ordinary
+  inserts. Other eligible statements keep bulk loading.
+  Large CTE inserts can take longer and use more memory.
+- **Tests**: `test/insert_select_nested.sql` feeds an insert's
+  returned rows to another insert into the same empty table.
+  The test fails before the change with an open-load error.
+  Both cases pass with and without `ON CONFLICT`, alone and in
+  eight sessions. The existing bulk-insert SQL tests also pass
+  alone and in eight sessions on the debug build.

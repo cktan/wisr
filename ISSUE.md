@@ -124,6 +124,60 @@ since the statement's snapshot, gives the conflict with both
 kinds of index. A test showed no failure. A move in the narrower
 gap between its lookup and its read was not forced.
 
+### Bulk-load fallback ignores `lock_timeout`
+
+**Open, reproduced 2026-11-08.** Found on branch
+`wip-insert-select-bulk`, at `62e7a3f2`. An
+`INSERT ... SELECT` into a table with rows uses the loader's
+ordinary insert fallback. A conflicting uncommitted key makes
+it wait, but `lock_timeout` does not end that wait.
+
+**Reproduce in two sessions:**
+
+1. Create a nonempty table, then hold an uncommitted key in
+   session A. Keep its transaction open.
+
+   ```sql
+   CREATE TABLE timeout_test (id int PRIMARY KEY);
+   INSERT INTO timeout_test VALUES (1);
+   BEGIN;
+   INSERT INTO timeout_test VALUES (2);
+   ```
+
+2. Run the query insert in session B.
+
+   ```sql
+   SET lock_timeout = '100ms';
+   SET statement_timeout = '900ms';
+   INSERT INTO timeout_test
+   SELECT i FROM generate_series(2, 2) i;
+   ```
+
+3. Observe `canceling statement due to statement timeout`
+   (SQLSTATE `57014`). The expected error is
+   `canceling statement due to lock timeout`
+   (SQLSTATE `55P03`), after about 100 ms.
+4. Run `ROLLBACK` in session A to release the key.
+
+**Cause.** `smstore_load()` in
+`dg/src/backend/access/sm/smstore.c` calls
+`waiting(..., false)` for `sm_tbl_load_add()`. This disables
+the lock timer even when `tbl_load_add()` falls back to
+`tbl_insert()` in `sm/sm3/src/table/table.cc`.
+
+The timer is disabled to keep sorting and file writes from
+triggering a lock timeout. Arming it around every load call
+would also count time spent doing that work, without a lock
+wait. The fix must distinguish lock waits from load work.
+
+**Regression test.** `dg/test/server.sh` now holds a key in
+one session and checks that the query insert gets `55P03`
+before its statement timeout. The test fails on this branch.
+
+**Close when:** the regression test passes, and sorting or
+writing load files without a lock wait causes no lock timeout.
+The separate fix for data-modifying CTEs does not fix this bug.
+
 Smaller points:
 
 

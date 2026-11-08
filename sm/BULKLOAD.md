@@ -1271,7 +1271,10 @@ narrowed, with these differences.
 **digres's `INSERT ... SELECT`.** `ExecInitModifyTable()` marks an
 `INSERT` a load (`mt_sm_bulk`) when it has one result table in
 sm, not partitioned, a subplan that is neither a `Result` nor a
-`ValuesScan`, no `ON CONFLICT` and no row trigger. Foreign keys
+`ValuesScan`, no data-modifying CTE, no `ON CONFLICT` and no
+row trigger. A data-modifying CTE is a write inside `WITH`.
+Such statements use ordinary inserts because their writes can
+interleave while a load remains open. Foreign keys
 are row triggers, so a table with one is inserted row by row.
 `ExecInsert()` hands each row to `smstore_load()`, and
 `ExecModifyTable()` ends the load, before the statement

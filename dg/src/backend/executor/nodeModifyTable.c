@@ -4307,11 +4307,13 @@ ModifyTableState *ExecInitModifyTable(ModifyTable *node, EState *estate,
    * sm.  Not one with a row from a single Result or VALUES (a statement
    * that may insert many rows is the unit, ../sm/BULKLOAD.md), nor into a
    * partitioned table or a table with ON CONFLICT or a row trigger: those
-   * read or route by the row at once.
+   * read or route by the row at once.  A data-modifying CTE may yield
+   * RETURNING rows to another write while its load is still open.
    */
   if (CMD_INSERT == operation && 1 == mtstate->mt_nrels &&
-      0 == node->rootRelation && ONCONFLICT_NONE == node->onConflictAction &&
-      !IsA(subplan, Result) && !IsA(subplan, ValuesScan)) {
+      !estate->es_plannedstmt->hasModifyingCTE && 0 == node->rootRelation &&
+      ONCONFLICT_NONE == node->onConflictAction && !IsA(subplan, Result) &&
+      !IsA(subplan, ValuesScan)) {
     ResultRelInfo *rri = mtstate->resultRelInfo;
     TriggerDesc *trig = rri->ri_TrigDesc;
 

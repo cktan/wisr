@@ -561,6 +561,29 @@ held_wait isy 'isy held' || fail "insert values: the holder"
 held_send isy "rollback;"
 held_end isy
 
+# Verify that a load's row insert fallback obeys lock_timeout.
+# 1. Create a nonempty table to force the row insert fallback.
+# 2. Hold an uncommitted key in another session.
+# 3. Insert that key from a query with both timeouts set.
+# 4. Confirm that lock_timeout ends the wait before statement_timeout.
+# 5. Roll back the holder and confirm the failed insert stored no rows.
+local_psql -c 'create table tis_timeout (id int primary key)' \
+  -c 'insert into tis_timeout values (1)' > "$work/isl_timeout_setup.out" 2>&1
+held_start isl_timeout
+held_send isl_timeout "begin; insert into tis_timeout values (2); select 'timeout held';"
+held_wait isl_timeout 'timeout held' || fail "insert select timeout: holder"
+local_psql -c '\set VERBOSITY verbose' \
+  -c "set lock_timeout = '100ms'" -c "set statement_timeout = '900ms'" \
+  -c 'insert into tis_timeout select i from generate_series(2, 2) i' \
+  > "$work/isl_timeout.out" 2>&1
+grep -q 'ERROR:  55P03: canceling statement due to lock timeout' \
+  "$work/isl_timeout.out" || fail "insert select timeout: lock timeout"
+held_send isl_timeout "rollback; select 'timeout released';"
+held_wait isl_timeout 'timeout released' || fail "insert select timeout: rollback"
+held_end isl_timeout
+[ "$(local_psql -c 'select count(*) from tis_timeout')" = 1 ] ||
+  fail "insert select timeout: rows after rollback"
+
 # Verify that a sequence newer than a snapshot neither fails a draw nor a
 # DROP TABLE: a sequence is not transactional.
 # 1. Make a table, and hold a REPEATABLE READ snapshot.
