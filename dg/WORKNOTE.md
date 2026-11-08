@@ -12507,3 +12507,42 @@ The decisions are in [`../QUESTION.md`](../QUESTION.md).
   create_table_like: about 100 statements run now. The skips for
   the subcommands left, `SET SCHEMA` and storage among them, are
   180.
+
+## Step 410: NOT NULL constraints by name
+
+[`../sm/NOTNULL.md`](../sm/NOTNULL.md): PostgreSQL 18 makes each
+NOT NULL column a constraint with a name and an oid, a row of type
+`n` in `pg_constraint`, and its own code reads them.
+
+- **sm3**: a NOT NULL column's record keeps its constraint's oid
+  and name, which `make_table()`, `add_column()` and
+  `set_not_null()` give it (`name_not_null()`), the caller's name
+  or `table_column_not_null`. `drop_not_null()` and DROP COLUMN
+  take them away; `rename_not_null()` renames one. A name is
+  unique among the table's constraints
+  (`constraint_name_taken()`).
+- **sm.h and rel**: `sm_column_spec_t::not_null_name`,
+  `sm_column_def_t::not_null_oid` and `not_null_name`,
+  `sm_cat_set_not_null()`'s name, `sm_cat_rename_not_null()`;
+  rel's `not-nulls`, `rename-not-null`, and `set-not-null`'s name.
+- **digres**:
+  - CREATE TABLE names each one as PostgreSQL's
+    `AddRelationNotNullConstraints()` does (`name_not_nulls()`):
+    the names the statement gives, a name given twice an error,
+    then `ChooseConstraintName()` for the rest, free of the
+    names given to the checks. ADD COLUMN, SET NOT NULL and ADD
+    PRIMARY KEY name theirs the same way.
+  - `ADD CONSTRAINT n NOT NULL a`; a column whose constraint has
+    another name is refused with PostgreSQL's error, and NOT
+    VALID is refused. DROP CONSTRAINT of one is DROP NOT NULL;
+    RENAME CONSTRAINT renames one.
+  - `pg_constraint` has a row of type `n` for each
+    (`not_null_row()` in `catalog/catrel.c`), and
+    `RelationGetNotNullConstraints()` reads the names and oids
+    from sm, so `LIKE ... INCLUDING ALL` works and copies them.
+- **Tests**: `../sm/sm3/test/test_table.cc`,
+  `../sm/rel/test/test_notnull.rel`,
+  `test/not_null_constraint.sql`, which gave PostgreSQL 18's
+  output but for `lsm` and NOT VALID. `test/check_constraint.out`
+  shows a LIKE copy's NOT NULL row, and
+  `slt/key_constraint_catalog.test` reads only key constraints.

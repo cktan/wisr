@@ -1047,6 +1047,8 @@ static smstore_relation_t *add_relation(List **out, uint64_t oid,
   r->notnull = (bool *)palloc0(Max(natts, 1) * sizeof(bool));
   r->defaults = (char **)palloc0(Max(natts, 1) * sizeof(char *));
   r->identity = (char *)palloc0(Max(natts, 1) * sizeof(char));
+  r->nnoids = (Oid *)palloc0(Max(natts, 1) * sizeof(Oid));
+  r->nnnames = (char **)palloc0(Max(natts, 1) * sizeof(char *));
   *out = lappend(*out, r);
   return r;
 }
@@ -1059,6 +1061,9 @@ static void set_column(smstore_relation_t *r, int i, const sm_column_def_t &c) {
     return;
   r->typids[i] = type_oid(c.type_code);
   r->notnull[i] = c.not_null;
+  r->nnoids[i] = (Oid)c.not_null_oid;
+  if (0 != c.not_null_oid)
+    r->nnnames[i] = pstrdup(c.not_null_name.c_str());
 }
 
 /*
@@ -1637,6 +1642,65 @@ static bool column_not_null(const CreateStmt *stmt, const ColumnDef *col) {
 }
 
 /*
+ * The name a NOT NULL constraint of stmt gives col, or NULL if none does
+ * (../sm/NOTNULL.md §1).
+ */
+static const char *given_not_null_name(const CreateStmt *stmt,
+                                       const ColumnDef *col) {
+  foreach_node(Constraint, c, stmt->nnconstraints) {
+    if (NULL == c->conname)
+      continue;
+    foreach_node(String, k, c->keys) {
+      if (0 == strcmp(strVal(k), col->colname))
+        return c->conname;
+    }
+  }
+  return NULL;
+}
+
+/*
+ * Name the NOT NULL constraints of columns, a CREATE TABLE's of the table
+ * relname in nspoid, as PostgreSQL's AddRelationNotNullConstraints() does:
+ * the names stmt gives first, a name given twice an error, then each other
+ * one relname_column_not_null, by ChooseConstraintName(), free of the
+ * names chosen before it and of the names stmt gives its checks, which are
+ * added after the table is made.
+ */
+static void name_not_nulls(const CreateStmt *stmt, const char *relname,
+                           Oid nspoid, std::vector<sm_column_spec_t> &columns,
+                           const std::vector<ColumnDef *> &defs) {
+  List *chosen = NIL;
+  List *checks = NIL;
+
+  foreach_node(Constraint, c, stmt->constraints) {
+    if (NULL != c->conname)
+      checks = lappend(checks, c->conname);
+  }
+  for (size_t i = 0; i < columns.size(); i++) {
+    const char *name = given_not_null_name(stmt, defs[i]);
+
+    if (!columns[i].not_null || NULL == name)
+      continue;
+    foreach_ptr(char, other, chosen) {
+      if (0 == strcmp(other, name))
+        ereport(ERROR, (errcode(ERRCODE_DUPLICATE_OBJECT),
+                        errmsg("constraint \"%s\" for relation \"%s\" "
+                               "already exists",
+                               name, relname)));
+    }
+    columns[i].not_null_name = name;
+    chosen = lappend(chosen, (void *)name);
+  }
+  for (size_t i = 0; i < columns.size(); i++)
+    if (columns[i].not_null && NULL == columns[i].not_null_name) {
+      columns[i].not_null_name =
+          ChooseConstraintName(relname, columns[i].name, "not_null", nspoid,
+                               list_concat_copy(chosen, checks));
+      chosen = lappend(chosen, (void *)columns[i].not_null_name);
+    }
+}
+
+/*
  * Check a CREATE TABLE's WITH (...) and ignore it: sm has no pages to
  * fill and no autovacuum, so fillfactor and autovacuum_enabled are taken,
  * their values checked as PostgreSQL checks them, and kept nowhere.  Any
@@ -2055,6 +2119,7 @@ static void alter_add_check(Oid relid, Constraint *con) {
 
 ObjectAddress smstore_create_table(CreateStmt *stmt) {
   std::vector<sm_column_spec_t> columns;
+  std::vector<ColumnDef *> defs;
   Oid nspoid;
   bool temp;
   uint64_t oid;
@@ -2098,6 +2163,7 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
     columns.push_back({col->colname, type_code(typid), typmod,
                        column_not_null(stmt, col),
                        column_default(col, typid, typmod)});
+    defs.push_back(col);
     columns.back().on_update_expr =
         column_update_default(col, col->raw_default, typid, typmod);
     /*
@@ -2110,6 +2176,8 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
           RangeVarGetRelid(col->identitySequence, NoLock, false);
     }
   }
+  name_not_nulls(stmt, stmt->relation->relname,
+                 temp ? PG_TEMP_NAMESPACE : nspoid, columns, defs);
   sm_session_t *s = xact_session();
 
   /* A temporary table is the session's alone, in no namespace of sm's. */
@@ -2584,6 +2652,9 @@ smstore_table_t *smstore_table_desc(Oid oid) {
     col->dropped = c.dropped;
     col->default_expr = c.has_default ? pstrdup(c.default_expr.c_str()) : NULL;
     col->identity = c.identity;
+    col->not_null_oid = (Oid)c.not_null_oid;
+    col->not_null_name =
+        0 != c.not_null_oid ? pstrdup(c.not_null_name.c_str()) : NULL;
     if (!c.dropped) {
       col->typid = type_oid(c.type_code);
       col->typmod = c.typmod;
@@ -4286,15 +4357,17 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
   bool has_missing = false;
   Expr *volatile_default = NULL;
   Oid identity_seq = InvalidOid;
+  const char *not_null_name = NULL;
   ListCell *l;
 
   check_column_name(col->colname);
   foreach (l, col->constraints) {
     Constraint *c = lfirst_node(Constraint, l);
 
-    if (c->contype == CONSTR_NOTNULL)
+    if (c->contype == CONSTR_NOTNULL) {
       not_null = true;
-    else if (c->contype == CONSTR_DEFAULT && 'u' != c->generated_when)
+      not_null_name = c->conname;
+    } else if (c->contype == CONSTR_DEFAULT && 'u' != c->generated_when)
       raw_default = c->raw_expr;
     else if (c->contype == CONSTR_DEFAULT && c != update_default_of(col))
       ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
@@ -4351,10 +4424,15 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
     next->typeId = typid;
     volatile_default = (Expr *)next;
   }
+  /* Its NOT NULL constraint's name, as PostgreSQL chooses it. */
+  if (not_null && NULL == not_null_name)
+    not_null_name = ChooseConstraintName(relname, col->colname, "not_null",
+                                         get_rel_namespace(relid), NIL);
   /* NOT NULL only once every row holds its value. */
   sm_column_spec_t spec = {col->colname, type_code(typid), typmod,
                            not_null && NULL == volatile_default, default_expr};
   spec.on_update_expr = update_default;
+  spec.not_null_name = not_null_name;
   sm_session_t *s = xact_session();
 
   if (0 == waiting([&] {
@@ -4374,7 +4452,7 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
       CommandCounterIncrement();
       s = xact_session();
       if (0 != waiting([&] {
-            return sm_cat_set_not_null(s, relid, col->colname);
+            return sm_cat_set_not_null(s, relid, col->colname, not_null_name);
           })) {
         if (SM_ERR_NOTNULL == sm_errnum())
           ereport(ERROR,
@@ -4494,17 +4572,47 @@ static size_t live_column_of(Oid relid, const char *relname, const char *name,
  * ALTER COLUMN name SET NOT NULL, or with set false DROP NOT NULL, of the
  * table relid, as PostgreSQL's ATExecSetNotNull() and ATExecDropNotNull()
  * refuse them.  SET reads every row at sm's latest view, under the table's
- * lock X (sm3::set_not_null); DROP changes the record alone.
+ * lock X (sm3::set_not_null), and names the constraint conname, or as
+ * PostgreSQL names it with none (../sm/NOTNULL.md); DROP changes the
+ * record alone.  A name another constraint of the column has, then a NOT
+ * VALID one (valid false), are refused first.
  */
 static void alter_not_null(Oid relid, const char *relname, const char *name,
-                           bool set) {
+                           bool set, const char *conname, bool valid) {
   sm_session_t *s = xact_session();
   sm_table_def_t def;
   size_t at = live_column_of(relid, relname, name, def);
+  const sm_column_def_t &c = def.columns[at];
 
+  /* A name given that is not the one the column's constraint has. */
+  if (set && NULL != conname && 0 != c.not_null_oid &&
+      c.not_null_name != conname)
+    ereport(ERROR,
+            (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+             errmsg("cannot create not-null constraint \"%s\" on column "
+                    "\"%s\" of table \"%s\"",
+                    conname, name, relname),
+             errdetail("A not-null constraint named \"%s\" already exists "
+                       "for this column.",
+                       c.not_null_name.c_str())));
+  /* No row may break one: digres has no NOT NULL NOT VALID. */
+  if (!valid)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("a NOT VALID NOT NULL constraint is not supported "
+                           "yet")));
   if (set) {
-    if (0 == waiting([&] { return sm_cat_set_not_null(s, relid, name); }))
+    /* Its NOT NULL constraint's name, if it becomes NOT NULL. */
+    if (NULL == conname && !c.not_null)
+      conname = ChooseConstraintName(relname, name, "not_null",
+                                     get_rel_namespace(relid), NIL);
+    if (0 ==
+        waiting([&] { return sm_cat_set_not_null(s, relid, name, conname); }))
       return;
+    if (SM_ERR_DUPKEY == sm_errnum())
+      ereport(ERROR, (errcode(ERRCODE_DUPLICATE_OBJECT),
+                      errmsg("constraint \"%s\" for relation \"%s\" "
+                             "already exists",
+                             conname, relname)));
     if (SM_ERR_NOTNULL == sm_errnum())
       ereport(ERROR, (errcode(ERRCODE_NOT_NULL_VIOLATION),
                       errmsg("column \"%s\" of relation \"%s\" contains "
@@ -4512,7 +4620,7 @@ static void alter_not_null(Oid relid, const char *relname, const char *name,
                              name, relname)));
     sm_error("set a column NOT NULL");
   }
-  if (0 != def.columns[at].identity)
+  if (0 != c.identity)
     ereport(ERROR,
             (errcode(ERRCODE_SYNTAX_ERROR),
              errmsg("column \"%s\" of relation \"%s\" is an identity column",
@@ -4730,9 +4838,12 @@ static void add_index_constraint(Oid relid, const char *relname,
                                            attnum - 1)->attnotnull)
         continue;
       sm_session_t *s = xact_session();
+      /* Its NOT NULL constraint's name, as PostgreSQL chooses it. */
+      const char *nn = ChooseConstraintName(relname, elem->name, "not_null",
+                                            get_rel_namespace(relid), NIL);
 
       if (0 != waiting([&] {
-            return sm_cat_set_not_null(s, relid, elem->name);
+            return sm_cat_set_not_null(s, relid, elem->name, nn);
           })) {
         if (SM_ERR_NOTNULL == sm_errnum())
           ereport(ERROR,
@@ -4861,11 +4972,14 @@ void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
         add_index_constraint(relid, relname, stmt, cmd);
       else if (CONSTR_CHECK == con->contype)
         alter_add_check(relid, con);
+      else if (CONSTR_NOTNULL == con->contype)
+        alter_not_null(relid, relname, strVal(linitial(con->keys)), true,
+                       con->conname, con->initially_valid);
       else if (con->contype != CONSTR_FOREIGN)
         ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                         errmsg("ALTER TABLE ... ADD CONSTRAINT supports only "
-                               "FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK "
-                               "yet")));
+                               "FOREIGN KEY, PRIMARY KEY, UNIQUE, CHECK and "
+                               "NOT NULL yet")));
       else
         add_fkey(relid, relname, con);
     } else if (cmd->subtype == AT_DropConstraint)
@@ -4876,7 +4990,8 @@ void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
     else if (AT_AlterColumnType == cmd->subtype)
       alter_column_type(relid, relname, cmd);
     else if (AT_SetNotNull == cmd->subtype || AT_DropNotNull == cmd->subtype)
-      alter_not_null(relid, relname, cmd->name, AT_SetNotNull == cmd->subtype);
+      alter_not_null(relid, relname, cmd->name, AT_SetNotNull == cmd->subtype,
+                     NULL, true);
     else if (AT_ColumnDefault == cmd->subtype)
       alter_column_default(relid, relname, cmd);
     else
@@ -5674,6 +5789,23 @@ static bool check_named(Oid relid, const char *name, sm_check_def_t &out) {
   return false;
 }
 
+/*
+ * The column of the table relid whose NOT NULL constraint is named name,
+ * into column; false if none (../sm/NOTNULL.md).
+ */
+static bool not_null_named(Oid relid, const char *name, std::string &column) {
+  sm_table_def_t def;
+
+  if (!table_def_now(relid, def))
+    return false;
+  for (const sm_column_def_t &c : def.columns)
+    if (!c.dropped && 0 != c.not_null_oid && c.not_null_name == name) {
+      column = c.name;
+      return true;
+    }
+  return false;
+}
+
 /* An error for a constraint name the table relname has none of. */
 static void no_constraint(const char *name, const char *relname) {
   ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
@@ -5708,6 +5840,8 @@ static void drop_constraint(Oid relid, const char *relname, const char *name,
   sm_fkey_def_t f;
   sm_check_def_t c;
 
+  std::string column;
+
   /* A check: nothing depends on one (../sm/CHECK.md). */
   if (check_named(relid, name, c)) {
     uint64_t oid = c.oid;
@@ -5715,6 +5849,12 @@ static void drop_constraint(Oid relid, const char *relname, const char *name,
 
     if (waiting([&] { return sm_cat_drop_check(s, relid, oid); }) != 0)
       sm_error("drop a check constraint");
+    forget_table(relid);
+    return;
+  }
+  /* A NOT NULL constraint: its column's DROP NOT NULL. */
+  if (not_null_named(relid, name, column)) {
+    alter_not_null(relid, relname, column.c_str(), false, NULL, true);
     forget_table(relid);
     return;
   }
@@ -5785,7 +5925,10 @@ static void validate_constraint(Oid relid, const char *relname,
   forget_table(relid);
 }
 
-/* ALTER TABLE ... RENAME CONSTRAINT, of a foreign key.  Returns its address. */
+/*
+ * ALTER TABLE ... RENAME CONSTRAINT, of a foreign key, a check or a NOT
+ * NULL constraint.  Returns its address.
+ */
 ObjectAddress smstore_rename_constraint(RenameStmt *stmt) {
   bool view;
   Oid relid = rename_target(stmt, OBJECT_TABLE, &view);
@@ -5799,14 +5942,25 @@ ObjectAddress smstore_rename_constraint(RenameStmt *stmt) {
                     errmsg("\"%s\" is not a table", stmt->relation->relname)));
   sm_fkey_def_t f;
   sm_check_def_t c;
+  std::string column;
+  sm_table_def_t def;
   bool is_check = check_named(relid, stmt->subname, c);
+  bool is_not_null = !is_check && not_null_named(relid, stmt->subname, column);
 
-  if (!is_check && !fkey_named(relid, stmt->subname, f))
+  if (!is_check && !is_not_null && !fkey_named(relid, stmt->subname, f))
     no_constraint(stmt->subname, stmt->relation->relname);
   uint64_t oid = is_check ? c.oid : f.oid;
   sm_session_t *s = xact_session();
 
+  /* A NOT NULL constraint's oid is its column's (../sm/NOTNULL.md). */
+  if (is_not_null && table_def_now(relid, def))
+    for (const sm_column_def_t &col : def.columns)
+      if (!col.dropped && col.name == column)
+        oid = col.not_null_oid;
   if (waiting([&] {
+        if (is_not_null)
+          return sm_cat_rename_not_null(s, relid, column.c_str(),
+                                        stmt->newname);
         return is_check ? sm_cat_rename_check(s, relid, oid, stmt->newname)
                         : sm_cat_rename_fkey(s, relid, oid, stmt->newname);
       }) != 0) {

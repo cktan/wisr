@@ -82,6 +82,11 @@ struct column_spec_t {
      * does not assign the column writes in it. Kept, not run.
      */
     std::optional<std::string> on_update_expr = std::nullopt;
+    /*
+     * A NOT NULL column's constraint's name (../NOTNULL.md §1), the
+     * host's choice; empty, sm3 makes one, table_column_not_null.
+     */
+    std::string not_null_name = {};
 };
 
 /*
@@ -151,6 +156,8 @@ struct column_rec_t {
   char identity = 0;         /* 'a', 'd', or 0: column_spec_t's */
   uint64_t identity_seq = 0; /* its sequence, with an identity */
   std::optional<std::string> on_update_expr; /* the host's, opaque */
+  uint64_t not_null_oid = 0;  /* its NOT NULL constraint; 0 if none */
+  std::string not_null_name;  /* its name (../NOTNULL.md §2) */
   bool operator==(const column_rec_t&) const = default;
 };
 
@@ -260,6 +267,8 @@ struct column_def_t {
     char                       identity = 0;     /* column_spec_t's */
     uint64_t                   identity_seq = 0; /* its sequence */
     std::optional<std::string> on_update_expr; /* the host's, opaque */
+    uint64_t    not_null_oid = 0; /* its NOT NULL constraint; 0 if none */
+    std::string not_null_name;    /* its name (../NOTNULL.md §2) */
 };
 
 /* An index of a loaded table. */
@@ -844,11 +853,24 @@ int add_column(session_t* session, uint64_t oid,
  * changes nothing: the table is opened exclusive (tbl_open), so no
  * row is written meanwhile, and a scan reads each as it is now, one
  * committed since the transaction's snapshot among them
- * (sm1::view_latest). One NOT NULL already is no error. ADD COLUMN
+ * (sm1::view_latest). One NOT NULL already is no error, and keeps
+ * its constraint's name; one made NOT NULL takes constraint as its
+ * constraint's name, or with none table_column_not_null
+ * (../NOTNULL.md §1), a name taken SM_ERR_DUPKEY. ADD COLUMN
  * with a volatile default makes the column, gives each row its
  * value, and then calls this.
  */
-int set_not_null(session_t* session, uint64_t oid, std::string_view name);
+int set_not_null(session_t* session, uint64_t oid, std::string_view name,
+                 std::string_view constraint = {});
+
+/*
+ * Rename the NOT NULL constraint of the column name of the table oid
+ * to to (../NOTNULL.md §3): SM_ERR_NOTFOUND if the column is not
+ * there or not NOT NULL, SM_ERR_DUPKEY if a constraint of the table
+ * has the name.
+ */
+int rename_not_null(session_t* session, uint64_t oid, std::string_view name,
+                    std::string_view to);
 
 /*
  * Let the live column name of the table oid hold a null: the

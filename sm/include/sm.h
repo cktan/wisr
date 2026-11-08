@@ -761,6 +761,8 @@ struct sm_column_spec_t {
     char        identity = 0;     /* 'a', 'd' or 0 (sm3::column_spec_t) */
     uint64_t    identity_seq = 0; /* an identity column's sequence */
     const char* on_update_expr = nullptr; /* the host's update default */
+    /* Its NOT NULL constraint's name; nullptr: sm3 makes one. */
+    const char* not_null_name = nullptr;
 };
 
 /*
@@ -789,6 +791,8 @@ struct sm_column_def_t {
     uint64_t    identity_seq; /* an identity column's sequence */
     bool        has_on_update;
     std::string on_update_expr; /* the host's update default; "" if none */
+    uint64_t    not_null_oid;   /* its NOT NULL constraint; 0 if none */
+    std::string not_null_name;  /* its name (NOTNULL.md) */
 };
 
 /* Where an index's build stands (sm3::index_state_t). */
@@ -1838,10 +1842,18 @@ int sm_cat_add_column(sm_session_t* session, uint64_t oid,
 
 /*
  * Make the column name of the table oid NOT NULL, SM_ERR_NOTNULL if
- * a row holds a null in it (sm3::set_not_null).
+ * a row holds a null in it, its constraint named constraint, or by
+ * sm3 if nullptr; a name taken is SM_ERR_DUPKEY (sm3::set_not_null).
  */
 int sm_cat_set_not_null(sm_session_t* session, uint64_t oid,
-                        const char* name);
+                        const char* name, const char* constraint = nullptr);
+
+/*
+ * Rename the NOT NULL constraint of the column name of the table oid
+ * to to (sm3::rename_not_null).
+ */
+int sm_cat_rename_not_null(sm_session_t* session, uint64_t oid,
+                           const char* name, const char* to);
 
 /*
  * Let the column name of the table oid hold a null: SM_ERR_INUSE

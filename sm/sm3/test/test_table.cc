@@ -1003,6 +1003,73 @@ TEST_CASE("set_identity makes a filled NOT NULL column an identity column") {
   REQUIRE(0 == sm3::commit(f.a));
 }
 
+TEST_CASE("a NOT NULL column's constraint has an oid and a name") {
+  // Verify NOT NULL constraints by name (../NOTNULL.md).
+  // 1. jobs's id, NOT NULL at create_table, has jobs_id_not_null and an
+  //    oid; state, nullable, has neither.
+  // 2. A check cannot take jobs_id_not_null: SM_ERR_DUPKEY.
+  // 3. state made NOT NULL as state_set; owner made NOT NULL with no
+  //    name, its default taken by a check, gets jobs_owner_not_null1.
+  //    A name taken is SM_ERR_DUPKEY, and owner stays nullable.
+  // 4. rename_not_null renames state_set; a name taken, or a column
+  //    with none, fails.
+  // 5. After a restart the names and oids are as they were.
+  // 6. DROP NOT NULL and DROP COLUMN take the constraint away.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  const sm3::column_def_t id = sm3::tbl_def(t).columns[0];
+  CHECK("jobs_id_not_null" == id.not_null_name);
+  CHECK(0 != id.not_null_oid);
+  CHECK(0 == sm3::tbl_def(t).columns[1].not_null_oid);
+  CHECK(sm3::tbl_def(t).columns[1].not_null_name.empty());
+  sm3::tbl_close(t);
+
+  sm3::check_rec_t k;
+  k.name = "jobs_id_not_null";
+  k.reads = {0};
+  uint64_t k_oid = 0;
+  CHECK(-1 == sm3::create_check(f.a, f.jobs, k, k_oid));
+  CHECK(sm1::SM_ERR_DUPKEY == sm1::errnum());
+  k.name = "jobs_owner_not_null";
+  REQUIRE(0 == sm3::create_check(f.a, f.jobs, k, k_oid));
+
+  REQUIRE(0 == sm3::set_not_null(f.a, f.jobs, "state", "state_set"));
+  CHECK(-1 == sm3::set_not_null(f.a, f.jobs, "owner", "state_set"));
+  CHECK(sm1::SM_ERR_DUPKEY == sm1::errnum());
+  t = f.write(f.a);
+  CHECK(!sm3::tbl_def(t).columns[2].not_null);
+  sm3::tbl_close(t);
+  REQUIRE(0 == sm3::set_not_null(f.a, f.jobs, "owner"));
+
+  REQUIRE(0 == sm3::rename_not_null(f.a, f.jobs, "state", "state_given"));
+  CHECK(-1 == sm3::rename_not_null(f.a, f.jobs, "state", "jobs_id_not_null"));
+  CHECK(sm1::SM_ERR_DUPKEY == sm1::errnum());
+  REQUIRE(0 == sm3::commit(f.a));
+
+  f.reload();
+  start(f.a);
+  t = f.write(f.a);
+  const sm3::table_def_t &d = sm3::tbl_def(t);
+  CHECK(id.not_null_oid == d.columns[0].not_null_oid);
+  CHECK("state_given" == d.columns[1].not_null_name);
+  CHECK("jobs_owner_not_null1" == d.columns[2].not_null_name);
+  CHECK(d.columns[1].not_null_oid != d.columns[2].not_null_oid);
+  sm3::tbl_close(t);
+
+  REQUIRE(0 == sm3::drop_not_null(f.a, f.jobs, "state"));
+  CHECK(-1 == sm3::rename_not_null(f.a, f.jobs, "state", "x"));
+  CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+  REQUIRE(0 == sm3::drop_check(f.a, f.jobs, k_oid));
+  REQUIRE(0 == sm3::drop_index(f.a, f.jobs, f.jobs_state));
+  REQUIRE_MESSAGE(0 == sm3::drop_column(f.a, f.jobs, "owner"), sm1::errmsg());
+  t = f.write(f.a);
+  CHECK(0 == sm3::tbl_def(t).columns[1].not_null_oid);
+  CHECK(0 == sm3::tbl_def(t).columns[2].not_null_oid);
+  sm3::tbl_close(t);
+  REQUIRE(0 == sm3::commit(f.a));
+}
+
 TEST_CASE("drop_not_null and set_default change a column's record") {
   // Verify drop_not_null and set_default, ALTER COLUMN's DROP NOT NULL,
   // SET DEFAULT and DROP DEFAULT.

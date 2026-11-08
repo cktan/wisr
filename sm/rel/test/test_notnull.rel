@@ -1,0 +1,58 @@
+# test_notnull.rel -- NOT NULL constraints by name, through the C API
+# (NOTNULL.md): each NOT NULL column's constraint has a name, chosen by
+# sm or given, kept across a reopen, renamed, and gone with DROP NOT
+# NULL.
+#
+# 1. A table's NOT NULL columns, a primary key's among them, get
+#    t_column_not_null.
+# 2. SET NOT NULL with a name takes it; a name taken is ERR_DUPKEY.
+# 3. A constraint is renamed; a name taken is ERR_DUPKEY.
+# 4. After a reopen the names are as they were; DROP NOT NULL takes
+#    one away.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_notnull"))
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "nndb")
+(db-open "nndb")
+
+# 1. Named by sm.
+(begin :rc)
+(table-create t
+  (columns (k :int4) (a :int4 :not-null) (b :text) (c :text))
+  (primary-key k))
+(assert-eq (not-nulls t) '[[k "t_k_not_null"] [a "t_a_not_null"]])
+(commit)
+
+# 2. Named by the caller.
+(begin :rc)
+(set-not-null t b b_set)
+(assert-err :err-dupkey (set-not-null t c b_set))
+(abort)
+(begin :rc)
+(set-not-null t b b_set)
+(commit)
+
+# 3. Renamed.
+(begin :rc)
+(rename-not-null t b b_given)
+(assert-err :err-dupkey (rename-not-null t a t_k_not_null))
+(commit)
+
+# 4. After a reopen; then one dropped.
+(db-close)
+(env-detach)
+(env-attach test-dir)
+(db-open "nndb")
+(begin :rc)
+(assert-eq (not-nulls t)
+           '[[k "t_k_not_null"] [a "t_a_not_null"] [b "b_given"]])
+(drop-not-null t a)
+(assert-eq (not-nulls t) '[[k "t_k_not_null"] [b "b_given"]])
+(commit)
+
+(db-close)
+(env-detach)
+(rm-rf test-dir)
+(print "test_notnull.rel passed")

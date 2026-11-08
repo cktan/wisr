@@ -48,6 +48,9 @@ typedef struct smstore_relation_t {
   bool *notnull;
   char **defaults; /* a table column's DEFAULT, nodeToString()'s, or NULL */
   char *identity;  /* a table column's identity kind, or 0 */
+  /* A table column's NOT NULL constraint, or InvalidOid (NOTNULL.md). */
+  Oid *nnoids;
+  char **nnnames; /* its name */
   /* An index's, as pg_index lists it. */
   Oid table;
   bool unique;
@@ -81,6 +84,8 @@ typedef struct smstore_column_t {
   bool dropped;
   const char *default_expr; /* its DEFAULT, nodeToString()'s, or NULL */
   char identity;            /* attidentity's: 'a', 'd', or 0 */
+  Oid not_null_oid;         /* its NOT NULL constraint, or InvalidOid */
+  const char *not_null_name; /* its name, or NULL (../sm/NOTNULL.md) */
 } smstore_column_t;
 
 /*

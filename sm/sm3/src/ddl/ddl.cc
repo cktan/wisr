@@ -217,6 +217,11 @@ int drop_namespace(session_t *session, uint64_t oid) {
   return cat_del_namespace(session, oid);
 }
 
+static bool constraint_name_taken(const table_rec_t &rec, std::string_view name,
+                                  uint64_t oid);
+static int name_not_null(session_t *session, table_rec_t &rec, size_t at,
+                         std::string_view name);
+
 /*
  * Create a table in nspoid, or a temporary one if nspoid is
  * nsp_temp: what create_table and create_temp_table share.
@@ -269,6 +274,13 @@ static int make_table(session_t *session, uint64_t nspoid,
     rec.columns.push_back({c.name, c.type_code, c.typmod, c.not_null, false,
                            std::nullopt, std::nullopt, c.default_expr,
                            c.identity, c.identity_seq, c.on_update_expr});
+  }
+  // Each NOT NULL column's constraint, in the columns' order.
+  for (size_t i = 0; i < columns.size(); i++) {
+    if (columns[i].not_null &&
+        name_not_null(session, rec, i, columns[i].not_null_name) != 0) {
+      return -1;
+    }
   }
   // The table's store and its _id sequence (../DESIGN.md §5): for a
   // temporary table, both temporary, and so the session's alone
@@ -577,11 +589,16 @@ int add_column(session_t *session, uint64_t oid, const column_spec_t &col,
       {col.name, col.type_code, col.typmod, col.not_null, false,
        missing ? std::optional<std::string>(*missing) : std::nullopt,
        std::nullopt, col.default_expr, 0, 0, col.on_update_expr});
+  if (col.not_null && name_not_null(session, rec, rec.columns.size() - 1,
+                                    col.not_null_name) != 0) {
+    return -1;
+  }
   return cat_put_table(session, oid, rec);
 }
 
 /* Make a column NOT NULL, once no row holds a null in it; see sm3.h. */
-int set_not_null(session_t *session, uint64_t oid, std::string_view name) {
+int set_not_null(session_t *session, uint64_t oid, std::string_view name,
+                 std::string_view constraint) {
   table_rec_t rec;
   if (0 != cat_get_table_rec(session, oid, rec)) {
     return -1;
@@ -632,6 +649,32 @@ int set_not_null(session_t *session, uint64_t oid, std::string_view name) {
     return -1;
   }
   rec.columns[at].not_null = true;
+  if (0 != name_not_null(session, rec, at, constraint)) {
+    return -1;
+  }
+  return cat_put_table(session, oid, rec);
+}
+
+/* Rename a column's NOT NULL constraint; see sm3.h. */
+int rename_not_null(session_t *session, uint64_t oid, std::string_view name,
+                    std::string_view to) {
+  table_rec_t rec;
+  if (0 != cat_get_table_rec(session, oid, rec)) {
+    return -1;
+  }
+  int at = live_column(rec, name);
+  if (at < 0 || 0 == rec.columns[at].not_null_oid) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "rename not null: no NOT NULL column " +
+                           std::string(name));
+  }
+  column_rec_t &c = rec.columns[at];
+  if (to.empty() || constraint_name_taken(rec, to, c.not_null_oid)) {
+    return sm1::seterr(sm1::SM_ERR_DUPKEY, "rename not null: constraint " +
+                                               std::string(to) +
+                                               " is taken, or empty");
+  }
+  c.not_null_name = std::string(to);
   return cat_put_table(session, oid, rec);
 }
 
@@ -665,6 +708,8 @@ int drop_not_null(session_t *session, uint64_t oid, std::string_view name) {
     }
   }
   c.not_null = false;
+  c.not_null_oid = 0;
+  c.not_null_name.clear();
   return cat_put_table(session, oid, rec);
 }
 
@@ -994,6 +1039,8 @@ int drop_column(session_t *session, uint64_t oid, std::string_view name) {
   column_rec_t &c = rec.columns[at];
   c.dropped = true;
   c.not_null = false;
+  c.not_null_oid = 0;
+  c.not_null_name.clear();
   c.missing = std::nullopt;
   return cat_put_table(session, oid, rec);
 }
@@ -1015,9 +1062,6 @@ static int rekey(session_t *session, uint64_t oid, table_rec_t rec) {
   return empty ? cat_put_table(session, oid, rec)
                : rewrite_table(session, oid, std::move(rec));
 }
-
-static bool constraint_name_taken(const table_rec_t &rec, std::string_view name,
-                                  uint64_t oid);
 
 /* Create a plain index; see sm3.h. */
 int create_index(session_t *session, uint64_t table, std::string_view name,
@@ -1424,7 +1468,40 @@ static bool constraint_name_taken(const table_rec_t &rec, std::string_view name,
       return true;
     }
   }
+  for (const column_rec_t &c : rec.columns) {
+    if (c.not_null_oid != 0 && c.not_null_oid != oid &&
+        c.not_null_name == name) {
+      return true;
+    }
+  }
   return false;
+}
+
+/*
+ * Give rec's column at, NOT NULL, its constraint (../NOTNULL.md §1): a
+ * new oid, and the name name, or with none table_column_not_null, a
+ * number after it if that is taken. A name given that is taken among
+ * rec's constraints is SM_ERR_DUPKEY.
+ */
+static int name_not_null(session_t *session, table_rec_t &rec, size_t at,
+                         std::string_view name) {
+  column_rec_t &c = rec.columns[at];
+  std::string chosen(name);
+  if (chosen.empty()) {
+    std::string base = rec.name + "_" + c.name + "_not_null";
+    chosen = base;
+    for (int n = 1; constraint_name_taken(rec, chosen, 0); n++) {
+      chosen = base + std::to_string(n);
+    }
+  } else if (constraint_name_taken(rec, chosen, 0)) {
+    return sm1::seterr(sm1::SM_ERR_DUPKEY,
+                       "not null: constraint " + chosen + " is taken");
+  }
+  if (cat_new_oid(session, c.not_null_oid) != 0) {
+    return -1;
+  }
+  c.not_null_name = std::move(chosen);
+  return 0;
 }
 
 /* The foreign key oid of rec, or nullptr. */

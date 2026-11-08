@@ -41,12 +41,13 @@ select relchecks from pg_class where oid = 'ord'::regclass;
 create temp table ord_copy (like ord including constraints);
 select conname, convalidated, pg_get_constraintdef(oid) from pg_constraint
   where conrelid = 'ord_copy'::regclass order by conname;
-    conname    | convalidated |  pg_get_constraintdef   
----------------+--------------+-------------------------
- id_small      | t            | CHECK ((id < 1000000))
- ord_check     | t            | CHECK ((disc <= price))
- ord_qty_check | t            | CHECK ((qty > 0))
-(3 rows)
+     conname     | convalidated |  pg_get_constraintdef   
+-----------------+--------------+-------------------------
+ id_small        | t            | CHECK ((id < 1000000))
+ ord_check       | t            | CHECK ((disc <= price))
+ ord_id_not_null | t            | NOT NULL id
+ ord_qty_check   | t            | CHECK ((qty > 0))
+(4 rows)
 
 drop table ord_copy;
 insert into ord values (1, 2, 10, 1);

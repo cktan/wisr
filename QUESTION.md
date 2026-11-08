@@ -49,3 +49,19 @@ alter table job alter column mtime drop default;
    `CURRENT_TIMESTAMP`, `LOCALTIMESTAMP` and `CURRENT_DATE`
    ([`dg/ONUPDATE.md`](dg/ONUPDATE.md#2-what-it-means) §2), as
    CREATE TABLE does. Recommended: the rule stays one rule.
+
+## NOT NULL constraints by name
+
+[`sm/NOTNULL.md`](sm/NOTNULL.md): PostgreSQL 18 lists each NOT
+NULL column as a constraint in `pg_constraint`; digres lists
+none, so `CREATE TABLE ... (LIKE t INCLUDING ALL)` fails on any
+table with a NOT NULL column. This replaces decision 5 above.
+
+1. **sm3 keeps an oid and a name per NOT NULL column.** The other
+   choice, rows made up in `catrel.c` with no oid of sm's, is
+   less code, but a made-up oid could be another object's, and a
+   name the user gives, `CONSTRAINT note_set NOT NULL`, would be
+   lost. Recommended.
+2. **`NOT VALID` of a NOT NULL constraint is refused; `NO
+   INHERIT` is accepted and changes nothing**, as digres accepts
+   it today. Recommended.

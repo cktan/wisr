@@ -959,22 +959,61 @@ static Janet cfun_alter_column_type(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
+static Janet tuple_of(const std::vector<Janet> &items);
+
 /* The oid of the table name for op, under X, as the DDL takes it. */
 static uint64_t ddl_table(session_ctx_t *s, const std::string &name,
                           const char *op) {
   return need_table(s, name, SM_LOCKMODE_EX, op)->def->oid;
 }
 
-/* (set-not-null table column): ALTER COLUMN ... SET NOT NULL. */
+/*
+ * (set-not-null table column [name]): ALTER COLUMN ... SET NOT NULL,
+ * its constraint named name, or by sm.
+ */
 static Janet cfun_set_not_null(int32_t argc, Janet *argv) {
-  janet_fixarity(argc, 2);
+  janet_arity(argc, 2, 3);
   session_ctx_t *s = require_session();
   std::string col = identifier_of(argv[1]);
+  std::string name = 3 == argc ? identifier_of(argv[2]) : "";
   uint64_t oid = ddl_table(s, identifier_of(argv[0]), "set-not-null");
-  if (sm_cat_set_not_null(s->session, oid, col.c_str()) != 0) {
+  if (sm_cat_set_not_null(s->session, oid, col.c_str(),
+                          3 == argc ? name.c_str() : nullptr) != 0) {
     panic_sm_error("set-not-null");
   }
   return janet_wrap_nil();
+}
+
+/* (rename-not-null table column name): its NOT NULL constraint renamed. */
+static Janet cfun_rename_not_null(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 3);
+  session_ctx_t *s = require_session();
+  std::string col = identifier_of(argv[1]);
+  std::string to = identifier_of(argv[2]);
+  uint64_t oid = ddl_table(s, identifier_of(argv[0]), "rename-not-null");
+  if (sm_cat_rename_not_null(s->session, oid, col.c_str(), to.c_str()) != 0) {
+    panic_sm_error("rename-not-null");
+  }
+  return janet_wrap_nil();
+}
+
+/*
+ * (not-nulls table): the table's NOT NULL constraints, each [column
+ * name], in the columns' order (NOTNULL.md).
+ */
+static Janet cfun_not_nulls(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  const sm_table_def_t &def =
+      *need_table(s, identifier_of(argv[0]), SM_LOCKMODE_IS, "not-nulls")->def;
+  std::vector<Janet> out;
+  for (const sm_column_def_t &c : def.columns) {
+    if (0 != c.not_null_oid) {
+      out.push_back(tuple_of({janet_csymbolv(c.name.c_str()),
+                              janet_cstringv(c.not_null_name.c_str())}));
+    }
+  }
+  return tuple_of(out);
 }
 
 /* (drop-not-null table column): ALTER COLUMN ... DROP NOT NULL. */
@@ -3390,6 +3429,8 @@ static const JanetReg s_rel_cfuns[] = {
     {"_alter-column-type", cfun_alter_column_type, "internal"},
     {"_set-not-null", cfun_set_not_null, "internal"},
     {"_drop-not-null", cfun_drop_not_null, "internal"},
+    {"_rename-not-null", cfun_rename_not_null, "internal"},
+    {"_not-nulls", cfun_not_nulls, "internal"},
     {"_set-default", cfun_set_default, "internal"},
     {"_index-drop", cfun_index_drop, "internal"},
     {"_index-wait", cfun_index_wait, "internal"},
@@ -3509,8 +3550,14 @@ static const char *s_prelude = R"janet(
 (defmacro alter-column-type [tbl col type & rest]
   ~(_alter-column-type (string ',tbl) (string ',col) ',type ,;rest))
 
-(defmacro set-not-null [tbl col]
-  ~(_set-not-null (string ',tbl) (string ',col)))
+(defmacro set-not-null [tbl col & rest]
+  ~(_set-not-null (string ',tbl) (string ',col) ,;(map (fn [n] ~(string ',n)) rest)))
+
+(defmacro rename-not-null [tbl col to]
+  ~(_rename-not-null (string ',tbl) (string ',col) (string ',to)))
+
+(defmacro not-nulls [tbl]
+  ~(_not-nulls (string ',tbl)))
 
 (defmacro drop-not-null [tbl col]
   ~(_drop-not-null (string ',tbl) (string ',col)))
