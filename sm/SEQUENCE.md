@@ -131,12 +131,14 @@ A Sequence's position has two homes.
 
 It is the scheme of the timestamp lease, with the Sequence's
 increment as its step. The block is `ts_lease` values, 1,000,000
-by default. `alloc_mu` guards every lease.
+by default. `alloc_mu` guards the timestamp and object-id
+leases. `seq_mu` guards the Sequences and their leases.
 
-**Caution:** `alloc_mu` is also the commit sequencer's mutex. A
-renewal holds it across a synced write, so commits wait while a
-block is renewed. It happens once a block, and at the first draw
-of each Sequence after an open.
+**Caution:** a renewal holds `seq_mu` across a synced write, so
+draws on every Sequence wait while a block is renewed. It happens
+once a block, and at the first draw of each Sequence after an
+open. A renewal does not hold `alloc_mu`: a commit that renews
+the timestamp lease does not wait for it.
 
 ### 2.3 A draw
 
@@ -158,7 +160,7 @@ is (`XCTMGR.md`). Under SERIALIZABLE the lookup is a read, and
 takes a SIREAD entry on the `"S"` row. It never waits.
 
 `db_next_seq(db, seqid, start, increment,
-out)`, under `alloc_mu`:
+out)`, under `seq_mu`:
 
 1. On first use in this process, set `next` and `limit` to the
    lease if there is one, else to `start`. Resuming at the lease
@@ -493,7 +495,7 @@ the host.
 | Crash | the Sequence resumes at its lease, above every value handed out; the rest of the block is skipped |
 | Clean close | the next open resumes at the exact next value |
 | Two-phase commit | a draw inside is spent whatever the outcome; a prepared session cannot draw; a prepared drop leaves its lease behind |
-| Two sessions drawing | `alloc_mu` orders them; no value is given twice |
+| Two sessions drawing | `seq_mu` orders them; no value is given twice |
 | Two sessions making one sm1 name | the second waits, then fails with `SM_ERR_EXISTS` or sm1's `SM_ERR_CONFLICT` |
 | A name dropped and made again | a new seqid, from its own `start` |
 | A statement that made the Sequence | it draws only after `sm1::stmt_advance` |

@@ -164,6 +164,31 @@ TEST_CASE("a sequence starts at its start and steps by its increment") {
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
+TEST_CASE(
+    "a sequence's lease renewal leaves the timestamp lease's mutex free") {
+  // Verify a Sequence's synced lease write does not hold alloc_mu, which
+  // a commit's timestamp lease renewal takes under commit_mu.
+  // 1. Make a sequence; its first draw renews the lease.
+  // 2. As the lease is written, a hook tries alloc_mu from another thread.
+  // 3. The mutex is free.
+  seq_fixture_t f;
+  sm1::session_t *s = f.s();
+  commit_mkseq(s, SEQ, 1, 1);
+  bool held = true;
+  s->db->test_before_seq_lease = [&] {
+    std::thread([&] {
+      held = !s->db->alloc_mu.try_lock();
+      if (!held) {
+        s->db->alloc_mu.unlock();
+      }
+    }).join();
+    return rocksdb::Status::OK();
+  };
+  CHECK(next(s) == 1);
+  s->db->test_before_seq_lease = nullptr;
+  CHECK_FALSE(held);
+}
+
 TEST_CASE("a sequence refuses a malformed or unreadable lease") {
   // Verify a failed lease read never restarts a used sequence.
   // 1. Draw from a sequence and retain its persisted lease.

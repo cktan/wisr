@@ -365,7 +365,9 @@ struct db_t {
   /*
    * A sequence in use, by seqid (../DBMGR.md §7). The state is built on
    * the first sm1::nextseq and kept until the database closes;
-   * it is guarded by alloc_mu, like the leases above.
+   * it is guarded by seq_mu, not alloc_mu: a block's renewal is a
+   * synced write, and must not hold up a timestamp lease's renewal,
+   * which a commit waits for.
    */
   struct seq_state_t {
     uint64_t increment = 1;
@@ -373,6 +375,7 @@ struct db_t {
     uint64_t limit = 0;     /* persisted; never handed out */
     bool exhausted = false; /* the last value is handed out */
   };
+  std::mutex seq_mu;
   std::unordered_map<uint64_t, seq_state_t> seqs;
 
   /* Every commit_ts at or below this is published (../XCTMGR.md §3.2). */
@@ -626,6 +629,9 @@ struct db_t {
 
   /* Test hook, as test_before_commit, for a prepared one's ABORTED record. */
   std::function<rocksdb::Status()> test_before_abort_prepared;
+
+  /* Test hook, as test_before_commit, for a Sequence's lease write. */
+  std::function<rocksdb::Status()> test_before_seq_lease;
 
   /* Test hook: called by xct_fail_retryable before it aborts. */
   std::function<void()> test_in_fail_retryable;

@@ -1543,7 +1543,8 @@ each `PREPARED` record:
 
 | Mutex | Guards |
 | --- | --- |
-| `alloc_mu` | the leases |
+| `alloc_mu` | the timestamp and object-id leases |
+| `seq_mu` | the Sequences' state and their leases; never held with `alloc_mu` |
 | `commit_mu` | the commit queue and `commit_leading`; a commit's claim of `commit_ts` and SSI check; `visible_ts`'s raise |
 | `snap_mu` | `snapshots`, the registered begin snapshots |
 | `txn_mu` | `active`, `xid_owner`, the commit cache |

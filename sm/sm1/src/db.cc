@@ -744,8 +744,8 @@ static std::string seq_meta_key(uint64_t seqid) {
 /* Hand out seqid's next value, persisting a new lease first if needed. */
 int db_next_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
                 uint64_t *out) {
-  // Hold alloc_mu, which guards every lease.
-  std::lock_guard<std::mutex> guard(db->alloc_mu);
+  // Hold seq_mu, which guards the sequences and their leases.
+  std::lock_guard<std::mutex> guard(db->seq_mu);
   auto it = db->seqs.find(seqid);
   // First use in this process: recover the sequence's state.
   if (it == db->seqs.end()) {
@@ -787,8 +787,15 @@ int db_next_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
     // The lease must be durable before any value under it.
     rocksdb::WriteOptions wo;
     wo.sync = true;
-    // Persist the new lease.
-    rocksdb::Status s = db->rdb->Put(wo, db->cf_meta, seq_meta_key(seqid), val);
+    // Let a test look at what the renewal holds.
+    rocksdb::Status s;
+    if (db->test_before_seq_lease) {
+      s = db->test_before_seq_lease();
+    }
+    // Persist the new lease unless the hook failed it.
+    if (s.ok()) {
+      s = db->rdb->Put(wo, db->cf_meta, seq_meta_key(seqid), val);
+    }
     // Fail if the new lease did not persist.
     if (!s.ok()) {
       return set_status_error(s, "persist sequence lease");
@@ -809,8 +816,8 @@ int db_next_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
 /* The last value seqid handed out, or its upper bound. */
 int db_last_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
                 uint64_t *out) {
-  // Hold alloc_mu, which guards every lease.
-  std::lock_guard<std::mutex> guard(db->alloc_mu);
+  // Hold seq_mu, which guards the sequences and their leases.
+  std::lock_guard<std::mutex> guard(db->seq_mu);
   auto it = db->seqs.find(seqid);
   // In use in this process: the state knows exactly.
   if (it != db->seqs.end()) {
@@ -840,8 +847,8 @@ int db_last_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
 
 /* Drop seqid's in-memory state and its persisted lease. */
 void db_forget_seq(db_t *db, uint64_t seqid) {
-  // Hold alloc_mu while dropping the state.
-  std::lock_guard<std::mutex> guard(db->alloc_mu);
+  // Hold seq_mu while dropping the state.
+  std::lock_guard<std::mutex> guard(db->seq_mu);
   db->seqs.erase(seqid);
   // Delete the lease; nobody waits on this, so log a failure.
   rocksdb::Status s = db->rdb->Delete(rocksdb::WriteOptions(), db->cf_meta,

@@ -70,6 +70,17 @@ hashed to the same latch waited for the drop. The latch is now
 released first. A hook shows the latch free during the abort, in
 a test for each kind of store. Only the error path changed.
 
+**Closed 2026-11-08:** a Sequence's lease renewal held
+`alloc_mu` across a synced write, once a block. `alloc_mu` is no
+longer the commit sequencer's mutex (`commit_mu` is), but a
+commit that renews the timestamp lease takes it under
+`commit_mu`, so it waited for the Sequence's write. Sequences now
+have a mutex of their own, `seq_mu`. A renewal still holds it
+across the write, so draws on other Sequences wait; the mutex
+is never held with `alloc_mu`. A hook shows `alloc_mu` free
+during a renewal. No test at the mvcc, rel or dg layer can
+express it: each needs the hook inside a renewal.
+
 **Closed:** `find_now()` at READ COMMITTED, with a row moved
 since the statement's snapshot, gives the conflict with both
 kinds of index. A test showed no failure. A move in the narrower
@@ -79,8 +90,6 @@ Smaller points:
 
 - A prepared `sm1::rmseq` leaks its lease row in `CF:meta`. This
   is harmless, as a seqid is not reused.
-- A Sequence's lease renewal holds `alloc_mu`, the commit
-  sequencer's mutex, across a synced write, once a block.
 - A cursor ended after its transaction is a double free. The end
   of a transaction frees sm1's cursor, and `sm_rel_scanend` and
   `sm_idx_scanend` then use it: valgrind shows it, and the
