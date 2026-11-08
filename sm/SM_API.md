@@ -9,7 +9,7 @@ options and statistics. Each call converts its arguments, calls
 the sm1, sm2 or sm3 call of the same name, and converts the
 results back. The wrapper adds no concept of its own: it keeps
 each database's sm3 catalog and each session's sm3 session.
-`sm1/API.md` is the contract of the level below.
+[`sm1/API.md`](sm1/API.md) is the contract of the level below.
 
 ## Conventions
 
@@ -25,11 +25,12 @@ differs.
   row of a table with a primary key has no `_id`, and a call that
   hands one out gives 0.
 - **row key**: the encoded key of a row in its table, past the
-  2-byte relid (`ROWSTORE.md` §2.1).
+  2-byte relid ([`ROWSTORE.md`](ROWSTORE.md#21-a-rows-name)
+  §2.1).
 - **LSM index**: an index whose entries are sm1 keys
-  (`LSMINDEX.md`).
+  ([`LSMINDEX.md`](LSMINDEX.md)).
 - **tree**: a B-tree index, an index of its own pages
-  (`BTREEINDEX.md`).
+  ([`BTREEINDEX.md`](BTREEINDEX.md)).
 - **table-oid lock**: the lock on a table's oid. `SM_LOCKMODE_EX`
   on it is "X".
 
@@ -176,7 +177,9 @@ may run on the stack's own threads.
   references, and some have default arguments and overloads.
 - The standard library types in `sm.h` are `std::string`,
   `std::vector` and `std::shared_ptr`. `std::shared_ptr` appears
-  in `sm_tbl_stats` alone. `sm/CODE.md` §2 also allows
+  in `sm_tbl_stats` alone.
+  [`sm/CODE.md`](CODE.md#2-the-interface-to-sms-users) §2 also
+  allows
   `std::string_view`, which no call in `sm.h` takes.
 - `std::string` and `std::vector` carry owned data.
 - A callback the host gives is `noexcept`: `sm_log_fn`,
@@ -200,8 +203,10 @@ string if sm0, sm1, sm2, sm3 and the wrapper agree, such as `-O3
 
 ## Errors
 
-The error state is level 0's, thread-local (`sm0/README.md`,
-`DESIGN.md` §5). `include/sm_error.h` holds the codes.
+The error state is level 0's, thread-local
+([`sm0/README.md`](sm0/README.md),
+[`DESIGN.md`](DESIGN.md#5-cross-level-decisions) §5).
+`include/sm_error.h` holds the codes.
 
 ### `sm_errnum`
 
@@ -264,7 +269,8 @@ int sm_errdup(uint64_t* index, std::string* row = nullptr);
 ```
 
 Says where the thread's last error, `SM_ERR_DUPKEY`, met its key
-(`ROWSTORE.md` §2.7).
+([`ROWSTORE.md`](ROWSTORE.md#27-duplicates-and-lock-status)
+§2.7).
 
 - `*index` gets the unique index's oid, or 0 if the stack does
   not know it. `index` must not be NULL.
@@ -277,7 +283,7 @@ is 0 and the row key is empty.
 
 ## The log hook
 
-The hook is sm1's (`sm1/API.md`, "Logging").
+The hook is sm1's ([`sm1/API.md`](sm1/API.md), "Logging").
 
 ```cpp
 enum sm_loglevel_t {
@@ -307,8 +313,10 @@ replaces.
 
 ## Home directories and databases
 
-The Database Manager holds the design (`DBMGR.md`). The first
-session on a database also loads its catalog (`CATALOG.md`).
+The Database Manager holds the design ([`DBMGR.md`](DBMGR.md)).
+The first
+session on a database also loads its catalog
+([`CATALOG.md`](CATALOG.md)).
 
 ### `sm_init`
 
@@ -338,7 +346,7 @@ have `homedir` attached: the stack takes no lock for that.
 
 | Field | Default | What it is |
 | --- | --- | --- |
-| `block_cache_bytes` | 128 MB | the one block cache of the environment, at least 1; a quarter goes to the buffer pool of a tree's pages (`BUFMGR.md`) |
+| `block_cache_bytes` | 128 MB | the one block cache of the environment, at least 1; a quarter goes to the buffer pool of a tree's pages ([`BUFMGR.md`](BUFMGR.md)) |
 | `max_sessions` | 0 | if above 0, the most sessions at once, so the buffer pool has frames enough for each; below 1, the pool has its floor of 64 frames |
 
 Errors: `SM_ERR_NOTFOUND` (not a home directory),
@@ -393,7 +401,7 @@ call removes the database. The database is not opened.
 | `group_commit_us` | 200 | unused |
 | `deadlock_ms` | 50 | how long a wait lasts before a deadlock check |
 | `ssi_max_entries` | 1 << 20 | unused |
-| `ts_lease` | 1000000 | the size of each lease, of timestamps and of a sequence's values (`XCTMGR.md`) |
+| `ts_lease` | 1000000 | the size of each lease, of timestamps and of a sequence's values ([`XCTMGR.md`](XCTMGR.md)) |
 | `rocksdb_options` | NULL | a RocksDB `DBOptions` string; NULL means RocksDB's defaults |
 | `commit_cache_entries` | 65536 | slots in the commit cache, at least 1; a slot is 16 bytes |
 | `savepoint_undo_bytes` | 64 MB | the undo a transaction keeps for its savepoints, at least 1 |
@@ -484,9 +492,11 @@ active transaction. A prepared transaction stays in doubt.
 
 ## Transactions
 
-The Transaction Manager holds the design (`XCTMGR.md`), and the
-Lock Manager the locks (`LOCKMGR.md`). Pins are the Row Store's
-(`ROWSTORE.md` §6.4).
+The Transaction Manager holds the design
+([`XCTMGR.md`](XCTMGR.md)), and the
+Lock Manager the locks ([`LOCKMGR.md`](LOCKMGR.md)). Pins are the
+Row Store's
+([`ROWSTORE.md`](ROWSTORE.md#64-the-pin-and-its-ref) §6.4).
 
 ### `sm_begin`
 
@@ -502,7 +512,8 @@ int sm_begin(sm_session_t* session, sm_xctlevel_t level, int read_only);
 
 Begins a transaction at `level`. A nonzero `read_only` declares
 it READ ONLY: a write fails with `SM_ERR_READONLY`, and at
-SERIALIZABLE it costs SSI less (`XCTMGR.md` §7.5).
+SERIALIZABLE it costs SSI less
+([`XCTMGR.md`](XCTMGR.md#75-who-takes-part) §7.5).
 
 Errors: `SM_ERR_INTRANS` (a transaction is active, or this
 session's prepared transaction is unresolved), `SM_ERR_INVALID`
@@ -547,7 +558,8 @@ The error state then holds `SM_ERR_NOTRANS`.
 int sm_stmt_begin(sm_session_t* session);
 ```
 
-Begins a statement, a SQL command (`XCTMGR.md` §5). It runs until
+Begins a statement, a SQL command
+([`XCTMGR.md`](XCTMGR.md#5-statements) §5). It runs until
 the next `sm_stmt_begin` or the end of the transaction.
 
 - Its reads see the transaction's writes made before it began,
@@ -820,7 +832,8 @@ Errors: `SM_ERR_NOSAVEPOINT`.
 
 ## Two-phase commit
 
-The Transaction Manager holds the design (`XCTMGR.md` §10).
+The Transaction Manager holds the design
+([`XCTMGR.md`](XCTMGR.md#10-two-phase-commit) §10).
 
 ### `sm_prepare`
 
@@ -881,7 +894,8 @@ Errors: `SM_ERR_NOTFOUND`.
 
 ## Sequences, below the catalog
 
-Sequence holds the design (`SEQUENCE.md`). These are counters of
+Sequence holds the design ([`SEQUENCE.md`](SEQUENCE.md)). These
+are counters of
 the caller's own, with a name and no namespace. SQL's CREATE
 SEQUENCE is `sm_cat_create_sequence`. A name is 1 to 63 bytes.
 Names that begin `sm3.` are sm3's own, and each call here refuses
@@ -924,7 +938,8 @@ the sequence is past `UINT64_MAX`).
 
 ## Types and collations
 
-These are sm2's (`sm2/TYPE.md`, and `LSMINDEX.md` §2.3 for
+These are sm2's ([`sm2/TYPE.md`](sm2/TYPE.md), and
+[`LSMINDEX.md`](LSMINDEX.md#23-text-and-collations) §2.3 for
 collations). `sm_type_t` and `sm_collation_t` are opaque.
 
 `sm_datum_t` is a `uintptr_t`, as PostgreSQL's 8-byte Datum. A
@@ -944,7 +959,8 @@ sign-extended, as PostgreSQL's `Int16GetDatum` and
 const sm_type_t* sm_type(uint8_t code);
 ```
 
-Returns the type with this frozen code (`sm2/TYPE.md` §3), or
+Returns the type with this frozen code
+([`sm2/TYPE.md`](sm2/TYPE.md#3-the-types) §3), or
 NULL.
 
 ### `sm_type_byval_width`
@@ -1039,7 +1055,8 @@ int sm_type_in(const sm_type_t* type, int32_t typmod, const char* text,
 ```
 
 Parses PostgreSQL's canonical text for a value of `type` under
-`typmod`, as the type's typinput does (`sm2/TYPE.md` §3). A
+`typmod`, as the type's typinput does
+([`sm2/TYPE.md`](sm2/TYPE.md#3-the-types) §3). A
 by-value result is `*val` itself, and `buf` is left empty. A
 by-reference result, fixed-width bytes or a varlena, goes in
 `buf`, and `*val` points at it. `buf` must outlive `*val` and
@@ -1061,11 +1078,13 @@ canonical text into `text`, as the type's typoutput does.
 ## Cursors over rows and index entries
 
 The Row Store and the index modules hold the design
-(`ROWSTORE.md`, `LSMINDEX.md`, `BTREEINDEX.md`, `CLUSTER.md` §5).
+([`ROWSTORE.md`](ROWSTORE.md), [`LSMINDEX.md`](LSMINDEX.md),
+[`BTREEINDEX.md`](BTREEINDEX.md),
+[`CLUSTER.md`](CLUSTER.md#5-reading) §5).
 A caller reads and writes a row or an index entry through an open
 table, never through a heap or an index of its own. So no caller
 can change a row and leave its index entries behind
-(`INDEXBUILD.md` §2).
+([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2).
 
 `sm_rel_scan_t` is a cursor over a table's rows, in their key's
 order: `_id` order in a keyless table, the primary key's in a
@@ -1113,7 +1132,8 @@ int sm_rel_scan_entries(sm_rel_scan_t* scan);
 ```
 
 Makes a cursor of a tree's rows an index-only scan's
-(`BTREEINDEX.md` §8). An entry on a leaf vacuum found all
+([`BTREEINDEX.md`](BTREEINDEX.md#8-the-in-doubt-bit-and-the-all-visible-flag)
+§8). An entry on a leaf vacuum found all
 visible, whose key gives its columns back, then comes with its
 row unread. `sm_rel_scannxt`'s `*ref` names no row for such an
 entry, and `sm_rel_scan_cols` gives its columns.
@@ -1242,14 +1262,16 @@ int sm_idx_scannxt(sm_idx_scan_t* scan, uint64_t* id, bool* cut,
 
 Moves to the next entry. Returns 0 with it, 1 at the end, or -1.
 `*id` is its row's `_id`. `*cut` is true if the key was cut to
-fit (`LSMINDEX.md` §2.4), so that only the row holds the whole
+fit ([`LSMINDEX.md`](LSMINDEX.md#24-cut-keys) §2.4), so that only
+the row holds the whole
 value. `*value` and `*len`, set only on 0, are the entry's value,
 for `sm_tbl_idx_deform`.
 
 An LSM index's cursor returns entries the transaction sees. A
 tree's entries carry no version, so its cursor returns each entry
 in range, and the row decides what the transaction sees
-(`BTREEINDEX.md` §2). A host reads a tree through
+([`BTREEINDEX.md`](BTREEINDEX.md#2-decisions) §2). A host reads a
+tree through
 `sm_tbl_idx_scan_rows`.
 
 ### `sm_idx_scan_seek`
@@ -1298,8 +1320,10 @@ Closes a cursor.
 
 ## The catalog
 
-The Catalog holds the design (`CATALOG.md`), with Namespace
-(`NAMESPACE.md`) and Sequence (`SEQUENCE.md`). These calls are
+The Catalog holds the design ([`CATALOG.md`](CATALOG.md)), with
+Namespace
+([`NAMESPACE.md`](NAMESPACE.md)) and Sequence
+([`SEQUENCE.md`](SEQUENCE.md)). These calls are
 sm3's. A lookup takes no lock unless its entry says so.
 
 ```cpp
@@ -1320,7 +1344,9 @@ uint64_t sm_cat_namespace_epoch(sm_session_t* session);
 ```
 
 Returns the count of the catalog's publish that last made or
-dropped a namespace (`NAMESPACE.md` §5). A namespace's lookup by
+dropped a namespace
+([`NAMESPACE.md`](NAMESPACE.md#5-the-namespaces-epoch) §5). A
+namespace's lookup by
 name takes no lock, so a host that caches namespaces, or a search
 path over them, drops them when the epoch moves. It returns 0 for
 a NULL session.
@@ -1337,7 +1363,8 @@ session looks up, the session's temporary tables' changes among
 them. It is `UINT64_MAX` while the session's transaction has DDL
 of its own. A host that caches what it looks up reads it before
 each lookup, and keeps an answer while it reads the same
-(`../dg/SCHEMACACHE.md`). It returns 0 for a NULL session.
+([`../dg/SCHEMACACHE.md`](../dg/SCHEMACACHE.md)). It returns 0
+for a NULL session.
 
 ### `sm_cat_publishes`
 
@@ -1667,7 +1694,8 @@ transaction sees it), `SM_ERR_INVALID` (past `UINT64_MAX`).
 
 ## Views
 
-View holds the design (`VIEW.md`). A view is a name in a
+View holds the design ([`VIEW.md`](VIEW.md)). A view is a name in
+a
 namespace, a relation's, with the host's query behind it. sm
 keeps the query, never reads it, and keeps the view true to the
 relations it reads. A view has a table's oid lock: a query takes
@@ -1703,7 +1731,8 @@ Each relation read is locked `SM_LOCKMODE_IS` to the end of the
 transaction. It must be a table, with a live column where one is
 named, or a view, with none named.
 
-`SM_NSP_TEMP` makes a temporary view, the session's (`VIEW.md`
+`SM_NSP_TEMP` makes a temporary view, the session's
+([`VIEW.md`](VIEW.md)
 §12). A temporary view alone may read a temporary table or view.
 
 Errors: `SM_ERR_NOTFOUND` (a relation read is not there),
@@ -1751,7 +1780,8 @@ view reads or holds.
 Another session's temporary view, a reader `sm_cat_view_readers`
 gives as `other`, takes no lock. Once this transaction commits,
 its session no longer sees it, nor its own temporary views that
-read it, and drops them at its next transaction (`VIEW.md`
+read it, and drops them at its next transaction
+([`VIEW.md`](VIEW.md)
 §12.4).
 
 Errors: `SM_ERR_INUSE` (another view reads it).
@@ -1815,13 +1845,18 @@ Fills `views`, cleared first, with the views that read the
 relation `oid`, a table or a view, directly, sorted by oid, as
 the session's transaction sees them. It adds other sessions'
 temporary views that read it, with `other` set, which
-`sm_cat_view_def` does not find (`VIEW.md` §12.3). It leaves out
+`sm_cat_view_def` does not find
+([`VIEW.md`](VIEW.md#123-the-hazard-another-sessions-drop)
+§12.3). It leaves out
 those the transaction has dropped.
 
 ## Index builds, TOAST and the btree cleaner
 
-The Index Builder (`INDEXBUILD.md`), TOAST (`TOAST.md` §2) and
-the B-tree Index (`BTREEINDEX.md` §9) hold the designs. The calls
+The Index Builder ([`INDEXBUILD.md`](INDEXBUILD.md)), TOAST
+([`TOAST.md`](TOAST.md#2-design) §2) and
+the B-tree Index
+([`BTREEINDEX.md`](BTREEINDEX.md#9-cleaning-vacuum-and-the-cleaner)
+§9) hold the designs. The calls
 that set the environment run once, before the first `sm_opendb`.
 
 TOAST stores a row's long values out of line. With TOAST off, the
@@ -1877,7 +1912,9 @@ int sm_set_index_evaluator(sm_env_t* env, sm_index_eval_fn fn, void* ctx);
 ```
 
 `sm_index_eval_fn` is the host's evaluator of partial and
-expression indexes (`INDEXBUILD.md` §2). The stack evaluates
+expression indexes
+([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2). The stack
+evaluates
 nothing itself. Where it must know whether a row belongs in such
 an index, and what its expression key columns are, it calls this.
 
@@ -1922,7 +1959,9 @@ int sm_set_cleaner_workers(sm_env_t* env, int workers);
 ```
 
 Sets the btree cleaner's threads a database gets, 4 by default,
-before any database is opened (`BTREEINDEX.md` §9). 0 runs none,
+before any database is opened
+([`BTREEINDEX.md`](BTREEINDEX.md#9-cleaning-vacuum-and-the-cleaner)
+§9). 0 runs none,
 for a test that runs a pass itself with `sm_cleaner_run`. The
 call does not check for a negative `workers`.
 
@@ -1953,9 +1992,11 @@ TOAST pointer.
 An open table `sm_tbl_t` is a table's definition under the
 table-oid lock, its heap and its indexes. A write through it
 keeps every index of the table in step with the heap
-(`INDEXBUILD.md` §2). The Row Store (`ROWSTORE.md`), Clustered
-Table (`CLUSTER.md`), Bulk Load (`BULKLOAD.md`) and TOAST
-(`TOAST.md`) hold the designs.
+([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2). The Row
+Store ([`ROWSTORE.md`](ROWSTORE.md)), Clustered
+Table ([`CLUSTER.md`](CLUSTER.md)), Bulk Load
+([`BULKLOAD.md`](BULKLOAD.md)) and TOAST
+([`TOAST.md`](TOAST.md)) hold the designs.
 
 **The writes.** A write is the heap write, then a write or two to
 each index it changes, and it sets no savepoint. One that fails
@@ -2110,7 +2151,8 @@ int sm_tbl_load_begin(sm_tbl_t* tbl);
 ```
 
 Begins a bulk load of many rows into a table opened to write, for
-COPY, a restore or CREATE TABLE AS (`BULKLOAD.md` §5). A load has
+COPY, a restore or CREATE TABLE AS
+([`BULKLOAD.md`](BULKLOAD.md#5-file-mode) §5). A load has
 three steps:
 
 1. Call `sm_tbl_load_begin`.
@@ -2193,7 +2235,8 @@ int sm_tbl_update(sm_tbl_t* tbl, const sm_row_key_t& key,
                   size_t* len = nullptr);
 ```
 
-`sm_row_key_t` is a row's name (`ROWSTORE.md` §2.1): `n` values
+`sm_row_key_t` is a row's name
+([`ROWSTORE.md`](ROWSTORE.md#21-a-rows-name) §2.1): `n` values
 and null flags, the values of the primary key's columns in the
 key's order. In a keyless table it is the `_id` alone, an int8. A
 null, or an `n` that is not the key's, fails with
@@ -2280,7 +2323,9 @@ int sm_tbl_read_keys(sm_tbl_t* tbl, const void* const* keys,
 ```
 
 Reads the rows at `n` row keys in one call, each into a pin as
-`sm_tbl_read_key` does (`ROWSTORE.md` §2.6). For key `i`, the row
+`sm_tbl_read_key` does
+([`ROWSTORE.md`](ROWSTORE.md#26-reading-many-rows) §2.6). For key
+`i`, the row
 is in `refs[i]`, `tuples[i]` and `tuple_lens[i]` with `rc[i]` 0.
 If there is none, `rc[i]` is 1, `refs[i]` is zero and `tuples[i]`
 is NULL. On -1, each ref is zero and each tuple NULL.
@@ -2489,7 +2534,8 @@ int sm_tbl_scan_rows(sm_tbl_t* tbl, sm_rel_scan_t** out);
 ```
 
 Opens a cursor over each row of the table, in its key's order:
-its primary key's, or with none its `_id`'s (`CLUSTER.md` §5). A
+its primary key's, or with none its `_id`'s
+([`CLUSTER.md`](CLUSTER.md#5-reading) §5). A
 sequential scan reads this.
 
 ### `sm_tbl_idx_scan_rows`
@@ -2504,8 +2550,10 @@ Opens a cursor over the rows of `index`, between `lo` and `hi` as
 `sm_tbl_idx_scan` takes them, in key order.
 
 - On the table's primary key, it gives the rows themselves, one
-  sorted run (`CLUSTER.md` §5). It seeks no `_id`.
-- On a tree (`BTREEINDEX.md` §5), it gives each entry's row as
+  sorted run ([`CLUSTER.md`](CLUSTER.md#5-reading) §5). It seeks
+  no `_id`.
+- On a tree ([`BTREEINDEX.md`](BTREEINDEX.md#5-reads) §5), it
+  gives each entry's row as
   the transaction sees it, while the row still has the entry's
   key, in the tree's order. A tree's cursor seeks nothing.
 
@@ -2529,7 +2577,8 @@ build.
 bool sm_tbl_index_tree(const sm_tbl_t* tbl, uint64_t index);
 ```
 
-Returns whether the table's index is a tree (`BTREEINDEX.md`),
+Returns whether the table's index is a tree
+([`BTREEINDEX.md`](BTREEINDEX.md)),
 whose rows a scan reads through `sm_tbl_idx_scan_rows`. It
 returns false for no such index.
 
@@ -2541,7 +2590,9 @@ size_t sm_tbl_idx_ncols(const sm_tbl_t* tbl, uint64_t index);
 
 Returns the number of attributes in an entry's value in that
 index, or 0 for no such index. The attributes are the cut flag,
-the INCLUDE columns, then the row key (`ROWSTORE.md` §2.2). A
+the INCLUDE columns, then the row key
+([`ROWSTORE.md`](ROWSTORE.md#22-the-row-and-its-index-entries)
+§2.2). A
 tree's entry gives each INCLUDE column as null.
 
 ### `sm_tbl_idx_deform`
@@ -2560,7 +2611,9 @@ is past the attribute count).
 
 ## Statistics
 
-Statistics holds the design (`STATISTICS.md` §9). The size calls
+Statistics holds the design
+([`STATISTICS.md`](STATISTICS.md#9-the-design) §9). The size
+calls
 read the table's LSM live, and nothing stores the answer. Each
 size is apart: bytes in sorted files (`disk`) and in memtables
 (`mem`), never summed. `include/sm_stats.h` holds the types.
@@ -2584,7 +2637,8 @@ int sm_tbl_keys_at(sm_tbl_t* tbl, const double* fs, size_t n,
 Fills `keys` with one row key for each of the fractions
 `fs[0..n)` of the bytes of the table's rows. A key is a position
 in key order below which about that share of the bytes lie, by
-sm's estimates, to a data block or so (`ROWSTORE.md` §2.6). The
+sm's estimates, to a data block or so
+([`ROWSTORE.md`](ROWSTORE.md#26-reading-many-rows) §2.6). The
 call reads no row, and no row need have the key. The key at
 fraction 0 is empty. A sample scan of a table with a primary key
 cuts it into blocks by these.
@@ -2634,7 +2688,9 @@ Compacts the table's store, SQL's VACUUM:
    bottom one, so a lookup visits one sorted run and old versions
    no reader needs go.
 2. Remove each tree's dead entries, and set a leaf with no entry
-   in doubt all visible (`BTREEINDEX.md` §9).
+   in doubt all visible
+   ([`BTREEINDEX.md`](BTREEINDEX.md#9-cleaning-vacuum-and-the-cleaner)
+   §9).
 
 The call waits for the compaction, seconds for a table of
 hundreds of megabytes, and cannot be cut short. The handle's lock
@@ -2705,9 +2761,12 @@ keeps the ones it was given, whatever is analyzed since.
 
 ## Table and index DDL
 
-The Catalog holds the design (`CATALOG.md` §8), with Temporary
-Table (`TEMPTABLE.md`), Index Builder (`INDEXBUILD.md`) and
-Foreign Key (`FOREIGNKEY.md`). Each call works in the session's
+The Catalog holds the design ([`CATALOG.md`](CATALOG.md#8-ddl)
+§8), with Temporary
+Table ([`TEMPTABLE.md`](TEMPTABLE.md)), Index Builder
+([`INDEXBUILD.md`](INDEXBUILD.md)) and
+Foreign Key ([`FOREIGNKEY.md`](FOREIGNKEY.md)). Each call works
+in the session's
 transaction. A call on an existing table takes its table-oid lock
 X to the end of the transaction, unless the table is temporary or
 the entry says otherwise. A table not there is `SM_ERR_NOTFOUND`.
@@ -2756,7 +2815,8 @@ int sm_cat_create_temp_table(sm_session_t* session, const char* name,
 ```
 
 Creates the temporary table `name` with these columns
-(`TEMPTABLE.md`). It is the session's alone, seen by no other,
+([`TEMPTABLE.md`](TEMPTABLE.md)). It is the session's alone, seen
+by no other,
 and gone when the session closes. It is in no namespace, and is
 found by name with `SM_NSP_TEMP`. Its rows are never logged and
 take no locks, but follow the session's transactions as any
@@ -3061,14 +3121,16 @@ int sm_cat_create_fkey(sm_session_t* session, uint64_t table,
 ```
 
 `sm_fkey_def_t` is a foreign key of a table, its child
-(`FOREIGNKEY.md`): the parent `ref_table`, its unique index
+([`FOREIGNKEY.md`](FOREIGNKEY.md)): the parent `ref_table`, its
+unique index
 `ref_index` on `ref_columns`, and the column pairs by 0-based
 place. The actions are `'a'` no action, `'r'` restrict, `'c'`
 cascade, `'n'` set null and `'d'` set default. The match types
 are `'s'` simple and `'f'` full. These, `deferrable`, `deferred`
 and `host` are the host's to act on: sm only keeps them.
 
-`sm_cat_create_fkey` adds `def` to `table` (`FOREIGNKEY.md` §5),
+`sm_cat_create_fkey` adds `def` to `table`
+([`FOREIGNKEY.md`](FOREIGNKEY.md#5-what-ddl-does) §5),
 under the child's table-oid lock X and then the parent's. `*oid`
 gets its oid, and `def.oid` is ignored. The call reads no row:
 `def.validated` is the caller's word, after it has checked them.

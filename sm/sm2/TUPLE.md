@@ -2,15 +2,18 @@
 
 The reference for the tuple format: the bytes `tup_encode`
 writes and `tup_decode` and `tup_deform` read, which a heap
-`rel` stores as an sm1 value. `TUPLE.md` §10 argues *why*;
-`VARLENA.md` is a variable-width datum's bytes inside it; this
+`rel` stores as an sm1 value.
+[`TUPLE.md`](TUPLE.md#10-why-the-codec-is-an-api-of-its-own) §10
+argues *why*;
+[`VARLENA.md`](VARLENA.md) is a variable-width datum's bytes
+inside it; this
 file is the rest.
 
 **Status: built**, in `src/tuple/tuple.cc`, with the pinned
 examples of §7 in `test/test_tuple.cc`. A datum is inline, or
 out of line with one of sm2's TOAST pointers in its place,
 which the codec stores as it is; the heap `rel` decides which
-(`../TOAST.md` §2).
+([`../TOAST.md`](../TOAST.md#2-design) §2).
 
 ---
 
@@ -93,7 +96,8 @@ An entry for each non-null attribute among the row's first
 ## 5. The variable data
 
 The non-null variable-width attributes' varlenas, in schema
-order, end to end, each in its shortest form (`VARLENA.md`),
+order, end to end, each in its shortest form
+([`VARLENA.md`](VARLENA.md)),
 starting just past the fixed part. A varlena's length is in its
 own header.
 
@@ -178,7 +182,8 @@ or longer than 65535 bytes; has a reserved flag set; has a
 malformed `natts`, or one past the schema's count; is cut short
 in its bitmap or fixed part; has a slot that does not point
 where its varlena should start (§5); holds a varlena that is
-not valid (`VARLENA.md` §4); or has bytes past its last
+not valid ([`VARLENA.md`](VARLENA.md#4-reading-what-is-valid)
+§4); or has bytes past its last
 varlena. `tup_check` refuses the same, as `SM_ERR_INVALID`,
 before a tuple is written.
 
@@ -216,7 +221,7 @@ entry and varlena of each attribute it reads.
     It allocates only the schema's widths, not its output.
   - `tup_read_begin(desc, tuple, r)` and `tup_read(r, n, datums,
     isnull)` read a tuple attribute by attribute
-    (`../ROWSTORE.md` §6.8): the header and bitmap parsed once,
+    ([`../ROWSTORE.md`](../ROWSTORE.md#68-deforming) §6.8): the header and bitmap parsed once,
     then each call decodes the attributes from where the last
     stopped up to `n`, checking only what it reads.
   - `tup_size(desc, datums, isnull, len)` gives the length
@@ -235,7 +240,8 @@ entry and varlena of each attribute it reads.
 `tup_encode` could have written: well formed (§8), with
 every attribute of the schema, and none dropped that is not
 null. A heap `rel` checks a pre-encoded tuple against it
-before writing it (`../ROWSTORE.md` §8).
+before writing it
+([`../ROWSTORE.md`](../ROWSTORE.md#8-the-tuple-relation) §8).
 
 ---
 
@@ -251,17 +257,20 @@ relation.
 - **It has several callers.** A heap `rel` stores a row with it.
   An index `rel` stores the entry's value with it, the INCLUDE
   columns among them, with no base relation in sight. The Catalog
-  stores each part of a value with it (`../CATALOG.md`).
+  stores each part of a value with it
+  ([`../CATALOG.md`](../CATALOG.md)).
 - **It needs no database.** It calls none of sm1's storage
   functions, only sm1's error state. So a unit test exercises it
   with no database in it.
 
 **The datums are PostgreSQL's, and the framing is sm2's.**
-`TYPE.md` fixes what each column's bytes are, and stops there.
+[`TYPE.md`](TYPE.md) fixes what each column's bytes are, and
+stops there.
 The tuple around them owes `HeapTupleHeader` nothing. So sm2's
 TOAST is in sm2's own format: a TOASTed datum is sm2's pointer,
 in PostgreSQL's external form with a tag of sm2's own
-(`VARLENA.md` §2, `../TOAST.md`).
+([`VARLENA.md`](VARLENA.md#2-the-forms) §2,
+[`../TOAST.md`](../TOAST.md)).
 
 ## 11. Why the format is so
 
@@ -289,7 +298,7 @@ in PostgreSQL's external form with a tag of sm2's own
   IPC boundary, not the conversion.
 - **Decide TOAST per tuple, not per datum.** Many columns, each
   under a threshold for one datum, can still pass the limit.
-  `../TOAST.md` has the rule.
+  [`../TOAST.md`](../TOAST.md) has the rule.
 
 ### 11.2 The layout
 
@@ -334,7 +343,9 @@ fixed part and a variable part, with no padding.**
   takes any address. A TOASTed datum is copied when fetched. The
   codec takes either header on input, because PostgreSQL makes
   4-byte headers for short data after it detoasts, and it writes
-  the shortest (`VARLENA.md` §3, §5).
+  the shortest
+  ([`VARLENA.md`](VARLENA.md#3-writing-the-shortest-form) §3,
+  §5).
 - **A slot holds where its varlena starts, and nothing else.**
   The varlena's header holds its length, so the slot does not
   repeat it. A position from the tuple's start goes straight to
@@ -373,7 +384,9 @@ it.
   PostgreSQL datums.** The conversion at the executor boundary is
   per tuple, not per datum: the framing is rebuilt, and the
   column bytes are copied. The threaded fork removed the IPC
-  boundary, not this (`../PART4.md` §2).
+  boundary, not this
+  ([`../PART4.md`](../PART4.md#2-the-blocker-the-process-model)
+  §2).
 - **A null column costs arithmetic.** Reading a column is one
   step for each null before it, where an entry kept for a null
   would make every position a constant. The space was preferred.
@@ -409,7 +422,7 @@ it.
 
 ## 14. Tests
 
-Run on the debug build (`../../CLAUDE.md`).
+Run on the debug build ([`../../CLAUDE.md`](../../CLAUDE.md)).
 `test/test_tuple.cc` needs no database, since the codec touches
 no storage.
 

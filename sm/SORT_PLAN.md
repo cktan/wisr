@@ -1,7 +1,8 @@
 # SORT_PLAN — an external sort in sm
 
 Status: steps 1 to 3 of §8 are built. §9 lists what the user has
-decided. `SORT.md` is the design of the code as it stands.
+decided. [`SORT.md`](SORT.md) is the design of the code as it
+stands.
 
 **Warning: no PostgreSQL code goes into `sm/`.** This file
 describes techniques. Write the code from scratch, and copy
@@ -39,8 +40,8 @@ The last merge writes nothing. Its output goes to the caller.
 
 | User | Today | With this |
 | --- | --- | --- |
-| A bulk load's unsorted streams (`BULKLOAD.md` §5.3) | `sm1/src/load.cc`: `std::sort` of `std::string` pairs | this sort |
-| A B-tree index built bottom up (`NEXT.md` §1 item 10) | not built; `NEXT.md` asks whether to use RocksDB or `tuplesort` | this sort, which settles that question |
+| A bulk load's unsorted streams ([`BULKLOAD.md`](BULKLOAD.md#53-sorting-an-index) §5.3) | `sm1/src/load.cc`: `std::sort` of `std::string` pairs | this sort |
+| A B-tree index built bottom up ([`NEXT.md`](NEXT.md#1-next) §1 item 10) | not built; [`NEXT.md`](NEXT.md) asks whether to use RocksDB or `tuplesort` | this sort, which settles that question |
 
 **digres's `ORDER BY` stays on PostgreSQL's `tuplesort`.** That
 sort compares values of any SQL type through
@@ -109,7 +110,8 @@ keys give it something simpler.
 ## 3. The main difference: keys are bytes
 
 sm's keys are already **order-preserving**: two encoded keys
-order as `memcmp` orders them (`sm2/SM2_DESIGN.md`). A descending
+order as `memcmp` orders them
+([`sm2/SM2_DESIGN.md`](sm2/SM2_DESIGN.md)). A descending
 column is inverted, NULLs have their place, and a collated string
 is its sort key. A composite key is one byte string.
 
@@ -401,7 +403,8 @@ instructions, on `digres-release`.
 3. **`load.cc` on the sort.** → Check: the mvcc scenarios, `rel`
    and dg suites pass unchanged; `COPY` into a table with indexes
    is no slower than today, by a new `bench/` script.
-4. **Then `NEXT.md` §1 item 10**, the bottom-up tree, is a user
+4. **Then [`NEXT.md`](NEXT.md#1-next) §1 item 10**, the bottom-up
+   tree, is a user
    of this. It is work of its own.
 
 Test layers: sm0 unit tests for the sort; `rel` and `dg/test`
@@ -471,7 +474,7 @@ budget (§7).
 | Temporary tables, `load` into one | the sort sees bytes, and is the same |
 | Unique, primary key | §4.5 |
 | Non-unique | keys are distinct by their row key; if equal, any order |
-| TOAST | a sort sees bytes; a row that goes out of line is the loader's (`BULKLOAD.md`) |
+| TOAST | a sort sees bytes; a row that goes out of line is the loader's ([`BULKLOAD.md`](BULKLOAD.md)) |
 | Cut keys | a cut key is bytes as any other; a unique tree's check of one stays with its caller |
 | A long key, or a value over the buffer | the buffer grows for that record |
 | Empty sort | `sort_next` gives 1 at once, with no file |

@@ -9,8 +9,10 @@ a shorter key before a longer key that it starts.
 
 The code is `sm0/src/sort.cc`, and the API is
 `sm0/include/sm0_sort.h`. Its tests are `sm0/test/test_sort.cc`.
-The Bulk Load (`BULKLOAD.md` §5.3) gives each unsorted stream a
-sort. `SORT_PLAN.md` holds the plan, and what the Sort took from
+The Bulk Load ([`BULKLOAD.md`](BULKLOAD.md#53-sorting-an-index)
+§5.3) gives each unsorted stream a
+sort. [`SORT_PLAN.md`](SORT_PLAN.md) holds the plan, and what the
+Sort took from
 PostgreSQL's sort and why.
 
 **Warning.**
@@ -18,7 +20,8 @@ PostgreSQL's sort and why.
 - No PostgreSQL code is in the Sort, and none may go in. It is
   written from scratch.
 - A sort belongs to one thread. Its file descriptors are a
-  virtual fd cache (`sm0/VFD.md`), which takes no lock, so
+  virtual fd cache ([`sm0/VFD.md`](sm0/VFD.md)), which takes no
+  lock, so
   create, use and free a sort on the same thread.
 - A record from `sort_next` is good only until the next call on
   the sort.
@@ -51,7 +54,8 @@ which sm0 has. It touches no store, so it needs no session, no
 transaction and no RocksDB. Any level above can call it.
 
 The Sort knows no types. sm's encoded keys already order as
-`memcmp` orders them (`sm2/SM2_DESIGN.md`): a descending column
+`memcmp` orders them ([`sm2/SM2_DESIGN.md`](sm2/SM2_DESIGN.md)):
+a descending column
 is inverted, NULLs have their place, and a collated string is its
 sort key. So the Sort has no comparators, no collations and no
 NULL handling.

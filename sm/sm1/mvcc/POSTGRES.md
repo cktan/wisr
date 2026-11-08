@@ -4,7 +4,8 @@ PostgreSQL validates its concurrency control with an isolation
 test suite: scenario files in `src/test/isolation/specs`, each
 a schedule of steps across sessions with an expected outcome,
 as the scenarios here are. This file keeps that list, for
-porting cases that `MVCC.md`'s scenarios do not yet cover.
+porting cases that [`MVCC.md`](MVCC.md)'s scenarios do not yet
+cover.
 
 The list is the suite on PostgreSQL's `REL_17_STABLE` branch,
 125 files, read through GitHub's API on 2026-10-06. The
@@ -136,11 +137,14 @@ RUBiS. The suite below is where the cases live.
 | `prepared-transactions` | `test/test_2pc.cc` |
 | `truncate-conflict` | `rel/test/test_truncate.rel`, step 4 |
 
-**Ported**, as permutation scripts (`DRIVER.md` §6), `in/p01`
+**Ported**, as permutation scripts
+([`DRIVER.md`](DRIVER.md#6-permutation-scripts) §6), `in/p01`
 to `in/p10`: `simple-write-skew`, `receipt-report`,
 `read-only-anomaly`, `read-write-unique`, `total-cash`,
 `two-ids`, `classroom-scheduling`, `temporal-range-integrity`,
-`project-manager`, `multiple-row-versions`. `MVCC.md` §7b has
+`project-manager`, `multiple-row-versions`.
+[`MVCC.md`](MVCC.md#7b-family-p--postgresqls-own-isolation-tests)
+§7b has
 how each compares.
 
 **Worth porting next**, also serializable: `partial-index`,
@@ -156,7 +160,8 @@ PostgreSQL.
 
 - `nowait*`, `skip-locked*`, `lock-nowait`, `timeouts`: the wait
   policies are digres's, on sm1's `trylock` and a timer's
-  cancel (`../../NEXT.md` §2); no scenario here drives them.
+  cancel ([`../../NEXT.md`](../../NEXT.md#2-loose-ends) §2); no
+  scenario here drives them.
 - `fk-*`, `ri-trigger`, `referential-integrity`,
   `insert-conflict-*`, `merge-*`: the host's, above the
   stack.

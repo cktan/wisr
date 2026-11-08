@@ -1,12 +1,16 @@
 # digres: the design of record
 
 What digres is built as, and the decisions that shape it. It
-holds what stands, not the steps that got there: `WORKNOTE.md`
-has each step and why, `CODE.md` the rules for changing the
-code, and `README.md` what runs. `../sm/PART4.md` §10 is how
+holds what stands, not the steps that got there:
+[`WORKNOTE.md`](WORKNOTE.md)
+has each step and why, [`CODE.md`](CODE.md) the rules for
+changing the
+code, and [`README.md`](README.md) what runs.
+[`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+§10 is how
 digres was to be made, and §2 why the server must be threaded.
 The overriding objective, a database is its directory, is in
-`CODE.md`.
+[`CODE.md`](CODE.md).
 
 ---
 
@@ -18,7 +22,8 @@ table, lock manager and SSI graph in process memory, so forked
 backends could not share a database: threads are what lets
 more than one connection use a table.
 
-As built (`CODE.md` §3 to §5 have the rules):
+As built ([`CODE.md`](CODE.md#3-globals) §3 to §5 have the
+rules):
 
 - **A connection is a thread** of the postmaster's process,
   started through `session_thread_start()`
@@ -70,7 +75,8 @@ all of it is done:
    the process's.
 3. **Connections as threads** (§1; what is left is in §5).
 4. **Signals became flags, and the process-only subsystems
-   went**: crash restart and `EXEC_BACKEND` (`WORKNOTE.md`
+   went**: crash restart and `EXEC_BACKEND`
+   ([`WORKNOTE.md`](WORKNOTE.md)
    steps 23 and 24); shared memory, each structure the threads
    share now an ordinary allocation (steps 25 and 26); dynamic
    shared memory (step 29); the auxiliary processes, from
@@ -91,7 +97,8 @@ every file first compiled as strict C++ and nothing linked:
   going away.
 - **Carve out the parser.** It is `../sq`, the parser alone,
   with its own nodes and no base under it, which digres links
-  (`WORKNOTE.md` step 5, `../sq/DESIGN.md`). The base stayed in
+  ([`WORKNOTE.md`](WORKNOTE.md) step 5,
+  [`../sq/DESIGN.md`](../sq/DESIGN.md)). The base stayed in
   digres.
 - **Defer the rest.** `src/timezone` and `regex` stay in
   digres: carving them out is tidy and unblocks nothing. The
@@ -101,13 +108,14 @@ every file first compiled as strict C++ and nothing linked:
   an encrypted connection.
 
 The replacement of GUC was to follow the threads
-(`../sm/NEXT.md`, low priority); it is not designed yet.
+([`../sm/NEXT.md`](../sm/NEXT.md), low priority); it is not
+designed yet.
 
 ## 3. The globals, and how the build keeps them
 
 Every writable global and file-scope static is `thread_local`,
 marked `/*LOCAL*/`; a thread shares only through `pcb` and
-`shmem`, the control blocks (`CODE.md` §3).
+`shmem`, the control blocks ([`CODE.md`](CODE.md#3-globals) §3).
 
 - **The sweep was a script**, `src/tools/cxx_thread_local.py`.
   It takes the variables from the objects, not from a search
@@ -146,7 +154,8 @@ Do not reopen these without the owner.
 
 - **A database is its directory, and this overrides the
   rest.** `base/X` can be copied to another machine and
-  imported, whole, into a new digres instance (`CODE.md`, the
+  imported, whole, into a new digres instance
+  ([`CODE.md`](CODE.md), the
   overriding objective). So `global/` holds only the list of
   databases, a database uses nothing outside its directory and
   nothing of another database, and nothing inside it names
@@ -162,20 +171,24 @@ Do not reopen these without the owner.
 - **sm's callbacks are `noexcept`**, and four C++ types cross
   `sm.h`: `std::string`, `std::vector`, `std::string_view` and
   `std::shared_ptr`; `sm_sys.h` adds what a wait is made with
-  (`../sm/CODE.md` §2).
+  ([`../sm/CODE.md`](../sm/CODE.md#2-the-interface-to-sms-users)
+  §2).
 - **SPI stays.** SQL-language functions are cut.
 - **One encoding, UTF8; default collation C;** ICU for a column
   or a query that asks.
 - **Authentication is not configured**: no `pg_hba.conf`, and
-  its parser is gone (`WORKNOTE.md` step 92). The rule is
-  `../aa/ROLE.md` §5's, built in `WORKNOTE.md` steps 320 and
+  its parser is gone ([`WORKNOTE.md`](WORKNOTE.md) step 92). The
+  rule is
+  [`../aa/ROLE.md`](../aa/ROLE.md#5-how-a-client-gets-in) §5's,
+  built in [`WORKNOTE.md`](WORKNOTE.md) steps 320 and
   327.
 - **Every writable global is `thread_local`**, marked
   `/*LOCAL*/`, and the build fails otherwise (§3). A thread
   shares only through `pcb` and `shmem` (`src/include/c.h`).
 - **The globals move into four control blocks**: the SHARED ones
   did, as work of their own, and a LOCAL one does as a
-  change touches it (`utils/control_block.h`, `WORKNOTE.md` steps
+  change touches it (`utils/control_block.h`,
+  [`WORKNOTE.md`](WORKNOTE.md) steps
   22 and 211): `pcb_t`, what the main thread owns and the others
   read; `shmem_t`, what the threads share and write, each field
   guarding itself; one `tcb_t` for each thread; and
@@ -183,7 +196,8 @@ Do not reopen these without the owner.
   reads. A field is a value, or a `std::unique_ptr` to what the
   block owns; a module's state is a struct only it defines. New
   state goes into a block at once. The last SHARED variable
-  moved in `WORKNOTE.md` step 229, with the copy table and the
+  moved in [`WORKNOTE.md`](WORKNOTE.md) step 229, with the copy
+  table and the
   two-pass link: the only writable globals outside
   `thread_local` are `pcb` and `shmem`.
 - **The GUC variables and tables are per thread** (§3).
@@ -192,11 +206,13 @@ Do not reopen these without the owner.
   vacuum are removed, planner included; sorting and temporary
   files stay serial.
 - **No VACUUM.** sm collects its own garbage. `VACUUM`
-  compacts each table's store and no more (`WORKNOTE.md` step
+  compacts each table's store and no more
+  ([`WORKNOTE.md`](WORKNOTE.md) step
   284); `ANALYZE` stays. `CLUSTER` and
   `REINDEX` succeed too, doing nothing, with a warning: a table
   in sm is kept in its primary key's order, or by its `_id`
-  without one (rowno once; `../sm/ROWSTORE.md`), and its indexes
+  without one (rowno once;
+  [`../sm/ROWSTORE.md`](../sm/ROWSTORE.md)), and its indexes
   with its rows.
 - **No WAL.** sm keeps what is durable. There is no recovery,
   archiving or hot standby, and `PREPARE TRANSACTION` is
@@ -230,20 +246,23 @@ Do not reopen these without the owner.
   `SELECT ... FOR UPDATE`) asks sm for a lock explicitly. A
   table is opened where PostgreSQL locks it, before its
   definition is read, so a statement waits out DDL before it
-  plans, not after (`WORKNOTE.md` step 111). One lock manager
+  plans, not after ([`WORKNOTE.md`](WORKNOTE.md) step 111). One
+  lock manager
   means one deadlock detector. Tables in sm moved
   first; PostgreSQL's lock manager went when nothing else used
-  it (`WORKNOTE.md` step 156).
+  it ([`WORKNOTE.md`](WORKNOTE.md) step 156).
 - **Advisory locks are not sm's.** They name a number the
   application picks and guard nothing stored, and their
   session scope, explicit unlock and counted holds are
   PostgreSQL's, which sm1's locks need not learn. They are in
   a table of digres's own (`storage/advisory_lock.h`,
-  `WORKNOTE.md` step 153), with a deadlock detector of its own
+  [`WORKNOTE.md`](WORKNOTE.md) step 153), with a deadlock
+  detector of its own
   for cycles among advisory waits. A cycle through an advisory
   lock and an sm lock is not detected, and `lock_timeout` or a
   cancel ends it; sm1's wait-for graph could take edges from
-  digres to find it (`../sm/NEXT.md` §3).
+  digres to find it
+  ([`../sm/NEXT.md`](../sm/NEXT.md#3-not-blocking) §3).
 - **sm's transactions are the only ones.** sm keeps the
   transaction, its statements, savepoints, isolation,
   visibility and durability; `xact.c` keeps only what a
@@ -251,14 +270,16 @@ Do not reopen these without the owner.
   resource cleanup, and the hooks that end a statement. It
   stays until it is empty: what it no longer needs is deleted,
   and nothing is moved out just so the file goes
-  (`WORKNOTE.md` steps 232 to 236).
+  ([`WORKNOTE.md`](WORKNOTE.md) steps 232 to 236).
   PostgreSQL's transaction ids, command ids, combo cids and
   two-phase commit are gone, and every snapshot is the same
   one (`utils/time/snapmgr.c`).
 - **A table in sm has no bitmap scans.** A row in sm has no
   page or block, and a table with a primary key is read by its
   key: a bitmap of row keys would read a row a seek, in no order
-  the store keeps (`../sm/CLUSTER.md` §6). An index in sm has
+  the store keeps
+  ([`../sm/CLUSTER.md`](../sm/CLUSTER.md#6-digres) §6). An index
+  in sm has
   no `amgetbitmap`, so the planner plans none.
 - **Storage and replication features go.** Tablespaces,
   publications, subscriptions and large objects are tied to
@@ -273,10 +294,11 @@ Do not reopen these without the owner.
   one oid in every session and database
   (`PG_TEMP_NAMESPACE`), and no row anywhere: sm keeps each
   session's temporary tables apart, in no namespace
-  (`../sm/TEMPTABLE.md`). PostgreSQL's `pg_temp_N` per backend
+  ([`../sm/TEMPTABLE.md`](../sm/TEMPTABLE.md)). PostgreSQL's
+  `pg_temp_N` per backend
   would be a row in the database naming a slot of this
   instance, against "a database is its directory"
-  (`CODE.md`).
+  ([`CODE.md`](CODE.md)).
 - **No geometric types** (decided 2026-10-17). PostgreSQL's
   built-in `point`, `line`, `lseg`, `box`, `path`, `polygon`
   and `circle` are not supported: sm has no type for them, and
@@ -293,7 +315,8 @@ Do not reopen these without the owner.
   ... INHERITS` and `ALTER TABLE ... INHERIT` are not
   supported, as partitioning is not. A row is named by its key,
   the values of its table's primary key's columns
-  (`../sm/ROWSTORE.md`), and PostgreSQL gives a child no primary
+  ([`../sm/ROWSTORE.md`](../sm/ROWSTORE.md)), and PostgreSQL
+  gives a child no primary
   key of its parent's, so the tables of a tree name their rows
   by different columns: a row mark, an UPDATE or a DELETE
   through the parent would need a key for each child.
@@ -302,9 +325,12 @@ Do not reopen these without the owner.
   to be built for inheritance trees, and the planner's and
   executor's code for them is dead for tables in sm.
 - **`CREATE INDEX` on a table with rows waits for its build,
-  after the commit** (decided on review, `WORKNOTE.md` step 162).
+  after the commit** (decided on review,
+  [`WORKNOTE.md`](WORKNOTE.md) step 162).
   sm3 builds such an index in the background once the transaction
-  that made it commits (`../sm/INDEXBUILD.md` §2). digres waits
+  that made it commits
+  ([`../sm/INDEXBUILD.md`](../sm/INDEXBUILD.md#2-the-protocol)
+  §2). digres waits
   for each build before it reports the command complete, outside
   any transaction, as PostgreSQL's `CREATE INDEX CONCURRENTLY`
   waits between its transactions; a build that failed, a unique
@@ -325,13 +351,16 @@ What making each session a thread left:
 - **Crash and immediate shutdown.** `SIGQUIT` reaches a thread
   as a flag, and `quickdie()` calls `_exit(2)`: the whole
   server ends. A thread that ends abnormally stops the server
-  too: there is no crash restart (`WORKNOTE.md` step 23).
-- **Nothing forks but `popen()`** (`WORKNOTE.md` steps 17 and
+  too: there is no crash restart ([`WORKNOTE.md`](WORKNOTE.md)
+  step 23).
+- **Nothing forks but `popen()`** ([`WORKNOTE.md`](WORKNOTE.md)
+  steps 17 and
   20): `COPY ... PROGRAM` and the like, which exec at once.
 - **A session thread has no `SIGFPE` handler**: the process's
   disposition, the postmaster's, applies.
 - **RocksDB's files are counted by no one.** The sessions'
-  are, under one ceiling for the process (`WORKNOTE.md` step
+  are, under one ceiling for the process
+  ([`WORKNOTE.md`](WORKNOTE.md) step
   135); RocksDB's `max_open_files` is still -1, every SST file
   open. `datadir_load()` could set it to a share of the
   ceiling, as MyRocks ties `rocksdb_max_open_files` to

@@ -1,7 +1,8 @@
 # DUCKPLAN: run DuckDB's SQL tests against digres
 
 This is a plan for a coding agent. Nothing here is built. Read
-`CLAUDE.md`, `dg/CODE.md` and `dg/test/slt/README.md` first.
+[`CLAUDE.md`](../CLAUDE.md), [`dg/CODE.md`](CODE.md) and
+[`dg/test/slt/README.md`](test/slt/README.md) first.
 
 **The goal.** DuckDB's repository holds 6,156 SQL test files
 under `test/sql`, in the sqllogictest format, under the MIT
@@ -41,7 +42,7 @@ All new files are in `dg/test/duck/`:
 | `duck.sh` | starts both servers, fetches the files, runs them, prints the summary |
 | `duckrun.cc` | the differential runner, a libpq client |
 | `known.txt` | differences reviewed and accepted: `FILE:LINE reason` |
-| `README.md` | how to run it, and how to read its report |
+| [`README.md`](README.md) | how to run it, and how to read its report |
 | `selftest/` | small `.test` files that prove the runner works |
 
 `duck.sh` compiles `duckrun.cc` itself, into `dg/build/duckrun`,
@@ -84,7 +85,7 @@ for a run:
   Fail with a clear message if it is not there.
 - **Their data, logs and sockets** go in `dg/build/dk`. Keep the
   path short: a socket's path is at most 107 bytes. Do not use
-  `/tmp` for data (`CLAUDE.md`).
+  `/tmp` for data ([`CLAUDE.md`](../CLAUDE.md)).
 - **Each test file** gets a new database on each server, dropped
   after, as `slt.cc` does.
 - **Every connection** on both servers runs these first:
@@ -257,17 +258,20 @@ check named.
    to expect".
 4. **Sort the findings.** For each one, decide whether it is a
    bug or a known difference. Reduce a bug to its smallest SQL.
-   - A bug: add it to `dg/ISSUE.md`, with the smallest SQL. Do
+   - A bug: add it to [`dg/ISSUE.md`](ISSUE.md), with the
+     smallest SQL. Do
      not fix it in this work.
    - A known difference: add it to `known.txt`, with its reason.
-     `dg/UNSUPPORTED.md` lists what digres refuses on purpose, so
+     [`dg/UNSUPPORTED.md`](UNSUPPORTED.md) lists what digres refuses on purpose, so
      a refusal it lists is a known difference.
    - Read `dialect`: add a rewrite under "The format" only if it
      opens many records.
 5. **Run with `--tree`.** Run the default directories again with
    btree indexes, and sort the new findings the same way.
-6. **Write `dg/test/duck/README.md`**, and add one line about it
-   to `dg/test/slt/README.md`. Check: another person could run it
+6. **Write [`dg/test/duck/README.md`](test/duck/README.md)**, and
+   add one line about it
+   to [`dg/test/slt/README.md`](test/slt/README.md). Check:
+   another person could run it
    from the README alone.
 
 Later, and not in this work: `restart` could restart both
@@ -295,10 +299,12 @@ A file is skipped by the rules under "The format".
 `index`.
 
 - **`types/decimal` may differ on purpose.** sm's decimals are
-  DuckDB's, not PostgreSQL's (`dg/DECIMAL.md`). Read that
+  DuckDB's, not PostgreSQL's ([`dg/DECIMAL.md`](DECIMAL.md)).
+  Read that
   document before calling a decimal difference a bug.
 - **Row order and `pg_` catalogs differ on purpose.** See
-  `dg/UNSUPPORTED.md` and `DG-vs-PG.md`.
+  [`dg/UNSUPPORTED.md`](UNSUPPORTED.md) and
+  [`DG-vs-PG.md`](../DG-vs-PG.md).
 - **Many statements will fail on both.** DuckDB's `ORDER BY ALL`,
   `CREATE MACRO`, `PRAGMA`, list types and `HUGEINT` are not
   PostgreSQL's. This is expected, and costs nothing.
@@ -309,13 +315,15 @@ A file is skipped by the rules under "The format".
   -c user.name="CK Tan" -c user.email="cktanx@gmail.com"`.
 - Run `duck.sh --selftest` before each commit. Run the full
   suites (sm, sq, dg, with `DEBUG=1`) once before the last
-  commit, as `CLAUDE.md` requires.
+  commit, as [`CLAUDE.md`](../CLAUDE.md) requires.
 - This work changes only `dg/test/duck/`,
-  `dg/test/slt/README.md`'s one line, and `dg/ISSUE.md`. No file
+  [`dg/test/slt/README.md`](test/slt/README.md)'s one line, and
+  [`dg/ISSUE.md`](ISSUE.md). No file
   in `sm/`, `dg/src/` or any existing test changes. If you think
   one must, stop and ask.
 - Do not fix a bug it finds: report it.
-- Follow `CLAUDE.md`'s code style: `snake_case`, a doc comment on
+- Follow [`CLAUDE.md`](../CLAUDE.md)'s code style: `snake_case`,
+  a doc comment on
   every function, `_t` on types, and no `strncpy()`. Open each
   test file with a one-line synopsis and numbered steps.
 - Prose in `.md` files wraps at 65 columns.

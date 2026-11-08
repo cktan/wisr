@@ -11,7 +11,8 @@ and `sm3/src/ddl/ddl.cc`.
 
 It is built, at every level and in digres: §11 has the steps,
 and §9 what was left for later. It replaced the mechanism
-first proposed in `DBMGR.md` §7.8, which put a
+first proposed in [`DBMGR.md`](DBMGR.md#78-temporary-stores)
+§7.8, which put a
 temporary store's column family in the database's own
 RocksDB. §10 is the list drawn up before the work, of what to
 check first, kept as it was written.
@@ -28,12 +29,13 @@ check first, kept as it was written.
   it sets `disableWAL`, and `sm1::attach` destroys whatever
   it finds there and makes X empty.
 - **A temporary table is a temporary store**, as decided
-  (`DESIGN.md` §5): one column family of X for its rows, its
+  ([`DESIGN.md`](DESIGN.md#5-cross-level-decisions) §5): one
+  column family of X for its rows, its
   indexes and its TOAST data, its rows chained as any table's
-  (`ROWSTORE.md`).
+  ([`ROWSTORE.md`](ROWSTORE.md)).
 - **Its definition is in the session's memory**, in a
   temporary catalog of its own, never in store 0
-  (`CATALOG.md` §4).
+  ([`CATALOG.md`](CATALOG.md#4-in-memory) §4).
 - **Its transactions are the database's.** A row version in
   X carries the `xid` and timestamps of the session's
   transaction in its own database, and is resolved against
@@ -60,11 +62,13 @@ check first, kept as it was written.
 
 ## 1. Why not in the database's RocksDB
 
-`DBMGR.md` §7.8 proposed a column family in the
+[`DBMGR.md`](DBMGR.md#78-temporary-stores) §7.8 proposed a column
+family in the
 database's own RocksDB, written with `disableWAL`. Two things
 decided against it.
 
-- **A database is its directory** (`../dg/CODE.md`, the
+- **A database is its directory**
+  ([`../dg/CODE.md`](../dg/CODE.md), the
   overriding objective): `base/{dbid}` is copied to another
   machine and imported whole. What makes that package is what
   is transactionally consistent, a database's data and its
@@ -91,7 +95,7 @@ database: a store is in the database's instance or in X (§3).
   database; `sm1::attach` makes it if the host has not, and X
   is the one name in it that is sm's. The sweep of `base` at
   attach already leaves alone an entry that is not a number
-  (`DBMGR.md` §4).
+  ([`DBMGR.md`](DBMGR.md#4-the-home-directory) §4).
 - **Whose.** The environment's: `sm1::attach` opens it and
   `sm1::detach` closes it. It is shared between databases,
   as the host's temporary files are, and for the same reason:
@@ -104,7 +108,8 @@ database: a store is in the database's instance or in X (§3).
   named `<dbid>.<storeid>`: a `storeid` is a database's own,
   and two databases hand out the same ones. The comparator,
   the prefix extractor and the GC compaction filter are a
-  store's, as in a database (`DBMGR.md` §6.2).
+  store's, as in a database
+  ([`DBMGR.md`](DBMGR.md#62-key-classes) §6.2).
 - **What it does not hold.** No `CF:txn`, no `CF:meta`, no
   catalog. X is a place to put versions and nothing else.
 - **Every write is unlogged.** Each write to a store takes
@@ -132,7 +137,8 @@ store goes through the pair.
   anything, and a version left behind by a failure is dead
   with its transaction.
 - **The commit needs no change.** Row versions and the commit
-  record were never one write (`XCTMGR.md` §8.2): the
+  record were never one write
+  ([`XCTMGR.md`](XCTMGR.md#82-the-procedure) §8.2): the
   versions are in the stores, and the record goes to the
   database's `CF:txn`, logged and synced.
 
@@ -161,7 +167,8 @@ store goes through the pair.
 
 Everything that makes a transaction a transaction, unchanged:
 
-- **The version format** (`DBMGR.md` §6.2) and the
+- **The version format** ([`DBMGR.md`](DBMGR.md#62-key-classes)
+  §6.2) and the
   visibility test (§4.4 there).
 - **Status resolution** (§3.4 there), against the session's
   database. A version in X written by a transaction with no
@@ -169,7 +176,8 @@ Everything that makes a transaction a transaction, unchanged:
 - **Savepoints** (§6.5 there): a write to a temporary store
   while a mark is set is listed in the undo list like any
   other, under the same cap, and a rollback undoes it, a
-  chained row by putting back its version (`ROWSTORE.md` §6).
+  chained row by putting back its version
+  ([`ROWSTORE.md`](ROWSTORE.md#6-pins) §6).
 - **A statement does not see its own writes**, and a cursor
   keeps the view it opened with.
 - **Garbage collection.** An update or a delete leaves an old
@@ -221,7 +229,8 @@ transaction at a time. So, for a temporary store:
 
 - **A second overlay, which commit does not publish.** A
   session has an overlay of its open transaction's DDL
-  (`CATALOG.md` §4). The temporary catalog is the same
+  ([`CATALOG.md`](CATALOG.md#4-in-memory) §4). The temporary
+  catalog is the same
   structure with a longer life: definitions of the session's
   temporary tables, kept from commit to commit, and dropped
   when the session closes.
@@ -262,8 +271,11 @@ transaction at a time. So, for a temporary store:
   it is chosen by the table's absence from the shared
   catalog, and a temporary table is never in it.
 - **TRUNCATE** is a new temporary store and a drop of the
-  old, as for a table (`CATALOG.md` §2).
-- **A temporary view is kept there too** (`VIEW.md` §12.2),
+  old, as for a table
+  ([`CATALOG.md`](CATALOG.md#2-object-mapping) §2).
+- **A temporary view is kept there too**
+  ([`VIEW.md`](VIEW.md#122-the-view-the-temporary-catalog)
+  §12.2),
   its name among the session's temporary names, and in the
   shared catalog's register of temporary readers (§12.3),
   for another session's drop to find.
@@ -314,7 +326,7 @@ that no longer exist, and are swept with the rest.
 
 - **The `CF:txn` sweep must cover X.** A `COMMITTED` record
   is deleted only once every version it covers is stamped
-  with its `commit_ts` (`GC.md` §1). The pass
+  with its `commit_ts` ([`GC.md`](GC.md#1-design) §1). The pass
   that stamps them walks the database's stores. If it skipped
   the database's stores in X, a temporary version would lose
   its record and read as aborted. It does not skip them: a
@@ -341,7 +353,7 @@ that no longer exist, and are swept with the rest.
 ## 8. Alternatives considered
 
 - **A column family in the database's RocksDB**
-  (`DBMGR.md` §7.8). §1.
+  ([`DBMGR.md`](DBMGR.md#78-temporary-stores) §7.8). §1.
 - **An instance per database, or per session.** No name
   prefix, and a database's temporary rows go with one
   `DestroyDB`. It costs an open and a close of RocksDB for
@@ -355,8 +367,9 @@ that no longer exist, and are swept with the rest.
   `ON_ERROR_ROLLBACK`.
 - **A cheaper rollback for temporary rows.** A savepoint
   costs an undo entry for each write made under it, for
-  every table (`XCTMGR.md` §6). Temporary tables
-  are treated the same; `XCTMGR.md` is the design
+  every table ([`XCTMGR.md`](XCTMGR.md#6-savepoints) §6).
+  Temporary tables
+  are treated the same; [`XCTMGR.md`](XCTMGR.md) is the design
   that removes the cost for both.
 
 ---
@@ -402,11 +415,13 @@ Each step lands on its own, with its tests.
    temporary sequences with them.
 4. **The temporary catalog in sm3** (§4). Built.
 5. **The wrapper, and `rel`** (§5). Built.
-6. **digres**: Built (`../dg/WORKNOTE.md` step 80).
+6. **digres**: Built ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md)
+   step 80).
    `CREATE TEMPORARY TABLE`, `ON COMMIT`, and
    the temporary namespace in the search path.
 
-Bulk load into a temporary table (`BULKLOAD.md`), first left
+Bulk load into a temporary table ([`BULKLOAD.md`](BULKLOAD.md)),
+first left
 for later, is built too. `tbl_load_open` in
 `sm3/src/table/table.cc` takes no table lock for one, its
 session's alone. In `sm1/src/load.cc`, `load_open` lets a

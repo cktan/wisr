@@ -1,7 +1,8 @@
 # Work notes: decisions taken without asking
 
 Written while working through the first recommendation
-(`DESIGN.md` §2) unattended. Each entry
+([`DESIGN.md`](DESIGN.md#2-how-it-got-there) §2) unattended. Each
+entry
 is a guess made in place of a question; any of them can be
 reversed. Newest step last.
 
@@ -31,7 +32,9 @@ reversed. Newest step last.
 `make -j4` now links `build/digres`, with no undefined symbol.
 It prints its version and nothing more useful: there is no
 bootstrap, so no catalog and no database to start. That is the
-state `../sm/PART4.md` §10 expects before the lookup layer.
+state
+[`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+§10 expects before the lookup layer.
 
 How it was done: the headers of each subsystem that was left out
 of the copy were deleted, and then every use the compiler
@@ -144,11 +147,13 @@ code to be run rather than only compiled.
   the `.c` files alone would make sq need digres to compile.
   Guess: a boundary with tests, and an honest list of what
   crosses it, is worth more tonight than a move that leaves the
-  two projects needing each other. `../sq/README.md` gives the
+  two projects needing each other.
+  [`../sq/README.md`](../sq/README.md) gives the
   order to finish it in. `dg/` is therefore no slimmer for this
   step.
 - **The name `sq`** and its place beside `sm/` and `dg/` are as
-  the first recommendation proposed (`DESIGN.md` §2).
+  the first recommendation proposed
+  ([`DESIGN.md`](DESIGN.md#2-how-it-got-there) §2).
 - **`sq/src/host.c` answers 32 names** that the parser's layers
   ask of the server, as a process with no client and no
   transaction would. They are stand-ins for a test program, and
@@ -163,7 +168,8 @@ code to be run rather than only compiled.
 
 ## Step 4: what was left alone
 
-As the first recommendation says (`DESIGN.md` §2):
+As the first recommendation says
+([`DESIGN.md`](DESIGN.md#2-how-it-got-there) §2):
 `src/timezone` and `regex` are not carved
 out, the planner is not touched, and the TLS and GSSAPI files
 are still skipped.
@@ -215,7 +221,9 @@ of its own for SQL. This supersedes what step 3 says of sq.
 
 ## Step 6: `SELECT 1 + 1` runs
 
-The second thing `../sm/PART4.md` §10 says must run does:
+The second thing
+[`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+§10 says must run does:
 `echo 'select 1 + 1;' | build/digres --parse --run` prints 2,
 with no server started and no catalog table read. The operator,
 its function and the type are found compiled in.
@@ -273,7 +281,9 @@ its function and the type are found compiled in.
 
 ## Step 7: an error is an exception
 
-The first step toward threads (`../sm/PART4.md` §2): digres no
+The first step toward threads
+([`../sm/PART4.md`](../sm/PART4.md#2-the-blocker-the-process-model)
+§2): digres no
 longer leaves an error by `longjmp`. `ereport(ERROR)` throws a
 C++ exception, `pg_error_t`, and what catches it is a `catch`.
 
@@ -396,7 +406,9 @@ still a postmaster that forks a process a connection.
 - **The databases are listed once, by a child process** of the
   postmaster. Attaching sm leaves RocksDB's threads in the
   process that did it, and a postmaster that forks must have
-  none. A backend cannot ask sm either (`../sm/PART4.md` §2):
+  none. A backend cannot ask sm either
+  ([`../sm/PART4.md`](../sm/PART4.md#2-the-blocker-the-process-model)
+  §2):
   until connections are threads, the databases are the ones
   there were at start.
 - **A database's oid is its place in sm's list**, from 16384.
@@ -489,7 +501,8 @@ before sm's own scans exist.
 
 ## Step 11: VACUUM is gone
 
-sm collects its own garbage (`../sm/PART4.md`), so VACUUM,
+sm collects its own garbage ([`../sm/PART4.md`](../sm/PART4.md)),
+so VACUUM,
 autovacuum, freezing and the wraparound defences built around
 them are removed. 5 files went, and about 11,000 lines.
 ANALYZE stays.
@@ -1117,7 +1130,8 @@ postmaster's queue of ended threads was guarded by a
 A latch's setter woke its owner with `tgkill(SIGURG)`, which
 the owner read from a `signalfd` in its epoll set: a signal to
 carry a wake-up from one thread of the process to another.
-sys (`../sm/sm0/INTERRUPT.md`) has one already: each thread's
+sys ([`../sm/sm0/INTERRUPT.md`](../sm/sm0/INTERRUPT.md)) has one
+already: each thread's
 wake fd, an eventfd that `sys_interrupt()` writes.
 
 - **A latch keeps its owner's handle** (`sys_thread_ref_t`),
@@ -1269,7 +1283,9 @@ sets the latch of the thread it runs in, in a thread with none.
 
 ## Step 37: CREATE TABLE makes a table in sm
 
-The first of `../sm/PART4.md` §9.5's three statements. A table
+The first of
+[`../sm/PART4.md`](../sm/PART4.md#95-the-first-target-insert-and-scan-integers-only)
+§9.5's three statements. A table
 of `int2`, `int4` and `int8` columns, some NOT NULL, is created
 in sm3's catalog, in the session's transaction, and seen by
 every session once it commits.
@@ -1318,7 +1334,9 @@ every session once it commits.
 
 ## Step 38: INSERT and a sequential scan go to sm
 
-The other two of `../sm/PART4.md` §9.5's statements: rows go
+The other two of
+[`../sm/PART4.md`](../sm/PART4.md#95-the-first-target-insert-and-scan-integers-only)
+§9.5's statements: rows go
 into a table in sm, and a scan reads them back, under the
 transaction's isolation level.
 
@@ -1395,7 +1413,9 @@ and a table dropped.
 ## Step 40: a wait in sm ends on an interrupt
 
 sm's waits for another transaction are a `sys_wait()` on the
-thread's wait mask (`../sm/sm0/INTERRUPT.md` §8), and fail
+thread's wait mask
+([`../sm/sm0/INTERRUPT.md`](../sm/sm0/INTERRUPT.md#8-how-sm-uses-it)
+§8), and fail
 with `SM_ERR_INTERRUPTED` when a bit in it is raised.
 
 - **A session thread's wait mask** is `INTERRUPT_CANCEL`,
@@ -1415,7 +1435,9 @@ with `SM_ERR_INTERRUPTED` when a bit in it is raised.
   conflicts waits there; a row's lock is not reached until
   UPDATE and DELETE are. The path is untested end to end.
 - **Two lock managers lock the same table**, PostgreSQL's and
-  sm's (`../sm/PART4.md` §3 warns of it): a deadlock across
+  sm's
+  ([`../sm/PART4.md`](../sm/PART4.md#3-why-the-table-access-method-path-does-not-work-here)
+  §3 warns of it): a deadlock across
   them is one neither detector sees. Not resolved here.
 - `server.sh` holds a table's lock in one session, and confirms
   a scan in another is ended by its statement_timeout, and by
@@ -1618,7 +1640,8 @@ heap's.
   and EXCLUSIVE so conflict with more than PostgreSQL's do:
   with ROW EXCLUSIVE, and with ACCESS SHARE.
 - **NOWAIT is refused**: sm is to take a wait policy as a flag
-  on the calls that can wait (`../sm/sm1/SM1_DESIGN.md` §5.1),
+  on the calls that can wait
+  ([`../sm/sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md) §5.1),
   and has none yet.
 - **smstore keeps a table's handle by lock mode**: a handle
   serves a later use its lock covers, and a stronger use opens
@@ -2156,7 +2179,8 @@ compiled in, not pg_proc.
 
 ## Step 71: a database is its directory
 
-`CODE.md`, the overriding objective, decided by the owner:
+[`CODE.md`](CODE.md), the overriding objective, decided by the
+owner:
 `base/X` can be copied to another machine and imported into a
 new instance. An audit of `global/` and `base/` came first.
 
@@ -2241,7 +2265,8 @@ new instance. An audit of `global/` and `base/` came first.
 
 ## Step 74: ANALYZE is sm's, and a table is sized by it
 
-`STATISTICS.md` is the design; this is its first two steps.
+[`STATISTICS.md`](STATISTICS.md) is the design; this is its first
+two steps.
 
 - **ANALYZE goes to `smstore_analyze()`** from `ExecVacuum()`,
   not `vacuum()`: each table named, or with none every table in
@@ -2294,7 +2319,8 @@ and what only it reached.
 
 ## Step 76: the planner reads sm's column statistics
 
-`STATISTICS.md` §2.3 and §2.4; its third step.
+[`STATISTICS.md`](STATISTICS.md#23-column-statistics-a-pg_statistic-row-made)
+§2.3 and §2.4; its third step.
 
 - **`get_statistic_tuple()` makes a `pg_statistic` row** from
   `sm_tbl_stats()` (`smstore_statistic_tuple()`): the null
@@ -2336,7 +2362,8 @@ planning, as `get_relation_foreign_keys()` reached
 
 ## Step 78: pg_stats is a function
 
-`STATISTICS.md` §2.5; its fourth step.
+[`STATISTICS.md`](STATISTICS.md#25-pg_stats-as-a-function-for-now)
+§2.5; its fourth step.
 
 - **`pg_stats()` and `pg_stats(regclass)`** are built in
   (`pg_proc.dat`, oids 8844 and 8845): the rows of PostgreSQL's
@@ -2354,7 +2381,9 @@ planning, as `get_relation_foreign_keys()` reached
 - `server.sh` checks no rows before ANALYZE, a row a column
   after, every table's, and the common values, null fraction
   and bounds of a known distribution.
-- **`make tsan` is clean** (`STATISTICS.md` §3 step 5), and so
+- **`make tsan` is clean**
+  ([`STATISTICS.md`](STATISTICS.md#3-order-of-work) §3 step 5),
+  and so
   is a run of eight sessions on `digres-tsan`, each fifteen
   times analyzing two shared tables, inserting, planning a
   filter and a join on them and reading `pg_stats`: no report.
@@ -2378,7 +2407,8 @@ name by listing sm's schemas (step 78).
 
 ## Step 80: temporary tables
 
-`../sm/TEMPTABLE.md`; its sixth step. `CREATE TEMPORARY TABLE`
+[`../sm/TEMPTABLE.md`](../sm/TEMPTABLE.md); its sixth step.
+`CREATE TEMPORARY TABLE`
 was refused.
 
 - **A temporary table is sm's** (`sm_cat_create_temp_table`):
@@ -2699,7 +2729,8 @@ those files.
 
 A table in sm took `int2`, `int4` and `int8` alone, though sm2
 has seventeen types. sm2 keeps PostgreSQL's own datums
-(`../sm/sm2/TYPE.md` §1), so a type needs only its code.
+([`../sm/sm2/TYPE.md`](../sm/sm2/TYPE.md#1-the-two-representations)
+§1), so a type needs only its code.
 
 - **`bool`, `float4`, `float8`, `text`, `varchar` and `bytea`**
   are mapped to sm2's codes 1, 5, 6, 8, 9 and 10, and back
@@ -2725,7 +2756,8 @@ has seventeen types. sm2 keeps PostgreSQL's own datums
   interval's 16-byte struct and a uuid's bytes by reference.
 - **An index keyed on interval is refused.** sm2 keys an
   interval by its span and then its months and days
-  (`../sm/sm2/TYPE.md` §3.10): an order finer than
+  ([`../sm/sm2/TYPE.md`](../sm/sm2/TYPE.md#310-interval) §3.10):
+  an order finer than
   PostgreSQL's, which calls `'1 mon'` and `'30 days'` equal. So
   `=` through such an index would find one of two equal
   intervals, and UNIQUE would take both. An interval may still
@@ -2750,7 +2782,8 @@ default (`get_typdefault()`), which read the `TYPEOID` cache.
 
 ## Step 95: numeric is a decimal of 38 digits
 
-`DECIMAL.md` §3, steps 1 to 3: PostgreSQL's arbitrary-precision
+[`DECIMAL.md`](DECIMAL.md#3-order-of-work) §3, steps 1 to 3:
+PostgreSQL's arbitrary-precision
 numeric is gone, and `numeric` is a 128-bit integer with its
 scale.
 
@@ -2777,7 +2810,8 @@ scale.
 
 ## Step 96: numeric columns are sm's decimals
 
-`DECIMAL.md` §2.3, step 4 of its §3.
+[`DECIMAL.md`](DECIMAL.md#23-stored-as-sm2s-decimal-at-the-columns-scale)
+§2.3, step 4 of its §3.
 
 - **A `numeric(p, s)` column is sm2's `decimal64`** up to 18
   digits, **`decimal128`** up to 38, its typmod sm2's own. A
@@ -2800,7 +2834,8 @@ scale.
 
 ## Step 97: a JSON number with an exponent is a float8
 
-`DECIMAL.md` §2.7: jsonb's numbers were numeric's alone, so a
+[`DECIMAL.md`](DECIMAL.md#27-what-else-used-numeric) §2.7:
+jsonb's numbers were numeric's alone, so a
 JSON number past 38 digits, `1e300`, was refused.
 
 - **jsonb has a second kind of number, `jbvFloat8`**, stored as
@@ -2848,7 +2883,8 @@ keep it, as there is no `pg_attrdef`.
   refused, PRIMARY KEY and UNIQUE included; an interval may be
   an INCLUDE column.
 - Why: sm2's key keeps `'1 mon'` and `'30 days'` apart on
-  purpose (`../sm/sm2/TYPE.md` section 3.10), and dg scanning
+  purpose ([`../sm/sm2/TYPE.md`](../sm/sm2/TYPE.md) section
+  3.10), and dg scanning
   spans would still leave UNIQUE wrong. Interval keys are rare;
   a query on one scans the table. Lifting the refusal later is
   compatible.
@@ -2866,7 +2902,7 @@ a query.
   row over `smstore_beginscan()`, with no scan keys; and
   `tuple_insert` and `multi_insert`, over `smstore_insert()`.
   A batch is inserted a row at a time: sm has no batched insert
-  yet (`../sm/BULKLOAD.md`).
+  yet ([`../sm/BULKLOAD.md`](../sm/BULKLOAD.md)).
 - **The executor writes no index of a table in sm**:
   `ExecInsertIndexTuples()` returns at once for one. sm writes
   a table's indexes with its row, and an index in sm has no
@@ -2926,7 +2962,8 @@ not the default, and `regcollation` output, read `pg_collation`.
 `COPY` inserted its rows one by one (step 100): a write to sm for
 each row and for each of its index entries, every one logged,
 put in a memtable and compacted. sm now has a bulk load
-(`../sm/BULKLOAD.md` §13).
+([`../sm/BULKLOAD.md`](../sm/BULKLOAD.md#13-what-was-built-first-and-how-it-differs)
+§13).
 
 - **`multi_insert` hands COPY's rows to sm's load**
   (`smstore_load()`, over `sm_tbl_load_begin` and
@@ -3165,7 +3202,8 @@ Step 88 refused every ALTER TABLE. sm3 had `add_column`,
   rows already there read that value, as PostgreSQL's
   `attmissingval`. One that calls something volatile, and a
   serial, are refused: PostgreSQL rewrites the table for them,
-  and sm has no rewrite (`../sm/NEXT.md` §2).
+  and sm has no rewrite
+  ([`../sm/NEXT.md`](../sm/NEXT.md#2-loose-ends) §2).
 - **NOT NULL with no DEFAULT needs an empty table**, as in
   PostgreSQL, which fails `column ... contains null values`
   otherwise. sm3 takes the table's lock X only if it is free
@@ -3231,7 +3269,8 @@ one behind a DROP COLUMN wrote into the dropped column's place.
 
 ## Step 112: pg_namespace is read, and \dn runs
 
-The first catalog relation (`SYSCATALOG.md` step 2): a catalog a
+The first catalog relation ([`SYSCATALOG.md`](SYSCATALOG.md) step
+2): a catalog a
 query reads, with nothing stored.
 
 - **`gen_cat.py` writes each catalog relation's oid and
@@ -3262,7 +3301,7 @@ query reads, with nothing stored.
 
 ## Step 113: pg_class and pg_am are read, and \dt and \ds run
 
-`SYSCATALOG.md` step 3.
+[`SYSCATALOG.md`](SYSCATALOG.md) step 3.
 
 - **`pg_class` lists every relation**: the catalog relations, in
   `pg_catalog`, then sm's tables, their indexes and the
@@ -3288,7 +3327,7 @@ query reads, with nothing stored.
 
 ## Step 114: pg_index is read, \di runs, and an index's definition is printed
 
-`SYSCATALOG.md` step 4.
+[`SYSCATALOG.md`](SYSCATALOG.md) step 4.
 
 - **`pg_index` lists sm's indexes** (`smstore_relations()`): each
   one's table, columns, key column count, uniqueness, whether
@@ -3311,7 +3350,8 @@ query reads, with nothing stored.
 
 ## Step 115: \d describes a table and an index, and \du runs
 
-`SYSCATALOG.md` step 6, for a table and an index.
+[`SYSCATALOG.md`](SYSCATALOG.md) step 6, for a table and an
+index.
 
 - **`pg_attribute` lists the columns** of the catalog relations
   and of sm's tables and indexes (`smstore_relations()`, which
@@ -3399,7 +3439,7 @@ mark of one.
 
 ## Step 118: pg_database is read
 
-`SYSCATALOG.md` step 5's last part.
+[`SYSCATALOG.md`](SYSCATALOG.md) step 5's last part.
 
 - **`pg_database` has a row a database of sm's**
   (`datadir_database_names()`), its oid the one the server
@@ -3486,7 +3526,8 @@ statement refused.
 
 ## Step 123: \df, \do, \dC and \dx run
 
-`SYSCATALOG.md` step 7, for functions, operators and casts.
+[`SYSCATALOG.md`](SYSCATALOG.md) step 7, for functions, operators
+and casts.
 
 - **`pg_proc`, `pg_operator` and `pg_cast` are the rows compiled
   in**, as text (`TEXT_ROWS`), as `pg_type` is (step 115). A
@@ -3506,7 +3547,8 @@ statement refused.
 
 ## Step 124: a syscache miss reads the compiled-in rows
 
-`SYSCATALOG.md` §2. A syscache miss scanned the catalog's index,
+[`SYSCATALOG.md`](SYSCATALOG.md#2-decisions) §2. A syscache miss
+scanned the catalog's index,
 which digres has not: `pg_get_functiondef()` failed opening
 relation 2690, `pg_proc`'s.
 
@@ -3534,11 +3576,13 @@ relation 2690, `pg_proc`'s.
 
 ## Step 125: sm's TOAST is on
 
-`../sm/NEXT.md` §3. digres read a value straight out of sm's
+[`../sm/NEXT.md`](../sm/NEXT.md#3-not-blocking) §3. digres read a
+value straight out of sm's
 tuple, so it left sm's TOAST off, and a row was held to 65535
 bytes. sm's pointer is a PostgreSQL external varlena already,
 `0x01` and then a vartag of its own, `0x40`
-(`../sm/sm2/VARLENA.md` §2), so digres reads it as PostgreSQL
+([`../sm/sm2/VARLENA.md`](../sm/sm2/VARLENA.md#2-the-forms) §2),
+so digres reads it as PostgreSQL
 reads its own: late, where a value is read, and not where it
 is only passed along.
 
@@ -3579,7 +3623,8 @@ is only passed along.
   value gone. PostgreSQL's detoasting of a holdable cursor's
   rows, before they outlive the transaction, stays.
 - **Left**: compression, and a fetch of part of a value
-  (`../sm/sm2/SM2_DESIGN.md` §4.2).
+  ([`../sm/sm2/SM2_DESIGN.md`](../sm/sm2/SM2_DESIGN.md#42-build)
+  §4.2).
   `pg_column_toast_chunk_id()` and `pg_column_compression()`
   give null for sm's pointer.
 - `server.sh`: a row of 100,000 bytes is read back whole and
@@ -3603,7 +3648,8 @@ comparisons a call.
   `alter_table_rel()` and `smstore_truncate()`, which close
   the handles of one table.
 - **It is `tcb->smstore`** (`smstore_state_t`), as
-  `CODE.md` §3 asks of a global a change touches: made by
+  [`CODE.md`](CODE.md#3-globals) §3 asks of a global a change
+  touches: made by
   `tcb_init()`, freed with the tcb. It is cleared as the
   transaction ends, by commit and abort alike
   (`close_tables()`), so its memory need not be the
@@ -3706,7 +3752,8 @@ found it when step 128's FATAL check started 8 with options.
 
 ## Step 130: the sinval queue's flags are atomics, in the pcb
 
-`SHMEM.md` §5. The thread sanitizer reported a race in
+[`SHMEM.md`](SHMEM.md#5-shared-structures) §5. The thread
+sanitizer reported a race in
 storage/ipc `sinvaladt.c`: `ProcState.hasMessages`, a plain
 `bool`, was set by a writer under `SInvalWriteLock`, read by
 its reader with no lock and cleared under `SInvalReadLock`.
@@ -3724,7 +3771,8 @@ barriers of the locks around it; in C++ it is a data race.
 - **`msgnumLock` is gone**, the spinlock that made `maxMsgNum`'s
   barrier.
 - **The segment is `pcb->sinval`**, `calloc`'d once by the
-  postmaster and never freed, as `CODE.md` §3 asks of a global
+  postmaster and never freed, as [`CODE.md`](CODE.md#3-globals)
+  §3 asks of a global
   a change touches: the `thread_local` `shmInvalBuffer` and its
   `ShmemInitStruct()` are gone. A session thread's
   `SharedInvalShmemInit()` finds it made.
@@ -3732,7 +3780,8 @@ barriers of the locks around it; in C++ it is a data race.
 
 ## Step 131: the dead code of the shared-memory machinery
 
-`SHMEM.md` §6: what is left of modules already removed, taken
+[`SHMEM.md`](SHMEM.md#6-what-is-left-of-modules-removed) §6: what
+is left of modules already removed, taken
 out before the rest of that file's work changes what it
 touches. Each went with nothing calling it.
 
@@ -3790,7 +3839,8 @@ touches. Each went with nothing calling it.
   caller stays, though no xid is ever assigned (step 45): the
   group XID clearing, the horizons `GlobalVisTestFor()` and
   `GetSnapshotData()` compute, the slots' xmin fields they
-  read. They go with the constant snapshot (`SHMEM.md` §7).
+  read. They go with the constant snapshot
+  ([`SHMEM.md`](SHMEM.md#7-order-of-work) §7).
 - **Left on purpose**: what still has a caller, though it does
   nothing in digres: lock groups, which the lock manager and
   the deadlock detector test throughout, and the lock tags the
@@ -3798,11 +3848,13 @@ touches. Each went with nothing calling it.
   the extension hooks `shmem_request_hook`, `shmem_startup_hook`
   and `RequestNamedLWLockTranche()`, which a library in
   `shared_preload_libraries` may use, and digres still loads
-  libraries (`SHMEM.md` §6).
+  libraries
+  ([`SHMEM.md`](SHMEM.md#6-what-is-left-of-modules-removed) §6).
 
 ## Step 132: a lock or two of PostgreSQL's is a C++ mutex
 
-`SHMEM.md` §3. Three locks of the five the survey named for
+[`SHMEM.md`](SHMEM.md#3-locks) §3. Three locks of the five the
+survey named for
 this are `std::mutex` now, in the pcb.
 
 - **`held_lock_t`** (`storage/held_lock.h`) holds a
@@ -3827,14 +3879,15 @@ this are `std::mutex` now, in the pcb.
 - **ProcSignal's `pss_mutex`**, a spinlock a slot, is a
   `std::mutex` in each slot, each section a `std::unique_lock`.
   The slots are `pcb->procsignal`, `new`'d once by the
-  postmaster, as `CODE.md` §3 asks of a global a change
+  postmaster, as [`CODE.md`](CODE.md#3-globals) §3 asks of a
+  global a change
   touches; the `thread_local` `ProcSignalSlots`, its
   `ShmemInitStruct()` and `ProcSignalShmemSize()` are gone.
 - **Not converted**: XidGen and OidGen, as transaction ids and
   OIDs are sm's and PostgreSQL's counters of them are to go;
   RelationMapping and RelCacheInit, which guard the relation
   mapper's files and the relcache's init files, never read
-  (`SHMEM.md` §3).
+  ([`SHMEM.md`](SHMEM.md#3-locks) §3).
 
 ## Step 133: no spinlock is taken
 
@@ -3901,7 +3954,8 @@ The sessions are threads of one process, but storage/file
 `fd.c` gave each the budget a process had, `max_safe_fds`:
 together they could open far more than the limit holds, and
 fail wherever an `open()` landed. Its LRU of real fds is now
-sm0's (`sm/sm0/VFD.md`, `sm_vfd.h`): each thread has a cache
+sm0's ([`sm/sm0/VFD.md`](../sm/sm0/VFD.md), `sm_vfd.h`): each
+thread has a cache
 of its own, `tcb->vfd`, and every real fd any cache holds
 counts against one ceiling for the process.
 
@@ -3944,7 +3998,8 @@ counts against one ceiling for the process.
 
 ## Step 136: a latch is an interrupt bit
 
-`SHMEM.md` §4. A latch was a flag in shared memory, with one
+[`SHMEM.md`](SHMEM.md#4-latches-an-interrupt-bit) §4. A latch was
+a flag in shared memory, with one
 owner, that other processes set to wake it; storage/ipc
 `latch.c` kept that shape over `sm_sys.h`'s wake: `is_set` and
 `maybe_sleeping`, ordered by `pg_memory_barrier()`s placed by
@@ -3981,7 +4036,8 @@ without losing the wake: a bit raised, then its wake fd written.
 
 ## Step 137: PostgreSQL's xid and OID counters go, and the files
 
-`SHMEM.md` §7, step 1. Transaction ids and oids are sm's; what
+[`SHMEM.md`](SHMEM.md#7-order-of-work) §7, step 1. Transaction
+ids and oids are sm's; what
 PostgreSQL kept of its own, and the files it read at start,
 had no use left but their locks.
 
@@ -4022,7 +4078,8 @@ had no use left but their locks.
 
 ## Step 138: LOCK TABLE ... NOWAIT does not wait
 
-`SHMEM.md` §5.1's first hole. `ConditionalLockRelationOid()` took
+[`SHMEM.md`](SHMEM.md#51-invalidation-by-version-not-by-message)
+§5.1's first hole. `ConditionalLockRelationOid()` took
 no lock in sm and said it had, and LOCK TABLE ... NOWAIT, meant
 to be refused as not supported, waited instead: the permission
 callback that `RangeVarGetRelidExtended()` runs before its lock
@@ -4097,7 +4154,9 @@ skips.
   SKIP_LOCKED**, and reports a table passed over as for a table
   held X: `skip_locked_table()`.
 - **A plain ANALYZE still waits**, then analyzes again: the
-  statistics are the transaction's (`STATISTICS.md` §2.1), so
+  statistics are the transaction's
+  ([`STATISTICS.md`](STATISTICS.md#21-analyze-is-sm_tbl_analyze)
+  §2.1), so
   the first may abort, and rows committed after its sample
   belong in the second's. PostgreSQL does the same.
 - **`waiting()` returns any answer but -1 at once.** It retried
@@ -4113,7 +4172,8 @@ skips.
 
 ## Step 141: a lock on an index locks its table
 
-`SHMEM.md` §5.1's second hole: a relation's descriptor used with
+[`SHMEM.md`](SHMEM.md#51-invalidation-by-version-not-by-message)
+§5.1's second hole: a relation's descriptor used with
 no lock held, which a version checked under the lock would never
 see stale.
 
@@ -4149,7 +4209,9 @@ see stale.
 
 Step 141's audit, made a rule: a descriptor of sm's is used
 under sm's lock on its table, which a version checked under the
-lock (`SHMEM.md` §5.1) needs.
+lock
+([`SHMEM.md`](SHMEM.md#51-invalidation-by-version-not-by-message)
+§5.1) needs.
 
 - **`CheckRelationLockedByMe()` and
   `CheckRelationOidLockedByMe()`** (storage/lmgr `lmgr.c`)
@@ -4175,7 +4237,8 @@ lock (`SHMEM.md` §5.1) needs.
 
 ## Step 143: sm gives a table a version
 
-`SHMEM.md` §5.1's version, the sm half; dg does not read it yet.
+[`SHMEM.md`](SHMEM.md#51-invalidation-by-version-not-by-message)
+§5.1's version, the sm half; dg does not read it yet.
 
 - **A table's version is a count of publishes**, which sm3
   already kept (`catalog_t::seq`) and dated an index's becoming
@@ -4199,7 +4262,8 @@ lock (`SHMEM.md` §5.1) needs.
 - **`sm_cat_namespace_epoch()`**, over `cat_namespace_epoch()`.
 - Counts are in memory, as `seq` is: after a restart every table
   is at 0, and so is every host's cache.
-- `../sm/DESIGN.md` §5 has it as a decision across levels: a
+- [`../sm/DESIGN.md`](../sm/DESIGN.md#5-cross-level-decisions) §5
+  has it as a decision across levels: a
   host's caches are kept fresh by a version, not by a message.
 - sm3 `test_table.cc`: a rename moves the version, own until
   committed; another table's DDL and inserts do not; an analyze
@@ -4241,12 +4305,14 @@ after a restart, which flushed them.
   bytes for the heap and 39,000 for the index in every run.
 - sm1 `test_stats.cc`: each prefix's memtable bytes are exactly
   its rows' versions, 0 after a flush, and only the new rows'
-  after more. `../sm/sm1/API.md`, `sm1.h`, `../sm/STATISTICS.md`
+  after more. [`../sm/sm1/API.md`](../sm/sm1/API.md), `sm1.h`,
+  [`../sm/STATISTICS.md`](../sm/STATISTICS.md)
   §3.1.
 
 ## Step 145: another session's DDL is learned from sm, not sent
 
-`SHMEM.md` §5.1, built: no session sends an invalidation message
+[`SHMEM.md`](SHMEM.md#51-invalidation-by-version-not-by-message)
+§5.1, built: no session sends an invalidation message
 to another, or reads one. sinval's code stays one step more.
 
 - **A descriptor of sm's records sm's version** of the table's
@@ -4278,7 +4344,8 @@ to another, or reads one. sinval's code stays one step more.
 
 ## Step 146: sinval is gone
 
-`SHMEM.md` §7 step 2, done. Since step 145 no session sent or
+[`SHMEM.md`](SHMEM.md#7-order-of-work) §7 step 2, done. Since
+step 145 no session sent or
 read a message; the queue that carried them goes.
 
 - **Deleted**: storage/ipc `sinval.c` and `sinvaladt.c`, and
@@ -4305,7 +4372,8 @@ read a message; the queue that carried them goes.
 
 ## Step 147: ProcSignal is gone
 
-`SHMEM.md` §5, its ProcSignal: a slot a session, by ProcNumber,
+[`SHMEM.md`](SHMEM.md#5-shared-structures) §5, its ProcSignal: a
+slot a session, by ProcNumber,
 holding a pid, a cancel key and a flag for each reason, read by
 one interrupt bit's handler. With sinval's catchup gone (step
 146) one reason was left.
@@ -4331,7 +4399,8 @@ one interrupt bit's handler. With sinval's catchup gone (step
 
 ## Step 148: PMSignalState is gone
 
-`SHMEM.md` §5, its PMSignalState: a quit reason, and a flag for
+[`SHMEM.md`](SHMEM.md#5-shared-structures) §5, its PMSignalState:
+a quit reason, and a flag for
 each child slot, set by the child once it took a PGPROC and
 cleared by its exit callback, which the postmaster read when the
 child ended to tell one that had not cleaned up after itself.
@@ -4359,7 +4428,8 @@ child ended to tell one that had not cleaned up after itself.
 
 ## Step 149: a snapshot is neither exported nor imported
 
-Found by the audit before `SHMEM.md` §7 step 3, the constant
+Found by the audit before [`SHMEM.md`](SHMEM.md#7-order-of-work)
+§7 step 3, the constant
 snapshot. `pg_export_snapshot()` wrote out PostgreSQL's snapshot,
 and `SET TRANSACTION SNAPSHOT` read one in, so a second session
 would see what the first saw. What a session sees in digres is
@@ -4375,7 +4445,8 @@ its own, with no error.
 
 ## Step 150: a snapshot is a constant
 
-`SHMEM.md` §7 step 3, its first half. `GetSnapshotData()` took
+[`SHMEM.md`](SHMEM.md#7-order-of-work) §7 step 3, its first half.
+`GetSnapshotData()` took
 `ProcArrayLock` and scanned every session's PGPROC for the xid
 it was running, for every snapshot, though no PostgreSQL xid is
 ever assigned (steps 45, 137): the list was always empty and the
@@ -4404,7 +4475,8 @@ snapshot always the same.
   transaction**, as no other holds an xid.
 - Still there, as nothing feeds them now: the horizons, group
   xid clearing, the replication slots' xmins and the `XidCache`
-  (`SHMEM.md` §6). `ProcArrayLock` is taken still at a
+  ([`SHMEM.md`](SHMEM.md#6-what-is-left-of-modules-removed) §6).
+  `ProcArrayLock` is taken still at a
   transaction's start and end and by the lookups by pid.
 
 ## Step 151: what fed the snapshot's scan goes
@@ -4431,7 +4503,8 @@ goes from storage/ipc `procarray.c`, 1,721 lines to 903.
 
 ## Step 152: a session is found by its record
 
-`SHMEM.md` §5.2. The proc array found a session by scanning
+[`SHMEM.md`](SHMEM.md#52-the-session-registry) §5.2. The proc
+array found a session by scanning
 PGPROC slots under `ProcArrayLock`, and a reader rechecked the
 slot, as a slot and a pid are both reused.
 
@@ -4468,9 +4541,12 @@ slot, as a slot and a pid are both reused.
 
 ## Step 153: advisory locks are digres's own
 
-`SHMEM.md` §3, §7 step 4. Advisory locks were the lock
+[`SHMEM.md`](SHMEM.md#3-locks) §3, §7 step 4. Advisory locks were
+the lock
 manager's user lock method. They guard nothing stored, so
-they do not go to sm (`DESIGN.md` §4): sm1's locks end with
+they do not go to sm
+([`DESIGN.md`](DESIGN.md#4-decisions-of-record) §4): sm1's locks
+end with
 their transaction, and session scope, explicit unlock and
 counted holds are PostgreSQL's to keep.
 
@@ -4496,7 +4572,8 @@ counted holds are PostgreSQL's to keep.
   starts to wait, by following the holders it waits on and
   what they wait on; it fails with `deadlock detected`. One
   through an sm lock is not seen, and `lock_timeout` or a
-  cancel ends it: `../sm/NEXT.md` §3 says how sm1 could find it.
+  cancel ends it: [`../sm/NEXT.md`](../sm/NEXT.md#3-not-blocking)
+  §3 says how sm1 could find it.
 - **Not kept**: the wait queue. A request waits only for
   conflicting holders, so a stream of share holds can keep an
   exclusive request waiting. Advisory locks are not in
@@ -4516,7 +4593,8 @@ counted holds are PostgreSQL's to keep.
 
 ## Step 154: a catalog takes no lock
 
-`SHMEM.md` §3, §7 step 4. A relation not sm's is a catalog,
+[`SHMEM.md`](SHMEM.md#3-locks) §3, §7 step 4. A relation not sm's
+is a catalog,
 compiled in, and every write to one is refused
 (`catalog/indexing.c`): no lock on it guards anything. Step 48
 made the object locks no-ops for the same reason; this does
@@ -4547,7 +4625,8 @@ the rest.
 
 ## Step 155: nothing takes a lock of the lock manager
 
-`SHMEM.md` §3, §7 step 4. After steps 153 and 154 the lock
+[`SHMEM.md`](SHMEM.md#3-locks) §3, §7 step 4. After steps 153 and
+154 the lock
 manager's last lock was the virtual xid's, which each
 transaction took at its start for a session that would wait
 for it to end. What waits for one, and the other waits on the
@@ -4576,7 +4655,8 @@ lock manager, waited for locks no session holds any more.
 
 ## Step 156: the lock manager is gone
 
-`SHMEM.md` §3, §7 step 4. After step 155 no transaction took a
+[`SHMEM.md`](SHMEM.md#3-locks) §3, §7 step 4. After step 155 no
+transaction took a
 lock of PostgreSQL's lock manager, and nothing waited on one;
 what was left of it read it, released it, and kept its
 structures.
@@ -4623,7 +4703,8 @@ structures.
 
 ## Step 157: the LWLocks are gone
 
-`SHMEM.md` §3, §7 step 4. After step 156 one LWLock was left,
+[`SHMEM.md`](SHMEM.md#3-locks) §3, §7 step 4. After step 156 one
+LWLock was left,
 InjectionPoint, taken only by a build option's code
 (`USE_INJECTION_POINTS`, compiled out); and the LWLocks'
 waiters were all a semaphore was for.
@@ -4657,7 +4738,8 @@ waiters were all a semaphore was for.
 
 ## Step 158: a session is reached through its record
 
-`SHMEM.md` §5, §7 step 4. A session was interrupted through its
+[`SHMEM.md`](SHMEM.md#5-shared-structures) §5, §7 step 4. A
+session was interrupted through its
 PGPROC's latch, whose owner was its thread, and a cancel
 request was matched against each PGPROC's pid and key. The
 session's record (step 152) holds its thread already.
@@ -4683,7 +4765,8 @@ session's record (step 152) holds its thread already.
 
 ## Step 159: PGPROC is gone
 
-`SHMEM.md` §5, §7 step 4. After step 158 a session's PGPROC held
+[`SHMEM.md`](SHMEM.md#5-shared-structures) §5, §7 step 4. After
+step 158 a session's PGPROC held
 nothing another session read: its virtual xid, its xmin, its
 database and role, its flags, and its slot on the free list.
 
@@ -4720,7 +4803,8 @@ database and role, its flags, and its slot on the free list.
 
 ## Step 160: SQL tests say what they expect
 
-`test/slt/README.md`. `run.sh` compares what psql printed with
+[`test/slt/README.md`](test/slt/README.md). `run.sh` compares
+what psql printed with
 a file of it, and most of what SQL is checked is in
 `server.sh`, a check a `psql` call. A test in the
 sqllogictest format, SQLite's, as DuckDB and CockroachDB use
@@ -4740,7 +4824,8 @@ are PostgreSQL 18's.
 - **SQLite's corpus**, `select1.test` to `select5.test`,
   unchanged: 10,706 records. PostgreSQL 18 passes them all,
   in 51 seconds; digres fails 103 of `select4`'s, joins over
-  two bitmap scans (`../sm/NEXT.md` §2), and takes 3 minutes
+  two bitmap scans ([`../sm/NEXT.md`](../sm/NEXT.md#2-loose-ends)
+  §2), and takes 3 minutes
   55.
 - **Each record is timed**: `--times FILE` writes every
   record's time, the slowest first, and a file's tally line
@@ -4763,7 +4848,8 @@ are PostgreSQL 18's.
 
 ## Step 161: a row read by rowno is the slot's own
 
-`../sm/NEXT.md` §2. SQLite's corpus (step 160) found 103
+[`../sm/NEXT.md`](../sm/NEXT.md#2-loose-ends) §2. SQLite's corpus
+(step 160) found 103
 joins in `select4.test` giving wrong rows: a nested loop over
 two bitmap scans returned the inner table's text in the outer
 table's column too.
@@ -4781,14 +4867,16 @@ table's column too.
   already did. It serves the bitmap scan, the index scan and
   `smstore_fetch_row()`. An index entry read back from its
   row (`entry_from_row()`) is copied the same way.
-- **`NEXT.md` said digres copied** the row an index scan or a
+- **[`NEXT.md`](../sm/NEXT.md) said digres copied** the row an
+  index scan or a
   bitmap scan fetches. It did not; it does now.
 - **`test/slt/point_read.test`**: nested loops of bitmap
   scans, of index scans, and of an index scan inside, over
   text columns; three of its four queries failed before the
   fix. Its indexes are made before its rows: an index built
   over rows is not planned with for some statements after
-  `CREATE INDEX` returns (`../sm/NEXT.md` §2).
+  `CREATE INDEX` returns
+  ([`../sm/NEXT.md`](../sm/NEXT.md#2-loose-ends) §2).
 - **`make test` runs the sqllogictest files** but
   `select5.test`, about 15 seconds; `make slt` runs them all.
   All 10,723 records pass.
@@ -4821,7 +4909,8 @@ ended.
 - **Left**: after one failed build the others the transaction
   made are not waited for; the detail is sm's, `two rows of u
   with one key in uk`, not PostgreSQL's `Key (k)=(1) is
-  duplicated.` (`../sm/NEXT.md` §2); a session that ends right
+  duplicated.` ([`../sm/NEXT.md`](../sm/NEXT.md#2-loose-ends)
+  §2); a session that ends right
   after its commit waits for nothing.
 - `test/slt/create_index.test`: a unique index over duplicates
   fails and leaves no index; a plain one over rows is planned
@@ -4830,7 +4919,8 @@ ended.
 
 ## Step 163: an index's name taken is refused as PostgreSQL does
 
-`../sm/NEXT.md` §2. sm refuses a name taken in a namespace with
+[`../sm/NEXT.md`](../sm/NEXT.md#2-loose-ends) §2. sm refuses a
+name taken in a namespace with
 `SM_ERR_DUPKEY`, as it refuses a duplicated key, and digres
 said `could not create unique index`, `the name nk is taken`,
 for both; `CREATE INDEX IF NOT EXISTS` failed the same way.
@@ -4846,7 +4936,8 @@ for both; `CREATE INDEX IF NOT EXISTS` failed the same way.
 
 ## Step 164: SQLite's whole corpus, on demand
 
-`../DECISION.md`, for review; `test/slt/README.md`. The rest of
+`../DECISION.md`, for review;
+[`test/slt/README.md`](test/slt/README.md). The rest of
 SQLite's corpus, `index/`, `random/` and `evidence/`, is 1.2
 GB, too much to keep, and the part most likely to find what
 `select4` found.
@@ -4865,13 +4956,16 @@ GB, too much to keep, and the part most likely to find what
   PostgreSQL 18 fails 7,328, digres 31,734.
 - **What digres alone fails is views**: 24,408 records, all
   of them a `CREATE VIEW` digres refuses, or a query of the
-  view it did not make (`../sm/NEXT.md` §2). The rest of the
+  view it did not make
+  ([`../sm/NEXT.md`](../sm/NEXT.md#2-loose-ends) §2). The rest of
+  the
   sample digres answers as PostgreSQL 18 does.
 - Not in `make test`: it needs the network once, and long.
 
 ## Step 165: a sqllogictest file runs in more than one session
 
-`test/slt/README.md`. `server.sh` checks what one session sees
+[`test/slt/README.md`](test/slt/README.md). `server.sh` checks
+what one session sees
 of another's work with held psql sessions on fifos; a
 sqllogictest file can now say it in records.
 
@@ -4902,7 +4996,8 @@ each blocked step for 300 seconds and failed it.
   gives an sm session the host's number for it, and
   `sm_waits_for()` returns the numbers of the sessions it
   waits for, from sm1's waits-for edges (`sm1::set_tag`,
-  `sm1::waits_for`, `../sm/sm1/API.md`). It reads them under
+  `sm1::waits_for`, [`../sm/sm1/API.md`](../sm/sm1/API.md)). It
+  reads them under
   the env's mutex and the database's `lock_mu`, and passes over
   an edge to a session no longer registered.
 - **digres numbers each sm session by its record's id**
@@ -4934,7 +5029,8 @@ look for the words.
   `SM_ERR_DEADLOCK` as `deadlock detected`, with what was being
   done in the detail, wherever an sm call ends in one.
 - **Which transaction is chosen is sm1's**: the youngest on the
-  cycle (`../sm/sm1/SM1_DESIGN.md` §5.1), not, as PostgreSQL,
+  cycle ([`../sm/sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md)
+  §5.1), not, as PostgreSQL,
   the one whose check found it. `deadlock-simple` fails on that.
 - `server.sh`: two sessions locking two tables in opposite
   orders; one fails with `40P01: deadlock detected`. It failed
@@ -4942,7 +5038,8 @@ look for the words.
 
 ## Step 168: lock_timeout ends a wait in sm
 
-`../sm/NEXT.md` §2 asked for it. `lock_timeout` ended a wait for
+[`../sm/NEXT.md`](../sm/NEXT.md#2-loose-ends) §2 asked for it.
+`lock_timeout` ended a wait for
 an advisory lock only; a wait in sm, for a row's writer or a
 table's lock, went on past it.
 
@@ -4977,7 +5074,8 @@ table's lock, went on past it.
   whether it is to pass, and why not.
 - **16 pass**: NOWAIT, SKIP LOCKED, `INSERT ... ON CONFLICT`,
   savepoints, `lock-nowait`, `aborted-keyrevoke`.
-- **21 fail, for reasons known** (`../sm/NEXT.md` §2): no `FOR
+- **21 fail, for reasons known**
+  ([`../sm/NEXT.md`](../sm/NEXT.md#2-loose-ends) §2): no `FOR
   KEY SHARE` or `FOR NO KEY UPDATE` (six); sm1's deadlock
   victim and its unordered wait queue (two); `deadlock_timeout`
   gone (two); `REFERENCES` in `CREATE TABLE` and `char(n)` not
@@ -5017,7 +5115,8 @@ lock's queue closes it, and sm1 looked only after a waiter had
 slept `deadlock_ms`. The victim was the same.
 
 - **sm1 searches as a wait begins** (`../sm/sm1/src/lockmgr.cc`,
-  `../sm/sm1/SM1_DESIGN.md` §5.1): `lock_wait` and
+  [`../sm/sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md) §5.1):
+  `lock_wait` and
   `lock_wait_xact` call `check_deadlock()` once their edges
   are set, before they
   first sleep; a cycle the wait closes is found at once. One
@@ -5051,7 +5150,8 @@ to find its pid.
 
 ## Step 173: the registry of shared blocks is gone
 
-`SHMEM.md` §2, §7 step 5. storage/ipc `shmem.c` had been a
+[`SHMEM.md`](SHMEM.md#2-allocation-shmems-fields) §2, §7 step 5.
+storage/ipc `shmem.c` had been a
 registry of named blocks since step 26, found by name by every
 session thread's `AttachSharedMemoryStructs()`. Two blocks were
 left in it: `TransamVariables`, and the injection points',
@@ -5080,7 +5180,8 @@ under a build option.
 
 ## Step 174: dynahash's shared mode is gone
 
-`SHMEM.md` §2, §7 step 5. dynahash made PostgreSQL's hash tables
+[`SHMEM.md`](SHMEM.md#2-allocation-shmems-fields) §2, §7 step 5.
+dynahash made PostgreSQL's hash tables
 in shared memory: a header a process attached to by name, a
 directory fixed in size, a size not to grow past, and free lists
 partitioned among locks, each under a mutex of its own. Since
@@ -5135,7 +5236,8 @@ that was gone, until the session next locked the table.
 
 ## Step 176: lmgr.c's no-ops are gone
 
-`SHMEM.md` §3. Since steps 154 to 156, much of storage/lmgr
+[`SHMEM.md`](SHMEM.md#3-locks) §3. Since steps 154 to 156, much
+of storage/lmgr
 `lmgr.c` did nothing: a lock is held to the transaction's end,
 none is held for a session, a catalog's row is never locked,
 and no one waits for a transaction or a locker.
@@ -5178,7 +5280,8 @@ and no one waits for a transaction or a locker.
 
 ## Step 177: foreign keys
 
-`../sm/FOREIGNKEY.md`. sm3 keeps a foreign key in its catalog
+[`../sm/FOREIGNKEY.md`](../sm/FOREIGNKEY.md). sm3 keeps a foreign
+key in its catalog
 (`sm_cat_create_fkey` and the rest); digres checks the rows, with
 PostgreSQL's own RI triggers.
 
@@ -5291,7 +5394,9 @@ the server's status was the session's 2 (step 148 noted it).
 
 ## Step 180: char(n)
 
-`../sm/NEXT.md` §2, `../sm/sm2/TYPE.md` §3.5. PostgreSQL's
+[`../sm/NEXT.md`](../sm/NEXT.md#2-loose-ends) §2,
+[`../sm/sm2/TYPE.md`](../sm/sm2/TYPE.md#35-text-varchar-bpchar-name)
+§3.5. PostgreSQL's
 `char(n)`, `bpchar`, was refused: "type character is not
 supported yet". Its values are padded with spaces to n, and the
 padding counts for nothing when they are compared, so `'a'` and
@@ -5321,7 +5426,8 @@ padding counts for nothing when they are compared, so `'a'` and
 
 ## Step 181: pg_atomic_* is gone
 
-`SHMEM.md` §3. PostgreSQL's atomics, port `atomics.h` and the
+[`SHMEM.md`](SHMEM.md#3-locks) §3. PostgreSQL's atomics, port
+`atomics.h` and the
 headers under `port/atomics/`, had two users left; an atomic is
 a `std::atomic`, its order explicit.
 
@@ -5346,7 +5452,8 @@ a `std::atomic`, its order explicit.
 
 ## Step 182: spinlocks are gone
 
-`SHMEM.md` §3. No spinlock had been taken since steps 132 and
+[`SHMEM.md`](SHMEM.md#3-locks) §3. No spinlock had been taken
+since steps 132 and
 133; the last user of `slock_t`, port `atomics.c`'s emulation
 of 64-bit atomics, went with step 181.
 
@@ -5384,7 +5491,8 @@ test-and-set assembly.
 
 ## Step 184: the postmaster-death watch is gone
 
-`SHMEM.md` §5. A child process watched for its postmaster's
+[`SHMEM.md`](SHMEM.md#5-shared-structures) §5. A child process
+watched for its postmaster's
 death so as not to run on without it: the read end of a pipe
 the postmaster held open, or on macOS the postmaster's pid
 under kqueue, and a parent-death signal (`SIGPWR` by
@@ -5474,8 +5582,10 @@ wait), so what they set needs neither `volatile` nor
 
 ## Step 188: DDL on a cached descriptor takes sm's lock first
 
-`SHMEM.md` §5.1, step 142. PostgreSQL 18's regression suite
-(`test/regress/README.md`) stopped the server in five files on
+[`SHMEM.md`](SHMEM.md#51-invalidation-by-version-not-by-message)
+§5.1, step 142. PostgreSQL 18's regression suite
+([`test/regress/README.md`](test/regress/README.md)) stopped the
+server in five files on
 `relation_open()`'s assertion that a relation opened with
 `NoLock` is locked. Five call sites of digres's own read a
 descriptor before sm's lock: when the descriptor was built in
@@ -5513,7 +5623,8 @@ drop index i;
 
 ## Step 189: several keys cascading from one row
 
-`test/regress/README.md`'s crash in `foreign_key`:
+[`test/regress/README.md`](test/regress/README.md)'s crash in
+`foreign_key`:
 `!TTS_EMPTY(slot)`, on an `UPDATE` of a key that three columns
 of one table reference `ON UPDATE CASCADE`.
 
@@ -5533,7 +5644,8 @@ of one table reference `ON UPDATE CASCADE`.
 
 ## Step 190: WHERE CURRENT OF
 
-`test/regress/README.md`'s crash in `portals` and
+[`test/regress/README.md`](test/regress/README.md)'s crash in
+`portals` and
 `rowsecurity`: `DatumGetObjectId(ldatum) == table_oid`, in
 `execCurrent.c`, on `DELETE` or `UPDATE ... WHERE CURRENT OF`.
 
@@ -5562,7 +5674,8 @@ of one table reference `ON UPDATE CASCADE`.
 
 ## Step 191: a snapshot's xid arrays are not allocated
 
-`SHMEM.md` §2. Each session malloc'd, for each of its three
+[`SHMEM.md`](SHMEM.md#2-allocation-shmems-fields) §2. Each
+session malloc'd, for each of its three
 static snapshots (current, secondary and catalog), an array of
 `MaxBackends` xids and one of 65 per backend, as PostgreSQL
 sized them to hold every running xid and each PGPROC's cache of
@@ -5582,7 +5695,8 @@ connections, 78 kB a session.
 
 ## Step 192: a latch is a token
 
-`SHMEM.md` §4. Since step 158 a `Latch` held only its owner: a
+[`SHMEM.md`](SHMEM.md#4-latches-an-interrupt-bit) §4. Since step
+158 a `Latch` held only its owner: a
 handle on the thread, new'd by `InitLatch()`, and a mutex that
 `SetLatch()` held to copy it, so that another thread could find
 the one to wake. One did: a backend thread, as it ended, set
@@ -5602,11 +5716,13 @@ queue). Every other `SetLatch()` named `MyLatch`.
 
 ## Step 193: pg_lock_status() lists sm's locks and advisory locks
 
-`SHMEM.md` §3, §7 step 4. Since the lock manager went (step
+[`SHMEM.md`](SHMEM.md#3-locks) §3, §7 step 4. Since the lock
+manager went (step
 156), `pg_lock_status()` returned no row.
 
 - **sm1 lists its lock table** (`sm1::lock_status()`,
-  `../sm/sm1/API.md`): a row for each holder of each lock, in
+  [`../sm/sm1/API.md`](../sm/sm1/API.md)): a row for each holder
+  of each lock, in
   its mode, and one for each session waiting in `sm1::lock`, in
   the mode it asks; a waiter's key and mode are kept while it
   waits (`lock_wait()`). A writer waiting behind an uncommitted
@@ -5646,7 +5762,8 @@ queue). Every other `SetLatch()` named `MyLatch`.
 
 ## Step 194: the proc array is gone
 
-`SHMEM.md` §5. Storage/ipc `procarray.c` was left with
+[`SHMEM.md`](SHMEM.md#5-shared-structures) §5. Storage/ipc
+`procarray.c` was left with
 forwarders to the session registry and what had no other home.
 Each piece is with its callers, and the file and its header are
 gone.
@@ -5680,7 +5797,8 @@ catalog relation.
   `parse_relation.c`'s `scanRTEForColumn()` looked up a system
   column's name in the `ATTNUM` syscache, to ask whether the
   relation has it; digres has no `pg_attribute` rows to find
-  (`SYSCATALOG.md` §2). Every relation but a view has them
+  ([`SYSCATALOG.md`](SYSCATALOG.md#2-decisions) §2). Every
+  relation but a view has them
   (catalog `heap.c`'s `AddNewAttributeTuples()`), so the
   relkind answers instead.
 - **EXPLAIN VERBOSE asked it too.** `get_rte_attribute_name()`
@@ -5704,7 +5822,8 @@ catalog relation.
 
 ## Step 196: SUBSTRING ... SIMILAR with no match is null
 
-`test/regress/README.md`'s bug in `strings`: `SUBSTRING('abcdefg'
+[`test/regress/README.md`](test/regress/README.md)'s bug in
+`strings`: `SUBSTRING('abcdefg'
 SIMILAR '#"(b_d)#"%' ESCAPE '#')`, null on PostgreSQL, failed
 with "function 0x... returned NULL".
 
@@ -5724,12 +5843,14 @@ with "function 0x... returned NULL".
 
 ## Step 197: name
 
-`test/regress/README.md`'s second item: `name` was refused,
+[`test/regress/README.md`](test/regress/README.md)'s second item:
+`name` was refused,
 "type name is not supported yet", and `test_setup`'s `onek` and
 `tenk1` have `name` columns, so 17 files lacked them.
 
 - **sm2 has a type for it**, `name`, code 20
-  (`../sm/sm2/TYPE.md` §3.5): PostgreSQL's `NameData`, 64 bytes,
+  ([`../sm/sm2/TYPE.md`](../sm/sm2/TYPE.md#35-text-varchar-bpchar-name)
+  §3.5): PostgreSQL's `NameData`, 64 bytes,
   the string and then NULs, stored as they are, a fixed-width
   datum by reference as `uuid` is, so the tuple codec and digres
   need nothing new. Its `cmp` and key are a `text`'s of the
@@ -5779,7 +5900,8 @@ same cost, did not.
 
 ## Step 199: the time zone abbreviations, compiled in
 
-`test/regress/README.md`'s first item: `timezone_abbreviations`
+[`test/regress/README.md`](test/regress/README.md)'s first item:
+`timezone_abbreviations`
 was empty, so `EDT`, `zulu` and `MET DST` were not read, and
 `time`, `timestamp`, `timestamptz` and `horology` failed on
 them.
@@ -5809,7 +5931,9 @@ them.
 
 ## Step 200: a row is named by its rowno; ctid and xmin are gone
 
-Decided 2026-10-16, `../sm/PART4.md` §3: digres is a digression
+Decided 2026-10-16,
+[`../sm/PART4.md`](../sm/PART4.md#3-why-the-table-access-method-path-does-not-work-here)
+§3: digres is a digression
 from PostgreSQL, and says what it has not. sm keeps no
 transaction ids in a row, and names a row by its `rowno`, not a
 tid. Step 195 had made every system column found by name;
@@ -5840,10 +5964,15 @@ row was read, and `ctid` was the rowno packed into a tid,
   digres`). Without the parser's change it failed, and the
   server stopped on `select rowno from pg_namespace`, whose
   rows have no tid.
-- `../sm/PART4.md` §3 and §6, `../sm/sm2/SM2_OBJECTIVE.md` and
-  `../sm/sm2/SM2_DESIGN.md` §5 and §7 say so; `../sm/NEXT.md`
+-
+  [`../sm/PART4.md`](../sm/PART4.md#3-why-the-table-access-method-path-does-not-work-here)
+  §3 and §6,
+  [`../sm/sm2/SM2_OBJECTIVE.md`](../sm/sm2/SM2_OBJECTIVE.md) and
+  [`../sm/sm2/SM2_DESIGN.md`](../sm/sm2/SM2_DESIGN.md#5-cross-level-decisions)
+  §5 and §7 say so; [`../sm/NEXT.md`](../sm/NEXT.md)
   items 3 and 4 are done, and two take their place.
-- Left (`../sm/NEXT.md`): `WHERE rowno = n` reads the whole
+- Left ([`../sm/NEXT.md`](../sm/NEXT.md)): `WHERE rowno = n`
+  reads the whole
   table, as the planner makes a TID scan of `ctid = tid` alone;
   and a missing qualified column of a table in sm, `t.nosuch`,
   fails with "does not have a composite type".
@@ -5854,7 +5983,8 @@ row was read, and `ctid` was the rowno packed into a tid,
 
 ## Step 201: snapshot export and import are gone
 
-`../sm/NEXT.md` item 5. Step 149 made `pg_export_snapshot()`
+[`../sm/NEXT.md`](../sm/NEXT.md) item 5. Step 149 made
+`pg_export_snapshot()`
 and `SET TRANSACTION SNAPSHOT` refuse, and left behind them
 what wrote a snapshot to a file in `pg_snapshots` and read one
 back, reached by nothing.
@@ -5877,11 +6007,13 @@ back, reached by nothing.
   `ImportSnapshot()` for `SET TRANSACTION SNAPSHOT`.
   `test/server.sh` checks both, as it did.
 - Left: the postmaster still makes `pg_snapshots`, among the
-  directories nothing opens (`../sm/NEXT.md` item 5, was 6).
+  directories nothing opens ([`../sm/NEXT.md`](../sm/NEXT.md)
+  item 5, was 6).
 
 ## Step 202: DROP INDEX finds a temporary index first
 
-`test/regress/README.md`'s bug in `temp`: with a table and a
+[`test/regress/README.md`](test/regress/README.md)'s bug in
+`temp`: with a table and a
 temporary table both named `temptest`, each with an index
 `i_temptest`, the second `DROP INDEX i_temptest` found none.
 
@@ -5905,7 +6037,8 @@ temporary table both named `temptest`, each with an index
 
 ## Step 203: CREATE TABLE AS, into sm's bulk load
 
-`test/regress/README.md`'s cheapest unblocking: `CREATE TABLE
+[`test/regress/README.md`](test/regress/README.md)'s cheapest
+unblocking: `CREATE TABLE
 AS` and `SELECT INTO` failed with `a relation's storage cannot
 be made`, as `create_ctas_internal()` still made a heap and its
 TOAST table.
@@ -5924,7 +6057,7 @@ TOAST table.
   context of its own, reset after it.
 - **A savepoint set before it can be rolled back to**: since
   `a656446` a rollback past a load empties the table
-  (`../sm/BULKLOAD.md` §3.5).
+  ([`../sm/BULKLOAD.md`](../sm/BULKLOAD.md#35-savepoints) §3.5).
 - **sm's statement advances after the table is made**, as
   PostgreSQL's command counter does at the same place:
   access/sm `smstore_statement_advance()`, over
@@ -5937,7 +6070,8 @@ TOAST table.
   after its first row ends the transaction, not the savepoint
   alone: its load is still open, sm refuses the rollback, and
   the next call into sm or the `COMMIT` fails, as after a
-  `COPY` (`../sm/NEXT.md` §1). Nothing of it is committed.
+  `COPY` ([`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1). Nothing of
+  it is committed.
 - `test/slt/create_table_as.test`: the forms, a column list,
   `SELECT INTO`, `WITH NO DATA`, `IF NOT EXISTS`, 100,000 rows,
   values out of line, a temporary table, `EXECUTE`, and a
@@ -5947,7 +6081,8 @@ TOAST table.
 
 ## Step 204: a cursor reads on after a rollback to a savepoint
 
-`test/regress/README.md`'s crash in `transactions`: a cursor
+[`test/regress/README.md`](test/regress/README.md)'s crash in
+`transactions`: a cursor
 declared before a savepoint, fetched from inside it, used
 after `ROLLBACK TO SAVEPOINT` read freed memory. Its sm scan
 began at its first `FETCH`, inside the savepoint, so sm1's
@@ -5968,7 +6103,8 @@ the scan read by, opened in the subtransaction.
   after the mark is closed by the rollback as before, but
   stays the session's: each read and seek fails with
   `SM_ERR_INVALID`, until `sm1::scanend()` or the
-  transaction's end frees it (`../sm/sm1/SM1_DESIGN.md`
+  transaction's end frees it
+  ([`../sm/sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md)
   §6.5). A cursor whose nested loop began its inner scan
   again inside
   the savepoint fails at its next `FETCH`, `could not scan a
@@ -5988,7 +6124,8 @@ the scan read by, opened in the subtransaction.
 
 ## Step 205: a rollback sm refuses dooms the transaction
 
-`../sm/NEXT.md`'s bug: access/sm `smstore_subabort()`, which
+[`../sm/NEXT.md`](../sm/NEXT.md)'s bug: access/sm
+`smstore_subabort()`, which
 `AbortSubTransaction()` calls, discarded `sm_rollback()`'s
 error, taking a savepoint sm could not undo for a transaction
 sm had ended. But a rollback sm refuses changes nothing and
@@ -6019,7 +6156,7 @@ with a bulk load open (`SM_ERR_INVALID`).
   failing a load's end, then the next statement, and the
   commit, refused (`onlyif digres`, beside PostgreSQL's
   answers). 5 of its 49 records failed before. The cap's path
-  is untested (`../sm/NEXT.md` §2).
+  is untested ([`../sm/NEXT.md`](../sm/NEXT.md#2-loose-ends) §2).
 
 ## Step 206: a load whose end fails rolls back to its savepoint
 
@@ -6034,12 +6171,14 @@ refused, and the transaction was doomed.
 - **sm1: a close that fails ends the load.** It frees the
   loader and its files, as an abort would. The store holds
   nothing of the load: its write batch, or its ingest, applies
-  whole or not at all (`../sm/BULKLOAD.md` §3.5). The rollback
+  whole or not at all
+  ([`../sm/BULKLOAD.md`](../sm/BULKLOAD.md#35-savepoints) §3.5).
+  The rollback
   is let in and finds the store empty, and the transaction goes
   on, as in PostgreSQL. digres is unchanged.
 - **The doom stays**, for a rollback past
   `savepoint_undo_bytes`; it is now untested
-  (`../sm/NEXT.md` §2).
+  ([`../sm/NEXT.md`](../sm/NEXT.md#2-loose-ends) §2).
 - **A rollback sm refuses is logged**: `smstore_subabort()`
   writes a `WARNING` with sm's reason, which does not throw in
   an abort, before dooming the transaction.
@@ -6066,7 +6205,7 @@ where every caller gets it.
   and an open cursor's read, and a sequence draw. Only the
   abort is let through. Unlike a deadlock victim's, the
   transaction is not aborted at once
-  (`../sm/sm1/SM1_DESIGN.md` §6.5).
+  ([`../sm/sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md) §6.5).
 - **A rollback refused by its checks**, at a depth with no
   savepoint or with a bulk load open, changes nothing and dooms
   nothing.
@@ -6078,7 +6217,8 @@ where every caller gets it.
   `test/test_doomed.rel` sets it to 1 byte, fails a rollback,
   and checks that 15 calls fail with `ERR_DOOMED`, through
   sm3's tables, indexes and catalog, and that the abort leaves
-  nothing. This closes `../sm/NEXT.md`'s loose end: the cap's
+  nothing. This closes [`../sm/NEXT.md`](../sm/NEXT.md)'s loose
+  end: the cap's
   path is tested, in sm.
 - `../sm/sm1/test/test_savepoint.cc`: the cap's three tests no
   longer go on after `SM_ERR_UNDOLIMIT`, and a new one checks
@@ -6086,7 +6226,8 @@ where every caller gets it.
 
 ## Step 208: CREATE TABLE takes WITH (fillfactor, autovacuum_enabled)
 
-`test/regress/README.md`'s third item: 5 files stopped at
+[`test/regress/README.md`](test/regress/README.md)'s third item:
+5 files stopped at
 `CREATE TABLE ... WITH (...)`, which access/sm
 `check_create_table()` refused whole.
 
@@ -6107,7 +6248,8 @@ where every caller gets it.
 
 ## Step 209: the postmaster makes no legacy directories
 
-`../sm/NEXT.md` §1's fifth item. postmaster
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's fifth item.
+postmaster
 `make_legacy_dirs()` made eight directories at start that
 nothing opened any more: `pg_dynshmem` (step 29), `pg_stat`
 and `pg_stat_tmp` (step 28), `pg_replslot` and `pg_logical`'s
@@ -6119,7 +6261,9 @@ three (step 2), and `pg_snapshots` (step 201).
 
 ## Step 210: no std::optional in sm.h
 
-`../sm/NEXT.md` §1's second item: `../sm/CODE.md` §2 lets no
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's second item:
+[`../sm/CODE.md`](../sm/CODE.md#2-the-interface-to-sms-users) §2
+lets no
 `std::optional` cross to sm's users, and
 `sm_column_def_t::default_expr` was one.
 
@@ -6136,7 +6280,7 @@ The pcb held two kinds of field under one rule, "set before
 the first thread starts and only read after, or guards
 itself", and every field it had was of the second kind. Now
 each kind has a block of its own (`utils/control_block.h`,
-`CODE.md` section 3):
+[`CODE.md`](CODE.md) section 3):
 
 - **`shmem_t`, what the threads share and write**: the pcb's
   fields, all of them, moved as they were. Each is an atomic,
@@ -6164,7 +6308,8 @@ each kind has a block of its own (`utils/control_block.h`,
 
 ## Step 212: t.nosuch on a table in sm is a missing column
 
-`../sm/NEXT.md` §1's third item. On a table in sm, `select
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's third item. On a
+table in sm, `select
 t.nosuch from t` failed with `relation "t" does not have a
 composite type`. The parser, finding no column `nosuch`, tries
 `nosuch(t)` as a function on the row (parser
@@ -6187,7 +6332,8 @@ make the whole-row reference with (nodes `makeWholeRowVar()`).
 
 ## Step 213: WHERE rowno = n is a TID scan
 
-`../sm/NEXT.md` §1's second item. A query names a row by its
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's second item. A query
+names a row by its
 `rowno` (step 200), and `WHERE rowno = n` read the whole table
 with a filter: the planner made a TID scan of `ctid = tid`
 alone. The row's tid carries its rowno
@@ -6223,7 +6369,8 @@ fetches a row by its tid already, for `WHERE CURRENT OF`.
 
 ## Step 214: the replication catalogs are purged
 
-`../sm/NEXT.md` §1's last cleanup: step 2's known leftovers,
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's last cleanup: step
+2's known leftovers,
 the catalogs of replication, which nothing has written since
 step 2 cut replication.
 
@@ -6235,7 +6382,8 @@ step 2 cut replication.
   `IsCatalogTextUniqueIndexOid()` no longer list them. `select
   from pg_subscription` already failed: digres never served it.
 - **`pg_publication` and its two relations stay, empty**
-  (`SYSCATALOG.md` §2): psql's `\d name` reads them for a
+  ([`SYSCATALOG.md`](SYSCATALOG.md#2-decisions) §2): psql's `\d
+  name` reads them for a
   table's publications. Their headers keep the catalog and its
   indexes, for `cat_builtin.c`; their syscaches go, and so does
   the rest of PostgreSQL's header, `Publication`,
@@ -6372,8 +6520,10 @@ program the calling thread's state:
 
 ## Step 218: postmaster_tcb_t, the postmaster's own state
 
-`../sm/NEXT.md` §1's second item, its first batch, under the
-rule this step states (`CODE.md` §3): `pcb_t` holds what the
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's second item, its
+first batch, under the
+rule this step states ([`CODE.md`](CODE.md#3-globals) §3):
+`pcb_t` holds what the
 main thread owns and other threads read; what it owns and no
 other thread reads is in a block of its own,
 `postmaster_tcb_t`. 18 `/*SHARED*/` globals were the
@@ -6408,7 +6558,8 @@ that remove lock and socket files are the main thread's.
 
 ## Step 219: pcb_t's first fields
 
-`../sm/NEXT.md` §1's second item, its second batch: 15
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's second item, its
+second batch: 15
 `/*SHARED*/` globals the main thread sets as the server or a
 standalone backend starts, and sessions read, are `pcb_t`'s
 (`utils/control_block.h`).
@@ -6440,16 +6591,19 @@ standalone backend starts, and sessions read, are `pcb_t`'s
 - **Left SHARED, on purpose**: `progname`, whose address is
   the copy table's anchor (`session_thread.c`'s `tls_block()`),
   until the table goes; `data_directory_mode`, a setting, and
-  settings are each thread's (`DESIGN.md` §4).
+  settings are each thread's
+  ([`DESIGN.md`](DESIGN.md#4-decisions-of-record) §4).
 - 56 `/*SHARED*/` globals are left.
 
 ## Step 220: the modules' own state in pcb_t
 
-`../sm/NEXT.md` §1's second item, its third batch: 6
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's second item, its
+third batch: 6
 module-private `/*SHARED*/` statics the main thread sets as it
 starts, and sessions read.
 
-- **Each module's state is a struct it defines** (`CODE.md`
+- **Each module's state is a struct it defines**
+  ([`CODE.md`](CODE.md)
   §3), made by `pcb_init()` through the module's `*_new()`,
   and held by a plain pointer in `pcb_t`, never freed:
   datadir `datadir_state_t`, `pcb->datadir` (the superuser's
@@ -6472,7 +6626,8 @@ starts, and sessions read.
 
 ## Step 221: three constants are const
 
-`../sm/NEXT.md` §1's second item, its fourth batch: three
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's second item, its
+fourth batch: three
 `/*SHARED*/` globals were constants nothing writes, made
 `thread_local` only because they were not `const` all the way
 down.
@@ -6490,7 +6645,8 @@ down.
 
 ## Step 222: the hooks are the thread's, copied at its start
 
-`../sm/NEXT.md` §1's second item, its fifth batch: the 30 hooks
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's second item, its
+fifth batch: the 30 hooks
 a loaded library sets, each a `/*SHARED*/` global, so that a
 session started with the postmaster's: what
 `shared_preload_libraries` set there reached every session,
@@ -6524,7 +6680,8 @@ and a library a session `LOAD`s set that session's alone.
 
 ## Step 223: the loaded libraries and EXPLAIN registry are the thread's
 
-`../sm/NEXT.md` §1's second item, its sixth batch, and the
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's second item, its
+sixth batch, and the
 hazard step 222 left: dfmgr's list of loaded libraries and the
 EXPLAIN extension registry were SHARED, a pointer copy each,
 so a session's copy was the postmaster's memory. With
@@ -6551,7 +6708,8 @@ file through the postmaster's last node, and a session's
 - No library is built in the tree, so no test loads one.
 - A library's own statics are still the process's: a second
   session that `LOAD`s it runs its `_PG_init()` again on them.
-  `ISSUE.md` issue 1 records it, not to be fixed soon, and
+  [`ISSUE.md`](ISSUE.md) issue 1 records it, not to be fixed
+  soon, and
   `internal_load_library()` asserts that no session thread
   loads a library.
 - 10 `/*SHARED*/` globals are left; step 222's 16 counted the
@@ -6559,7 +6717,8 @@ file through the postmaster's last node, and a session's
 
 ## Step 224: the postmaster reads its signals from a signalfd
 
-`../sm/NEXT.md` §1's second item, its seventh batch. Only the
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's second item, its
+seventh batch. Only the
 main thread took a signal, and only to set a flag and wake its
 own loop; sessions blocked every signal but their faults and
 are interrupted by bits. Each thread still carried three masks
@@ -6598,12 +6757,14 @@ switched among masks that were the same.
   already, and `pg_cancel_backend()` of a session waiting for
   an advisory lock now is too, which leaves the session. A
   reload in the test's data directory applies nothing: it has
-  no `postgresql.conf` (`DESIGN.md` §5).
+  no `postgresql.conf` ([`DESIGN.md`](DESIGN.md#5-known-gaps)
+  §5).
 - 6 `/*SHARED*/` globals are left.
 
 ## Step 225: PgReloadTime is the main thread's, in pcb_t
 
-`../sm/NEXT.md` §1's second item, its eighth batch.
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's second item, its
+eighth batch.
 `PgReloadTime`, what `pg_conf_load_time()` reports, was SHARED:
 a session started with the postmaster's, then wrote its own when
 it re-read the file on `INTERRUPT_RELOAD`, a moment after the
@@ -6632,7 +6793,8 @@ postmaster.
 
 ## Step 226: the CPU dispatch pointers are plain globals
 
-`../sm/NEXT.md` §1's second item, its ninth batch.
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's second item, its
+ninth batch.
 `pg_comp_crc32c`, `pg_popcount_optimized` and
 `pg_popcount_masked_optimized` were marked SHARED, but none is
 compiled: `pg_config.h` chooses slicing-by-8 and no runtime
@@ -6670,7 +6832,8 @@ server is ready in about a second: the machine was loaded.
 
 ## Step 228: data_directory_mode is gone
 
-`../sm/NEXT.md` §1's second item, its tenth batch.
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's second item, its
+tenth batch.
 `data_directory_mode` was SHARED: `checkDataDir()` assigned it
 directly, not through GUC, and a session was given the
 postmaster's copy. It was the variable of a read-only setting,
@@ -6690,7 +6853,8 @@ digres refuses a replication connection and has no WAL.
 
 ## Step 229: progname is pcb's, and the copy table is gone
 
-`../sm/NEXT.md` §1's second item, its last batch. `progname` was
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's second item, its
+last batch. `progname` was
 the last SHARED global, and its address was the copy table's
 anchor (`session_thread.c`'s `tls_block()`), so it moved with
 the table.
@@ -6713,7 +6877,8 @@ the table.
   matched, is `link_server`, one link with no map.
 - **The `/*LOCAL*/` marks stay**: each marks a thread's own
   variable, to move into `tcb_t` when a change touches it.
-  `c.h` and `CODE.md` §3 say a thread shares only through
+  `c.h` and [`CODE.md`](CODE.md#3-globals) §3 say a thread shares
+  only through
   `pcb` and `shmem`. `cxx_thread_local.py --check` still fails
   the build on a writable global not `thread_local`.
 - No `/*SHARED*/` global is left.
@@ -6742,7 +6907,8 @@ each under a `/* -- name -- */` heading:
 
 ## Step 231: what replication left is gone
 
-`../sm/NEXT.md` §1's replication item. Replication's modules
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's replication item.
+Replication's modules
 went in step 2; what they left was refused or inert. It is
 removed now, but for what psql reads.
 
@@ -6794,7 +6960,8 @@ removed now, but for what psql reads.
 
 ## Step 232: xact.c's dead API is gone
 
-The first step of `../sm/NEXT.md` §1's `xact.c` item: what
+The first step of [`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's
+`xact.c` item: what
 nothing needs, as digres assigns no transaction id and has no
 prepared transactions.
 
@@ -6833,7 +7000,8 @@ prepared transactions.
 
 ## Step 233: combo cids, the current xid and xmin are gone
 
-The second step of `../sm/NEXT.md` §1's `xact.c` item, its
+The second step of [`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1's
+`xact.c` item, its
 first part. digres has no heap, assigns no xid, and every
 snapshot is the same, so what told one transaction's tuples
 from another's had nothing to tell.
@@ -6848,7 +7016,8 @@ from another's had nothing to tell.
 - **"cannot affect row a second time"**: ON CONFLICT DO UPDATE
   and MERGE told the case by the row's xmin being their own
   transaction's, which never held. The checks are gone, and the
-  gap they leave is `ISSUE.md` issue 2: digres keeps the first
+  gap they leave is [`ISSUE.md`](ISSUE.md) issue 2: digres keeps
+  the first
   row and drops the second's update. MERGE does not write yet.
   `test/slt/on_conflict_twice.test` holds PostgreSQL's answer
   and digres's, so the gap is not forgotten.
@@ -6953,7 +7122,8 @@ longer needs is deleted, as here:
 
 ## Step 237: ON CONFLICT DO UPDATE refuses a row twice
 
-`ISSUE.md` issue 2, from step 233. An `INSERT ... ON CONFLICT DO
+[`ISSUE.md`](ISSUE.md) issue 2, from step 233. An `INSERT ... ON
+CONFLICT DO
 UPDATE` whose rows conflict with each other, as `values (1, 0),
 (1, 1)` on a key, kept the first row and dropped the second's
 update, where PostgreSQL refuses the statement: "ON CONFLICT DO
@@ -6971,11 +7141,13 @@ told the case by the row's xmin; digres assigns none.
   the second change, as in PostgreSQL.
 - `test/slt/on_conflict_twice.test` holds PostgreSQL's answers
   alone now: both cases fail and leave the table as it was, and
-  the join UPDATE passes. Issue 2 is removed from `ISSUE.md`.
+  the join UPDATE passes. Issue 2 is removed from
+  [`ISSUE.md`](ISSUE.md).
 
 ## Step 238: views are sm's
 
-`../sm/VIEW.md` is the design; this is its second step, on sm3's
+[`../sm/VIEW.md`](../sm/VIEW.md) is the design; this is its
+second step, on sm3's
 views (`../sm/sm3/test/test_view.cc`).
 
 - **CREATE [OR REPLACE] VIEW** keeps PostgreSQL's parse analysis
@@ -7023,7 +7195,8 @@ views (`../sm/sm3/test/test_view.cc`).
 
 ## Step 239: a view in the catalog relations
 
-`../sm/VIEW.md` §10, its third step; `SYSCATALOG.md` §3.
+[`../sm/VIEW.md`](../sm/VIEW.md#10-order-of-work) §10, its third
+step; [`SYSCATALOG.md`](SYSCATALOG.md#3-the-mechanism) §3.
 
 - **`pg_class` lists a view**, `relkind` `v`, `relhasrules`
   true, no `relfilenode`; **`pg_attribute`** its columns, its
@@ -7046,7 +7219,8 @@ views (`../sm/sm3/test/test_view.cc`).
 
 ## Step 240: ALTER VIEW, and a view's options
 
-`../sm/VIEW.md` §10, its fourth step.
+[`../sm/VIEW.md`](../sm/VIEW.md#10-order-of-work) §10, its fourth
+step.
 
 - **ALTER VIEW ... RENAME TO** is `sm_cat_rename_view`, and so is
   ALTER TABLE ... RENAME TO of a view, as PostgreSQL takes it;
@@ -7085,7 +7259,8 @@ latches, and `pg_cancel_backend()` and its kin
 (`signalfuncs.c`).
 
 - **Wait sets are epoll's alone**: digres runs on Linux alone
-  (`../sm/PART4.md` section 10). `waiteventset.c`, 1,600 lines,
+  ([`../sm/PART4.md`](../sm/PART4.md) section 10).
+  `waiteventset.c`, 1,600 lines,
   is 590: PostgreSQL's poll(), kqueue() and Windows
   implementations and the self-pipe are gone, none of which
   could wake on sm's wake fd, the latch of a digres thread.
@@ -7159,7 +7334,8 @@ A pass over what PostgreSQL's heap left in `storage/page`,
   and `get_toast_snapshot()`, with `SnapshotToastData`, 219 lines
   to 88. `toast_compress_datum()` stays, for index tuples.
 - Left: `toasting.c`, which makes a TOAST table, with the
-  catalog DDL kept to be ported (`DESIGN.md` §4).
+  catalog DDL kept to be ported
+  ([`DESIGN.md`](DESIGN.md#4-decisions-of-record) §4).
 
 ## Step 244: TABLESAMPLE on a table in sm
 
@@ -7187,7 +7363,8 @@ offsets; sm has no pages, so a block is a tid's.
 - **Rescan** starts the cursor and the blocks again, as under
   `LATERAL`.
 - **Cost**: the planner's pages for a table in sm are its bytes
-  over 8 KB (`STATISTICS.md` section 2.2), not its blocks of
+  over 8 KB ([`STATISTICS.md`](STATISTICS.md) section 2.2), not
+  its blocks of
   rownos, so a `SYSTEM` scan's I/O cost is an estimate of its
   own; its rows, the table's times the fraction, are right.
 - `test/slt/tablesample.test`: both methods at 0 and 100, a
@@ -7196,7 +7373,8 @@ offsets; sm has no pages, so a block is a tid's.
 
 ## Step 245: temporary views
 
-`../sm/VIEW.md` §12, its fourth step, on sm3's temporary view,
+[`../sm/VIEW.md`](../sm/VIEW.md#12-temporary-views) §12, its
+fourth step, on sm3's temporary view,
 its register of temporary readers and its cascade across
 sessions (steps 1 to 3 there).
 
@@ -7273,7 +7451,8 @@ purpose: an extension's API (custom settings, scan methods,
 label providers, resource owner callbacks, `regexport.c`), SPI
 (a scripting language is to use it), general utilities
 (`list.c`, `pg_prng.c`, the multibyte and Unicode helpers), and
-the catalog DDL kept to be ported (`DESIGN.md` section 4). What
+the catalog DDL kept to be ported ([`DESIGN.md`](DESIGN.md)
+section 4). What
 belonged to modules digres removed is gone:
 
 - **`src/common`**: `blkreftable.c`, the block reference tables
@@ -7370,7 +7549,8 @@ A session that loaded a library, by `LOAD` or a C function's
 first call, failed `internal_load_library()`'s assertion that
 no session thread loads one, and took the server down:
 PostgreSQL's `create_function_c`, on its first statement.
-Dynamic loading is to be redesigned and redone (`ISSUE.md`
+Dynamic loading is to be redesigned and redone
+([`ISSUE.md`](ISSUE.md)
 issue 1); until then it is disabled.
 
 - **`internal_load_library()` refuses every library**, with
@@ -7395,14 +7575,16 @@ wide table cost what `select *` did.
   scan with no projection names every column. It is passed to
   `smstore_beginscan()`, which deforms that many
   (`sm_tbl_deform()` takes a prefix now, and sm checks only
-  what it reads, `../sm/sm2/TUPLE.md` §8).
+  what it reads,
+  [`../sm/sm2/TUPLE.md`](../sm/sm2/TUPLE.md#8-a-malformed-tuple)
+  §8).
 - **The slot stays virtual.** The columns left out are null
   to a materializing, and not valid: the executor reads a
   virtual slot with no deform, so a count too few trips an
   assertion, or reads null.
 - **Left as it was**: the table AM's scans (sample, TID,
   ANALYZE) and the index and bitmap scans read every column
-  (`../sm/NEXT.md` §2).
+  ([`../sm/NEXT.md`](../sm/NEXT.md#2-loose-ends) §2).
 - `test/slt/scan_columns.test`.
 
 ## Step 253: an index scan reads the columns it needs
@@ -7470,16 +7652,20 @@ step 254's were, cleanly.
   whole string as any count past its length does.
 - `text` passes now; `int4` fails only on a numeric of no
   typmod printed at scale 3, as `int2` and `int8` do
-  (`test/regress/README.md`).
+  ([`test/regress/README.md`](test/regress/README.md)).
 - `test/slt/adt_upstream.test`.
 
 ## Step 256: a bare numeric keeps its value's scale
 
 A bare `numeric` was `decimal64(17, 3)` everywhere, a cast
-included (`DECIMAL.md` §2.1), so `-2.5::numeric` was
+included
+([`DECIMAL.md`](DECIMAL.md#21-two-types-and-numeric-a-name-for-them)
+§2.1), so `-2.5::numeric` was
 `-2.500` and `'1.23456'::numeric` `1.235`, where PostgreSQL
 keeps the scale written: its `int2`, `int4` and `int8` failed
-on it. A value carries its scale (`DECIMAL.md` §2.2), so a
+on it. A value carries its scale
+([`DECIMAL.md`](DECIMAL.md#22-a-value-carries-its-scale) §2.2),
+so a
 bare `numeric` needs none of its own.
 
 - **`parse_type.c`** gives a bare `numeric` no typmod: a
@@ -7570,7 +7756,9 @@ commit, in the background, where no row is at hand.
   duplicate's record, the index and up to two rownos
   (`sm1::errdup()`, `sm_errdup()`); sm3's build sets it, a
   failed index's catalog state keeps it, and `builder_wait`
-  raises it again (`../sm/sm3/SM3_DESIGN.md` §3).
+  raises it again
+  ([`../sm/sm3/SM3_DESIGN.md`](../sm/sm3/SM3_DESIGN.md#3-modules)
+  §3).
 - **digres reads one of them** and says its key as PostgreSQL
   does, the columns quoted as `pg_get_indexdef_columns()`
   quotes them (`dup_key()` in `smstore.c`); the rows go in a
@@ -7582,7 +7770,8 @@ commit, in the background, where no row is at hand.
   a key is the row's columns, and needs no evaluator.
 - PostgreSQL's checks of the user's right to see the columns,
   row security and SELECT, are not made: digres's roles are
-  compiled in (`test/regress/README.md`).
+  compiled in
+  ([`test/regress/README.md`](test/regress/README.md)).
 - `test/server.sh`, "a duplicated key's build": a build after
   the commit, a key of two columns, and one in the creating
   transaction.
@@ -7603,7 +7792,8 @@ exists`. PostgreSQL names the index and the key.
   `Key (a)=(1) already exists.`, and the constraint's name in
   the error's fields (`duplicate_write()` in `smstore.c`).
 - **No index named, sm's words**: a load's duplicate found at
-  its close, in sm1's sort, names none (`../sm/NEXT.md` §2).
+  its close, in sm1's sort, names none
+  ([`../sm/NEXT.md`](../sm/NEXT.md#2-loose-ends) §2).
 - **A COPY's CONTEXT line was wrong**, before and after: it
   named the line after the batch COPY handed sm, not the
   row's. Step 262 mends it.
@@ -7662,7 +7852,8 @@ which keeps it in memory where RocksDB has it
 ## Step 264: a scan a rollback closed says its view is lost
 
 A rollback to a savepoint closes every sm cursor opened after
-it (`../sm/sm1/SM1_DESIGN.md` §6.5). A SQL cursor declared
+it ([`../sm/sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md) §6.5). A
+SQL cursor declared
 before the savepoint and fetched inside it may begin its
 inner scan again there, as a nested loop does for each outer
 row; after `ROLLBACK TO`, its next FETCH read on from that
@@ -7677,7 +7868,7 @@ PostgreSQL goes on.
   SQLSTATE 0A000: sm does not reopen the cursor at the
   savepoint's view.
 - **It is documented** as a known incompatibility, in a new
-  section of `README.md`.
+  section of [`README.md`](README.md).
 - `test/slt/point_read.test` fetches row 6 inside a
   savepoint, so its inner scan begins there, rolls back, and
   checks that the next FETCH fails on digres and finds no row
@@ -7705,7 +7896,9 @@ overflow, where PostgreSQL stores the value.
   a `decimal128` of 1 to 36 digits.
 - **A `decimal128` column with no typmod is numeric(36, 3)**,
   the widest of its type at the three places a bare numeric
-  column has (`numeric_typmod()`, `DECIMAL.md` §2.3).
+  column has (`numeric_typmod()`,
+  [`DECIMAL.md`](DECIMAL.md#23-stored-as-sm2s-decimal-at-the-columns-scale)
+  §2.3).
 - **Nothing is converted**: every decimal datum is sm's as it
   is, a word or a pointer into sm's tuple. Gone with it:
   `numeric_from_sm()`, `converted_decimal()`, `has_numeric()`,
@@ -7824,7 +8017,8 @@ pin a turn (`../sm/PIN.md` §7).
 
 ## Step 270: a join's re-check checked against PostgreSQL
 
-`../sm/sm3/SM3_DESIGN.md` §3.1 said, from memory, that under
+[`../sm/sm3/SM3_DESIGN.md`](../sm/sm3/SM3_DESIGN.md) §3.1 said,
+from memory, that under
 READ COMMITTED the re-check of an UPDATE whose target row
 changed uses the rows of the other tables it joined as they
 were, not their newest versions. PostgreSQL 18's source
@@ -7838,7 +8032,7 @@ sees it, which is that version, so digres agrees too.
   has the target's rowno, and `smstore_fetch_row()` gives the
   newest version the write kept, where PostgreSQL gives the
   one joined, by a ctid digres has no version in. Recorded in
-  `README.md`'s known incompatibilities.
+  [`README.md`](README.md)'s known incompatibilities.
 - **`test/server.sh`** joins the target of a held update to
   `tj`: on a column the first session changed, the second
   updates none; on one it did not, it updates the first's row,
@@ -7909,7 +8103,8 @@ table gives one.
   column own the sequence for good, as `create_table` does.
 - **A draw is not a flush**: each row's `nextval()` takes the
   next value of sm1's lease, a million values a synced write
-  (`../sm/sm1/SM1_DESIGN.md` §4.2), and reads the sequence's
+  ([`../sm/sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md#42-build)
+  §4.2), and reads the sequence's
   definition. No batch of values is taken for the fill.
 - `test/slt/add_column_serial.test`; `../sm/sm3/test/
   test_table.cc` tests `set_identity`. `test/server.sh`'s
@@ -7944,7 +8139,8 @@ RocksDB, which it links, Ubuntu's, keeps its `assert()`s.
 
 ## Step 274: an index key names its default operator class
 
-`test/regress/README.md`: 5 files stopped at `an index key is
+[`test/regress/README.md`](test/regress/README.md): 5 files
+stopped at `an index key is
 a column, with no collation or operator class, yet`, which
 access/sm `check_create_index()` raised for any key that named
 either. An sm index is keyed by its type's default btree
@@ -8041,7 +8237,7 @@ cache, 32 MB of its own, so a scan of a table larger than that
 read every block from the OS each time and put it in the cache
 again. sm1 now makes one block cache an environment's every
 instance and column family reads through, sized at attach
-(`../sm/sm1/SM1_DESIGN.md` §12.2).
+([`../sm/sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md) §12.2).
 
 - **`shared_buffers` is back**, `PGC_POSTMASTER`, in 8 kB
   blocks, 128 MB by default, as PostgreSQL's: `datadir_load()`
@@ -8062,7 +8258,8 @@ planner's several asks a query copied every column's values
 again. sm3 keeps them in memory already; `sm_stat_t`,
 `sm_stats_index_t` and `sm_stats_t` are now sm3's own types, in
 `../sm/include/sm_stats.h`, and `sm_tbl_stats()` hands out
-sm3's object (`../sm/OBJECTIVE.md`, `../sm/DESIGN.md`).
+sm3's object ([`../sm/OBJECTIVE.md`](../sm/OBJECTIVE.md),
+[`../sm/DESIGN.md`](../sm/DESIGN.md)).
 
 - **`has_index` and `has_correlation` go**: a statistic's
   `index` and `correlation` are `std::optional`, as sm3's
@@ -8071,7 +8268,8 @@ sm3's object (`../sm/OBJECTIVE.md`, `../sm/DESIGN.md`).
 
 ## Step 279: an index-only scan decodes only the index's columns
 
-`../sm/NEXT.md`'s scan item: an index-only scan reads the row
+[`../sm/NEXT.md`](../sm/NEXT.md)'s scan item: an index-only scan
+reads the row
 when sm says the entry's key does not give its columns back --
 the key was cut, or a text column is under a non-deterministic
 collation -- and `entry_from_row()` then deformed every column
@@ -8080,7 +8278,9 @@ of the row, to take the few the index holds.
 - **Each index column is decoded alone**, with
   `sm_tbl_decode()`, straight into the slot: sm2 finds an
   attribute by its offset, less the widths of the nulls before
-  it (`../sm/sm2/TUPLE.md` §6), so the cost is the index's
+  it
+  ([`../sm/sm2/TUPLE.md`](../sm/sm2/TUPLE.md#6-finding-an-attribute)
+  §6), so the cost is the index's
   column count, not the row's. A dropped column, a null and a
   column added after the row read as `sm_tbl_deform()` reads
   them.
@@ -8098,7 +8298,9 @@ After step 278, Q7 of `../bench` still spent 9% of the server's
 time making `pg_statistic` rows: three a plan, for the key's
 condition, its index column and `c1`'s width, each converting
 every common value and histogram bound to a datum and building
-its arrays again (`STATISTICS.md` §2.3).
+its arrays again
+([`STATISTICS.md`](STATISTICS.md#23-column-statistics-a-pg_statistic-row-made)
+§2.3).
 
 - **`smstore_statistic_tuple()` keeps each row** in
   `smstore_state_t`, by relation and column, as its bytes, with
@@ -8148,11 +8350,14 @@ the analyze from `growth()` again.
 - **`smstore_estimate_index_size()` takes the table's rows**,
   `rel->tuples`, which `get_relation_info()` estimated just
   before (`plancat.c`), and scales the index's entries by them
-  over the analyze's live rows (`STATISTICS.md` §2.2).
+  over the analyze's live rows
+  ([`STATISTICS.md`](STATISTICS.md#22-a-tables-size-live-bytes-scaled-rows)
+  §2.2).
 - **A table analyzed whose heap now holds no bytes** is planned
   at ten pages, as before; its indexes now scale by that guess,
   where they read as empty.
-- **sm1 asks RocksDB less** (`../sm/sm1/API.md`,
+- **sm1 asks RocksDB less**
+  ([`../sm/sm1/API.md`](../sm/sm1/API.md),
   `sm1::approxsize`): its bound above every key is made only
   when there is no bound, and the count of sealed memtables not
   yet flushed is kept under the tree's version, as the files'
@@ -8183,7 +8388,8 @@ A point read of `../bench`'s `wide_mixed` probed four sorted
 runs where it needs two, 8 to 17% of its time.
 
 - **`smstore_vacuum()` compacts each table's store**
-  (`sm_tbl_compact()`, `../sm/sm1/API.md` `sm1::compact`): its
+  (`sm_tbl_compact()`, [`../sm/sm1/API.md`](../sm/sm1/API.md)
+  `sm1::compact`): its
   memtables flushed and every level merged into the bottom
   one. Each table is opened as a reader, so writers go on and
   DDL waits; a bare VACUUM takes every table, as a bare
@@ -8207,14 +8413,17 @@ runs where it needs two, 8 to 17% of its time.
 
 sm keys a table's rows by its primary key now, and every row
 keeps an `_id`, the number digres still calls `rowno` and packs
-into the tid (`../sm/CLUSTER.md`, its §11 step 1). digres reads
+into the tid ([`../sm/CLUSTER.md`](../sm/CLUSTER.md), its §11
+step 1). digres reads
 and writes every row by that number, as before, and sm finds
 the row's key through the table's `_id` index. Two things in
 digres had to change with it:
 
 - **A primary key's row lock names no tid.** sm locks such a
   row by its key, not its `_id`, and does not read the row to
-  learn the one from the other (`../sm/CLUSTER.md` §10,
+  learn the one from the other
+  ([`../sm/CLUSTER.md`](../sm/CLUSTER.md#10-decided-at-review)
+  §10,
   question 5): `sm_lock_status()` gives the row `rowno` 0, and
   `pg_lock_status()` shows it as a tuple of its table with page
   and tuple NULL. `test/server.sh`'s lock status checks lock a
@@ -8222,18 +8431,22 @@ digres had to change with it:
 - **Adding or dropping a primary key forgets the table's
   handles** (`forget_table()`), as an ALTER TABLE that changes
   the table does. sm keys the rows anew, in a new store when
-  the table has rows (`../sm/CLUSTER.md` §8), and a handle the
+  the table has rows
+  ([`../sm/CLUSTER.md`](../sm/CLUSTER.md#8-a-rewrite) §8), and a
+  handle the
   transaction opened before reads the rows as they were laid
   out: pgregress's `join` made temporary tables with primary
   keys and scanned them through such a handle.
 
 Reading by key, the primary key's index scan as a range of the
 rows, and the system column's new name are the next step
-(`../sm/CLUSTER.md` §11).
+([`../sm/CLUSTER.md`](../sm/CLUSTER.md#11-what-is-left) §11).
 
 ## Step 286: digres reads a table with a primary key by its key
 
-The second step of `../sm/CLUSTER.md` §11, its first part. A
+The second step of
+[`../sm/CLUSTER.md`](../sm/CLUSTER.md#11-what-is-left) §11, its
+first part. A
 table keyed by its primary key in sm was read through its `_id`,
 two seeks a row, as digres asked for every row by its tid:
 
@@ -8254,7 +8467,8 @@ two seeks a row, as digres asked for every row by its tid:
   table's rows in the order they went in, digres in the key's.
   `foreign_key` is trimmed again for nine statements: `UPDATE pp
   SET f1 = f1 + 1` over keys 12 and 11 meets its own duplicate
-  in key order (`../sm/CLUSTER.md` §7), and the foreign key
+  in key order ([`../sm/CLUSTER.md`](../sm/CLUSTER.md#7-costs)
+  §7), and the foreign key
   checks after it go with it.
 
 ## Step 287: no bitmap scan of a table in sm
@@ -8263,7 +8477,8 @@ A bitmap scan read its rows by `_id`, in `_id` order: a seek a
 row, two in a table with a primary key, where PostgreSQL's
 sorted TIDs read pages in order. A bitmap of sorted primary
 keys, fetched through one cursor, was planned
-(`../sm/CLUSTER.md` §10, question 6); it was dropped at review
+([`../sm/CLUSTER.md`](../sm/CLUSTER.md#10-decided-at-review) §10,
+question 6); it was dropped at review
 for planning no bitmap scan at all, as InnoDB and CockroachDB
 do without one:
 
@@ -8292,7 +8507,8 @@ do without one:
 
 A tid carries a row's `_id`, and a table with a primary key
 reaches its row by `_id` only through the `_id` index, two
-seeks. `_id` is to go from such a table (`../sm/CLUSTER.md`
+seeks. `_id` is to go from such a table
+([`../sm/CLUSTER.md`](../sm/CLUSTER.md)
 §10, question 6), so the planner no longer plans a row's
 fetch through it:
 
@@ -8316,7 +8532,8 @@ In a table with a primary key, a row's tid reaches the row
 through the `_id` index: an UPDATE by the key read the `_id`
 entry and the row to fetch it, then the `_id` entry again to
 write it. The scan that handed the row out has both, the key
-in its cursor and the row in its pin (`../sm/CLUSTER.md` §6):
+in its cursor and the row in its pin
+([`../sm/CLUSTER.md`](../sm/CLUSTER.md#6-digres) §6):
 
 - **Each open scan records the row it handed out last**
   (`smstore_scan_t`'s `cur`), and `open_scans` lists the
@@ -8406,7 +8623,8 @@ columns, or a keyless table's rowno alone (`access/rowkey.h`'s
   (`add_row_identity_columns()`), "rowno" in a keyless table and
   `rowkey<relid>_<n>` in one with a key; and as a locking row
   mark's junk, `key<rowmark>_<n>` (`add_row_key_junk()`).
-  digres has no table inheritance (`DESIGN.md` §4), so no row
+  digres has no table inheritance
+  ([`DESIGN.md`](DESIGN.md#4-decisions-of-record) §4), so no row
   mark reaches a child through its parent.
 - **A row mark that locks nothing copies the row**
   (`select_rowmark_type()`): PostgreSQL's re-fetch by reference
@@ -8415,13 +8633,15 @@ columns, or a keyless table's rowno alone (`access/rowkey.h`'s
   (`make_rowmark_wholerow()`). A table joined to itself is now
   re-checked as PostgreSQL re-checks it, on the version it
   joined: the known incompatibility of step 270 is gone from
-  `README.md`, and `test/server.sh` expects PostgreSQL's row.
+  [`README.md`](README.md), and `test/server.sh` expects
+  PostgreSQL's row.
 - **A table whose rows the plan names**, an UPDATE's or a
   DELETE's target or a locking row mark's, gets no index-only
   scan (`indxpath.c`'s `rows_named()`): EvalPlanQual cannot
   re-check one. Its `ctid`, which no index has, kept it off one;
   its key's columns, a primary key index's, do not.
-- **A catalog relation** (`SYSCATALOG.md`) is named by its rowno
+- **A catalog relation** ([`SYSCATALOG.md`](SYSCATALOG.md)) is
+  named by its rowno
   in a plan that would write it: the permission check refuses it
   before it runs, as it did.
 - **ModifyTable, LockRows, triggers, EvalPlanQual,
@@ -8649,7 +8869,7 @@ has one.
 
 ## Step 300: a numrange aligns as its decimal128 bounds do
 
-`ISSUE.md` issue 3: a numeric range in an array or a
+[`ISSUE.md`](ISSUE.md) issue 3: a numeric range in an array or a
 multirange lost a bound, `ARRAY[numrange(1, 2), numrange(3,
 4), numrange(5, 6)]` giving `[3,2475880078570760549798248448)`
 for its second. numrange's bounds are decimal128s, aligned to
@@ -8707,7 +8927,8 @@ column, is a decimal64, and numrange's subtype is decimal128.
 
 A duplicate key in a table made in the open transaction, with
 a UNIQUE column, said `could not open relation with OID N`
-(`ISSUE.md` issue 6): the savepoint of the issue's repro had
+([`ISSUE.md`](ISSUE.md) issue 6): the savepoint of the issue's
+repro had
 nothing to do with it. And a unique index made on a table the
 transaction had already written was not kept: the duplicate
 went in, `INSERT 0 1`.
@@ -8735,7 +8956,8 @@ went in, `INSERT 0 1`.
 A temporary table that empties at commit, referenced by a
 foreign key of a table that keeps its rows, committed and
 emptied, leaving the child's rows referencing none
-(`ISSUE.md` issue 7). PostgreSQL's `heap_truncate()` first
+([`ISSUE.md`](ISSUE.md) issue 7). PostgreSQL's `heap_truncate()`
+first
 calls `heap_truncate_check_FKs(rels, true)`, which refuses
 the commit; digres's `PreCommit_on_commit_actions()` truncated
 each table by `smstore_truncate()` and skipped the check.
@@ -8757,7 +8979,8 @@ each table by `smstore_truncate()` and skipped the check.
 ## Step 304: a cursor reads as its DECLARE did on each FETCH
 
 A cursor saw its own transaction's writes made after its
-DECLARE (`ISSUE.md` issue 4): a row deleted after it was
+DECLARE ([`ISSUE.md`](ISSUE.md) issue 4): a row deleted after it
+was
 gone once the cursor was rewound, `MOVE BACKWARD ALL`, and a
 row inserted after it was there. Not rewinds alone: a nested
 loop's inner scan, begun again for each outer row in a later
@@ -8777,7 +9000,8 @@ command id.
   `stmt_begin(outer)` and `stmt_end()`, a trigger's nesting:
   sm1 is unchanged. No pin is needed: a READ COMMITTED
   transaction keeps its begin snapshot registered, at or
-  below any statement's (`sm1/SM1_DESIGN.md` §6.2). A view
+  below any statement's
+  ([`sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md) §6.2). A view
   saved before its statement read takes its snapshot at its
   first resumed read, and `sm_stmt_end()` keeps it in the
   view for every later resume.
@@ -8810,7 +9034,7 @@ command id.
 ## Step 305: FOR UPDATE passes over a row changed since
 
 A FOR UPDATE cursor returned a row its transaction updated or
-deleted after the DECLARE (`ISSUE.md` issue 5), where
+deleted after the DECLARE ([`ISSUE.md`](ISSUE.md) issue 5), where
 PostgreSQL's row lock answers `TM_SelfModified` and
 `ExecLockRows()` passes over the row. It was not SERIALIZABLE
 alone: at REPEATABLE READ and SERIALIZABLE the old row came
@@ -8823,7 +9047,8 @@ version; a deleted one there was passed over as gone.
   statement read: a key whose newest version is the
   transaction's own, written after the statement's mark, fails
   with `SM_ERR_SELFMODIFIED` and takes no lock, as a write of
-  it does (`SM1_DESIGN.md` §6.2), checked under the key's
+  it does ([`SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md) §6.2),
+  checked under the key's
   latch, a temporary store's too (`lock_self_modified()`,
   `lockmgr.cc`). Without it nothing changes: sm2's and sm3's
   own locks, taken to read a key's newest version, the
@@ -8854,7 +9079,8 @@ version; a deleted one there was passed over as gone.
 
 `INSERT ... ON CONFLICT` at REPEATABLE READ or SERIALIZABLE
 failed with sm1's `sm1_read_latest requires READ COMMITTED`
-when two of its rows had one key (`ISSUE.md` issue 9). Not the
+when two of its rows had one key ([`ISSUE.md`](ISSUE.md) issue
+9). Not the
 message alone: DO NOTHING, which PostgreSQL runs, inserting
 the first row and passing over the second, failed with it;
 DO UPDATE, which PostgreSQL refuses, refused with sm1's words.
@@ -8874,7 +9100,8 @@ it.
   read, above READ COMMITTED, a newest version that is the
   transaction's own, which the snapshot does not hide and no
   other writer changes; any other is `SM_ERR_INVALID` as
-  before (`SM1_DESIGN.md` §5.4). DO UPDATE then locks the row
+  before ([`SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md) §5.4). DO
+  UPDATE then locks the row
   as read, which is refused (step 305), and dg says
   PostgreSQL's "cannot affect row a second time".
 - **Tests**: scenario `a19` (`../sm/sm1/mvcc`), at each level,
@@ -8892,14 +9119,18 @@ it.
 
 A column may have an update default, `DEFAULT x ON UPDATE`: the
 value an UPDATE writes in it when it does not assign it, beside
-an optional plain `DEFAULT y` for INSERT (`ONUPDATE.md`). It
+an optional plain `DEFAULT y` for INSERT
+([`ONUPDATE.md`](ONUPDATE.md)). It
 keeps a modification time, or a state an edit moves a row to,
 which PostgreSQL keeps with a trigger, and digres has none. It
-is digres's own: PostgreSQL refuses it (`UNSUPPORTED.md` §10).
+is digres's own: PostgreSQL refuses it
+([`UNSUPPORTED.md`](UNSUPPORTED.md#10-what-digres-adds) §10).
 
 - **sq**: one rule beyond PostgreSQL's grammar, `DEFAULT b_expr
   ON UPDATE`, making the DEFAULT's `Constraint` marked by
-  `generated_when = 'u'` (`../sq/DESIGN.md` §2). It needs one
+  `generated_when = 'u'`
+  ([`../sq/DESIGN.md`](../sq/DESIGN.md#2-what-is-postgresqls-and-what-is-sqs)
+  §2). It needs one
   token of lookahead; a clause of its own, `ON UPDATE x` or
   `ON ROW UPDATE x`, conflicted with a foreign key's `ON
   UPDATE` after `REFERENCES t`, and was dropped for it.
@@ -8926,7 +9157,8 @@ is digres's own: PostgreSQL refuses it (`UNSUPPORTED.md` §10).
   where PostgreSQL refuses them; two update defaults it
   refuses.
 - **Tests**: `test/slt/on_update.test`, every case of
-  `ONUPDATE.md` §8 and what it refuses, failing with the
+  [`ONUPDATE.md`](ONUPDATE.md#8-the-cases) §8 and what it
+  refuses, failing with the
   rewrite, the check, the update default's keeping or the
   analysis's choice of default each disabled;
   `../sm/rel/test/test_on_update.rel` and an sm3 test of
@@ -8938,7 +9170,8 @@ is digres's own: PostgreSQL refuses it (`UNSUPPORTED.md` §10).
 
 ## Step 307b: nothing is made in pg_catalog
 
-`CREATE TABLE pg_catalog.t ()` made a table (`ISSUE.md` issue
+`CREATE TABLE pg_catalog.t ()` made a table
+([`ISSUE.md`](ISSUE.md) issue
 8), as did CREATE VIEW and CREATE SEQUENCE there. PostgreSQL
 refuses one in `heap_create()`, which a relation made in sm
 does not reach. In digres no catalog is in sm: the 28 in
@@ -8973,7 +9206,8 @@ taken name looks in sm alone: `CREATE TABLE pg_catalog.pg_class
 ## Step 308: a SET DEFAULT column named twice is kept once
 
 A foreign key's `ON DELETE SET DEFAULT (d, d)` or `SET NULL
-(d, d, d)` kept every column named (`ISSUE.md` issue 11), where
+(d, d, d)` kept every column named ([`ISSUE.md`](ISSUE.md) issue
+11), where
 PostgreSQL's `validateFkOnDeleteSetColumns()` drops a repeat.
 Not the definition alone: the action's UPDATE set `d` twice,
 `multiple assignments to same column "d"`, so the parent's row
@@ -8997,7 +9231,8 @@ could not be deleted at all.
 
 `CREATE TABLE t (LIKE a, LIKE a)` failed with sm's `could not
 create a table: create table: a column without a name, or two
-with one: xx` (`ISSUE.md` issue 10). Not LIKE alone: any column
+with one: xx` ([`ISSUE.md`](ISSUE.md) issue 10). Not LIKE alone:
+any column
 named twice, `(a int, a int)` or `(LIKE a, xx text)`, did; the
 table was refused, as PostgreSQL refuses it, with sm's words.
 PostgreSQL's `MergeAttributes()`, which says `column "xx"
@@ -9021,7 +9256,8 @@ specified more than once`, is not on a table in sm's path.
 ## Step 310: the hash access method cannot exclude, rightly
 
 `pg_indexam_has_property(hash, 'can_exclude')` is false in
-digres and true in PostgreSQL (`ISSUE.md` issue 12). Closed as
+digres and true in PostgreSQL ([`ISSUE.md`](ISSUE.md) issue 12).
+Closed as
 digres's answer, not a bug. `amutils.c` computes the property
 from the method's `amgettuple`, a scan an exclusion constraint
 checks its rows by; digres's hash method is one in name only
@@ -9036,7 +9272,8 @@ digres cannot do. Every other property of it is PostgreSQL's.
   refused. No source changed; sm has no access methods.
 - **pgregress**: `amutils` keeps its `--dg-differs: the
   result`; the marker's words are pgregress's own, made again
-  at each port, so `TRIAGE.md` says why it differs.
+  at each port, so [`TRIAGE.md`](test/pgregress/TRIAGE.md) says
+  why it differs.
 - **ISSUE.md**: issue 12 is closed in the preamble. Every issue
   the triage found (3 to 12) is closed, and its introduction
   goes with them.
@@ -9044,7 +9281,8 @@ digres cannot do. Every other property of it is PostgreSQL's.
 ## Step 311: partial and expression indexes
 
 An index may have a predicate, `WHERE`, and key columns that
-are expressions (`EXPRINDEX.md`). sm3 kept and maintained both
+are expressions ([`EXPRINDEX.md`](EXPRINDEX.md)). sm3 kept and
+maintained both
 already, asking its host's evaluator whether a row belongs and
 what its expression keys are; digres refused them in
 `check_create_index()`, and registered no evaluator.
@@ -9077,14 +9315,16 @@ what its expression keys are; digres refused them in
 - **Left on purpose**: an error in a build on sm's builders
   says `could not create index "x":` before PostgreSQL's
   message; settings on a builder are their defaults
-  (`EXPRINDEX.md` §8); what ANALYZE gives an expression's
+  ([`EXPRINDEX.md`](EXPRINDEX.md#8-what-it-does-not-do) §8); what
+  ANALYZE gives an expression's
   statistics, and the planner reads of them, was not looked at
   (§10 step 6).
 - **Tests**: `test/slt/expr_index.test`, its results
   PostgreSQL 18's, and two `server.sh` checks, of PostgreSQL's
   DETAIL in each path and of a build a crash cut short,
   resumed on an adopted builder; each shown to fail with one
-  part disabled (`EXPRINDEX.md` §10). A first run of those
+  part disabled ([`EXPRINDEX.md`](EXPRINDEX.md#10-order-of-work)
+  §10). A first run of those
   checks restored each file older than its object, so `make`
   kept the disabled part built in; they were run again, each
   file touched as it was restored.
@@ -9092,8 +9332,11 @@ what its expression keys are; digres refused them in
 ## Step 312: primary keys and unique constraints added and dropped
 
 `ALTER TABLE ... ADD PRIMARY KEY`, `ADD UNIQUE` and their
-`DROP CONSTRAINT` (`PKDDL.md`). sm3 had the rewrite that keys
-a table's rows anew (`../sm/CLUSTER.md` §8); digres refused
+`DROP CONSTRAINT` ([`PKDDL.md`](PKDDL.md)). sm3 had the rewrite
+that keys
+a table's rows anew
+([`../sm/CLUSTER.md`](../sm/CLUSTER.md#8-a-rewrite) §8); digres
+refused
 the statements.
 
 - **ADD** (`add_index_constraint()`, `smstore.c`): parse
@@ -9120,11 +9363,12 @@ the statements.
 - **Tests**: `test/slt/pk_ddl.test`, its results PostgreSQL
   18's; a `server.sh` check of a crash before the commit; 51
   pgregress files trimmed again; each part shown to fail
-  disabled (`PKDDL.md` §5).
+  disabled ([`PKDDL.md`](PKDDL.md#5-tests) §5).
 
 ## Step 313: server.sh's held-row checks read only their own output
 
-`sm/NEXT.md` owed "an upsert against a held row fails now and
+[`sm/NEXT.md`](../sm/NEXT.md) owed "an upsert against a held row
+fails now and
 then": `server.sh` failed 2 runs in 35, at a check where one
 session holds a row and another upserts its key. sm1 was not
 at fault; the test was.
@@ -9155,7 +9399,8 @@ with a filter: sm's index access method took no array
 (`amsearcharray = false`), so the planner made no index path
 of the clause, even with `enable_seqscan` off. The
 benchmark's new Q7, 100 rows by key in one statement
-(`../bench/DESIGN.md` §5), read a million (`INLIST.md`).
+(`../bench/DESIGN.md` §5), read a million
+([`INLIST.md`](INLIST.md)).
 
 - **The access method takes arrays** (`smindex.c`), so
   PostgreSQL 18 also makes `id = 1 OR id = 2` one array.
@@ -9176,8 +9421,10 @@ benchmark's new Q7, 100 rows by key in one statement
   the type cache has the same comparison.
 - **Tests**: `test/slt/in_list.test`, 50 records, PostgreSQL
   18's results and plans; each of six parts disabled fails it
-  (`INLIST.md` §4).
-- **Measured** (`../bench/results/20261028-0854.md`): Q7,
+  ([`INLIST.md`](INLIST.md#4-tests) §4).
+- **Measured**
+  ([`../bench/results/20261028-0854.md`](../bench.old/results/20261028-0854.md)):
+  Q7,
   2,749 transactions a second to PostgreSQL's 2,907 (0.95),
   an index scan on both; Q8, 16 clients with writes, 13,648
   to 37,447 (0.36).
@@ -9191,7 +9438,8 @@ each its own transaction, counted 0 rows in 4 of 160
 sessions, on main as on every branch.
 
 - **The cause, sm1's**: commits publish in commit_ts order
-  (`../sm/sm1/SM1_DESIGN.md` §4.3), and only claim and done
+  ([`../sm/sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md#43-tests)
+  §4.3), and only claim and done
   take the sequencer's mutex; the status record's write and
   sync between them take none, so syncs are grouped. A
   commit done behind an older one still syncing returned
@@ -9275,7 +9523,9 @@ that grows a file costs 2,776 µs, one over bytes the file has
 
 ## Step 318: the roles live in pg_global
 
-The first step of roles (`../aa/ROLE.md` §9). digres had one
+The first step of roles
+([`../aa/ROLE.md`](../aa/ROLE.md#9-order-of-work) §9). digres had
+one
 role, the superuser initdb named, whose name and SCRAM secret
 were the data directory's `superuser` file. A role is the
 whole server's, and no sm transaction spans two databases, so
@@ -9324,7 +9574,9 @@ the invariant).
 
 ## Step 319: role DDL writes pg_global
 
-The second step of roles (`../aa/ROLE.md` §9): CREATE, ALTER
+The second step of roles
+([`../aa/ROLE.md`](../aa/ROLE.md#9-order-of-work) §9): CREATE,
+ALTER
 and DROP ROLE, GRANT and REVOKE of a membership, SET ROLE and
 SET SESSION AUTHORIZATION. `user.c` is PostgreSQL's still, its
 checks and messages too; what it wrote to `pg_authid` and
@@ -9395,7 +9647,9 @@ checks and messages too; what it wrote to `pg_authid` and
 
 ## Step 320: how a client gets in
 
-The third step of roles (`../aa/ROLE.md` §5, §9): the fixed
+The third step of roles
+([`../aa/ROLE.md`](../aa/ROLE.md#5-how-a-client-gets-in) §5, §9):
+the fixed
 rule of step 92, peer on the socket and SCRAM over TCP, gives
 way to ROLE.md's four checks, with no `pg_hba.conf`.
 
@@ -9435,7 +9689,8 @@ way to ROLE.md's four checks, with no `pg_hba.conf`.
 
 ## Step 321: a role that is not a superuser runs statements
 
-The first half of step 4 of roles (`../aa/ROLE.md` §9). Since
+The first half of step 4 of roles
+([`../aa/ROLE.md`](../aa/ROLE.md#9-order-of-work) §9). Since
 step 319 a session may be a role that is not a superuser, and
 every statement of one that looked a name up failed: the
 privilege check of a schema read `pg_namespace` by the
@@ -9485,7 +9740,8 @@ syscache, which opened an index no catalog relation has.
 
 ## Step 322: owners
 
-The second half of step 4 of roles (`../aa/ROLE.md` §9): every
+The second half of step 4 of roles
+([`../aa/ROLE.md`](../aa/ROLE.md#9-order-of-work) §9): every
 object a role makes is its, in `pg_global`, and DDL on one is
 refused to a role that does not own it, as PostgreSQL refuses
 it. Every object was the superuser's.
@@ -9561,7 +9817,9 @@ it. Every object was the superuser's.
 
 ## Step 323: GRANT and REVOKE
 
-The fifth step of roles (`../aa/ROLE.md` §9): GRANT and REVOKE
+The fifth step of roles
+([`../aa/ROLE.md`](../aa/ROLE.md#9-order-of-work) §9): GRANT and
+REVOKE
 on tables, views, sequences, schemas and databases, and the
 checks that then refuse. `aclchk.c` is PostgreSQL's still: what
 it computes, PostgreSQL's ACL merged with the grant, goes to
@@ -9610,7 +9868,9 @@ it computes, PostgreSQL's ACL merged with the grant, goes to
 
 ## Step 324: what depends on a role
 
-The sixth step of roles (`../aa/ROLE.md` §9): DROP ROLE refuses
+The sixth step of roles
+([`../aa/ROLE.md`](../aa/ROLE.md#9-order-of-work) §9): DROP ROLE
+refuses
 a role anything depends on, in any database, and REASSIGN
 OWNED and DROP OWNED act on what it owns and is granted, all
 read from `pg_global`'s entries, as PostgreSQL reads them from
@@ -9677,8 +9937,10 @@ or the table had no index.
 
 What `pg_global.c` kept of the roles, memberships, owners and
 ACLs moves to `../aa`, a library on sm that digres links as it
-links sm and sq (`../aa/README.md`; `../sm/NEXT.md` §3). Its
-design, `ROLE.md`, moves with it to `../aa/ROLE.md`.
+links sm and sq ([`../aa/README.md`](../aa/README.md);
+[`../sm/NEXT.md`](../sm/NEXT.md#3-not-blocking) §3). Its
+design, [`ROLE.md`](../aa/ROLE.md), moves with it to
+[`../aa/ROLE.md`](../aa/ROLE.md).
 
 - **aa**: `pg_global`'s tables and their rows; the snapshots
   every session reads, their mutex and their epochs; a
@@ -9696,7 +9958,9 @@ design, `ROLE.md`, moves with it to `../aa/ROLE.md`.
 - **The build**: `dg.mk` adds `../aa/include`; the plain,
   tsan and release links take `libaa.a` built the same way as
   their sm.
-- **Left in digres, to move next**: `ROLE.md` §5's checks as
+- **Left in digres, to move next**:
+  [`ROLE.md`](../aa/ROLE.md#5-how-a-client-gets-in) §5's checks
+  as
   one decision, and the evaluation of privileges with the
   closures INHERIT, SET and ADMIN make.
 - **Tests**: aa's own, 15 cases on a throwaway home: initdb's
@@ -9712,7 +9976,8 @@ design, `ROLE.md`, moves with it to `../aa/ROLE.md`.
 
 ## Step 327: how a client gets in, decided by aa
 
-`../aa/ROLE.md` §5's checks, but CONNECT, move to aa
+[`../aa/ROLE.md`](../aa/ROLE.md#5-how-a-client-gets-in) §5's
+checks, but CONNECT, move to aa
 (`../aa/src/aa_auth.cc`), as three calls, one for each moment
 of a connection they fall in; digres reads the socket's peer,
 the clock and its sessions, passes them in, and tells the
@@ -9741,8 +10006,11 @@ client what it told it before.
 
 The evaluation of privileges moves from `acl.c` to aa
 (`../aa/src/aa_authz.cc`), and CONNECT at a connect with it:
-what is left of `../aa/ROLE.md` §5 in digres is the protocol.
-`../sm/NEXT.md` §3's item on the module is done, and goes.
+what is left of
+[`../aa/ROLE.md`](../aa/ROLE.md#5-how-a-client-gets-in) §5 in
+digres is the protocol.
+[`../sm/NEXT.md`](../sm/NEXT.md#3-not-blocking) §3's item on the
+module is done, and goes.
 
 - **The closures**: the roles a role is a member of through
   grants with INHERIT, with SET, or any, breadth first, a
@@ -9780,7 +10048,8 @@ what is left of `../aa/ROLE.md` §5 in digres is the protocol.
 ## Step 329: a role's check on a table, without its pg_class row
 
 What a role that is not a superuser pays: 12 to 16% of a read
-by key on `digres-release` (`../sm/NEXT.md` §1). Statements that
+by key on `digres-release`
+([`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1). Statements that
 read no row (`WHERE ... AND false`) cost the role 7 to 10 µs
 more each, and `select 1` nothing, so the cost is the check on
 the table. A profile of the session thread by gdb, stopping it
@@ -9826,14 +10095,16 @@ table, and 2.1% of it reading the ACL's text in aa
   the superuser, within the runs' noise, on reads by key and on
   statements that read no row. Sixteen clients lose 2 to 9%:
   what is left is likely the one mutex every owner and ACL
-  lookup takes (`../sm/NEXT.md` §1, step 4).
+  lookup takes ([`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1, step
+  4).
 - **Tests**: aa's, a case of malformed text, an empty field, a
   sign, two spaces between items; four mutations of the reader
   caught.
 
 ## Step 331: a role's check on an object, cached
 
-The rule (`../aa/AA_DESIGN.md`): a check must be cheap; making,
+The rule ([`../aa/AA_DESIGN.md`](../aa/AA_DESIGN.md)): a check
+must be cheap; making,
 changing and granting roles may be slow. After step 330 a
 role's check on a table still found the table's entry twice,
 copying `pg_global`'s snapshot pointer under its one mutex each
@@ -9908,7 +10179,8 @@ cached blocks, 29% a data block's search, 13.7% of it reading
 entries one by one from the restart point the hash index lands
 on to the key, up to 15 with RocksDB's 16 entries an interval.
 
-- **sm1** (`../sm/sm1/SM1_DESIGN.md` §12.2): a store CF's data
+- **sm1** ([`../sm/sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md)
+  §12.2): a store CF's data
   blocks restart every 4 entries (`store_restart_interval`).
 - **Tests**: sm1, a block's restart count is its entries over
   4; 16 fails it.
@@ -10024,7 +10296,8 @@ for sm1's `lock_mu` in `lock_try`, 12% waking the next; a
 statement takes 16 table locks and releases them at commit, all
 under that one mutex, ~640 thousand holds a second.
 
-- **sm1** (`../sm/sm1/SM1_DESIGN.md` §5.1): the lock table's key
+- **sm1** ([`../sm/sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md)
+  §5.1): the lock table's key
   is `lock_key_t`, two 64-bit words, the storeid and the oid, or
   a hash of a row's key; no allocation finds or adds an entry,
   where the string key was allocated, and an entry's string again
@@ -10051,7 +10324,8 @@ After step 337, 36% of t16's busy samples at 16 clients still
 waited for `lock_mu` in `lock_try`: every statement takes its
 tables' IS, and every session meets every other at that mutex.
 
-- **sm1** (`../sm/sm1/SM1_DESIGN.md` §5.1, PostgreSQL's fast
+- **sm1** ([`../sm/sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md)
+  §5.1, PostgreSQL's fast
   path): an OID lock taken IS or IX is kept in one of 32 slots
   of the session's own, under its `fp_mu`, not in the lock
   table, while a count in `fp_strong`, 1,024 by the key's hash,
@@ -10080,7 +10354,8 @@ tables' IS, and every session meets every other at that mutex.
   at 16 clients 65 µs (step 337: 121). No sample waits for
   `lock_mu`; 14% wait for the snapshot's mutex
   (`db_take_snapshot`, `db_release_snapshot`).
-- **Next** (`../sm/NEXT.md` §1, item 4): the lock table a hash
+- **Next** ([`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1, item 4):
+  the lock table a hash
   table of its own, measured without digres or sm.
 
 ## Step 339: the deadlock search reads its edges from the table
@@ -10095,7 +10370,8 @@ it, but until it runs again its list still names the holder,
 which may by then wait, in a transaction of its own, on
 something the waiter holds; the search walked those lists.
 
-- **sm1** (`../sm/sm1/SM1_DESIGN.md` §5.1): the search reads a
+- **sm1** ([`../sm/sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md)
+  §5.1): the search reads a
   waiter's edges from the lock table as it walks
   (`lock_blockers`), as PostgreSQL's detector does: the holders
   that hold, now, a mode conflicting with the one it asks, or the
@@ -10122,7 +10398,8 @@ entry, allocated, past 15 bytes, under `lock_mu`; a waiter copied
 its lock's name; a prepared record built each name in a string
 of its own.
 
-- **sm1** (`../sm/sm1/SM1_DESIGN.md` §5.1): a row lock's key is
+- **sm1** ([`../sm/sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md)
+  §5.1): a row lock's key is
   appended to `lock_keys`, one buffer of the session's, its entry
   keeping the offset and length; a rollback to a savepoint cuts
   the buffer back with the list, a commit empties it, keeping its
@@ -10144,7 +10421,8 @@ of its own.
 The lock list and its key buffer are vectors, which grow under
 `lock_mu`, moving what they hold.
 
-- **sm0** (`../sm/sm0/README.md`): `blist_t<T, N>`, in
+- **sm0** ([`../sm/sm0/README.md`](../sm/sm0/README.md)):
+  `blist_t<T, N>`, in
   `include/sm0_blist.h`, a list of blocks of N entries, linked
   oldest first. An entry never moves; `emplace` constructs one
   in place; a mark is a block and its top, and a cut to it gives
@@ -10165,7 +10443,8 @@ A session's lock list and its row keys were vectors, grown under
 a holder and a slot named their entry by index, an entry its key
 by offset.
 
-- **sm1** (`../sm/sm1/SM1_DESIGN.md` §5.1): both are step 341's
+- **sm1** ([`../sm/sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md)
+  §5.1): both are step 341's
   `blist_t`, of 256 entries and 8 KB a block; `lockref_t` moves
   to `db.h`. A holder keeps its first entry's position, a slot
   its entry's, an entry a pointer to its key, a savepoint a mark
@@ -10208,7 +10487,8 @@ slot kept one.
 
 ## Step 344: a benchmark of row locks
 
-`../sm/NEXT.md` §1 item 4 wants a row-lock workload in digres,
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1 item 4 wants a
+row-lock workload in digres,
 to show what a lock table of sm1's own gains a client.
 
 - **bench** (`../bench/rowlocks.sh`): r of 100,000 rows; 1, 10
@@ -10255,7 +10535,8 @@ to show what a lock table of sm1's own gains a client.
   and 3,949, ins 5,540 and 5,715, and the same insert through
   `(select 1)` 5,660 and 5,365. In either order, the same.
 - **Left**: profiling `lock100` at 16 clients; the write path's
-  two trips through RocksDB's queue (`../sm/NEXT.md` §1, item
+  two trips through RocksDB's queue
+  ([`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1, item
   5).
 
 ## Step 345: B+tree secondary indexes, the tree
@@ -10393,7 +10674,8 @@ and counts every thread):
 
 ## Step 349: rows of an ascending batch read by one iterator
 
-`../sm/NEXT.md` §1 item 3, step 2: rows of sorted, close keys
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1 item 3, step 2: rows
+of sorted, close keys
 read by one cursor, not by `MultiGet`. Inside sm1's
 `chain_read_batch`, so every batch read gains, a tree's scan's
 and digres's read-ahead of today's entries alike.
@@ -10933,7 +11215,7 @@ is now as the code is:
   are copied, not the leaf.
 - `sm3/include/sm3.h`, writes: a keyed row is named by its
   key, not its `_id`, and a row another transaction moved is
-  not followed (`CLUSTER.md` §4).
+  not followed ([`CLUSTER.md`](../sm/CLUSTER.md#4-writing) §4).
 - `sm3/include/sm3.h`, `tbl_insert_arbiter()`: a tree
   arbiter's entry goes in after the row, under a savepoint.
 - `sm3/src/catalog/internal.h`, `rewrite_table()`: only a
@@ -10998,7 +11280,8 @@ planner reads it.
 
 ## Step 374: a commit's sync outside RocksDB's write queue
 
-`../sm/NEXT.md` §1 item 5: an insert's version write, unsynced,
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1 item 5: an insert's
+version write, unsynced,
 waited for the syncs of other sessions' commits, as RocksDB's
 write group led by a synced write takes in the unsynced writes
 behind it (step 344). Design and cases: `../sm/sm1/GROUPSYNC.md`.
@@ -11071,14 +11354,16 @@ each entry a key of RocksDB's. `WITH (tree = on)` is gone.
   `LIKE` copy's kind left out, `index_kind.test` fails: the
   copied primary key is refused as a tree. pgregress reads
   `lsm` as PostgreSQL's `btree` where an index is printed
-  (`test/pgregress/README.md`); slt splits the five records
+  ([`test/pgregress/README.md`](test/pgregress/README.md)); slt
+  splits the five records
   that print one by server.
 - **Not changed**: sq's corpus test fails on 29 scripts, on
   `main` as here: the same 29.
 
 ## Step 376: what is left of the 16-client write gap, profiled
 
-`../sm/NEXT.md` §1 item 5: after step 374, `ins` and `fk` at 16
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1 item 5: after step
+374, `ins` and `fk` at 16
 clients run at about 0.7 of PostgreSQL's tps. This step measures
 where the rest goes. It changes no code.
 
@@ -11209,10 +11494,12 @@ waiting commit on one condition variable.
 
 ## Step 378: ALTER COLUMN TYPE, a key column's among them
 
-`../sm/NEXT.md` §1 item 1, `../sm/CLUSTER.md` §11 step 3: the
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1 item 1,
+[`../sm/CLUSTER.md`](../sm/CLUSTER.md#11-what-is-left) §11 step
+3: the
 key-column ALTERs waited for `ALTER COLUMN TYPE`, which digres
 refused for every column. Design, cases and decisions:
-`ALTERTYPE.md`.
+[`ALTERTYPE.md`](ALTERTYPE.md).
 
 - **sm3**: `alter_column_type()`. With the host's converter, a
   table with rows is rewritten into a new store, as ADD PRIMARY
@@ -11255,7 +11542,8 @@ refused for every column. Design, cases and decisions:
 
 ## Step 379: the grid again, and a row's allocations
 
-`../sm/NEXT.md` §1 item 3, its step 3: the grid of index scans
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1 item 3, its step 3:
+the grid of index scans
 measured again on both kinds, then the gap profiled.
 
 - **The grid** (`../bench.old/btree.sh`, each kind asked for by
@@ -11322,7 +11610,9 @@ SCRAM sends no password at a login, but `CREATE ROLE` and
 `ALTER ROLE ... PASSWORD 'x'` carry one in the statement's
 text, which crosses TCP in the clear while digres has no TLS,
 and which an error's `STATEMENT:` line writes to the log.
-Design: `../aa/ROLE.md` §5.1.
+Design:
+[`../aa/ROLE.md`](../aa/ROLE.md#51-a-password-set-in-cleartext)
+§5.1.
 
 - **user.c**: `check_cleartext_password()`, in `CreateRole()`
   and `AlterRole()`: a password in cleartext over TCP without
@@ -11346,7 +11636,8 @@ Design: `../aa/ROLE.md` §5.1.
 
 ## Step 381: sm's catalog rows in the syscache, and aa's snapshots without a lock
 
-`../sm/NEXT.md` §1 item 2, its steps 3 to 5. Step 321 stopped the
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1 item 2, its steps 3 to
+5. Step 321 stopped the
 syscache keeping sm's catalog rows, as no DDL of sm's invalidated
 them. Each lookup made its row again.
 
@@ -11400,12 +11691,17 @@ them. Each lookup made its row again.
 
 ## Step 382: an MD5 password is refused
 
-A login is by SCRAM alone (`../aa/ROLE.md` §5), so a role with
+A login is by SCRAM alone
+([`../aa/ROLE.md`](../aa/ROLE.md#5-how-a-client-gets-in) §5), so
+a role with
 an md5 hash as its password cannot log in. Over TCP the hash
 also crossed the network in the clear, and an md5 hash of a
 password and a role name can be checked against a guess
-offline. `ISSUE.md` held it as an open question; the user chose
-to refuse it everywhere. Design: `../aa/ROLE.md` §5.1.
+offline. [`ISSUE.md`](ISSUE.md) held it as an open question; the
+user chose
+to refuse it everywhere. Design:
+[`../aa/ROLE.md`](../aa/ROLE.md#51-a-password-set-in-cleartext)
+§5.1.
 
 - **user.c**: `check_password_given()`, formerly
   `check_cleartext_password()`, refuses an md5 hash first, on
@@ -11429,10 +11725,12 @@ to refuse it everywhere. Design: `../aa/ROLE.md` §5.1.
 A logged statement masks each string after the keyword
 `PASSWORD` (step 380). A statement with `PASSWORD` misspelled,
 such as `ALTER ROLE r PASWORD 'x'`, fails to parse, and its
-`STATEMENT:` line showed the password. `ISSUE.md` held it as an
+`STATEMENT:` line showed the password. [`ISSUE.md`](ISSUE.md)
+held it as an
 open question; the user chose to mask a failed role statement,
 and to leave `pg_stat_activity` as PostgreSQL's. Design:
-`../aa/ROLE.md` §5.1.
+[`../aa/ROLE.md`](../aa/ROLE.md#51-a-password-set-in-cleartext)
+§5.1.
 
 - **elog.c**: `mask_query()`, the scan `query_for_log()` was,
   takes `syntax_error`. With it, every string after `CREATE` or
@@ -11452,9 +11750,11 @@ and to leave `pg_stat_activity` as PostgreSQL's. Design:
 ## Step 384: DuckDB's SQL tests, side by side, and a dropped column
 
 `test/duck/` runs DuckDB's SQL test files on PostgreSQL 18 and
-on digres, and reports where digres differs (`DUCKPLAN.md`,
-`test/duck/README.md`). What it found and what was not fixed
-is in `ISSUE.md`, issues 15 to 26.
+on digres, and reports where digres differs
+([`DUCKPLAN.md`](DUCKPLAN.md),
+[`test/duck/README.md`](test/duck/README.md)). What it found and
+what was not fixed
+is in [`ISSUE.md`](ISSUE.md), issues 15 to 26.
 
 - **The runner**, `test/duck/duckrun.cc`, beyond the plan:
   - DuckDB writes a loop variable `{i}`, not `${i}`: both are
@@ -11505,7 +11805,8 @@ failed with sm's error while its build ran.
   either, as it runs after the statement; PostgreSQL's would
   cancel a CREATE INDEX that takes longer. A cancelled wait
   leaves the index, INVALID, its build running, as before:
-  `DESIGN.md` §4 promises PostgreSQL's outcome for a build that
+  [`DESIGN.md`](DESIGN.md#4-decisions-of-record) §4 promises
+  PostgreSQL's outcome for a build that
   fails, not for a wait cut short.
 - **Tests**: `test/slt/index_build_wait.test`: CREATE INDEX and
   CREATE UNIQUE INDEX under a `lock_timeout` of 1 ms, used and
@@ -11616,7 +11917,8 @@ did not exist, unqualified. Each looked the name up with
 Issue 19, found by DuckDB's tests: `ALTER SCHEMA s RENAME TO t`
 ran PostgreSQL's `RenameSchema()`, which writes `pg_namespace`,
 and failed with "relation 2615 cannot be written: digres has no
-catalog tables". A schema is sm's (`../sm/NAMESPACE.md`), and sm
+catalog tables". A schema is sm's
+([`../sm/NAMESPACE.md`](../sm/NAMESPACE.md)), and sm
 renames none.
 
 - **schemacmds.c**: `RenameSchema()` refuses with `0A000`,
@@ -11635,7 +11937,9 @@ renames none.
 ## Step 393: a bare numeric rounds its places, as DECIMAL.md now says
 
 Issue 21, found by DuckDB's tests: `'922337203685478.758'::numeric`
-gave `922337203685478.76`, where `DECIMAL.md` §2.1 said a bare
+gave `922337203685478.76`, where
+[`DECIMAL.md`](DECIMAL.md#21-two-types-and-numeric-a-name-for-them)
+§2.1 said a bare
 `numeric` "refuses past 17 digits". The code does it on purpose:
 `d64_of_wide()` rounds places away, half away from zero, to fit
 17 digits, and refuses only more than 17 digits before the
@@ -11664,7 +11968,9 @@ older than another transaction's commit.
   at the snapshot instead would have missed a row committed
   after it, and made a NOT NULL column that holds a null.
 
-What changed (`../sm/XCTMGR.md` §5.5):
+What changed
+([`../sm/XCTMGR.md`](../sm/XCTMGR.md#55-reading-the-newest-state)
+§5.5):
 
 - **sm1**: `sm1::view_latest(session, on)`. While on, every read
   and every cursor opened reads at `visible_ts`, at every level,
@@ -11695,13 +12001,15 @@ What changed (`../sm/XCTMGR.md` §5.5):
 
 ## Step 395: a function's EXECUTE check, kept in the session
 
-`../sm/NEXT.md` §1 item 2 left a role's prepared point read 4.4%
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1 item 2 left a role's
+prepared point read 4.4%
 dearer than the superuser's, against a goal of 3%. PostgreSQL's
 EXECUTE check of the operator's function is most of the gap:
 about 1,260 instructions at each executor start, a syscache
 lookup of `pg_proc`, a default ACL made and freed, and aa's mask.
 
-- **aa** (`../aa/AA_DESIGN.md` "Caching"): `aa_kept_mask()`,
+- **aa** ([`../aa/AA_DESIGN.md`](../aa/AA_DESIGN.md) "Caching"):
+  `aa_kept_mask()`,
   `aa_keep_mask()` and `aa_forget_kept_masks()` keep the mask of
   an object whose owner and ACL the host reads, by (class,
   object, role), under the stamp `aa_object_mask()` uses. A keep
@@ -11728,7 +12036,8 @@ lookup of `pg_proc`, a default ACL made and freed, and aa's mask.
 
 No role has an MD5 password (step 382), and digres never chose
 md5 as a login's method: `aa_auth_method()` gives peer or SCRAM
-(`../aa/ROLE.md` §5). What served an md5 login was dead.
+([`../aa/ROLE.md`](../aa/ROLE.md#5-how-a-client-gets-in) §5).
+What served an md5 login was dead.
 
 - **auth.c**: `CheckMD5Auth()` goes. `CheckPWChallengeAuth()`
   does SCRAM alone, so its guess of a missing role's password
@@ -11804,14 +12113,16 @@ after the validation; PostgreSQL 18 for comparison).
   on every write (an orphan insert, and the delete of a
   referenced parent row, both fail). `ADD FOREIGN KEY` holds
   both X (`sm3::create_fkey`). The contract of `sm_view_latest()`
-  says so (`../sm/XCTMGR.md` section 5.5).
+  says so ([`../sm/XCTMGR.md`](../sm/XCTMGR.md) section 5.5).
 - **What does block**: `sm3::validate_fkey()` writes the child's
   table record, which locks the child X to the transaction's
   end. The child's writer waited 3.9 s, PostgreSQL's 0.01 s. The
   parent's waited 0.02 s, as PostgreSQL's did. The check took
   0.21 s, PostgreSQL's 0.02 s.
-- **Docs**: `UNSUPPORTED.md`, `../DG-vs-PG.md` and
-  `../sm/NEXT.md` state it; NEXT.md lists the way to revisit it.
+- **Docs**: [`UNSUPPORTED.md`](UNSUPPORTED.md),
+  [`../DG-vs-PG.md`](../DG-vs-PG.md) and
+  [`../sm/NEXT.md`](../sm/NEXT.md) state it; NEXT.md lists the
+  way to revisit it.
 
 ## Step 399: does marking a foreign key valid need the table X?
 
@@ -11830,12 +12141,14 @@ asks why, and what it costs when VALIDATE is one statement.
   [0.03 s]; a writer that starts meanwhile does not wait behind
   it, 0.02 s [0.01 s], so VALIDATE could wait for ever under
   overlapping writers.
-- **Left**: `../sm/NEXT.md` lists the steps to take the lighter
+- **Left**: [`../sm/NEXT.md`](../sm/NEXT.md) lists the steps to
+  take the lighter
   write; not urgent.
 
 ## Step 400: a role's checks, measured with no rows to read
 
-`../sm/NEXT.md` §1 item 2 left step 395 unmeasured. Callgrind on
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1 item 2 left step 395
+unmeasured. Callgrind on
 a point read was the plan. A statement that reads no row is a
 better instrument: the checks are most of what is left, so
 `perf stat` shows them, though it swings 2% on a point read.
@@ -11935,7 +12248,8 @@ drops the ones whose feature digres removed.
   expected output is PostgreSQL's.
 - **Kept on purpose**: the TLS, GSSAPI and Bonjour settings.
   They are compiled out by configure, not removed
-  (`CODE.md` §7), and TLS is an open decision.
+  ([`CODE.md`](CODE.md#7-deleting-postgresql-code) §7), and TLS
+  is an open decision.
 - **Left**: settings of refused features (triggers,
   partitioning, foreign tables, xml) and of the process model.
   Their code is still compiled.
@@ -11958,7 +12272,8 @@ DG has no triggers, so `session_replication_role` and
 
 ## Step 405: a visible commit wakes only the commits it makes visible
 
-`../sm/NEXT.md` §1 item 5: after step 377, `ins` and `fk` at 16
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1 item 5: after step
+377, `ins` and `fk` at 16
 clients ran at about 0.86 of PostgreSQL's tps. This step finds
 why, and removes half of it.
 
@@ -11984,7 +12299,8 @@ why, and removes half of it.
   in turn, the mutex of every claim of a `commit_ts` and of a
   keyless table's `_id`.
 - **sm1** (`db_commit_done()`, `db_commit_wait()`,
-  `../sm/XCTMGR.md` §8.4): a commit that must wait joins
+  [`../sm/XCTMGR.md`](../sm/XCTMGR.md#84-a-commit-returns-once-it-is-visible)
+  §8.4): a commit that must wait joins
   `visible_head`, a list oldest first, under `alloc_mu`, and
   sleeps on a semaphore of its own. The commit that raises
   `visible_ts` takes out the prefix it made visible, and wakes
@@ -12005,7 +12321,8 @@ why, and removes half of it.
   while some older commit is still in the queue, and the newer
   commits it covers wait for that commit's sync. PostgreSQL has
   no such wait: its snapshot is a set of xids, and a commit is
-  visible once its xid leaves the proc array. `../sm/XCTMGR.md`
+  visible once its xid leaves the proc array.
+  [`../sm/XCTMGR.md`](../sm/XCTMGR.md)
   §8.5 writes this down as a shortcoming, with what could
   remove it.
 - **Tests**: sm1's `test_xct.cc`, four commits, two of them
@@ -12016,14 +12333,17 @@ why, and removes half of it.
 
 ## Step 406: commit records in commit_ts order
 
-`../sm/COMMITORDER_PLAN.md`, after step 405: two commits in three
+[`../sm/COMMITORDER_PLAN.md`](../sm/COMMITORDER_PLAN.md), after
+step 405: two commits in three
 still waited about 220 µs for an older commit's sync, as a
 commit claimed its `commit_ts` and then wrote its own record
 through RocksDB's write queue, so records reached the WAL out of
 `commit_ts` order.
 
 - **sm1** (`enter_queue()`, `lead_batch()`, `finish_commit()` in
-  `../sm/sm1/src/xct.cc`; `../sm/XCTMGR.md` §3.2, §8.2, §8.5):
+  `../sm/sm1/src/xct.cc`;
+  [`../sm/XCTMGR.md`](../sm/XCTMGR.md#32-visible_ts-and-the-commit-queue)
+  §3.2, §8.2, §8.5):
   1. A commit claims its `commit_ts`, passes SSI, raises
      `last_ddl_ts` if it made or dropped a store, and joins the
      commit queue's tail, in one hold of `commit_mu`. So the
@@ -12057,7 +12377,8 @@ through RocksDB's write queue, so records reached the WAL out of
 
 ## Step 407: a tree's row key viewed, not copied
 
-`../sm/NEXT.md` §1 item 3: q2, 183 entries of a btree counted,
+[`../sm/NEXT.md`](../sm/NEXT.md#1-next) §1 item 3: q2, 183
+entries of a btree counted,
 ran 1.52 times PostgreSQL's instructions, against a goal of 1.5.
 
 - **Profile**: callgrind on `digres-release`, collection off

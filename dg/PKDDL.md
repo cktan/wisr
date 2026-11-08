@@ -1,8 +1,10 @@
 # PKDDL — primary keys and unique constraints added and dropped
 
-**Status: built** (`WORKNOTE.md` step 312). §6 has what was
+**Status: built** ([`WORKNOTE.md`](WORKNOTE.md) step 312). §6 has
+what was
 decided, §7 the order of work, §8 what building it found. It
-is `../sm/CLUSTER.md` §11's step 3, digres's part; sm's is
+is [`../sm/CLUSTER.md`](../sm/CLUSTER.md#11-what-is-left) §11's
+step 3, digres's part; sm's is
 built.
 
 ```sql
@@ -30,7 +32,9 @@ index, which PostgreSQL refuses.
 
 ## 0. In brief
 
-- **sm has it all** (`../sm/CLUSTER.md` §8): a primary index
+- **sm has it all**
+  ([`../sm/CLUSTER.md`](../sm/CLUSTER.md#8-a-rewrite) §8): a
+  primary index
   made on a table with rows copies them into a new store under
   the new key (`sm3::create_index`, `rekey()`), and one dropped
   keys them by `_id` again; a unique constraint's index is an
@@ -84,7 +88,7 @@ Run on PostgreSQL 18.6:
   existing index a constraint's, or re-key by it.
 - **The key-column ALTERs** (`ALTER COLUMN TYPE`, a collation
   change) that §11 step 3 names: built later, as ALTER COLUMN
-  TYPE of any column (`ALTERTYPE.md`).
+  TYPE of any column ([`ALTERTYPE.md`](ALTERTYPE.md)).
 - **DEFERRABLE**: refused, as for CREATE TABLE.
 
 ## 4. The cases
@@ -93,11 +97,11 @@ Run on PostgreSQL 18.6:
 | --- | --- |
 | Empty table | sm keys it anew in place, under the table-oid lock X |
 | Table with rows | sm copies it into a new store; the old is dropped at commit |
-| TOAST | sm copies the chunks with the rows, the pointers renamed (`CLUSTER.md` §8) |
-| Secondary, partial and expression indexes | refilled by the rewrite, through the evaluator on the session's thread (`EXPRINDEX.md`) |
+| TOAST | sm copies the chunks with the rows, the pointers renamed ([`CLUSTER.md`](../sm/CLUSTER.md#8-a-rewrite) §8) |
+| Secondary, partial and expression indexes | refilled by the rewrite, through the evaluator on the session's thread ([`EXPRINDEX.md`](EXPRINDEX.md)) |
 | A NULL in a key column | `sm_cat_set_not_null` fails first: PostgreSQL's words |
 | A duplicate key | the rewrite fails: PostgreSQL's `could not create unique index`, with the key |
-| ADD UNIQUE on a table with rows | built after the commit, as CREATE UNIQUE INDEX is (`DESIGN.md` §4): in a transaction block a duplicate is reported at COMMIT |
+| ADD UNIQUE on a table with rows | built after the commit, as CREATE UNIQUE INDEX is ([`DESIGN.md`](DESIGN.md#4-decisions-of-record) §4): in a transaction block a duplicate is reported at COMMIT |
 | A second primary key | sm refuses; PostgreSQL's words |
 | Abort, savepoint rollback | the new store is dropped; the catalog as it was |
 | Crash before commit | the new store is unreferenced, as a TRUNCATE's swap leaves one: after a restart the table has its rows, no index, its column nullable (`server.sh`) |
@@ -142,7 +146,8 @@ Run on PostgreSQL 18.6:
 1. ADD PRIMARY KEY, ADD UNIQUE. → verify: slt.
 2. DROP CONSTRAINT, RESTRICT and CASCADE. → verify: slt.
 3. DROP INDEX refused. → verify: slt, pgregress.
-4. pgregress trimmed again; `UNSUPPORTED.md` §3 updated.
+4. pgregress trimmed again;
+   [`UNSUPPORTED.md`](UNSUPPORTED.md#3-ddl) §3 updated.
 
 ## 8. What building it found
 

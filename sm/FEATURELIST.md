@@ -1,6 +1,7 @@
 # FEATURELIST — the PostgreSQL subset wisr targets
 
-`OBJECTIVE.md` says wisr's PostgreSQL target is a subset —
+[`OBJECTIVE.md`](OBJECTIVE.md) says wisr's PostgreSQL target is a
+subset —
 the essential parts, not full compatibility. This is that
 subset, spelled out feature by feature so it can be decided
 once and referenced afterward, instead of re-litigated every
@@ -11,10 +12,12 @@ should support. Leave a box unchecked for everything it
 should not. Add a line under any item if the decision needs
 a reason attached — a reason written down here is worth more
 later than the box itself. Once this file stops changing,
-its decisions move into `OBJECTIVE.md` and `PART4.md`, and
+its decisions move into [`OBJECTIVE.md`](OBJECTIVE.md) and
+[`PART4.md`](PART4.md), and
 this file either stays as the working list or is retired.
 
-Scope note: `OBJECTIVE.md` already excludes a query
+Scope note: [`OBJECTIVE.md`](OBJECTIVE.md) already excludes a
+query
 language, a planner and an executor from wisr itself. Most
 SQL-language features (window functions, CTEs, stored
 procedures, triggers) are decided by whatever sits above
@@ -41,7 +44,7 @@ ordered key as the only access path below sm2.
 - [x] bool
 - [x] timestamp / date / time
 - [x] interval
-      — not as an index key in digres (`../dg/WORKNOTE.md` step 99)
+      — not as an index key in digres ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 99)
 - [x] UUID
 - [x] bytea
 - [ ] JSON / JSONB
@@ -128,7 +131,7 @@ ordered key as the only access path below sm2.
       — via each row's attribute count, as PostgreSQL's natts
 - [ ] other online ALTER (type change, drop column)
       — DROP COLUMN built (`sm_cat_drop_column`); ALTER
-        COLUMN TYPE refused (`../dg/UNSUPPORTED.md`)
+        COLUMN TYPE refused ([`../dg/UNSUPPORTED.md`](../dg/UNSUPPORTED.md))
 
 ## 7. Replication / backup / ops
 

@@ -15,8 +15,11 @@ operations on a row, every read-write shape known to produce
 an anomaly under snapshot isolation, and, for each one, the
 answer at every level pairing.
 
-`../LOCKMGR.md` §1.7, `../XCTMGR.md` §7 defines the mechanisms;
-`../XCTMGR.md` explains the serializable theory they implement.
+[`../LOCKMGR.md`](../../LOCKMGR.md#17-a-write) §1.7,
+[`../XCTMGR.md`](../../XCTMGR.md#7-ssi-serializable-snapshot-isolation)
+§7 defines the mechanisms;
+[`../XCTMGR.md`](../../XCTMGR.md) explains the serializable
+theory they implement.
 This document is about behaviour: given a history, which calls
 fail and which commit.
 
@@ -38,7 +41,8 @@ writer of the same row waits for that transaction, rather
 than producing a version nobody asked for. This is what
 makes a dirty write impossible. No lock is recorded for it:
 the uncommitted version is what the second writer waits on
-(`../LOCKMGR.md`). Two writers that wait on each other's rows
+([`../LOCKMGR.md`](../../LOCKMGR.md)). Two writers that wait on
+each other's rows
 would wait forever, so the engine breaks the cycle itself:
 the youngest transaction on it fails with
 `SM_ERR_DEADLOCK`, and the others go on.
@@ -124,7 +128,8 @@ runs both.
 Each scenario is a script in `in/`, written as a timeline.
 The driver runs it once per pairing and prints a transcript;
 `good/` holds the transcript each script must produce, and
-`make test` diffs the two. `DRIVER.md` is the reference for
+`make test` diffs the two. [`DRIVER.md`](DRIVER.md) is the
+reference for
 the command and the language;
 `in/b09_dirty_write_blocks_commit.t` reads:
 
@@ -184,7 +189,8 @@ running, and `e07` runs eight threads taking table locks.
 Everything else -- families A, B, C, F, G, H and P, and `e04`
 and `e05`, the blocking scenarios included -- is a script, 122
 of them, and `make scenarios` runs each twice, on
-versioned stores and on chained ones (`DRIVER.md` §7).
+versioned stores and on chained ones
+([`DRIVER.md`](DRIVER.md#7-chained-mode) §7).
 
 ## 4. Family A — visibility
 
@@ -268,7 +274,8 @@ SSI.
 | b36 | as b35, `T1: a` | BLOCK → OK, R1 = 20 | same | same | `in/b36_read_modify_write_first_aborts.t` |
 
 b35 and b36 run at all nine pairings of the three levels
-(`pairings levels`, `DRIVER.md` §2.1). Where T2 is READ
+(`pairings levels`, [`DRIVER.md`](DRIVER.md#21-directives) §2.1).
+Where T2 is READ
 COMMITTED, b35's T2 is not aborted: its write is refused with
 UPDATED, it re-reads 10, re-applies v + 20 and commits 30, so
 neither increment is lost. T1's level changes nothing.
@@ -394,7 +401,8 @@ Four of the rest say more than their row can:
 
 - **c26 and c27**: the pivot commits whichever neighbour
   aborts, because an abort takes its edges with it
-  (`../XCTMGR.md` §7.4). Under Cahill's two flags both
+  ([`../XCTMGR.md`](../../XCTMGR.md#74-the-abort-rule) §7.4).
+  Under Cahill's two flags both
   failed T2; they pin that the refinement withdraws an edge.
 - **c29**: a read taken before a savepoint still constrains
   the transaction after a rollback past it (§6.5). Were it
@@ -433,7 +441,9 @@ Every script here pins its sessions with `rc`, since `pairings
 all` runs only RR and SERIALIZABLE. A write that meets a row
 committed after the transaction began fails with `updated`,
 which does not abort; the caller reads the newest version with
-`readlatest` and goes on (`../LOCKMGR.md` §1.9).
+`readlatest` and goes on
+([`../LOCKMGR.md`](../../LOCKMGR.md#19-read-committed-write-re-read-write)
+§1.9).
 
 | # | Schedule | Outcome | File |
 |---|---|---|---|
@@ -451,9 +461,11 @@ which does not abort; the caller reads the newest version with
 
 ## 7b. Family P — PostgreSQL's own isolation tests
 
-Ported from PostgreSQL's isolation test suite (`POSTGRES.md`):
+Ported from PostgreSQL's isolation test suite
+([`POSTGRES.md`](POSTGRES.md)):
 each script is one PostgreSQL spec, run as a permutation script
-(`DRIVER.md` §6), every permutation PostgreSQL runs, with the
+([`DRIVER.md`](DRIVER.md#6-permutation-scripts) §6), every
+permutation PostgreSQL runs, with the
 outcome PostgreSQL's expected output gives.
 
 | # | PostgreSQL spec | Permutations | As PostgreSQL | Differs, as noted | File |
@@ -470,7 +482,8 @@ outcome PostgreSQL's expected output gives.
 | p10 | `multiple-row-versions` | 1 | 0 | 1 | `in/p10_multiple_row_versions.t` |
 
 sm1 applies Ports and Grittner's commit-order and read-only
-refinements, as PostgreSQL does (`../XCTMGR.md` §7.4), and a
+refinements, as PostgreSQL does
+([`../XCTMGR.md`](../../XCTMGR.md#74-the-abort-rule) §7.4), and a
 session declared `READ ONLY` in PostgreSQL's setup, as p02's
 s3, is declared read-only here (`session s3 ser ro`), so 383
 of the 390 permutations end as PostgreSQL's do. The rest:
@@ -497,7 +510,9 @@ by an abort and then written over.
 ## 7d. Family H — table locks
 
 A table's IS or IX is kept in a slot of its session, not in
-the lock table (`../LOCKMGR.md` §3.2); S, SIX and X on the oid
+the lock table
+([`../LOCKMGR.md`](../../LOCKMGR.md#32-the-lock-table) §3.2); S,
+SIX and X on the oid
 move every session's slot for it into the table first. These
 show a slot still meets what conflicts with it.
 
@@ -532,7 +547,8 @@ At every level, wisr **does not** detect:
   each other (a08, a09, c15).
 
 It also does not detect anything across **processes**: one
-process attaches a home directory (`../DBMGR.md` §4), so all
+process attaches a home directory
+([`../DBMGR.md`](../../DBMGR.md#4-the-home-directory) §4), so all
 of the above is within-process concurrency.
 
 ## 9. What this coverage is, and what it is not

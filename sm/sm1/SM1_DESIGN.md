@@ -5,7 +5,8 @@ manager for OLTP over RocksDB. RocksDB is an ordered, durable,
 crash-atomic key-value store and nothing more. Every notion of
 row version, transaction, isolation and visibility is sm1's. This
 document is an overview. Each module document holds its own
-design. `SM1_OBJECTIVE.md` says what the level is for.
+design. [`SM1_OBJECTIVE.md`](SM1_OBJECTIVE.md) says what the
+level is for.
 
 ## 1. What the level provides
 
@@ -26,9 +27,11 @@ design. `SM1_OBJECTIVE.md` says what the level is for.
 - **Upkeep:** garbage collection of dead versions, named
   sequences, and the sizes and probes statistics need.
 
-The API is `include/sm1.h`, in `namespace sm1`. `API.md`
+The API is `include/sm1.h`, in `namespace sm1`.
+[`API.md`](API.md)
 documents it call by call. sm1 keeps no types and no schema:
-values are opaque, and sm1 has no secondary index (`../DBMGR.md`
+values are opaque, and sm1 has no secondary index
+([`../DBMGR.md`](../DBMGR.md)
 §1.1).
 
 ## 2. What the level depends on
@@ -46,22 +49,28 @@ an MVCC key-value store is a complete product.
 
 | Module | Document | Summary | Code in `src/` |
 | --- | --- | --- | --- |
-| Database Manager | `../DBMGR.md` | environments, databases, sessions, stores and their column families; the WAL, recovery, the store catalog | `env.cc`, `db.cc`, `session.cc`, `catalog.cc`, `walfs.cc`, `recover.cc` |
-| Transaction Manager | `../XCTMGR.md` | timestamps, snapshots, isolation levels, savepoints, SSI, commit, the commit cache, 2PC | `xct.cc`, `ssi.cc` |
-| Lock Manager | `../LOCKMGR.md` | row and object locks, deadlocks, what a write does when it meets another writer | `lockmgr.cc`, `locktab.cc` |
-| Buffer Manager | `../BUFMGR.md` | the pool of 4 KB frames that holds B-tree Index pages; a pin is also a latch | `bufpool.cc`, `page.cc` |
-| Row Store | `../ROWSTORE.md` | versions in a store: the write path, the read path, chains and pins; the row key and the tuple relation above sm1 | `access.cc`, `chain.cc`, `version.cc`, `pin.cc` |
-| Garbage Collector | `../GC.md` | reclaims dead versions, tombstones, dropped stores and status records, on RocksDB compaction | `gc.cc` |
-| Sequence | `../SEQUENCE.md` | sm1's named counters, the way any level gets unique ids | `seq.cc` |
+| Database Manager | [`../DBMGR.md`](../DBMGR.md) | environments, databases, sessions, stores and their column families; the WAL, recovery, the store catalog | `env.cc`, `db.cc`, `session.cc`, `catalog.cc`, `walfs.cc`, `recover.cc` |
+| Transaction Manager | [`../XCTMGR.md`](../XCTMGR.md) | timestamps, snapshots, isolation levels, savepoints, SSI, commit, the commit cache, 2PC | `xct.cc`, `ssi.cc` |
+| Lock Manager | [`../LOCKMGR.md`](../LOCKMGR.md) | row and object locks, deadlocks, what a write does when it meets another writer | `lockmgr.cc`, `locktab.cc` |
+| Buffer Manager | [`../BUFMGR.md`](../BUFMGR.md) | the pool of 4 KB frames that holds B-tree Index pages; a pin is also a latch | `bufpool.cc`, `page.cc` |
+| Row Store | [`../ROWSTORE.md`](../ROWSTORE.md) | versions in a store: the write path, the read path, chains and pins; the row key and the tuple relation above sm1 | `access.cc`, `chain.cc`, `version.cc`, `pin.cc` |
+| Garbage Collector | [`../GC.md`](../GC.md) | reclaims dead versions, tombstones, dropped stores and status records, on RocksDB compaction | `gc.cc` |
+| Sequence | [`../SEQUENCE.md`](../SEQUENCE.md) | sm1's named counters, the way any level gets unique ids | `seq.cc` |
 
-Three designs span levels and start here: `../TEMPTABLE.md`, the
-temporary instance and its stores; `../BULKLOAD.md`,
-`src/load.cc`; and `../STATISTICS.md`, `src/stats.cc` and
+Three designs span levels and start here:
+[`../TEMPTABLE.md`](../TEMPTABLE.md), the
+temporary instance and its stores;
+[`../BULKLOAD.md`](../BULKLOAD.md),
+`src/load.cc`; and [`../STATISTICS.md`](../STATISTICS.md),
+`src/stats.cc` and
 `src/memcount.cc`.
 
-`mvcc/MVCC.md` is the specification of isolation, as a table of
-scenarios. `mvcc/POSTGRES.md` sets it against PostgreSQL's
-isolation suite. `mvcc/DRIVER.md` is the scenario driver and its
+[`mvcc/MVCC.md`](mvcc/MVCC.md) is the specification of isolation,
+as a table of
+scenarios. [`mvcc/POSTGRES.md`](mvcc/POSTGRES.md) sets it against
+PostgreSQL's
+isolation suite. [`mvcc/DRIVER.md`](mvcc/DRIVER.md) is the
+scenario driver and its
 language.
 
 ## 4. Structure
@@ -78,7 +87,8 @@ bench/           the lock table's benchmark
 example/         small programs against the public API
 ```
 
-`../DBMGR.md` §13.1 lists `src/` file by file. A utility not
+[`../DBMGR.md`](../DBMGR.md#131-source-layout-of-sm1) §13.1 lists
+`src/` file by file. A utility not
 about the engine belongs in `../sm0`.
 
 ### 4.2 Build
@@ -98,7 +108,8 @@ first.
 **Warning: the scenarios in `mvcc/` are the specification.** A
 change to sm1 that makes one fail is presumed wrong, not the
 scenario. Do not run `make accept` to take a new transcript
-without the user's approval (`../../CLAUDE.md`).
+without the user's approval
+([`../../CLAUDE.md`](../../CLAUDE.md)).
 
 ```
 DEBUG=1 make -j4 test    unit tests, scenarios, examples
@@ -113,23 +124,32 @@ DEBUG=1 make -j4 test    unit tests, scenarios, examples
 3. The stress programs, `mvcc/e*.cc`.
 4. The examples.
 
-`../DBMGR.md` §17 says what the unit tests prove, and each module
-document lists its own. `../DESIGN.md` §4 gives the two-layer
+[`../DBMGR.md`](../DBMGR.md#17-tests) §17 says what the unit
+tests prove, and each module
+document lists its own.
+[`../DESIGN.md`](../DESIGN.md#4-testing-across-levels) §4 gives
+the two-layer
 scheme every level follows. Set `TMPDIR` to a directory under
 `bench/build` at the root, as test homes do not go in `/tmp`.
 
 ## 5. Cross-level decisions
 
 No decision that crosses levels is owned here alone.
-`../DESIGN.md` §5 holds them: sm1's interface is the only channel
+[`../DESIGN.md`](../DESIGN.md#5-cross-level-decisions) §5 holds
+them: sm1's interface is the only channel
 into sm1, and every level reports failure the way sm1 does. These
 two are sm1's, and bind the levels above:
 
-- **Backward scans are out of scope, forever** (`../DBMGR.md`
+- **Backward scans are out of scope, forever**
+  ([`../DBMGR.md`](../DBMGR.md)
   §1.2). Descending order is built into the key, by level 2.
 - **One process, many threads, one shared RocksDB instance a
-  database** (`../DBMGR.md` §1.1). Other access means a server
+  database**
+  ([`../DBMGR.md`](../DBMGR.md#11-the-decisions-of-level-1)
+  §1.1). Other access means a server
   front end, not a change to this design.
 
-Trade-offs have module owners: `../DBMGR.md` §14, `../XCTMGR.md`
-and `../GC.md`.
+Trade-offs have module owners:
+[`../DBMGR.md`](../DBMGR.md#14-trade-offs) §14,
+[`../XCTMGR.md`](../XCTMGR.md)
+and [`../GC.md`](../GC.md).

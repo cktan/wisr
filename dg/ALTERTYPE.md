@@ -1,9 +1,13 @@
 # ALTERTYPE — ALTER COLUMN TYPE, key columns among them
 
-**Status: built** (`WORKNOTE.md` step 378). §8 has what was
-decided, §9 what building it found. It is `../sm/CLUSTER.md`
+**Status: built** ([`WORKNOTE.md`](WORKNOTE.md) step 378). §8 has
+what was
+decided, §9 what building it found. It is
+[`../sm/CLUSTER.md`](../sm/CLUSTER.md)
 §11's step 3, the key-column ALTERs, and the general `ALTER
-COLUMN TYPE` they wait for (`UNSUPPORTED.md` §3, `PKDDL.md`
+COLUMN TYPE` they wait for
+([`UNSUPPORTED.md`](UNSUPPORTED.md#3-ddl) §3,
+[`PKDDL.md`](PKDDL.md)
 §3).
 
 ```sql
@@ -43,13 +47,16 @@ Run on PostgreSQL 18.6:
 
 ## 2. What sm has
 
-- **The rewrite** (`../sm/CLUSTER.md` §8, `sm3/src/table/
+- **The rewrite**
+  ([`../sm/CLUSTER.md`](../sm/CLUSTER.md#8-a-rewrite) §8,
+  `sm3/src/table/
   table.cc`'s `rewrite_table()`): a new store, the table's
   definition after the change over it, every row deformed by
   the old definition and inserted by the new one, every index
   filled as the rows go in, and the old store dropped at
   commit. A duplicate key fails it, with the key, for the host
-  to report. ADD and DROP PRIMARY KEY use it (`PKDDL.md`).
+  to report. ADD and DROP PRIMARY KEY use it
+  ([`PKDDL.md`](PKDDL.md)).
 - **A column's type is its record's** (`column_rec_t`:
   `type_code`, `typmod`, `collation`). A plain index key column
   takes its type from the column, so the rewrite builds every
@@ -57,11 +64,14 @@ Run on PostgreSQL 18.6:
   the new type. An expression key keeps a type of its own.
 - **The host's expressions are opaque to sm**: a default, an
   index's `eval`. sm calls the host's evaluator for an
-  expression index (`EXPRINDEX.md` §3, `sm_index_eval_fn`), on
+  expression index ([`EXPRINDEX.md`](EXPRINDEX.md#3-what-sm-has)
+  §3, `sm_index_eval_fn`), on
   the session's thread for a build inside the transaction.
 - **sm's datums are PostgreSQL's**, bit for bit
-  (`DECIMAL.md` §2.3). `text` and `varchar` store the same
-  bytes and the same key (`../sm/sm2/TYPE.md` §3).
+  ([`DECIMAL.md`](DECIMAL.md#23-stored-as-sm2s-decimal-at-the-columns-scale)
+  §2.3). `text` and `varchar` store the same
+  bytes and the same key
+  ([`../sm/sm2/TYPE.md`](../sm/sm2/TYPE.md#3-the-types) §3).
 
 ## 3. Where the conversion runs
 
@@ -75,7 +85,7 @@ can evaluate it.
 | sm's surface | one call, and a converter type beside `sm_index_eval_fn` | three calls, and a rewrite's state kept between them |
 | A key column | the rewrite as ADD PRIMARY KEY's: the same code | digres inserts in any order; sm sorts or checks |
 | A duplicate key | the rewrite's error, with the key, as now | found at an insert, reported by digres |
-| digres | the converter: the row in a slot, the expression made ready once, as the index evaluator does (`EXPRINDEX.md` §4.3) | two descriptors of one table at once: the old to read by, the new to write by |
+| digres | the converter: the row in a slot, the expression made ready once, as the index evaluator does ([`EXPRINDEX.md`](EXPRINDEX.md#43-the-evaluator) §4.3) | two descriptors of one table at once: the old to read by, the new to write by |
 | Crash, abort | as ADD PRIMARY KEY: the new store unreferenced, or dropped | the same, if the three calls keep it so |
 
 **Recommended: A.** It keeps the rewrite whole in sm, as ADD
@@ -99,7 +109,7 @@ same type code, or `text` and `varchar`.
 | No `USING`, no implicit cast | PostgreSQL's error and hint, from parse analysis (`transformAlterTableStmt()`) |
 | A plain column | rewritten into a new store; its plain indexes filled under the new type |
 | A key column | the same rewrite: the rows keyed under the new type's encoding; a duplicate fails with PostgreSQL's words |
-| A conversion error (`USING b/0`, a value too long) | PostgreSQL's error, re-raised on the session's thread (`EXPRINDEX.md` §4.4); the table as it was |
+| A conversion error (`USING b/0`, a value too long) | PostgreSQL's error, re-raised on the session's thread ([`EXPRINDEX.md`](EXPRINDEX.md#44-errors) §4.4); the table as it was |
 | A NULL in a NOT NULL column after `USING` | the rewrite's insert fails: PostgreSQL's `column "b" of relation "t" contains null values` |
 | A default | coerced to the new type by digres, as PostgreSQL's `ATExecAlterColumnType()` does, and stored with the type |
 | A missing value (a column ADDed with a default) | the rewrite stores every row's value; the record's missing bytes go |
@@ -140,10 +150,13 @@ same type code, or `text` and `varchar`.
    `rel`.
 3. digres: parse analysis, the converter, the default, the
    refusals. → verify: slt.
-4. The key column. → verify: slt; `CLUSTER.md` §11 step 3
+4. The key column. → verify: slt;
+   [`CLUSTER.md`](../sm/CLUSTER.md#11-what-is-left) §11 step 3
    built.
-5. pgregress trimmed again; `UNSUPPORTED.md` §3, `NEXT.md` §1
-   item 1, `WORKNOTE.md`.
+5. pgregress trimmed again;
+   [`UNSUPPORTED.md`](UNSUPPORTED.md#3-ddl) §3,
+   [`NEXT.md`](../sm/NEXT.md#1-next) §1
+   item 1, [`WORKNOTE.md`](WORKNOTE.md).
 
 ## 8. Decided
 
@@ -170,7 +183,8 @@ same type code, or `text` and `varchar`.
 - **Parse analysis of `USING` is digres's own**:
   `transformAlterTableStmt()` looks the column up with
   `get_attnum()`, which reads a syscache digres has not
-  (`PKDDL.md` §8). `alter_column_type()` in `smstore.c` makes
+  ([`PKDDL.md`](PKDDL.md#8-what-building-it-found) §8).
+  `alter_column_type()` in `smstore.c` makes
   the transform as `ATPrepAlterColumnType()` does, the table
   locked first, as parse analysis assumes.
 - **`timestamp` and `timestamptz`** are one change PostgreSQL

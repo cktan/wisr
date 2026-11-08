@@ -1,10 +1,14 @@
 # BTREELOAD_PLAN: a bulk load builds a B-tree from the bottom up
 
-**Status:** built, steps 1 to 5 below (`BTREEINDEX.md` §6.7).
+**Status:** built, steps 1 to 5 below
+([`BTREEINDEX.md`](BTREEINDEX.md#67-a-bulk-load-builds-the-tree-whole)
+§6.7).
 §6 has the measures.
 
-This plan is for `NEXT.md` §1 item 10. A load into an empty
-table sorts each tree's entries with the Sort (`SORT.md`), packs
+This plan is for [`NEXT.md`](NEXT.md#1-next) §1 item 10. A load
+into an empty
+table sorts each tree's entries with the Sort
+([`SORT.md`](SORT.md)), packs
 them into leaves, builds the inner levels from the leaves, and
 ingests the pages with the load's files. It writes no page twice
 and holds no latch.
@@ -20,7 +24,9 @@ and holds no latch.
 
 ## 1. What a load does now
 
-A load into an empty table (`BULKLOAD.md` §5.1) sends the rows
+A load into an empty table
+([`BULKLOAD.md`](BULKLOAD.md#51-two-cases-an-empty-table-and-one-with-rows)
+§5.1) sends the rows
 and each LSM Index's entries to files. A tree's entries do not
 go to files:
 
@@ -76,7 +82,9 @@ COPY t FROM 'rows.csv';     -- 10 million rows
 Both remove the write per entry, which is most of the cost.
 Option A is about 15 lines more in sm1 (`stream_key()` and
 `stream_value()` take a raw stream as given). The loader writes
-a small load as one batch (`BULKLOAD.md` §5.7), so a small load's
+a small load as one batch
+([`BULKLOAD.md`](BULKLOAD.md#57-a-small-load) §5.7), so a small
+load's
 pages go in that batch, in both options.
 
 **Page ids ascend.** A file takes its keys in order, and a page's
@@ -109,7 +117,8 @@ cleaner has read them once. PostgreSQL's `COPY` has the same
 cost: its visibility map is clear until `VACUUM`.
 
 **Recommended: queue each built leaf for the cleaner.** `VACUUM`
-cleans only the queue (`BTREEINDEX.md` §9.2), so a leaf no one
+cleans only the queue ([`BTREEINDEX.md`](BTREEINDEX.md#92-vacuum)
+§9.2), so a leaf no one
 queues stays in doubt after a `VACUUM`. The queue holds 262,144
 pages, about 1 GB of tree. Leaves past that are dropped, and
 their next reader queues them.
@@ -150,13 +159,15 @@ unique tree to row-by-row inserts.
   split few leaves.
 - **Inner pages fill to 70%**, as PostgreSQL's do.
 - **A high key is the next page's first key**, whole, as a split
-  sets it. No suffix is truncated (`BTREEINDEX.md` §4.3).
+  sets it. No suffix is truncated
+  ([`BTREEINDEX.md`](BTREEINDEX.md#43-entries) §4.3).
 - **The links:** each page's `prev` and `next` name its
   neighbours on its level. The builder draws the next page's id
   before it writes a page, so a page goes out whole, once.
 - **An inner entry is a child's first key and id.** The first
   entry of a level's leftmost page has an empty key, as
-  `BTREEINDEX.md` §4.7 needs.
+  [`BTREEINDEX.md`](BTREEINDEX.md#47-a-page-holds-a-range) §4.7
+  needs.
 - **The top level is page 0.** A level that fits one page is
   not written to the file. Its entries become page 0, at its
   level. An index with no entry keeps the empty page 0.
@@ -191,13 +202,13 @@ unique tree to row-by-row inserts.
 | abort before the close | the load's files and runs are deleted; the tree is the empty page 0 of the open |
 | abort after the close | the pages stay; each entry is in doubt, its row dead; a cleaning removes them |
 | crash before page 0's write | no commit, so an abort; the ingested pages are not reachable, and stay until the store goes. Page ids are not reused, so nothing finds them |
-| savepoint rollback | as now: a load in a savepoint is refused or not as `BULKLOAD.md` §3.5 says; nothing changes |
+| savepoint rollback | as now: a load in a savepoint is refused or not as [`BULKLOAD.md`](BULKLOAD.md#35-savepoints) §3.5 says; nothing changes |
 | 2PC | the loader must be closed before the prepare, as now |
 | two writers | none: the table is X, or temporary |
 | old RR snapshot | reads rows; no leaf is all visible (§3.2) |
 | SSI | the heap and every full tree entry key report their writes; a committed reader can retain an SIREAD after releasing the table lock |
 | the cleaner, a page queued before the open | the drop removes the page; the cleaner finds none, or the new page 0, judged again under the latch |
-| other sessions' copies of page 0 | the drop's purge and page 0's write move the frame's version, so a copy is stale and read again (`BTREEINDEX.md` §5.5) |
+| other sessions' copies of page 0 | the drop's purge and page 0's write move the frame's version, so a copy is stale and read again ([`BTREEINDEX.md`](BTREEINDEX.md#55-a-sessions-copy-of-page-0) §5.5) |
 | DROP INDEX, TRUNCATE | the table is X for the load |
 | temporary table | built the same way, in its instance; not queued, so `VACUUM` in the session cleans it |
 | keyless (`_id`) table | the row's key is the `_id` |

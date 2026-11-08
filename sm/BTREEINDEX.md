@@ -26,8 +26,11 @@ initdb.
 An index scan must cost digres no more than 1.5 times what it
 costs PostgreSQL. Reads by the primary key meet this, through
 RocksDB. Reads by an LSM Index do not. Instructions a statement
-on the old bench's queries (`../bench.old/DESIGN.md` §5), both
-servers pinned (`../dg/WORKNOTE.md` steps 333 to 336):
+on the old bench's queries
+([`../bench.old/DESIGN.md`](../bench.old/DESIGN.md#5-the-queries)
+§5), both
+servers pinned ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) steps
+333 to 336):
 
 | Query | digres | PostgreSQL | Ratio |
 | --- | --- | --- | --- |
@@ -356,7 +359,8 @@ The key columns' budget keeps room for the longest row key:
 `budget()` in `sm2/src/rel/index.cc` takes off `sm2::max_pk_len`,
 1,024 bytes, or `sm2::id_len`, 8 bytes, whatever the row's key
 really takes. A longer key is cut and flagged
-(`LSMINDEX.md` §2.4). A unique index's key is never cut,
+([`LSMINDEX.md`](LSMINDEX.md#24-cut-keys) §2.4). A unique index's
+key is never cut,
 and is refused with `SM_ERR_KEYTOOLONG`, where an LSM Index takes
 4,096 bytes (`sm1::max_keylen`).
 
@@ -486,7 +490,8 @@ hands the row out only if the row still gives this entry's key:
    also ends where that leaf's entries end
    (`sm2::idx_scan_held`).
 2. It reads their rows in one call (`sm2::rel_read_batch`,
-   `ROWSTORE.md` §2.1). A single row is read into the cursor's
+   [`ROWSTORE.md`](ROWSTORE.md#21-a-rows-name) §2.1). A single
+   row is read into the cursor's
    pin. Rows of sorted, close keys are read by one cursor.
    `tree_scattered()` says, from `ANALYZE`'s correlation, whether
    to skip that cursor.
@@ -499,7 +504,7 @@ hands the row out only if the row still gives this entry's key:
 
 A cut key is made cut, so `still_has()` compares it as any key. A
 scan bound that was cut sets `widened`, and the caller rechecks
-what it gets (`LSMINDEX.md` §2.4).
+what it gets ([`LSMINDEX.md`](LSMINDEX.md#24-cut-keys) §2.4).
 
 ### 5.4 An index-only scan
 
@@ -641,7 +646,8 @@ there or not.
 
 **Nothing is removed by an update or a delete.** The old entry
 stays, and its row, at the old key no longer, makes it dead until
-a cleaning. A primary key's change moves the row (`CLUSTER.md`
+a cleaning. A primary key's change moves the row
+([`CLUSTER.md`](CLUSTER.md)
 §4): its new entries name the new key, and the old ones name a
 key that holds no row.
 
@@ -762,15 +768,18 @@ The cost of writing a page whole is in §10.1.
 
 ### 6.7 A bulk load builds the tree whole
 
-A load into an empty table (`BULKLOAD.md` §5.1) does not insert
+A load into an empty table
+([`BULKLOAD.md`](BULKLOAD.md#51-two-cases-an-empty-table-and-one-with-rows)
+§5.1) does not insert
 its entries. It builds each tree from the bottom up, with no
-latch and one write a page (`BTREELOAD_PLAN.md`):
+latch and one write a page
+([`BTREELOAD_PLAN.md`](BTREELOAD_PLAN.md)):
 
 1. `idx_load_tree()` makes the tree empty, and declares two
    streams of the load: a drained stream for the entries and a
    page stream for the pages.
 2. Each row's entry goes to the drained stream, which the
-   Sort (`SORT.md`) sorts in the load's memory budget.
+   Sort ([`SORT.md`](SORT.md)) sorts in the load's memory budget.
 3. At the close, `idx_load_build()` takes the entries back in
    key order. `build_add()` fills each leaf to 90%, links it to
    the next, and gives it the next leaf's first key as its high
@@ -1007,7 +1016,8 @@ settled and live entries, and sets a leaf all visible. `VACUUM`
 cleans the leaves on the queue (§9.2). A cleaner thread cleans
 the leaves that readers and writers queue: all of them when the
 system is not busy, and about 100 pages a second when it is
-(§9.9). digres has no autovacuum (`../dg/UNSUPPORTED.md`), so the
+(§9.9). digres has no autovacuum
+([`../dg/UNSUPPORTED.md`](../dg/UNSUPPORTED.md)), so the
 cleaner is what keeps a tree clean between `VACUUM`s. §8 defines
 the bit and the flag that a cleaning works from.
 
@@ -1337,7 +1347,7 @@ the rest (§12.2).
 ### 10.2 Against PostgreSQL
 
 `../bench/run.sh`'s q1 to q3 on `usertable`, 10,000 rows, one
-client (`../PERF.md`). Latency over PostgreSQL's:
+client ([`../PERF.md`](../PERF.md)). Latency over PostgreSQL's:
 
 | Query | an LSM Index | a tree |
 | --- | --- | --- |
@@ -1346,11 +1356,13 @@ client (`../PERF.md`). Latency over PostgreSQL's:
 | q3, 8 rows found by `lastname` | 2.40 | 1.74 |
 
 A tree's instructions a statement are 1.06, 1.44 and 2.00 times
-PostgreSQL's (`NEXT.md` §1, `../dg/WORKNOTE.md` step 407).
+PostgreSQL's ([`NEXT.md`](NEXT.md#1-next) §1,
+[`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 407).
 
-Writes and loads, from the old bench (`../bench.old/DESIGN.md`):
+Writes and loads, from the old bench
+([`../bench.old/DESIGN.md`](../bench.old/DESIGN.md)):
 `wide_mixed`, a million rows, its `c2` index, the root at page 0
-(`../dg/WORKNOTE.md` step 359):
+([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 359):
 
 | | a tree | an LSM Index |
 | --- | --- | --- |
@@ -1360,7 +1372,8 @@ Writes and loads, from the old bench (`../bench.old/DESIGN.md`):
 
 - **The goal, 1.5× of PostgreSQL's instructions, is met by q1
   and q2, not by q3.** q3's gap is a row's read, mostly RocksDB's
-  `MultiGet` (`../PARITY.md` §4, `NEXT.md` §1).
+  `MultiGet` ([`../PARITY.md`](../PARITY.md#4-prognosis) §4,
+  [`NEXT.md`](NEXT.md#1-next) §1).
 - **A load is 5.6 times an LSM Index's on that machine**, against
   1.5 in §10.1, on both builds, and why is not known. Its profile
   is RocksDB's: LZ4 a tenth, then compaction and the memtable.
@@ -1368,7 +1381,8 @@ Writes and loads, from the old bench (`../bench.old/DESIGN.md`):
   with the WAL's logs zero-filled, 1.38 with that off, and 1.13
   on tmpfs. There the extra is zeroing 64 MB a log on the write
   path, and stalls for two immutable memtables. So new logs are
-  zero-filled only on WSL (`DBMGR.md` §2). That does
+  zero-filled only on WSL
+  ([`DBMGR.md`](DBMGR.md#2-a-worked-example) §2). That does
   not account for 5.6 times, which is still to be run both ways.
 
 Estimated: a descent of cached pages costs about 3k instructions,
@@ -1549,7 +1563,7 @@ is built.
 | Log the entry, write the page later | closes 27.7 s to 18 s, the write gap | RocksDB's memtable and WAL are the write-back, so no dirty pages of ours: a Merge on the page's key, with a design for the frames and the GC filter (§12.1) |
 | Prefix compression, suffix truncation of separators | more entries a page, a lower tree, far fewer page writes | §4.3, a split, the search of a page |
 | Deduplicate equal keys | smaller leaves on low-cardinality columns | §4.3, the entry's format |
-| Bottom-up sorted build | `CREATE INDEX` without a write per entry | sm3's build, `BULKLOAD.md` |
+| Bottom-up sorted build | `CREATE INDEX` without a write per entry | sm3's build, [`BULKLOAD.md`](BULKLOAD.md) |
 | Many leaves by one `MultiGet` | an IN list's misses in one read | §5.1 |
 | Copies of the inner pages below page 0 | no pin on them in a probe | §5.5 |
 | Narrow an SIREAD at a cursor's end | fewer false failures | a call with the last key read |
@@ -1623,7 +1637,7 @@ is built.
   It is not built:
   - **Not every entry in doubt has an OLD version.** An
     insert's entry is in doubt until its row is settled, and
-    the insert writes CURR alone (`ROWSTORE.md` §4.2). Every
+    the insert writes CURR alone ([`ROWSTORE.md`](ROWSTORE.md#42-the-put) §4.2). Every
     dead entry has one, as only an update or a delete leaves
     one.
   - **The GC removes OLD versions first.** The compaction

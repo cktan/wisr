@@ -4,7 +4,8 @@ sm3 is level 3 of the stack. It turns sm2's tuples into a schema.
 It gives relations names and definitions, decides which indexes a
 table has, keeps them in step with its rows, and adds statistics.
 This document is an overview. Each module document holds its own
-design. `SM3_OBJECTIVE.md` says what the level is for.
+design. [`SM3_OBJECTIVE.md`](SM3_OBJECTIVE.md) says what the
+level is for.
 
 ## 1. What the level provides
 
@@ -21,7 +22,8 @@ The catalog, object mapping, index maintenance and builds, scans
 and statistics are built. Constraints are settled: `NOT NULL` is
 sm3's, the `varchar(n)` limit and the checks of a foreign key are
 the host's, and `tbl_lock` is the stack's share of a foreign key.
-Bulk load is built for files into an empty table. `../NEXT.md`
+Bulk load is built for files into an empty table.
+[`../NEXT.md`](../NEXT.md)
 has what is left. The API is `include/sm3.h`, in `namespace sm3`.
 
 ## 2. What the level depends on
@@ -54,18 +56,21 @@ source tree.
 
 | Module | Document | Summary | Code in `src/` |
 | --- | --- | --- | --- |
-| Catalog | `../CATALOG.md` | definitions, their keys and values, a session's overlay, publishing, DDL, object mapping | `catalog/`, `ddl/` |
-| Namespace | `../NAMESPACE.md` | SQL's `SCHEMA`: how a name is taken and found | `catalog/`, `ddl/` |
-| Sequence | `../SEQUENCE.md` | SQL's `CREATE SEQUENCE`, over sm1's counters | `catalog/ddl.cc`, `ddl/ddl.cc` |
-| LSM Index | `../LSMINDEX.md` | index maintenance by table writes, unique checks, scans, partial and expression indexes | `table/table.cc` |
-| B-tree Index | `../BTREEINDEX.md` | the row check, the unique check, `VACUUM` and the cleaner of a tree | `table/table.cc`, `cleaner/` |
-| Index Builder | `../INDEXBUILD.md` | fills an index on a table that has rows, while its readers and writers go on | `builder/`, `table/table.cc` |
-| Row Store | `../ROWSTORE.md` | the row calls, and rows read as pins | `table/` |
-| TOAST | `../TOAST.md` | values fetched for indexes | `table/table.cc` |
-| Statistics | `../STATISTICS.md` | what the planner needs: a sample, PostgreSQL's estimators, `STATS` entries | `analyze/`, `catalog/ddl.cc` |
+| Catalog | [`../CATALOG.md`](../CATALOG.md) | definitions, their keys and values, a session's overlay, publishing, DDL, object mapping | `catalog/`, `ddl/` |
+| Namespace | [`../NAMESPACE.md`](../NAMESPACE.md) | SQL's `SCHEMA`: how a name is taken and found | `catalog/`, `ddl/` |
+| Sequence | [`../SEQUENCE.md`](../SEQUENCE.md) | SQL's `CREATE SEQUENCE`, over sm1's counters | `catalog/ddl.cc`, `ddl/ddl.cc` |
+| LSM Index | [`../LSMINDEX.md`](../LSMINDEX.md) | index maintenance by table writes, unique checks, scans, partial and expression indexes | `table/table.cc` |
+| B-tree Index | [`../BTREEINDEX.md`](../BTREEINDEX.md) | the row check, the unique check, `VACUUM` and the cleaner of a tree | `table/table.cc`, `cleaner/` |
+| Index Builder | [`../INDEXBUILD.md`](../INDEXBUILD.md) | fills an index on a table that has rows, while its readers and writers go on | `builder/`, `table/table.cc` |
+| Row Store | [`../ROWSTORE.md`](../ROWSTORE.md) | the row calls, and rows read as pins | `table/` |
+| TOAST | [`../TOAST.md`](../TOAST.md) | values fetched for indexes | `table/table.cc` |
+| Statistics | [`../STATISTICS.md`](../STATISTICS.md) | what the planner needs: a sample, PostgreSQL's estimators, `STATS` entries | `analyze/`, `catalog/ddl.cc` |
 
-Five designs span levels: `../VIEW.md`, `../FOREIGNKEY.md`,
-`../CLUSTER.md`, `../TEMPTABLE.md` and `../BULKLOAD.md`.
+Five designs span levels: [`../VIEW.md`](../VIEW.md),
+[`../FOREIGNKEY.md`](../FOREIGNKEY.md),
+[`../CLUSTER.md`](../CLUSTER.md),
+[`../TEMPTABLE.md`](../TEMPTABLE.md) and
+[`../BULKLOAD.md`](../BULKLOAD.md).
 
 ## 4. Structure
 
@@ -111,7 +116,8 @@ sm3 has no scenario driver of its own. sm1's QA-only
 `set_qa_nowait` lets one thread play several sessions, so sm3's
 two-session cases are in `test/test_table.cc` and in
 `../rel/test`. Deadlocks and the background build use real
-threads (`../DESIGN.md` §4).
+threads ([`../DESIGN.md`](../DESIGN.md#4-testing-across-levels)
+§4).
 
 Each module document says what its tests prove. The level's own
 rules:
@@ -130,14 +136,20 @@ rules:
 
 - **What is deliberately not here.** No types, no key encoding
   and no tuple format: sm3 calls sm2's. No SQL, no planner and no
-  executor. No PostgreSQL dependency (`../PART4.md`).
+  executor. No PostgreSQL dependency
+  ([`../PART4.md`](../PART4.md)).
 - **A scan filters nothing.** sm3 has no evaluator, and gets
   none. Deriving a key range is the kept planner's, and the
-  residual is the executor's (`../LSMINDEX.md` §5.5).
+  residual is the executor's
+  ([`../LSMINDEX.md`](../LSMINDEX.md#55-what-a-scan-leaves-to-the-host)
+  §5.5).
 - **The host evaluates.** Partial and expression indexes reach it
-  by a callback (`../LSMINDEX.md` §6).
+  by a callback
+  ([`../LSMINDEX.md`](../LSMINDEX.md#6-partial-and-expression-indexes)
+  §6).
 - **Deployment.** All the levels link into one server process
-  (`../sm2/SM2_DESIGN.md` §5.2). The boundary between the
+  ([`../sm2/SM2_DESIGN.md`](../sm2/SM2_DESIGN.md#52-deployment)
+  §5.2). The boundary between the
   executor and sm3 is a function call, so sm3's interface is one
   tuple at a time.
 
@@ -146,9 +158,12 @@ rules:
 - **The version lag is permanent.** The fork replaces the storage
   and transaction layers and makes PostgreSQL thread safe. So
   tracking upstream releases is harder than the version lag it
-  already counts as a liability (`../PART4.md`).
+  already counts as a liability ([`../PART4.md`](../PART4.md)).
 
-The other trade-offs have module owners: `../LSMINDEX.md` §9 and
-§4.3 for lost plans and over-long unique keys, `../CATALOG.md` §1
-for a catalog with no versions and for PITR, and `../DBMGR.md`
+The other trade-offs have module owners:
+[`../LSMINDEX.md`](../LSMINDEX.md#9-costs-accepted) §9 and
+§4.3 for lost plans and over-long unique keys,
+[`../CATALOG.md`](../CATALOG.md#1-design) §1
+for a catalog with no versions and for PITR, and
+[`../DBMGR.md`](../DBMGR.md)
 §14 for the bound on tables.

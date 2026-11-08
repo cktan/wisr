@@ -5,8 +5,10 @@ out. This file lists what a PostgreSQL user will miss: features
 refused with an error, features removed outright, and features
 that run but behave differently; and, in §10, what digres takes
 that PostgreSQL does not. It is a map, not the record:
-each entry names where the reasons are, a `WORKNOTE.md` step,
-`DESIGN.md`'s decisions, or a design document under `../sm/`.
+each entry names where the reasons are, a
+[`WORKNOTE.md`](WORKNOTE.md) step,
+[`DESIGN.md`](DESIGN.md)'s decisions, or a design document under
+`../sm/`.
 
 Each entry is marked:
 
@@ -27,7 +29,8 @@ regression files are taken out for it (`test/pgregress`,
 ## 1. Tables and storage
 
 - **Table inheritance** — never. `CREATE TABLE ... INHERITS`
-  and `ALTER TABLE ... INHERIT` are refused (`DESIGN.md` §4,
+  and `ALTER TABLE ... INHERIT` are refused
+  ([`DESIGN.md`](DESIGN.md#4-decisions-of-record) §4,
   2026-10-23): rows are named by their key, and the tables of
   a tree would name theirs by different columns.
 - **Partitioning** — refused. `PARTITION BY` and `PARTITION
@@ -35,7 +38,8 @@ regression files are taken out for it (`test/pgregress`,
   (step 198).
 - **TIDs and `ctid`** — never. No row has a TID: a row is
   named by its key, the values of its primary key's columns, or
-  a keyless table's `_id` (`../sm/ROWSTORE.md`, step 292).
+  a keyless table's `_id`
+  ([`../sm/ROWSTORE.md`](../sm/ROWSTORE.md), step 292).
   `ctid` is no system column, so a table may have a column of
   that name (step 295); `xmin`, `xmax`, `cmin` and `cmax` are
   "column does not exist" (step 200); the `tid` type cannot be
@@ -73,7 +77,8 @@ regression files are taken out for it (`test/pgregress`,
 - **Tables are clustered on their primary key** — differs. A
   SELECT with no ORDER BY reads in key order; a primary key is
   capped at 1024 encoded bytes; `CLUSTER` does nothing, every
-  table being clustered (`../sm/CLUSTER.md`). A primary key
+  table being clustered ([`../sm/CLUSTER.md`](../sm/CLUSTER.md)).
+  A primary key
   index takes no bytes of its own, its entries being the rows:
   its size is 0 (step 298).
 - **VACUUM, CLUSTER, REINDEX, CHECKPOINT** — differs. VACUUM
@@ -84,12 +89,14 @@ regression files are taken out for it (`test/pgregress`,
 ## 2. Indexes and plans
 
 - **Index methods other than btree** — removed: hash, GIN,
-  GiST, SP-GiST and BRIN (`README.md`; pgregress: 39).
+  GiST, SP-GiST and BRIN ([`README.md`](README.md); pgregress:
+  39).
 - **NULLS NOT DISTINCT, non-default operator classes and
   collations, interval keys** — refused (step 50, 99). An
   index is btree over columns and expressions, ASC or DESC,
   UNIQUE, partial, with INCLUDE.
-- **Partial and expression indexes** — differs (`EXPRINDEX.md`,
+- **Partial and expression indexes** — differs
+  ([`EXPRINDEX.md`](EXPRINDEX.md),
   step 311): an expression key of type numeric needs a
   precision and scale, and one of interval is refused, as a
   column of it is; an expression in a collation other than
@@ -98,23 +105,26 @@ regression files are taken out for it (`test/pgregress`,
   build after the commit says `could not create index "x":`
   before PostgreSQL's message, with another SQLSTATE.
 - **CREATE INDEX waits for every transaction using the table**
-  — differs: it takes the table's lock X (`../sm/INDEXBUILD.md`
+  — differs: it takes the table's lock X
+  ([`../sm/INDEXBUILD.md`](../sm/INDEXBUILD.md)
   §2), where PostgreSQL's SHARE lock lets readers go on, so an
   open transaction that read the table holds it up.
 - **A unique index or constraint made on a table with rows**
-  — differs: it is built after the commit (`DESIGN.md` §4),
+  — differs: it is built after the commit
+  ([`DESIGN.md`](DESIGN.md#4-decisions-of-record) §4),
   so in a transaction block a duplicate key is reported at
   `COMMIT`, after the block's other work has committed, and
   the index is not there.
 - **Bitmap scans** — never. No BitmapAnd or BitmapOr: an OR
-  over two indexes is a sequential scan (`../sm/CLUSTER.md` §6,
+  over two indexes is a sequential scan
+  ([`../sm/CLUSTER.md`](../sm/CLUSTER.md#6-digres) §6,
   step 287).
 - **Backward index scans** — differs. `ORDER BY ... DESC
   LIMIT` sorts.
 - **Index quals** — refused: a row comparison, `(a, b) >
   (...)`; differs: `IN (...)` and `= ANY` on a column after
   a range's are a filter of the range, not a skip scan
-  (`INLIST.md`, step 314).
+  ([`INLIST.md`](INLIST.md), step 314).
 - **Index-only scans of a table a statement writes or locks**
   — differs: none, as EvalPlanQual cannot recheck one
   (step 292).
@@ -132,12 +142,14 @@ regression files are taken out for it (`test/pgregress`,
   `SET`/`DROP NOT NULL`, `SET DEFAULT`, row level security,
   replica identity (step 231); dropping a column an index uses
   (step 110). A primary key added or dropped re-keys the rows,
-  which a scan then gives in key order (`PKDDL.md`, step 312).
+  which a scan then gives in key order ([`PKDDL.md`](PKDDL.md),
+  step 312).
 - **ALTER COLUMN TYPE of a column an expression or a partial
   index reads, a foreign key uses or references, or of an
   identity column; with COLLATE; and a USING that reads another
   column the same ALTER TABLE retypes** — refused
-  (`ALTERTYPE.md` §8, step 378). PostgreSQL makes the index,
+  ([`ALTERTYPE.md`](ALTERTYPE.md#8-decided) §8, step 378).
+  PostgreSQL makes the index,
   the foreign key or the sequence again, and evaluates every
   USING on the row as it was.
 - **VALIDATE CONSTRAINT of a foreign key** — as PostgreSQL's:
@@ -146,7 +158,8 @@ regression files are taken out for it (`test/pgregress`,
   checks the rows under IS (see below); `sm3::validate_fkey`
   then sets the flag under the child's lock IX and the key's
   own record locked X, and publishes it at commit
-  (`../sm/CATALOG.md`). Writers of both tables go on. Left:
+  ([`../sm/CATALOG.md`](../sm/CATALOG.md)). Writers of both
+  tables go on. Left:
   - **The flag shows at commit.** Until then the session that
     validated reads `convalidated` as false.
   - **A table the transaction changed, or a temporary table,
@@ -160,7 +173,8 @@ regression files are taken out for it (`test/pgregress`,
 - **ALTER SCHEMA ... RENAME** — refused: sm renames no
   namespace yet (step 392). `OWNER TO` works.
 - **DEFERRABLE constraints** — never for a primary key
-  (`../sm/CLUSTER.md` §10.4); refused for a unique constraint
+  ([`../sm/CLUSTER.md`](../sm/CLUSTER.md) §10.4); refused for a
+  unique constraint
   (step 294), and for a foreign key, with `NOT ENFORCED`,
   `MATCH PARTIAL` and `PERIOD` (step 177). Nothing is checked
   at commit.
@@ -202,13 +216,15 @@ regression files are taken out for it (`test/pgregress`,
   `SET TRANSACTION SNAPSHOT` (steps 149, 201).
 - **A key update that collides with itself** — differs:
   `UPDATE t SET k = k + 1` can fail on a duplicate key, rows
-  being read in key order (`../sm/CLUSTER.md` §7).
+  being read in key order
+  ([`../sm/CLUSTER.md`](../sm/CLUSTER.md#7-costs) §7).
 - **A row whose primary key another transaction changed** —
   differs: the writer that meets it fails with a serialization
   failure, at every level, where PostgreSQL follows an update
-  chain (`../sm/ROWSTORE.md` §2.5).
+  chain ([`../sm/ROWSTORE.md`](../sm/ROWSTORE.md#25-a-key-change)
+  §2.5).
 - **A scan begun after a savepoint** ends at a rollback to it
-  — differs (`README.md`, known incompatibilities).
+  — differs ([`README.md`](README.md), known incompatibilities).
 
 ## 5. Types
 
@@ -218,12 +234,13 @@ regression files are taken out for it (`test/pgregress`,
   xid, tid, pg_lsn. A column is bool, int2, int4, int8,
   float4, float8, numeric, text, varchar, char(n), name, bytea,
   date, time, timestamp, timestamptz, interval or uuid.
-- **Geometric types** — never (`DESIGN.md` §4).
+- **Geometric types** — never
+  ([`DESIGN.md`](DESIGN.md#4-decisions-of-record) §4).
 - **Text search** — removed: tsvector, tsquery, their DDL and
   functions (step 2).
 - **numeric** — differs: decimal64 or decimal128, at most 36
   digits, no NaN or infinity; an unconstrained numeric column
-  is numeric(17,3) (`DECIMAL.md`).
+  is numeric(17,3) ([`DECIMAL.md`](DECIMAL.md)).
 
 ## 6. Functions and languages
 
@@ -236,7 +253,7 @@ regression files are taken out for it (`test/pgregress`,
   argument (step 70).
 - **Loadable libraries and extensions** — refused: `LOAD`, C
   functions, `shared_preload_libraries`, `CREATE EXTENSION`;
-  contrib is left out (step 251, `README.md`).
+  contrib is left out (step 251, [`README.md`](README.md)).
 
 ## 7. Server and administration
 
@@ -252,14 +269,18 @@ regression files are taken out for it (`test/pgregress`,
   syslogger, csvlog and jsonlog, cumulative statistics and the
   `pg_stat_*` views, background workers, AIO, synchronized
   scans, crash restart (steps 11, 20, 21, 28 and others). A
-  session is a thread (`DESIGN.md` §1).
+  session is a thread
+  ([`DESIGN.md`](DESIGN.md#1-one-process-a-thread-a-session) §1).
 - **pg_hba.conf, pg_ident.conf** — removed (step 92): a client
-  gets in by `../aa/ROLE.md` §5's checks, peer or a password
+  gets in by
+  [`../aa/ROLE.md`](../aa/ROLE.md#5-how-a-client-gets-in) §5's
+  checks, peer or a password
   on the socket, a password over TCP (steps 320, 327).
 - **TLS, GSSAPI** — refused: their build options are off and
-  their files not compiled (`README.md`).
+  their files not compiled ([`README.md`](README.md)).
 - **Roles** — differs: roles, memberships, owners and ACLs are
-  `pg_global`'s (`../aa/ROLE.md`, steps 318 to 324), and role
+  `pg_global`'s ([`../aa/ROLE.md`](../aa/ROLE.md), steps 318 to
+  324), and role
   DDL is refused in a transaction block; a column's
   privileges, a function's, ALTER ROLE ... SET and ALTER
   DEFAULT PRIVILEGES fail. UTF8 only, collation C; `initdb`
@@ -267,7 +288,9 @@ regression files are taken out for it (`test/pgregress`,
 - **A password in cleartext over TCP** — refused: `CREATE` or
   `ALTER ROLE ... PASSWORD` over TCP without TLS takes only a
   hashed password, a SCRAM secret as psql's `\password` sends;
-  the local socket takes either (`../aa/ROLE.md` §5.1, step
+  the local socket takes either
+  ([`../aa/ROLE.md`](../aa/ROLE.md#51-a-password-set-in-cleartext)
+  §5.1, step
   380). A password is masked in every logged statement.
 - **An MD5 password** — refused: an md5 hash as a password, on
   every connection, as no login accepts it; `password_encryption
@@ -281,9 +304,11 @@ regression files are taken out for it (`test/pgregress`,
   five, so some conflict more (step 49).
 - **Lock wait queues** — differs: none, so a soft deadlock
   aborts a transaction where PostgreSQL reorders the waiters
-  (`../sm/LOCKMGR.md` §3.2).
+  ([`../sm/LOCKMGR.md`](../sm/LOCKMGR.md#32-the-lock-table)
+  §3.2).
 - **SERIALIZABLE** — differs: sm's own, not PostgreSQL's SSI
-  (`../sm/XCTMGR.md` §7).
+  ([`../sm/XCTMGR.md`](../sm/XCTMGR.md#7-ssi-serializable-snapshot-isolation)
+  §7).
 - **pg_locks** — differs: sm's mode names; a keyed row's page
   and tuple are NULL (step 193).
 
@@ -291,7 +316,8 @@ regression files are taken out for it (`test/pgregress`,
 
 - **Catalog tables** — removed: the catalog is sm's, and psql's
   `\d` reads relations made from it, read only
-  (`SYSCATALOG.md`). `information_schema` and the statistics
+  ([`SYSCATALOG.md`](SYSCATALOG.md)). `information_schema` and
+  the statistics
   views are missing; `pg_description` is empty (step 123);
   `pg_stats` is a function (step 78).
 
@@ -301,7 +327,8 @@ What digres takes that PostgreSQL does not. A schema that uses
 it is digres's: PostgreSQL refuses it, and `pg_dump` from
 digres does not carry it.
 
-- **A column's update default** — added (`ONUPDATE.md`, step
+- **A column's update default** — added
+  ([`ONUPDATE.md`](ONUPDATE.md), step
   307): `DEFAULT x ON UPDATE`, the value an UPDATE
   writes in the column when it does not assign it, beside an
   optional plain `DEFAULT y` for INSERT. `x` and `y` are
@@ -309,5 +336,6 @@ digres does not carry it.
   `CURRENT_DATE`. It keeps a modification time or a state an
   edit moves a row to, which PostgreSQL keeps with a BEFORE
   UPDATE trigger, and digres has none (§6). sq's grammar takes
-  it as its one rule beyond PostgreSQL's (`../sq/DESIGN.md`
+  it as its one rule beyond PostgreSQL's
+  ([`../sq/DESIGN.md`](../sq/DESIGN.md)
   §2); psql's `\d` shows the plain default alone.

@@ -26,7 +26,7 @@ of the hard semantic work already done:
 | sm1 | PostgreSQL |
 | --- | --- |
 | RC / RR / SERIALIZABLE, RR being snapshot isolation | identical; PG's RR is also SI |
-| SSI with SIREAD predicate locks and pivot detection | the same Cahill algorithm PG uses (`XCTMGR.md` tracks PG's refinement) |
+| SSI with SIREAD predicate locks and pivot detection | the same Cahill algorithm PG uses ([`XCTMGR.md`](XCTMGR.md) tracks PG's refinement) |
 | `sm1::stmt_begin` pinning the RC snapshot for a statement | PG takes a snapshot per statement at RC |
 | nested savepoints as a depth stack | subtransactions |
 | `sm1::prepare(gid)`, `sm1::max_gid` = 200 | 2PC, `GIDSIZE` |
@@ -72,8 +72,10 @@ reaches all the way back into the stack's topmost API: **every
 call across that boundary is an RPC.** A per-row interface will
 not survive it. This is why the API above was made batch-shaped
 from the start — a decision that now belongs to sm3, the level
-with the filters (`sm3/SM3_OBJECTIVE.md`) — and it is why the
-batched read left unbuilt in `ROWSTORE.md` §5.2 stops
+with the filters ([`sm3/SM3_OBJECTIVE.md`](sm3/SM3_OBJECTIVE.md))
+— and it is why the
+batched read left unbuilt in
+[`ROWSTORE.md`](ROWSTORE.md#52-a-versioned-point-read) §5.2 stops
 being an unproven optimization and becomes a requirement.
 
 **Decision: the fork is threaded.** The project does not put
@@ -92,7 +94,8 @@ What this changes above:
   unsalvageable, so the batch-shaped API is no longer forced
   by this section. Whether to keep it for other reasons —
   filter pushdown, fewer calls per scan — is open, and is
-  sm3's to settle (`LSMINDEX.md` §5); sm2 is
+  sm3's to settle ([`LSMINDEX.md`](LSMINDEX.md#5-scans) §5); sm2
+  is
   tuple-at-a-time either way.
 - YugabyteDB stays the precedent for §4's replacement of the
   storage and transaction layers, but no longer for the
@@ -106,7 +109,9 @@ What this changes above:
 - **The fork is compiled as C++.** `include/sm.h` passes
   `std::string` and `std::vector` across the boundary for
   owned data, and may pass `std::string_view` and
-  `std::shared_ptr` (`DESIGN.md` §5); the fork calls it as it
+  `std::shared_ptr`
+  ([`DESIGN.md`](DESIGN.md#5-cross-level-decisions) §5); the fork
+  calls it as it
   is, and there is no plain C header to keep beside it.
 - **A row handed out is good until the next call.** A row or
   an index entry the stack returns points into its own
@@ -116,12 +121,14 @@ What this changes above:
 - **Every wait can be interrupted.** A backend thread waiting
   inside the stack never reaches PostgreSQL's interrupt
   check, so the stack waits through `sm_sys.h`
-  (`sm0/INTERRUPT.md`): an interrupt to the thread, a bit
+  ([`sm0/INTERRUPT.md`](sm0/INTERRUPT.md)): an interrupt to the
+  thread, a bit
   in its wait mask, fails the wait with `SM_ERR_INTERRUPTED`
   and leaves the transaction to the caller. The bit stays
   pending until the fork takes it. Query cancel,
   `statement_timeout` and `lock_timeout` are bits and `sm_sys.h`
-  timers (`LOCKMGR.md` §3.2); the wait for an index
+  timers ([`LOCKMGR.md`](LOCKMGR.md#32-the-lock-table) §3.2); the
+  wait for an index
   build (`sm_cat_index_wait`) ends the same way.
 - **The fork has no `longjmp`.** PostgreSQL raises an error by
   jumping out of wherever it is. That goes with the rest of
@@ -129,7 +136,8 @@ What this changes above:
   against a jump through one of its calls, or out of a
   callback it makes, such as the index evaluator's. Done:
   digres raises an error as a C++ exception
-  (`../dg/WORKNOTE.md` step 7). An exception out of a callback
+  ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 7). An exception
+  out of a callback
   the stack makes is therefore the thing to settle next:
   `sm.h` says no exception crosses it.
 
@@ -162,14 +170,18 @@ by bitmap scans, BRIN, `CLUSTER`, `ANALYZE`'s block sampling,
 `relpages` in the cost model, and the user-visible `ctid`. sm1
 has no TID. sm2 keys every row by its primary key, or in a
 table without one by `_id`, a 64-bit number from an sm1
-sequence, crash-safe and never reused (`ROWSTORE.md`,
-`ROWSTORE.md` §8); neither fits a 6-byte TID. A query
+sequence, crash-safe and never reused
+([`ROWSTORE.md`](ROWSTORE.md),
+[`ROWSTORE.md`](ROWSTORE.md#8-the-tuple-relation) §8); neither
+fits a 6-byte TID. A query
 names a keyless table's row by `_id`, a system column of its
 own, an `int8`; `ctid` is no relation's column, nor are `xmin`,
 `xmax`, `cmin` and `cmax`, as sm keeps no transaction ids in a
-row (decided 2026-10-16, `../dg/WORKNOTE.md` step 200). Inside,
+row (decided 2026-10-16, [`../dg/WORKNOTE.md`](../dg/WORKNOTE.md)
+step 200). Inside,
 the fork carries the key's columns where the executor carried
-a TID (`ROWSTORE.md` §10), rather than fitting a key into the
+a TID ([`ROWSTORE.md`](ROWSTORE.md#10-digres) §10), rather than
+fitting a key into the
 table AM's shape.
 
 **PostgreSQL's MVCC would have to be the authority, which
@@ -249,7 +261,8 @@ What still has to be solved either way:
   stack replicates is open. RocksDB has no replication of its
   own, only pieces to build one from: `Checkpoint` for a base
   copy, `GetUpdatesSince` to tail its WAL. Logical decoding has
-  a design of its own, not on PG's WAL (`LOGICALDECODE.md`,
+  a design of its own, not on PG's WAL
+  ([`LOGICALDECODE.md`](LOGICALDECODE.md),
   proposed). Replication at the storage tier is a subsystem in
   its own right; it is what YugabyteDB built, with Raft.
 - **Catalogs move into sm3.** PostgreSQL hardwires catalogs
@@ -267,7 +280,8 @@ What still has to be solved either way:
   in-memory catalog coherent without cross-process
   invalidation. The cost is the code that reads the
   catalogs — the relation cache, syscache and system-table
-  scans — and the open questions in `CATALOG.md` §1.
+  scans — and the open questions in
+  [`CATALOG.md`](CATALOG.md#1-design) §1.
 - **Statistics.** The planner is being kept, so it needs
   `reltuples`, `relpages`, histograms and correlations, and
   `ANALYZE` needs a sampling path.
@@ -284,7 +298,8 @@ approach.
 
 ## 5. The one conflict with a decision already made
 
-`sm1/SM1_OBJECTIVE.md` settles that backward scans are never
+[`sm1/SM1_OBJECTIVE.md`](sm1/SM1_OBJECTIVE.md) settles that
+backward scans are never
 supported. PostgreSQL does not let an engine opt out:
 
 - `ExecSupportsBackwardScan` returns true **unconditionally**
@@ -307,7 +322,7 @@ ordered index, roughly doubling storage and write
 amplification.
 
 **Why the decision was made, and whether it can be revisited.**
-The reason is in `DBMGR.md` §1, and it is not
+The reason is in [`DBMGR.md`](DBMGR.md#1-scope) §1, and it is not
 "RocksDB cannot iterate backwards" — it can, with `Prev()`.
 When it was made, sm1 stored every key's versions
 newest-first (`key | ~wts | ~seq`), so a backward scan would
@@ -317,7 +332,8 @@ it would need `SeekForPrev` to cooperate with the prefix-seek
 setup; and the SSI range bookkeeping, which narrows a scan's
 predicate to the last key examined, inverts.
 
-Since `ROWSTORE.md`, most of that cost is gone for table rows. A
+Since [`ROWSTORE.md`](ROWSTORE.md), most of that cost is gone for
+table rows. A
 row's newest version is one CURR key, `01 ‖ rowkey`, and its
 older versions are a chain in OLD, so a backward scan of rows
 meets one key a row and walks the chain as a forward scan
@@ -327,13 +343,16 @@ so this covers backward primary-key and sequential scans. What
 remains:
 
 - **Secondary index entries, TOAST and the catalog** keep
-  versioned keys (`ROWSTORE.md` §12.1), and a backward scan of
+  versioned keys
+  ([`ROWSTORE.md`](ROWSTORE.md#121-keys-and-stores) §12.1), and a
+  backward scan of
   them still meets the oldest version first. `ORDER BY x DESC
   LIMIT n` on a secondary index is the case this section gives
   up.
 - **The SSI bookkeeping** inverts whatever the key layout.
 
-If secondary indexes move to B+trees (`BTREEINDEX.md`), their
+If secondary indexes move to B+trees
+([`BTREEINDEX.md`](BTREEINDEX.md)), their
 leaf entries are unversioned, the row deciding visibility, and a
 backward scan is a walk of leaves by a left link, as PostgreSQL's
 nbtree does. The SSI inversion would then be the cost left.
@@ -361,7 +380,7 @@ correctness. What it means:
 - The infinite cost is on the direction of the scan, not on
   how the index is declared. An index declared with DESC
   columns is still scanned forward, over inverted key bytes
-  (`LSMINDEX.md` §2).
+  ([`LSMINDEX.md`](LSMINDEX.md#2-key-encoding) §2).
 - Index paths are not the only place a backward scan is
   assumed. `ExecSupportsBackwardScan` returns true for a
   sequential scan unconditionally, so it is changed to return
@@ -388,7 +407,10 @@ row lock and then proceeds instead of failing. The change is to
 sm1: a refused write, `SM_ERR_UPDATED`, is followed by
 `sm1::read_latest` and then the write, and versions are keyed by
 a write timestamp so their order stays commit order. The design
-is `LOCKMGR.md` §1.9, `XCTMGR.md` §5, and its tests are scenarios
+is
+[`LOCKMGR.md`](LOCKMGR.md#19-read-committed-write-re-read-write)
+§1.9, [`XCTMGR.md`](XCTMGR.md#5-statements) §5, and its tests are
+scenarios
 `f01`–`f10` and `e06`.
 
 ---
@@ -402,7 +424,7 @@ reflected in each level's own `SMn_OBJECTIVE.md` and
 | Forced | Level | Why |
 | --- | --- | --- |
 | **Tuple format cheap to turn into a PG tuple** | sm2 | the executor works in tuple slots; a bespoke encoding pays a conversion per row, in both directions; the threaded fork removes the IPC boundary, not the conversion |
-| **Row identity is the row's key, or `_id` without a primary key** | sm2 | tables may have no primary key, so a table without one is keyed by `_id`, a 64-bit number from an sm1 sequence, which a query reads as the system column `_id`; the executor carries the key's columns where it carried a TID, and there is no `ctid` (`ROWSTORE.md`) |
+| **Row identity is the row's key, or `_id` without a primary key** | sm2 | tables may have no primary key, so a table without one is keyed by `_id`, a 64-bit number from an sm1 sequence, which a query reads as the system column `_id`; the executor carries the key's columns where it carried a TID, and there is no `ctid` ([`ROWSTORE.md`](ROWSTORE.md)) |
 | **Key encoder takes a collation** | sm2 | PG's text order is `strcoll`/ICU, not memcmp; the encoder needs `(type, collation, direction, nulls-order)` per column or half of SQL's `ORDER BY` is unrepresentable |
 | **Collated keys store the sort key *and* the original** | sm2 | the collation transform is lossy and irreversible; this is what YugabyteDB does, and it costs storing the datum twice |
 | **Batch-shaped API** | sm3 | was forced by §2's out-of-process engine; with a threaded fork it is no longer forced, and is open |
@@ -420,7 +442,8 @@ should become a dependency.
 ## 7. Recommended sequencing
 
 1. **Build sm2, then sm3, standalone**, to
-   `sm2/SM2_DESIGN.md` §4 and `sm3/SM3_DESIGN.md` §4.
+   [`sm2/SM2_DESIGN.md`](sm2/SM2_DESIGN.md#4-structure) §4 and
+   [`sm3/SM3_DESIGN.md`](sm3/SM3_DESIGN.md#4-structure) §4.
 2. **Backward scans are settled** (§5): the ban stands, and
    the planner is changed not to ask for one.
 3. **Spike the fork early, and throw it away.** A prototype
@@ -428,7 +451,8 @@ should become a dependency.
    built to find which of §2's and §4's walls bites first —
    not to be kept. Its first target is narrower still: insert
    into, and scan, a table whose columns are all integers
-   (§9.5). The formats of `sm2/TYPE.md` §9,
+   (§9.5). The formats of [`sm2/TYPE.md`](sm2/TYPE.md#9-tests)
+   §9,
    steps 2 and 3, are permanent once data exists; the spike is
    how to learn what they must carry *before* that happens.
 4. Only then decide whether the full program is worth its
@@ -456,7 +480,8 @@ Stated so none of it is repeated as fact:
   not enumerated.
 - ~~**RocksDB's approximate-statistics accuracy**~~ has since
   been measured: exact once flushed and compacted, as much as
-  7x high for rows still unflushed (`STATISTICS.md` §6).
+  7x high for rows still unflushed
+  ([`STATISTICS.md`](STATISTICS.md#6-what-was-measured) §6).
 - **The cost of converting PostgreSQL to threads** (§2's
   decision). Not estimated, and not in §4's figures, which
   assume the process model stays.
@@ -469,7 +494,7 @@ Stated so none of it is repeated as fact:
 - **The READ COMMITTED write protocol under a race detector**
   (§5a). It is built and tested against GC and compaction, and
   `e06` loses no increment, but a `-fsanitize=thread` run was
-  inconclusive (`XCTMGR.md` §11.4).
+  inconclusive ([`XCTMGR.md`](XCTMGR.md#114-trade-offs) §11.4).
 - **The effort figures in §4** are calibrated judgment against
   the precedents, not measurements. Treat the ordering as
   sound and the absolute numbers as loose.
@@ -545,7 +570,7 @@ the same error either way, and must not abort twice.
    once.
 2. ~~**The identity of a row is 64 bits and a TID is 48.**~~
    **Closed.** A row is named by its key, not a TID
-   (`ROWSTORE.md`).
+   ([`ROWSTORE.md`](ROWSTORE.md)).
 
 **Not in the way of `SELECT` and `INSERT` on one table, but
 the next things the fork would hit:**
@@ -553,7 +578,7 @@ the next things the fork would hit:**
 3. **Two lock modes, where PostgreSQL has four.** `FOR KEY
    SHARE` and `FOR NO KEY UPDATE` have nothing to map to, so
    an update of a parent row that leaves its key alone waits
-   for a child's foreign-key check (`NEXT.md`).
+   for a child's foreign-key check ([`NEXT.md`](NEXT.md)).
 4. ~~**No wait policy.**~~ **Closed.** `sm_tbl_trylock` and
    `sm_tbl_tryopen` serve `NOWAIT` and `SKIP LOCKED`.
 5. **An index entry gives back its key columns only where its
@@ -582,7 +607,7 @@ the next things the fork would hit:**
     built: a row's long values are stored out of line
     (`include/sm.h`).
 11. ~~**Nothing for the planner.**~~ **Closed.** Statistics
-    are built (`STATISTICS.md`): `sm_tbl_size`,
+    are built ([`STATISTICS.md`](STATISTICS.md)): `sm_tbl_size`,
     `sm_tbl_stats`.
 
 **The fork's own, with nothing to change here:**
@@ -630,7 +655,7 @@ What the fork calls, start to finish:
 | --- | --- |
 | once a server | `sm_init`, `sm_attach`, `sm_mkdb` |
 | once a backend | `sm_opendb` |
-| `CREATE TABLE` | `sm_begin`, `sm_cat_create_table` with type codes 2, 3 or 4 (`sm2/TYPE.md` §3), `sm_commit`; the fork keeps the oid it gets back |
+| `CREATE TABLE` | `sm_begin`, `sm_cat_create_table` with type codes 2, 3 or 4 ([`sm2/TYPE.md`](sm2/TYPE.md#3-the-types) §3), `sm_commit`; the fork keeps the oid it gets back |
 | `INSERT` | `sm_begin`, `sm_stmt_begin`, `sm_tbl_open` in IX, `sm_tbl_insert` with the slot's values and null flags, `sm_tbl_close`, `sm_commit` |
 | `SELECT` | `sm_begin`, `sm_stmt_begin`, `sm_tbl_open` in IS, `sm_tbl_scan` over every rowno, then for each row `sm_rel_scannxt` and `sm_tbl_deform` into the slot, `sm_rel_scanend`, `sm_tbl_close`, `sm_commit` |
 
@@ -695,12 +720,14 @@ What replaces it:
   nothing about them is stored, locked or invalidated.
 - **What a user creates is in sm3**: namespaces, tables,
   columns and their defaults, indexes, collations,
-  sequences, foreign keys and views (`CATALOG.md` §3.3);
-  what is open is in `CATALOG.md` §11.
+  sequences, foreign keys and views
+  ([`CATALOG.md`](CATALOG.md#33-keys) §3.3);
+  what is open is in [`CATALOG.md`](CATALOG.md#11-not-built) §11.
 
 **An oid is 64 bits**, in digres as in sm3. For now digres keeps
 PostgreSQL's 32-bit `Oid`, so sm3 hands out none past 2^32 - 1
-(`CATALOG.md` §3.1); widening it is to come. The numbers
+([`CATALOG.md`](CATALOG.md#31-where-it-lives) §3.1); widening it
+is to come. The numbers
 are PostgreSQL's where it has them: sm3 hands out oids from
 16384, PostgreSQL's `FirstNormalObjectId`, and its two built-in
 namespaces are `pg_catalog` at 11 and `public` at

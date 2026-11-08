@@ -7,12 +7,13 @@ tables live in Wisr. The repository holds both, in four parts:
 | Where | What it is |
 | --- | --- |
 | `sm/` | the storage stack: an MVCC storage manager on RocksDB, types and tuples over it, and schema and index maintenance over those, with one API, `sm/include/sm.h` |
-| `dg/` | digres: a fork of PostgreSQL 18.6 that runs on the stack (`DG-vs-PG.md`). It compiles as C++, is one process with a thread a session, and serves PostgreSQL's own `psql`, its tables sm's; `dg/README.md` says what runs, and `sm/PART4.md` §10 how it is being made |
+| `dg/` | digres: a fork of PostgreSQL 18.6 that runs on the stack ([`DG-vs-PG.md`](DG-vs-PG.md)). It compiles as C++, is one process with a thread a session, and serves PostgreSQL's own `psql`, its tables sm's; [`dg/README.md`](dg/README.md) says what runs, and [`sm/PART4.md`](sm/PART4.md#10-digres-how-the-fork-is-to-be-made) §10 how it is being made |
 | `sq/` | the SQL parser: PostgreSQL 18's SQL in, a tree of nodes out, as a library with one API, `sq/include/sq.h`. It is built from nothing outside `sq/` |
-| `aa/` | roles, authentication and authorization, a library on sm that digres links (`aa/AA_DESIGN.md`, `aa/USAGE.md`) |
+| `aa/` | roles, authentication and authorization, a library on sm that digres links ([`aa/AA_DESIGN.md`](aa/AA_DESIGN.md), [`aa/USAGE.md`](aa/USAGE.md)) |
 | `bench/` | digres against PostgreSQL 18, query by query (`bench/run.sh`) |
 
-To try digres, from a build to a query: `QUICKSTART.md`.
+To try digres, from a build to a query:
+[`QUICKSTART.md`](QUICKSTART.md).
 
 ## How the parts fit
 
@@ -44,20 +45,25 @@ To try digres, from a build to a query: `QUICKSTART.md`.
   replaces what is under them: a table is an sm store (one
   RocksDB column family), a row an sm2 tuple, a scan an sm
   cursor. Its catalog is sm's; PostgreSQL's catalog tables are
-  made from it on demand (`dg/SYSCATALOG.md`).
+  made from it on demand
+  ([`dg/SYSCATALOG.md`](dg/SYSCATALOG.md)).
 - **A database is its directory**, `base/X`, its rows and WAL
-  in one RocksDB instance there (`dg/CODE.md`).
+  in one RocksDB instance there ([`dg/CODE.md`](dg/CODE.md)).
 - **Each level owns its notions**: row versions, transactions
   and visibility are sm1's; columns, types and index entries
   sm2's; tables and index definitions sm3's. Each has a design
-  document: `sm/sm1/SM1_DESIGN.md`, `sm/sm2/SM2_DESIGN.md`,
-  `sm/sm3/SM3_DESIGN.md`, and `sm/sm0/README.md`.
+  document: [`sm/sm1/SM1_DESIGN.md`](sm/sm1/SM1_DESIGN.md),
+  [`sm/sm2/SM2_DESIGN.md`](sm/sm2/SM2_DESIGN.md),
+  [`sm/sm3/SM3_DESIGN.md`](sm/sm3/SM3_DESIGN.md), and
+  [`sm/sm0/README.md`](sm/sm0/README.md).
 - **`sm/rel/`** drives `sm.h` from scripts, the stack's tests
   without SQL.
 
-Start with `sm/README.md`. Before changing code, read
-`CLAUDE.md`, then `sm/CODE.md` for `sm/` and `aa/`, or
-`dg/CODE.md` for `dg/`.
+Start with [`sm/README.md`](sm/README.md). Before changing code,
+read
+[`CLAUDE.md`](CLAUDE.md), then [`sm/CODE.md`](sm/CODE.md) for
+`sm/` and `aa/`, or
+[`dg/CODE.md`](dg/CODE.md) for `dg/`.
 
 ## Prerequisites
 
@@ -136,7 +142,7 @@ for `bench.old/btree.sh`.
   - `bench/build/pg18`, PostgreSQL 18.6 itself (commit
     `724edf9`) built optimized with no `--enable-cassert` or
     `--enable-debug`, for the benchmark
-    (`bench.old/DESIGN.md` §2), from a worktree of that clone,
+    ([`bench.old/DESIGN.md`](bench.old/DESIGN.md#2-optimized-builds) §2), from a worktree of that clone,
     its prefix the absolute path of this repository's
     `bench/build/pg18`:
 
@@ -214,7 +220,7 @@ changes to threads, latches, locks or shared state.
 - **A part alone** builds in its own directory, as
   `make -C sm/sm1 -j4`, `DEBUG=1` or not.
 - **`make format`** before a commit. dg is formatted by the
-  lines a change touches (`dg/CODE.md` §8).
+  lines a change touches ([`dg/CODE.md`](dg/CODE.md#8-style) §8).
 
 ## Running digres
 
@@ -273,7 +279,7 @@ psql -h localhost -p 5432 -U NAME -d postgres    # TCP, with the password
 - `CREATE DATABASE app` makes another database; each is a
   directory, `base/app`, of its own.
 - What digres does not run yet fails with an error, not a
-  wrong answer (`dg/UNSUPPORTED.md`).
+  wrong answer ([`dg/UNSUPPORTED.md`](dg/UNSUPPORTED.md)).
 
 ## Testing
 
@@ -324,10 +330,12 @@ What each is:
 - **dg**: the `.sql` files of `dg/test`, alone and in eight
   sessions; `initdb`; `server.sh`, a server driven by `psql`;
   the sqllogictest files of `dg/test/slt`, whose results are
-  PostgreSQL 18's (`dg/test/slt/README.md`); and pgregress,
+  PostgreSQL 18's
+  ([`dg/test/slt/README.md`](dg/test/slt/README.md)); and
+  pgregress,
   PostgreSQL 18's regression files with what digres does not
   run commented out, against PostgreSQL's output
-  (`dg/test/pgregress/README.md`).
+  ([`dg/test/pgregress/README.md`](dg/test/pgregress/README.md)).
 
 **Keep test data off `/tmp`.** Set `TMPDIR` to a directory on a
 real disk, on every machine, as `/tmp` may be in memory:
@@ -350,12 +358,13 @@ Run on their own, outside `make test`:
 
 A test is written with a one-line synopsis and numbered steps,
 and is shown to fail by breaking what it checks before it is
-committed (`CLAUDE.md` §5).
+committed ([`CLAUDE.md`](CLAUDE.md#5-test-structure) §5).
 
 ## Benchmarks
 
 `bench/` measures digres against PostgreSQL 18, on optimized
-builds only (`bench.old/CODE.md`): a debug build's number measures
+builds only ([`bench.old/CODE.md`](bench.old/CODE.md)): a debug
+build's number measures
 the build. `perf` must be allowed to count, which a system with
 `kernel.perf_event_paranoid` above 1 refuses: `sudo sysctl
 kernel.perf_event_paranoid=1`, until the next reboot. To keep it:
@@ -402,10 +411,11 @@ DG_PORT=5432 PG_PORT=5433 make -j4 bench  # both servers up
   - q2: 183 entries of the `state` index, a count.
   - q3: 8 rows, found by the `lastname` index.
   - q4: every row, a sum, no index.
-- `PERF.md` has the throughput of digres, PostgreSQL 18,
+- [`PERF.md`](PERF.md) has the throughput of digres, PostgreSQL
+  18,
   MyRocks and InnoDB on q0 to q4.
 - The old benchmark is `bench.old/run.sh`. Its queries, Q1 to
-  Q11, are in `bench.old/DESIGN.md`.
+  Q11, are in [`bench.old/DESIGN.md`](bench.old/DESIGN.md).
 - Judge digres against PostgreSQL, never against an older
   digres.
 - **On a machine whose clock varies** (a VM, a laptop),
@@ -416,17 +426,17 @@ DG_PORT=5432 PG_PORT=5433 make -j4 bench  # both servers up
   fixed `pgbench -t N`.
 - `bench.old/smbench/`, `bench.old/getseek/` and
   `bench.old/relq6/` measure layers below SQL
-  (`bench.old/README.md`).
+  ([`bench.old/README.md`](bench.old/README.md)).
 
 ## Where things are
 
 | Document | What it holds |
 | --- | --- |
-| `QUICKSTART.md` | build, make a database, connect, and run a query |
-| `sm/README.md` | the stack's levels, and each one's design document |
-| `sm/NEXT.md` | what is to be built next, in order |
-| `DG-vs-PG.md` | how digres differs from PostgreSQL 18 |
-| `PERF.md` | how fast digres runs against PostgreSQL 18, MyRocks and InnoDB |
-| `dg/README.md`, `dg/DESIGN.md` | what digres is, and its decisions of record |
-| `dg/WORKNOTE.md` | every step taken in digres, and why |
-| `sm/BTREEINDEX.md` and the other notes in `sm/` | designs of a feature each, built or proposed |
+| [`QUICKSTART.md`](QUICKSTART.md) | build, make a database, connect, and run a query |
+| [`sm/README.md`](sm/README.md) | the stack's levels, and each one's design document |
+| [`sm/NEXT.md`](sm/NEXT.md) | what is to be built next, in order |
+| [`DG-vs-PG.md`](DG-vs-PG.md) | how digres differs from PostgreSQL 18 |
+| [`PERF.md`](PERF.md) | how fast digres runs against PostgreSQL 18, MyRocks and InnoDB |
+| [`dg/README.md`](dg/README.md), [`dg/DESIGN.md`](dg/DESIGN.md) | what digres is, and its decisions of record |
+| [`dg/WORKNOTE.md`](dg/WORKNOTE.md) | every step taken in digres, and why |
+| [`sm/BTREEINDEX.md`](sm/BTREEINDEX.md) and the other notes in `sm/` | designs of a feature each, built or proposed |

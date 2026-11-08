@@ -2,13 +2,15 @@
 
 The reference for every type sm2 supports: how its datum is
 represented, how it is ordered, and what its key bytes are.
-`TYPE.md` §5 argues *why* these choices; this file is the
+[`TYPE.md`](TYPE.md#5-why-the-types-are-so) §5 argues *why* these
+choices; this file is the
 table you look things up in while writing code.
 
 **Status: built**, every type here, with its text, its order
-and its key (`TYPE.md` §9). Where a fact about
+and its key ([`TYPE.md`](TYPE.md#9-tests) §9). Where a fact about
 PostgreSQL is from memory rather than checked against the
-source it says so, and `TYPE.md` §9 step 1 pins each
+source it says so, and [`TYPE.md`](TYPE.md#9-tests) §9 step 1
+pins each
 one to a fixture taken from a running PostgreSQL.
 
 ---
@@ -20,8 +22,8 @@ mechanical:
 
 | Form | Where it is used | What it is |
 | --- | --- | --- |
-| **native** | in a tuple, always | PostgreSQL's own representation of the datum (`TYPE.md` §5.1) |
-| **key** | only when the datum is a key, or part of one | `key_encode(datum)` — a byte string whose `memcmp` order is the type's order (`../LSMINDEX.md` §2) |
+| **native** | in a tuple, always | PostgreSQL's own representation of the datum ([`TYPE.md`](TYPE.md#51-the-representation-is-postgresqls) §5.1) |
+| **key** | only when the datum is a key, or part of one | `key_encode(datum)` — a byte string whose `memcmp` order is the type's order ([`../LSMINDEX.md`](../LSMINDEX.md#2-key-encoding) §2) |
 
 A tuple stores native datums and nothing else. A key column
 is *also* encoded into the sm1 key, so it appears twice: once
@@ -55,7 +57,8 @@ in §3 produces.
 `0x00` for null, `0x01` for non-null when nulls sort first;
 `0x01` and `0x02` when they sort last. A `NOT NULL` column
 carries the marker too, so a nullability change never
-rewrites a key (`../LSMINDEX.md` §2.2). No type needs a reserved
+rewrites a key ([`../LSMINDEX.md`](../LSMINDEX.md#22-framing)
+§2.2). No type needs a reserved
 value to mean absent. First and last mean in the finished key:
 since a descending column's marker is inverted with the rest
 (below), a descending column with nulls first takes the
@@ -63,7 +66,9 @@ nulls-last markers, which inversion turns into nulls first.
 
 **Direction.** A `DESC` column is the ascending encoding with
 every byte inverted, marker included, because sm1 will not
-scan backwards (`SM2_DESIGN.md` §2). Inversion is applied last,
+scan backwards
+([`SM2_DESIGN.md`](SM2_DESIGN.md#2-what-the-level-depends-on)
+§2). Inversion is applied last,
 to the finished per-column bytes.
 
 **Concatenation.** A multi-column key is the per-column keys
@@ -74,7 +79,8 @@ escaping rule. Fixed-width encodings are prefix-free already.
 
 **Length.** `sm1::max_keylen` is 4096 and bounds the whole
 concatenation, the 2-byte relid included. What
-happens when a key does not fit is in `../LSMINDEX.md` §2.4:
+happens when a key does not fit is in
+[`../LSMINDEX.md`](../LSMINDEX.md#24-cut-keys) §2.4:
 refused for a primary key, truncated and rechecked for a
 secondary index.
 
@@ -108,7 +114,8 @@ null marker and before any inversion.
 | `name` | 20 | the bytes, NUL-padded to 64 | 64 | as `text`, of the bytes before the NULs | var |
 
 The codes are frozen: assigned once, never reused or
-renumbered (`TYPE.md` §5). Code 7 was `decimal`, before
+renumbered ([`TYPE.md`](TYPE.md#5-why-the-types-are-so) §5). Code
+7 was `decimal`, before
 it was split into `decimal64` and `decimal128`, and is retired.
 Codes 64–127 are reserved for types added later; 0 is never a
 type code.
@@ -121,7 +128,8 @@ PostgreSQL's order.
 
 ### 3.2 int2, int4, int8
 
-Native is two's complement, little-endian (`TYPE.md` §5.1).
+Native is two's complement, little-endian
+([`TYPE.md`](TYPE.md#51-the-representation-is-postgresqls) §5.1).
 
 The key flips the sign bit and writes big-endian:
 
@@ -192,9 +200,10 @@ the subnormal and huge boundaries, and random datums.
 
 SQL's `decimal(p, s)`, and `numeric` its alias, are not sm
 types: the host maps them to one of these two, choosing the
-width (`../CATALOG.md` §8.4).
+width ([`../CATALOG.md`](../CATALOG.md#84-decimal-columns) §8.4).
 
-Native follows DuckDB's decimal (`TYPE.md` §5.2), with
+Native follows DuckDB's decimal
+([`TYPE.md`](TYPE.md#52-the-decimals-follow-duckdbs) §5.2), with
 the scale in it: the value times 10^s as a two's complement
 integer, shifted left past s itself, little-endian —
 `(value << 5) | s` in 8 bytes for `decimal64`,
@@ -219,14 +228,16 @@ column, so the encoder never rescales. Comparing two columns
 of different scale, or a `decimal64` with a `decimal128`, is a
 cast, above sm2.
 
-Decided in `TYPE.md` §5.2: a typmod is required, and NaN
+Decided in [`TYPE.md`](TYPE.md#52-the-decimals-follow-duckdbs)
+§5.2: a typmod is required, and NaN
 and infinity are refused on insert, so no value is reserved as
 a sentinel.
 
 ### 3.5 text, varchar, bpchar, name
 
 Native is the payload bytes alone — no varlena header, no
-1-byte short form, no PostgreSQL TOAST pointer (`TYPE.md` §5.1).
+1-byte short form, no PostgreSQL TOAST pointer
+([`TYPE.md`](TYPE.md#51-the-representation-is-postgresqls) §5.1).
 Length lives in the tuple's framing.
 
 The bytes must be valid UTF-8 with no NUL, as in a PostgreSQL
@@ -245,7 +256,8 @@ key = sortkey(collation, datum) ‖ 0x00 0x00 ‖ escape(datum)
 - `sortkey` is the collation's transform, run **once here in
   the encoder** — ICU's `ucol_getSortKey` —
   never `strcoll` at compare time, because sm1 compares with
-  `memcmp` and takes no comparator (`../LSMINDEX.md` §2). Its
+  `memcmp` and takes no comparator
+  ([`../LSMINDEX.md`](../LSMINDEX.md#2-key-encoding) §2). Its
   output carries no embedded `0x00`, which is what lets the
   `0x00 0x00` separator above sit between it and the
   tie-break. Budget 2-4x the input length against
@@ -266,18 +278,20 @@ key = sortkey(collation, datum) ‖ 0x00 0x00 ‖ escape(datum)
 - The type's `cmp` stays byte order: it takes no collation, so
   the collation's order is in the key alone.
 - The collation's version is recorded with the schema
-  (`../CATALOG.md` §1); a mismatch is refused, not trusted.
+  ([`../CATALOG.md`](../CATALOG.md#1-design) §1); a mismatch is
+  refused, not trusted.
 - Under a **non-deterministic** collation the tie-break is
   left out: the key is `sortkey ‖ 0x00 0x00`, so strings ICU
   calls equal share a key, and `key_decode` fails with
   `SM_ERR_INVALID`, since the key holds no string
-  (`../LSMINDEX.md` §2.3). Byte order is always
+  ([`../LSMINDEX.md`](../LSMINDEX.md#23-text-and-collations)
+  §2.3). Byte order is always
   deterministic.
 - `text` (8) and `varchar` (9) share every byte and keep
   separate codes only so a round trip never rewrites a
   column's declared type. The `varchar(n)` limit is a
   coercion the host applies; sm2's codec stores what it is
-  given (`TYPE.md` §5).
+  given ([`TYPE.md`](TYPE.md#5-why-the-types-are-so) §5).
 - `bpchar` (19) is PostgreSQL's `char(n)`, whose trailing
   spaces count for nothing: `'a'` and `'a  '` are one value.
   It stores what it is given, the host's padding and all, and
@@ -380,7 +394,9 @@ Native is PostgreSQL's struct, 16 bytes:
 The three components are kept apart because they are not
 convertible: a month is 28 to 31 days, a day is 23, 24 or 25
 hours across a daylight-saving boundary. So `'1 mon'` and
-`'30 days'` are different datums (`TYPE.md` §5.4).
+`'30 days'` are different datums
+([`TYPE.md`](TYPE.md#54-interval-keeps-postgresqls-three-components)
+§5.4).
 
 All three components at their maximum is `infinity`, all at
 their minimum `-infinity`, as in PostgreSQL 17 and later; every
@@ -451,10 +467,12 @@ refuses them.
 ## 4. What is not here yet
 
 Not in the first set, and the format leaves room for each
-without disturbing what is already written (`TYPE.md` §5):
+without disturbing what is already written
+([`TYPE.md`](TYPE.md#5-why-the-types-are-so) §5):
 arrays, composites, ranges, domains, enums, JSON and JSONB,
 the network and geometric types, `money`, `xml`, and bit
-strings. `FEATURELIST.md`, at the top level, tracks which of
+strings. [`FEATURELIST.md`](../FEATURELIST.md), at the top level,
+tracks which of
 them are wanted and what each one needs.
 
 `interval` was once on this list as a candidate for exclusion,
@@ -481,7 +499,8 @@ set satisfies:
   has no entry kind for them.
 - **A type is three things together:** an in-memory datum, an
   order-preserving key encoding (§3), and a tuple encoding
-  (`TUPLE.md`). A type is not added until it has all three.
+  ([`TUPLE.md`](TUPLE.md)). A type is not added until it has all
+  three.
 - **A type code goes on disk in the schema**, not in each row. A
   type removed from the set does not free its number (§3).
 - **Null is a property of the column, not of the type.** The
@@ -501,11 +520,14 @@ by type, with the decimals the one exception.** This means the
 same widths, the same epochs, the same units and the same struct
 layouts, not a format of our own that holds the same information.
 
-The executor works in tuple slots (`../PART4.md` §6). A bespoke
+The executor works in tuple slots
+([`../PART4.md`](../PART4.md#6-what-this-forces-on-sm2-and-sm3-now)
+§6). A bespoke
 encoding of each datum pays a translation on every column of
 every row, in both directions. With PostgreSQL's representation
 the cost is per tuple, not per datum: the framing around the
-columns must still be built (`TUPLE.md`), but the column bytes
+columns must still be built ([`TUPLE.md`](TUPLE.md)), but the
+column bytes
 are copied, not converted. `test/pg_fixtures.h` pins each width,
 epoch and unit to bytes PostgreSQL stored (§9).
 
@@ -521,7 +543,8 @@ Two places need sm2 to be more precise than PostgreSQL is:
   alone. The varlena header, the 1-byte short form and the TOAST
   pointer are framing, and framing is the tuple's business. In a
   tuple a variable-width datum is a PostgreSQL varlena, header
-  and all, so PostgreSQL can read it in place (`VARLENA.md`).
+  and all, so PostgreSQL can read it in place
+  ([`VARLENA.md`](VARLENA.md)).
 
 ### 5.2 The decimals follow DuckDB's
 
@@ -561,7 +584,8 @@ What a column may declare, and what a datum may hold:
   resolves a bare `decimal`, `decimal(p)` and the `numeric` alias
   to a declared `(p, s)`. sm takes what it is given.
 - **SQL's `decimal(p, s)` is not an sm type.** The host maps it
-  to one of the two, choosing the width (`../../dg/DECIMAL.md`
+  to one of the two, choosing the width
+  ([`../../dg/DECIMAL.md`](../../dg/DECIMAL.md)
   §2.3). So the names a user writes are resolved above sm.
 - **The scale is in the datum**, below the value (§3.4). So a
   datum means a value without its typmod, and a host can pass a
@@ -628,7 +652,8 @@ the identity it dropped appended behind it.
 
 ## 6. Why the keys are so
 
-`../LSMINDEX.md` §2 holds the rules a key satisfies: `memcmp`
+[`../LSMINDEX.md`](../LSMINDEX.md#2-key-encoding) §2 holds the
+rules a key satisfies: `memcmp`
 order, injective and not reversible, prefix-free, framing,
 collations and cut keys. This section holds the rest.
 
@@ -648,7 +673,9 @@ collations and cut keys. This section holds the rest.
 - **The encoder takes each column's description**,
   `key_column_t`, so a descending column is the ascending
   encoding inverted and scanned forward (§2). The fork's planner
-  never asks for a backward scan (`../LSMINDEX.md` §5.5).
+  never asks for a backward scan
+  ([`../LSMINDEX.md`](../LSMINDEX.md#55-what-a-scan-leaves-to-the-host)
+  §5.5).
 
 ## 7. Costs accepted
 
@@ -701,7 +728,8 @@ collations and cut keys. This section holds the rest.
 
 ## 9. Tests
 
-Run on the debug build (`../../CLAUDE.md`). Paths are relative to
+Run on the debug build ([`../../CLAUDE.md`](../../CLAUDE.md)).
+Paths are relative to
 `sm2/`.
 
 - **Types** (`test/test_type.cc`). For every type, a datum round

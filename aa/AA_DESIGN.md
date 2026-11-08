@@ -8,11 +8,13 @@ is wrong.
 
 Related documents:
 
-- `ROLE.md` explains why: which parts of PostgreSQL's roles and
+- [`ROLE.md`](ROLE.md) explains why: which parts of PostgreSQL's
+  roles and
   privileges digres supports, and the rules for letting a client
   in.
-- `USAGE.md` explains how to call aa.
-- `README.md` lists the files and explains the build.
+- [`USAGE.md`](USAGE.md) explains how to call aa.
+- [`README.md`](README.md) lists the files and explains the
+  build.
 
 **The guiding rule: checks must be cheap; changes may be
 slow.** A server checks privileges on every statement, many
@@ -47,7 +49,7 @@ aa does **not**:
   running the SCRAM password exchange;
 - support column, function, type or language privileges,
   row-level security, or `ALTER DEFAULT PRIVILEGES` (see
-  `ROLE.md` for what comes later).
+  [`ROLE.md`](ROLE.md) for what comes later).
 
 aa depends only on sm (through `sm.h`) and the C++ standard
 library. It includes no PostgreSQL header: where it needs
@@ -238,7 +240,8 @@ so they never need to be undone by a savepoint.
 
 ## 6. Authentication (`src/aa_auth.cc`)
 
-`ROLE.md` §5 sets the rule for letting a client in. aa makes the
+[`ROLE.md`](ROLE.md#5-how-a-client-gets-in) §5 sets the rule for
+letting a client in. aa makes the
 decisions; the host does the I/O and passes in what it learned
 (the socket's peer, the current time, the number of sessions).
 There are four decisions, each at a different point in the
@@ -389,6 +392,7 @@ data directory (`test/home.h`). They cover:
   and each cache noticing the changes it must.
 
 Each test was checked by deliberately breaking the code it
-covers and confirming the test fails (`../dg/WORKNOTE.md`, steps
+covers and confirming the test fails
+([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md), steps
 326 on). digres's `test/server.sh` and `test/initdb.sh` test the
 same behavior through a running server, as a client sees it.

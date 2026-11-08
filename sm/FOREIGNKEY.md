@@ -8,11 +8,13 @@ rows. The code is in `sm3/src/ddl/ddl.cc` (DDL),
 (digres).
 
 **Status: built**: sm3's part and `sm.h`'s (§3 to §6,
-`sm3/test/test_fkey.cc`), digres's (§8, `../dg/WORKNOTE.md`
-step 177), and `rel`'s verbs (`rel/REL.md`,
+`sm3/test/test_fkey.cc`), digres's (§8,
+[`../dg/WORKNOTE.md`](../dg/WORKNOTE.md)
+step 177), and `rel`'s verbs ([`rel/REL.md`](rel/REL.md),
 `rel/test/test_fkey.rel`). Not yet: a DEFERRABLE one.
 
-`DESIGN.md` §5 settles whose a foreign key is: the host's.
+[`DESIGN.md`](DESIGN.md#5-cross-level-decisions) §5 settles whose
+a foreign key is: the host's.
 PostgreSQL checks one with triggers that run queries, and the
 stack runs none; its share is the lock on the parent row,
 `sm_tbl_lock`. What it did not have was somewhere to keep the
@@ -72,7 +74,7 @@ the constraint and keeps none (§8).
 
 **A new kind, `CONSTRAINT`, 12**, keyed by the child table's oid
 and the constraint's oid, as an index is keyed by its table's
-(`CATALOG.md` §3.3):
+([`CATALOG.md`](CATALOG.md#33-keys) §3.3):
 
 | Kind | Value | Key after the kind | Holds |
 | --- | --- | --- | --- |
@@ -101,7 +103,7 @@ CONSTRAINT value = constraint | fkey | pair × npairs
   against the child's constraints, under the child's lock X,
   and refuses a taken one with `SM_ERR_DUPKEY`.
 - **A new kind changes no key's layout**, so `META` stays at 4
-  (`CATALOG.md` §3.5).
+  ([`CATALOG.md`](CATALOG.md#35-values) §3.5).
 - **Its oid** is from `cat_new_oid()`, as a table's and an
   index's.
 
@@ -116,7 +118,8 @@ CONSTRAINT value = constraint | fkey | pair × npairs
   each DDL that adds or drops a foreign key puts the parent's
   definition back with it changed. This is the reverse lookup a
   `DROP TABLE` of a parent and the host's parent-side triggers
-  need, with no dependency index (`CATALOG.md` §11: a
+  need, with no dependency index
+  ([`CATALOG.md`](CATALOG.md#11-not-built) §11: a
   dependency is derived, and the catalog is in memory).
 - **A constraint is found by its oid alone**, as PostgreSQL's
   `CONSTROID` syscache finds one. There is no map from
@@ -127,10 +130,13 @@ CONSTRAINT value = constraint | fkey | pair × npairs
   key publishes both definitions, and validating or renaming one
   the child's, so a host's cache of either, the parent's triggers
   among it, is seen to be stale
-  (`DESIGN.md` §5, a cache is kept fresh by a version).
+  ([`DESIGN.md`](DESIGN.md#5-cross-level-decisions) §5, a cache
+  is kept fresh by a version).
 - **Temporary tables**: a foreign key between two of one
   session's temporary tables is kept in its temporary catalog
-  and written nowhere (`TEMPTABLE.md` §4); one between a
+  and written nowhere
+  ([`TEMPTABLE.md`](TEMPTABLE.md#4-sm3-the-temporary-catalog)
+  §4); one between a
   temporary table and a permanent one is refused,
   `SM_ERR_INVALID`, as PostgreSQL refuses it.
 
@@ -224,7 +230,8 @@ struct sm_fkey_ref_t {
   nor written. That is coarser than PostgreSQL, for the length
   of one DDL transaction.
 - **A check takes the parent row's lock SH**, `sm_tbl_lock`, as
-  `FOR KEY SHARE` is `FOR SHARE` here (`DESIGN.md` §5): an
+  `FOR KEY SHARE` is `FOR SHARE` here
+  ([`DESIGN.md`](DESIGN.md#5-cross-level-decisions) §5): an
   update of the parent's other columns waits for the child's
   transaction, as it does today.
 
@@ -240,15 +247,17 @@ Outlined here; designed with the work, in `../dg`.
 - **The host blob**: the three operator arrays and the `SET
   NULL`/`SET DEFAULT` column list, as `pg_constraint` has them,
   oids of compiled-in operators, the same in every instance
-  (`../dg/CODE.md`).
+  ([`../dg/CODE.md`](../dg/CODE.md)).
 - **The relation cache** builds `rd_fkeylist` and the
   relation's `TriggerDesc` from `fkeys` and `referenced_by`:
   PostgreSQL's RI trigger set, each naming the constraint by
   oid. The lookups `ri_triggers.c` makes, `CONSTROID` and
   `pg_constraint` and `pg_trigger` rows, are answered from
   `sm_cat_fkey` by the lookup layer, as `pg_class` is today
-  (`../dg/SYSCATALOG.md`). `pg_constraint` lists each foreign
-  key, so `\d` shows it (`../dg/WORKNOTE.md` step 246).
+  ([`../dg/SYSCATALOG.md`](../dg/SYSCATALOG.md)). `pg_constraint`
+  lists each foreign
+  key, so `\d` shows it ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md)
+  step 246).
 - **The check of rows already there** is PostgreSQL's
   `RI_Initial_Check`, over SPI, before `validated` is passed
   true.
@@ -261,12 +270,14 @@ Outlined here; designed with the work, in `../dg`.
 ## 9. Not here
 
 - **`CHECK`**: the same kind, another type (§3).
-- **A dependency index** (`CATALOG.md` §11):
+- **A dependency index** ([`CATALOG.md`](CATALOG.md#11-not-built)
+  §11):
   `referenced_by` is the one reverse lookup foreign keys need,
   and it is derived in memory.
 - **`FOR KEY SHARE` and `FOR NO KEY UPDATE`** in sm1: they would
   let an update of the parent's other columns past a child's
-  check (`NEXT.md` §2). Foreign keys work without them, more
+  check ([`NEXT.md`](NEXT.md#2-loose-ends) §2). Foreign keys work
+  without them, more
   coarsely.
 - **`MATCH PARTIAL`**: PostgreSQL does not implement it either.
 

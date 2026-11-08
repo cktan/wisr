@@ -2,32 +2,47 @@
 
 The repository has four parts: `sm/`, the storage stack;
 `dg/`, digres, the fork of PostgreSQL that runs on it
-(`sm/PART4.md` §10); `sq/`, the SQL parser digres links,
-a library of its own (`sq/DESIGN.md`); and `aa/`, roles,
+([`sm/PART4.md`](sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+§10); `sq/`, the SQL parser digres links,
+a library of its own ([`sq/DESIGN.md`](sq/DESIGN.md)); and `aa/`,
+roles,
 authentication and authorization, a library on sm that
-digres links too (`aa/AA_DESIGN.md`, `aa/USAGE.md`). The system
+digres links too ([`aa/AA_DESIGN.md`](aa/AA_DESIGN.md),
+[`aa/USAGE.md`](aa/USAGE.md)). The system
 services sm and dg both build on, `sm_sys.h`, are in sm's
-level 0 (`sm/sm0/README.md`), which depends on nothing else in
+level 0 ([`sm/sm0/README.md`](sm/sm0/README.md)), which depends
+on nothing else in
 the repository.
 
-Read `sm/README.md` for the layout of the stack's levels, then
+Read [`sm/README.md`](sm/README.md) for the layout of the stack's
+levels, then
 the design document of the level you are working in —
-`sm/sm0/README.md` for the error state, helpers and sm_sys.h,
-`sm/sm1/SM1_DESIGN.md` for the MVCC storage manager,
-`sm/sm2/SM2_DESIGN.md` for types and tuples,
-`sm/sm3/SM3_DESIGN.md` for schema and index maintenance. Those
+[`sm/sm0/README.md`](sm/sm0/README.md) for the error state,
+helpers and sm_sys.h,
+[`sm/sm1/SM1_DESIGN.md`](sm/sm1/SM1_DESIGN.md) for the MVCC
+storage manager,
+[`sm/sm2/SM2_DESIGN.md`](sm/sm2/SM2_DESIGN.md) for types and
+tuples,
+[`sm/sm3/SM3_DESIGN.md`](sm/sm3/SM3_DESIGN.md) for schema and
+index maintenance. Those
 are overviews: each module has its own document in `sm/`, and
-`sm/GLOSSARY.md` lists the modules and their standard names.
+[`sm/GLOSSARY.md`](sm/GLOSSARY.md) lists the modules and their
+standard names.
 
-Before changing code in `sm/`, read `sm/CODE.md`, and before
-changing code in `dg/`, read `dg/CODE.md`: the rules and
-practices for coding in each. `aa/` follows `sm/CODE.md`;
-read `aa/AA_DESIGN.md` before changing it.
+Before changing code in `sm/`, read [`sm/CODE.md`](sm/CODE.md),
+and before
+changing code in `dg/`, read [`dg/CODE.md`](dg/CODE.md): the
+rules and
+practices for coding in each. `aa/` follows
+[`sm/CODE.md`](sm/CODE.md);
+read [`aa/AA_DESIGN.md`](aa/AA_DESIGN.md) before changing it.
 
 Paths written inside the stack's documents are relative to
-`sm/`: `sm1/SM1_DESIGN.md` there means `sm/sm1/SM1_DESIGN.md`.
+`sm/`: [`sm1/SM1_DESIGN.md`](sm/sm1/SM1_DESIGN.md) there means
+[`sm/sm1/SM1_DESIGN.md`](sm/sm1/SM1_DESIGN.md).
 Paths written inside a level's documents are relative to that
-level: `src/db.cc` in `sm1/SM1_DESIGN.md` means
+level: `src/db.cc` in [`sm1/SM1_DESIGN.md`](sm/sm1/SM1_DESIGN.md)
+means
 `sm/sm1/src/db.cc`.
 
 ## Expert Persona
@@ -178,7 +193,8 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
 
 - **Code Formatting:** Always run `make format` at the top
   before committing: it formats sm, sq and aa. dg is formatted
-  by the lines a change touches (`dg/CODE.md` §8).
+  by the lines a change touches
+  ([`dg/CODE.md`](dg/CODE.md#8-style) §8).
 
 ### 2. Think Before Coding
 

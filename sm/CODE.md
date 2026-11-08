@@ -1,18 +1,23 @@
 # Coding in sm
 
 The rules and practices for changing `sm/`, written for coding
-agents. `README.md` lays out the levels, `DESIGN.md` holds the
+agents. [`README.md`](README.md) lays out the levels,
+[`DESIGN.md`](DESIGN.md) holds the
 decisions that cross them, and each level's `SMn_DESIGN.md` is
-its design of record (sm0's is `sm0/README.md`). The
-repository's `CLAUDE.md` holds the rules for the whole
+its design of record (sm0's is [`sm0/README.md`](sm0/README.md)).
+The
+repository's [`CLAUDE.md`](../CLAUDE.md) holds the rules for the
+whole
 repository; this file adds what is particular to `sm/`. Where
-the two differ, `CLAUDE.md` wins.
+the two differ, [`CLAUDE.md`](../CLAUDE.md) wins.
 
 ## 1. Levels
 
 - **A level calls only the levels below it**: sm1 calls sm0;
   sm2 calls sm1 and sm0; sm3 calls sm2, and sm1 directly where
-  sm2 has nothing to add (`DESIGN.md` §5). Nothing calls
+  sm2 has nothing to add
+  ([`DESIGN.md`](DESIGN.md#5-cross-level-decisions) §5). Nothing
+  calls
   upward, and the C wrapper (`include/sm.h`, `src/sm.cc`)
   belongs to no level.
 - **sm0 depends on nothing in the repository** but the root's
@@ -55,7 +60,8 @@ the two differ, `CLAUDE.md` wins.
   of every level's objects and the wrapper's that dg links.
 - **`DEBUG=1 make -j4 test` in `sm/`** runs every level's
   tests in order, then the `rel` suite, on the debug build
-  (`-O0 -g`, with `assert()`), as `CLAUDE.md` requires. It
+  (`-O0 -g`, with `assert()`), as [`CLAUDE.md`](../CLAUDE.md)
+  requires. It
   passes when every doctest line reads `0 failed`, sm1's line
   reads `scenarios: 122 scripts match, versioned and chained`
   (or however many there are), and the last line is
@@ -79,7 +85,8 @@ the two differ, `CLAUDE.md` wins.
   code and message are read afterwards from the thread's error
   state: `sm1::errnum()` and `sm1::errmsg()` in C++,
   `sm_errnum()` and `sm_errmsg()` in C. Only "no row" is a
-  positive return, 1 (`DESIGN.md` §5).
+  positive return, 1
+  ([`DESIGN.md`](DESIGN.md#5-cross-level-decisions) §5).
 - **Record an error with sm0's setters**, so a failing path is
   one line: `return set_error(SM_ERR_..., "{} ...", ...);`
   (`sm0_error.h`; `sm1::seterr` takes a ready message).
@@ -104,7 +111,8 @@ the two differ, `CLAUDE.md` wins.
   library (`std::system_error` when a thread cannot start),
   or from a callback whose contract allows one. sm1, sm2 and
   sm3 catch nothing but in the index builder's worker (below);
-  the C wrapper is the one catch-all (`DESIGN.md` §5).
+  the C wrapper is the one catch-all
+  ([`DESIGN.md`](DESIGN.md#5-cross-level-decisions) §5).
 - **Release with RAII, not catch and rethrow.** What a frame
   must undo on the way out is held by a guard: a
   `std::lock_guard`, a `std::unique_ptr`, or sm0's `defer` and
@@ -125,7 +133,8 @@ the two differ, `CLAUDE.md` wins.
   `SM_ERR_NOMEM`. The C wrapper is the one exception: its
   catch-all maps a `std::bad_alloc` to `SM_ERR_NOMEM`. One
   reaches it only before `sm1::attach` installs the handler,
-  or under a host's own handler (`DESIGN.md` §5).
+  or under a host's own handler
+  ([`DESIGN.md`](DESIGN.md#5-cross-level-decisions) §5).
 
 ## 6. Names and headers
 
@@ -148,7 +157,8 @@ the two differ, `CLAUDE.md` wins.
   caller is an `sm_wait()` with the thread's `sm_wait_mask()`,
   and fails with `SM_ERR_INTERRUPTED` when a bit in the mask
   is pending. sm takes no bit: the host does
-  (`sm1/SM1_DESIGN.md`, `sm0/INTERRUPT.md`). One wait in sm1
+  ([`sm1/SM1_DESIGN.md`](sm1/SM1_DESIGN.md),
+  [`sm0/INTERRUPT.md`](sm0/INTERRUPT.md)). One wait in sm1
   is an exception, past a commit's claim: a queued commit's wait
   for its batch (`finish_commit()` in `sm1/src/xct.cc`). It is
   bounded by two syncs, each of which finishes or aborts the
@@ -166,7 +176,8 @@ the two differ, `CLAUDE.md` wins.
 
 ## 8. Style
 
-- **Follow `CLAUDE.md`**: `snake_case` names, types ending in
+- **Follow [`CLAUDE.md`](../CLAUDE.md)**: `snake_case` names,
+  types ending in
   `_t`, `m_` before a class's private members, a doc comment
   of a line or two on every function, a short comment saying
   why on every significant call (a lock, a thread, an
@@ -205,9 +216,10 @@ the two differ, `CLAUDE.md` wins.
 
 ## 10. Documents
 
-- **A decision that crosses levels goes in `DESIGN.md`**, one
+- **A decision that crosses levels goes in
+  [`DESIGN.md`](DESIGN.md)**, one
   inside a level in that level's design document, and what is
-  to be built next in `NEXT.md`.
+  to be built next in [`NEXT.md`](NEXT.md).
 - **Paths in `sm/`'s documents are relative to `sm/`**, and in
   a level's documents relative to that level.
 - **Wrap prose at 65 columns** in every `.md` file; code

@@ -1,7 +1,7 @@
 # Summary: digres against PostgreSQL, MyRocks and InnoDB
 
 Written 2026-11-07. This file reports throughput and latency
-only. Profiles are in `PARITY.md`.
+only. Profiles are in [`PARITY.md`](PARITY.md).
 
 ## Aim
 

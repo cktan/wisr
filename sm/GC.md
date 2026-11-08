@@ -55,7 +55,8 @@ stamp is also what lets the sweep delete a status record (§8).
   file at the bottom of the tree is reached only by the sweep's
   pass. A bulk load's ingested files land there, so their rows
   lean on the commit cache and `CF:txn` for a long time, and a
-  load's dead versions wait for that pass (`BULKLOAD.md`).
+  load's dead versions wait for that pass
+  ([`BULKLOAD.md`](BULKLOAD.md)).
 - **Records linger.** Below a million records nothing is swept. A
   database with modest traffic keeps every commit record, tens of
   megabytes at most.

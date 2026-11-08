@@ -54,7 +54,8 @@ each (`../../sm`).
 
 digres's Q6 makes these calls too, over 100 rows. Its plan is an
 index scan of `wide_mixed_pkey`, and a primary key is its table
-(`../../sm/CLUSTER.md` §0): `smstore_index_beginscan` opens
+([`../../sm/CLUSTER.md`](../../sm/CLUSTER.md#0-in-brief) §0):
+`smstore_index_beginscan` opens
 `sm_tbl_idx_scan_rows`, which reaches `sm1::chain_scan` on the
 table's store over the rows' keys. A row's key is there `relid ‖
 encode(id)`, here `relid ‖ _id`, which the load makes the row's

@@ -3,8 +3,10 @@
 This is what an audit of wisr's scenario testing infrastructure
 in `mvcc/` left standing: three behaviours that look wrong at
 first reading and are not. Every gap the audit found in the
-driver and the scenarios is closed; `MVCC.md` documents what
-every script pins, and `DRIVER.md` the verbs they use.
+driver and the scenarios is closed; [`MVCC.md`](MVCC.md)
+documents what
+every script pins, and [`DRIVER.md`](DRIVER.md) the verbs they
+use.
 
 ---
 
@@ -49,10 +51,12 @@ The suite is in six families:
   its specs, run as permutation scripts against the outcome
   its expected output gives.
 
-These counts are as of the audit, 109 scripts (`AUDIT.md`
+These counts are as of the audit, 109 scripts
+([`AUDIT.md`](AUDIT.md)
 dates it). The suite has 122 now, in eight families: A runs
 to `a19`, C to `c36`, E to `e07`, F to `f11`, family G
-(`g01`, `g02`) holds a key's versions (`MVCC.md` §7c), and
+(`g01`, `g02`) holds a key's versions
+([`MVCC.md`](MVCC.md#7c-family-g--a-keys-versions) §7c), and
 family H (`h01`–`h06`) table locks (§7d).
 
 ---
@@ -66,7 +70,8 @@ are recorded so the next reader does not re-open them.
    S/S.** `c02`–`c05`, `c13`, `c21`, `c22`, `c24`,
    `c29`–`c31` and `e04` assert write skew that way. `ssi_precommit()` in `src/ssi.cc` now
    fails only the second to commit of a plain write skew
-   (`../XCTMGR.md` §7.4), but serializability asks only that
+   ([`../XCTMGR.md`](../../XCTMGR.md#74-the-abort-rule) §7.4),
+   but serializability asks only that
    one not commit; a more conservative rule would be as
    sound. At most one is the assertion of the property, not
    of the rule.
@@ -84,4 +89,5 @@ are recorded so the next reader does not re-open them.
    rather than a missed detection: `ssi_on_write()` returns
    at once for a writer that is not SERIALIZABLE, so no edge
    forms into T1 and the cycle never closes. Mixed pairings
-   degrade to snapshot isolation by design (`../XCTMGR.md` §7.5).
+   degrade to snapshot isolation by design
+   ([`../XCTMGR.md`](../../XCTMGR.md#75-who-takes-part) §7.5).

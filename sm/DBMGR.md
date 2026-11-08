@@ -45,7 +45,7 @@ index serves a backward scan: not the clustered primary key, and
 not a secondary index a level above builds out of stores.
 Descending order is built into the key. An index with inverted
 key bytes is scanned forward. The stack keeps no mirror copy of
-an index for the other direction (`PART4.md`).
+an index for the other direction ([`PART4.md`](PART4.md)).
 
 The engine cost was part of the reason:
 
@@ -77,7 +77,7 @@ link (BTREEINDEX.md).
   (`memcmp`), which is what `sm1::scan` exposes.
 - The language is C++, RocksDB's native API, and so is the
   interface, in `namespace sm1`. Only the top level wraps the
-  stack in a C API (`DESIGN.md`).
+  stack in a C API ([`DESIGN.md`](DESIGN.md)).
 
 ---
 
@@ -189,7 +189,7 @@ the name never reaches the filesystem, and `base` cannot collide
 with `global`. A database name is 1 to `sm1::max_dbname` (63)
 bytes, and any byte but NUL. Names compare bytewise and never
 fold. An over-long name is an error and not a truncation
-(`sm1/API.md`).
+([`sm1/API.md`](sm1/API.md)).
 
 One process holds the root db, so it needs no concurrency control
 beyond the environment's mutex, `env_t::mu`. Writes to it are
@@ -411,7 +411,7 @@ ROWSTORE.md gives the version layouts of classes `0x00` to
 `0x02`, and BTREEINDEX.md the layout of a page. A page is no
 version: the compaction filter keeps it as it is (GC.md), and a
 bulk load's check that a store is empty and a load's rollback
-leave it out (`BULKLOAD.md`).
+leave it out ([`BULKLOAD.md`](BULKLOAD.md)).
 
 Pages sort last. So a chained store's last key below class `0x04`
 is its highest old id, which `chain_next_old()` reads at open.
@@ -900,7 +900,9 @@ record before it.
 **Design.** A commit does not write its record itself. It joins
 the commit queue, and one commit, the leader, writes the records
 of every commit queued, in `commit_ts` order, and syncs once for
-all, as `XLogFlush()` does (`XCTMGR.md` §8.2, §8.5). The commit
+all, as `XLogFlush()` does
+([`XCTMGR.md`](XCTMGR.md#82-the-procedure) §8.2, §8.5). The
+commit
 queue is `commit_head`, under `commit_mu`. `lead_batch()` does
 these steps:
 
@@ -931,7 +933,8 @@ Rules of this design:
   own. A woken commit takes no lock.
 - **The records go in `commit_ts` order.** A sync that covers a
   commit then covers every older one, so no commit waits for an
-  older commit's sync (`XCTMGR.md` §8.5).
+  older commit's sync
+  ([`XCTMGR.md`](XCTMGR.md#85-records-in-commit_ts-order) §8.5).
 - **The xid stays in the active table until the sync is done.**
   So every reader, the compaction filter too, finds it in flight
   before it reaches `CF:txn` (`xct_status()` step 1), and no
@@ -941,7 +944,8 @@ Rules of this design:
   are rare, and a group led by one of them syncs inside the
   queue.
 - **The wait is not cut short by an interrupt,** unlike every
-  other wait in sm (`CODE.md`). The record may be written, so an
+  other wait in sm ([`CODE.md`](CODE.md)). The record may be
+  written, so an
   interrupted commit has an unknown outcome, and only an abort
   could settle it. The wait is bounded by two batches: the one
   being written, and the next. Each finishes or aborts the
@@ -953,7 +957,8 @@ Rules of this design:
 ### 8.3 A failed write is fatal
 
 **Warning: a failed status record write, or a failed WAL sync,
-aborts the process (`sm0::fatal()`, `CODE.md`).** The engine
+aborts the process (`sm0::fatal()`, [`CODE.md`](CODE.md)).** The
+engine
 keeps no failed state.
 
 - A failed write or sync leaves the outcome unknown. The record
@@ -1206,7 +1211,7 @@ Recovery at attach uses the defaults.
 | `commit_cache_entries` | 65536 | slots, rounded up to even; at least 1 (XCTMGR.md) |
 | `savepoint_undo_bytes` | 64 MB | XCTMGR.md |
 | `idle_close_ms` | 60000 | §5.2 |
-| `load_small_bytes`, `load_sort_bytes`, `load_file_bytes` | 4 MB, 256 MB, 256 MB | `BULKLOAD.md` |
+| `load_small_bytes`, `load_sort_bytes`, `load_file_bytes` | 4 MB, 256 MB, 256 MB | [`BULKLOAD.md`](BULKLOAD.md) |
 
 `db_open()` refuses a value out of range with `SM_ERR_INVALID`.
 
@@ -1217,7 +1222,8 @@ old WAL files alive. sm1 does not set it. A host sets it in
 ### 10.4 Logging
 
 wisr writes no log of its own. A host installs a process-wide
-hook with `sm1::set_log` (`sm1/API.md`). The engine reports
+hook with `sm1::set_log` ([`sm1/API.md`](sm1/API.md)). The engine
+reports
 through it only what no caller can learn from a return value:
 
 - failures on the GC thread;
@@ -1232,7 +1238,7 @@ through it only what no caller can learn from a return value:
 ## 11. Errors
 
 `include/sm_error.h` defines the codes, with stable values, and
-`sm1/API.md` documents them. sm1 raises these:
+[`sm1/API.md`](sm1/API.md) documents them. sm1 raises these:
 
 | Module | Codes |
 | --- | --- |
@@ -1359,8 +1365,10 @@ it. No work here should start before that number exists.
 
 Remote compaction distributes a stateless computation over
 immutable inputs. That is a different problem from letting
-several processes use one database, which `sm1/SM1_OBJECTIVE.md`
-rules out and `PART4.md` shows to be the hard blocker for
+several processes use one database, which
+[`sm1/SM1_OBJECTIVE.md`](sm1/SM1_OBJECTIVE.md)
+rules out and [`PART4.md`](PART4.md) shows to be the hard blocker
+for
 PostgreSQL. It needs no part of that decision reopened.
 
 ---
@@ -1511,7 +1519,7 @@ GC.md gives the trade-off of reclaiming space by compaction.
 | a reader, a second writer, or the compaction filter, before the sync | the xid is in the active table and `visible_ts` has not moved: in flight, and no stamp |
 | the `CF:txn` sweep | drops records at or below W0, which is below `visible_ts`: never an unsynced one |
 | 2PC across a restart | PREPARE stays synced; COMMIT PREPARED goes through `finish_commit()`, the same wait |
-| a commit of DDL, or of temporary stores alone | the same record and wait; `last_ddl_ts` set after the sync; `NEXT.md` lists skipping the sync of a commit of temporary stores alone |
+| a commit of DDL, or of temporary stores alone | the same record and wait; `last_ddl_ts` set after the sync; [`NEXT.md`](NEXT.md) lists skipping the sync of a commit of temporary stores alone |
 | bulk load | the load's files go in before the record; ingested files have no log |
 | a log switch during a sync | `SyncWAL()` syncs every log up to the current one |
 | older commits in progress | a commit waits for them after its sync (XCTMGR.md) |
@@ -1538,7 +1546,8 @@ GC.md gives the trade-off of reclaiming space by compaction.
   leader hands off to one commit.
 - **Each commit writing its own record.** Records then reach the
   WAL out of `commit_ts` order, and a commit whose sync missed an
-  older record waits one more sync (`XCTMGR.md` §8.5).
+  older record waits one more sync
+  ([`XCTMGR.md`](XCTMGR.md#85-records-in-commit_ts-order) §8.5).
 - **`recycle_log_file_num`.** It reuses old log files at full
   size, and RocksDB turns it off under `kPointInTimeRecovery`,
   the mode sm1 runs.
@@ -1574,13 +1583,14 @@ GC.md gives the trade-off of reclaiming space by compaction.
   prefix. The narrow table grew 15%, and its scans slowed by up
   to 13%.
 - **Errors as thread-local globals.** `sm1::errnum()` and
-  `sm1::errmsg()` are functions (`sm1/API.md`).
+  `sm1::errmsg()` are functions ([`sm1/API.md`](sm1/API.md)).
 
 ---
 
 ## 17. Tests
 
-Run on the debug build (`CLAUDE.md`). Paths are relative to
+Run on the debug build ([`CLAUDE.md`](../CLAUDE.md)). Paths are
+relative to
 `sm1/`.
 
 ### 17.1 The Database Manager
@@ -1652,7 +1662,8 @@ Run on the debug build (`CLAUDE.md`). Paths are relative to
 
 ### 17.2 The rest of sm1
 
-`sm1/mvcc/MVCC.md` states the isolation rules as a table of
+[`sm1/mvcc/MVCC.md`](sm1/mvcc/MVCC.md) states the isolation rules
+as a table of
 scenarios, with the outcome at REPEATABLE READ, at a mixed pair
 of levels, and at SERIALIZABLE. One file a scenario runs it in
 all those pairings. The unit tests in `sm1/test` cover the rest:

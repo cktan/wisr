@@ -9,7 +9,8 @@ the puts and dels, a session and its overlay) and
 `sm3/src/ddl/ddl.cc` (what a CREATE, a DROP or an ALTER does).
 `sm3/include/sm3.h` declares the calls, and `include/sm.h` gives
 them to the host as `sm_cat_*`. sm1's own catalog of stores is in
-`DBMGR.md`. `NAMESPACE.md` and `SEQUENCE.md` cover the two
+[`DBMGR.md`](DBMGR.md). [`NAMESPACE.md`](NAMESPACE.md) and
+[`SEQUENCE.md`](SEQUENCE.md) cover the two
 objects of those names.
 
 ---
@@ -60,7 +61,7 @@ version at its next look.
 - **The Catalog is held in memory.** `cat_open` loads it at
   startup. A change is made in memory and written through to
   store 0, which is used for persistence only. It replaces
-  PostgreSQL's heap catalogs (`PART4.md`).
+  PostgreSQL's heap catalogs ([`PART4.md`](PART4.md)).
 - **There is one commit point.** Store 0 is an MVCC store in the
   same database as the tables. DDL writes its catalog entries and
   its tables' stores in one sm1 transaction. They commit, roll
@@ -83,7 +84,7 @@ version at its next look.
   catalogs and sequences to heap. The fork replaces them, and
   uses sm1's sequences. Physical replication and PITR over
   PostgreSQL's WAL do not apply to data held in RocksDB
-  (`PART4.md`).
+  ([`PART4.md`](PART4.md)).
 - **The Catalog is a repository.** It stores the record it is
   given, finds it again, and forgets it. It makes no store and
   fills no index. It makes one sequence only, a sequence object's
@@ -94,7 +95,8 @@ version at its next look.
   drops what the object needs outside the Catalog, and puts or
   takes out the object's record (§8).
 - **A catalog row stays small.** A catalog row is an sm2 tuple,
-  held to 64 KB with no TOAST behind it (`sm2/TUPLE.md`). A
+  held to 64 KB with no TOAST behind it
+  ([`sm2/TUPLE.md`](sm2/TUPLE.md)). A
   table's definition in one row could pass that, with its
   columns' missing values. A key for each column, as PostgreSQL's
   `pg_attribute` has a row, keeps each row small.
@@ -102,7 +104,8 @@ version at its next look.
   database from its birth, so no transaction can lose the
   Catalog. sm3 fixes the schema of each value part in code
   (§3.5), and `META` holds the layout's format version.
-- **Type codes are sm2's frozen codes** (`sm2/TYPE.md`). Code 7,
+- **Type codes are sm2's frozen codes**
+  ([`sm2/TYPE.md`](sm2/TYPE.md)). Code 7,
   the retired `decimal`, is never written.
 
 ### 1.3 The table-oid lock
@@ -120,7 +123,8 @@ in-memory catalog safe.
   new ones until the DDL commits.
 - `create_index` is DDL. It takes X only to record the index as
   pending. The build then runs beside readers and writers, and
-  sets the index's state under IX (`INDEXBUILD.md`).
+  sets the index's state under IX
+  ([`INDEXBUILD.md`](INDEXBUILD.md)).
 - Once a transaction holds IS or IX, the definition in memory
   cannot change under it. A Catalog served from memory must take
   this lock, or DDL has nothing to wait on.
@@ -132,10 +136,12 @@ in-memory catalog safe.
 - `cat_lock_table` takes the lock. sm1's detector finds deadlocks
   between DDL and DML like any others.
 
-A view has the same lock on its oid (`VIEW.md`), and a namespace
-has one on its oid (`NAMESPACE.md`). Every object draws its oid
+A view has the same lock on its oid ([`VIEW.md`](VIEW.md)), and a
+namespace
+has one on its oid ([`NAMESPACE.md`](NAMESPACE.md)). Every object
+draws its oid
 from one sequence, so one oid names one object, with no kind byte
-(`LOCKMGR.md`).
+([`LOCKMGR.md`](LOCKMGR.md)).
 
 ### 1.4 The overlay
 
@@ -176,7 +182,8 @@ other document points here for them.
   and nothing about it is recorded.
 - **`0xFFFE`, `sm2::id_relid`, is reserved.** There is no `_id`
   index: a keyed row has no `_id`, and a keyless row is keyed by
-  it (`ROWSTORE.md`). No index takes the relid, and nothing is
+  it ([`ROWSTORE.md`](ROWSTORE.md)). No index takes the relid,
+  and nothing is
   written under it.
 - **`0x0000` is unused**, so a zeroed or unset relid is never a
   live rel.
@@ -198,7 +205,8 @@ other document points here for them.
   for a temporary table too. Its one column family is
   `chain.<storeid>`. A row's newest version is under its plain
   key, with older ones in a chain behind it. Index entries and
-  TOAST data, in the same store, stay versioned (`ROWSTORE.md`).
+  TOAST data, in the same store, stay versioned
+  ([`ROWSTORE.md`](ROWSTORE.md)).
 - **The cost: sm1's store count bounds the tables.** sm1 targets
   hundreds to low thousands of stores, and every table takes one,
   each partition included. This is accepted for v1. Raising the
@@ -223,12 +231,14 @@ other document points here for them.
   and reopens the handle on the new store.
 - **`DROP INDEX` erases the index's keys** one by one, as sm1 has
   no range delete. A tree index's pages go after the commit
-  instead (`BTREEINDEX.md`). Dropping a primary key keys the rows
+  instead ([`BTREEINDEX.md`](BTREEINDEX.md)). Dropping a primary
+  key keys the rows
   anew (below).
 - **A rewrite** (`rewrite_table`) copies a table into a new
   store, under the table-oid lock X. It reopens every index in
   the new store, fills each one, puts the record, and drops the
-  old store at commit, as `TRUNCATE` does (`ROWSTORE.md`).
+  old store at commit, as `TRUNCATE` does
+  ([`ROWSTORE.md`](ROWSTORE.md)).
 - **Adding a primary key** to a table with rows rewrites it: each
   row is copied under its new key, losing its `_id`. An empty
   store only records the key.
@@ -236,7 +246,8 @@ other document points here for them.
   store keyed by `_id`. The rows draw theirs from the table's
   sequence in key order.
 - **Changing a column's type** (`alter_column_type`,
-  `../dg/ALTERTYPE.md`) rewrites a table with rows in the same
+  [`../dg/ALTERTYPE.md`](../dg/ALTERTYPE.md)) rewrites a table
+  with rows in the same
   way. The host's converter gives each row's value. Every index
   on the column is filled under the new type, and a key column's
   rows are keyed anew. A change whose values stay, the same type
@@ -267,14 +278,16 @@ userkey      =  relid (2B BE, sm2) ‖ the rel's key (sm3)
 | secondary index entry, unique | `0x00` versioned | `0x00 ‖ relid ‖ encode(sk) ‖ ~wts ‖ ~seq` | as above |
 | TOAST chunk | `0x00` versioned | `0x00 ‖ 0xFFFF ‖ id ‖ seq ‖ ~wts ‖ ~seq` | flags, xid or commit_ts ‖ the chunk |
 
-A tree index's pages are not in this table: `BTREEINDEX.md` has
+A tree index's pages are not in this table:
+[`BTREEINDEX.md`](BTREEINDEX.md) has
 their keys.
 
 - **The class byte orders the column family.** The store's
   comparator, `wisr.store.v2`, sorts versioned keys by userkey
   then newest version first, and current and old keys bytewise.
   The three classes lie in three ranges, and a scan of rows
-  bounds itself to one. `ROWSTORE.md` says why sm1 keeps a byte
+  bounds itself to one. [`ROWSTORE.md`](ROWSTORE.md) says why sm1
+  keeps a byte
   of its own and does not read the relid.
 - **A row's newest version is under its plain key**, so a scan of
   the newest rows reads one key a row. Index entries and TOAST
@@ -296,7 +309,7 @@ own catalog store, store 0, under the key prefix `"U"`.
 
 - **It sits beside sm1's own rows.** Store 0 is split by key
   prefix: `"R"` rows are sm1's stores and `"S"` rows its
-  sequences (`DBMGR.md`). sm1 never reads `"U"` rows:
+  sequences ([`DBMGR.md`](DBMGR.md)). sm1 never reads `"U"` rows:
   `sm1::lsstore` scans `["R", "S")`, and the startup sweep reads
   `"R"` rows. sm1 lets a caller use store 0 under `"U"` only
   (`sm1::upper_prefix`), so neither can touch the other's rows.
@@ -307,7 +320,8 @@ own catalog store, store 0, under the key prefix `"U"`.
   `FirstNormalObjectId`.
 - **Oids below 16384 are built-in objects.** They are
   PostgreSQL's own numbers, since digres compiles its built-ins
-  in with them (`PART4.md`): `pg_catalog` is 11 and `public` is
+  in with them ([`PART4.md`](PART4.md)): `pg_catalog` is 11 and
+  `public` is
   2200.
 - **An aborted DDL leaves a gap**, as PostgreSQL's oid counter
   does: `nextseq` is not transactional.
@@ -356,8 +370,8 @@ frozen.
 | `INDEX_STATE` | 9 | table oid `int8`, index oid `int8` | one index's state, with why its build failed; none for a pending index |
 | `STATS` | 10 | table oid `int8`, index oid `int8`, n `int8` | the table's statistics: an entry for the table, (0, 0), and one a statistic, a column's (0, attnum + 1), an index expression's (index oid, place + 1) |
 | `SEQUENCE` | 11 | oid `int8` | a sequence: its namespace, name, start, increment and owner |
-| `CONSTRAINT` | 12 | table oid `int8`, constraint oid `int8` | one constraint of the table, its child: a foreign key (`FOREIGNKEY.md`) |
-| `VIEW` | 13 | oid `int8` | a view: its namespace, name, the host's query and options, and the relations it reads (`VIEW.md`) |
+| `CONSTRAINT` | 12 | table oid `int8`, constraint oid `int8` | one constraint of the table, its child: a foreign key ([`FOREIGNKEY.md`](FOREIGNKEY.md)) |
+| `VIEW` | 13 | oid `int8` | a view: its namespace, name, the host's query and options, and the relations it reads ([`VIEW.md`](VIEW.md)) |
 
 ### 3.4 What the keys mean
 
@@ -383,17 +397,17 @@ frozen.
 - **Names are keys.** Every named object owns a `NAME` key, so a
   taken name fails with sm1's `SM_ERR_DUPKEY`, and two sessions
   taking it at once meet in sm1's write-write conflict
-  (`NAMESPACE.md`).
+  ([`NAMESPACE.md`](NAMESPACE.md)).
 - **A table has two sequences.** `sm3.id.<oid>` hands out its
   `_id`s, and `sm3.toast.<oid>` its TOAST ids. Both are made with
-  its store (`SEQUENCE.md`).
+  its store ([`SEQUENCE.md`](SEQUENCE.md)).
 - **A view's query is in pieces**, its parts in order. A part is
   an sm2 tuple, at most 65,535 bytes, and a query may be longer:
   SQLite's corpus has one of 100 KB.
 - **A view is one entry**, its reads in its value, and its name a
   `NAME` key in its namespace, shared with the relations there.
   What reads a relation is found by a pass over the views in
-  memory, and stored nowhere (`VIEW.md`).
+  memory, and stored nowhere ([`VIEW.md`](VIEW.md)).
 
 ### 3.5 Values
 
@@ -414,7 +428,8 @@ STATS value       = table stats | index stats × nindex
 ```
 
 A `STATS` entry is the table's own, the first line, or one
-statistic's, the second. Their parts are in `sm3/SM3_DESIGN.md`,
+statistic's, the second. Their parts are in
+[`sm3/SM3_DESIGN.md`](sm3/SM3_DESIGN.md),
 under "What is recorded".
 
 | Part | Fields |
@@ -422,7 +437,7 @@ under "What is recorded".
 | meta | format version `int4` |
 | name | kind `int2`, oid `int8`, table oid `int8` or null |
 | table | namespace `int8`, name `text`, storeid `int8`, `_id` sequence `text`, next index relid `int2` |
-| column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null, default `bytea` or null: the host's expression, opaque, kept and never run; identity kind `int2` (`a` or `d`) or null, identity sequence `int8` or null, update default `bytea` or null: the host's expression for what an UPDATE that does not assign the column writes, opaque, kept and never run (`../dg/ONUPDATE.md`) |
+| column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null, default `bytea` or null: the host's expression, opaque, kept and never run; identity kind `int2` (`a` or `d`) or null, identity sequence `int8` or null, update default `bytea` or null: the host's expression for what an UPDATE that does not assign the column writes, opaque, kept and never run ([`../dg/ONUPDATE.md`](../dg/ONUPDATE.md)) |
 | index | oid `int8`, name `text`, relid `int2`, unique `bool`, nkey `int4`, ninclude `int4`, three retired and null, eval `bytea` or null, nread `int4` or null, primary `bool` or null, constraint `bool` or null, tree `bool` or null: true, or null for false |
 | index state | state `int2`, error `int2` or null, reason `text` or null, the key of a row that holds a duplicated key, `bytea` or null |
 | key | attnum `int4`, desc `bool`, nulls first `bool`, collation oid `int8` or null, type code `int2` or null, typmod `int4` or null |
@@ -447,7 +462,8 @@ under "What is recorded".
   is 4 since the built-in namespaces took PostgreSQL's oids.
 - **A part evolves as a tuple does.** A field appended to a
   part's schema reads as its missing value in a value written
-  before it (`sm2/TUPLE.md`), so a value needs no version of its
+  before it ([`sm2/TUPLE.md`](sm2/TUPLE.md)), so a value needs no
+  version of its
   own. A new kind, as `SEQUENCE` was, changes no key's layout and
   leaves the version as it is.
 - **An index's state** is 0 pending, 1 valid or 2 failed, in the
@@ -466,7 +482,8 @@ under "What is recorded".
   in memory.
 - **A missing value is its bytes**, a varlena for a
   variable-width type, as sm2's `attribute_t` holds it.
-- **Each part is held to 64 KB** (`sm2/TUPLE.md`). An index's
+- **Each part is held to 64 KB**
+  ([`sm2/TUPLE.md`](sm2/TUPLE.md)). An index's
   value, a sequence of parts, is not, and is an sm1 value of up
   to 64 MB.
 - **Corruption fails.** A value cut short, with bytes past its
@@ -511,13 +528,14 @@ never edits one in place. It holds:
   `std::shared_ptr<const table_def_t>`.
 - A map of committed indexes' names, by namespace and name, built
   at load and kept at each publish.
-- Every namespace's name, by oid (`NAMESPACE.md`).
+- Every namespace's name, by oid
+  ([`NAMESPACE.md`](NAMESPACE.md)).
 - Every collation, opened by `cat_open` at its recorded ICU
   version and closed by `cat_close`, and the namespace of each.
 - Each sequence's namespace and name by its oid, and its oid by
-  them (`SEQUENCE.md`).
+  them ([`SEQUENCE.md`](SEQUENCE.md)).
 - Every view, by oid and by namespace and name, and the register
-  of every session's temporary views (`VIEW.md`).
+  of every session's temporary views ([`VIEW.md`](VIEW.md)).
 - Each index's state, by index oid (§4.5).
 - Each table's statistics, loaded on first use and kept:
   `nullptr` if it was never analyzed, no entry if not yet asked
@@ -526,11 +544,11 @@ never edits one in place. It holds:
 - The host's evaluator of partial and expression indexes, and
   whether the host reads TOAST pointers.
 - The btree cleaner, once attached, and a count of transactions
-  begun, its measure of busy (`BTREEINDEX.md`).
+  begun, its measure of busy ([`BTREEINDEX.md`](BTREEINDEX.md)).
 - The environment and database name, for a load of its own.
 
 The Index Builder's queue and workers are not here: they are the
-process's, not a Catalog's (`INDEXBUILD.md`).
+process's, not a Catalog's ([`INDEXBUILD.md`](INDEXBUILD.md)).
 
 ### 4.3 A session
 
@@ -540,8 +558,9 @@ catalog.
 
 **The temporary catalog** holds the definitions of the session's
 temporary tables, their names, which are in no namespace, their
-indexes' states, and its temporary views (`TEMPTABLE.md`,
-`VIEW.md`).
+indexes' states, and its temporary views
+([`TEMPTABLE.md`](TEMPTABLE.md),
+[`VIEW.md`](VIEW.md)).
 
 - A change to a temporary table is made in the overlay like any
   other, marked as temporary.
@@ -564,7 +583,7 @@ snapshot and no host cache survives a restart.
   remembers for an index the count at which it became valid
   (`valid_seq`). A session notes the count before it takes a
   snapshot, and may scan an index only if it was valid by then
-  (`index_usable`, `INDEXBUILD.md`).
+  (`index_usable`, [`INDEXBUILD.md`](INDEXBUILD.md)).
 - **A table's version** (`cat_table_version`) comes from the same
   count. The Catalog remembers for each table the count at which
   its definition, and its statistics, were last published. The
@@ -574,19 +593,21 @@ snapshot and no host cache survives a restart.
   table not changed since the load is at 0.
 - **A view's version** (`cat_view_version`) works the same way.
 - **The namespaces' epoch** (`cat_namespace_epoch`) is the count
-  at which a namespace was last made or dropped (`NAMESPACE.md`).
+  at which a namespace was last made or dropped
+  ([`NAMESPACE.md`](NAMESPACE.md)).
 - **The catalog's epoch** (`cat_epoch`) is the count of publishes
   plus the count of changes to the session's temporary catalog.
   It moves whenever what the session can look up does. It is
   `epoch_own` while the session's transaction has DDL of its own,
   which no epoch dates. A host that caches what it looks up reads
   it before each lookup, and keeps an answer while it reads the
-  same (`../dg/SCHEMACACHE.md`).
+  same ([`../dg/SCHEMACACHE.md`](../dg/SCHEMACACHE.md)).
 
 A host that caches what it learns of a table under the table-oid
 lock (`sm_table_def_t::version`) knows from the version whether
 the cache is good, with no word from the session that changed it
-(`../dg/SHMEM.md`). Read under IS or IX, the version changes only
+([`../dg/SHMEM.md`](../dg/SHMEM.md)). Read under IS or IX, the
+version changes only
 by an analyze or an index made valid, since DDL takes X.
 
 ### 4.5 Index states
@@ -613,7 +634,7 @@ wrap sm1's and keep the overlay in step.
 - **`begin`** notes the count of publishes before sm1 takes the
   snapshot: what was published by then, the snapshot sees whole.
   It empties the overlay and drops the temporary views another
-  session has doomed (`VIEW.md`).
+  session has doomed ([`VIEW.md`](VIEW.md)).
 - **`stmt_begin`** does the same for a READ COMMITTED statement,
   the only kind that takes a snapshot of its own.
   `stmt_begin(s, outer)` and `stmt_end(s, outer)` keep the outer
@@ -699,7 +720,7 @@ session or a catalog. Each reports failure as sm1 does.
   evaluator, once. A second call is `SM_ERR_INVALID`.
 - **`cat_set_toast(cat, on)`** says whether the host reads TOAST
   pointers, and so whether a table's long datums are stored out
-  of line (`TOAST.md`).
+  of line ([`TOAST.md`](TOAST.md)).
 
 `cat_open` reads in this order:
 
@@ -759,14 +780,15 @@ committed.
   **`cat_get_table(ss, nspoid, name)`**,
   **`cat_list_tables(ss, nspoid)`** and **`cat_get_index(ss,
   nspoid, name, table, index)`** look up as the session's
-  transaction sees it (`NAMESPACE.md`).
+  transaction sees it ([`NAMESPACE.md`](NAMESPACE.md)).
 - **`cat_get_index_state(ss, index_oid)`** gives an index's state
   as the session's transaction sees it.
 - **`cat_get_namespace`**, **`cat_get_namespace_name`** and
-  **`cat_list_namespaces`** are in `NAMESPACE.md`.
+  **`cat_list_namespaces`** are in
+  [`NAMESPACE.md`](NAMESPACE.md).
 - **`cat_get_sequence`**, **`cat_get_sequence_name`**,
   **`cat_list_sequences`** and **`cat_get_sequence_def`** are in
-  `SEQUENCE.md`.
+  [`SEQUENCE.md`](SEQUENCE.md).
 - **`cat_lock_view(ss, oid, mode, def)`** takes a view's oid lock
   and gives its definition, as `cat_lock_table` does a table's. A
   temporary view takes none.
@@ -775,7 +797,7 @@ committed.
   lock, **`cat_list_views(ss, nspoid)`** lists a namespace's, and
   **`cat_view_readers(ss, oid)`** gives the views that read a
   relation, other sessions' temporary ones among them
-  (`VIEW.md`).
+  ([`VIEW.md`](VIEW.md)).
 - **`cat_get_fkey(ss, oid, table, def)`** finds a foreign key and
   its table, the child, with no lock.
 - **`cat_get_stats(ss, oid, out)`** gives a table's statistics as
@@ -851,9 +873,9 @@ newer than the snapshot.
 ### 7.2 Other objects
 
 - **`cat_put_namespace`** and **`cat_del_namespace`** are in
-  `NAMESPACE.md`.
+  [`NAMESPACE.md`](NAMESPACE.md).
 - **`cat_put_sequence`** and **`cat_del_sequence`** are in
-  `SEQUENCE.md`.
+  [`SEQUENCE.md`](SEQUENCE.md).
 - **`cat_put_collation(ss, collation_oid, namespace_oid, name,
   locale, deterministic)`** stores a new collation. The Catalog
   opens it, to check the locale and record the ICU version it
@@ -933,7 +955,8 @@ the table's oid lock X to the end of its transaction.
 - **`create_temp_table(session, name, columns,
   oid)`** is `create_table` in no namespace: a temporary store
   and sequences, and a definition in the session's temporary
-  catalog alone (`TEMPTABLE.md`). An identity column is
+  catalog alone ([`TEMPTABLE.md`](TEMPTABLE.md)). An identity
+  column is
   `SM_ERR_INVALID`, as no sequence is temporary at sm3.
 - **`drop_table(session, oid)`** dels the table's record and
   drops its store, its sequences, and the sequences its columns
@@ -962,7 +985,8 @@ the table's oid lock X to the end of its transaction.
   the transaction sees: `SM_ERR_NOTNULL` if one holds none.
 - **`set_identity(session, oid, name, identity, seq)`** makes a
   column an identity column whose values come from `seq`
-  (`SEQUENCE.md`). `ADD COLUMN` with a volatile default or of an
+  ([`SEQUENCE.md`](SEQUENCE.md)). `ADD COLUMN` with a volatile
+  default or of an
   identity column is `add_column`, the rows given their values,
   then these two.
 - **`rename_column(session, oid, name, new_name)`** puts the
@@ -1006,7 +1030,8 @@ the table's oid lock X to the end of its transaction.
   `PRIMARY KEY` constraint made, not `CREATE UNIQUE INDEX`: a
   mark for the host, unique, on columns alone. An index written
   before the mark reads it false.
-- **`tree`** makes a B+tree of its own pages (`BTREEINDEX.md`). A
+- **`tree`** makes a B+tree of its own pages
+  ([`BTREEINDEX.md`](BTREEINDEX.md)). A
   tree that is a primary key is `SM_ERR_INVALID`.
 - **`create_index(…, eval, reads, oid, …)`** is the same for a
   partial or an expression index: `eval` is its blob, `reads` the
@@ -1033,7 +1058,7 @@ the table's oid lock X to the end of its transaction.
   the table, its child, under its lock X and, to add or drop one,
   its parent's. Its entry is the child's. The parent's
   `referenced_by` is derived, at load and by these, and written
-  nowhere (`FOREIGNKEY.md`).
+  nowhere ([`FOREIGNKEY.md`](FOREIGNKEY.md)).
 - **`create_view(session, nspoid, name, def,
   oid)`**, **`replace_view`**, **`rename_view`**, **`drop_view`**
   work on a view, which is its record alone, with nothing outside
@@ -1041,11 +1066,12 @@ the table's oid lock X to the end of its transaction.
   IS to the end of the transaction. `nsp_temp` makes a temporary
   view, which alone may read a temporary relation. A view another
   view reads is `SM_ERR_INUSE` to drop, and a replace whose reads
-  reach the view itself is `SM_ERR_INVALID` (`VIEW.md`).
+  reach the view itself is `SM_ERR_INVALID`
+  ([`VIEW.md`](VIEW.md)).
 - **`create_namespace`**, **`drop_namespace`** are in
-  `NAMESPACE.md`.
+  [`NAMESPACE.md`](NAMESPACE.md).
 - **`create_sequence`**, **`drop_sequence`**, **`own_sequence`**,
-  **`nextval`** are in `SEQUENCE.md`.
+  **`nextval`** are in [`SEQUENCE.md`](SEQUENCE.md).
 
 ### 8.4 Decimal columns
 
@@ -1057,7 +1083,8 @@ host declares it.
 `decimal(p, s)` and `numeric(p, s)`, `decimal(p)` and a bare
 `numeric` are resolved above sm, to one of the two and a declared
 `(p, s)`. digres's rules, and its default for a bare `numeric`,
-are in `../dg/DECIMAL.md`. sm3 takes the type and typmod it is
+are in [`../dg/DECIMAL.md`](../dg/DECIMAL.md). sm3 takes the type
+and typmod it is
 given, and supplies no default. A typmod the type refuses, `-1`
 or a precision past its 17 or 36 digits among them, fails
 `CREATE TABLE` with `SM_ERR_INVALID`. Changing a column from
@@ -1068,7 +1095,8 @@ table.
 
 ## 9. The Index Builder
 
-The Index Builder is no part of the Catalog (`INDEXBUILD.md`). It
+The Index Builder is no part of the Catalog
+([`INDEXBUILD.md`](INDEXBUILD.md)). It
 runs a service and waits on it, so its calls are its own,
 `builder_*`, in `sm3/src/builder/builder.cc`. It meets the
 Catalog in three places:
@@ -1135,7 +1163,8 @@ catalog of their own.
   scan of every name adds to it.
 - **A commit-ordered change feed.** Logical decoding could be fed
   from sm1 and not from a second copy in PostgreSQL's WAL, but
-  sm1 has no such feed yet (`LOGICALDECODE.md`).
+  sm1 has no such feed yet
+  ([`LOGICALDECODE.md`](LOGICALDECODE.md)).
 - **A 64-bit `Oid` in digres**, which removes `last_oid`.
 
 ---

@@ -9,7 +9,8 @@ revoked and checked; a column's and a function's are later
 (§2). This file says what roles
 and privileges digres takes from PostgreSQL, where sm keeps
 them, and how a client is let in, by a rule much simpler
-than `pg_hba.conf`. aa (`README.md`) is the code that keeps
+than `pg_hba.conf`. aa ([`README.md`](README.md)) is the code
+that keeps
 them. Paths are relative to `aa/`; sm's are under `../sm/`,
 digres's under `../dg/`.
 
@@ -46,12 +47,14 @@ digres's under `../dg/`.
 
 ## 1. Where digres stood
 
-Before step 1 (`../dg/WORKNOTE.md` step 318), what this design
+Before step 1 ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step
+318), what this design
 set out from:
 
 - **One role, oid 10.** initdb writes its name, and the
   SCRAM secret of its password if one is given, to the data
-  directory's `superuser` file (`../dg/WORKNOTE.md` step 8).
+  directory's `superuser` file
+  ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 8).
   `superuser_arg(10)` is true, and no other oid is a role.
 - **Authentication is a fixed rule** (step 92): peer on the
   local socket, SCRAM-SHA-256 over TCP; a superuser with no
@@ -63,7 +66,8 @@ set out from:
   statements are taken out at a role's catalog (`pg_authid`),
   47 at default privileges, 18 at policies, before what each
   takes with it (`../dg/test/pgregress`). It is the largest gap
-  there, and `../sm/NEXT.md` puts it first for adoption: an
+  there, and [`../sm/NEXT.md`](../sm/NEXT.md) puts it first for
+  adoption: an
   application, a read-only and an administrator's role are
   the least a deployment asks.
 
@@ -96,14 +100,18 @@ set out from:
 
 **Later**, each on its own: column privileges (§8 question 2);
 `ALTER DEFAULT PRIVILEGES`; row-level security, which needs roles
-first (`../sm/FEATURELIST.md` §7); GRANT and REVOKE on functions,
+first
+([`../sm/FEATURELIST.md`](../sm/FEATURELIST.md#7-replication--backup--ops)
+§7); GRANT and REVOKE on functions,
 types and languages, which are compiled into digres: each is
 `PUBLIC`'s, as PostgreSQL's are, but the functions PostgreSQL's
 initdb takes EXECUTE on from `PUBLIC`, which are the superuser's
 alone, or a predefined role's too as initdb grants them
-(`../dg/WORKNOTE.md` step 334); most of what PostgreSQL's
+([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 334); most of what
+PostgreSQL's
 predefined roles imply, which exist, all 16
-(`AA_DESIGN.md` §2); TLS, after roles, by one setting (§8
+([`AA_DESIGN.md`](AA_DESIGN.md#2-where-the-data-lives-the-pg_global-database)
+§2); TLS, after roles, by one setting (§8
 question 4).
 
 **Not at all**: `pg_hba.conf`, `pg_ident.conf`, and the
@@ -118,7 +126,8 @@ A role is the whole server's: one connects to any database,
 and owns objects in several. PostgreSQL keeps roles in shared
 catalogs, which every database's transaction reads and writes.
 In sm a database is a RocksDB of its own
-(`../sm/DBMGR.md` §4), and no transaction spans
+([`../sm/DBMGR.md`](../sm/DBMGR.md#4-the-home-directory) §4), and
+no transaction spans
 two.
 
 **Decision: a database for what is shared, `pg_global`.**
@@ -129,8 +138,10 @@ and `pg_database` does not list it.
 there** (decided, §8 question 6). Nothing in a database's
 directory names a role: not an owner, not an `aclitem`, not
 a setting. So a database is its directory still
-(`../dg/CODE.md`, the overriding objective), and a copy of it
-on another server — replicated (`../sm/LOGICALDECODE.md`) or
+([`../dg/CODE.md`](../dg/CODE.md), the overriding objective), and
+a copy of it
+on another server — replicated
+([`../sm/LOGICALDECODE.md`](../sm/LOGICALDECODE.md)) or
 imported — finds no role of its source there, and that
 server's `pg_global` gives it roles of its own. Its tables,
 aa's (§6), hold:
@@ -152,9 +163,11 @@ nothing else; it stays so. The superuser is the role of oid
 10, and the `superuser` file goes.
 
 **Keys that are never reused.** A `dbid` is never reused
-(`../sm/DBMGR.md` §4), nor an object's oid in its
+([`../sm/DBMGR.md`](../sm/DBMGR.md#4-the-home-directory) §4), nor
+an object's oid in its
 database, which comes from the sequence `sm3.oid`
-(`../sm/CATALOG.md`). So an entry left behind for a
+([`../sm/CATALOG.md`](../sm/CATALOG.md)). So an entry left behind
+for a
 dropped object or database, by a crash between its two
 commits, names nothing and can never name a new one; it is
 swept, not trusted.
@@ -233,14 +246,17 @@ holds what was granted.
 
 **Sessions share aa's snapshot of the roles.** aa reads
 `pg_global` once, when the server starts, and replaces a
-snapshot whole when something changes (`AA_DESIGN.md` §3); a
+snapshot whole when something changes
+([`AA_DESIGN.md`](AA_DESIGN.md#3-the-shared-state) §3); a
 session compares the snapshot's epoch with its own at a
 statement's start, as a database's catalog is checked
-(`../dg/SCHEMACACHE.md`): a REVOKE takes effect at the next
+([`../dg/SCHEMACACHE.md`](../dg/SCHEMACACHE.md)): a REVOKE takes
+effect at the next
 statement of every session, as in PostgreSQL.
 
 **A replicated database leaves `pg_global` behind.** The unit of
-replication is a database (`../sm/LOGICALDECODE.md`): A, B and C
+replication is a database
+([`../sm/LOGICALDECODE.md`](../sm/LOGICALDECODE.md)): A, B and C
 on one server may go to X, Y and Z. `pg_global` is not replicated
 with them. By the invariant, that loses nothing A needs to be
 read, and leaks nothing of A's server:
@@ -253,7 +269,8 @@ read, and leaks nothing of A's server:
   servers, beside A.
 - **Grants and role DDL on A's server**, after replication
   starts or before, do not reach X; X's are made on X. Nor
-  does `../sm/LOGICALDECODE.md`'s feed carry them: they are
+  does [`../sm/LOGICALDECODE.md`](../sm/LOGICALDECODE.md)'s feed
+  carry them: they are
   not in A.
 
 ---
@@ -349,7 +366,8 @@ as in PostgreSQL. No single-user mode is kept for this.
 SCRAM sends no password when a client logs in. A password set
 by SQL does: `CREATE ROLE` or `ALTER ROLE ... PASSWORD 'x'`
 carries it in the statement's text, and without TLS that text
-crosses the network in the clear (`../dg/WORKNOTE.md` step
+crosses the network in the clear
+([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step
 380).
 
 - **Over TCP without TLS, a password in cleartext is
@@ -420,7 +438,8 @@ of its own for them.
   else its database's owner; the entry written for
   `current_user` after a CREATE commits, and removed after a
   DROP commits (§3).
-- The catalog relations of §2 (`../dg/SYSCATALOG.md`), and
+- The catalog relations of §2
+  ([`../dg/SYSCATALOG.md`](../dg/SYSCATALOG.md)), and
   `pg_get_userbyid()` reading the cache.
 - Authentication by §5, in place of `check_hba()`'s fixed
   rule.
@@ -430,14 +449,14 @@ of its own for them.
 ## 7. Tests
 
 Each step tests what it builds at every layer that reaches
-it (`../CLAUDE.md`, "Test at every layer"):
+it ([`../CLAUDE.md`](../CLAUDE.md), "Test at every layer"):
 
 - **sm3, rel**: none. sm keeps no role of its own: `pg_global`
   is tables, which sm's tests already cover, and no check of
   sm's reads them.
 - **mvcc**: none; roles change nothing of sm1.
 - **aa**: its unit tests (`test/`), of the API, the stores
-  and the checks (`AA_DESIGN.md` §10).
+  and the checks ([`AA_DESIGN.md`](AA_DESIGN.md#10-testing) §10).
 - **digres**: `initdb.sh` for `pg_global` made, its
   superuser's name and secret, and a data directory without
   it refused; `server.sh` for `pg_authid` and `pg_roles`, a
@@ -486,22 +505,24 @@ it (`../CLAUDE.md`, "Test at every layer"):
 
 1. `pg_global` and the role records; the superuser moves
    there from the file; `pg_authid`, `pg_roles`, `\du`. Done
-   (`../dg/WORKNOTE.md` step 318).
+   ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 318).
 2. CREATE, ALTER, DROP ROLE; membership; SET ROLE. Done
-   (`../dg/WORKNOTE.md` step 319).
+   ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 319).
 3. §5's four checks, in place of the fixed rule. Done
-   (`../dg/WORKNOTE.md` step 320).
+   ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 320).
 4. Owners: what initdb leaves, as PostgreSQL's (the schemas'
    ACLs, the predefined roles), and a role that is not a
-   superuser running statements, done (`../dg/WORKNOTE.md`
+   superuser running statements, done
+   ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md)
    step 321); an object's entry in `pg_global`, `current_user`
    after CREATE commits, the database's owner without one,
    `ALTER ... OWNER TO`, done (step 322). Not done: the sweep
    of entries a crash left behind, which name nothing.
 5. GRANT and REVOKE on tables, views, sequences, schemas and
    databases; the checks that then refuse. Done
-   (`../dg/WORKNOTE.md` step 323).
+   ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 323).
 6. `DROP ROLE` and its dependents, `REASSIGN OWNED`, `DROP
-   OWNED`. Done (`../dg/WORKNOTE.md` step 324).
+   OWNED`. Done ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step
+   324).
 7. Later: column privileges, default privileges, row-level
    security, TLS.

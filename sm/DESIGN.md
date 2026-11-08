@@ -1,6 +1,7 @@
 # DESIGN — wisr
 
-How the stack in `OBJECTIVE.md` fits together: the levels,
+How the stack in [`OBJECTIVE.md`](OBJECTIVE.md) fits together:
+the levels,
 the build, and the decisions that cross level boundaries.
 Each level's own mechanics — sm1's MVCC, sm2's tuple
 format, sm3's catalog — are argued in that level's own
@@ -48,7 +49,9 @@ sm1's unit of storage is the **store**: an ordered map of byte
 keys to byte values, named by a `uint64_t` storeid. **A store
 is exactly one RocksDB column family**, `CF:store.<storeid>`
 for a versioned store and `CF:chain.<storeid>` for a chained
-one (`DBMGR.md` §6.2, `ROWSTORE.md` §3.5): `sm1::mkstore`
+one ([`DBMGR.md`](DBMGR.md#62-key-classes) §6.2,
+[`ROWSTORE.md`](ROWSTORE.md#35-a-chained-key) §3.5):
+`sm1::mkstore`
 creates it and `sm1::rmstore` drops it. sm3 chains every
 table's store: a row's newest version is kept under its plain
 key and the older ones in a chain behind it, while its index
@@ -63,15 +66,18 @@ interface. sm3 is built on sm2 — it never encodes a key or
 decodes a tuple itself — and may also call sm1's interface
 directly, for whatever sm2 has nothing to add to: above all
 `sm1::lock_oid`, which sm3's DDL and index-build protocols are
-built on (`CATALOG.md` §1). That boundary is why each
-level's `OBJECTIVE.md` can promise it is "useful and
+built on ([`CATALOG.md`](CATALOG.md#1-design) §1). That boundary
+is why each
+level's [`OBJECTIVE.md`](OBJECTIVE.md) can promise it is "useful
+and
 testable on its own" — the whole lower stack is one
 dependency.
 
 The top level is not a level: it adds no notion of its own, only
 a C signature over the levels' C++ interfaces, and it is the one
 place an exception is caught and a PostgreSQL error path is safe
-to take (`OBJECTIVE.md`). Like sm3, it may skip a level. A C
+to take ([`OBJECTIVE.md`](OBJECTIVE.md)). Like sm3, it may skip a
+level. A C
 session is an sm3 session over an sm1 one, and each database's
 sm3 catalog is loaded by its first session: sessions,
 transactions, savepoints and prepare go through sm3, which keeps
@@ -92,7 +98,7 @@ services, `sm_sys.h`, which dg includes directly too. It includes
 nothing of the levels and links no RocksDB. sm1 brings the error and
 log calls into namespace sm1, so the stack and its callers
 name them `sm1::errnum()`, `sm1::set_log()` and the rest
-(`sm0/README.md`).
+([`sm0/README.md`](sm0/README.md)).
 
 The root's `include/` also holds headers that belong to no
 level and that a level includes: `sm_error.h`, the stack's
@@ -103,7 +109,7 @@ definitions, not an upward call: a level and the wrapper must
 agree on them bytewise, and one header is how. sm0 includes
 `sm_error.h` too. For the statistics it also means the wrapper
 hands out sm3's own, as sm3 keeps them in memory, with no copy
-in a form of its own (`OBJECTIVE.md`).
+in a form of its own ([`OBJECTIVE.md`](OBJECTIVE.md)).
 
 ---
 
@@ -147,10 +153,10 @@ rule is that nothing turns them off.
 
 | Level | Status |
 | --- | --- |
-| sm0 | built and tested: the error state, the log hook, the general-purpose helpers and the system services (`sm0/include/sm_sys.h`, `sm0/INTERRUPT.md`), with its C++ interface in `sm0/include/sm0.h`; `sm0/README.md` describes it |
-| sm1 | built and tested, with its C++ interface in `sm1/include/sm1.h`; the design of record is `sm1/SM1_DESIGN.md` |
-| sm2 | built: its types, key encoding, tuple codec, row and index relations and TOAST, with its C++ interface in `sm2/include/sm2.h`; `sm2/SM2_DESIGN.md` is the design of record, and its §8 has the build order |
-| sm3 | being built: its catalog (`CATALOG.md`), object mapping, index maintenance through table-level writes, and the concurrent index build with its background workers, partial and expression indexes among them, with its C++ interface in `sm3/include/sm3.h`; constraints are settled, `NOT NULL` built in sm3 and the rest the host's (§5); statistics built (`STATISTICS.md` §9), TOAST built (§3.4 there), and bulk load into an empty table (`BULKLOAD.md`); the order of work is in `sm3/SM3_DESIGN.md` §4, and what is left in `NEXT.md` |
+| sm0 | built and tested: the error state, the log hook, the general-purpose helpers and the system services (`sm0/include/sm_sys.h`, [`sm0/INTERRUPT.md`](sm0/INTERRUPT.md)), with its C++ interface in `sm0/include/sm0.h`; [`sm0/README.md`](sm0/README.md) describes it |
+| sm1 | built and tested, with its C++ interface in `sm1/include/sm1.h`; the design of record is [`sm1/SM1_DESIGN.md`](sm1/SM1_DESIGN.md) |
+| sm2 | built: its types, key encoding, tuple codec, row and index relations and TOAST, with its C++ interface in `sm2/include/sm2.h`; [`sm2/SM2_DESIGN.md`](sm2/SM2_DESIGN.md) is the design of record, and its §8 has the build order |
+| sm3 | being built: its catalog ([`CATALOG.md`](CATALOG.md)), object mapping, index maintenance through table-level writes, and the concurrent index build with its background workers, partial and expression indexes among them, with its C++ interface in `sm3/include/sm3.h`; constraints are settled, `NOT NULL` built in sm3 and the rest the host's (§5); statistics built ([`STATISTICS.md`](STATISTICS.md#9-the-design) §9), TOAST built (§3.4 there), and bulk load into an empty table ([`BULKLOAD.md`](BULKLOAD.md)); the order of work is in [`sm3/SM3_DESIGN.md`](sm3/SM3_DESIGN.md#4-structure) §4, and what is left in [`NEXT.md`](NEXT.md) |
 | top level | built: `include/sm.h` over sm1, sm2 and sm3, with `src/sm.cc`. A row is read and written through an open table, `sm_tbl_*`, by the table's oid from `sm_cat_*`; the heap-level and index-level calls that took a store id and a relid are gone. The `rel` driver runs on it |
 
 sm1 was built first and alone, on purpose: it is usable
@@ -161,14 +167,15 @@ sm2 and sm3 are split for the same reason in a different
 key: sm2 is two permanent on-disk formats and a codec over
 them, sm3 is protocols that can be rewritten, and keeping
 the permanent part small is what lets it get all the
-scrutiny (`sm2/SM2_DESIGN.md` §4).
+scrutiny ([`sm2/SM2_DESIGN.md`](sm2/SM2_DESIGN.md#4-structure)
+§4).
 
 ---
 
 ## 4. Testing across levels
 
 Every level uses the same two-layer scheme, established in
-`sm1/mvcc/DRIVER.md`:
+[`sm1/mvcc/DRIVER.md`](sm1/mvcc/DRIVER.md):
 
 - ordinary tests for contract and single-session mechanics —
   C++ unit tests in each level's `test/`.
@@ -187,11 +194,13 @@ teaching it `create table` would make sm1's test binary link
 the levels above it. Instead sm1 gained a QA-only session
 flag, `sm1::set_qa_nowait`: a write or a lock that would wait
 fails with `SM_ERR_BLOCKED`, the transaction left active, and
-the caller repeats the call (`LOCKMGR.md` §3.2). One
+the caller repeats the call
+([`LOCKMGR.md`](LOCKMGR.md#32-the-lock-table) §3.2). One
 thread can then play several sessions, and "this step blocks"
 needs no thread and no sleep. sm3's two-session cases are
 written this way in C++ (`sm3/test/test_table.cc`), and again
-through the C API as `rel` scripts (`rel/REL_DESIGN.md` §5).
+through the C API as `rel` scripts
+([`rel/REL_DESIGN.md`](rel/REL_DESIGN.md) §5).
 What the flag cannot reach stays where it was: a polling
 session is never a deadlock victim, so deadlocks are tested
 with real threads in sm1, and the background index build is
@@ -209,7 +218,8 @@ design:
   above it may read RocksDB directly or depend on sm1's
   internals. A missing primitive is added to sm1's surface
   instead of worked around from outside it, as the ones
-  secondary indexes needed were (`DBMGR.md` §1).
+  secondary indexes needed were ([`DBMGR.md`](DBMGR.md#1-scope)
+  §1).
 - **Every level reports failure the way sm1 does.** A call on a
   level's C++ interface returns a plain `int` — 0 on success, -1
   on failure — and the code and message are read afterwards from
@@ -234,7 +244,8 @@ design:
   a note, and codes are grouped by the level that produces them
   under a comment naming it, with no reserved numeric ranges — a
   number matters once PostgreSQL sees it through the C wrapper,
-  and this is the rule `sm2/TYPE.md` already applies to type
+  and this is the rule [`sm2/TYPE.md`](sm2/TYPE.md) already
+  applies to type
   codes. An upper level records an error with `int
   sm1::seterr(sm1::errnum_t code, std::string_view msg)`,
   exported by sm1: it copies the message into the fixed
@@ -267,7 +278,8 @@ design:
   caller that treats one of them as an ordinary outcome reads the
   code. Under an `int` and a thread-local, reading it costs
   nothing, so there is no performance reason to split outcomes
-  from errors; it also keeps `sm1/API.md`, the tests and the
+  from errors; it also keeps [`sm1/API.md`](sm1/API.md), the
+  tests and the
   scenario transcripts' error names as they are.
 - **Out-parameters take one shape at every level.** A required
   output is a reference (`uint64_t& storeid`). An optional output
@@ -285,7 +297,8 @@ design:
   evaluator, run where an error has nowhere to go, and are
   `noexcept` in their types: one that throws ends the
   process. Four C++ types may cross it and no others
-  (`CODE.md` §2). `std::string` and `std::vector`, of plain C
+  ([`CODE.md`](CODE.md#2-the-interface-to-sms-users) §2).
+  `std::string` and `std::vector`, of plain C
   types, of
   `sm_datum_t` or of strings, carry owned data only: a
   result the caller keeps, or a list passed in, as an
@@ -294,7 +307,8 @@ design:
   not the receiver's: read during the call, or pointing into
   session memory for as long as the call says. A wait the
   host may want to end is ended by an interrupt to its
-  thread (`sm0/INTERRUPT.md`), not by a flag or a
+  thread ([`sm0/INTERRUPT.md`](sm0/INTERRUPT.md)), not by a flag
+  or a
   callback into the host. No call takes a
   `std::string_view` yet: a row or an index entry on a scan
   is still a pointer and a length into session memory.
@@ -456,8 +470,11 @@ design:
   process through `std::terminate`.
 
 - **One encoder, one tuple format, two callers.** The key
-  encoding and the tuple layout are sm2's alone (`LSMINDEX.md`
-  §2, `sm2/TUPLE.md` §10), and sm3 builds its index entries —
+  encoding and the tuple layout are sm2's alone
+  ([`LSMINDEX.md`](LSMINDEX.md)
+  §2,
+  [`sm2/TUPLE.md`](sm2/TUPLE.md#10-why-the-codec-is-an-api-of-its-own)
+  §10), and sm3 builds its index entries —
   `encode(sk)`, ending with the row's key — by calling sm2's
   encoder with the same per-column arguments. Two encoders that
   have to agree bytewise is a corruption bug waiting to be
@@ -467,36 +484,45 @@ design:
   itself, but it may call sm1's interface directly for
   anything sm2 has nothing to add to — `sm1::lock_oid` above all,
   which sm3's DDL and index-build protocols rest on
-  (`CATALOG.md` §1). sm2 still calls only sm1, and
+  ([`CATALOG.md`](CATALOG.md#1-design) §1). sm2 still calls only
+  sm1, and
   nothing calls upward.
 - **A table is keyed by its primary key, or by `_id` without
-  one** (`CLUSTER.md`, `ROWSTORE.md`). A row's key is its
+  one** ([`CLUSTER.md`](CLUSTER.md),
+  [`ROWSTORE.md`](ROWSTORE.md)). A row's key is its
   primary key's encoding; a table without a primary key is
   keyed by `_id`, an unsigned 64-bit number from a per-table
   sm1 sequence, never reused and unchanged by `UPDATE`, which
   SQL reads as the system column `_id`. A table with a primary
-  key has no `_id` and no `_id` index (`ROWSTORE.md` §8).
+  key has no `_id` and no `_id` index
+  ([`ROWSTORE.md`](ROWSTORE.md#8-the-tuple-relation) §8).
   Every other index is sm3's, and its entry names its row by
-  the row's key (`INDEXBUILD.md` §2). There is no `ctid`:
+  the row's key ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol)
+  §2). There is no `ctid`:
   digres names a row by its key's column values wherever
-  PostgreSQL's executor carried a TID (`ROWSTORE.md` §10). A read
+  PostgreSQL's executor carried a TID
+  ([`ROWSTORE.md`](ROWSTORE.md#10-digres) §10). A read
   by the primary key is one read; a primary key change is a
   delete at the old key, which leaves a moved tombstone, and an
   insert at the new one, and rewrites the row's index entries
-  (`ROWSTORE.md` §2.5).
+  ([`ROWSTORE.md`](ROWSTORE.md#25-a-key-change) §2.5).
 - **One sm1 store per table.** A table's rows, all its
   indexes and its TOAST data are rels in one sm1 store, told
-  apart by a 2-byte relid whose values `CATALOG.md` §2
+  apart by a 2-byte relid whose values
+  [`CATALOG.md`](CATALOG.md#2-object-mapping) §2
   fixes. sm3 chooses an index's relid; sm2 prepends and strips
-  it and never interprets it (`ROWSTORE.md` §8), so sm2
+  it and never interprets it
+  ([`ROWSTORE.md`](ROWSTORE.md#8-the-tuple-relation) §8), so sm2
   never learns what a table is. `DROP TABLE` is one
   `sm1::rmstore`, sm1's O(1) column family drop; `DROP INDEX`
   erases the entries under the index's relid one by one, as
-  sm1 has no range delete (`CATALOG.md` §8), and
+  sm1 has no range delete ([`CATALOG.md`](CATALOG.md#8-ddl) §8),
+  and
   index relids are never reused. The cost is
   that tables, partitions included, are bounded by the
   hundreds to low thousands of stores sm1 handles
-  (`XCTMGR.md` §11.4); accepted for v1 (`CATALOG.md` §2).
+  ([`XCTMGR.md`](XCTMGR.md#114-trade-offs) §11.4); accepted for
+  v1 ([`CATALOG.md`](CATALOG.md#2-object-mapping) §2).
 - **A temporary table is a temporary store.** Temporariness
   belongs to an sm1 store, and so to its RocksDB column family,
   not to any row, key or relid: every object in a
@@ -505,16 +531,17 @@ design:
   temporary table is one temporary store, and an index is
   temporary exactly when its table is. sm3 asks for a temporary
   store when it creates a temporary table; sm2 neither knows
-  nor cares (`DBMGR.md` §7.8).
+  nor cares ([`DBMGR.md`](DBMGR.md#78-temporary-stores) §7.8).
 - **The key budget is shared.** `sm1::max_keylen` (4096) bounds
   relid, index columns and the row's key together, a primary
   key's held to 1024 bytes. sm2's encoder
   enforces it: an over-long key in a unique index, the primary
   key's among them, refuses the row, and an over-long key in a
   non-unique index is truncated, flagged and rechecked against
-  the tuple, never hashed (`LSMINDEX.md` §2.4). sm3 owns
+  the tuple, never hashed
+  ([`LSMINDEX.md`](LSMINDEX.md#24-cut-keys) §2.4). sm3 owns
   the recheck that follows from a cut key
-  (`INDEXBUILD.md` §2).
+  ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2).
 - **Uniqueness is sm1's `SM_ERR_DUPKEY`, and NULLs are
   distinct.** Two NULLs encode to the same bytes, so the
   encoding cannot say they differ; an entry with a NULL key
@@ -523,16 +550,18 @@ design:
   check of its own. `NULLS NOT DISTINCT` is refused at
   `CREATE INDEX` in v1; adding it
   later is a catalog flag and changes no bytes on disk
-  (`INDEXBUILD.md` §2).
+  ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2).
 - **Collation versions are pinned, recorded and enforced across
   the stack.** A specific ICU is linked into the server; sm3
   records each collation's version with the schema
-  (`CATALOG.md` §1); sm2 refuses to read or write an index
+  ([`CATALOG.md`](CATALOG.md#1-design) §1); sm2 refuses to read
+  or write an index
   built under another version, the primary key's included, until
-  an explicit online rebuild (`LSMINDEX.md` §2.3).
+  an explicit online rebuild
+  ([`LSMINDEX.md`](LSMINDEX.md#23-text-and-collations) §2.3).
   Non-deterministic ICU collations are accepted, and a string
   equal under one is equal at every level
-  (`LSMINDEX.md` §2.3).
+  ([`LSMINDEX.md`](LSMINDEX.md#23-text-and-collations) §2.3).
 - **`NOT NULL` and labels are sm3's; sm2 stores what it is
   given.** sm3 refuses a NULL in a `NOT NULL` column with
   `SM_ERR_NOTNULL`, before the row is written: the check is
@@ -544,7 +573,8 @@ design:
   it trims, and it counts characters. That is evaluation, and
   evaluation is the host's (below); the stack keeps the typmod
   and stores what it is given. An enum is `int4` to sm2 with
-  its labels in sm3's catalog (`sm2/TYPE.md` §5).
+  its labels in sm3's catalog
+  ([`sm2/TYPE.md`](sm2/TYPE.md#5-why-the-types-are-so) §5).
 - **Foreign keys are the host's.** PostgreSQL checks one from
   triggers its executor runs: it looks the parent row up and
   locks it, and on a change to the parent looks for children.
@@ -556,32 +586,39 @@ design:
   open table, `tbl_lock`, and the C API as `sm_tbl_lock`. It
   is what `SELECT … FOR SHARE` and `FOR UPDATE` take too. It
   waits as a write does; `NOWAIT` and `SKIP LOCKED` take it
-  without waiting (`sm_tbl_trylock`, `NEXT.md` §2). The lock
+  without waiting (`sm_tbl_trylock`,
+  [`NEXT.md`](NEXT.md#2-loose-ends) §2). The lock
   is coarser than PostgreSQL's:
   sm1 has no mode that admits an update of the parent's other
   columns while a child holds its key, as `FOR KEY SHARE`
   does against `FOR NO KEY UPDATE`, so such an update waits
   for the child's transaction.
 - **The API is tuple at a time, at every level**, but for
-  rows read by key, many in one call (`ROWSTORE.md`). Sets of
+  rows read by key, many in one call
+  ([`ROWSTORE.md`](ROWSTORE.md)). Sets of
   rows in and out was forced by an IPC boundary between a
   PostgreSQL backend process and sm1; the fork has moved
-  PostgreSQL to threads (`PART4.md` §2), so the boundary is
+  PostgreSQL to threads
+  ([`PART4.md`](PART4.md#2-the-blocker-the-process-model) §2), so
+  the boundary is
   a function call and the shape is no longer forced. Its other
   reason was filter pushdown, and sm3 filters nothing (above).
   Fewer calls per scan is what is left of the case for
   batches; the keyed read is the one a profile asked for
-  (`ROWSTORE.md`), and the rest wait for one
-  (`LSMINDEX.md` §5).
+  ([`ROWSTORE.md`](ROWSTORE.md)), and the rest wait for one
+  ([`LSMINDEX.md`](LSMINDEX.md#5-scans) §5).
 - **READ COMMITTED writes wait, then proceed.** PostgreSQL's
   default level does not fail a concurrent update of the same
   row, so sm1's first-committer-wins rule is relaxed there
-  (`XCTMGR.md` §5). It needs a new version ordering in
+  ([`XCTMGR.md`](XCTMGR.md#5-statements) §5). It needs a new
+  version ordering in
   sm1 and a row re-check in the executor.
 - **One commit point.** The catalog lives in sm3, in memory
   and written through to sm2, so a DDL statement and the data
   it changes commit in one sm1 transaction, and recovery is
-  RocksDB's alone (`PART4.md` §4, `CATALOG.md` §1).
+  RocksDB's alone
+  ([`PART4.md`](PART4.md#4-the-fork-and-what-it-costs) §4,
+  [`CATALOG.md`](CATALOG.md#1-design) §1).
 - **A host's caches are kept fresh by a version, not by a
   message.** sm sends no word of a DDL to the sessions that did
   not make it. A table definition carries a version
@@ -589,7 +626,8 @@ design:
   publishes at which the definition or the table's statistics
   were last published, or an index of it made valid, and
   `SM_VERSION_OWN` while the reader's own transaction has
-  changed it (`CATALOG.md` §4). A host caching what it
+  changed it ([`CATALOG.md`](CATALOG.md#4-in-memory) §4). A host
+  caching what it
   learns of a table uses it only under the table-oid lock and
   compares the version there: read under IS or IX, it changes
   only by an analyze or an index made valid, since DDL takes X.
@@ -597,7 +635,9 @@ design:
   its place (`sm_cat_namespace_epoch`). The counts are in
   memory, at 0 after a restart, when no host's cache survives
   either. digres's use of them replaces PostgreSQL's shared
-  invalidation (`../dg/SHMEM.md` §5.1).
+  invalidation
+  ([`../dg/SHMEM.md`](../dg/SHMEM.md#51-invalidation-by-version-not-by-message)
+  §5.1).
 - **READ COMMITTED writes are resolved above the stack, and
   sm3 fixes the indexes.** `SM_ERR_UPDATED` is answered by
   re-checking the statement's filter against the newest image.
@@ -606,13 +646,15 @@ design:
   repeats the write or skips the row. sm2 and sm3 surface the
   error and offer the read. sm3's share is to take the index
   entries to remove from the old image the repeated write
-  hands back (`INDEXBUILD.md` §2).
+  hands back ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol)
+  §2).
 - **sm3 drives index maintenance.** PostgreSQL's kept executor
   could maintain indexes itself through its index access
   method (`ExecInsertIndexTuples`). It does not: it writes a
   row through one table-level call that sm3 owns, `sm_tbl_*`,
   and the C wrapper's heap-level and index-level calls are
-  gone (`INDEXBUILD.md` §2). The rules of a unique index's
+  gone ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2). The
+  rules of a unique index's
   key, the index build and the index-row invariant must
   stay below the executor, and the invariant holds only if one
   layer writes both a row and its entries.
@@ -630,7 +672,8 @@ design:
   construction. A scan takes key bounds and filters nothing:
   deriving bounds from a `WHERE` clause and testing the
   residual are the planner's and the executor's
-  (`INDEXBUILD.md` §2, `LSMINDEX.md` §5).
+  ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2,
+  [`LSMINDEX.md`](LSMINDEX.md#5-scans) §5).
 - **A write that fails partway is the caller's to undo.** A
   table write is the row's write and then a write or two per
   index, and sm3 sets no savepoint inside it. One that fails
@@ -639,7 +682,8 @@ design:
   savepoint of its own or aborts, as PostgreSQL's errors abort
   the transaction or the subtransaction anyway; `rel` aborts.
   `SM_ERR_UPDATED` needs no undoing: it comes from the row's
-  write, the first step (`INDEXBUILD.md` §2).
+  write, the first step
+  ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2).
 - **An index is built in the background.** An index made on a
   table that has rows is recorded as pending, maintained by
   every writer from then on, and filled by the process's
@@ -648,11 +692,15 @@ design:
   A reader may not scan it until it is valid, nor if its
   snapshot is older than the build; `sm_cat_index_wait` is for
   a caller that wants it at once. A failed build keeps its
-  reason in the index's record (`INDEXBUILD.md` §2).
+  reason in the index's record
+  ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2).
 - **No backward scans, at any level, ever.** Settled in
-  `sm1/SM1_OBJECTIVE.md`, built into sm2's encoding and
+  [`sm1/SM1_OBJECTIVE.md`](sm1/SM1_OBJECTIVE.md), built into
+  sm2's encoding and
   inherited by every index sm3 builds. The fork's planner is
-  changed never to ask for a backward scan (`PART4.md` §5);
+  changed never to ask for a backward scan
+  ([`PART4.md`](PART4.md#5-the-one-conflict-with-a-decision-already-made)
+  §5);
   descending order comes from inverted key bytes, scanned
   forward.
 
@@ -660,10 +708,12 @@ design:
 
 ## 6. What this document is not
 
-It is not a substitute for `sm1/SM1_DESIGN.md`,
-`sm2/SM2_DESIGN.md` or `sm3/SM3_DESIGN.md` — read those for how a
+It is not a substitute for
+[`sm1/SM1_DESIGN.md`](sm1/SM1_DESIGN.md),
+[`sm2/SM2_DESIGN.md`](sm2/SM2_DESIGN.md) or
+[`sm3/SM3_DESIGN.md`](sm3/SM3_DESIGN.md) — read those for how a
 level works. It is
-not a restatement of `PART4.md` — read that for the
+not a restatement of [`PART4.md`](PART4.md) — read that for the
 PostgreSQL target in full. It exists so a reader can see the
 whole stack, and the handful of decisions that bind it
 together, without first reading either level end to end.

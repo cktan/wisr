@@ -33,100 +33,148 @@ top-level one delegates to them. It also builds the C wrapper,
 in the root's `include/` and `src/`, which belongs to no level,
 into `build/libsm.a`: one archive of every level's objects and
 the wrapper's, so a C++ program includes `include/sm.h` and
-links that (`DESIGN.md` §2, §5). `make test` ends by driving
+links that ([`DESIGN.md`](DESIGN.md#2-build) §2, §5). `make test`
+ends by driving
 the wrapper through the `rel/` test suite.
 
 ## Where to read
 
-- `CODE.md` — the rules and practices for changing `sm/`:
+- [`CODE.md`](CODE.md) — the rules and practices for changing
+  `sm/`:
   levels, errors, exceptions, names, tests
-- `GLOSSARY.md` — the words this stack uses, the ones that
+- [`GLOSSARY.md`](GLOSSARY.md) — the words this stack uses, the
+  ones that
   mean more than one thing first, and the identifiers side
   by side
-- `OBJECTIVE.md` — what wisr as a whole is for, and the
+- [`OBJECTIVE.md`](OBJECTIVE.md) — what wisr as a whole is for,
+  and the
   decisions that span every level
-- `DESIGN.md` — how the levels fit together: the stack, the
+- [`DESIGN.md`](DESIGN.md) — how the levels fit together: the
+  stack, the
   build, and the decisions that cross level boundaries
-- `NEXT.md` — what to build next and in what order, across
+- [`NEXT.md`](NEXT.md) — what to build next and in what order,
+  across
   levels, with the loose ends and the gaps that block nothing
-- `sm0/README.md` — level 0: the error state, the log hook,
+- [`sm0/README.md`](sm0/README.md) — level 0: the error state,
+  the log hook,
   the helpers every level uses, and the system services
-- `sm0/INTERRUPT.md` — interrupting a thread, interruptible
+- [`sm0/INTERRUPT.md`](sm0/INTERRUPT.md) — interrupting a thread,
+  interruptible
   waits, and timers that interrupt: `sm_sys.h`
-- `sm1/SM1_OBJECTIVE.md` — what level 1 is for, and the decisions
+- [`sm1/SM1_OBJECTIVE.md`](sm1/SM1_OBJECTIVE.md) — what level 1
+  is for, and the decisions
   that settled its design
-- `sm1/SM1_DESIGN.md` — how level 1 works; the design of record
-- `SM_API.md` — every function of `include/sm.h`, the interface
+- [`sm1/SM1_DESIGN.md`](sm1/SM1_DESIGN.md) — how level 1 works;
+  the design of record
+- [`SM_API.md`](SM_API.md) — every function of `include/sm.h`,
+  the interface
   digres calls
-- `sm1/API.md` — sm1's C++ API, call by call, in
+- [`sm1/API.md`](sm1/API.md) — sm1's C++ API, call by call, in
   `namespace sm1`
-- `sm1/mvcc/MVCC.md` — the isolation rules, as a table of
+- [`sm1/mvcc/MVCC.md`](sm1/mvcc/MVCC.md) — the isolation rules,
+  as a table of
   scenarios that are executed on every build
-- `sm1/mvcc/POSTGRES.md` — PostgreSQL's isolation test suite,
+- [`sm1/mvcc/POSTGRES.md`](sm1/mvcc/POSTGRES.md) — PostgreSQL's
+  isolation test suite,
   listed, and set against the scenarios here
-- `sm1/mvcc/DRIVER.md` — the scenario driver: its command
+- [`sm1/mvcc/DRIVER.md`](sm1/mvcc/DRIVER.md) — the scenario
+  driver: its command
   and the language of the scripts
-- `sm1/mvcc/AUDIT.md` and `sm1/mvcc/REPORT.md` — the
+- [`sm1/mvcc/AUDIT.md`](sm1/mvcc/AUDIT.md) and
+  [`sm1/mvcc/REPORT.md`](sm1/mvcc/REPORT.md) — the
   scenarios' expected transcripts, and their driver, audited
-- `sm2/SM2_OBJECTIVE.md` — what level 2 is for
-- `sm2/SM2_DESIGN.md` — the type system, the two on-disk
+- [`sm2/SM2_OBJECTIVE.md`](sm2/SM2_OBJECTIVE.md) — what level 2
+  is for
+- [`sm2/SM2_DESIGN.md`](sm2/SM2_DESIGN.md) — the type system, the
+  two on-disk
   encodings, and the tuple relation
-- `sm2/TYPE.md` — every type, one by one: native
+- [`sm2/TYPE.md`](sm2/TYPE.md) — every type, one by one: native
   representation, order, and key bytes
-- `sm2/TUPLE.md` — a row's bytes: the tuple format
-- `sm2/VARLENA.md` — a variable-width datum's bytes
-- `sm3/SM3_OBJECTIVE.md` — what level 3 is for
-- `sm3/SM3_DESIGN.md` — the catalog, index maintenance and
+- [`sm2/TUPLE.md`](sm2/TUPLE.md) — a row's bytes: the tuple
+  format
+- [`sm2/VARLENA.md`](sm2/VARLENA.md) — a variable-width datum's
+  bytes
+- [`sm3/SM3_OBJECTIVE.md`](sm3/SM3_OBJECTIVE.md) — what level 3
+  is for
+- [`sm3/SM3_DESIGN.md`](sm3/SM3_DESIGN.md) — the catalog, index
+  maintenance and
   builds, scans and statistics
-- `rel/REL_DESIGN.md` and `rel/REL.md` — `rel`, the test
+- [`rel/REL_DESIGN.md`](rel/REL_DESIGN.md) and
+  [`rel/REL.md`](rel/REL.md) — `rel`, the test
   driver over `include/sm.h`: its design and its verbs
-- `sm0/VFD.md` — virtual file descriptors, under one ceiling
+- [`sm0/VFD.md`](sm0/VFD.md) — virtual file descriptors, under
+  one ceiling
   for the process
-- `FEATURELIST.md` — the PostgreSQL subset wisr targets,
+- [`FEATURELIST.md`](FEATURELIST.md) — the PostgreSQL subset wisr
+  targets,
   decided feature by feature; not all of it is built
-- `PART4.md` — what it would take to put PostgreSQL on this
+- [`PART4.md`](PART4.md) — what it would take to put PostgreSQL
+  on this
   stack, and what that target forces on level 2's design
 
 Paths inside a level's documents are relative to that level, so
-`src/db.cc` in `sm1/SM1_DESIGN.md` means `sm1/src/db.cc`.
+`src/db.cc` in [`sm1/SM1_DESIGN.md`](sm1/SM1_DESIGN.md) means
+`sm1/src/db.cc`.
 
 ### The modules
 
 One document for each module, with its design and implementation.
-`GLOSSARY.md` holds the same names, with the code of each.
+[`GLOSSARY.md`](GLOSSARY.md) holds the same names, with the code
+of each.
 
-- `DBMGR.md` — Database Manager: environments, databases, stores,
+- [`DBMGR.md`](DBMGR.md) — Database Manager: environments,
+  databases, stores,
   the WAL, recovery
-- `XCTMGR.md` — Transaction Manager: snapshots, commit,
+- [`XCTMGR.md`](XCTMGR.md) — Transaction Manager: snapshots,
+  commit,
   savepoints, SSI, 2PC
-- `LOCKMGR.md` — Lock Manager: row and object locks, deadlocks,
+- [`LOCKMGR.md`](LOCKMGR.md) — Lock Manager: row and object
+  locks, deadlocks,
   write latches
-- `BUFMGR.md` — Buffer Manager: sm's buffer pool: frames, pins,
+- [`BUFMGR.md`](BUFMGR.md) — Buffer Manager: sm's buffer pool:
+  frames, pins,
   the clock
-- `GC.md` — Garbage Collector: the watermark, the compaction
+- [`GC.md`](GC.md) — Garbage Collector: the watermark, the
+  compaction
   filter, the `CF:txn` sweep
-- `ROWSTORE.md` — Row Store: row keys, versions, chains, the read
+- [`ROWSTORE.md`](ROWSTORE.md) — Row Store: row keys, versions,
+  chains, the read
   and write paths
-- `TOAST.md` — TOAST: a datum stored out of line
-- `LSMINDEX.md` — LSM Index: an index whose entries are sm1 keys
-- `BTREEINDEX.md` — B-tree Index: an index of its own pages, its
+- [`TOAST.md`](TOAST.md) — TOAST: a datum stored out of line
+- [`LSMINDEX.md`](LSMINDEX.md) — LSM Index: an index whose
+  entries are sm1 keys
+- [`BTREEINDEX.md`](BTREEINDEX.md) — B-tree Index: an index of
+  its own pages, its
   in-doubt bit, the cleaner
-- `INDEXBUILD.md` — Index Builder: concurrent index builds
-- `CATALOG.md` — Catalog: definitions in memory and on disk, DDL
-- `NAMESPACE.md` — Namespace: a schema, and name lookup
-- `SEQUENCE.md` — Sequence: counters and their leases
-- `TEMPTABLE.md` — Temporary Table: a table of one session
-- `VIEW.md` — View: a stored query's definition
-- `STATISTICS.md` — Statistics: what ANALYZE records
-- `BULKLOAD.md` — Bulk Load: loading an empty table from sorted
+- [`INDEXBUILD.md`](INDEXBUILD.md) — Index Builder: concurrent
+  index builds
+- [`CATALOG.md`](CATALOG.md) — Catalog: definitions in memory and
+  on disk, DDL
+- [`NAMESPACE.md`](NAMESPACE.md) — Namespace: a schema, and name
+  lookup
+- [`SEQUENCE.md`](SEQUENCE.md) — Sequence: counters and their
+  leases
+- [`TEMPTABLE.md`](TEMPTABLE.md) — Temporary Table: a table of
+  one session
+- [`VIEW.md`](VIEW.md) — View: a stored query's definition
+- [`STATISTICS.md`](STATISTICS.md) — Statistics: what ANALYZE
+  records
+- [`BULKLOAD.md`](BULKLOAD.md) — Bulk Load: loading an empty
+  table from sorted
   files
-- `CLUSTER.md` — Clustered Table: rows stored in primary-key
+- [`CLUSTER.md`](CLUSTER.md) — Clustered Table: rows stored in
+  primary-key
   order
-- `FOREIGNKEY.md` — Foreign Key: a table's references to another
-- `SORT.md` — Sort: records in key order, in memory and in runs
+- [`FOREIGNKEY.md`](FOREIGNKEY.md) — Foreign Key: a table's
+  references to another
+- [`SORT.md`](SORT.md) — Sort: records in key order, in memory
+  and in runs
   on files
-- `SORT_PLAN.md` — the plan the Sort was built from
-- `BTREELOAD_PLAN.md` — the plan for a bulk load that builds a
+- [`SORT_PLAN.md`](SORT_PLAN.md) — the plan the Sort was built
+  from
+- [`BTREELOAD_PLAN.md`](BTREELOAD_PLAN.md) — the plan for a bulk
+  load that builds a
   B-tree from the bottom up
-- `LOGICALDECODE.md` — Logical Decoding: a design, not built
+- [`LOGICALDECODE.md`](LOGICALDECODE.md) — Logical Decoding: a
+  design, not built
 

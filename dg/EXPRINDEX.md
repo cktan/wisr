@@ -1,6 +1,7 @@
 # EXPRINDEX — partial and expression indexes
 
-**Status: built** (`WORKNOTE.md` step 311). §9 has what was
+**Status: built** ([`WORKNOTE.md`](WORKNOTE.md) step 311). §9 has
+what was
 decided, and §10 the order of work and the tests.
 
 ```sql
@@ -45,7 +46,9 @@ until step 311.
   index's predicate and expressions as bytes it does not read,
   and asks the host's **evaluator**, a callback, whether a row
   belongs and what its expression keys are, on every write,
-  build and ANALYZE (`../sm/INDEXBUILD.md` §2,
+  build and ANALYZE
+  ([`../sm/INDEXBUILD.md`](../sm/INDEXBUILD.md#2-the-protocol)
+  §2,
   `sm_set_index_evaluator` in `../sm/include/sm.h`). `rel` has
   an evaluator of its own and tests it
   (`../sm/rel/test/test_partial.rel`).
@@ -62,7 +65,8 @@ until step 311.
 
 ## 1. Why
 
-- `NEXT.md` §1's cheapest gap: 67 statements of PostgreSQL's
+- [`NEXT.md`](../sm/NEXT.md#1-next) §1's cheapest gap: 67
+  statements of PostgreSQL's
   regression files are taken out for it.
 - Common in schemas: `WHERE deleted_at IS NULL`, a unique
   `lower(email)`, a unique key over the live rows only.
@@ -206,7 +210,8 @@ On a call:
    it again.
 2. Put sm's row in a virtual slot as it is: sm's datums are
    PostgreSQL's, the decimals among them, bit for bit
-   (`DECIMAL.md` §2.3). The slot's descriptor has the type
+   ([`DECIMAL.md`](DECIMAL.md#23-stored-as-sm2s-decimal-at-the-columns-scale)
+   §2.3). The slot's descriptor has the type
    of each column a Var reads, taken from the Var, as the
    executor checks a Var against its slot; the table's own
    descriptor would need the relcache.
@@ -230,7 +235,8 @@ construction.
 
 ### 4.4 Errors
 
-A PostgreSQL error is a C++ exception in digres (`CODE.md`
+A PostgreSQL error is a C++ exception in digres
+([`CODE.md`](CODE.md)
 §2), which must not cross sm's frames: the evaluator is
 `noexcept`.
 
@@ -247,7 +253,7 @@ A PostgreSQL error is a C++ exception in digres (`CODE.md`
   `smstore_wait_indexes()` raises it as now, `could not create
   index "x": division by zero`, with sm's SQLSTATE. PostgreSQL
   says `division by zero` alone, 22012. A small difference,
-  noted in `UNSUPPORTED.md`.
+  noted in [`UNSUPPORTED.md`](UNSUPPORTED.md).
 
 ## 5. Threads: the one hard question
 
@@ -321,7 +327,8 @@ digres's own. The evaluation after it runs in none.
   `Key ((id % 10::bigint))=(1)`, PostgreSQL's words.
 - **Size and statistics**: a partial index's row estimate is
   its own entries' count, which sm already gives per index
-  (`sm_tbl_idx_size`); `STATISTICS.md` already lays out an
+  (`sm_tbl_idx_size`); [`STATISTICS.md`](STATISTICS.md) already
+  lays out an
   expression's statistics as the index's rows. No plan of the
   tests needed more, so §10 step 6 is not built.
 
@@ -333,7 +340,7 @@ digres's own. The evaluation after it runs in none.
 | Non-unique / unique | sm3's own write paths, with `belongs` and the computed key |
 | Primary key | cannot be partial or an expression (§2) |
 | INCLUDE | plain columns, as now |
-| Cut keys | a long expression key in a unique index is refused as a long column key is (`sm/sm3/SM3_DESIGN.md` §6) |
+| Cut keys | a long expression key in a unique index is refused as a long column key is ([`sm/sm3/SM3_DESIGN.md`](../sm/sm3/SM3_DESIGN.md#6-known-trade-offs) §6) |
 | Update A→B→A | sm3 compares the `reads` columns' bytes; equal images leave the index alone |
 | INCLUDE-only update | as now: entry rewritten, evaluator called only if `reads` changed |
 | Update into, out of, the predicate | sm3 evaluates both images: entry removed if the old belonged, added if the new does |
@@ -408,7 +415,8 @@ Steps:
    one resumed after a restart. → verify: `server.sh`.
 4. Upsert arbiters and the duplicate key's detail. → verify:
    slt.
-5. pgregress statements put back; `UNSUPPORTED.md` updated.
+5. pgregress statements put back;
+   [`UNSUPPORTED.md`](UNSUPPORTED.md) updated.
 6. If a plan needs it: a partial index's row count and an
    expression's statistics.
 
@@ -421,7 +429,9 @@ Steps:
 - **C: build such an index on the session's thread.** No worker
   evaluates. It needs sm3 to build in the caller, a second
   build path, and a CREATE INDEX that holds its session for the
-  build, as sm3's design chose not to (`../sm/INDEXBUILD.md` §2).
+  build, as sm3's design chose not to
+  ([`../sm/INDEXBUILD.md`](../sm/INDEXBUILD.md#2-the-protocol)
+  §2).
 - **D: an evaluator in sm** over a subset of expressions. sm3's
   design refused it: a second implementation of PostgreSQL's
   functions, which must agree row for row.

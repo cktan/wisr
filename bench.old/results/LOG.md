@@ -2,7 +2,8 @@
 
 One row per report, oldest first, each marked with the date
 of its run and the digres commit it measured. `run.sh`
-appends a row whenever it writes a report (`../CODE.md`).
+appends a row whenever it writes a report
+([`../CODE.md`](../CODE.md)).
 
 | Date | Commit | Machine | Report |
 | --- | --- | --- | --- |

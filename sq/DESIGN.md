@@ -1,7 +1,8 @@
 # DESIGN — sq, the SQL parser
 
 sq is a library that parses PostgreSQL 18's SQL: text in, a tree
-of nodes out. It is what digres parses with. `README.md` says
+of nodes out. It is what digres parses with.
+[`README.md`](README.md) says
 how to build and test it and `include/sq.h` is the interface;
 this document says how it is put together, and why.
 
@@ -79,7 +80,7 @@ What a fork changes is the code around the rules, never a rule:
 **One rule is digres's, not PostgreSQL's**: `DEFAULT b_expr ON
 UPDATE` in `ColConstraintElem`, a column's update default, what
 an UPDATE that does not assign the column writes in it
-(`../dg/ONUPDATE.md`). It makes
+([`../dg/ONUPDATE.md`](../dg/ONUPDATE.md)). It makes
 the `Constraint` that `DEFAULT b_expr` makes, with
 `generated_when` set to `'u'`, a field a default does not
 otherwise use, so no node changes. It needs no token of its own
@@ -328,7 +329,9 @@ the committed node header is what the generator writes; and
   functions, kept by PostgreSQL's names so that actions read as
   they do upstream.
 - **An `Oid` field is 32 bits**, as in PostgreSQL; digres's is
-  to be 64 (`../sm/PART4.md` §10). Every such field in a parse
+  to be 64
+  ([`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+  §10). Every such field in a parse
   tree is the analyzer's to fill, and zero from sq.
 
 ## 10. What is deliberately not here

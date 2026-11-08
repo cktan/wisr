@@ -83,7 +83,8 @@ The rule decides which applies:
 A transaction's memory therefore does not grow with the keys it
 writes. A load of a million rows with three indexes holds no lock
 entries, where a held write lock would cost four million.
-Mini-batch needs no lock path of its own (`BULKLOAD.md` §4.5).
+Mini-batch needs no lock path of its own
+([`BULKLOAD.md`](BULKLOAD.md#45-mini-batch) §4.5).
 
 A plain read takes no lock. Nothing on disk records a lock but
 the `PREPARED` record.
@@ -184,7 +185,8 @@ session's own (§3.4).
 1. Check for an active transaction, a known mode, and a live
    store and legal key at the view.
 2. In a temporary store, return 0: there is no one to lock
-   against (`TEMPTABLE.md`). With `as_read`, a row changed since
+   against ([`TEMPTABLE.md`](TEMPTABLE.md)). With `as_read`, a
+   row changed since
    the statement began is refused first.
 3. Take the key's latch.
 4. Read the newest version of the key.
@@ -209,7 +211,8 @@ UPDATE` in PostgreSQL waits for an uncommitted update. The check
 costs a read of the key.
 
 `sm1::wait_writer` waits for a transaction `sm1::read_newest`
-named: a unique tree's check uses it (`BTREEINDEX.md`). It is the
+named: a unique tree's check uses it
+([`BTREEINDEX.md`](BTREEINDEX.md)). It is the
 wait of §1.11 on its own, with no lock.
 
 ### 1.6 The currency check
@@ -249,7 +252,8 @@ version can come between that read and the check:
 
 ### 1.7 A write
 
-The write path is `ROWSTORE.md`'s. This section gives its
+The write path is [`ROWSTORE.md`](ROWSTORE.md)'s. This section
+gives its
 protocol with the Lock Manager. `sm1::insert`, `sm1::update` and
 `sm1::erase`, and their `chain_` forms, do these steps:
 
@@ -310,7 +314,7 @@ An insert has no predicate to evaluate again. It is judged
 against the newest committed version, and `SM_ERR_DUPKEY` if that
 is live, as PostgreSQL's unique check does. Writes at the
 non-serializable levels still feed the SSI tracker, and those
-levels are never its victims (`XCTMGR.md`).
+levels are never its victims ([`XCTMGR.md`](XCTMGR.md)).
 
 ### 1.9 READ COMMITTED: write, re-read, write
 
@@ -377,13 +381,14 @@ the snapshot. Something must keep that version from changing:
 - It fails with `SM_ERR_MOVED` for a row moved to another key,
   where it returns 1 for a plain tombstone. So a writer past
   `SM_ERR_UPDATED` learns the row moved, and does not skip it
-  (`ROWSTORE.md`).
+  ([`ROWSTORE.md`](ROWSTORE.md)).
 
 Nothing else changes for this exchange. REPEATABLE READ,
 SERIALIZABLE, SSI and 2PC are as they were. The garbage collector
 is too: a READ COMMITTED transaction already holds its begin
 snapshot, and the newest committed version is never collected
-(`GC.md`). Version order needs no help: the write that goes ahead
+([`GC.md`](GC.md)). Version order needs no help: the write that
+goes ahead
 takes a `wts` after the lock, so it sorts first.
 
 ### 1.10 Lifetime
@@ -417,7 +422,8 @@ A session waits on a lock, or on a transaction.
   transaction.
 
 **Every wait can be cut short.** sm1 waits through `sm_wait()`
-(`sm0/INTERRUPT.md`). A bit in the thread's wait mask ends the
+([`sm0/INTERRUPT.md`](sm0/INTERRUPT.md)). A bit in the thread's
+wait mask ends the
 wait with `SM_ERR_INTERRUPTED`: not an abort, with the
 transaction left active, as after `SM_ERR_BLOCKED`. The interrupt
 goes to a thread, because it is the thread that blocks. sm1 takes
@@ -425,8 +431,9 @@ no bit, so the bit stays pending until the host takes it and
 every later wait fails at once too. An interrupt is then never
 lost to a wait that began a moment late. A host builds query
 cancel, statement timeout and lock timeout from this. Two waits
-of a commit past its record cannot be cut short (`XCTMGR.md`). A
-pin's wait is the Buffer Manager's (`BUFMGR.md`).
+of a commit past its record cannot be cut short
+([`XCTMGR.md`](XCTMGR.md)). A
+pin's wait is the Buffer Manager's ([`BUFMGR.md`](BUFMGR.md)).
 
 **`sm1::set_qa_nowait`, for QA only.** It turns a wait into a
 failure: a write, an `sm1::lock_row` or an `sm1::lock_oid` that
@@ -434,7 +441,8 @@ would block returns `SM_ERR_BLOCKED` at once. It is not an abort
 and not retryable. The transaction holds exactly what it held,
 and the caller polls by repeating the call. This lets one thread
 play several sessions, and a script say "this step blocks" with
-no thread and no sleep (`rel/REL.md`). The price is deadlock
+no thread and no sleep ([`rel/REL.md`](rel/REL.md)). The price is
+deadlock
 detection: a polling session records no edges and is never a
 victim, so sessions polling each other poll for ever. That cycle
 is the caller's to break.
@@ -482,9 +490,9 @@ something the caller is not writing.
 | a table's `STATS` entry | row, a catalog key, X | a second analyze waits for the first, so both do not sample | built: `cat_lock_stats` |
 | a namespace | OID, its oid | `DROP SCHEMA` against `CREATE` in it | built: `cat_put_table`, `cat_put_collation` and `cat_put_sequence` take S, `cat_del_namespace` X |
 | a view's definition | OID, its oid | `DROP VIEW`, `CREATE OR REPLACE` against a query expanding it | built: `cat_lock_view` |
-| a collation or type in use | OID, its oid | `DROP COLLATION` with a column using it | not built (`CATALOG.md`) |
+| a collation or type in use | OID, its oid | `DROP COLLATION` with a column using it | not built ([`CATALOG.md`](CATALOG.md)) |
 | an index as an object | none | `DROP INDEX` against a scan on it | subsumed by the table's lock |
-| a sequence as an object | none | `CREATE` and `DROP SEQUENCE` | its record is a catalog key, read in the transaction (`SEQUENCE.md`) |
+| a sequence as an object | none | `CREATE` and `DROP SEQUENCE` | its record is a catalog key, read in the transaction ([`SEQUENCE.md`](SEQUENCE.md)) |
 
 Nothing in sm1 requires a width of a key: `max_keylen`, 4096,
 bounds it, and a lock keeps none of it.
@@ -509,7 +517,8 @@ involved.
   the lock.
 - **Gaps and ranges.** Phantoms are SSI's SIREAD range
   predicates, checked at a write. Nothing is held on a gap, and a
-  conflict is a serialization failure, not a wait (`XCTMGR.md`).
+  conflict is a serialization failure, not a wait
+  ([`XCTMGR.md`](XCTMGR.md)).
 - **A sequence's position.** `sm1::nextseq` is outside MVCC,
   takes no locks and is not undone by an abort.
 - **A TOAST chunk.** It belongs to its row.
@@ -681,7 +690,8 @@ persisted, so a process's hash serves.
 - `sm1::lock_row` takes it too, so no write of the key comes
   between its look at the newest version and `lock_try`.
 - Savepoint rollback and the chained store's garbage collection
-  take a key's latch for the same reason (`XCTMGR.md`, `GC.md`).
+  take a key's latch for the same reason
+  ([`XCTMGR.md`](XCTMGR.md), [`GC.md`](GC.md)).
 
 ### 3.6 Waits and wake-ups
 
@@ -745,7 +755,8 @@ the victim wakes in its own wait, finds `doomed` set, and fails
 from there. `xct_check_active` also fails a doomed transaction at
 the entry of any later call, so a doomed transaction can only be
 aborted. `doomed` is atomic. It holds `SM_ERR_DEADLOCK` for a
-victim, or `SM_ERR_DOOMED` for a failed rollback (`XCTMGR.md`).
+victim, or `SM_ERR_DOOMED` for a failed rollback
+([`XCTMGR.md`](XCTMGR.md)).
 
 ### 3.8 Release
 
@@ -768,7 +779,8 @@ throughout. For each partition in order:
 A prepared transaction's uncommitted versions are its write
 locks. After a restart, recovery puts it back in the active
 table, in doubt, so a writer waits for it as before
-(`XCTMGR.md`). The `PREPARED` record therefore lists explicit
+([`XCTMGR.md`](XCTMGR.md)). The `PREPARED` record therefore lists
+explicit
 locks alone.
 
 An entry of the record is `lock_record_size`, 20 bytes: the type,
@@ -831,7 +843,8 @@ structures grow in memory instead:
 
 The last two keep the key inline, so a transaction touching tens
 of millions of keys costs gigabytes. That is the price of O(1)
-abort, and a real limit on one transaction's size (`XCTMGR.md`).
+abort, and a real limit on one transaction's size
+([`XCTMGR.md`](XCTMGR.md)).
 
 ## 4. Cases
 
@@ -898,7 +911,7 @@ sm3::lock_table(s, 16384, X)
 
 Then, in `cat_put_table`, it locks each catalog key it is about
 to write, and only those. A table's own fields, one column and
-one index each have a key (`CATALOG.md`).
+one index each have a key ([`CATALOG.md`](CATALOG.md)).
 
 ```
 sm2::catkv_lock(kv, part_key(column, 16384, 3), X)
@@ -945,7 +958,8 @@ They still hold.
 a row while a writer changes it. The entry key is the obvious
 thing to lock, and the wrong one. The build locks the **row**
 shared and reads it with `sm2::rel_read_latest`, to the end of
-the batch (`INDEXBUILD.md`). Its explicit lock waits for a
+the batch ([`INDEXBUILD.md`](INDEXBUILD.md)). Its explicit lock
+waits for a
 writer's uncommitted version (§1.5), and a writer waits for its
 lock (§1.7). So the two never work on one row at once.
 
@@ -1000,7 +1014,8 @@ it, and a waiter could then read the shared catalog before the
 DDL's new definition was published. So sm3's commit holds the
 catalog's mutex exclusive across both sm1's commit and the
 publish. A transaction that gets the table-oid lock then waits on
-that mutex, and sees the new definition (`CATALOG.md`).
+that mutex, and sees the new definition
+([`CATALOG.md`](CATALOG.md)).
 
 ### 4.9 What a shared id costs
 

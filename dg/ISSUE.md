@@ -3,7 +3,8 @@
 Problems found and left unfixed, each with what it would take to
 fix. The code it concerns points here by number. A fixed issue is
 removed, and its number is not used again: issue 2, ON CONFLICT
-DO UPDATE affecting a row twice, was fixed in `WORKNOTE.md` step
+DO UPDATE affecting a row twice, was fixed in
+[`WORKNOTE.md`](WORKNOTE.md) step
 237; issue 3, a numeric range in an array or a multirange losing
 its bound, in step 300; issue 6, a duplicate key in a table made
 in a savepoint saying the wrong error, in step 302; issue 7, ON
@@ -31,7 +32,8 @@ counting deleted rows, in step 394. Issue 12, the hash access
 method saying it cannot exclude, was closed as digres's answer,
 not a bug, in step 310: digres has no hash index. Issue 21, a
 bare numeric rounding its places past 17 digits, was closed so in
-step 393: the code does it on purpose, and `DECIMAL.md` now says
+step 393: the code does it on purpose, and
+[`DECIMAL.md`](DECIMAL.md) now says
 so.
 
 ---
@@ -80,7 +82,7 @@ one of:
   `thread_local`.** `LOAD` stays; every extension must change.
 - **Run `_PG_init()` once per process**, with process-wide
   hooks under a lock. Undoes the per-session hooks
-  (`WORKNOTE.md` step 222).
+  ([`WORKNOTE.md`](WORKNOTE.md) step 222).
 
 ## Issue 22: the purge of a mass delete stalls every writer
 
@@ -119,7 +121,8 @@ a count of 1,567 rows: "a wait for a page interrupted". Run
 alone, the file is clean in 41 s. That it waits on an earlier
 file's purge is likely, not proven.
 
-The fix is a choice in sm1's GC (`../sm/GC.md` §5), not made
+The fix is a choice in sm1's GC
+([`../sm/GC.md`](../sm/GC.md#5-the-tombstone-purge) §5), not made
 here:
 
 - **Erase each version with a point delete**, found by an
@@ -134,4 +137,5 @@ here:
   takes longer to reclaim.
 - **Raising `store_max_range_deletions`** is no fix: a memtable
   with many range tombstones makes each read fragment them
-  again, which `GC.md` §5 flushes to avoid.
+  again, which [`GC.md`](../sm/GC.md#5-the-tombstone-purge) §5
+  flushes to avoid.

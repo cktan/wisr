@@ -3,10 +3,12 @@
 Roles, authentication and authorization: what every database of
 a server shares about who may do what. It is a library,
 `build/libaa.a`, with its interface in `include/aa.h`, and
-digres links it beside sm and sq. `ROLE.md` is why: what digres
+digres links it beside sm and sq. [`ROLE.md`](ROLE.md) is why:
+what digres
 takes of PostgreSQL's roles and privileges, where they are kept,
-and how a client is let in. `AA_DESIGN.md` is the design of
-record, and `USAGE.md` how to call it.
+and how a client is let in. [`AA_DESIGN.md`](AA_DESIGN.md) is the
+design of
+record, and [`USAGE.md`](USAGE.md) how to call it.
 
 ```
 make -j4         build build/libaa.a and its tests
@@ -25,7 +27,8 @@ which digres's tsan and release builds rely on.
 
 ## What it keeps
 
-aa keeps, in the sm database `pg_global` (`ROLE.md` §3), which
+aa keeps, in the sm database `pg_global`
+([`ROLE.md`](ROLE.md#3-where-roles-live) §3), which
 no client connects to:
 
 - `pg_authid`, a role a row, and `pg_auth_members`, a
@@ -75,11 +78,14 @@ messages (`../dg/src/backend/utils/init/pg_global.c`).
   transaction it writes each entry that is to grant less as
   granting only what it grants before and after, so a crash
   between the two commits leaves less granted, never more
-  (`ROLE.md` §8, question 7). `aa_post_commit()`, after it,
+  ([`ROLE.md`](ROLE.md#8-decisions) §8, question 7).
+  `aa_post_commit()`, after it,
   writes each entry as the transaction left it.
   `aa_abort()` puts back what `aa_commit()` wrote if the
   database's commit failed.
-- **How a client gets in** (`ROLE.md` §5) is decided here and
+- **How a client gets in**
+  ([`ROLE.md`](ROLE.md#5-how-a-client-gets-in) §5) is decided
+  here and
   carried out by digres: `aa_auth_method()` before the
   exchange, peer or password; `aa_role_secret()` during it;
   `aa_login_okay()` after it, LOGIN, VALID UNTIL and
@@ -103,7 +109,9 @@ messages (`../dg/src/backend/utils/init/pg_global.c`).
 
 ## The interface
 
-As sm's (`../sm/CODE.md` §2): C-like functions named `aa_`,
+As sm's
+([`../sm/CODE.md`](../sm/CODE.md#2-the-interface-to-sms-users)
+§2): C-like functions named `aa_`,
 returning 0 on success and -1 on failure, with the failure's
 code and message in the thread's error state (`aa_errnum()`,
 `aa_errmsg()`); a lookup that finds nothing returns false.
@@ -112,8 +120,10 @@ and `std::shared_ptr` of a `const` cross it. aa never throws.
 
 ## Coding in aa
 
-`../sm/CODE.md`'s rules hold here, and the repository's
-`CLAUDE.md` over them. aa calls sm only through `sm.h`, and
+[`../sm/CODE.md`](../sm/CODE.md)'s rules hold here, and the
+repository's
+[`CLAUDE.md`](../CLAUDE.md) over them. aa calls sm only through
+`sm.h`, and
 nothing in sm calls aa. Every test has a synopsis and
 numbered steps, and a change is tested at every layer it
 reaches: here, and digres's `test/server.sh` for what a

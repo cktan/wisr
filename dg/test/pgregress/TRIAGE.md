@@ -31,7 +31,8 @@ PostgreSQL says.
 
 Of the 147, all but the bugs below follow from a decision:
 
-- **The decimal types** (`../../DECIMAL.md`): a bare
+- **The decimal types** ([`../../DECIMAL.md`](../../DECIMAL.md)):
+  a bare
   `numeric` column is `numeric(17,3)`, so `-5.499999` is
   stored as `-5.500`; a product past the type's range, and
   jsonb's numbers, are double precision; `^`, `sqrt` lose
@@ -49,7 +50,7 @@ Of the 147, all but the bugs below follow from a decision:
   one, so `pg_indexam_has_property(hash, 'can_exclude')`,
   computed from its `amgettuple`, is false; true would promise
   what CREATE INDEX USING hash refuses. `amutils`
-  (`../../WORKNOTE.md` step 310).
+  ([`../../WORKNOTE.md`](../../WORKNOTE.md) step 310).
 - **A serial column's sequence is `bigint`**, to
   9223372036854775807, not `integer`: sm's sequences have no
   type. `psql` 18, `identity`, `sequence`.
@@ -89,17 +90,18 @@ Of the 147, all but the bugs below follow from a decision:
 ## Bugs
 
 Each reproduces alone on both servers, and is an issue in
-`../../ISSUE.md`, numbered there as here, with its repro.
+[`../../ISSUE.md`](../../ISSUE.md), numbered there as here, with
+its repro.
 
 | Issue | What | Where | Priority |
 | --- | --- | --- | --- |
-| 3 | Fixed, `../../WORKNOTE.md` step 300: a numeric range inside an array or a multirange came back with a garbage bound: `nummultirange(numrange(5.0, 6.0), numrange(1.0, 2.0))` is `{[1.0,2475880078570760549798248448)}`, `ARRAY[numrange(1.1, 1.2), numrange(12.3, 155.5)]` likewise. `numrange` alone is right. | `multirangetypes`, `rangetypes` | high: a wrong answer |
-| 4 | Fixed, `../../WORKNOTE.md` step 304: a cursor saw its own transaction's later DELETE: after `DELETE ... WHERE CURRENT OF c1`, `MOVE BACKWARD ALL` and `FETCH ALL` missed the deleted row, which a cursor's snapshot keeps. | `portals` | high: a wrong answer |
-| 5 | Fixed, `../../WORKNOTE.md` step 305: a `FOR UPDATE` cursor in a SERIALIZABLE transaction returned a row the transaction updated after DECLARE; PostgreSQL returns none. | `portals` | medium |
-| 6 | Fixed, `../../WORKNOTE.md` step 302: a duplicate key in a table made in a savepoint said `could not open relation with OID N`, not the unique violation: `BEGIN; SAVEPOINT x; CREATE TABLE koju (a int UNIQUE);` and the same INSERT twice. | `transactions` | medium: the row is refused, the error is wrong |
-| 7 | Fixed, `../../WORKNOTE.md` step 303: `ON COMMIT DELETE ROWS` on a table a foreign key references committed; PostgreSQL refuses it, as the delete would break the key. | `temp` | medium |
-| 8 | Fixed, `../../WORKNOTE.md` step 307: `CREATE TABLE pg_catalog.t()` succeeded; PostgreSQL refuses it. | `alter_table` | low |
-| 9 | Fixed, `../../WORKNOTE.md` step 306: `INSERT ... ON CONFLICT` under REPEATABLE READ or SERIALIZABLE failed with sm1's `sm1_read_latest requires READ COMMITTED` on a key its own statement took; DO NOTHING failed where PostgreSQL succeeds. | `insert_conflict` | low: the message |
-| 10 | Fixed, `../../WORKNOTE.md` step 309: `CREATE TABLE t (LIKE a, LIKE a)` failed with sm's `create table: a column without a n...`, not `column "x" specified more than once`. | `create_table_like` | low: the message |
-| 11 | Fixed, `../../WORKNOTE.md` step 308: a foreign key's `SET DEFAULT (c, c)` kept the column twice, and the parent's row could not be deleted; PostgreSQL keeps it once. | `foreign_key` | low |
-| 12 | Not a bug, `../../WORKNOTE.md` step 310: the hash access method says `can_exclude` is false, PostgreSQL's true; digres has no hash index (above). | `amutils` | low |
+| 3 | Fixed, [`../../WORKNOTE.md`](../../WORKNOTE.md) step 300: a numeric range inside an array or a multirange came back with a garbage bound: `nummultirange(numrange(5.0, 6.0), numrange(1.0, 2.0))` is `{[1.0,2475880078570760549798248448)}`, `ARRAY[numrange(1.1, 1.2), numrange(12.3, 155.5)]` likewise. `numrange` alone is right. | `multirangetypes`, `rangetypes` | high: a wrong answer |
+| 4 | Fixed, [`../../WORKNOTE.md`](../../WORKNOTE.md) step 304: a cursor saw its own transaction's later DELETE: after `DELETE ... WHERE CURRENT OF c1`, `MOVE BACKWARD ALL` and `FETCH ALL` missed the deleted row, which a cursor's snapshot keeps. | `portals` | high: a wrong answer |
+| 5 | Fixed, [`../../WORKNOTE.md`](../../WORKNOTE.md) step 305: a `FOR UPDATE` cursor in a SERIALIZABLE transaction returned a row the transaction updated after DECLARE; PostgreSQL returns none. | `portals` | medium |
+| 6 | Fixed, [`../../WORKNOTE.md`](../../WORKNOTE.md) step 302: a duplicate key in a table made in a savepoint said `could not open relation with OID N`, not the unique violation: `BEGIN; SAVEPOINT x; CREATE TABLE koju (a int UNIQUE);` and the same INSERT twice. | `transactions` | medium: the row is refused, the error is wrong |
+| 7 | Fixed, [`../../WORKNOTE.md`](../../WORKNOTE.md) step 303: `ON COMMIT DELETE ROWS` on a table a foreign key references committed; PostgreSQL refuses it, as the delete would break the key. | `temp` | medium |
+| 8 | Fixed, [`../../WORKNOTE.md`](../../WORKNOTE.md) step 307: `CREATE TABLE pg_catalog.t()` succeeded; PostgreSQL refuses it. | `alter_table` | low |
+| 9 | Fixed, [`../../WORKNOTE.md`](../../WORKNOTE.md) step 306: `INSERT ... ON CONFLICT` under REPEATABLE READ or SERIALIZABLE failed with sm1's `sm1_read_latest requires READ COMMITTED` on a key its own statement took; DO NOTHING failed where PostgreSQL succeeds. | `insert_conflict` | low: the message |
+| 10 | Fixed, [`../../WORKNOTE.md`](../../WORKNOTE.md) step 309: `CREATE TABLE t (LIKE a, LIKE a)` failed with sm's `create table: a column without a n...`, not `column "x" specified more than once`. | `create_table_like` | low: the message |
+| 11 | Fixed, [`../../WORKNOTE.md`](../../WORKNOTE.md) step 308: a foreign key's `SET DEFAULT (c, c)` kept the column twice, and the parent's row could not be deleted; PostgreSQL keeps it once. | `foreign_key` | low |
+| 12 | Not a bug, [`../../WORKNOTE.md`](../../WORKNOTE.md) step 310: the hash access method says `can_exclude` is false, PostgreSQL's true; digres has no hash index (above). | `amutils` | low |

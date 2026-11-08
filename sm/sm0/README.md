@@ -18,16 +18,17 @@ error codes, besides the C++ standard library and POSIX.
 | fixed-width big-endian integers | `include/sm0_codec.h` | — |
 | a list of fixed blocks, cut back to a mark, its entries never moving: `blist_t` | `include/sm0_blist.h` | — |
 | a memory area, bytes cut into pieces and freed at once: `arena_t` | `include/sm0_arena.h` | `src/arena.cc` |
-| a sort of records by key, in memory and in runs on files: `sort_t` (`../SORT.md`) | `include/sm0_sort.h` | `src/sort.cc` |
+| a sort of records by key, in memory and in runs on files: `sort_t` ([`../SORT.md`](../SORT.md)) | `include/sm0_sort.h` | `src/sort.cc` |
 | the vendored doctest test framework, used by every level | `include/doctest.h` | — |
-| interrupting a thread, interruptible waits, and timers that interrupt (`INTERRUPT.md`) | `include/sm_sys.h` | `src/interrupt.cc` |
-| virtual file descriptors over a share of real ones, under one ceiling for the process (`VFD.md`) | `include/sm_vfd.h` | `src/vfd.cc` |
+| interrupting a thread, interruptible waits, and timers that interrupt ([`INTERRUPT.md`](INTERRUPT.md)) | `include/sm_sys.h` | `src/interrupt.cc` |
+| virtual file descriptors over a share of real ones, under one ceiling for the process ([`VFD.md`](VFD.md)) | `include/sm_vfd.h` | `src/vfd.cc` |
 
 Everything is in `namespace sm0` but `sm_sys.h` and
 `sm_vfd.h`, whose `sm_` names are outside any namespace.
 `../sm1/include/sm1.h` brings the error state and the log hook
 into `namespace sm1`, so the stack and its callers call them
-`sm1::errnum()`, `sm1::set_log()` and so on; `../sm1/API.md`
+`sm1::errnum()`, `sm1::set_log()` and so on;
+[`../sm1/API.md`](../sm1/API.md)
 documents them there.
 sm1's `src/error.h` and `src/log.h` likewise bring the setters
 and `log_msg` into its `namespace wisr`, beside

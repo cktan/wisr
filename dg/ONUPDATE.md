@@ -1,6 +1,7 @@
 # ONUPDATE — a column's default on UPDATE
 
-**Status: built** (`WORKNOTE.md` step 307). §11 has what was
+**Status: built** ([`WORKNOTE.md`](WORKNOTE.md) step 307). §11
+has what was
 decided, and §12 the order of work.
 
 ```sql
@@ -27,7 +28,9 @@ assign it. Its **insert default** is its plain `DEFAULT y`, or,
 without one, `x`. So a row's modification time, a "changed
 since" flag, or a state an edit moves a row to is kept by the
 table, with no trigger and no language to write one in: digres
-has neither (`UNSUPPORTED.md` §6), and would rather not.
+has neither
+([`UNSUPPORTED.md`](UNSUPPORTED.md#6-functions-and-languages)
+§6), and would rather not.
 
 ---
 
@@ -106,7 +109,8 @@ column with one value for both writes it once.
 ## 4. Parsing, in sq
 
 sq's grammar is PostgreSQL's, its rules untouched
-(`../sq/DESIGN.md` §2), but for one alternative in
+([`../sq/DESIGN.md`](../sq/DESIGN.md#2-what-is-postgresqls-and-what-is-sqs)
+§2), but for one alternative in
 `ColConstraintElem` (`../sq/src/gram.y`):
 
 ```
@@ -135,7 +139,8 @@ for this rule (§11). It is kept checkable: `make corpus-test`
 holds sq to what PostgreSQL 18.6's parser printed for all
 49,034 pieces of its regression scripts, and passes; `make
 test` has `test/on_update.sql` and two files of what it
-refuses, whose expected output is sq's own. `../sq/DESIGN.md`
+refuses, whose expected output is sq's own.
+[`../sq/DESIGN.md`](../sq/DESIGN.md)
 §2, §8 and §9 say so.
 
 ## 5. The catalog, in sm
@@ -151,7 +156,8 @@ std::string on_update_expr;             /* def: "" if none */
 
 - **Stored** in the column's catalog record as an appended
   `bytea` field (`../sm/sm3/src/catalog/blob.cc`,
-  `../sm/CATALOG.md`); a record written before reads
+  [`../sm/CATALOG.md`](../sm/CATALOG.md)); a record written
+  before reads
   it null.
 - **Opaque.** sm keeps the text and gives it back, as it keeps
   the insert default: it runs neither, and checks neither's
@@ -159,7 +165,8 @@ std::string on_update_expr;             /* def: "" if none */
   have no update default either: `SM_ERR_INVALID`.
 - **rel** takes it in `table-create` as `:on-update "text"` in
   a column, and shows it so in `describe-table`, so the field
-  and its checks are tested where sm is (`../sm/rel/REL.md`).
+  and its checks are tested where sm is
+  ([`../sm/rel/REL.md`](../sm/rel/REL.md)).
 
 ## 6. In digres
 
@@ -205,7 +212,8 @@ columns a statement named.
   default acts from their next UPDATE.
 - **DROP COLUMN** drops both with the column.
 - **ALTER COLUMN SET DEFAULT and DROP DEFAULT** are refused in
-  digres today (`UNSUPPORTED.md` §3). Once built, they change
+  digres today ([`UNSUPPORTED.md`](UNSUPPORTED.md#3-ddl) §3).
+  Once built, they change
   the insert default and leave the update default alone; no
   ALTER COLUMN form sets or drops an update default, so a
   column is dropped and added again to change it.
@@ -223,7 +231,7 @@ columns a statement named.
 | UPDATE `SET c = DEFAULT` | the insert default |
 | ON CONFLICT DO UPDATE | as an UPDATE; ON CONFLICT DO NOTHING writes nothing |
 | An UPDATE that changes no other value; A → B → A | written each time (§11) |
-| An UPDATE of the primary key, which moves the row (`../sm/CLUSTER.md`) | written; the other columns move with it |
+| An UPDATE of the primary key, which moves the row ([`../sm/CLUSTER.md`](../sm/CLUSTER.md)) | written; the other columns move with it |
 | NOT NULL, with an update default of NULL | refused on the first UPDATE that leaves the column out, as an UPDATE writing NULL is |
 | DELETE, then INSERT of the same key | a new row: its insert default |
 | Abort, rollback to a savepoint, a bulk load rolled back | an ordinary column's value, undone with the row |
@@ -241,7 +249,8 @@ columns a statement named.
   digres's; PostgreSQL refuses it as a syntax error.
 - **psql's `\d` shows the insert default only**, and `pg_dump`
   dumps it alone: both read PostgreSQL's catalog, which has a
-  place for one default (`SYSCATALOG.md`). A dump restored
+  place for one default ([`SYSCATALOG.md`](SYSCATALOG.md)). A
+  dump restored
   keeps the column and its insert default and loses the update
   default.
 - **It is not a commit time.** A time is the transaction's
@@ -316,5 +325,6 @@ All on 2026-10-27:
    of §8, each shown to fail with the rewrite taken out; and
    pgbench's UPDATEs at their instructions a transaction before
    and after, on tables with no update default.
-5. **The documents**: `UNSUPPORTED.md` lists `ON UPDATE` as
-   digres's own (§10); `WORKNOTE.md` step 307.
+5. **The documents**: [`UNSUPPORTED.md`](UNSUPPORTED.md) lists
+   `ON UPDATE` as
+   digres's own (§10); [`WORKNOTE.md`](WORKNOTE.md) step 307.

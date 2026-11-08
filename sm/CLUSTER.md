@@ -5,7 +5,8 @@ The primary key is the row's key in the table's sm1 store, so a
 range over the primary key is a forward scan of the rows, and the
 primary key index has no entries of its own. A table with no
 primary key is keyed by a hidden `_id`. digres names a row by its
-key, and nothing in it is a TID (`ROWSTORE.md`). The code is in
+key, and nothing in it is a TID ([`ROWSTORE.md`](ROWSTORE.md)).
+The code is in
 `sm2/src/rel/rel.cc` and `sm2/src/rel/index.cc` (rows, keys and
 entries), `sm3/src/table/table.cc` (writes, the move and the
 rewrite), `sm3/src/ddl/ddl.cc` (when to rewrite) and
@@ -27,7 +28,8 @@ is an update that changes a row's primary key.
 - **A keyless row has an `_id`**, an `int8` from the table's
   sequence. It is the row's key, is never reused and never
   changes. SQL reads it as `_id`. A keyed row has no `_id`
-  (`ROWSTORE.md` §2.2).
+  ([`ROWSTORE.md`](ROWSTORE.md#22-the-row-and-its-index-entries)
+  §2.2).
 - **There is no `_id` index.**
 - **A secondary index maps to the primary key**:
   `encode(sk) ‖ encode(pk)`. A read through it is two lookups.
@@ -99,10 +101,12 @@ key pays a lookup a row. The arguments for a heap, answered:
 
 - **The relid is `sm3::heap_relid`, 1**, in every table. sm3
   makes every table's store chained, so a row is a chained key
-  (`ROWSTORE.md` §3.6).
+  ([`ROWSTORE.md`](ROWSTORE.md#36-why-a-tables-rows-are-chained)
+  §3.6).
 - **`encode(pk)` is sm2's key encoding** of the primary key's
   columns, in their order, with their collations, as a unique
-  index's key is (`LSMINDEX.md` §2). It is never cut: a key past
+  index's key is ([`LSMINDEX.md`](LSMINDEX.md#2-key-encoding)
+  §2). It is never cut: a key past
   `sm2::max_pk_len` refuses the row with `SM_ERR_KEYTOOLONG`. A
   NULL in it fails with `SM_ERR_INVALID`.
 - **A key column may be out of line.** `encode_cols` fetches its
@@ -111,7 +115,9 @@ key pays a lookup a row. The arguments for a heap, answered:
   `encode` may be lossy (collated text keeps a sort key). So the
   key is an ordering device, and the tuple is what a read
   returns.
-- **The value is the tuple alone** (`ROWSTORE.md` §2.2). A
+- **The value is the tuple alone**
+  ([`ROWSTORE.md`](ROWSTORE.md#22-the-row-and-its-index-entries)
+  §2.2). A
   keyless row's `_id` is read from its key.
 - **`_id` is drawn from the table's sequence**, by a keyless row
   alone. It only grows and may have gaps, so ANALYZE and
@@ -130,7 +136,9 @@ key pays a lookup a row. The arguments for a heap, answered:
 | B-tree Index, unique or not | `relid ‖ encode(sk) ‖ encode(pk)` | flags, and the columns' length |
 | primary key | none: the rows are its entries | |
 
-- **There is no `_id` index** (`ROWSTORE.md` §2.2). Relid
+- **There is no `_id` index**
+  ([`ROWSTORE.md`](ROWSTORE.md#22-the-row-and-its-index-entries)
+  §2.2). Relid
   `0xFFFE` (`sm2::id_relid`) is reserved: no index takes it, and
   nothing is written under it.
 - **An entry's value is a cut flag, the INCLUDE columns and
@@ -146,7 +154,7 @@ key pays a lookup a row. The arguments for a heap, answered:
 - **A B-tree Index's entry always ends with `encode(pk)`**: the
   row decides whether the entry is live. Its value holds no
   INCLUDE column, as a scan reads them from the row
-  (`BTREEINDEX.md` §4).
+  ([`BTREEINDEX.md`](BTREEINDEX.md#4-page-layout) §4).
 - **The key budget**: `encode(sk)` and `encode(pk)` together are
   within `sm1::max_keylen` less the relid. A non-unique entry
   cuts `encode(sk)` to fit and keeps `encode(pk)` whole. A unique
@@ -155,7 +163,7 @@ key pays a lookup a row. The arguments for a heap, answered:
   columns (§10, question 3). A key is cut at the one length every
   cut key and cut bound share: 3070 bytes in a keyed table, 4086
   in a keyless one. A B-tree Index's budget is smaller, 304 and
-  1320 bytes (`BTREEINDEX.md` §4.4).
+  1320 bytes ([`BTREEINDEX.md`](BTREEINDEX.md#44-limits) §4.4).
 - **The primary key index stays in PostgreSQL's catalog**, so the
   planner proves uniqueness with it and plans scans of it. digres
   turns a scan of it into a range scan of the rows (§6).
@@ -184,7 +192,9 @@ key pays a lookup a row. The arguments for a heap, answered:
   in after its row, never before.
 - **An update that leaves the primary key alone** writes the row
   at its key, and touches only the secondaries whose columns
-  changed (`LSMINDEX.md` §7.4). The primary key is unchanged if
+  changed
+  ([`LSMINDEX.md`](LSMINDEX.md#74-when-an-update-leaves-an-index-alone)
+  §7.4). The primary key is unchanged if
   the new key's encoding is the old one's.
 - **An update that changes the primary key moves the row**
   (`move_row`). It erases the old key, with a moved tombstone,
@@ -194,7 +204,8 @@ key pays a lookup a row. The arguments for a heap, answered:
   the half-done move, as it undoes any failed multi-key write.
 - **A concurrent writer that finds a row moved fails.** The move
   erases the old key with sm1's moved tombstone
-  (`sm1::erase_moved`, `ROWSTORE.md` §2.5):
+  (`sm1::erase_moved`,
+  [`ROWSTORE.md`](ROWSTORE.md#25-a-key-change) §2.5):
   - A writer that began before the move committed fails as over
     any newer commit: `SM_ERR_UPDATED` at READ COMMITTED,
     `SM_ERR_CONFLICT` above it.
@@ -209,7 +220,8 @@ key pays a lookup a row. The arguments for a heap, answered:
   cross-partition move is the precedent: it refuses to follow.
 - **A row lock names the row's key**, `relid ‖ encode(pk)`. sm1
   hashes the key, so the lock holds a fixed-width id and no key
-  bytes (`LOCKMGR.md` §1.3). A move erases the old key, which is
+  bytes ([`LOCKMGR.md`](LOCKMGR.md#13-what-a-lock-names) §1.3). A
+  move erases the old key, which is
   a write on it, so it waits for a lock on the old key as any
   write does. It inserts the new key, which it then holds as a
   writer. So a `FOR UPDATE` lock never loses its row to a move.
@@ -222,14 +234,16 @@ key pays a lookup a row. The arguments for a heap, answered:
 - **By primary key**: a point read is one lookup. A range is a
   forward scan of the rows, one sorted run after VACUUM.
 - **By `_id`**: a keyless table answers in one lookup, its key. A
-  keyed table has no `_id` to read by (`ROWSTORE.md` §2.4), and
+  keyed table has no `_id` to read by
+  ([`ROWSTORE.md`](ROWSTORE.md#24-calls-by-key) §2.4), and
   its calls by `_id` fail with `SM_ERR_INVALID`.
 - **Through a secondary index**: the entry gives `encode(pk)`,
   and the row is a second lookup.
 - **A sequential scan** (`tbl_scan_rows`) walks the rows in key
   order: the primary key's, or `_id`'s in a keyless table.
 - **ANALYZE samples a keyed table by key ranges** (§10, question
-  6; `ROWSTORE.md` §2.6, `STATISTICS.md` §9.4):
+  6; [`ROWSTORE.md`](ROWSTORE.md#26-reading-many-rows) §2.6,
+  [`STATISTICS.md`](STATISTICS.md#94-the-sample) §9.4):
   1. Cut the table's bytes into slots of 8 KB. A slot's rows lie
      between the keys at its ends, which `rel_keys_at` finds from
      sm1's size estimates.
@@ -260,14 +274,17 @@ key pays a lookup a row. The arguments for a heap, answered:
   needs nothing: its mover made its entry. A duplicate it finds
   is reported as the index and one row's key, which
   `sm0::dupkey_t` and the persisted index state carry
-  (`ROWSTORE.md` §2.7).
+  ([`ROWSTORE.md`](ROWSTORE.md#27-duplicates-and-lock-status)
+  §2.7).
 - **Bulk load in file mode** sorts the row stream by key and
   checks it for duplicates, as it does a unique index's stream
-  (`BULKLOAD.md` §5.3, §5.4). A keyless table's rows arrive in
+  ([`BULKLOAD.md`](BULKLOAD.md#53-sorting-an-index) §5.3, §5.4).
+  A keyless table's rows arrive in
   `_id` order. A table with a unique B-tree Index takes no file
   load: its rows are inserted (`tbl_load_open`).
 - **TOAST is independent of the row's key**: a chunk's key is its
-  own id and sequence number, not the row's (`TOAST.md` §2). So a
+  own id and sequence number, not the row's
+  ([`TOAST.md`](TOAST.md#2-design) §2). So a
   move leaves the row's chunks where they are.
 
 ---
@@ -276,7 +293,8 @@ key pays a lookup a row. The arguments for a heap, answered:
 
 - **A row is named by its key**: its primary key's columns'
   values, or a keyless table's `_id`. Nothing is a TID
-  (`ROWSTORE.md` §10). The system column SQL reads is an `int8`,
+  ([`ROWSTORE.md`](ROWSTORE.md#10-digres) §10). The system column
+  SQL reads is an `int8`,
   `_id` (§10, question 1), of a keyless table alone.
 - **A scan of the primary key index is a scan of the rows.**
   `smstore.c`'s `open_probe()` sees the index is the primary key
@@ -292,7 +310,8 @@ key pays a lookup a row. The arguments for a heap, answered:
 - **A write names its row by its key**: `sm_tbl_update`,
   `sm_tbl_delete`, `sm_tbl_lock` and their kin take an
   `sm_row_key_t`, and sm3 writes at the key with no read
-  (`ROWSTORE.md` §2.4). The executor's fetch of a row a scan of
+  ([`ROWSTORE.md`](ROWSTORE.md#24-calls-by-key) §2.4). The
+  executor's fetch of a row a scan of
   the statement just handed out takes it from the scan's pin,
   with no read (`smstore.c`'s `scan_at()`). The scan is found by
   the key's encoding (`sm_tbl_row_key`, `sm_rel_scan_key`,
@@ -308,7 +327,8 @@ key pays a lookup a row. The arguments for a heap, answered:
 - **A keyed table has no TID scan** but `WHERE CURRENT OF`'s,
   which reads by the cursor's row's key
   (`../dg/src/backend/optimizer/path/tidpath.c`): it has no `_id`
-  to name (`ROWSTORE.md` §10.1). A keyless table's TID scan reads
+  to name ([`ROWSTORE.md`](ROWSTORE.md#101-system-columns)
+  §10.1). A keyless table's TID scan reads
   by `_id`, its key: one lookup. digres has no `ctid`.
 - **ADD PRIMARY KEY, DROP PRIMARY KEY**, and a change of a
   column's type that converts its values, rewrite a table that
@@ -340,10 +360,12 @@ key pays a lookup a row. The arguments for a heap, answered:
   rows**, and its indexes, under the table-oid lock X. PostgreSQL
   builds only an index.
 - **ANALYZE and TABLESAMPLE estimate from the store's sizes** in
-  a keyed table, which RocksDB approximates (`ROWSTORE.md` §2.8).
+  a keyed table, which RocksDB approximates
+  ([`ROWSTORE.md`](ROWSTORE.md#28-costs) §2.8).
 - **A row lock costs a hash of the row's key.** Two keys of a
   store that hash alike are one lock: a false conflict, never a
-  missed one (`LOCKMGR.md` §1.3).
+  missed one ([`LOCKMGR.md`](LOCKMGR.md#13-what-a-lock-names)
+  §1.3).
 
 ---
 
@@ -367,7 +389,7 @@ rows is copied into a new store (`rewrite_table`, `copy_rows`):
    under new pointers.
 9. Put the table's record, which names the new store.
 10. Drop the old store at commit (`sm1::rmstore`), as `TRUNCATE`
-    swaps a store (`CATALOG.md` §2.2).
+    swaps a store ([`CATALOG.md`](CATALOG.md#22-what-a-store-level-change-does) §2.2).
 
 What the copy does to `_id`:
 
@@ -397,7 +419,8 @@ Some changes need no rewrite:
 
 - **sm1**: the moved tombstone, `sm1::erase_moved`, and
   `SM_ERR_MOVED` for a write or `read_latest` that meets it (§4,
-  `ROWSTORE.md` §2.5); and `insert_new`, an insert that leaves
+  [`ROWSTORE.md`](ROWSTORE.md#25-a-key-change) §2.5); and
+  `insert_new`, an insert that leaves
   out the check of its key (§10, question 6). Isolation scenario
   f11 covers a moved row.
 - **sm2**: the rel is keyed by its clustering key, the primary
@@ -413,14 +436,14 @@ Some changes need no rewrite:
   the rewrite (§8).
 - **The C API** (`include/sm.h`):
   - Calls that read, scan, write and lock by key take an
-    `sm_row_key_t` (`ROWSTORE.md` §2.4).
+    `sm_row_key_t` ([`ROWSTORE.md`](ROWSTORE.md#24-calls-by-key) §2.4).
   - The calls by `_id` are a keyless table's.
   - `sm_idx_scannxt` hands out a keyless row's `_id`, 0 for a
     keyed row's, and `sm_idx_scan_row` the row's key.
   - `sm_errdup` hands out the index and a row's key
-    (`ROWSTORE.md` §2.7).
+    ([`ROWSTORE.md`](ROWSTORE.md#27-duplicates-and-lock-status) §2.7).
   - `sm_lock_status_t` names a row lock's table, and no row (§10,
-    question 5; `LOCKMGR.md` §1.3).
+    question 5; [`LOCKMGR.md`](LOCKMGR.md#13-what-a-lock-names) §1.3).
 - **rel**: the verbs that take or return an `_id` are a keyless
   table's, and other verbs read by key.
 - **digres**: §6.
@@ -438,10 +461,12 @@ Other documents cite these items as questions 1 to 6.
 
 1. **The system column is named `_id`**, an `int8`: one name in
    SQL, in sm's calls and here. It exists on a keyless table
-   alone (`ROWSTORE.md` §10.1).
+   alone ([`ROWSTORE.md`](ROWSTORE.md#101-system-columns) §10.1).
 2. **A keyless row's value is the tuple alone**, its `_id` in its
    key. Both kinds of table have one row format and one deform
-   path (`ROWSTORE.md` §2.2). Rejected: a copy of `_id` in the
+   path
+   ([`ROWSTORE.md`](ROWSTORE.md#22-the-row-and-its-index-entries)
+   §2.2). Rejected: a copy of `_id` in the
    value. It costs 8 bytes a row and buys nothing.
 3. **A primary key's encoding is capped at 1024 bytes**
    (`sm2::max_pk_len`), which leaves every secondary at least 3
@@ -452,7 +477,9 @@ Other documents cite these items as questions 1 to 6.
    unique index, and a DEFERRABLE foreign key is refused too.
 5. **`pg_locks` shows a row lock's relation alone**, its page and
    tuple NULL. A lock keeps a hash of its key, so sm cannot say
-   which row it names (`LOCKMGR.md` §1.3). A test of digres's
+   which row it names
+   ([`LOCKMGR.md`](LOCKMGR.md#13-what-a-lock-names) §1.3). A test
+   of digres's
    locks a row of a keyed table (`../dg/test/server.sh`, lock
    status).
 6. **A keyed row has no `_id`, and nothing reads many rows in
@@ -471,7 +498,7 @@ Other documents cite these items as questions 1 to 6.
      entry's write and a check of its key.
    - Rejected: a TID as a slot in a statement's table of keys.
      digres names a row by its key, so it needs no such table
-     (`ROWSTORE.md` §2.1).
+     ([`ROWSTORE.md`](ROWSTORE.md#21-a-rows-name) §2.1).
    - A keyless insert pays little for its `_id`.
      `sm1::insert_new` leaves out the check of the key, which no
      write can hold before the draw. The `_id` is drawn by a
@@ -485,17 +512,21 @@ The Clustered Table is complete in sm. One item is left, in
 digres. Other documents cite it as step 3 of this section.
 
 **Step 3: digres's key-column ALTERs.** ADD and DROP PRIMARY KEY
-(`../dg/PKDDL.md`) and `ALTER COLUMN TYPE` of any column, a key
-column's among them (`../dg/ALTERTYPE.md`), run through the
+([`../dg/PKDDL.md`](../dg/PKDDL.md)) and `ALTER COLUMN TYPE` of
+any column, a key
+column's among them ([`../dg/ALTERTYPE.md`](../dg/ALTERTYPE.md)),
+run through the
 rewrite (§8). A collation change does not arise: digres has one
 collation, C. These are not built:
 
-- **The dependents PostgreSQL makes again** (`../dg/ALTERTYPE.md`
+- **The dependents PostgreSQL makes again**
+  ([`../dg/ALTERTYPE.md`](../dg/ALTERTYPE.md)
   §8). digres refuses a type change of a column one of these
   uses, and sm refuses it too (`find_column_use`):
   - an expression or a partial index that reads the column;
   - a foreign key on either side;
   - an identity column's sequence.
-- **`ADD PRIMARY KEY USING INDEX`** is refused (`../dg/PKDDL.md`
+- **`ADD PRIMARY KEY USING INDEX`** is refused
+  ([`../dg/PKDDL.md`](../dg/PKDDL.md)
   §3). sm has to mark an existing index a constraint's, or re-key
   by it.

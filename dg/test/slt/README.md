@@ -96,7 +96,8 @@ hand.
 sqllogictest files, from
 `https://www.sqlite.org/sqllogictest/raw?ci=trunk&filename=test/selectN.test`,
 taken on 2026-10-15 and unchanged. Their copyright notice,
-`sqlite/COPYRIGHT.md`, copied from the same repository, lets
+[`sqlite/COPYRIGHT.md`](sqlite/COPYRIGHT.md), copied from the
+same repository, lets
 them be used as one sees fit, with no attribution required. They are about 10,700 records of joins, subqueries,
 aggregates, `CASE` and compound selects over integer and
 text columns, whose results every engine sqllogictest was
@@ -128,4 +129,4 @@ in no `make test`: it needs the network once, and takes long.
 
 DuckDB's SQL tests are run another way: on PostgreSQL 18 and on
 digres side by side, by `test/duck/duck.sh`
-(`test/duck/README.md`).
+([`test/duck/README.md`](../duck/README.md)).

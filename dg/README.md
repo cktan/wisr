@@ -1,16 +1,19 @@
 # digres
 
 A fork of PostgreSQL that runs on the storage stack in `../sm`.
-`../sm/PART4.md` §10 says how it is to be made, and §9 what it
+[`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+§10 says how it is to be made, and §9 what it
 calls.
 
 **It starts, `psql` connects to it, and its tables are sm's.**
 `build/initdb DIR` makes a data directory, `build/digres -D
 DIR` serves it, and PostgreSQL's own `psql` runs statements on
-it. What runs so far, each a step of `WORKNOTE.md`:
+it. What runs so far, each a step of
+[`WORKNOTE.md`](WORKNOTE.md):
 
 - databases and schemas, created and dropped;
-- tables of the types sm stores (`../sm/sm2/TYPE.md` §3):
+- tables of the types sm stores
+  ([`../sm/sm2/TYPE.md`](../sm/sm2/TYPE.md#3-the-types) §3):
   `bool`, the integers and floats, `numeric` as sm's
   decimals, `text`, `varchar`, `char(n)`, `name`, `bytea`,
   `date`, `time`, `timestamp`, `timestamptz`, `interval` and
@@ -18,7 +21,7 @@ it. What runs so far, each a step of `WORKNOTE.md`:
   FOREIGN KEY, SERIAL and identity columns, and indexes on
   them, partial and expression ones too;
 - a column's update default, `DEFAULT x ON UPDATE`, digres's
-  own (`ONUPDATE.md`);
+  own ([`ONUPDATE.md`](ONUPDATE.md));
 - ALTER TABLE's ADD, DROP and RENAME, a primary key and a
   unique constraint among them, and CREATE TABLE AS;
 - views, temporary ones too;
@@ -36,10 +39,11 @@ it. What runs so far, each a step of `WORKNOTE.md`:
 - transactions and savepoints at READ COMMITTED, REPEATABLE
   READ and SERIALIZABLE, which are sm's;
 - roles, with owners and GRANT and REVOKE, kept in the database
-  `pg_global` (`../aa/ROLE.md`);
+  `pg_global` ([`../aa/ROLE.md`](../aa/ROLE.md));
 - ANALYZE, and the planner reading its statistics;
 - psql's `\d` commands, on catalog relations made from sm's
-  catalog and the rows compiled in (`SYSCATALOG.md`).
+  catalog and the rows compiled in
+  ([`SYSCATALOG.md`](SYSCATALOG.md)).
 
 A statement over constants also runs with no server: `echo
 'select 1 + 1;' | build/digres --parse --run`.
@@ -47,34 +51,48 @@ A statement over constants also runs with no server: `echo
 `make -j4` generates what is generated, compiles every file as
 strict C++ with no `-fpermissive`, and links `build/digres`
 with `../sq` and `../sm`. The server has no catalog tables:
-its catalog is being replaced, not created (`../sm/PART4.md`
+its catalog is being replaced, not created
+([`../sm/PART4.md`](../sm/PART4.md)
 §10).
 
-- `WORKNOTE.md`: the decisions taken along the way, a step
+- [`WORKNOTE.md`](WORKNOTE.md): the decisions taken along the
+  way, a step
   at a time.
-- `CODE.md`: the rules for changing the code.
-- `ISSUE.md`: the problems known and left unfixed.
-- `UNSUPPORTED.md`: what of PostgreSQL digres refuses, has
+- [`CODE.md`](CODE.md): the rules for changing the code.
+- [`ISSUE.md`](ISSUE.md): the problems known and left unfixed.
+- [`UNSUPPORTED.md`](UNSUPPORTED.md): what of PostgreSQL digres
+  refuses, has
   removed, or does otherwise.
-- `DESIGN.md`: digres's design of record: one process with a
+- [`DESIGN.md`](DESIGN.md): digres's design of record: one
+  process with a
   thread a session, how it got there, and its §4 the decisions
   of record.
-- `SYSCATALOG.md`: the catalog relations psql's `\d`
+- [`SYSCATALOG.md`](SYSCATALOG.md): the catalog relations psql's
+  `\d`
   commands read; being built.
-- `DECIMAL.md`: `numeric` as sm's two decimals; built.
-- `STATISTICS.md`: how ANALYZE and the planner use sm's
+- [`DECIMAL.md`](DECIMAL.md): `numeric` as sm's two decimals;
+  built.
+- [`STATISTICS.md`](STATISTICS.md): how ANALYZE and the planner
+  use sm's
   statistics.
-- `SCHEMACACHE.md`: a session's schema kept across
+- [`SCHEMACACHE.md`](SCHEMACACHE.md): a session's schema kept
+  across
   transactions; built.
-- `EXPRINDEX.md`: partial and expression indexes; built.
-- `INLIST.md`: an index scan of `= ANY(array)` and `IN
+- [`EXPRINDEX.md`](EXPRINDEX.md): partial and expression indexes;
+  built.
+- [`INLIST.md`](INLIST.md): an index scan of `= ANY(array)` and
+  `IN
   (...)`; built.
-- `ONUPDATE.md`: a column's default on UPDATE; built.
-- `PKDDL.md`: primary keys and unique constraints added and
+- [`ONUPDATE.md`](ONUPDATE.md): a column's default on UPDATE;
+  built.
+- [`PKDDL.md`](PKDDL.md): primary keys and unique constraints
+  added and
   dropped; built.
-- `test/pgregress/README.md`: PostgreSQL 18's regression
+- [`test/pgregress/README.md`](test/pgregress/README.md):
+  PostgreSQL 18's regression
   files, ported to digres.
-- `SHMEM.md`: what is left of PostgreSQL's shared memory,
+- [`SHMEM.md`](SHMEM.md): what is left of PostgreSQL's shared
+  memory,
   locks and signals, and what replaces it.
 
 ## Building
@@ -109,7 +127,8 @@ tests hold what it prints to what PostgreSQL's parser printed.
 ## The catalog
 
 PostgreSQL's catalog is being replaced, a lookup at a time
-(`../sm/PART4.md` §10, `WORKNOTE.md` step 6). What is built in —
+([`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+§10, [`WORKNOTE.md`](WORKNOTE.md) step 6). What is built in —
 types, functions, operators — is compiled in:
 `src/backend/catalog/gen_cat.py` writes `cat_builtin.c` from the
 catalog data, and a caller gets a row with `cat_type(oid)`,
@@ -126,7 +145,8 @@ stops it, and says which. `make test` runs the statements in
 `build/initdb DIR`, or `build/digres --init DIR`, makes a data
 directory: an sm home directory holding the database
 `postgres`, the database `pg_global`, which holds the roles
-and which no client connects to (`../aa/ROLE.md`), and a
+and which no client connects to
+([`../aa/ROLE.md`](../aa/ROLE.md)), and a
 `PG_VERSION` file. Its one role at first is the superuser,
 with the SCRAM secret of its password if one is given.
 `initdb` is the server under another name, and `--help` lists
@@ -134,8 +154,10 @@ its options, which are few: the encoding is UTF8, the default
 collation is C, and authentication is not configured: on the
 local socket, peer if the OS user is the role's name, else the
 role's password; over TCP, the role's password, by
-SCRAM-SHA-256 (`../aa/ROLE.md` §5). PostgreSQL's other options
-are rejected (`WORKNOTE.md` step 8).
+SCRAM-SHA-256
+([`../aa/ROLE.md`](../aa/ROLE.md#5-how-a-client-gets-in) §5).
+PostgreSQL's other options
+are rejected ([`WORKNOTE.md`](WORKNOTE.md) step 8).
 
 ## The server
 
@@ -144,8 +166,10 @@ configuration file and no installation, and listens on TCP and
 on a local socket (`-p PORT`, `-k SOCKETDIR`). It reads the
 roles from `pg_global` and the list of databases from the
 directory. There is no `pg_hba.conf`: a client gets in as the
-data directory section above says (`../aa/ROLE.md` §5,
-`WORKNOTE.md` steps 320 and 327). `WORKNOTE.md` step 9 lists
+data directory section above says
+([`../aa/ROLE.md`](../aa/ROLE.md#5-how-a-client-gets-in) §5,
+[`WORKNOTE.md`](WORKNOTE.md) steps 320 and 327).
+[`WORKNOTE.md`](WORKNOTE.md) step 9 lists
 what was cut to get here. What does not work yet fails with an
 error: a statement that still looks in a catalog table, and
 what a table in sm does not take, such as a column of another
@@ -193,7 +217,7 @@ More is to be cut, a piece at a time.
 ## Known incompatibilities
 
 Where digres behaves otherwise than PostgreSQL, by choice;
-`ISSUE.md` has the bugs.
+[`ISSUE.md`](ISSUE.md) has the bugs.
 
 - **A scan begun inside a savepoint ends at a rollback to
   it.** A FETCH inside a savepoint may begin a scan again, as
@@ -204,7 +228,8 @@ Where digres behaves otherwise than PostgreSQL, by choice;
   0A000), where PostgreSQL goes on. sm closes every scan
   begun after a savepoint at a rollback to it, as its view,
   fixed when it began, would still show the rows the rollback
-  undid (`../sm/XCTMGR.md` §6), and does not
+  undid ([`../sm/XCTMGR.md`](../sm/XCTMGR.md#6-savepoints) §6),
+  and does not
   recreate it. A cursor whose scans all began before the
   savepoint goes on. `test/slt/point_read.test` shows both.
 

@@ -17,7 +17,8 @@ make nodes       rewrite include/sq_nodes.h from spec/
 It needs a C++20 compiler, flex, bison and Python 3, and nothing
 else: nothing sq is built from is outside this directory.
 
-`DESIGN.md` says how it is put together and why, and what is
+[`DESIGN.md`](DESIGN.md) says how it is put together and why, and
+what is
 left. digres uses
 it through `raw_parser()`, in `../dg/src/backend/parser`.
 
@@ -115,5 +116,7 @@ cannot be made again without it. `test/run.sh --accept` would
 replace them with sq's own output, which checks nothing: use it
 only for a difference that has been read and is known to be
 PostgreSQL's too. The exception is digres's one rule,
-`ON UPDATE` (`DESIGN.md` §2): `test/on_update.sql` and the two
+`ON UPDATE`
+([`DESIGN.md`](DESIGN.md#2-what-is-postgresqls-and-what-is-sqs)
+§2): `test/on_update.sql` and the two
 `test/err_on_update_*.sql` files expect sq's own output.

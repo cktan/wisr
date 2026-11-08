@@ -15,8 +15,11 @@ None open.
 
 1. **A failed prepare leaked an SSI node.** `prepare` now does
    every step that can fail before `ssi_precommit`
-   (`XCTMGR.md` §10.1). A test fails the prepare by a hook.
-2. **The `CF:txn` sweep had no back-off** (`GC.md` §8.6). A
+   ([`XCTMGR.md`](sm/XCTMGR.md#101-prepare) §10.1). A test fails
+   the prepare by a hook.
+2. **The `CF:txn` sweep had no back-off**
+   ([`GC.md`](sm/GC.md#86-the-pass-under-a-production-load-open)
+   §8.6). A
    sweep now sets `sweep_floor` to the records it left, and the
    next starts only past that plus `txn_sweep_records`.
 
@@ -40,7 +43,8 @@ with no report.
    calls took two in opposite orders: a cycle for the sanitizer,
    not a deadlock today, as the environment's `mu` serializes the
    calls and no other path holds two. It now takes them in
-   address order (`LOCKMGR.md` §3.11). The test lists the locks of
+   address order ([`LOCKMGR.md`](sm/LOCKMGR.md#311-mutex-order)
+   §3.11). The test lists the locks of
    a set that grows and shrinks; only the sanitizer sees the
    order.
 
@@ -56,7 +60,9 @@ Sequence that named a dropped table, which nothing could remove.
 A test reproduced it at REPEATABLE READ. A commit that dropped a
 table now sweeps the table's Namespace for such orphans, and
 opening a database sweeps all Namespaces, for a crash between the
-commit and the sweep (`sm/SEQUENCE.md` §3.5). The sweep costs a
+commit and the sweep
+([`sm/SEQUENCE.md`](sm/SEQUENCE.md#35-orphan-sequences) §3.5).
+The sweep costs a
 read of each Sequence record in the Namespace; keeping the owners
 in memory would remove that cost (§3.5, "Improvement").
 
@@ -64,7 +70,8 @@ in memory would remove that cost (§3.5, "Improvement").
 READ or above ran `xct_fail_retryable`, and so `discard`, with
 the key's write latch held, in versioned and in chained stores.
 `discard` takes no key latch, so it could not deadlock, but it
-drops stores, and `LOCKMGR.md` §3.5 says the latch is held only
+drops stores, and [`LOCKMGR.md`](sm/LOCKMGR.md#35-write-latches)
+§3.5 says the latch is held only
 to check a key and put a version. Another writer of any key that
 hashed to the same latch waited for the drop. The latch is now
 released first. A hook shows the latch free during the abort, in
@@ -94,13 +101,14 @@ Smaller points:
   of a transaction frees sm1's cursor, and `sm_rel_scanend` and
   `sm_idx_scanend` then use it: valgrind shows it, and the
   process aborts. digres cannot reach it, as its portals end
-  scans first. `sm.h` and `SM_API.md` state the rule. If sm gets
+  scans first. `sm.h` and [`SM_API.md`](sm/SM_API.md) state the
+  rule. If sm gets
   a second host, sm3 could keep a list of each session's open
   scans, and clear their sm1 cursors at commit and abort: then
   `tbl_scanend` frees only its wrapper, at the cost of a list
   update on every scan.
 - A prepare after a bulk load is refused, but the reason it had
-  no longer holds (`XCTMGR.md`).
+  no longer holds ([`XCTMGR.md`](sm/XCTMGR.md)).
 
 ## 2. Costs to profile
 
@@ -146,7 +154,8 @@ a transaction:
 | `sm_begin` | 818 | begins sm's transaction |
 
 The open and the close, 3,941 together, are more than the whole
-gap. The table's lock is inside the open. `SM_API.md` makes this
+gap. The table's lock is inside the open.
+[`SM_API.md`](sm/SM_API.md) makes this
 the contract: an `sm_tbl_t` lasts one transaction. So the cost
 comes from the design and is not a bug. digres makes 10 calls of
 `operator new` a statement, some of them in the open, where
@@ -197,7 +206,8 @@ The totals agree with `perf stat`: 25,611 against 25,600, and
 
 **Not done: a fix.** A handle kept across transactions might
 save part of the open and the close; the saving is not measured,
-and the lock must still be taken. It changes `SM_API.md`'s
+and the lock must still be taken. It changes
+[`SM_API.md`](sm/SM_API.md)'s
 contract, and a catalog change would have to reach a kept handle.
 It is not designed, and no case has been checked.
 
@@ -224,7 +234,8 @@ so this stays open until one is.
    each transaction that opened a table, and at 0 the handle is
    freed. A session keeps at most 1,024.
 
-`SM_API.md`'s contract stays: a handle is good for one
+[`SM_API.md`](sm/SM_API.md)'s contract stays: a handle is good
+for one
 transaction. digres does not change. The reopen must read the
 definition under the catalog's mutex: a commit of DDL releases
 the table-oid lock before it publishes, so a check without the
@@ -338,8 +349,11 @@ sabotage, delete the object file: `touch` may not rebuild it.
 
 ### 2.4 A `COPY` into a table with a unique B-tree Index is slow
 
-**Closed 2026-11-07** by `sm/BTREELOAD_PLAN.md`: a load builds
-its trees from the bottom up (`sm/BTREEINDEX.md` §6.7).
+**Closed 2026-11-07** by
+[`sm/BTREELOAD_PLAN.md`](sm/BTREELOAD_PLAN.md): a load builds
+its trees from the bottom up
+([`sm/BTREEINDEX.md`](sm/BTREEINDEX.md#67-a-bulk-load-builds-the-tree-whole)
+§6.7).
 
 `bench/sortload.sh` with `KIND=btree`: a `COPY` of 5 million
 rows, in no key order, into an empty table:
@@ -363,7 +377,8 @@ With LSM Indexes, the same load costs digres 27,195
 instructions a row and 14 s.
 
 **The cause.** A load into an empty table writes its rows to
-sorted files (`sm/BULKLOAD.md` §5). A unique tree stops this:
+sorted files ([`sm/BULKLOAD.md`](sm/BULKLOAD.md#5-file-mode) §5).
+A unique tree stops this:
 
 1. `tbl_load_open()` (`sm/sm3/src/table/table.cc`) sends a table
    with a unique tree to row-by-row inserts, as the tree's check

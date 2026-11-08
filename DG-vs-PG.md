@@ -4,7 +4,7 @@
 the Wisr storage stack (`sm/`). DG keeps PG's wire protocol,
 analyzer, planner, and executor. It replaces the process model,
 storage engine, transaction manager, catalog, and authentication
-layer. `PERF.md` measures how fast DG runs against PG.
+layer. [`PERF.md`](PERF.md) measures how fast DG runs against PG.
 
 > **Roles, authentication, and authorization are redone.** DG
 > does not keep PG's role and privilege machinery. A new
@@ -99,12 +99,14 @@ layer. `PERF.md` measures how fast DG runs against PG.
   catalog.
 - **On-demand catalog relations.** To support `psql` (`\d`,
   `\dt`, `\di`, `\l`, `\du`) and client drivers, DG exposes
-  read-only virtual catalog relations (`dg/SYSCATALOG.md`). A
+  read-only virtual catalog relations
+  ([`dg/SYSCATALOG.md`](dg/SYSCATALOG.md)). A
   sequential scan on `pg_class` or `pg_attribute` synthesizes
   rows on the fly from compiled-in data and `sm3`.
 - **Roles, authentication, and authorization: redone
   (`aa/`).** DG replaces PG's implementation with `aa/`, a
-  library of its own on `sm` (`aa/AA_DESIGN.md`). It includes
+  library of its own on `sm`
+  ([`aa/AA_DESIGN.md`](aa/AA_DESIGN.md)). It includes
   no PG header. PG's `acl.c`, `aclchk.c`, `auth.c`, `crypt.c`,
   and others call `aa/` in place of the shared catalogs.
   The design differs from PG's:
@@ -128,7 +130,9 @@ layer. `PERF.md` measures how fast DG runs against PG.
   connection over TCP is not encrypted. Logins use SCRAM, which
   sends no password; a password set by SQL over TCP must come
   hashed, as psql's `\password` sends it, and a logged statement
-  never shows a password (`aa/ROLE.md` §5.1). An MD5 password is
+  never shows a password
+  ([`aa/ROLE.md`](aa/ROLE.md#51-a-password-set-in-cleartext)
+  §5.1). An MD5 password is
   refused on every connection.
 - **Fixed encoding and locale.** Every DG database uses `UTF8`
   encoding and collation `C`. A column's `COLLATE`, `CREATE
@@ -177,7 +181,8 @@ layer. `PERF.md` measures how fast DG runs against PG.
 - **Two secondary index types (`lsm` and `btree`).** Hash, GIN,
   GiST, SP-GiST, and BRIN access methods are removed; DG
   supports `UNIQUE`, partial (`WHERE`), covering (`INCLUDE`),
-  and expression indexes in two formats (`sm/BTREEINDEX.md`):
+  and expression indexes in two formats
+  ([`sm/BTREEINDEX.md`](sm/BTREEINDEX.md)):
   - **`lsm` (default, `USING lsm`):** Stores each secondary
     index entry as an individual MVCC key-value record in
     RocksDB's LSM tree.
@@ -209,7 +214,8 @@ layer. `PERF.md` measures how fast DG runs against PG.
 - **Constrained, fixed-size `numeric`.** PG stores `numeric` as
   a variable-length (`varlena`) array of base-10000 digits. DG
   replaces it with two fixed-size binary decimal types matching
-  `sm` bit for bit (`dg/DECIMAL.md`): 8-byte pass-by-value
+  `sm` bit for bit ([`dg/DECIMAL.md`](dg/DECIMAL.md)): 8-byte
+  pass-by-value
   `decimal64` (1 to 17 digits) and 16-byte `decimal128` (18 to
   36 digits), with no `varlena` header, `NaN`, or `Infinity`
   (unconstrained `numeric` columns default to `numeric(17,3)`).
@@ -226,11 +232,13 @@ layer. `PERF.md` measures how fast DG runs against PG.
   INDEX`, and `ALTER TYPE`. `ALTER COLUMN TYPE` refuses a column
   an expression or partial index, a foreign key, or an identity
   sequence uses, a `COLLATE`, and a `USING` that reads another
-  column the same statement retypes (`dg/ALTERTYPE.md`).
+  column the same statement retypes
+  ([`dg/ALTERTYPE.md`](dg/ALTERTYPE.md)).
 - **`VALIDATE CONSTRAINT` of a foreign key.** As in
   PostgreSQL, no writer of either table waits for it, nor it
   for them. The flag shows to the session that set it at
-  commit, not before (`dg/UNSUPPORTED.md`, "DDL").
+  commit, not before ([`dg/UNSUPPORTED.md`](dg/UNSUPPORTED.md),
+  "DDL").
 - **Sequences.** A sequence takes `START`, `INCREMENT`, and
   `AS`. `MINVALUE`, `MAXVALUE`, `CACHE`, `CYCLE`, `OWNED BY`,
   `ALTER SEQUENCE`, `setval()`, and `TRUNCATE ... RESTART
@@ -251,8 +259,10 @@ layer. `PERF.md` measures how fast DG runs against PG.
   aggregates, `CREATE DATABASE` options, `ALTER DATABASE`,
   extensions and `LOAD`, and replication (`PUBLICATION`,
   `SUBSCRIPTION`, base backup, PITR, archiving, hot standby)
-  are removed or refused (`dg/UNSUPPORTED.md`).
+  are removed or refused
+  ([`dg/UNSUPPORTED.md`](dg/UNSUPPORTED.md)).
 - **Added in DG: `DEFAULT ... ON UPDATE`.** Because DG has no
   triggers, it extends column definitions with `DEFAULT expr ON
-  UPDATE` (`dg/ONUPDATE.md`), which writes `expr` whenever an
+  UPDATE` ([`dg/ONUPDATE.md`](dg/ONUPDATE.md)), which writes
+  `expr` whenever an
   `UPDATE` does not explicitly assign that column.

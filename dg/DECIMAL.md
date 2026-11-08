@@ -1,11 +1,14 @@
 # Decimal in digres
 
 PostgreSQL's `numeric` is replaced by two fixed-width
-decimals, the ones sm stores (`../sm/sm2/TYPE.md` §3.4):
+decimals, the ones sm stores
+([`../sm/sm2/TYPE.md`](../sm/sm2/TYPE.md#34-decimal64-decimal128)
+§3.4):
 `decimal64`, of at most 17 digits, passed by value, and
 `decimal128`, of at most 36; `numeric` is a name for them.
 Reviewed; §4 records the answers. All of §3 is built
-(`WORKNOTE.md` steps 95 to 97), and so is §5, `decimal64` by
+([`WORKNOTE.md`](WORKNOTE.md) steps 95 to 97), and so is §5,
+`decimal64` by
 value, which made §2 what it is.
 
 ## 1. Where digres stands
@@ -125,10 +128,13 @@ typedef struct decimal_t {  /* decimal128's, in two halves */
 ### 2.3 Stored as sm2's decimal, at the column's scale
 
 - **A column is `numeric(p, s)`**, and dg, not sm, chooses
-  its width (`../sm/CATALOG.md` §8.4): `p <= 17` is
+  its width
+  ([`../sm/CATALOG.md`](../sm/CATALOG.md#84-decimal-columns)
+  §8.4): `p <= 17` is
   sm2's `decimal64`, `p <= 36` its `decimal128`, whose datums
   carry their scale below their value
-  (`sm/sm2/TYPE.md` §5.2).
+  ([`sm/sm2/TYPE.md`](../sm/sm2/TYPE.md#52-the-decimals-follow-duckdbs)
+  §5.2).
   Its typmod is PostgreSQL's, which sm2 takes as is; a column
   past 36 digits is refused.
 - **Writing rescales to the column's scale**, rounding half
@@ -311,7 +317,9 @@ path.
 
 1. **An unconstrained `numeric` column** is given a default,
    DuckDB's `DECIMAL(18, 3)`; `(17, 3)` since sm's decimals
-   carry their scale (`sm/sm2/TYPE.md` §5.2).
+   carry their scale
+   ([`sm/sm2/TYPE.md`](../sm/sm2/TYPE.md#52-the-decimals-follow-duckdbs)
+   §5.2).
 2. **A literal past 36 digits** was to be an error; building
    it showed that this refuses `1e300` as a float, so it is a
    `float8`, as in DuckDB. Text cast to numeric past 36 digits
@@ -340,7 +348,8 @@ the alternative it turned down:
    value keeping its scale (§2.1). It was first `decimal64(17,
    3)` everywhere, a cast included, until `x::numeric` rounding
    to three places failed PostgreSQL's `int2`, `int4` and
-   `int8` (`WORKNOTE.md` step 256). Making it a `decimal128`
+   `int8` ([`WORKNOTE.md`](WORKNOTE.md) step 256). Making it a
+   `decimal128`
    outside a column, as PostgreSQL's unbounded numeric, was
    the alternative.
 9. **The name a user sees**: `numeric(p, s)` for both types,
@@ -367,7 +376,8 @@ A `decimal128` laid out as sm's makes the wide case a pointer
 into sm's tuple, with no conversion either.
 
 It keeps the scale in the datum, as sm keeps it
-(`sm/sm2/TYPE.md` §5.2), which costs a digit of
+([`sm/sm2/TYPE.md`](../sm/sm2/TYPE.md#52-the-decimals-follow-duckdbs)
+§5.2), which costs a digit of
 `decimal64` and two of `decimal128`. Carrying `(p, s)` through
 every expression, as DuckDB does, and an abbreviated sort key
 were the other options. §2 is what it made, and §4's answers 6

@@ -10,7 +10,8 @@ way any level gets unique ids, and sm3's is SQL's
 `keep_seq_positions`), `sm3/src/catalog/ddl.cc`
 (`cat_put_sequence` and the calls beside it) and
 `sm3/src/ddl/ddl.cc` (`create_sequence`, `drop_sequence`,
-`own_sequence`, `nextval`). sm1's store catalog is in `DBMGR.md`.
+`own_sequence`, `nextval`). sm1's store catalog is in
+[`DBMGR.md`](DBMGR.md).
 
 ---
 
@@ -46,7 +47,8 @@ taken the `"S"` row and the Catalog keys with it.
 
 - **The definition is transactional.** A Sequence is a catalog
   row, so `sm1::mkseq` and `sm1::rmseq` commit and roll back like
-  `sm1::mkstore` (`DBMGR.md`), down to the wait that makes two
+  `sm1::mkstore` ([`DBMGR.md`](DBMGR.md)), down to the wait that
+  makes two
   concurrent creates of one name conflict.
 - **The values are not transactional**, like a PostgreSQL
   sequence. `sm1::nextseq` needs no transaction, takes no lock,
@@ -87,7 +89,7 @@ taken the `"S"` row and the Catalog keys with it.
   gone. Its record is read from the store in the transaction.
 - **A Sequence has no lock of its own.** Its record is a catalog
   key, written under that key's X lock. Its position is ordered
-  by a mutex (`LOCKMGR.md`).
+  by a mutex ([`LOCKMGR.md`](LOCKMGR.md)).
 
 ---
 
@@ -113,7 +115,8 @@ A row of another size is `SM_ERR_CORRUPT`. A name is 1 to
   `SM_ERR_NOTFOUND`. It deletes the row and remembers the seqid
   in `dropped_seqs`, which a rollback to a savepoint cuts back.
 - **A commit that writes only `"S"` or `"U"` rows leaves
-  `last_ddl_ts` alone**: no store lookup reads them (`DBMGR.md`).
+  `last_ddl_ts` alone**: no store lookup reads them
+  ([`DBMGR.md`](DBMGR.md)).
 - **The startup sweep and `sm1::lsstore` pass over `"S"` rows.**
 
 ### 2.2 The position
@@ -156,7 +159,8 @@ the timestamp lease does not wait for it.
 The view means a Sequence the transaction made is usable before
 it commits. At a statement's mark, a Sequence the statement
 itself made is found only after `sm1::stmt_advance`, as any row
-is (`XCTMGR.md`). Under SERIALIZABLE the lookup is a read, and
+is ([`XCTMGR.md`](XCTMGR.md)). Under SERIALIZABLE the lookup is a
+read, and
 takes a SIREAD entry on the `"S"` row. It never waits.
 
 `db_next_seq(db, seqid, start, increment,
@@ -239,7 +243,7 @@ estimate.
 
 With `temporary`, `sm1::mkseq` makes an entry in the session's
 memory (`temp_seqs`): no row in store 0, no lease in `CF:meta`,
-nothing written (`TEMPTABLE.md`).
+nothing written ([`TEMPTABLE.md`](TEMPTABLE.md)).
 
 - No other session knows its name, and it goes when the session
   closes.
@@ -264,7 +268,8 @@ A temporary table counts its `_id`s with one, and its TOAST ids.
 
 A Sequence is a `SEQUENCE` key by oid, with one `sequence` part:
 namespace, name, start, increment, owner table and owner column
-(`CATALOG.md`). Its counter is the sm1 Sequence `sm3.seq.<oid>`
+([`CATALOG.md`](CATALOG.md)). Its counter is the sm1 Sequence
+`sm3.seq.<oid>`
 (`sequence_counter`), made and dropped with the key in the same
 transaction.
 
@@ -461,7 +466,7 @@ Names beginning `sm3.` are sm3's own. `sm_mkseq`, `sm_rmseq` and
 | — | `cat_get_sequence_def` | `sm_cat_sequence_def` |
 | — | `cat_list_sequences` | `sm_cat_list_sequences` |
 
-`sm1/API.md` lists each sm1 call's errors.
+[`sm1/API.md`](sm1/API.md) lists each sm1 call's errors.
 
 digres narrows what SQL may ask
 (`../dg/src/backend/access/sm/smstore.c`). A Sequence counts up

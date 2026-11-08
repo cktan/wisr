@@ -1,6 +1,7 @@
 # The expected transcripts, audited against the rules
 
-`REPORT.md` audits the scenario *infrastructure* — the driver
+[`REPORT.md`](REPORT.md) audits the scenario *infrastructure* —
+the driver
 and the shape of the scripts. This document audits the
 *answers*: for every script in `in/`, whether the transcript
 in `good/` is the outcome the isolation rules require, at each
@@ -9,7 +10,9 @@ level pairing it runs in.
 The question is not whether the engine reproduces `good/`;
 `make test` asks that. It is the prior question, the one a
 diff cannot ask — whether the recorded behaviour is the
-correct behaviour. `DRIVER.md` §0 names the hazard this
+correct behaviour.
+[`DRIVER.md`](DRIVER.md#0-why-a-script-and-a-transcript) §0 names
+the hazard this
 addresses: a wrong change to the engine plus a regenerated
 transcript looks like progress.
 
@@ -26,7 +29,9 @@ The counts below are as of those dates, 109 scripts. There are
 re-derived them.
 
 **Method.** Every expected outcome was re-derived from
-`MVCC.md` §1 and `../XCTMGR.md` §7.4 by hand — the edge set
+[`MVCC.md`](MVCC.md#1-the-model) §1 and
+[`../XCTMGR.md`](../../XCTMGR.md#74-the-abort-rule) §7.4 by hand
+— the edge set
 of each history, then the abort rule applied to it — and
 compared with the transcript. The derivation was done on
 paper, deliberately independent of what the engine does:
@@ -76,7 +81,8 @@ snapshot per call, and one snapshot per statement between
 ## 3. Family B — write-write
 
 Correct throughout. The three error-choice distinctions
-`MVCC.md` §5 claims all hold in the transcripts:
+[`MVCC.md`](MVCC.md#5-family-b--write-write-conflicts) §5 claims
+all hold in the transcripts:
 
 - **CONFLICT, not NOTFOUND** (`b03`, `b05`, `b18`) — the row
   exists in the loser's snapshot, or was created after it.
@@ -192,7 +198,9 @@ permutation orders align between script and transcript, each
 `as PostgreSQL` outcome equals its script's `expect` line,
 each `differs` outcome equals its `sm1` override and its
 parenthetical equals `expect`, and no override is stale. The
-totals match `MVCC.md` §7b exactly — 390 permutations, 383 as
+totals match
+[`MVCC.md`](MVCC.md#7b-family-p--postgresqls-own-isolation-tests)
+§7b exactly — 390 permutations, 383 as
 PostgreSQL, 7 differing, 0 failures.
 
 The 7 differences divide into two kinds, and only one of them
@@ -248,7 +256,8 @@ unique violation, matching `b06` and `b12`.
 1. **A defect, since fixed: `c34`'s transcript printed an
    engine message, not an error name.** The step read
    `@2 T1 write R1 t1 -> error:the transaction was declared
-   read-only`. `DRIVER.md` §2.2 says error names are
+   read-only`. [`DRIVER.md`](DRIVER.md#22-steps) §2.2 says error
+   names are
    "symbolic, never numbers or messages"; §4 says the driver
    "prints nothing the engine generates". The cause was a gap
    in `error_name()` in `mvcc/driver/run.cc`, which had a
@@ -295,7 +304,8 @@ unique violation, matching `b06` and `b12`.
    which is the point: all four pairings but S+S end in the
    same state, and now all three say so.
 
-3. **Fixed: `REPORT.md` had gone stale in its lists, though
+3. **Fixed: [`REPORT.md`](REPORT.md) had gone stale in its lists,
+   though
    not in its findings.** It named family B as `b01`–`b29`,
    C as `c01`–`c31` and E as `e01`–`e05`, now `b01`–`b36`,
    `c01`–`c34` and `e01`–`e06`; it opened "the suite is in
@@ -330,7 +340,9 @@ so some test's assertion count depends on contention or
 timing. A number recorded here would read as a regression on
 the next run that disagreed with it.
 
-**The suite did not lose assertive power.** `MVCC.md` §9's
+**The suite did not lose assertive power.**
+[`MVCC.md`](MVCC.md#9-what-this-coverage-is-and-what-it-is-not)
+§9's
 three deliberate breakages were re-run, because `2ae8668`
 made three scenarios stop failing (`c17`, `c26`, `c27`) and
 that is exactly the shape of a suite going quiet. None of the
@@ -353,10 +365,12 @@ numbers can be reproduced.
 ## 9. What this audit does not establish
 
 It does not re-derive the C++ scenarios (`e01` to `e03`,
-`e06`), and it inherits `MVCC.md` §9's limits: these are
+`e06`), and it inherits
+[`MVCC.md`](MVCC.md#9-what-this-coverage-is-and-what-it-is-not)
+§9's limits: these are
 finite schedules, not a model check, so an interleaving not
 written here is not covered by either document.
 
 Where this audit and the engine disagree, neither is
 automatically right: the disagreement is the finding, and
-`MVCC.md`'s rules are what settle it.
+[`MVCC.md`](MVCC.md)'s rules are what settle it.

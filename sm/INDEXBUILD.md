@@ -293,7 +293,7 @@ pending, and calls `tbl_index_backfill`:
 
 An evaluator sees each row's newest image under the row's lock,
 as the build reads any row. It runs on the worker's thread
-(LSMINDEX.md, `../dg/EXPRINDEX.md`).
+(LSMINDEX.md, [`../dg/EXPRINDEX.md`](../dg/EXPRINDEX.md)).
 
 ### 5.3 An entry that is there
 
@@ -610,7 +610,8 @@ Public: `builder_attach`, `builder_detach`, `builder_enqueue`,
   only what is absent makes that safe.
 - **Building on the session's thread** to keep the evaluator off
   the workers. It is a second build path, and a `CREATE INDEX`
-  that holds its session (`../dg/EXPRINDEX.md`).
+  that holds its session
+  ([`../dg/EXPRINDEX.md`](../dg/EXPRINDEX.md)).
 
 ## 16. Tests
 

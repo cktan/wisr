@@ -1,7 +1,10 @@
 # COMMITORDER_PLAN — commit records in commit_ts order
 
-Status: built (`../dg/WORKNOTE.md` step 406). §9 lists what the
-user decided. `XCTMGR.md` §3.2, §8.2 and §8.5 and `DBMGR.md` §8.2
+Status: built ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step
+406). §9 lists what the
+user decided.
+[`XCTMGR.md`](XCTMGR.md#32-visible_ts-and-the-commit-queue) §3.2,
+§8.2 and §8.5 and [`DBMGR.md`](DBMGR.md#82-group-sync) §8.2
 are the design of record.
 
 ---
@@ -9,9 +12,11 @@ are the design of record.
 ## 1. What this is
 
 A commit that has made its record durable still waits when an
-older commit's record missed the same sync (`XCTMGR.md` §8.5).
+older commit's record missed the same sync
+([`XCTMGR.md`](XCTMGR.md#85-records-in-commit_ts-order) §8.5).
 At 16 clients two commits in three wait, about 220 µs each, 0.4
-of a sync of 600 µs (`../dg/WORKNOTE.md` step 405). PostgreSQL
+of a sync of 600 µs ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md)
+step 405). PostgreSQL
 has no such wait.
 
 The cause is the order of the commit path today:
@@ -38,7 +43,9 @@ step 6 never waits for a sync.
 
 ## 2. A worked example
 
-The case of `XCTMGR.md` §8.5: A claims 100, B claims 101, a WAL
+The case of
+[`XCTMGR.md`](XCTMGR.md#85-records-in-commit_ts-order) §8.5: A
+claims 100, B claims 101, a WAL
 sync takes 600 µs.
 
 Today:
@@ -121,7 +128,9 @@ visible waiters with them.
   write and sync ended.
 - **No commit returns unseen**: a member is woken in step 7,
   after step 6 raised `visible_ts` past its `commit_ts`. So its
-  next statement sees it, as `XCTMGR.md` §8.4 requires.
+  next statement sees it, as
+  [`XCTMGR.md`](XCTMGR.md#84-a-commit-returns-once-it-is-visible)
+  §8.4 requires.
 - **Monotonic**: a claim made after step 2 has a larger
   `commit_ts` than every batch member, so step 6 never lowers
   `visible_ts`.
@@ -137,7 +146,8 @@ visible waiters with them.
   the same records, so WAL replay does not change.
 - **The PREPARED and ABORTED records** of two-phase commit. They
   have no `commit_ts` and no snapshot waits on them; each stays
-  a synced write of its own (`XCTMGR.md` §10).
+  a synced write of its own
+  ([`XCTMGR.md`](XCTMGR.md#10-two-phase-commit) §10).
 - **A transaction that wrote nothing** commits with no record and
   no `commit_ts`, as now.
 - **The versions** a transaction wrote: unsynced writes before
@@ -185,14 +195,16 @@ At 16 clients a sync covered about 6.7 commits, PostgreSQL's
 about 2.1 sync times, as PostgreSQL's does, so about 7.5 commits
 a sync: about 12% more commits a second at an equal sync time.
 Fewer trips through RocksDB's write queue also cut the CPU of a
-commit, which is about twice PostgreSQL's (`../dg/WORKNOTE.md`
+commit, which is about twice PostgreSQL's
+([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md)
 step 376).
 
 ## 8. Steps
 
 1. **Measure the start**: `ins` and `fk` at 16 clients, the
    commits a sync and the share of time in `db_commit_wait()`
-   (`bench/build/prof5/prof.sh`, `../dg/WORKNOTE.md` step 405).
+   (`bench/build/prof5/prof.sh`,
+   [`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 405).
 2. **Build the queue and the leader** in `sm1/src/db.cc` and
    `sm1/src/xct.cc`, as §3. Remove `committing`,
    `db_commit_done()`, `db_commit_wait()` and the visible
@@ -208,8 +220,11 @@ step 376).
      in 8 sessions checks that a commit is seen by its own next
      statement.
 4. **Measure again**, as step 1, both systems alternated.
-5. **Update the documents**: `XCTMGR.md` §3.2, §8 and §8.5,
-   `DBMGR.md` §8.2, `../dg/WORKNOTE.md`.
+5. **Update the documents**:
+   [`XCTMGR.md`](XCTMGR.md#32-visible_ts-and-the-commit-queue)
+   §3.2, §8 and §8.5,
+   [`DBMGR.md`](DBMGR.md#82-group-sync) §8.2,
+   [`../dg/WORKNOTE.md`](../dg/WORKNOTE.md).
 
 ## 9. Decided
 

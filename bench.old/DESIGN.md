@@ -2,13 +2,13 @@
 
 What is measured, on what, and how, so that a number from
 digres and one from PostgreSQL 18 can be set side by side.
-`README.md` says why.
+[`README.md`](README.md) says why.
 
 ## 1. The two systems
 
 | | PostgreSQL 18 | digres |
 | --- | --- | --- |
-| Source | `~/p/postgres18`, at digres's fork point, 18.6, `724edf9` (`../dg/README.md`) | this repository |
+| Source | `~/p/postgres18`, at digres's fork point, 18.6, `724edf9` ([`../dg/README.md`](../dg/README.md)) | this repository |
 | Build | `./configure` (`-O2`, no asserts), installed under `bench/build/pg18` | `-O2`, no asserts, objects of their own (§2) |
 | Storage | heap pages, shared buffers, the OS page cache | sm on RocksDB: block cache, memtables |
 | Server | `postgres -D` on a data directory `initdb` makes | `digres -D` on one digres's `initdb` makes |
@@ -34,7 +34,7 @@ own port, with nothing else of note running.
   RocksDB 8.9.1 built by `test/rocksdb.sh release` at
   `-O3 -DNDEBUG`, statically: the system's `librocksdb.so`
   keeps its `assert()`s (5,858 calls of `__assert_fail`).
-  `CODE.md` makes this a rule, and `run.sh` checks it.
+  [`CODE.md`](CODE.md) makes this a rule, and `run.sh` checks it.
 - Each report records both commits and the flags.
 
 ## 3. Settings
@@ -43,19 +43,21 @@ Chosen so neither side does work the other cannot:
 
 - **No parallel query**: `max_parallel_workers_per_gather =
   0` on PostgreSQL. digres has none: its parallel backend is
-  gone (`../dg/WORKNOTE.md` step 10).
+  gone ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 10).
 - **No JIT**: `jit = off`. digres was built without it.
 - **Memory**: `shared_buffers` 2 GB on both, large enough to
   hold the data. On digres it sizes sm's block cache, the one
   every database's RocksDB reads through
-  (`../sm/sm1/SM1_DESIGN.md` §12.2), whose blocks sm stores
+  ([`../sm/sm1/SM1_DESIGN.md`](../sm/sm1/SM1_DESIGN.md) §12.2),
+  whose blocks sm stores
   compressed with LZ4 and the cache holds decompressed.
 - **Each side settled after the load**: `VACUUM (FREEZE,
   ANALYZE)` on both. On PostgreSQL no scan then pays for
   setting hint bits or pruning, and autovacuum is off, so none
   starts during a run. On digres it compacts each table's
   store into one sorted run, so a lookup visits one, and FREEZE
-  has nothing to do (`../dg/WORKNOTE.md` step 284).
+  has nothing to do ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md)
+  step 284).
 - Everything else as each ships.
 
 ## 4. The data
@@ -95,7 +97,7 @@ reads under many clients with writes among them. Q9 to Q11
 are Q6 to Q8 by a secondary index, the same rows: an entry
 found, then its row read, where the primary key's entry is
 the row. Q9b and Q10b are Q9 and Q10 by that index as a tree
-on digres (`../sm/BTREEINDEX.md`).
+on digres ([`../sm/BTREEINDEX.md`](../sm/BTREEINDEX.md)).
 
 | # | Query | What it isolates |
 | --- | --- | --- |
@@ -165,7 +167,9 @@ loop. Q10 and Q11 draw theirs from `random_zipfian(3,
 digres reads a row as sm2 laid it out, and deforms the
 columns a scan needs into the slot's `Datum`s and nulls
 (`tuple_into_slot()`, `../dg/src/backend/access/sm/
-smstore.c`; `sm2::tup_deform`, `../sm/sm2/TUPLE.md` §8).
+smstore.c`; `sm2::tup_deform`,
+[`../sm/sm2/TUPLE.md`](../sm/sm2/TUPLE.md#8-a-malformed-tuple)
+§8).
 PostgreSQL deforms its heap tuple the same way, into the same
 slot (`slot_deform_heap_tuple()`). The two layouts differ in
 what reaching column n costs:
@@ -175,7 +179,9 @@ what reaching column n costs:
   a null, makes it compute each one (its `attcacheoff` helps
   only up to the first of them).
 - **sm2** keeps its widths and entry offsets in the table's
-  `tup_desc_t` (`../sm/sm2/TUPLE.md` §6): a column's place is
+  `tup_desc_t`
+  ([`../sm/sm2/TUPLE.md`](../sm/sm2/TUPLE.md#6-finding-an-attribute)
+  §6): a column's place is
   found in a step per earlier null, not a walk over the row.
 
 So Q2 against Q3 on `wide_fixed` and `wide_mixed` asks, on
@@ -204,8 +210,10 @@ reports it, with each data directory's. The settings of §3
 are not in it. A run is the unit: numbers from two runs are
 not mixed in one table.
 
-Each report also gets a row in `results/LOG.md`, the log of
-every run: its date, commit, machine and file (`CODE.md`).
+Each report also gets a row in
+[`results/LOG.md`](results/LOG.md), the log of
+every run: its date, commit, machine and file
+([`CODE.md`](CODE.md)).
 
 ## 8. What can mislead
 

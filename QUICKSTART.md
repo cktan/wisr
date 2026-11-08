@@ -2,16 +2,19 @@
 
 From a fresh checkout to a query, in six steps: build digres,
 make a database, start the server, connect with `psql`, create
-a table, and read it back. `DG-vs-PG.md` says what digres is,
+a table, and read it back. [`DG-vs-PG.md`](DG-vs-PG.md) says what
+digres is,
 and how it differs from PostgreSQL.
 
-The steps are for Ubuntu 24.04. `README.md` has the detail of
+The steps are for Ubuntu 24.04. [`README.md`](README.md) has the
+detail of
 each step, and the other platforms.
 
 ## 1. Build
 
 Install the prerequisites once. `./SETUP_UBUNTU_DEV.sh` does
-it on a minimal Ubuntu machine; `README.md`, "Prerequisites",
+it on a minimal Ubuntu machine; [`README.md`](README.md),
+"Prerequisites",
 lists the packages to install by hand.
 
 From the top of the repository, build the debug build:
@@ -97,8 +100,10 @@ SELECT name, price FROM fruit WHERE price < 1 ORDER BY price;
 
 ## Next
 
-- **What works and what does not**: `DG-vs-PG.md`, and the full
-  list in `dg/UNSUPPORTED.md`. A statement digres does not run
+- **What works and what does not**: [`DG-vs-PG.md`](DG-vs-PG.md),
+  and the full
+  list in [`dg/UNSUPPORTED.md`](dg/UNSUPPORTED.md). A statement
+  digres does not run
   fails with an error, not with a wrong answer.
 - **More databases**: `CREATE DATABASE app` makes one more; each
   is a directory of its own, `base/app`.
@@ -106,4 +111,4 @@ SELECT name, price FROM fruit WHERE price < 1 ORDER BY price;
   2 (`--init -W`), then `psql -h localhost -p 5432 -U NAME -d
   postgres`.
 - **The release build, the tests and the benchmark**:
-  `README.md`.
+  [`README.md`](README.md).

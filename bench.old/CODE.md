@@ -1,7 +1,8 @@
 # Working in bench
 
-Rules for changing and running the benchmark. `README.md`
-says what it is for, `DESIGN.md` how it measures.
+Rules for changing and running the benchmark.
+[`README.md`](README.md)
+says what it is for, [`DESIGN.md`](DESIGN.md) how it measures.
 
 ## Builds: optimized, never debug
 
@@ -17,7 +18,8 @@ be reported.
   `--enable-debug`: `-O2`, `USE_ASSERT_CHECKING` undefined.
   `SHOW debug_assertions` on the server says `off`.
 - **digres**: `dg/build/digres-release`, from `make -C dg
-  release` (`DESIGN.md` §2), never `dg/build/digres`, which is
+  release` ([`DESIGN.md`](DESIGN.md#2-optimized-builds) §2),
+  never `dg/build/digres`, which is
   the tests' `-O0 -g` build with `Assert()` on. The release
   build compiles every object `-O2 -DNDEBUG` without
   `USE_ASSERT_CHECKING`, and links:
@@ -41,12 +43,14 @@ be reported.
   `debug_assertions` is on, or if `digres --build` is not a
   release build's; and copies `--build` into its report.
 - **Each report says so**: the builds and their flags are in
-  its header (`DESIGN.md` §7), and a run on any other build is
+  its header ([`DESIGN.md`](DESIGN.md#7-a-report) §7), and a run
+  on any other build is
   not a result.
 
 ## Reports: logged, with date and commit
 
-- **Every report is logged**: `results/LOG.md` has one row
+- **Every report is logged**: [`results/LOG.md`](results/LOG.md)
+  has one row
   per report, oldest first: the date and time of the run,
   the digres commit it measured, the machine, and a link to
   the report. `run.sh` appends the row when it writes the
@@ -54,5 +58,6 @@ be reported.
   hand.
 - **A report names its commit and date**: its file name is
   the date (`YYYYMMDD-HHMM.md`), and its header the commit
-  (`DESIGN.md` §7). Commit the report and its log row
+  ([`DESIGN.md`](DESIGN.md#7-a-report) §7). Commit the report and
+  its log row
   together.

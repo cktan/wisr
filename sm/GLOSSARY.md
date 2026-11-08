@@ -16,27 +16,27 @@ document. Use these and no others in code comments and documents.
 
 | Standard name | Short name | Document | What it is | Code |
 | --- | --- | --- | --- | --- |
-| Database Manager | db | `DBMGR.md` | environments, databases, stores, the WAL, recovery | `sm1/src/db.cc`, `env.cc` |
-| Transaction Manager | xct | `XCTMGR.md` | snapshots, commit, savepoints, SSI, 2PC | `sm1/src/xct.cc` |
-| Lock Manager | lockmgr | `LOCKMGR.md` | row and object locks, deadlocks, write latches | `sm1/src/lockmgr.cc`, `locktab.cc` |
-| Buffer Manager | bufmgr | `BUFMGR.md` | sm's buffer pool: frames, pins, the clock | `sm1/src/bufpool.cc`, `page.cc` |
-| Garbage Collector | gc | `GC.md` | the watermark, the compaction filter, the `CF:txn` sweep | `sm1/src/gc.cc` |
-| Row Store | row store | `ROWSTORE.md` | row keys, versions, chains, the read and write paths | `sm1/src/access.cc`, `chain.cc`, `sm2/src/rel/rel.cc` |
-| TOAST | toast | `TOAST.md` | a datum stored out of line | `sm2/src/rel/toast.cc` |
-| LSM Index | lsm index | `LSMINDEX.md` | an index whose entries are sm1 keys | `sm2/src/rel/index.cc` |
-| B-tree Index | btree index | `BTREEINDEX.md` | an index of its own pages, its in-doubt bit, the cleaner | `sm2/src/tree/`, `sm3/src/cleaner/` |
-| Index Builder | builder | `INDEXBUILD.md` | concurrent index builds | `sm3/src/builder/` |
-| Catalog | catalog | `CATALOG.md` | definitions in memory and on disk, DDL | `sm3/src/catalog/`, `sm3/src/ddl/` |
-| Namespace | namespace | `NAMESPACE.md` | a schema, and name lookup | `sm3/src/ddl/ddl.cc` |
-| Sequence | sequence | `SEQUENCE.md` | counters and their leases | `sm1/src/db.cc`, `sm3/src/ddl/ddl.cc` |
-| Temporary Table | temp table | `TEMPTABLE.md` | a table of one session | `sm3/src/table/table.cc` |
-| View | view | `VIEW.md` | a stored query's definition | `sm3/src/ddl/ddl.cc` |
-| Statistics | stats | `STATISTICS.md` | what ANALYZE records | `sm3/src/analyze/` |
-| Bulk Load | load | `BULKLOAD.md` | loading an empty table from sorted files | `sm1/src/load.cc` |
-| Sort | sort | `SORT.md` | records in key order, in memory and in runs on files | `sm0/src/sort.cc` |
-| Clustered Table | cluster | `CLUSTER.md` | rows stored in primary-key order | `sm3/src/table/table.cc` |
-| Foreign Key | fkey | `FOREIGNKEY.md` | a table's references to another | `sm3/src/ddl/ddl.cc` |
-| Logical Decoding | decode | `LOGICALDECODE.md` | a design, not built | none |
+| Database Manager | db | [`DBMGR.md`](DBMGR.md) | environments, databases, stores, the WAL, recovery | `sm1/src/db.cc`, `env.cc` |
+| Transaction Manager | xct | [`XCTMGR.md`](XCTMGR.md) | snapshots, commit, savepoints, SSI, 2PC | `sm1/src/xct.cc` |
+| Lock Manager | lockmgr | [`LOCKMGR.md`](LOCKMGR.md) | row and object locks, deadlocks, write latches | `sm1/src/lockmgr.cc`, `locktab.cc` |
+| Buffer Manager | bufmgr | [`BUFMGR.md`](BUFMGR.md) | sm's buffer pool: frames, pins, the clock | `sm1/src/bufpool.cc`, `page.cc` |
+| Garbage Collector | gc | [`GC.md`](GC.md) | the watermark, the compaction filter, the `CF:txn` sweep | `sm1/src/gc.cc` |
+| Row Store | row store | [`ROWSTORE.md`](ROWSTORE.md) | row keys, versions, chains, the read and write paths | `sm1/src/access.cc`, `chain.cc`, `sm2/src/rel/rel.cc` |
+| TOAST | toast | [`TOAST.md`](TOAST.md) | a datum stored out of line | `sm2/src/rel/toast.cc` |
+| LSM Index | lsm index | [`LSMINDEX.md`](LSMINDEX.md) | an index whose entries are sm1 keys | `sm2/src/rel/index.cc` |
+| B-tree Index | btree index | [`BTREEINDEX.md`](BTREEINDEX.md) | an index of its own pages, its in-doubt bit, the cleaner | `sm2/src/tree/`, `sm3/src/cleaner/` |
+| Index Builder | builder | [`INDEXBUILD.md`](INDEXBUILD.md) | concurrent index builds | `sm3/src/builder/` |
+| Catalog | catalog | [`CATALOG.md`](CATALOG.md) | definitions in memory and on disk, DDL | `sm3/src/catalog/`, `sm3/src/ddl/` |
+| Namespace | namespace | [`NAMESPACE.md`](NAMESPACE.md) | a schema, and name lookup | `sm3/src/ddl/ddl.cc` |
+| Sequence | sequence | [`SEQUENCE.md`](SEQUENCE.md) | counters and their leases | `sm1/src/db.cc`, `sm3/src/ddl/ddl.cc` |
+| Temporary Table | temp table | [`TEMPTABLE.md`](TEMPTABLE.md) | a table of one session | `sm3/src/table/table.cc` |
+| View | view | [`VIEW.md`](VIEW.md) | a stored query's definition | `sm3/src/ddl/ddl.cc` |
+| Statistics | stats | [`STATISTICS.md`](STATISTICS.md) | what ANALYZE records | `sm3/src/analyze/` |
+| Bulk Load | load | [`BULKLOAD.md`](BULKLOAD.md) | loading an empty table from sorted files | `sm1/src/load.cc` |
+| Sort | sort | [`SORT.md`](SORT.md) | records in key order, in memory and in runs on files | `sm0/src/sort.cc` |
+| Clustered Table | cluster | [`CLUSTER.md`](CLUSTER.md) | rows stored in primary-key order | `sm3/src/table/table.cc` |
+| Foreign Key | fkey | [`FOREIGNKEY.md`](FOREIGNKEY.md) | a table's references to another | `sm3/src/ddl/ddl.cc` |
+| Logical Decoding | decode | [`LOGICALDECODE.md`](LOGICALDECODE.md) | a design, not built | none |
 
 ---
 
@@ -46,22 +46,24 @@ document. Use these and no others in code comments and documents.
 
 - a **userkey** — the caller's bytes that name a row in an
   sm1 store. It is what a version chain hangs off, what a
-  lock locks, and what a scan orders by (`DBMGR.md` §6.2).
+  lock locks, and what a scan orders by
+  ([`DBMGR.md`](DBMGR.md#62-key-classes) §6.2).
 - an **index key** — the encoded key columns of an index
   entry, produced by sm2's `encode_key`. It *becomes part of*
   a userkey once the relid is prepended
-  (`sm2/TYPE.md` §2).
+  ([`sm2/TYPE.md`](sm2/TYPE.md#2-rules-that-apply-to-every-key)
+  §2).
 - a **key column** — one column of an index definition, with
   its direction, null order and collation.
 - a **catalog key** — a key in store 0 under `"U"`
-  (`CATALOG.md` §3.3).
+  ([`CATALOG.md`](CATALOG.md#33-keys) §3.3).
 
 **prefix.** Two things, both of them about position in a key
 and neither of them an identifier.
 
 - the **upper prefix** — the single byte `"U"`, the only part
   of store 0 a level above sm1 may use
-  (`DBMGR.md` §7).
+  ([`DBMGR.md`](DBMGR.md#7-the-store-catalog-and-ddl) §7).
 - a **scan prefix** — any leading byte string a range is
   derived from, its exclusive upper bound being that string's
   `successor`. **Prefix-free** (§7) is this sense too.
@@ -87,7 +89,7 @@ is *one* catalog object and *several* rels.
 - a table's oid lock was once called its *schema lock*, in
   sm2's sense: a lock on the table's *definition*, and
   nothing to do with a namespace. It is the **table-oid
-  lock** now (`CATALOG.md` §1).
+  lock** now ([`CATALOG.md`](CATALOG.md#1-design) §1).
 
 **version.** Three things: a **row version**, one entry in a
 key's MVCC chain; the catalog's **format version**, in its
@@ -102,12 +104,13 @@ entry in a table.
   the transaction.
 - an **uncommitted version**, which a write leaves behind and
   the next writer of the key waits on. A write keeps no
-  lock-table entry (`LOCKMGR.md`).
+  lock-table entry ([`LOCKMGR.md`](LOCKMGR.md)).
 - a **latch**, a short mutex hashed on store and key, held
   only inside a call, which makes check-then-write one step.
 
 A lock-table entry is one of two kinds, by what it names
-(`LOCKMGR.md` §1.5). A **row lock** names a key in a store: a
+([`LOCKMGR.md`](LOCKMGR.md#15-the-calls) §1.5). A **row lock**
+names a key in a store: a
 table's row locked without being written, or a catalog key
 about to be. An **OID lock** names an object's oid, a key in
 no store: a table's is its **table-oid lock**, and a namespace
@@ -118,11 +121,12 @@ row it writes: that is the uncommitted version.
 an encoded key to a row's key; and "index" used
 loosely of a
 lookup structure in the catalog — the **name index**, its
-`NAME` keys (`CATALOG.md` §3.3), and the
-**dependency index**, not built (`CATALOG.md` §11) —
+`NAME` keys ([`CATALOG.md`](CATALOG.md#33-keys) §3.3), and the
+**dependency index**, not built
+([`CATALOG.md`](CATALOG.md#11-not-built) §11) —
 which are keys and not objects.
 
-**part.** Two things, both in `CATALOG.md`: in §3 a
+**part.** Two things, both in [`CATALOG.md`](CATALOG.md): in §3 a
 part is one sm2 tuple inside a hand-framed catalog value; in
 §2 a part is a member of an object that has no oid of its own
 — a column, an index key column.
@@ -148,13 +152,14 @@ Six numbers name things, and none of the six is ever reused.
 | `seqid` | uint64 | database | the same objid lease | a sequence |
 | `oid` | uint64 | database | the sequence `sm3.oid` | a catalog object |
 | relid | uint16 | one store | a constant, or that table's counter | a rel in that store |
-| `_id` | uint64 | one table | the sequence `sm3.id.<oid>` | a row of a table without a primary key, its key (`ROWSTORE.md` §2.2) |
+| `_id` | uint64 | one table | the sequence `sm3.id.<oid>` | a row of a table without a primary key, its key ([`ROWSTORE.md`](ROWSTORE.md#22-the-row-and-its-index-entries) §2.2) |
 | `attnum` | int32 | one table | the column's position | a column |
 
 - **Never reused** means the same thing in every row: a
   reused id would name two things at once. A dropped store's
   column family outlives its `rmstore` until GC
-  (`DBMGR.md` §7); a dropped index's relid is
+  ([`DBMGR.md`](DBMGR.md#7-the-store-catalog-and-ddl) §7); a
+  dropped index's relid is
   never handed out again, so its surviving entries cannot be
   read as a new index's; a dropped column keeps its attnum,
   so no later column shifts under a row already written.
@@ -169,33 +174,37 @@ Six numbers name things, and none of the six is ever reused.
   index's, is taken by none; and **0 is unused**, so a zeroed
   relid is never a live rel.
   Which relid means what is written down once, in
-  `CATALOG.md` §2.
+  [`CATALOG.md`](CATALOG.md#2-object-mapping) §2.
 - **An index therefore has two identities**: its **oid** in
   the catalog, and its **relid** in its table's store, with
   the catalog holding the mapping between them.
 - `_id` starts at 1, so `_id = 0` names no row. It is the key of
   a row in a table without a primary key; a row of a table with
   one has none, its key its primary key's encoding, and the calls
-  that hand out an `_id` give 0 for it (`ROWSTORE.md` §2.2). It
+  that hand out an `_id` give 0 for it
+  ([`ROWSTORE.md`](ROWSTORE.md#22-the-row-and-its-index-entries)
+  §2.2). It
   was `rowno` before the pivot; SQL reads it as the system column
   `_id`, in a keyless table alone, and there is no `ctid`.
 - Ids 1 to 999 are reserved in sm1's objid lease, which starts
   at 1000. `sm3.oid` starts at 16384, PostgreSQL's
   `FirstNormalObjectId`; the oids below it are PostgreSQL's
   own for built-in objects, so `pg_catalog` is 11 and `public`
-  2200 (`CATALOG.md` §3.1).
+  2200 ([`CATALOG.md`](CATALOG.md#31-where-it-lives) §3.1).
 
 ---
 
 ## 2. The stack
 
-**level** — one of the four layers of `README.md`: the error
+**level** — one of the four layers of [`README.md`](README.md):
+the error
 state, helpers and system services `sm0/` (0), the MVCC
 storage manager `sm1/` (1), types and tuples `sm2/` (2),
 schema and index maintenance `sm3/` (3), with the C wrapper
 above them all and RocksDB under sm1. A level calls only the
 levels below it: sm3 calls sm2, and sm1 directly where sm2 has
-nothing to add, and nothing calls upward (`CODE.md` §1).
+nothing to add, and nothing calls upward
+([`CODE.md`](CODE.md#1-levels) §1).
 
 **the wrapper** — `include/sm.h` and `src/`, the one API the
 host calls. Belongs to no level.
@@ -207,13 +216,15 @@ host calls. Belongs to no level.
 **store** — sm1's unit of key space, named by a `storeid`.
 Every store *is* a RocksDB column family: `CF:chain.<storeid>`
 for a chained store, as every table's is, `CF:store.<storeid>`
-for a versioned one (`ROWSTORE.md` §3.5). Nothing above sm1 calls
+for a versioned one
+([`ROWSTORE.md`](ROWSTORE.md#35-a-chained-key) §3.5). Nothing
+above sm1 calls
 it one.
 
 **store 0** — sm1's own catalog, an ordinary MVCC store
 holding a `"R"` row per store, a `"S"` row per sequence, and
 whatever the level above keeps under `"U"`
-(`DBMGR.md` §7).
+([`DBMGR.md`](DBMGR.md#7-the-store-catalog-and-ddl) §7).
 
 **`CF:meta`** — the column family holding what is outside
 MVCC: the object-id lease and a sequence's position.
@@ -234,11 +245,14 @@ MB for a value.
 
 **row version** — one value of a key. A versioned key's
 version is one RocksDB key-value pair: the class byte, the
-userkey and the version tail (`DBMGR.md` §6.2,
-`ROWSTORE.md` §3.2). A chained store keeps a row's newest version
+userkey and the version tail
+([`DBMGR.md`](DBMGR.md#62-key-classes) §6.2,
+[`ROWSTORE.md`](ROWSTORE.md#32-the-class-byte-and-the-comparator)
+§3.2). A chained store keeps a row's newest version
 under its plain key and the older ones in a chain behind it,
 each pointing to the one before; its index entries and TOAST
-stay versioned (`ROWSTORE.md` §3.5). There is no "row" object on
+stay versioned ([`ROWSTORE.md`](ROWSTORE.md#35-a-chained-key)
+§3.5). There is no "row" object on
 disk, only versions.
 
 **version tail** — `~wts | ~seq`, 12 bytes, bitwise
@@ -263,8 +277,9 @@ looked up instead.
 **tombstone** — a version that records a delete. A **moved
 tombstone** (`sm1::erase_moved`) records a primary key change:
 a reader sees it as any tombstone, and a writer that meets it
-fails with `SM_ERR_MOVED` (`DBMGR.md` §6.2, `LOCKMGR.md` §1.7;
-`ROWSTORE.md` §2.5).
+fails with `SM_ERR_MOVED` ([`DBMGR.md`](DBMGR.md#62-key-classes)
+§6.2, [`LOCKMGR.md`](LOCKMGR.md#17-a-write) §1.7;
+[`ROWSTORE.md`](ROWSTORE.md#25-a-key-change) §2.5).
 
 **snapshot** — one number, `snapshot_ts`, taken as
 `visible_ts`. A reader sees every version whose commit is at
@@ -272,7 +287,8 @@ or below it.
 
 **`visible_ts`** — the largest timestamp below which every
 commit is published, so that a snapshot never sees a gap
-(`XCTMGR.md` §3.2).
+([`XCTMGR.md`](XCTMGR.md#32-visible_ts-and-the-commit-queue)
+§3.2).
 
 **view** — what a read actually sees: its `snapshot_ts`, its
 own `xid`, and the `seq` high-water mark that decides which of
@@ -280,7 +296,7 @@ its own writes are visible to this statement.
 
 **commit cache** — an in-memory map from `xid` to `commit_ts`,
 the fast answer for a recently committed transaction. Never on
-disk, and empty after a restart (`XCTMGR.md`).
+disk, and empty after a restart ([`XCTMGR.md`](XCTMGR.md)).
 
 **watermark** — the oldest snapshot still in use. Garbage
 collection may remove versions at or below it, and a dropped
@@ -324,7 +340,7 @@ refused, rather than readers blocking writers.
 **SIREAD lock** — a record of what a serializable transaction
 read: a point read records a key, a scan records the range it
 actually traversed. Not a lock in the waiting sense
-(`XCTMGR.md`).
+([`XCTMGR.md`](XCTMGR.md)).
 
 **range predicate** — the range half of a SIREAD lock, and
 the **phantom** defence: a later insert into that range
@@ -340,7 +356,8 @@ detected.
 
 **type code** — sm2's frozen number for a type, assigned once
 and never reused or renumbered. Code 7, the retired
-`decimal`, is never written (`sm2/TYPE.md` §3).
+`decimal`, is never written
+([`sm2/TYPE.md`](sm2/TYPE.md#3-the-types) §3).
 
 **typmod** — a type's modifier, such as a decimal's precision
 and scale.
@@ -351,10 +368,10 @@ encoding: what a tuple holds and what `cmp` compares.
 **key encoding** — the same value turned into bytes whose
 `memcmp` order is the value's order, because sm1 takes no
 comparator. Every type has both encodings, and they differ
-(`sm2/TYPE.md` §1).
+([`sm2/TYPE.md`](sm2/TYPE.md#1-the-two-representations) §1).
 
 **varlena** — the framing of a variable-width datum
-(`sm2/VARLENA.md`).
+([`sm2/VARLENA.md`](sm2/VARLENA.md)).
 
 **null marker** — the one byte every column's key encoding
 begins with, saying null or not and in which null order, so a
@@ -381,7 +398,7 @@ with `SM_ERR_KEYTOOLONG` instead.
 ## 8. Level 2: rows, relations and indexes
 
 **tuple** — a row's bytes: a header, null bitmap and the
-datums, held to 64 KB (`sm2/TUPLE.md`).
+datums, held to 64 KB ([`sm2/TUPLE.md`](sm2/TUPLE.md)).
 
 **`attribute_t`** — one column's physical description;
 **schema** is a vector of them, and **`tup_desc_t`** the
@@ -413,7 +430,7 @@ reads.
 
 **object** — a thing with an **oid** and a name unique in its
 namespace: a namespace, table, index, collation, constraint
-(`CATALOG.md` §3.3).
+([`CATALOG.md`](CATALOG.md#33-keys) §3.3).
 
 **part** — a member of an object with no oid, identified by
 its position: a column, an index key column.
@@ -435,8 +452,11 @@ before a transaction reads or writes the table's definition
 and held to the end of the transaction. It is what makes an
 in-memory catalog safe. The name it locks is a key in no
 store, which nothing writes, so the lock only orders and
-never fails as a row lock can (`LOCKMGR.md` §4.2,
-`CATALOG.md` §1). A namespace has the same kind of
+never fails as a row lock can
+([`LOCKMGR.md`](LOCKMGR.md#42-why-the-table-oid-lock-is-a-type-not-a-key)
+§4.2,
+[`CATALOG.md`](CATALOG.md#1-design) §1). A namespace has the same
+kind of
 lock on its own oid. It was called the schema lock.
 
 **overlay** — a session's own uncommitted DDL, tagged with the
@@ -458,7 +478,7 @@ read. Its **read columns** are the columns they use.
 **referenced and dependent** — the two ends of a dependency.
 The referenced object is the one a `DROP` is aimed at; the
 dependent is the one that would be left broken
-(`CATALOG.md` §11).
+([`CATALOG.md`](CATALOG.md#11-not-built) §11).
 
 ---
 

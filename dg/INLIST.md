@@ -1,6 +1,6 @@
 # INLIST — an index scan of `= ANY(array)` and `IN (...)`
 
-Status: built (`WORKNOTE.md` step 314).
+Status: built ([`WORKNOTE.md`](WORKNOTE.md) step 314).
 
 ## 1. What
 
@@ -19,7 +19,9 @@ index path for the clause, and a sequential scan filtered
 every row; with `enable_seqscan` off the plan was still `Seq
 Scan`, disabled. An IN list is what an
 ORM's prefetch and a batch loader send, and the old bench's
-Q7 is one (`../bench.old/DESIGN.md` §5): a million rows read
+Q7 is one
+([`../bench.old/DESIGN.md`](../bench.old/DESIGN.md#5-the-queries)
+§5): a million rows read
 for 100.
 
 ## 2. Design

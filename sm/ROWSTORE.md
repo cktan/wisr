@@ -10,8 +10,9 @@ with no copy. Its code is in `sm1/src/access.cc`,
 `sm3/src/table/table.cc`. Its client in digres is
 `../dg/src/backend/access/sm/smstore.c`.
 
-Types are in `sm2/TYPE.md`, and a tuple's bytes in
-`sm2/TUPLE.md`. Other modules: TOAST.md for values out of line,
+Types are in [`sm2/TYPE.md`](sm2/TYPE.md), and a tuple's bytes in
+[`sm2/TUPLE.md`](sm2/TUPLE.md). Other modules: TOAST.md for
+values out of line,
 LOCKMGR.md for latches and locks, XCTMGR.md for transactions,
 visibility, savepoints and SSI, GC.md for the Garbage Collector,
 DBMGR.md for column families and options, LSMINDEX.md and
@@ -135,7 +136,7 @@ version, and makes a second `Get`, of OLD id 7. It sees
 
 Why a table is clustered on its key: on an LSM a heap's key is a
 key like any other, so a heap pays an index's price on every read
-through an index (`CLUSTER.md`).
+through an index ([`CLUSTER.md`](CLUSTER.md)).
 
 Why no TID: an insert writes one key less, a secondary entry is 8
 bytes shorter, nothing reads at random to resolve an `_id`, and
@@ -248,7 +249,7 @@ there is none.
   order of magnitude in memtables. Correlation is measured in key
   order. A keyless table is sampled by runs of `_id`s. A keyed
   table has no `_id` limit, 0 in its statistics, and its growth
-  since ANALYZE is its bytes' (`STATISTICS.md`).
+  since ANALYZE is its bytes' ([`STATISTICS.md`](STATISTICS.md)).
 - **TABLESAMPLE** picks its blocks the same way. SYSTEM's are
   slots of 8 KB of the bytes, each read by a seek to its first
   key, the rest skipped. BERNOULLI's, which reads every row, are
@@ -473,7 +474,9 @@ compacted, in the block cache:
 - **The 12-byte tail is most of a scan's cost**, so it leaves
   CURR's keys, and is not padded.
 - **A point read gains a little**, about 4% of the old bench's
-  Q7 (`../bench.old/DESIGN.md` §5).
+  Q7
+  ([`../bench.old/DESIGN.md`](../bench.old/DESIGN.md#5-the-queries)
+  §5).
 - **In digres the scans gained less than these figures
   promised**: the old bench's Q1 stayed at 2.4 to 3.5 times
   PostgreSQL in one run. A raw RocksDB scan of rows all of one
@@ -523,7 +526,8 @@ aborted.
 A load stream is declared chained or not (`sm1::load_stream`). A
 chained stream puts CURR versions of the load's xid, `prev` 0,
 under class `0x01`, as one ingestion into the one column family
-(`BULKLOAD.md`). An abort leaves them dead, for the Garbage
+([`BULKLOAD.md`](BULKLOAD.md)). An abort leaves them dead, for
+the Garbage
 Collector to delete. A rollback to a savepoint deletes the
 store's keys of every class but pages, with one `DeleteRange`.
 
@@ -1039,7 +1043,8 @@ a row whose newest version it does not see.
 
 ### 5.8 The shape of the read calls
 
-`sm1/API.md` is the contract. Three shapes in it encode
+[`sm1/API.md`](sm1/API.md) is the contract. Three shapes in it
+encode
 decisions:
 
 - **Both range bounds are parameters of `sm1::scan`.** A NULL
@@ -1298,7 +1303,8 @@ int pin_tuple(pin_ref_t ref, std::string_view& tuple);
 
 sm2 gives the reader: `tup_read_begin` parses a tuple's header
 once, and `tup_read` deforms its columns in as many steps as the
-client takes (`tup_reader_t`, `sm2/TUPLE.md`). Resuming is free:
+client takes (`tup_reader_t`, [`sm2/TUPLE.md`](sm2/TUPLE.md)).
+Resuming is free:
 an expression that needs column 3, then one that needs column 40,
 deforms 0 to 3, then 4 to 40, each column once. `tup_deform`
 stays for callers that hold bytes, not a pin, and checks the
@@ -1414,7 +1420,8 @@ how many rows a caller keeps pinned at once.
   inside the savepoint, which opens a new sm cursor. After
   `ROLLBACK TO`, its next FETCH fails with `SM_ERR_SCANCLOSED`,
   where PostgreSQL goes on: a known incompatibility
-  (`../dg/README.md`). `../dg/test/slt/point_read.test` shows
+  ([`../dg/README.md`](../dg/README.md)).
+  `../dg/test/slt/point_read.test` shows
   both sides.
 - **A rollback that closes a cursor takes its lent row.** A
   caller reads that row only before the cursor's next call, which
@@ -1456,7 +1463,9 @@ makes them too.
 
 ### 7.1 Why
 
-Two queries of the old bench (`../bench.old/DESIGN.md` §5):
+Two queries of the old bench
+([`../bench.old/DESIGN.md`](../bench.old/DESIGN.md#5-the-queries)
+§5):
 
 ```sql
 -- Q9: 100 rows by a secondary index, their rows next to each other
@@ -1593,7 +1602,8 @@ sm1's store is an ordered map of byte string to byte string.
 sm2's is that store with the types put back: a row goes in as a
 tuple and comes out as a tuple. This is the whole of sm2's API
 surface. The types, the key encoding and the tuple codec are what
-it is built of (`sm2/TYPE.md`, `sm2/TUPLE.md`).
+it is built of ([`sm2/TYPE.md`](sm2/TYPE.md),
+[`sm2/TUPLE.md`](sm2/TUPLE.md)).
 
 A `rel` is opened over exactly one sm1 store, with three things:
 

@@ -38,13 +38,17 @@ is compared with `expected/`, blind to white space as
 statement has no ORDER BY, which are compared as a multiset
 (`../rowset.py`): digres reads a table with a primary key in the
 key's order, PostgreSQL in the order its rows went in
-(`../../../sm/CLUSTER.md`). A plan where PostgreSQL's has a
+([`../../../sm/CLUSTER.md`](../../../sm/CLUSTER.md)). A plan
+where PostgreSQL's has a
 bitmap scan is not compared, the statement still run: digres
-plans none (`../../../sm/CLUSTER.md` §6), and the results that
+plans none
+([`../../../sm/CLUSTER.md`](../../../sm/CLUSTER.md#6-digres) §6),
+and the results that
 follow are compared. An index's kind `lsm`, as
 `pg_get_indexdef()` and psql's `\d` print it, is read as
 PostgreSQL's `btree`: in digres both are `pg_am`'s `btree`
-(`../../../sm/BTREEINDEX.md`). A result's rule line is compared
+([`../../../sm/BTREEINDEX.md`](../../../sm/BTREEINDEX.md)). A
+result's rule line is compared
 without its width, which the shorter name changes. This applies
 to `test` only: `trim` and `differs` still see `lsm`. A file's
 output and diff go in

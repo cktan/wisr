@@ -4,7 +4,8 @@ sm2 is level 2 of the stack. It gives sm1's opaque byte strings a
 type and a shape. It is a type system, the two on-disk encodings
 those types get, and a relation whose rows are tuples. This
 document is an overview. Each module document holds its own
-design. `SM2_OBJECTIVE.md` says what the level is for.
+design. [`SM2_OBJECTIVE.md`](SM2_OBJECTIVE.md) says what the
+level is for.
 
 ## 1. What the level provides
 
@@ -49,14 +50,14 @@ decisions, never a build dependency.
 
 | Module | Document | Summary | Code in `src/` |
 | --- | --- | --- | --- |
-| Types | `TYPE.md` | each type's representation, order and key bytes, and why | `type/` |
-| Tuple | `TUPLE.md` | a row's bytes, the codec, and why | `tuple/` |
-| Varlena | `VARLENA.md` | a variable-width datum's bytes | `tuple/` |
-| Row Store | `../ROWSTORE.md` | the tuple relation: rows, their keys, `rel_*` | `rel/rel.cc` |
-| LSM Index | `../LSMINDEX.md` | the key encoder's rules, entries, cut keys, the index `rel` | `rel/index.cc`, `type/key.cc`, `type/collation.cc` |
-| B-tree Index | `../BTREEINDEX.md` | an index as a B+tree of its own pages | `tree/`, the tree paths of `rel/index.cc` |
-| TOAST | `../TOAST.md` | a row's long datums, out of line in the table's store | `rel/toast.cc` |
-| Catalog | `../CATALOG.md` | `catkv`, the bytes of sm3's catalog, which sm2 stores and never reads | `rel/catkv.cc` |
+| Types | [`TYPE.md`](TYPE.md) | each type's representation, order and key bytes, and why | `type/` |
+| Tuple | [`TUPLE.md`](TUPLE.md) | a row's bytes, the codec, and why | `tuple/` |
+| Varlena | [`VARLENA.md`](VARLENA.md) | a variable-width datum's bytes | `tuple/` |
+| Row Store | [`../ROWSTORE.md`](../ROWSTORE.md) | the tuple relation: rows, their keys, `rel_*` | `rel/rel.cc` |
+| LSM Index | [`../LSMINDEX.md`](../LSMINDEX.md) | the key encoder's rules, entries, cut keys, the index `rel` | `rel/index.cc`, `type/key.cc`, `type/collation.cc` |
+| B-tree Index | [`../BTREEINDEX.md`](../BTREEINDEX.md) | an index as a B+tree of its own pages | `tree/`, the tree paths of `rel/index.cc` |
+| TOAST | [`../TOAST.md`](../TOAST.md) | a row's long datums, out of line in the table's store | `rel/toast.cc` |
+| Catalog | [`../CATALOG.md`](../CATALOG.md) | `catkv`, the bytes of sm3's catalog, which sm2 stores and never reads | `rel/catkv.cc` |
 
 ## 4. Structure
 
@@ -105,17 +106,18 @@ make tsan                the B+tree's tests, under the thread sanitizer
 
 Most of sm2 is tested by property, not by interleaving.
 Two-session scenarios above sm1 are `rel` scripts
-(`../rel/REL.md`), which drive sm2 and sm3 through
+([`../rel/REL.md`](../rel/REL.md)), which drive sm2 and sm3
+through
 `../include/sm.h`. Each module document says what its tests
 prove:
 
 | Area | Tests | Where it is told |
 | --- | --- | --- |
-| types, keys, PostgreSQL fixtures | `test_type.cc`, `test_key.cc`, `test_pg_fixtures.cc` | `TYPE.md` §9 |
-| the tuple codec | `test_tuple.cc` | `TUPLE.md` §14 |
-| the relations | `test_rel.cc`, `test_cluster.cc`, `test_index.cc`, `test_catkv.cc` | `../ROWSTORE.md` §13, `../LSMINDEX.md` §13 |
-| TOAST | `test_toast.cc` | `../TOAST.md` §6 |
-| the tree | `test_page.cc`, `test_tree.cc`, `test_tree_index.cc` | `../BTREEINDEX.md` §15 |
+| types, keys, PostgreSQL fixtures | `test_type.cc`, `test_key.cc`, `test_pg_fixtures.cc` | [`TYPE.md`](TYPE.md#9-tests) §9 |
+| the tuple codec | `test_tuple.cc` | [`TUPLE.md`](TUPLE.md#14-tests) §14 |
+| the relations | `test_rel.cc`, `test_cluster.cc`, `test_index.cc`, `test_catkv.cc` | [`../ROWSTORE.md`](../ROWSTORE.md#13-tests) §13, [`../LSMINDEX.md`](../LSMINDEX.md#13-tests) §13 |
+| TOAST | `test_toast.cc` | [`../TOAST.md`](../TOAST.md#6-tests) §6 |
+| the tree | `test_page.cc`, `test_tree.cc`, `test_tree_index.cc` | [`../BTREEINDEX.md`](../BTREEINDEX.md#15-tests) §15 |
 
 ## 5. Cross-level decisions
 
@@ -140,19 +142,26 @@ sm3 is a client of sm2, as sm2 is of sm1.
 - **Predicates.** sm2 has no filter. So it cannot resolve
   `SM_ERR_UPDATED`, or derive a key range from a `WHERE` clause.
 - **Statistics.** sm2 counts nothing. It answers sizes and
-  positions by key range (`../STATISTICS.md` §9.8).
+  positions by key range
+  ([`../STATISTICS.md`](../STATISTICS.md#98-the-calls) §9.8).
 - **Everything above the stack.** sm2 has no SQL, no planner and
   no executor, and builds and tests with no PostgreSQL source
-  tree (`../PART4.md`).
+  tree ([`../PART4.md`](../PART4.md)).
 
 ### 5.2 Deployment
 
-The fork is threaded (`../PART4.md` §2), so all the levels link
+The fork is threaded
+([`../PART4.md`](../PART4.md#2-the-blocker-the-process-model)
+§2), so all the levels link
 into one server process, and a session is used by one thread at a
 time. The boundary above sm2 is a function call, not an RPC, so
 an interface of one tuple at a time costs nothing an IPC boundary
 would add.
 
-Trade-offs have module owners: `TYPE.md` §7, `TUPLE.md` §12,
-`../ROWSTORE.md` §2.8, `../LSMINDEX.md` §9, and `../DBMGR.md` §14
+Trade-offs have module owners:
+[`TYPE.md`](TYPE.md#7-costs-accepted) §7,
+[`TUPLE.md`](TUPLE.md#12-costs-accepted) §12,
+[`../ROWSTORE.md`](../ROWSTORE.md#28-costs) §2.8,
+[`../LSMINDEX.md`](../LSMINDEX.md#9-costs-accepted) §9, and
+[`../DBMGR.md`](../DBMGR.md#14-trade-offs) §14
 for the bound on tables that one store a table brings.

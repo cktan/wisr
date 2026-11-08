@@ -9,7 +9,8 @@ This guide shows how to call aa. It spends most of its time on
 reads (checking logins and privileges), because a server does
 those on every connection and every statement. Changing roles
 and privileges is covered briefly at the end. For how aa works
-inside, see `AA_DESIGN.md`. Every function is declared in
+inside, see [`AA_DESIGN.md`](AA_DESIGN.md). Every function is
+declared in
 `include/aa.h`.
 
 ---

@@ -49,7 +49,8 @@ change the leaf
 ```
 
 If the write fails, the frame still equals RocksDB's page. The
-unpin needs no special case. Trees are `BTREEINDEX.md`'s; this
+unpin needs no special case. Trees are
+[`BTREEINDEX.md`](BTREEINDEX.md)'s; this
 document says what they get from the pool.
 
 ### 1.2 Where it sits
@@ -104,7 +105,9 @@ holds a child's EX and takes SH above it. Those holders only ever
 go up or right, so no cycle forms.
 
 **A pin's wait.** A pin spins briefly, then waits by `sm_wait()`,
-and fails with `SM_ERR_INTERRUPTED` (`CODE.md` §7). A pin's wait
+and fails with `SM_ERR_INTERRUPTED`
+([`CODE.md`](CODE.md#7-threads-waits-and-logging) §7). A pin's
+wait
 can last most of a second through a stalled write (§1.11), so an
 interrupt must be able to end it. A pin may therefore fail; every
 caller already handles -1.
@@ -119,7 +122,8 @@ exceptions, both under the leaf's EX:
   leaf wait. A unique check's entries of one prefix are few.
 - `clean_leaf()` judges again only what is to go. The first
   judgement of a leaf runs with no pin, from a copy. So a clean
-  leaf takes no row read under EX (`BTREEINDEX.md`).
+  leaf takes no row read under EX
+  ([`BTREEINDEX.md`](BTREEINDEX.md)).
 
 **The bound on pins.** A thread pins at most five pages. In a
 split posting to a parent: the child, its parent, the parent's
@@ -230,7 +234,8 @@ never reused.
 Every descent reads page 0, so its pin is a word every probe on
 every core writes. A **page copy** removes that write: a session
 reads page 0 from an immutable copy, with no pin, while the page
-is as it was. `BTREEINDEX.md` says why a stale copy is safe for a
+is as it was. [`BTREEINDEX.md`](BTREEINDEX.md) says why a stale
+copy is safe for a
 descent. The pool gives three things.
 
 - **A version** in each descriptor, a count each change of the
@@ -280,7 +285,8 @@ longer holds the pages.
   holds it in the descriptor. A longer one is refused. sm2's are
   10.
 - **Its layout is the caller's.** sm1 reads no page. A page's
-  header and slots are `BTREEINDEX.md`'s. They were chosen for
+  header and slots are [`BTREEINDEX.md`](BTREEINDEX.md)'s. They
+  were chosen for
   the pool: `max` and `top` keep slots with room to grow, 16 at a
   time, and offsets count from the end of the slot array, so
   growing it moves no slot's value.
@@ -535,7 +541,7 @@ opaque `frame_t`.
 
 1. An active transaction, not prepared or doomed, or a session
    set by `sm1::set_no_transaction`, a cleaner's
-   (`BTREEINDEX.md`).
+   ([`BTREEINDEX.md`](BTREEINDEX.md)).
 2. A store other than 0.
 3. A store live at the view (`catalog_lookup`): a hash look-up in
    the session's cache, and a load of the database's
@@ -599,7 +605,7 @@ bytes, on disk and in memtables. `sm1::page_cached` and
 | a pin on a frame being evicted | the tag has changed under the pin: it unpins and looks again |
 | `DROP INDEX`, `tree_create` again | `sm1::page_drop`; a session's copy finds the version moved |
 | `TRUNCATE`, `DROP TABLE`, `rmdb` | the old store's frames age out; a store dropped fails `sm1::page_enter` first |
-| abort of the writing transaction | the page stays: it is outside every transaction. `BTREEINDEX.md` says why that is safe |
+| abort of the writing transaction | the page stays: it is outside every transaction. [`BTREEINDEX.md`](BTREEINDEX.md) says why that is safe |
 | crash, restart | the pool and the copies start empty; RocksDB replays its WAL |
 | a temporary store | its pages share the pool, with no WAL |
 | page 0 evicted under a copy | a good copy's check ages it, so it is not while read; if it is, the copy fails its check and the next descent misses |
@@ -646,7 +652,7 @@ what trees do with pins; `make tsan` in `sm2` runs them under
 TSan.
 
 **`rel` and dg** cover what a statement reaches, a load and a
-vacuum above all (`BTREEINDEX.md`).
+vacuum above all ([`BTREEINDEX.md`](BTREEINDEX.md)).
 
 **`sm1/mvcc` cannot express any of this.** A page is outside
 every transaction, and its scenarios see only versions.
@@ -661,7 +667,8 @@ every transaction, and its scenarios see only versions.
   is memory alone.
 - **Readers through a write**, §1.11's largest risk, has three
   steps. Zeroing the next log ahead is built, on WSL alone
-  (`DBMGR.md` §8.4): 794 ms goes to about 333 ms.
+  ([`DBMGR.md`](DBMGR.md#84-zero-filled-logs) §8.4): 794 ms goes
+  to about 333 ms.
   `WriteOptions::no_slowdown` under EX is not built: a write that
   would stall returns `Incomplete`, and the caller unpins, waits
   with no pin held, and starts again. It keeps two modes, and the

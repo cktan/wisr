@@ -9,20 +9,25 @@ the register of §12.3), `src/sm.cc` (the calls of §6), and
 
 **Status: sm3's part and `sm.h`'s are built** (§3 to §7,
 `sm3/test/test_view.cc`), as proposed in §11, and digres's
-CREATE, query and DROP (§8, `../dg/WORKNOTE.md` step 238),
+CREATE, query and DROP (§8,
+[`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 238),
 the catalog relations (step 239), and ALTER VIEW's RENAME and
 a view's options (step 240), and temporary views (§12, step
-245). Not yet: the rest of §9 (`NEXT.md` §2).
+245). Not yet: the rest of §9 ([`NEXT.md`](NEXT.md#2-loose-ends)
+§2).
 
 Before this, `CREATE VIEW` failed in digres: `DefineView()`
 made a PostgreSQL relation, which digres has no catalog for.
 It was what digres alone failed of SQLite's corpus: 48,608
 records in the whole of it, 24,408 in the sample `make
-slt-corpus` runs (`../dg/WORKNOTE.md` step 164), every one a
+slt-corpus` runs ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step
+164), every one a
 `CREATE VIEW` refused or a query of the view it did not make.
 `information_schema` and the views of `system_views.sql`,
-`pg_stats` among them, still wait (`../dg/SYSCATALOG.md` §7,
-`../dg/STATISTICS.md` §2.5).
+`pg_stats` among them, still wait
+([`../dg/SYSCATALOG.md`](../dg/SYSCATALOG.md#7-left-out) §7,
+[`../dg/STATISTICS.md`](../dg/STATISTICS.md#25-pg_stats-as-a-function-for-now)
+§2.5).
 
 This file is the design: a new kind of entry in sm3's catalog,
 what DDL does to it and to the relations a view reads, the
@@ -41,7 +46,7 @@ calls in `sm.h`, and what digres builds on them.
   column or a view a view reads cannot be dropped from under
   it (§5). This is the one dependency check sm3 must make;
   the others wait for a dependency index (§9,
-  `CATALOG.md` §11).
+  [`CATALOG.md`](CATALOG.md#11-not-built) §11).
 - **The host expands it.** In digres that is PostgreSQL's
   rewriter, unchanged: the view's relation cache entry carries
   its `_RETURN` rule, made from the query sm3 keeps, and
@@ -69,13 +74,15 @@ calls in `sm.h`, and what digres builds on them.
   in**: its tables', views' and collations', which a copied
   `base/X` keeps, and the functions', operators' and types',
   the same in every instance of one version
-  (`../dg/CODE.md`). A view's blob therefore moves with its
+  ([`../dg/CODE.md`](../dg/CODE.md)). A view's blob therefore
+  moves with its
   database, as an index's `eval` and a column's default do,
   and like them is tied to the version's node format.
 
 ## 3. The entry
 
-A new kind in `CATALOG.md` §3.3, and a part in §3:
+A new kind in [`CATALOG.md`](CATALOG.md#33-keys) §3.3, and a part
+in §3:
 
 | Kind | Value | Key after the kind | Holds |
 | --- | --- | --- | --- |
@@ -122,10 +129,11 @@ VIEW value = view | read × nread | query × npiece
   by a pass over the tables. A table's own definition does not
   change, so a view made on a table moves no version of the
   table's, and invalidates no host's cache of it (unlike a
-  foreign key, `FOREIGNKEY.md` §4).
+  foreign key, [`FOREIGNKEY.md`](FOREIGNKEY.md#4-in-memory) §4).
 - **The version moves** with each `replace_view` and
   `rename_view`, so a host's cache of the view is seen to be
-  stale (`DESIGN.md` §5, a cache is kept fresh by a version).
+  stale ([`DESIGN.md`](DESIGN.md#5-cross-level-decisions) §5, a
+  cache is kept fresh by a version).
 - **A namespace knows it holds views**, so its drop is
   refused while it does, as with its tables and sequences.
 
@@ -203,7 +211,8 @@ struct sm_view_def_t {
 ## 7. Locks
 
 - **A view has an oid lock**, sm1's `LOCKTYPE_OID` on its oid,
-  as a table has (`CATALOG.md` §1). A query takes it IS,
+  as a table has ([`CATALOG.md`](CATALOG.md#1-design) §1). A
+  query takes it IS,
   DDL on the view X: a `DROP VIEW` or `CREATE OR REPLACE`
   waits for the transactions reading it, and they for it, as
   PostgreSQL's `AccessShareLock` and `AccessExclusiveLock` do.
@@ -266,7 +275,8 @@ struct sm_view_def_t {
   makes `rd_options` of them, so the rewriter's check option,
   `security_barrier` and `security_invoker` are PostgreSQL's.
   `ALTER VIEW ... SET` and `RESET` replace them.
-- **The catalog relations** (`../dg/SYSCATALOG.md`): a view's
+- **The catalog relations**
+  ([`../dg/SYSCATALOG.md`](../dg/SYSCATALOG.md)): a view's
   `pg_class` row, `relkind` `v`, `relhasrules` true; its
   `pg_attribute` rows; and its `pg_rewrite` row, the rule's
   oid the view's own, `ev_action` its query. ruleutils.c's
@@ -286,14 +296,17 @@ struct sm_view_def_t {
 ## 9. Not here
 
 - **Materialized views**: they have storage, and are refused
-  as they are now (`../dg/WORKNOTE.md` step 64).
+  as they are now ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step
+  64).
 - **`INSTEAD OF` triggers and user rules** (`CREATE RULE`):
   sm keeps no triggers; a view that is not automatically
   updatable refuses DML, as PostgreSQL does with neither.
 - **Dependencies on what is not a relation**: a sequence a
   view's `nextval('s')` names, a user's collation. They wait
-  for a dependency index (`CATALOG.md` §11), as the
-  same checks for tables do (`NEXT.md` §3).
+  for a dependency index ([`CATALOG.md`](CATALOG.md#11-not-built)
+  §11), as the
+  same checks for tables do ([`NEXT.md`](NEXT.md#3-not-blocking)
+  §3).
 - **A view's row type**: a view's whole-row value is a
   record, as a table's in sm is, not a named composite type.
 - **`ALTER VIEW ... ALTER COLUMN SET DEFAULT` and `SET
@@ -362,14 +375,15 @@ struct sm_view_def_t {
 **Status: built**, as proposed in §12.8: in sm3
 (`sm3/test/test_view.cc`) and in digres
 (`../dg/test/slt/view_temp.test`, `../dg/test/server.sh`,
-`../dg/WORKNOTE.md` step 245).
+[`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 245).
 
 A temporary view is a session's, as a temporary table is: no
 other session sees it, and it is gone when the session ends.
 PostgreSQL makes one by `CREATE TEMPORARY VIEW`, and makes a
 view temporary when it reads a temporary table or view,
 saying so in a notice. It is the largest part of what
-`create_view` still fails on (`../dg/WORKNOTE.md` step 240).
+`create_view` still fails on
+([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 240).
 
 ### 12.1 What PostgreSQL does
 
@@ -395,7 +409,8 @@ saying so in a notice. It is the largest part of what
 ### 12.2 The view: the temporary catalog
 
 - **A temporary view is in the session's temporary catalog**
-  (`TEMPTABLE.md` §4), in namespace 0 (`sm3::nsp_temp`), as a
+  ([`TEMPTABLE.md`](TEMPTABLE.md#4-sm3-the-temporary-catalog)
+  §4), in namespace 0 (`sm3::nsp_temp`), as a
   temporary table is: made in the transaction's overlay, kept
   in the temporary catalog from commit to commit, dropped
   when the session closes, and written nowhere. Nothing of it
@@ -440,7 +455,8 @@ the drop; for that, the other session must learn of the view.
 - **It changes at commit**, with the temporary catalog: a
   commit that makes, replaces or drops a temporary view
   changes the register under the shared catalog's mutex, as
-  a commit of shared DDL does (`CATALOG.md` §4). Such a
+  a commit of shared DDL does
+  ([`CATALOG.md`](CATALOG.md#4-in-memory) §4). Such a
   commit counts as shared DDL.
 - **A session's close takes its entries out**, under the
   same mutex, as it drops its temporary catalog.

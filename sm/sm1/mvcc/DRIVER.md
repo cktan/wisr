@@ -7,7 +7,7 @@ writes `out/`, which is transient. `make test` runs every
 script and diffs the two; a difference fails the build.
 
 This file is the reference for the command and the language.
-`MVCC.md` is the isolation argument the scripts serve.
+[`MVCC.md`](MVCC.md) is the isolation argument the scripts serve.
 
 ## 0. Why a script and a transcript
 
@@ -96,7 +96,8 @@ behaviour: read the diff first.
    against what the design claims before believing it.
 3. `make accept` to record it, then commit the script and its
    `good/` transcript together.
-4. Add a row to the tables in `MVCC.md`, which are kept by
+4. Add a row to the tables in [`MVCC.md`](MVCC.md), which are
+   kept by
    hand.
 
 ## 2. The language
@@ -229,7 +230,9 @@ the transaction changed after the statement began answers
 `selfmodified`, and is not locked (`a18`). **`lockoid`** takes
 the OID lock on the number `n`, as sm3 locks a table by its
 oid: no row and no store, and no check against a snapshot.
-IS and IX take the fast path of `../LOCKMGR.md` §3.2 while no
+IS and IX take the fast path of
+[`../LOCKMGR.md`](../../LOCKMGR.md#32-the-lock-table) §3.2 while
+no
 stronger mode is held or asked on the name (`h01` to `h06`).
 
 **`seek`** moves an open cursor forward to a key, that key
@@ -429,7 +432,8 @@ noise.
 ## 6. Permutation scripts
 
 A second kind of script, made for porting PostgreSQL's
-isolation tests (`POSTGRES.md`). It names its steps once and
+isolation tests ([`POSTGRES.md`](POSTGRES.md)). It names its
+steps once and
 lists the orders to run them in, as PostgreSQL's specs do, in
 place of one schedule of `@` steps. A script is one kind or the
 other.
@@ -497,7 +501,8 @@ outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=seria
 ## 7. Chained mode
 
 `driver --chained script.t` runs a script against chained stores
-(`../ROWSTORE.md`): the two stores it makes are made chained, and
+([`../ROWSTORE.md`](../../ROWSTORE.md)): the two stores it makes
+are made chained, and
 every row verb calls the `chain_` counterpart of its call
 (`sm1::chain_read`, `chain_read_latest`, `chain_insert`,
 `chain_update`, `chain_erase`, `chain_erase_moved`, `chain_scan`,

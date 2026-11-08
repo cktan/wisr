@@ -1,11 +1,14 @@
 # Statistics in digres
 
 How digres's ANALYZE and planner use the statistics sm keeps.
-The strategy is `../sm/STATISTICS.md` (§3.7 is the host's
+The strategy is [`../sm/STATISTICS.md`](../sm/STATISTICS.md)
+(§3.7 is the host's
 part); what sm records, and how, is
-`../sm/STATISTICS.md` §9, and its calls are in
+[`../sm/STATISTICS.md`](../sm/STATISTICS.md#9-the-design) §9, and
+its calls are in
 `../sm/include/sm.h`: `sm_tbl_analyze`, `sm_tbl_stats` and the
-four live calls. All of §3 is built (`WORKNOTE.md` steps 74 to
+four live calls. All of §3 is built ([`WORKNOTE.md`](WORKNOTE.md)
+steps 74 to
 78).
 
 ## 1. Where digres stands
@@ -55,7 +58,8 @@ Where it stood before §3 was built.
 
 `estimate_rel_size()`'s sm branch calls
 `smstore_estimate_size()`, which follows
-`../sm/STATISTICS.md` §3.7:
+[`../sm/STATISTICS.md`](../sm/STATISTICS.md#37-what-the-host-derives)
+§3.7:
 
 - **Never analyzed, or a heap of 0 bytes** (new or truncated):
   as now, ten pages, planned as PostgreSQL plans `reltuples`
@@ -76,14 +80,14 @@ Where it stood before §3 was built.
     `rec.live_rows × N now / N then`, by the row numbers (its
     `_id`s) handed out, which counts inserts exactly and not
     deletes. A table with a primary key draws no row numbers
-    (`../sm/ROWSTORE.md` §2.2), and its bytes scale it still;
+    ([`../sm/ROWSTORE.md`](../sm/ROWSTORE.md#22-the-row-and-its-index-entries) §2.2), and its bytes scale it still;
   - pages are `⌈now / 8192⌉`, at least 1; `allvisfrac` 1, as
     there is no visibility map.
 - **An index** gets the same from its own entry
   (`sm_tbl_idx_size`, `stats_index_t`): its pages from its
   bytes, its tuples its entries scaled as the table's rows
   are. A partial index's entries are the rows that belong to
-  it (`EXPRINDEX.md`).
+  it ([`EXPRINDEX.md`](EXPRINDEX.md)).
   The scale is the plan's estimate of the table's rows over
   `rec.live_rows`: `get_relation_info()` estimates the table
   first, and passes its rows in, so the table is not sized a
@@ -95,7 +99,8 @@ Where it stood before §3 was built.
   seconds: making one reads every sorted file's and memtable's
   size, which costs more than the row itself in a plan of one
   row by its key. An entry is used while the catalog's epoch is
-  the one it was made at (`sm_cat_epoch`, `SCHEMACACHE.md`
+  the one it was made at (`sm_cat_epoch`,
+  [`SCHEMACACHE.md`](SCHEMACACHE.md)
   §4.4), which a DDL, an ANALYZE or an index made valid moves;
   none is made or used while the transaction has DDL of its
   own. An index keeps its pages and its entries at the analyze,
@@ -122,7 +127,8 @@ Where it stood before §3 was built.
   collation. sm keeps neither: they are the host's.
 - **Values are datums as they are.** `sm_datum_of_bytes` gives
   each value's datum; a variable-width one is a varlena in
-  PostgreSQL's own bytes (`../sm/sm2/VARLENA.md`), so
+  PostgreSQL's own bytes
+  ([`../sm/sm2/VARLENA.md`](../sm/sm2/VARLENA.md)), so
   `construct_array()` takes them as they are.
 - **`pg_statistic` gets a descriptor and no table.** The row is
   formed, and `get_attstatsslot()` reads its arrays, with
@@ -143,7 +149,8 @@ Where it stood before §3 was built.
   for a column's row several times, and building its arrays was
   9% of a point query's time, measured (a read of one row by key
   on the old bench, `../bench.old/`, as `../bench/q0-pkget.sql` reads
-  one; `WORKNOTE.md` step 280). A session keeps each row it
+  one; [`WORKNOTE.md`](WORKNOTE.md) step 280). A session keeps
+  each row it
   makes, as its bytes, with the `sm_stats_t` it was made from and
   the column's type and collation, and hands out a copy while sm
   still hands out those statistics: an ANALYZE publishes new
@@ -170,7 +177,7 @@ Where it stood before §3 was built.
   `pg_stats` is a view over `pg_statistic` and `pg_class`;
   digres has neither, nor views on catalogs: `system_views.sql`
   is not loaded. A view in sm has a `pg_rewrite` row since
-  `WORKNOTE.md` step 239; a system view has none.
+  [`WORKNOTE.md`](WORKNOTE.md) step 239; a system view has none.
 - **So `pg_stats` is a set-returning function**, compiled in
   from `pg_proc.dat` as every built-in is: `pg_stats(regclass)`
   gives the view's rows for one table, and `pg_stats()` for
@@ -211,8 +218,8 @@ Where it stood before §3 was built.
    join's estimate uses the distinct counts; an expression
    index's statistics drive a filter on that expression. The
    last is not checked: expression indexes are built
-   (`WORKNOTE.md` step 311), their statistics not
-   (`EXPRINDEX.md` §10 step 6).
+   ([`WORKNOTE.md`](WORKNOTE.md) step 311), their statistics not
+   ([`EXPRINDEX.md`](EXPRINDEX.md#10-order-of-work) §10 step 6).
 4. `pg_stats` (§2.5).
    → verify: after ANALYZE, `pg_stats('t')` gives a row a
    column, with the common values and bounds a known
@@ -222,7 +229,9 @@ Where it stood before §3 was built.
 ## 4. Left out
 
 - **Automatic analyze.** Nothing launches one; when to analyze
-  again is the host's (`../sm/STATISTICS.md` §3.8), and a
+  again is the host's
+  ([`../sm/STATISTICS.md`](../sm/STATISTICS.md#38-when-to-analyze-again)
+  §3.8), and a
   count of rows written since, kept in the write path, is the
   natural trigger. Not designed here.
 - **The other statistics views** (`pg_stats_ext`,

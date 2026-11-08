@@ -5,7 +5,8 @@ Build the level that turns sm1's ordered byte strings into
 on disk, and a relation whose rows are tuples rather than raw
 bytes.
 
-sm1 stops exactly where this begins. `sm1/SM1_OBJECTIVE.md` says
+sm1 stops exactly where this begins.
+[`sm1/SM1_OBJECTIVE.md`](../sm1/SM1_OBJECTIVE.md) says
 its values are "opaque byte strings" and its keys are ordered
 "bytewise (`memcmp`)" with the encoding left to the caller.
 sm2 is the caller that supplies that encoding, and this
@@ -13,7 +14,8 @@ document is what it is for.
 
 sm2 stops well short of a schema. A catalog, secondary
 indexes, predicate scans and statistics are sm3's, built on
-sm2 the way sm2 is built on sm1 (`sm3/SM3_OBJECTIVE.md`).
+sm2 the way sm2 is built on sm1
+([`sm3/SM3_OBJECTIVE.md`](../sm3/SM3_OBJECTIVE.md)).
 
 ## Scope
 
@@ -53,12 +55,13 @@ sm2 the way sm2 is built on sm1 (`sm3/SM3_OBJECTIVE.md`).
   does not reimplement them.
 - A PostgreSQL dependency. sm2 must be useful and testable on
   its own, and buildable without a PostgreSQL source tree. The
-  PG target shapes sm2's *decisions* (see `PART4.md` at the
+  PG target shapes sm2's *decisions* (see
+  [`PART4.md`](../PART4.md) at the
   top level), never its *build*.
 
 ## Decisions
 
-These are settled and drive `SM2_DESIGN.md`.
+These are settled and drive [`SM2_DESIGN.md`](SM2_DESIGN.md).
 
 - **A row is keyed by its primary key, or by `_id` without
   one.** A table with a primary key is clustered on it, and
@@ -66,13 +69,17 @@ These are settled and drive `SM2_DESIGN.md`.
   one keys a row by `_id`, an unsigned 64-bit number from a
   per-table sm1 sequence, never reused and never changed. A
   query reads `_id` as a keyless table's system column, and no
-  row has a `ctid` (`../ROWSTORE.md` §8, `../CLUSTER.md`,
-  `../ROWSTORE.md`). This bullet first recorded the opposite: a
+  row has a `ctid`
+  ([`../ROWSTORE.md`](../ROWSTORE.md#8-the-tuple-relation) §8,
+  [`../CLUSTER.md`](../CLUSTER.md),
+  [`../ROWSTORE.md`](../ROWSTORE.md)). This bullet first recorded
+  the opposite: a
   heap keyed by a `rowno` in every table, the primary key an
   index over it, reversing a still earlier choice to cluster,
   as YugabyteDB does. The heap was dropped in turn: on an LSM
   its key costs an index's price on every read through an
-  index (`../CLUSTER.md` §1), so it paid a second read on a
+  index ([`../CLUSTER.md`](../CLUSTER.md#1-why) §1), so it paid a
+  second read on a
   primary key lookup and locality on a range scan. A primary
   key change now moves the row and rewrites its index entries.
 - **Every column is in the tuple.** An encoded index key is
@@ -80,14 +87,16 @@ These are settled and drive `SM2_DESIGN.md`.
   written twice, encoded in the index and native in the
   tuple, and the tuple is what a read returns. It costs the
   duplicate; it buys a tuple that is complete on its own and
-  the next decision (`../ROWSTORE.md` §8).
+  the next decision
+  ([`../ROWSTORE.md`](../ROWSTORE.md#8-the-tuple-relation) §8).
 - **A key must be injective, not reversible.** Distinct datums
   get distinct keys, because unique indexes are enforced on key
   bytes. A key need not decode back to its datum, because the
   tuple holds it — so a lossy encoding is allowed where it is
   order-preserving and made injective by a tie-break, and
   `key_decode` is an optimization for sm3's index-only scans
-  rather than a correctness requirement (`../LSMINDEX.md` §2).
+  rather than a correctness requirement
+  ([`../LSMINDEX.md`](../LSMINDEX.md#2-key-encoding) §2).
 - **A datum's representation is PostgreSQL's**, type by
   type: the same widths, epochs, units and struct layouts,
   so that crossing into a tuple slot copies the column bytes
@@ -95,7 +104,8 @@ These are settled and drive `SM2_DESIGN.md`.
   stricter than PostgreSQL is — the byte order, fixed
   little-endian, and variable-length datums, which carry the
   payload alone and leave framing to the tuple
-  (`TYPE.md` §5.1).
+  ([`TYPE.md`](TYPE.md#51-the-representation-is-postgresqls)
+  §5.1).
 - **Except the decimals, which follow DuckDB's**: a fixed-width
   two's-complement integer with the scale in the schema, as two
   types — `decimal64`, 64 bits to 17 digits of precision, and
@@ -103,25 +113,30 @@ These are settled and drive `SM2_DESIGN.md`.
   `decimal(p, s)`. It buys a key encoding that is just an
   integer's, and fixed-width decimal columns; it costs PG's
   unbounded precision, PG's NaN and infinity, and a per-datum
-  conversion for these types (`TYPE.md` §5.2).
+  conversion for these types
+  ([`TYPE.md`](TYPE.md#52-the-decimals-follow-duckdbs) §5.2).
 - **A type is an ADT, in PostgreSQL's shape** — one
   descriptor of function pointers per type, as `pg_type` is,
   with `key_encode` added because sm1 compares with `memcmp`
   and a PG btree never needed one. Adding a type is adding a
   descriptor, not editing a `switch` in three places
-  (`TYPE.md` §5.3).
+  ([`TYPE.md`](TYPE.md#53-a-type-is-an-adt-in-postgresqls-shape)
+  §5.3).
 - **Interval keeps PostgreSQL's three components**, months, days
   and microseconds apart, because they are not convertible.
   Its order is PG's flattened 128-bit datum, which is not
   injective, so its *key* appends the months and days behind
   that datum to restore identity — a total order that refines
   PostgreSQL's rather than contradicting it
-  (`TYPE.md` §5.4, `../LSMINDEX.md` §2).
+  ([`TYPE.md`](TYPE.md#54-interval-keeps-postgresqls-three-components)
+  §5.4, [`../LSMINDEX.md`](../LSMINDEX.md#2-key-encoding) §2).
 - **The tuple codec is a separate API.** It holds the
   permanent on-disk format, it has two callers (the tuple
   relation, and sm3's INCLUDE columns), and it is the only
   part of sm2 that touches no database — so it is built and
-  tested on its own (`TUPLE.md` §10).
+  tested on its own
+  ([`TUPLE.md`](TUPLE.md#10-why-the-codec-is-an-api-of-its-own)
+  §10).
 - **One encoder, two callers.** The key encoder is sm2's, and
   sm3 builds its index entries — `encode(sk) ‖ row key` —
   from the same function with the same per-column arguments.
@@ -134,7 +149,9 @@ These are settled and drive `SM2_DESIGN.md`.
 - **The eventual consumer is a forked PostgreSQL**, keeping
   its parser, planner and executor and replacing its storage
   and transaction layers. The fork is **threaded**, a thread
-  per connection instead of a process (`PART4.md` §2), so sm1,
+  per connection instead of a process
+  ([`PART4.md`](../PART4.md#2-the-blocker-the-process-model) §2),
+  so sm1,
   sm2 and sm3 are linked into the one server process and every
   backend thread shares sm1's transaction table, lock manager
   and SSI graph. sm2 is therefore built to be *friendly* to
@@ -143,20 +160,25 @@ These are settled and drive `SM2_DESIGN.md`.
   without taking a dependency on it.
 - **One tuple at a time.** The IPC boundary that once forced
   a batch-shaped API is gone with the threaded fork
-  (`PART4.md` §2), so the call above sm2 is an ordinary
+  ([`PART4.md`](../PART4.md#2-the-blocker-the-process-model) §2),
+  so the call above sm2 is an ordinary
   function call. Whether a batched form earns its keep for
   filter pushdown is a question for the level that has filters
-  (`sm3/SM3_OBJECTIVE.md`), and nothing in sm2 depends on the
+  ([`sm3/SM3_OBJECTIVE.md`](../sm3/SM3_OBJECTIVE.md)), and
+  nothing in sm2 depends on the
   answer.
 - **Descending order is inverted bytes, scanned forward.** sm1
   does not scan backwards, and the fork's planner is changed
-  never to ask it to (`PART4.md` §5). So a descending column
+  never to ask it to
+  ([`PART4.md`](../PART4.md#5-the-one-conflict-with-a-decision-already-made)
+  §5). So a descending column
   is the ascending encoding with its bytes inverted, and there
   are no mirror relations.
 - **Writes at READ COMMITTED follow sm1's protocol, and sm2
   does not resolve them.** A write that meets a row committed
   after the transaction began is refused with `SM_ERR_UPDATED`
-  (`../LOCKMGR.md` §1.9). Resolving it means re-checking the
+  ([`../LOCKMGR.md`](../LOCKMGR.md#19-read-committed-write-re-read-write)
+  §1.9). Resolving it means re-checking the
   statement's filter against the newest image, and filters are
   sm3's; sm2 surfaces the error and provides
   `rel_read_latest`.
@@ -165,11 +187,13 @@ These are settled and drive `SM2_DESIGN.md`.
   a deterministic collation can give two distinct strings one
   sort key, and PostgreSQL keeps them as two datums. Without
   the tie-break the two would share a key and become one row
-  (`PART4.md` §6, `../LSMINDEX.md` §2).
+  ([`PART4.md`](../PART4.md#6-what-this-forces-on-sm2-and-sm3-now)
+  §6, [`../LSMINDEX.md`](../LSMINDEX.md#2-key-encoding) §2).
 
 ## Decided questions
 
-Five questions about the encoding, decided in `SM2_DESIGN.md`
+Five questions about the encoding, decided in
+[`SM2_DESIGN.md`](SM2_DESIGN.md)
 before anything is written to disk. They are sm2's and not
 sm3's because they are about the encoding, even though it is
 sm3's indexes that feel them most.
@@ -184,9 +208,13 @@ sm3's indexes that feel them most.
 
   *Decided: a default of `decimal(18, 3)`*, DuckDB's. It is
   now `decimal(17, 3)`, the widest `decimal64`, and the host's
-  to apply — digres's (`../../dg/DECIMAL.md` §2.3) — since
+  to apply — digres's
+  ([`../../dg/DECIMAL.md`](../../dg/DECIMAL.md#23-stored-as-sm2s-decimal-at-the-columns-scale)
+  §2.3) — since
   sm2's `decimal64` and `decimal128` require a typmod and sm3
-  supplies none (`../CATALOG.md` §8.4). A bare `decimal`
+  supplies none
+  ([`../CATALOG.md`](../CATALOG.md#84-decimal-columns) §8.4). A
+  bare `decimal`
   has 14 integer digits and 3 fractional. A datum with more
   fractional digits is rounded to 3, as PostgreSQL rounds for
   a declared typmod; one whose integer part needs more than 14
@@ -204,7 +232,9 @@ sm3's indexes that feel them most.
   fixed-width decimal is an integer and has neither. Refuse
   them, or reserve values?
 
-  *Decided: refuse them* (`TYPE.md` §5.2). A NaN or an
+  *Decided: refuse them*
+  ([`TYPE.md`](TYPE.md#52-the-decimals-follow-duckdbs) §5.2). A
+  NaN or an
   infinity is rejected on insert with a clear error, and no
   value is reserved as a sentinel. The door stays open: 17
   digits do not reach the limit of the 59 bits above the
@@ -219,7 +249,8 @@ sm3's indexes that feel them most.
   hash and recheck, or reject?
 
   *Decided: reject for the primary key, truncate and recheck for
-  a secondary index, never hash* (`../LSMINDEX.md` §2.4). The
+  a secondary index, never hash*
+  ([`../LSMINDEX.md`](../LSMINDEX.md#24-cut-keys) §2.4). The
   primary key index enforces uniqueness on exact key bytes, so it
   must be exact: an encoded primary key over a fixed limit is
   refused when the row is written, which is what PostgreSQL does
@@ -234,7 +265,8 @@ sm3's indexes that feel them most.
   index can no longer promise order among entries that share a
   prefix, and a unique check must compare originals over the
   prefix range rather than trust key equality, treating NULLs as
-  distinct (`../INDEXBUILD.md` §2). A hash is out, because it
+  distinct ([`../INDEXBUILD.md`](../INDEXBUILD.md#2-the-protocol)
+  §2). A hash is out, because it
   keeps equality but destroys order, and an index that cannot
   serve a range or an `ORDER BY` is not worth having. The budget
   for an index key is `4094` after the relid, less the row's
@@ -244,12 +276,16 @@ sm3's indexes that feel them most.
 - **Collation stability.** A sort key is only valid for the
   collation library version that produced it. The version is
   recorded with the schema, as `pg_collation.collversion` exists
-  to do for PostgreSQL (`PART4.md` §6). The question was what
+  to do for PostgreSQL
+  ([`PART4.md`](../PART4.md#6-what-this-forces-on-sm2-and-sm3-now)
+  §6). The question was what
   happens when the recorded version and the library's differ:
   refuse, or rebuild?
 
   *Decided: pin the library so it rarely differs, and refuse on a
-  mismatch, with an explicit rebuild* (`../LSMINDEX.md` §2.3).
+  mismatch, with an explicit rebuild*
+  ([`../LSMINDEX.md`](../LSMINDEX.md#23-text-and-collations)
+  §2.3).
   Link a specific ICU version into the server instead of using
   whatever the operating system has, so a mismatch happens only
   when the operator upgrades on purpose. When it does happen,
@@ -260,9 +296,11 @@ sm3's indexes that feel them most.
   from a new version into an old index corrupts it further, and a
   unique index quietly stops being unique. Rebuilding any index,
   the primary key's included, is an online build
-  (`../INDEXBUILD.md` §2); a table keyed by `_id` never needs
+  ([`../INDEXBUILD.md`](../INDEXBUILD.md#2-the-protocol) §2); a
+  table keyed by `_id` never needs
   rewriting, and one keyed by a primary key under a collation
-  is rewritten (`../CLUSTER.md` §8). The refusal is still the
+  is rewritten ([`../CLUSTER.md`](../CLUSTER.md#8-a-rewrite) §8).
+  The refusal is still the
   default and the rebuild a command someone chooses to run.
 
 - **Non-deterministic collations.** Equal keys are not
@@ -270,7 +308,9 @@ sm3's indexes that feel them most.
   Support or refuse?
 
   *Decided: accept them for ICU collations, keyed by the sort
-  key alone* (`../LSMINDEX.md` §2.3). The first decision was to
+  key alone*
+  ([`../LSMINDEX.md`](../LSMINDEX.md#23-text-and-collations)
+  §2.3). The first decision was to
   refuse them and design so that accepting them later needed no
   format change; that design is what was adopted. Under a
   non-deterministic collation two different strings can compare

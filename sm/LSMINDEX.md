@@ -85,8 +85,11 @@ the row. The second scan answers from the entry alone, since
 
 ## 2. Key encoding
 
-The per-type encodings are in `sm2/TYPE.md` §3, and the byte
-rules for every key in `sm2/TYPE.md` §2. This section holds the
+The per-type encodings are in
+[`sm2/TYPE.md`](sm2/TYPE.md#3-the-types) §3, and the byte
+rules for every key in
+[`sm2/TYPE.md`](sm2/TYPE.md#2-rules-that-apply-to-every-key) §2.
+This section holds the
 rules they satisfy and why. A row key uses the same encoder.
 
 ### 2.1 The rules
@@ -124,7 +127,8 @@ rules they satisfy and why. A row key uses the same encoder.
   key is the span, then the months and the days, so a primary key
   cannot merge two datums. This order refines PostgreSQL's: it
   agrees wherever PostgreSQL is decisive, and breaks its ties
-  (`sm2/TYPE.md` §3.10). The microseconds are not stored, because
+  ([`sm2/TYPE.md`](sm2/TYPE.md#310-interval) §3.10). The
+  microseconds are not stored, because
   the span, months and days give them back.
 - **One encoder, several callers.** sm2's `encode_key` makes row
   keys and entry keys alike, with the same per-column arguments.
@@ -150,7 +154,8 @@ rules they satisfy and why. A row key uses the same encoder.
   as a tie-break.** A deterministic collation can give two
   distinct strings one sort key, and PostgreSQL keeps them as two
   datums. A key that stopped at the sort key would merge two
-  rows. The layout is in `sm2/TYPE.md` §3.5.
+  rows. The layout is in
+  [`sm2/TYPE.md`](sm2/TYPE.md#35-text-varchar-bpchar-name) §3.5.
 - **The collation is an input to the encoder**, not a property of
   the bytes. The locale-aware work runs once, in the encoder,
   through ICU's `ucol_getSortKey`. `C` and `POSIX` mean byte
@@ -480,7 +485,8 @@ An entry is MVCC, so a scan needs no row to decide visibility.
   sequential scan reads in. On a keyless table it is `tbl_scan`,
   by a range of `_id`. `tbl_scan` refuses a keyed table.
 - `tbl_read_key` reads a row by the row key an entry names, and
-  `tbl_read_keys` reads many in one call (`ROWSTORE.md`).
+  `tbl_read_keys` reads many in one call
+  ([`ROWSTORE.md`](ROWSTORE.md)).
 - `idx_scan_seek` moves a cursor forward to a new lower bound.
   Moving back fails.
 - `tbl_idx_size` gives an index's bytes under its relid. A
@@ -507,7 +513,7 @@ An entry is MVCC, so a scan needs no row to decide visibility.
 A **partial** index holds only the rows its predicate takes. An
 **expression** index has a key column that is an expression over
 the row. One index may be both. digres's side is in
-`../dg/EXPRINDEX.md`.
+[`../dg/EXPRINDEX.md`](../dg/EXPRINDEX.md).
 
 sm3 evaluates neither, and is to get no evaluator. The catalog
 keeps the predicate and the expressions as one opaque blob an
@@ -838,7 +844,8 @@ a pointer.
 
 ### 7.9 Bulk load, rewrite, truncate and drop
 
-- **Bulk load** (`BULKLOAD.md`). `tbl_load_add` puts a row and
+- **Bulk load** ([`BULKLOAD.md`](BULKLOAD.md)). `tbl_load_add`
+  puts a row and
   its entries into sm1's loader, one stream for each index, in
   the rows' order. An entry goes in as `idx_insert` would write
   it, through `idx_load`. A row a load does not take ends the
@@ -970,7 +977,8 @@ refuses a row key past `max_pk_len`.
   `use_index` opens an index at its first use, so a read by the
   primary key opens no other index.
 - `tbl_park` and `tbl_reopen` keep a handle for its session's next
-  transaction (`SM_API.md`, `sm_tbl_close`). A reopen takes the
+  transaction ([`SM_API.md`](SM_API.md), `sm_tbl_close`). A
+  reopen takes the
   lock and reads the definition, and makes the rel and indexes
   again only if the definition has changed.
 - `make_entry` gives an index's entry for one image: `entry_t`
@@ -1035,7 +1043,7 @@ uses.
 | `ALTER` rewrite | every maintained index fills in the new store; a failed index stays failed |
 | Temporary table | an index of it is filled in the session; the store is chained as any table's (TEMPTABLE.md) |
 | Keyless (`_id`) table | row key is 8 bytes; budget 4086 |
-| Bulk load and rollback | entries go in with the rows; an aborted load leaves the table empty (`BULKLOAD.md`) |
+| Bulk load and rollback | entries go in with the rows; an aborted load leaves the table empty ([`BULKLOAD.md`](BULKLOAD.md)) |
 | A wrongly immutable function | an entry a delete cannot find, which fails the write on a valid index; PostgreSQL's hazard too |
 | Collation library changed | the catalog does not open (§2.3) |
 
@@ -1088,7 +1096,7 @@ uses.
   each row, and the rows that fail cross the API anyway (§5.5).
 - **Sets of rows in and out of a scan.** The IPC boundary that
   forced this is gone. Rows read by key, many in one call, are
-  built (`ROWSTORE.md`).
+  built ([`ROWSTORE.md`](ROWSTORE.md)).
 
 ## 13. Tests
 

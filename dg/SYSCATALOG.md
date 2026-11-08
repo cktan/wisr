@@ -9,7 +9,8 @@ sent.
 
 **It is being built**, a step at a time, and §6 tracks what is
 done. It is in the area of the catalog lookups, which are being
-moved to the compiled-in rows step by step (`WORKNOTE.md` step 6
+moved to the compiled-in rows step by step
+([`WORKNOTE.md`](WORKNOTE.md) step 6
 and after).
 
 ---
@@ -90,7 +91,8 @@ what runs now.
 - **They are not views.** A system view is SQL over the
   catalogs, which `initdb` no longer runs; a catalog relation
   gives a client the same thing. A user's view is sm's
-  (`../sm/VIEW.md`), and is listed in them as §3 says.
+  ([`../sm/VIEW.md`](../sm/VIEW.md)), and is listed in them as §3
+  says.
 - **A row comes from the two sources of §1**, the compiled-in
   rows first and sm's after:
   - a built-in object's row is its compiled-in one;
@@ -131,7 +133,8 @@ what runs now.
   is converted.
 - **A column with nothing true to say** has a fixed value,
   listed by catalog in §4: a tablespace is 0. An owner and an
-  ACL are `pg_global`'s (`WORKNOTE.md` steps 322 and 323).
+  ACL are `pg_global`'s ([`WORKNOTE.md`](WORKNOTE.md) steps 322
+  and 323).
   `reltuples` is -1 and
   `relpages` 0, a table never analyzed as PostgreSQL has it
   (`class_row()` in `catrel.c`); the planner takes sm's
@@ -164,7 +167,7 @@ Read against the code on 2026-10-14 (step 1 of §5).
   `pg_attribute`, `pg_auth_members`, `pg_authid`, `pg_class`,
   `pg_database`, `pg_index`, `pg_proc`, `pg_shseclabel`,
   `pg_statistic` and `pg_type` (`pg_subscription` went in
-  `WORKNOTE.md` step 214). The rest --
+  [`WORKNOTE.md`](WORKNOTE.md) step 214). The rest --
   `pg_namespace`, `pg_am`, `pg_attrdef`, `pg_constraint`,
   `pg_collation`, `pg_inherits`, `pg_trigger` and the others
   of §4 -- need one each, written by `gen_cat.py` from their
@@ -232,10 +235,12 @@ What a row says, for the first of them:
   relation here, as `pg_roles` is.
 - **`pg_am`**: the compiled-in rows (`cat_am`).
 - **`pg_database`**: a row a database of sm's; its oid is
-  `FirstNormalObjectId` plus its `dbid` (`CODE.md` §5).
+  `FirstNormalObjectId` plus its `dbid`
+  ([`CODE.md`](CODE.md#5-sm) §5).
   Encoding is UTF-8, and the locale columns the server's.
 - **`pg_authid`**: a row a role of `pg_global`'s
-  (`../aa/ROLE.md`), from the snapshot the sessions share
+  ([`../aa/ROLE.md`](../aa/ROLE.md)), from the snapshot the
+  sessions share
   (`utils/init/pg_global.c`); the syscache's `AUTHOID` and
   `AUTHNAME` read it, as they always scanned it. Its password
   is the SCRAM secret.
@@ -273,11 +278,11 @@ runs the psql command and reads its output.
 | Step | State |
 | --- | --- |
 | 1. Read the code | done, 2026-10-14: §1's functions, §2's access method, §3 |
-| 2. Mechanism, `pg_namespace`, `\dn` | done, `WORKNOTE.md` step 112 |
-| 3. `pg_class`, `pg_am`, `\dt`, `\ds` | done, `WORKNOTE.md` step 113 |
-| 4. `pg_index`, `\di` | done, `WORKNOTE.md` step 114 |
-| 5. `pg_database`, `pg_roles`, `\l`, `\du` | done, `WORKNOTE.md` steps 115 and 118; psql 16's `\l` asks for a column PostgreSQL 17 renamed |
-| 6. `\d name` | done: a table and an index, `WORKNOTE.md` step 115; a sequence, step 119; `\d+`, step 120; sizes, step 121 |
+| 2. Mechanism, `pg_namespace`, `\dn` | done, [`WORKNOTE.md`](WORKNOTE.md) step 112 |
+| 3. `pg_class`, `pg_am`, `\dt`, `\ds` | done, [`WORKNOTE.md`](WORKNOTE.md) step 113 |
+| 4. `pg_index`, `\di` | done, [`WORKNOTE.md`](WORKNOTE.md) step 114 |
+| 5. `pg_database`, `pg_roles`, `\l`, `\du` | done, [`WORKNOTE.md`](WORKNOTE.md) steps 115 and 118; psql 16's `\l` asks for a column PostgreSQL 17 renamed |
+| 6. `\d name` | done: a table and an index, [`WORKNOTE.md`](WORKNOTE.md) step 115; a sequence, step 119; `\d+`, step 120; sizes, step 121 |
 | 7. The other compiled-in catalogs | `pg_proc`, `pg_operator`, `pg_cast`, `pg_extension`, `pg_description`: `\df`, `\do`, `\dC`, `\dx`, step 123 |
 | 8. A syscache miss in a compiled-in catalog | `pg_language` too; `pg_get_functiondef()`, `\sf`, step 124 |
 | 9. Views | `pg_rewrite`, `pg_views`, `\dv`, `\d+` of a view, `pg_get_viewdef()`, step 239 |
@@ -290,7 +295,8 @@ runs the psql command and reads its output.
 ## 7. Left out
 
 - **`information_schema`**: views over the catalogs, in SQL.
-  Views are sm's now (`../sm/VIEW.md`), so it can be made of
+  Views are sm's now ([`../sm/VIEW.md`](../sm/VIEW.md)), so it
+  can be made of
   views in each database, or written as catalog relations of
   its own; neither is done.
 - **The statistics views** (`pg_stat_activity`,

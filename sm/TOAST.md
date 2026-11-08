@@ -70,7 +70,7 @@ fits.
 - The fixed part of a tuple does not always fit. A `name` column
   takes 64 bytes, so about 1,024 of them pass `sm2::max_tup_len`,
   and the write is refused with `SM_ERR_ROWTOOLONG`
-  (`sm2/TUPLE.md`).
+  ([`sm2/TUPLE.md`](sm2/TUPLE.md)).
 
 ### 2.2 Chunks live in the table's store
 
@@ -83,7 +83,8 @@ the relid `0xFFFF`.** This gives three things:
 - `DROP TABLE` takes the chunks with the store.
 
 A chunk is a versioned key in every store, a chained store too.
-`ROWSTORE.md` chains a table's rows. TOAST writes with
+[`ROWSTORE.md`](ROWSTORE.md) chains a table's rows. TOAST writes
+with
 `sm1::insert` and `sm1::erase`, not with the `chain_` calls.
 
 ### 2.3 A datum has an id, and never changes
@@ -191,7 +192,8 @@ then gone or not settled, and `toast_read_settled` returns
 reader or writer queues it again.
 
 The B-tree Index's cleaner judges an entry by its row
-(`BTREEINDEX.md`). A key column of the row can be out of line, so
+([`BTREEINDEX.md`](BTREEINDEX.md)). A key column of the row can
+be out of line, so
 the cleaner must read the value. `toast_read` needs a cursor, and
 a cursor needs a transaction. The cleaner has none, and holds no
 snapshot, so that it never holds back the watermark.
@@ -218,7 +220,8 @@ The read is `sm1::read_settled_versioned`, not
 
 ### 2.12 Not built
 
-- **Compression.** `sm2/VARLENA.md` specifies the compressed
+- **Compression.** [`sm2/VARLENA.md`](sm2/VARLENA.md) specifies
+  the compressed
   form, and the codec refuses it. Whether sm2 ever compresses a
   datum is open.
 - **A fetch of part of a datum.** digres reads the whole value
@@ -255,7 +258,7 @@ The pointer is `toast_ptr_t`, `toast_ptr_len`, 22 bytes:
 `make_toast_ptr` and `parse_toast_ptr` build and read it.
 `varlena_is_toast` tests the first byte. The tuple codec stores a
 pointer as it is, and refuses any other vartag
-(`sm2/VARLENA.md`).
+([`sm2/VARLENA.md`](sm2/VARLENA.md)).
 
 ### 3.2 An insert
 
@@ -403,7 +406,7 @@ nothing, for three rows:
   `toast_min` bytes.
 
 The caller ends the load and inserts that row, and the rows after
-it, with `rel_insert` (`BULKLOAD.md`).
+it, with `rel_insert` ([`BULKLOAD.md`](BULKLOAD.md)).
 
 ### 3.10 digres
 
@@ -449,7 +452,7 @@ it, with `rel_insert` (`BULKLOAD.md`).
 | `TRUNCATE` | a new store; the old chunks go with the old store; the sequence carries over |
 | `ALTER` rewrite | §3.8 |
 | `DROP TABLE` | the chunks go with the store, and the sequence is dropped |
-| temporary table | the chunks are in its temporary store, the sequence temporary (`TEMPTABLE.md`) |
+| temporary table | the chunks are in its temporary store, the sequence temporary ([`TEMPTABLE.md`](TEMPTABLE.md)) |
 | keyless table | the ids are from the TOAST sequence, so `_id`s keep no holes |
 | bulk load | §3.9; a rollback undoes the rows inserted, chunks with them |
 | B-tree cleaner | §2.10 |

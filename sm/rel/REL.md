@@ -343,7 +343,8 @@ sequence of its own. Without `(primary-key ...)` its rows are
 named by `_id`. With it, the columns named are the table's
 primary key, in their order: each is made NOT NULL, as SQL
 makes it, the key is the unique index `<name>_pkey`, and the
-table's rows are keyed by it (`../CLUSTER.md`), named by their
+table's rows are keyed by it ([`../CLUSTER.md`](../CLUSTER.md)),
+named by their
 key's values (§6). A second `(primary-key ...)` clause, one of
 no column, or one of a column not there, panics.
 
@@ -375,7 +376,8 @@ Column qualifiers:
 - `:on-update "text"` -- the column's update default, the
   host's text, kept in the catalog and never run: what an
   update that does not assign the column writes
-  (`../../dg/ONUPDATE.md`). rel writes nothing from it.
+  ([`../../dg/ONUPDATE.md`](../../dg/ONUPDATE.md)). rel writes
+  nothing from it.
 
 ```janet
 (table-create users
@@ -409,7 +411,8 @@ Makes the columns `c...`, in their order, the primary key of
 `table`, as `ALTER TABLE ... ADD PRIMARY KEY`: the unique
 index `<table>_pkey`, keying the table's rows from then on.
 sm rewrites a table that has rows into a new store, keyed by
-it, its secondary indexes filled anew (`../CLUSTER.md` §8);
+it, its secondary indexes filled anew
+([`../CLUSTER.md`](../CLUSTER.md#8-a-rewrite) §8);
 an abort, or a rollback to a savepoint before it, leaves the
 table as it was. It takes the table's lock exclusive. A
 nullable column, or a table with a primary key already, is
@@ -422,7 +425,8 @@ nullable column, or a table with a primary key already, is
 ### `(alter-column-type table column type mods... [:keep])`
 Changes `column`'s type to `type`, with its modifiers, as
 `ALTER TABLE ... ALTER COLUMN ... TYPE`
-(`../../dg/ALTERTYPE.md`). Each row's value is printed as its
+([`../../dg/ALTERTYPE.md`](../../dg/ALTERTYPE.md)). Each row's
+value is printed as its
 old type's text and parsed as the new type, as a cast through
 text is. sm rewrites a table that has rows into a new store,
 every index on the column filled under the new type, a key
@@ -481,7 +485,9 @@ Returns the catalog's epoch as the active session sees it
 (`sm_cat_epoch`): a number that moves whenever a DDL, an
 analyze or an index made valid is published, or the session's
 temporary tables change; `:own` while the session's transaction
-has DDL of its own (`../../dg/SCHEMACACHE.md` §3).
+has DDL of its own
+([`../../dg/SCHEMACACHE.md`](../../dg/SCHEMACACHE.md#3-the-epoch)
+§3).
 
 ```janet
 (cat-epoch)
@@ -544,13 +550,15 @@ Clauses:
 - `:where (col value)` -- a partial index: only the rows whose
   `col` prints as `value` are in it. A null equals nothing.
 - `:tree bool` -- a B+tree of the index's own pages
-  (`../BTREEINDEX.md`), not sm1's entries. Its entries carry no
+  ([`../BTREEINDEX.md`](../BTREEINDEX.md)), not sm1's entries.
+  Its entries carry no
   visibility: a scan of it is `(idx-rows)`, which reads each
   entry's row and gives it only while the row has the entry's
   key, and its dead entries stay until `(compact)` removes
   them (`(idx-entries)` counts them). A unique tree checks a key
   against the rows its equal entries name, waiting for a
-  running writer (`../BTREEINDEX.md` §7).
+  running writer
+  ([`../BTREEINDEX.md`](../BTREEINDEX.md#7-uniqueness) §7).
 
 The storage manager evaluates neither form. It calls `rel`'s
 own evaluator, as it would call PostgreSQL's in the fork.
@@ -578,7 +586,9 @@ Drops the secondary index named `name`.
 ### `(index-wait name)`
 Waits until the build of the index named `name` has ended. An
 index created on a table that already holds committed rows is
-built in the background (`../INDEXBUILD.md` §2): writers and
+built in the background
+([`../INDEXBUILD.md`](../INDEXBUILD.md#2-the-protocol) §2):
+writers and
 readers go on meanwhile, but the index may not be scanned
 until it is valid. One created in the same transaction as its
 table is valid at once and needs no wait. Call it outside a
@@ -605,7 +615,8 @@ and cannot be scanned; it can only be dropped.
 
 ### `(fkey-create name (table child) (columns c...) (references parent p...) ...)`
 Adds the foreign key `name` to the table `child`
-(`../FOREIGNKEY.md`). sm keeps it and checks no row: that is
+([`../FOREIGNKEY.md`](../FOREIGNKEY.md)). sm keeps it and checks
+no row: that is
 the host's. Without parent columns it takes the parent's
 primary key's, and a parent without one fails with `table
 '<parent>' has no primary key`: name the parent's columns. Its
@@ -694,7 +705,8 @@ Returns a tuple of values `[val1 val2 ...]` or `nil` if absent.
 ### `(read-keys table keys)`
 Reads the rows of a table with a primary key named by `keys`,
 an array or tuple of key tuples, in one `sm_tbl_read_keys`
-call (`../ROWSTORE.md`). Returns an array of the rows, each
+call ([`../ROWSTORE.md`](../ROWSTORE.md)). Returns an array of
+the rows, each
 as `read` gives it, `nil` for a key with none, in the order of
 `keys`. A table without a primary key panics.
 
@@ -754,9 +766,11 @@ Compacts the table's store through GC (`sm_tbl_compact`), as
 `VACUUM`: versions no reader needs are dropped, and a newest
 version an aborted writer left is queued for GC's worker, which
 puts the version before it back within a second or so
-(`../GC.md` §4.2). It takes the table's lock as a reader. A
+([`../GC.md`](../GC.md#42-chained-keys) §4.2). It takes the
+table's lock as a reader. A
 tree's entries whose rows are settled without them go too
-(`../BTREEINDEX.md` §9).
+([`../BTREEINDEX.md`](../BTREEINDEX.md#9-cleaning-vacuum-and-the-cleaner)
+§9).
 
 ```janet
 (compact jobs)
@@ -764,7 +778,9 @@ tree's entries whose rows are settled without them go too
 
 ### `(cleaner-pass)`
 Runs one pass of the btree cleaner of the session's database, on
-this thread (`sm_cleaner_run`, `../BTREEINDEX.md` §9). A script
+this thread (`sm_cleaner_run`,
+[`../BTREEINDEX.md`](../BTREEINDEX.md#9-cleaning-vacuum-and-the-cleaner)
+§9). A script
 gets no cleaner thread, so a tree's entries change only by this
 and by `(compact)`. A pass cleans the leaves that readers and
 writers queued, with no transaction of its own.
@@ -800,7 +816,8 @@ table (`sm_tbl_parked`).
 
 ### `(analyze table [target])`
 Analyzes the table in the current transaction
-(`../STATISTICS.md` §9): samples up to 300 × `target` rows,
+([`../STATISTICS.md`](../STATISTICS.md#9-the-design) §9): samples
+up to 300 × `target` rows,
 100 if none is given, reading no more than ten times that in
 `_id`s whatever the table's size, and records each
 column's statistics, each partial or expression index's from
@@ -893,7 +910,9 @@ expose them.
 The rows a scan of the index's rows gives between the bounds,
 as `(idx-scan)` takes them, in the index's order: a tree's,
 each entry's row as the transaction sees it while it still has
-the entry's key (`../INDEXBUILD.md` §2), or a primary
+the entry's key
+([`../INDEXBUILD.md`](../INDEXBUILD.md#2-the-protocol) §2), or a
+primary
 key's, its rows. Returns `[id row]` pairs as `(scan)` does,
 `[key row]` in a table with a primary key.
 

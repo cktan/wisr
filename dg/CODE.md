@@ -1,12 +1,14 @@
 # Coding in digres
 
 The rules and practices for changing `dg/`, written for coding
-agents. `README.md` says what digres is and how it builds,
-`DESIGN.md` the design and decisions of record, and
-`WORKNOTE.md` each step
-taken and why. The repository's `CLAUDE.md` holds the rules
+agents. [`README.md`](README.md) says what digres is and how it
+builds,
+[`DESIGN.md`](DESIGN.md) the design and decisions of record, and
+[`WORKNOTE.md`](WORKNOTE.md) each step
+taken and why. The repository's [`CLAUDE.md`](../CLAUDE.md) holds
+the rules
 for the whole repository; this file adds what is particular to
-`dg/`. Where the two differ, `CLAUDE.md` wins.
+`dg/`. Where the two differ, [`CLAUDE.md`](../CLAUDE.md) wins.
 
 ## The overriding objective: a database is its directory
 
@@ -40,15 +42,18 @@ wins over convenience and over what PostgreSQL did.
   roles, in the database `pg_global` — a database must not
   depend on to be read.
 - **All role data is in `pg_global`, and only there**
-  (`../aa/ROLE.md` §3): no owner, privilege or role setting
+  ([`../aa/ROLE.md`](../aa/ROLE.md#3-where-roles-live) §3): no
+  owner, privilege or role setting
   in a database's directory, so a copy of it on another
   instance takes that instance's roles. aa keeps it
-  (`../aa/README.md`); `utils/init/pg_global.c` is digres's
+  ([`../aa/README.md`](../aa/README.md));
+  `utils/init/pg_global.c` is digres's
   side, turning tuples and `Acl`s into aa's structs.
 - **Before adding state, ask where it lives.** If a copied
   `base/X` would miss it, it is in the wrong place.
 
-The import itself is not built yet (`DESIGN.md` §4).
+The import itself is not built yet
+([`DESIGN.md`](DESIGN.md#4-decisions-of-record) §4).
 
 ## 1. Building and testing
 
@@ -73,7 +78,8 @@ The import itself is not built yet (`DESIGN.md` §4).
   ```
 
 - **`make -j4 slt`** runs every sqllogictest file in
-  `test/slt` on digres (`test/slt/README.md`); their results
+  `test/slt` on digres
+  ([`test/slt/README.md`](test/slt/README.md)); their results
   are PostgreSQL 18's. `make test` runs all but
   `select5.test`, which takes three minutes in this build.
 
@@ -87,11 +93,14 @@ The import itself is not built yet (`DESIGN.md` §4).
 - **`make -j4 regress`** runs PostgreSQL 18's regression
   suite on digres, from the same tree, each file alone in a
   database of its own, and writes which missing features stop
-  the most files (`test/regress/README.md`). It only
+  the most files
+  ([`test/regress/README.md`](test/regress/README.md)). It only
   measures, and is in no `make test`; it takes four minutes.
 
 - **`make -j4 pgregress`** runs the same files as ported to
-  digres (`test/pgregress/README.md`): each with what digres
+  digres
+  ([`test/pgregress/README.md`](test/pgregress/README.md)): each
+  with what digres
   does not run as PostgreSQL does commented out, against
   PostgreSQL 18's output for what is left. A difference fails
   it; `make test` runs it, in two minutes. A change that makes
@@ -157,7 +166,7 @@ digres is one process; each session is a thread of it.
   on anything else, and on any static initialiser.
 - **A thread shares only through `pcb` and `shmem`.** Nothing
   is copied from a parent's thread-local variables; there is
-  no `/*SHARED*/` mark (`WORKNOTE.md` step 229).
+  no `/*SHARED*/` mark ([`WORKNOTE.md`](WORKNOTE.md) step 229).
 - **The control blocks replace them** (`utils/control_block.h`),
   four, by who owns a field and who reads it:
   - **`pcb_t`**: what the main thread owns and other threads
@@ -276,7 +285,8 @@ Much of the work is removing what digres does not need.
 
 - **Delete what belongs to a module that was deliberately
   removed** (WAL, the checkpointer, VACUUM, the syslogger and
-  the rest in `WORKNOTE.md`): its code, its settings, its SQL
+  the rest in [`WORKNOTE.md`](WORKNOTE.md)): its code, its
+  settings, its SQL
   functions, wait events, locks and process types.
 - **Do not delete what is merely compiled out** by configure
   (`USE_OPENSSL`, `ENABLE_GSS`, `USE_BONJOUR`, OAuth): that is
@@ -304,7 +314,8 @@ Much of the work is removing what digres does not need.
 - **Match the code around you.** Most of `dg/` is PostgreSQL's
   code, in its naming (`CamelCase` functions, `snake_case`
   locals); keep to it when editing it.
-- **New code follows `CLAUDE.md`**: `snake_case` names, types
+- **New code follows [`CLAUDE.md`](../CLAUDE.md)**: `snake_case`
+  names, types
   ending in `_t`, `m_` before a class's private members.
 - **Every function gets a doc comment** of a line or two.
 - **A call that does something significant gets a short
@@ -338,9 +349,10 @@ Much of the work is removing what digres does not need.
 ## 10. Documents
 
 - **Each change that removes or reshapes something gets a
-  step in `WORKNOTE.md`**: what it was, why it goes, what
+  step in [`WORKNOTE.md`](WORKNOTE.md)**: what it was, why it
+  goes, what
   went with it, and what was left on purpose.
-- **A decision of record goes in `DESIGN.md`** §4.
+- **A decision of record goes in [`DESIGN.md`](DESIGN.md)** §4.
 - **Wrap prose at 65 columns** in every `.md` file; code
   blocks, tables and headings are not wrapped.
 

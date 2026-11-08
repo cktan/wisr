@@ -446,7 +446,8 @@ checks them, must see the rows as they are, not as an old
 snapshot shows them. PostgreSQL's `ATRewriteTable()` reads at the
 latest snapshot for this reason. A rewrite at a REPEATABLE READ
 snapshot older than another transaction's commit would lose that
-commit's rows (`../dg/WORKNOTE.md` step 394).
+commit's rows ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step
+394).
 
 `sm1::view_latest(session, true)` makes every read, and every
 cursor opened while it is on, read at `visible_ts`, at every
@@ -624,7 +625,7 @@ stays on one held from before it (`f10`).
 name a different mark later. SQL already obliges the layer above
 to drop a savepoint name when its mark goes: `RELEASE`, and a
 rollback to an outer mark. So a correct caller cannot form a
-stale depth. `sm1/API.md` states the hazard.
+stale depth. [`sm1/API.md`](sm1/API.md) states the hazard.
 
 ### 6.5 Cursors
 
@@ -655,7 +656,8 @@ admits the undone versions.
 
 ### 6.6 Bulk loads
 
-A bulk load lists one entry, not one key a row (`BULKLOAD.md`).
+A bulk load lists one entry, not one key a row
+([`BULKLOAD.md`](BULKLOAD.md)).
 
 - A load opened while a savepoint is set adds its store to
   `T.loaded_stores`.
@@ -868,7 +870,8 @@ on reads. Callers must be able to retry.
 Only SERIALIZABLE transactions take part, as in PostgreSQL. Other
 levels have no node. So serializability holds among SERIALIZABLE
 transactions only, and a mixed pair is as permissive as
-REPEATABLE READ (`sm1/mvcc/MVCC.md`, family C).
+REPEATABLE READ ([`sm1/mvcc/MVCC.md`](sm1/mvcc/MVCC.md), family
+C).
 
 A transaction is **read-only** to SSI in two ways:
 
@@ -882,7 +885,7 @@ A transaction is **read-only** to SSI in two ways:
 
 PostgreSQL applies the read-only test only to a transaction
 declared `READ ONLY`, so sm1 commits some pivots that PostgreSQL
-fails (`sm1/mvcc/MVCC.md`, p06).
+fails ([`sm1/mvcc/MVCC.md`](sm1/mvcc/MVCC.md), p06).
 
 A read-only transaction is never a pivot, as nothing has an
 rw-edge into it. It can be the T1 of a structure, Fekete's
@@ -1044,7 +1047,7 @@ wrote can still hold locks from `sm1::lock_row` and
 ### 8.3 A failed status write is fatal
 
 **Warning: any failed write or sync of a status record aborts the
-process** (`sm0::fatal()`, `CODE.md`).
+process** (`sm0::fatal()`, [`CODE.md`](CODE.md)).
 
 The record may or may not have reached the WAL, as a sync can
 fail after the bytes are written. So the outcome is unknown until
@@ -1161,7 +1164,8 @@ t=605   S1 ends: both durable, none older missing
         visible_ts rises to 101; A and B return; C takes the lock
 ```
 
-**Measured** (`../dg/WORKNOTE.md` steps 405 and 406): 16 clients,
+**Measured** ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) steps 405
+and 406): 16 clients,
 each insert its own transaction (`../bench.old/rowlocks.sh`,
 `ins` and `fk`), on aarch64 under WSL2. With records out of
 order, a sync covered about 6.7 commits, PostgreSQL's 7.5, and
@@ -1365,7 +1369,8 @@ nothing. Until then the entry is null, so no resolver finds a
 transaction whose record is not durable.
 
 **A read-only transaction needs a durable record too**, as
-`sm1/API.md` promises that a prepared transaction survives a
+[`sm1/API.md`](sm1/API.md) promises that a prepared transaction
+survives a
 crash. It gets an `xid` so its record has a unique key. With
 `xid` 0, every read-only prepare would overwrite one record.
 Locks from `sm1::lock_row` and `sm1::lock_oid` go in the record:
@@ -1883,7 +1888,7 @@ so the next write needs its read again (ROWSTORE.md).
 | `sm1/src/gc.cc` | the filter passes `seq`, and drops a dead version before any committed rule |
 | `sm1/src/recover.cc` | the list restored with a prepared transaction |
 | `sm1/src/db.h` | the status record's new field, and the format version |
-| `sm1/API.md` | the cost of holding a savepoint, and the `seq` limit |
+| [`sm1/API.md`](sm1/API.md) | the cost of holding a savepoint, and the `seq` limit |
 
 **The order of work.** Tests come first at each step, in
 `sm1/test/test_savepoint.cc` unless the step says otherwise.
@@ -1916,13 +1921,14 @@ so the next write needs its read again (ROWSTORE.md).
    over a million writes adds nothing to the session's memory,
    and a rollback writes nothing to RocksDB.
 9. Rewrite the sections of this document, DBMGR.md, GC.md and
-   `BULKLOAD.md` that the change touches.
+   [`BULKLOAD.md`](BULKLOAD.md) that the change touches.
 
 ---
 
 ## 14. Tests
 
-**Isolation scenarios** (`sm1/mvcc`, `sm1/mvcc/MVCC.md`) are the
+**Isolation scenarios** (`sm1/mvcc`,
+[`sm1/mvcc/MVCC.md`](sm1/mvcc/MVCC.md)) are the
 specification. A change that fails one is presumed wrong.
 
 | Scenarios | Cover |

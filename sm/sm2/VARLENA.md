@@ -2,8 +2,10 @@
 
 The reference for how a variable-width datum — `text`,
 `varchar`, `bpchar`, `bytea` — is stored inside a tuple and
-handed across the tuple codec. `TUPLE.md` §11 argues
-*why*; `TUPLE.md` is the tuple around it; this file is the
+handed across the tuple codec.
+[`TUPLE.md`](TUPLE.md#11-why-the-format-is-so) §11 argues
+*why*; [`TUPLE.md`](TUPLE.md) is the tuple around it; this file
+is the
 bytes.
 
 **Status: built**, in `src/tuple/tuple.cc`, with the helpers
@@ -24,7 +26,7 @@ PostgreSQL's bytes so that the glue can hand PostgreSQL a
 
 The data after the header is the datum a type's own
 functions take — `in`, `out`, `cmp`, `key_encode` and
-`key_decode` never see a header (`TYPE.md`).
+`key_decode` never see a header ([`TYPE.md`](TYPE.md)).
 
 ## 2. The forms
 
@@ -50,7 +52,8 @@ Told apart by the first byte, least significant bits first:
   3 and 18 are taken; sm2's is `0x40`, and its pointer is 22
   bytes in all: after the two bytes, the datum's length as 4
   bytes, the store's id as 8 and the datum's id as 8, all
-  little-endian (`../TOAST.md` §2). It is stored as it is.
+  little-endian ([`../TOAST.md`](../TOAST.md#2-design) §2). It is
+  stored as it is.
   A pointer with any other vartag is refused.
 
 ## 3. Writing: the shortest form
@@ -69,7 +72,8 @@ and rewrites a short datum with a 4-byte header into the
 ## 4. Reading: what is valid
 
 A varlena read from a tuple starts where its slot points
-(`TUPLE.md` §4, §5), and its header says how long it is. It is
+([`TUPLE.md`](TUPLE.md#4-the-fixed-part) §4, §5), and its header
+says how long it is. It is
 valid when:
 
 - the tuple holds at least its header — one byte, or four for
@@ -93,7 +97,7 @@ PostgreSQL reads a 1-byte header anywhere, but a 4-byte header
 only where it knows the varlena is 4-byte aligned, and pads
 its heap tuples to make it so. An sm2 tuple is a RocksDB
 value, which starts at no particular alignment, so sm2 never
-pads (`TUPLE.md` §11):
+pads ([`TUPLE.md`](TUPLE.md#11-why-the-format-is-so) §11):
 
 - a **short** varlena can be handed to PostgreSQL in place;
 - a **long** one is handed to PostgreSQL in place too,

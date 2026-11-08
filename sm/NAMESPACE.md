@@ -11,7 +11,8 @@ for a lock on a lookup by name. The code is in
 `sm3/src/catalog/load.cc` and `sm3/src/ddl/ddl.cc`
 (`create_namespace`, `drop_namespace`). `sm3/include/sm3.h`
 declares the calls, and `include/sm.h` gives them to the host. A
-Namespace is one object of the Catalog: `CATALOG.md` has the
+Namespace is one object of the Catalog:
+[`CATALOG.md`](CATALOG.md) has the
 keys, the overlay and publishing.
 
 ---
@@ -49,7 +50,7 @@ DROP SCHEMA app;               -- drop_namespace(16390)
 
 - **A Namespace stores nothing but its own name.** It has no
   owner, no privileges and no options in sm. digres keeps its
-  owner and its privileges (`../aa/ROLE.md`).
+  owner and its privileges ([`../aa/ROLE.md`](../aa/ROLE.md)).
 - **A name is a key.** Every named object owns a `NAME` key under
   its Namespace's oid. So the name's uniqueness, and its race,
   are sm1's insert and write-write conflict. No lock and no check
@@ -67,7 +68,8 @@ DROP SCHEMA app;               -- drop_namespace(16390)
   (`nsp_public`). `cat_init` makes them, and neither can be
   dropped.
 - **A Namespace's oid is a Catalog oid.** It comes from
-  `sm3.oid`, from 16384 on, and is 64 bits (`CATALOG.md`).
+  `sm3.oid`, from 16384 on, and is 64 bits
+  ([`CATALOG.md`](CATALOG.md)).
 - **sm3 keeps no temporary Namespace.** No oid or name is
   reserved for one. A temporary object has namespace 0,
   `nsp_temp`, and that is what marks it temporary (§2.3). The
@@ -134,7 +136,8 @@ The value 0 has two uses, and they never meet.
 The creators refuse 0. `create_table` and `use_nspace` fail with
 `SM_ERR_NOTFOUND`: "namespace 0 does not exist".
 `create_temp_table` and `create_view` with `nsp_temp` are the two
-ways in (`TEMPTABLE.md`, `VIEW.md`). A temporary name and the
+ways in ([`TEMPTABLE.md`](TEMPTABLE.md), [`VIEW.md`](VIEW.md)). A
+temporary name and the
 same name in a Namespace do not meet, and two sessions may each
 have a temporary table of one name.
 
@@ -203,7 +206,8 @@ sees every committed name, whatever its snapshot.
   name, then takes the object's lock by oid. A table dropped
   between them is `SM_ERR_NOTFOUND` at `cat_lock_table`. A table
   renamed between them is found stale by the host, which looks
-  the name up again (`../dg/SCHEMACACHE.md`).
+  the name up again
+  ([`../dg/SCHEMACACHE.md`](../dg/SCHEMACACHE.md)).
 - **Listing is the same.** `cat_list_tables`, `cat_list_views`
   and `cat_list_sequences` give the names a lookup would find,
   sorted, so a list never names what a lookup does not find.
@@ -248,7 +252,8 @@ digres uses it so:
    search path too.
 
 `cat_epoch` is the wider number, which moves at every publish
-(`CATALOG.md`). `cat_namespace_epoch` lets a host keep its search
+([`CATALOG.md`](CATALOG.md)). `cat_namespace_epoch` lets a host
+keep its search
 path across the DDL that does not touch a Namespace.
 
 ---
@@ -342,7 +347,8 @@ constants in `sm.h`.
 - **`DROP COLLATION`**, so a Namespace that has held a collation
   cannot be dropped.
 - **A dependency index.** A cascade in sm waits for one
-  (`CATALOG.md`); digres's cascade does not need it.
+  ([`CATALOG.md`](CATALOG.md)); digres's cascade does not need
+  it.
 - **`ALTER SCHEMA ... RENAME`** and **`SET SCHEMA`**.
 
 ---

@@ -27,7 +27,8 @@ by a profile of `main` at 20f43e31.
 **Warning: the count depends on the state of the data.** A
 restart moved q2 by up to 47% in one run (374k, then 550k) when
 the server was started in a different way. Compare two builds on
-the same data directory, with the same restart, as `ISSUE.md`
+the same data directory, with the same restart, as
+[`ISSUE.md`](ISSUE.md)
 §2.3 says. The A/B numbers below were taken that way.
 
 ## 2. Where the instructions go
@@ -170,7 +171,9 @@ close it, and both are large:
 - The data is 10,000 rows. A table that does not fit in the
   block cache moves q3 most.
 - A restart changes the count (section 1). The cause is not
-  known; `ISSUE.md` §2.3 asks for a load, then a compare of the
+  known;
+  [`ISSUE.md`](ISSUE.md#23-a-point-reads-cost-depends-on-the-state-of-the-data)
+  §2.3 asks for a load, then a compare of the
   counts before and after a flush and a compaction.
 - Debug-build tests ran on the first branch alone, then on the
   second.
