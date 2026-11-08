@@ -154,6 +154,9 @@ struct sm1::session_t {
   std::atomic<uint64_t> tag{0};
   /* How long a wait lasts before a deadlock check, 0 for the db's. */
   int deadlock_ms = 0;
+  /* The host's notification of lock waits, called only on a conflict. */
+  sm_lock_wait_fn lock_wait_hook = nullptr;
+  void *lock_wait_arg = nullptr;
   bool stmt_taken = false; /* stmt_snapshot_ts is the one to use */
   uint64_t stmt_snapshot_ts = 0;
   /*

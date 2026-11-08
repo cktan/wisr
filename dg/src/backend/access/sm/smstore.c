@@ -422,9 +422,9 @@ template <class F> static int waiting(F f, bool lock_wait = true) {
 
   /*
    * lock_timeout ends a wait for a lock that lasts longer, by a cancel the
-   * timer raises (postinit.c).  It counts from the call, as sm does not say
-   * when the call begins to wait; a call that ends in time disarms it, and
-   * a cancel it raised meanwhile is never taken.
+   * timer raises (postinit.c). It counts from the call; smstore_lock_wait()
+   * times waits inside calls that leave this timer disabled. A call that
+   * ends in time disarms it, and a cancel it raised meanwhile is not taken.
    */
   if (timed)
     enable_timeout_after(LOCK_TIMEOUT, LockTimeout);
@@ -2606,6 +2606,25 @@ static void load_error(Relation rel, TupleTableSlot *slot, const char *what) {
 }
 
 /*
+ * Time an sm lock wait if the caller did not arm a timer already. Leave
+ * an expired timer armed for the alarm handler to report its timeout.
+ */
+bool smstore_lock_wait(void *arg, bool start) noexcept {
+  if (start) {
+    if (LockTimeout <= 0 || get_timeout_active(LOCK_TIMEOUT))
+      return false;
+    /* Count the blocked interval, not the load's sort or file writes. */
+    enable_timeout_after(LOCK_TIMEOUT, LockTimeout);
+    return true;
+  }
+  if (get_timeout_active(LOCK_TIMEOUT) &&
+      GetCurrentTimestamp() >= get_timeout_finish_time(LOCK_TIMEOUT))
+    return false;
+  disable_timeout(LOCK_TIMEOUT, true);
+  return false;
+}
+
+/*
  * Whether a bulk load can take rows of rel now: no load is open, or the
  * one open is of rel.  sm's loader tracks one table at a time here.
  */
@@ -2632,11 +2651,8 @@ void smstore_load(Relation rel, TupleTableSlot **slots, int n) {
                            RelationGetRelationName(rel))));
   if (load_oid != oid) {
     /*
-     * Tries the table's lock X, if it is empty: it never waits for it.  No
-     * call of a load arms lock_timeout: an add that sorts or writes a file
-     * takes long without a wait, and a timer that fires then cancels the
-     * statement.  Into a table with rows an add may wait for another
-     * transaction's key, and lock_timeout does not end that wait.
+     * Try the table's lock X without waiting. The wait hook times any
+     * later lock wait; sorting and file writes have no lock timer.
      */
     if (waiting([&] { return sm_tbl_load_begin(tbl); }, false) != 0)
       load_error(rel, NULL, "begin a bulk load");

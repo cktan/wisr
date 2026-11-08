@@ -215,6 +215,8 @@ void datadir_open_session(const char *dbname) {
   (void)sm_session_tag(sm_session, (uint64_t)MyProcPid);
   /* sm waits as long as deadlock_timeout says before it looks for a cycle. */
   (void)sm_set_deadlock_ms(sm_session, DeadlockTimeout);
+  /* Time sm's lock waits even when a bulk load does other work first. */
+  (void)sm_set_lock_wait_hook(sm_session, smstore_lock_wait, NULL);
 }
 
 /*

@@ -539,10 +539,43 @@ int lock_write_check(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   return 0;
 }
 
+/* Pair a host's wait notifications across wakeups and every exit. */
+class lock_wait_notice_t {
+public:
+  /* Keep the session's hook for the duration of this wait. */
+  explicit lock_wait_notice_t(sm1::session_t *s)
+      : m_fn(s->lock_wait_hook), m_arg(s->lock_wait_arg) {}
+
+  /* End the notification after the wait's mutex has been released. */
+  ~lock_wait_notice_t() {
+    if (m_paired) {
+      m_fn(m_arg, false);
+    }
+  }
+
+  /* Whether the first conflict has already been reported. */
+  bool started() const { return m_started; }
+
+  /* Start the notification once, after a conflict requires a wait. */
+  void start() {
+    if (!m_started) {
+      m_started = true;
+      m_paired = nullptr != m_fn && m_fn(m_arg, true);
+    }
+  }
+
+private:
+  sm_lock_wait_fn m_fn;
+  void *m_arg;
+  bool m_started = false;
+  bool m_paired = false;
+};
+
 /* Block until no other holder of (storeid, key) conflicts with mode. */
 int lock_wait(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
               uint16_t kind) {
   db_t *db = s->db;
+  lock_wait_notice_t notice(s);
   size_t pi = locktab_t::part_of(k);
   locktab_t::part_t &p = db->lock_table.part(pi);
   // Hold k's partition's mutex for its entry and our wait.
@@ -571,6 +604,13 @@ int lock_wait(sm1::session_t *s, const lockid_t &k, sm1::lockmode_t mode,
     if (s->qa_nowait) {
       s->waiting_for.clear();
       return 1;
+    }
+    if (!notice.started()) {
+      // Timer cancellation may wait for a wakeup that needs this mutex.
+      guard.unlock();
+      notice.start();
+      guard.lock();
+      continue;
     }
     // What it waits for, for lock_status and the cycle search.
     if (!s->waiting_lock) {
@@ -630,6 +670,7 @@ void lock_blockers(db_t *db, sm1::session_t *s,
 /* Block until xid ends, or rolls back to a savepoint. */
 int lock_wait_xact(sm1::session_t *s, uint64_t xid) {
   db_t *db = s->db;
+  lock_wait_notice_t notice(s);
   // Hold xact_mu for our wait; every wake-up takes it.
   std::unique_lock<std::mutex> guard(db->xact_mu);
   // A rollback from now on may delete what we wait for.
@@ -667,6 +708,13 @@ int lock_wait_xact(sm1::session_t *s, uint64_t xid) {
     if (s->qa_nowait) {
       s->waiting_for.clear();
       return 1;
+    }
+    if (!notice.started()) {
+      // Timer cancellation may wait for a wakeup that needs this mutex.
+      guard.unlock();
+      notice.start();
+      guard.lock();
+      continue;
     }
     // Our edge in the waits-for graph: to the transaction itself.
     s->waiting_for.clear();

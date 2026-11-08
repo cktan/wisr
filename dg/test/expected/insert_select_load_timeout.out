@@ -1,0 +1,15 @@
+-- Verify that bulk work without lock waits survives a short lock timeout.
+-- 1. Create an empty table with a primary key and a secondary index.
+-- 2. Load query rows with a one millisecond lock timeout.
+-- 3. Read the rows and confirm the whole load completed.
+create temp table il_timeout (id int primary key, v int);
+create index il_timeout_v on il_timeout (v);
+set lock_timeout = '1ms';
+insert into il_timeout select i, i % 10 from generate_series(1, 50000) i;
+reset lock_timeout;
+select count(*), sum(id) from il_timeout;
+ count |    sum     
+-------+------------
+ 50000 | 1250025000
+(1 row)
+

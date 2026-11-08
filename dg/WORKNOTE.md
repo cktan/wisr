@@ -12455,3 +12455,38 @@ ran 1.52 times PostgreSQL's instructions, against a goal of 1.5.
   Both cases pass with and without `ON CONFLICT`, alone and in
   eight sessions. The existing bulk-insert SQL tests also pass
   alone and in eight sessions on the debug build.
+
+## Step 410: Bulk-load fallback obeys lock_timeout
+
+- **Found**: the loader's row insert fallback could wait for
+  another transaction without arming `lock_timeout`.
+- **Decision**: sm reports the start and end of waits for locks
+  and uncommitted versions through `sm_set_lock_wait_hook()`.
+  Both callbacks run without a lock mutex. The start callback
+  runs once per wait, across wakeups and deadlock checks.
+- **Decision**: digres arms the lock timer if no caller armed
+  one already. At the end it disarms an unexpired timer. An
+  expired timer stays armed until the alarm handler reports it.
+  Sorting and file writes with no lock wait have no lock timer.
+- **Tests**: sm1 checks both wait paths, paired callbacks, and
+  an uncontended write. digres checks both conflicts through
+  the loader and a load with a one millisecond lock timeout.
+  A released holder lets the insert complete; a later query
+  shows that the timer was disarmed. The timeout regression
+  failed before this change. Disabling the new hook also makes
+  its unit test fail.
+- **Layers**: the dg tests drive the C wrapper and the loader
+  through sm3 and sm2. The mvcc and rel languages cannot install
+  callbacks or express a host lock timeout.
+- **Validation**: the debug SQL and server tests pass. All 231
+  PostgreSQL regression files pass. The 65 SQL logic files pass
+  on rerun; an earlier ALTER TYPE timeout also passed alone.
+  PostgreSQL isolation reports no unexpected failure.
+- **Sanitizer**: all SQL files and the focused timeout tests
+  pass with no race report. The full server run reports COPY
+  sort interruptions. The same COPY failures occur with the
+  new wait hook unregistered. They remain a separate issue.
+- **Storage validation**: the full debug suite passes at every
+  level and through `rel`. All 124 scenarios match for both
+  versioned and chained stores. All concurrency stress tests
+  pass. No existing scenario or expected result was changed.

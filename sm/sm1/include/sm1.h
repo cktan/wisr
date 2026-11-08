@@ -842,6 +842,14 @@ int set_tag(session_t* session, uint64_t tag);
 int set_deadlock_ms(session_t* session, int ms);
 
 /*
+ * Set the session's lock wait hook and its argument. NULL disables
+ * it. The setting lasts across transactions. See sm_lock_wait_fn
+ * in sm_lock.h for the callback contract.
+ * Errors: SM_ERR_INVALID.
+ */
+int set_lock_wait_hook(session_t* session, sm_lock_wait_fn fn, void* arg);
+
+/*
  * The numbers of the sessions the open session numbered tag
  * waits for now, into *out, cleared first: the holders of the
  * lock it waits on, or the transaction whose uncommitted version

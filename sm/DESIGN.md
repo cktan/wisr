@@ -694,6 +694,12 @@ design:
   a caller that wants it at once. A failed build keeps its
   reason in the index's record
   ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2).
+- **The host can time storage lock waits.**
+  `sm_set_lock_wait_hook()` reports the start and end of waits
+  for locks and uncommitted versions. Neither callback holds
+  a lock mutex. digres uses the hook to time waits inside a
+  bulk load without timing sorting or file writes.
+
 - **No backward scans, at any level, ever.** Settled in
   [`sm1/SM1_OBJECTIVE.md`](sm1/SM1_OBJECTIVE.md), built into
   sm2's encoding and

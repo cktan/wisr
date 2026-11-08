@@ -1029,6 +1029,21 @@ read it.
 
 Errors: `SM_ERR_INVALID`, for a negative `ms`.
 
+### int sm1::set_lock_wait_hook(sm1::session_t* session, sm_lock_wait_fn fn, void* arg)
+
+Sets a hook for the session's lock waits. NULL disables it.
+The setting lasts across transactions. A conflict calls
+`fn(arg, true)` once. If it returns true, the wait calls
+`fn(arg, false)` when it ends. Wakeups do not repeat the start.
+Neither call holds a lock mutex or may throw. The hook can use
+`sm_sys.h` timers, but must not reenter the storage engine. An
+uncontended operation calls no hook.
+
+The host can arm a timer at the start and disarm it at the end.
+This excludes sorting and file writes from the timed interval.
+
+Errors: `SM_ERR_INVALID` (a NULL session).
+
 ### int sm1::waits_for(sm1::env_t* env, uint64_t tag, std::vector<uint64_t>* out)
 
 The numbers of the sessions that the open session numbered

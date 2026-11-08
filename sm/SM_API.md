@@ -105,7 +105,8 @@ nothing. Their transaction stays active after either code. These
 calls are the cursor calls (`sm_rel_*`, `sm_idx_*`),
 `sm_pin_deform`, `sm_pin_decode`, `sm_pin_tuple`,
 `sm_tbl_deform`, `sm_tbl_decode`, `sm_tbl_idx_deform`,
-`sm_session_tag`, `sm_set_deadlock_ms`, `sm_cat_index_wait`, and
+`sm_session_tag`, `sm_set_deadlock_ms`, `sm_set_lock_wait_hook`,
+`sm_cat_index_wait`, and
 every call on an environment. A call that returns no `int` has no
 catch-all, but `sm_tbl_def`.
 
@@ -733,6 +734,25 @@ looks for a cycle of waits: `ms` above 0, or 0 for the database's
 first. The transaction ended is still the cycle's youngest.
 
 Errors: `SM_ERR_INVALID` (a negative `ms`).
+
+### `sm_set_lock_wait_hook`
+
+```cpp
+int sm_set_lock_wait_hook(sm_session_t* session, sm_lock_wait_fn fn, void* arg);
+```
+
+Sets a hook for the session's lock waits. NULL disables it.
+The setting lasts across transactions. A conflict calls
+`fn(arg, true)` once. If it returns true, the wait calls
+`fn(arg, false)` when it ends. Wakeups do not repeat the start.
+Neither call holds a lock mutex or may throw. The hook can use
+`sm_sys.h` timers, but must not reenter the storage engine. An
+uncontended operation calls no hook.
+
+The host can arm a timer at the start and disarm it at the end.
+This excludes sorting and file writes from the timed interval.
+
+Errors: `SM_ERR_INVALID` (a NULL session).
 
 ### `sm_waits_for`
 

@@ -974,6 +974,17 @@ int sm_set_deadlock_ms(sm_session_t *session, int ms) {
   });
 }
 
+/* Set the host's notification of lock waits for this session. */
+int sm_set_lock_wait_hook(sm_session_t *session, sm_lock_wait_fn fn,
+                          void *arg) {
+  return guard(nullptr, [&] {
+    if (nullptr == session) {
+      return null_arg("sm_set_lock_wait_hook", "session");
+    }
+    return sm1::set_lock_wait_hook(session_of(session), fn, arg);
+  });
+}
+
 /* The numbers of the sessions the session numbered tag waits for. */
 int sm_waits_for(sm_env_t *env, uint64_t tag, std::vector<uint64_t> *out) {
   return guard(nullptr, [&] {

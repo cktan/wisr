@@ -563,26 +563,43 @@ held_end isy
 
 # Verify that a load's row insert fallback obeys lock_timeout.
 # 1. Create a nonempty table to force the row insert fallback.
-# 2. Hold an uncommitted key in another session.
+# 2. Hold an uncommitted key and lock a committed row in another session.
 # 3. Insert that key from a query with both timeouts set.
-# 4. Confirm that lock_timeout ends the wait before statement_timeout.
-# 5. Roll back the holder and confirm the failed insert stored no rows.
+# 4. Confirm both conflicts reach lock_timeout before statement_timeout.
+# 5. Release the holder after a new waiter reports that it is blocked.
+# 6. Confirm the insert succeeds and its lock timer does not affect a later query.
 local_psql -c 'create table tis_timeout (id int primary key)' \
   -c 'insert into tis_timeout values (1)' > "$work/isl_timeout_setup.out" 2>&1
 held_start isl_timeout
-held_send isl_timeout "begin; insert into tis_timeout values (2); select 'timeout held';"
+held_send isl_timeout "begin; insert into tis_timeout values (2); select id from tis_timeout where id = 1 for update; select 'timeout held';"
 held_wait isl_timeout 'timeout held' || fail "insert select timeout: holder"
 local_psql -c '\set VERBOSITY verbose' \
   -c "set lock_timeout = '100ms'" -c "set statement_timeout = '900ms'" \
   -c 'insert into tis_timeout select i from generate_series(2, 2) i' \
-  > "$work/isl_timeout.out" 2>&1
+  > "$work/isl_timeout_waiter.out" 2>&1
 grep -q 'ERROR:  55P03: canceling statement due to lock timeout' \
-  "$work/isl_timeout.out" || fail "insert select timeout: lock timeout"
+  "$work/isl_timeout_waiter.out" || fail "insert select timeout: lock timeout"
+local_psql -c '\set VERBOSITY verbose' \
+  -c "set lock_timeout = '100ms'" -c "set statement_timeout = '900ms'" \
+  -c 'insert into tis_timeout select i from generate_series(1, 1) i' \
+  > "$work/isl_row_lock_timeout.out" 2>&1
+grep -q 'ERROR:  55P03: canceling statement due to lock timeout' \
+  "$work/isl_row_lock_timeout.out" || fail "insert select timeout: row lock"
+bg_start isl_wakeup -v ON_ERROR_STOP=1 \
+  -c "set lock_timeout = '5s'" -c "set statement_timeout = '10s'" \
+  -c "select 'pid ' || pg_backend_pid()" \
+  -c 'insert into tis_timeout select i from generate_series(2, 2) i' \
+  -c 'select pg_sleep(5.1)' -c "select 'timer disarmed'"
+[ "$(wait_state "${bg_pid[isl_wakeup]}" "$work/isl_wakeup.out")" = waited ] ||
+  fail "insert select timeout: wakeup waiter"
 held_send isl_timeout "rollback; select 'timeout released';"
 held_wait isl_timeout 'timeout released' || fail "insert select timeout: rollback"
 held_end isl_timeout
-[ "$(local_psql -c 'select count(*) from tis_timeout')" = 1 ] ||
-  fail "insert select timeout: rows after rollback"
+bg_end isl_wakeup || fail "insert select timeout: wakeup"
+grep -qx 'timer disarmed' "$work/isl_wakeup.out" ||
+  fail "insert select timeout: timer disarmed after wakeup"
+[ "$(local_psql -c 'select count(*) from tis_timeout')" = 2 ] ||
+  fail "insert select timeout: rows after wakeup"
 
 # Verify that a sequence newer than a snapshot neither fails a draw nor a
 # DROP TABLE: a sequence is not transactional.

@@ -349,3 +349,14 @@ int sm1::set_deadlock_ms(sm1::session_t *session, int ms) {
   session->deadlock_ms = ms;
   return 0;
 }
+
+/* Set the host's notification of lock waits for this session. */
+int sm1::set_lock_wait_hook(sm1::session_t *session, sm_lock_wait_fn fn,
+                            void *arg) {
+  if (nullptr == session) {
+    return set_error(sm1::SM_ERR_INVALID, "NULL session");
+  }
+  session->lock_wait_hook = fn;
+  session->lock_wait_arg = arg;
+  return 0;
+}

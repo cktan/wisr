@@ -126,7 +126,8 @@ gap between its lookup and its read was not forced.
 
 ### Bulk-load fallback ignores `lock_timeout`
 
-**Open, reproduced 2026-11-08.** Found on branch
+**Fixed in the working tree, reproduced 2026-11-08.**
+Found on branch
 `wip-insert-select-bulk`, at `62e7a3f2`. An
 `INSERT ... SELECT` into a table with rows uses the loader's
 ordinary insert fallback. A conflicting uncommitted key makes
@@ -172,11 +173,20 @@ wait. The fix must distinguish lock waits from load work.
 
 **Regression test.** `dg/test/server.sh` now holds a key in
 one session and checks that the query insert gets `55P03`
-before its statement timeout. The test fails on this branch.
+before its statement timeout. Both conflicts now pass: an
+uncommitted key and an explicit row lock.
 
-**Close when:** the regression test passes, and sorting or
-writing load files without a lock wait causes no lock timeout.
-The separate fix for data-modifying CTEs does not fix this bug.
+**Fix.** sm now reports lock waits to digres through
+`sm_set_lock_wait_hook()`. The hook runs outside the wait mutex.
+It arms a timer only when no caller armed one already. An
+unexpired timer is disarmed when the wait ends. An expired
+timer stays armed until the alarm handler reports it.
+
+The tests also release a holder before the timeout, then run a
+later query to confirm that the timer was disarmed. A bulk load
+of 50,000 rows with a one millisecond lock timeout passes alone
+and in eight sessions. The separate data-modifying CTE fallback
+remains in place.
 
 Smaller points:
 

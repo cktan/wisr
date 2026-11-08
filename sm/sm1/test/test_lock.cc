@@ -86,6 +86,25 @@ size_t table_size(sm1::session_t *s) {
 /* Give a blocking call time to reach its wait. */
 void settle() { std::this_thread::sleep_for(std::chrono::milliseconds(150)); }
 
+/* The notifications observed by a host that interrupts each wait. */
+struct wait_notice_test_t {
+  int starts = 0;
+  int ends = 0;
+  bool paired = true;
+};
+
+/* Interrupt a notified wait and record its paired end, if requested. */
+bool interrupt_notified_wait(void *arg, bool start) noexcept {
+  auto *state = static_cast<wait_notice_test_t *>(arg);
+  if (start) {
+    ++state->starts;
+    sm_interrupt_self(1);
+    return state->paired;
+  }
+  ++state->ends;
+  return false;
+}
+
 } // namespace
 
 TEST_CASE("first-committer-wins prevents lost updates at every level") {
@@ -1732,4 +1751,61 @@ TEST_CASE("a cycle through a wait for a transaction is found") {
   REQUIRE(sm1::commit(a) == 0);
   sm1::closedb(a);
   sm1::closedb(b);
+}
+
+TEST_CASE("host notifications cover lock and transaction waits only") {
+  // Verify host timers can surround only waits, with balanced notifications.
+  // 1. Hold a row lock and an uncommitted write in session A.
+  // 2. Install a hook on B and confirm an uncontended write calls no hook.
+  // 3. Interrupt both kinds of wait through the hook and check both ends.
+  // 4. Decline a paired end and confirm no end notification is delivered.
+  // 5. Disable the hook and confirm a QA refusal calls no hook.
+  lock_fixture_t f;
+  sm1::session_t *a = f.open();
+  sm1::session_t *b = f.open();
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(set(a, "x", "a") == 0);
+  REQUIRE(sm1::lock_row(a, g_store, "z", sm1::SM_LOCKMODE_EX) == 0);
+  wait_notice_test_t notice;
+  REQUIRE(sm1::set_lock_wait_hook(b, interrupt_notified_wait, &notice) == 0);
+  uint32_t old_mask = sm_wait_mask();
+  // Let the hook's interrupt end these waits, restoring the host's mask later.
+  sm_set_wait_mask(1);
+  // Bound a failed notification test, so a missing hook cannot hang it.
+  sm_timer_id_t safety =
+      sm_timer_at(sm_thread_self(), sm_now_us() + 1000000, 1, 1000000);
+  defer {
+    sm_timer_cancel(safety);
+    sm_take(1);
+    sm_set_wait_mask(old_mask);
+  };
+  REQUIRE(set(b, "y", "b") == 0);
+  CHECK(notice.starts == 0);
+  CHECK(notice.ends == 0);
+  CHECK(set(b, "x", "b") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INTERRUPTED);
+  CHECK(sm_take(1) == 1);
+  CHECK(notice.starts == 1);
+  CHECK(notice.ends == 1);
+  CHECK(sm1::lock_row(b, g_store, "z", sm1::SM_LOCKMODE_EX) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INTERRUPTED);
+  CHECK(sm_take(1) == 1);
+  CHECK(notice.starts == 2);
+  CHECK(notice.ends == 2);
+  notice.paired = false;
+  CHECK(set(b, "x", "b") == -1);
+  CHECK(sm_take(1) == 1);
+  CHECK(notice.starts == 3);
+  CHECK(notice.ends == 2);
+  REQUIRE(sm1::set_lock_wait_hook(b, nullptr, nullptr) == 0);
+  REQUIRE(sm1::set_qa_nowait(b, true) == 0);
+  CHECK(set(b, "x", "b") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  CHECK(notice.starts == 3);
+  CHECK(notice.ends == 2);
+  REQUIRE(sm1::abort(b) == 0);
+  REQUIRE(sm1::abort(a) == 0);
+  REQUIRE(sm1::closedb(b) == 0);
+  REQUIRE(sm1::closedb(a) == 0);
 }

@@ -592,6 +592,18 @@ removes the table entry. `part_t::join` covers an existing hold's
 mode, or makes a hold. `part_t::move_owner` changes a hold's
 owner, for a prepare.
 
+**Host wait timers.** `set_lock_wait_hook()` reports a conflict
+that requires a wait for a lock or an uncommitted version.
+
+1. Release the wait mutex and call the start hook once.
+2. Take the mutex and check the conflict again.
+3. Wait until the conflict ends, an interrupt, or a deadlock.
+4. Release the mutex and call the end hook if requested.
+
+Wakeups do not restart the hook. Neither hook holds a lock
+mutex: cancelling a host timer can wait for a wakeup that needs
+that mutex. An uncontended operation calls neither hook.
+
 ### 3.3 The lock list
 
 A session's `locks` is a `lock_lists_t`: one `lock_list_t` for

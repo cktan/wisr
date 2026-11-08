@@ -34,4 +34,15 @@ typedef enum sm_lockmode_t {
     SM_LOCKMODE_SIX = 4  /* SIX: S, and will write below it */
 } sm_lockmode_t;
 
+#ifdef __cplusplus
+/*
+ * Notify the host of a lock wait. Called with start=true once a
+ * conflict requires a wait. Return true to request a paired call
+ * with start=false when the wait ends; its return is ignored.
+ * Both calls hold no lock mutex. Timers in sm_sys.h are safe,
+ * but do not reenter the storage engine. Neither call may throw.
+ */
+typedef bool (*sm_lock_wait_fn)(void *arg, bool start) noexcept;
+#endif
+
 #endif /* SM_LOCK_H */
