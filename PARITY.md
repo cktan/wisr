@@ -66,8 +66,8 @@ profile:
 
 ## 3. What was done
 
-Two branches, not merged. `RESULT.md` in the home directory has
-the numbers of each step.
+Two branches, not merged. The numbers of each step are in
+section 6.
 
 ### 3.1 `wip-parity-ios`: read no column when none is wanted
 
@@ -173,7 +173,7 @@ close it, and both are large:
   known; `ISSUE.md` §2.3 asks for a load, then a compare of the
   counts before and after a flush and a compaction.
 - Debug-build tests ran on the first branch alone, then on the
-  second. See `RESULT.md` for the status of each.
+  second.
 
 ## 6. Throughput of `bench/run.sh`
 

@@ -21,7 +21,7 @@ None open.
    next starts only past that plus `txn_sweep_records`.
 
 **Thread sanitizer, closed 2026-11-06.** Found by the dg review
-(`DG_REVIEW.md` at `bc43915c`);
+(review at `bc43915c`);
 reproduced with `digres-tsan` (`server.sh`) and a program that
 grows the session set. `server.sh` and `run.sh` now pass under it
 with no report.

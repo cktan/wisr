@@ -11750,7 +11750,7 @@ md5 as a login's method: `aa_auth_method()` gives peer or SCRAM
 ## Step 397: DDL includes rows committed after its snapshot
 
 Two paths used an old REPEATABLE READ or SERIALIZABLE view for
-DDL that must read current rows (review at `bc43915c`, `DG_REVIEW.md`).
+DDL that must read current rows (review at `bc43915c`).
 
 - **Foreign keys**: `check_fkey_rows()` enables current reads
   with `sm_view_latest()` while `RI_Initial_Check()` runs. It
