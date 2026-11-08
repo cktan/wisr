@@ -117,6 +117,13 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
   step, not as prose. One sentence before the steps may say
   what the algorithm is for; a step may add why, briefly.
 
+- **Copied code keeps its copyright notice.** When you copy
+  a file, or part of one, from PostgreSQL or another project,
+  keep its copyright notice and author lines in the new file,
+  and say in the header what the file is derived from. When
+  you write the code again in your own words and structure,
+  the notice is not needed.
+
 - **Code review: not PostgreSQL's own code.** When reviewing
   code, do not review original PostgreSQL code. Review only
   the code this repository added or changed. `dg/` is a fork
