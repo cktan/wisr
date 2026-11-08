@@ -1047,6 +1047,7 @@ static smstore_relation_t *add_relation(List **out, uint64_t oid,
   r->notnull = (bool *)palloc0(Max(natts, 1) * sizeof(bool));
   r->defaults = (char **)palloc0(Max(natts, 1) * sizeof(char *));
   r->identity = (char *)palloc0(Max(natts, 1) * sizeof(char));
+  r->generated = (char *)palloc0(Max(natts, 1) * sizeof(char));
   r->nnoids = (Oid *)palloc0(Max(natts, 1) * sizeof(Oid));
   r->nnnames = (char **)palloc0(Max(natts, 1) * sizeof(char *));
   *out = lappend(*out, r);
@@ -1061,6 +1062,7 @@ static void set_column(smstore_relation_t *r, int i, const sm_column_def_t &c) {
     return;
   r->typids[i] = type_oid(c.type_code);
   r->notnull[i] = c.not_null;
+  r->generated[i] = c.generated;
   r->nnoids[i] = (Oid)c.not_null_oid;
   if (0 != c.not_null_oid)
     r->nnnames[i] = pstrdup(c.not_null_name.c_str());
@@ -1619,7 +1621,8 @@ static bool only_taken(List *constraints) {
     if (type != CONSTR_NOTNULL && type != CONSTR_NULL &&
         type != CONSTR_PRIMARY && type != CONSTR_UNIQUE &&
         type != CONSTR_DEFAULT && type != CONSTR_IDENTITY &&
-        type != CONSTR_FOREIGN && type != CONSTR_CHECK)
+        type != CONSTR_FOREIGN && type != CONSTR_CHECK &&
+        type != CONSTR_GENERATED)
       return false;
   }
   return true;
@@ -2117,6 +2120,41 @@ static void alter_add_check(Oid relid, Constraint *con) {
   relation_close(rel, NoLock);
 }
 
+/*
+ * Make the column col of the table relid generated (../sm/GENERATED.md):
+ * its expression cooked against the table, as PostgreSQL's cookDefault()
+ * checks it, and the columns it reads.  The column is there, plain.
+ */
+static void set_generated(Oid relid, ColumnDef *col) {
+  Relation rel = relation_open(relid, AccessShareLock);
+  ParseState *pstate = make_parsestate(NULL);
+  ParseNamespaceItem *nsitem = addRangeTableEntryForRelation(
+      pstate, rel, AccessShareLock, NULL, false, true);
+  AttrNumber attnum = attnameAttNum(rel, col->colname, false);
+  Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), attnum - 1);
+  Bitmapset *attnos = NULL;
+  std::vector<int32_t> reads;
+  int k = -1;
+
+  addNSItemToQuery(pstate, nsitem, true, true, true);
+  Node *expr = cookDefault(pstate, col->raw_default, att->atttypid,
+                           att->atttypmod, col->colname, col->generated);
+  free_parsestate(pstate);
+  pull_varattnos(expr, 1, &attnos);
+  while ((k = bms_next_member(attnos, k)) >= 0)
+    reads.push_back(k + FirstLowInvalidHeapAttributeNumber - 1);
+  relation_close(rel, NoLock);
+  sm_session_t *s = xact_session();
+  const char *bin = nodeToString(expr);
+
+  if (0 != waiting([&] {
+        return sm_cat_set_generated(s, relid, col->colname, col->generated, bin,
+                                    reads);
+      }))
+    sm_error("make a generated column");
+  forget_table(relid);
+}
+
 ObjectAddress smstore_create_table(CreateStmt *stmt) {
   std::vector<sm_column_spec_t> columns;
   std::vector<ColumnDef *> defs;
@@ -2151,18 +2189,25 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
                         errmsg("column \"%s\" specified more than once",
                                col->colname)));
     if (col->collClause != NULL || col->cooked_default != NULL ||
-        col->generated != 0 || !only_taken(col->constraints))
+        !only_taken(col->constraints))
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("column \"%s\" asks for what CREATE TABLE "
                              "does not support yet",
                              col->colname)));
+    /* sm keeps a null in a virtual column's place (../sm/GENERATED.md). */
+    if (ATTRIBUTE_GENERATED_VIRTUAL == col->generated &&
+        column_not_null(stmt, col))
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("a NOT NULL virtual generated column is not "
+                             "supported yet")));
     typenameTypeIdAndMod(NULL, col->typeName, &typid, &typmod);
     /* A numeric with no precision is its type's default one, kept in sm. */
     if (is_decimal(typid))
       typmod = numeric_typmod(typid, typmod);
-    columns.push_back({col->colname, type_code(typid), typmod,
-                       column_not_null(stmt, col),
-                       column_default(col, typid, typmod)});
+    /* A generated column's expression is cooked once the table is there. */
+    columns.push_back(
+        {col->colname, type_code(typid), typmod, column_not_null(stmt, col),
+         0 != col->generated ? NULL : column_default(col, typid, typmod)});
     defs.push_back(col);
     columns.back().on_update_expr =
         column_update_default(col, col->raw_default, typid, typmod);
@@ -2193,6 +2238,12 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
                              stmt->relation->relname)));
     sm_error("create a table");
   }
+  /* Its generated columns, cooked against the table now that it is there. */
+  for (ColumnDef *col : defs)
+    if (0 != col->generated) {
+      CommandCounterIncrement();
+      set_generated((Oid)oid, col);
+    }
   /* Its checks, cooked against the table now that it is there. */
   if (stmt->constraints != NIL) {
     Relation rel;
@@ -2652,6 +2703,7 @@ smstore_table_t *smstore_table_desc(Oid oid) {
     col->dropped = c.dropped;
     col->default_expr = c.has_default ? pstrdup(c.default_expr.c_str()) : NULL;
     col->identity = c.identity;
+    col->generated = c.generated;
     col->not_null_oid = (Oid)c.not_null_oid;
     col->not_null_name =
         0 != c.not_null_oid ? pstrdup(c.not_null_name.c_str()) : NULL;
@@ -4501,6 +4553,65 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
   sm_error("add a column");
 }
 
+static void drop_column(Oid relid, const char *relname, const char *name,
+                        bool missing_ok, bool cascade);
+
+/*
+ * The generated columns of the table relid, def, that read its column at,
+ * as DROP COLUMN of that one meets them (../sm/GENERATED.md §3): with
+ * cascade dropped first, else PostgreSQL's error naming each.
+ */
+static void drop_generated_readers(Oid relid, const char *relname,
+                                   const sm_table_def_t &def, int32_t at,
+                                   bool cascade) {
+  StringInfoData detail;
+  std::vector<std::string> readers;
+
+  /* The last first, in PostgreSQL's order of them. */
+  for (size_t i = def.columns.size(); i-- > 0;) {
+    const sm_column_def_t &c = def.columns[i];
+
+    if (!c.dropped && 0 != c.generated &&
+        std::find(c.generated_reads.begin(), c.generated_reads.end(), at) !=
+            c.generated_reads.end())
+      readers.push_back(c.name);
+  }
+  if (readers.empty())
+    return;
+  initStringInfo(&detail);
+  if (cascade) {
+    for (const std::string &r : readers)
+      appendStringInfo(&detail, "%sdrop cascades to column %s of table %s",
+                       detail.len > 0 ? "\n" : "", r.c_str(), relname);
+    if (1 == readers.size())
+      ereport(NOTICE, (errmsg_internal("%s", detail.data)));
+    else
+      ereport(NOTICE,
+              (errmsg("drop cascades to %zu other objects", readers.size()),
+               errdetail_internal("%s", detail.data)));
+    for (const std::string &r : readers) {
+      drop_column(relid, relname, r.c_str(), false, true);
+      forget_table(relid);
+      CommandCounterIncrement();
+    }
+    return;
+  }
+  for (const std::string &r : readers)
+    appendStringInfo(&detail,
+                     "%scolumn %s of table %s depends on column %s "
+                     "of table %s",
+                     detail.len > 0 ? "\n" : "", r.c_str(), relname,
+                     def.columns[at].name.c_str(), relname);
+  ereport(ERROR,
+          (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+           errmsg("cannot drop column %s of table %s because other objects "
+                  "depend on it",
+                  def.columns[at].name.c_str(), relname),
+           errdetail("%s", detail.data),
+           errhint("Use DROP ... CASCADE to drop the dependent objects "
+                   "too.")));
+}
+
 /*
  * DROP COLUMN name of the table relid, in sm; it reads as null from now.  A
  * view that reads it is what depends on it: CASCADE drops the view, RESTRICT
@@ -4517,6 +4628,7 @@ static void drop_column(Oid relid, const char *relname, const char *name,
         drop_readers(relid, (int32_t)i,
                      std::string("column ") + name + " of table " + relname,
                      cascade, {}, nullptr);
+        drop_generated_readers(relid, relname, def, (int32_t)i, cascade);
         /* The checks that read it go with it, as in PostgreSQL. */
         for (const sm_check_def_t &c : def.checks) {
           uint64_t oid = c.oid;
@@ -4658,6 +4770,19 @@ static void alter_column_default(Oid relid, const char *relname,
                               : errhint("Use %s instead.",
                                         "ALTER TABLE ... ALTER COLUMN ... "
                                         "DROP IDENTITY")));
+  if (0 != c.generated)
+    ereport(ERROR,
+            (errcode(ERRCODE_SYNTAX_ERROR),
+             errmsg("column \"%s\" of relation \"%s\" is a generated column",
+                    name, relname),
+             NULL != cmd->def
+                 ? errhint("Use %s instead.",
+                           "ALTER TABLE ... ALTER COLUMN ... SET EXPRESSION")
+                 : (ATTRIBUTE_GENERATED_STORED == c.generated
+                        ? errhint("Use %s instead.",
+                                  "ALTER TABLE ... ALTER COLUMN ... DROP "
+                                  "EXPRESSION")
+                        : 0)));
   if (NULL != cmd->def) {
     /* The column's type as PostgreSQL has it, a domain's or a varchar's. */
     Relation rel = relation_open(relid, AccessShareLock);
@@ -7682,6 +7807,18 @@ static void check_retype(Oid relid, int32_t at, const char *colname) {
                            "reads is not supported yet"),
                     errdetail("Check constraint \"%s\" reads column \"%s\".",
                               by.c_str(), colname)));
+  case SM_COLUMN_USE_GENERATED:
+    /* A column a generated column reads: PostgreSQL refuses it too. */
+    if (by != colname)
+      ereport(ERROR,
+              (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+               errmsg("cannot alter type of a column used by a generated "
+                      "column"),
+               errdetail("Column \"%s\" is used by generated column \"%s\".",
+                         colname, by.c_str())));
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("ALTER COLUMN TYPE of a generated column is not "
+                           "supported yet")));
   }
 }
 
@@ -7994,6 +8131,18 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
     ereport(ERROR, (errcode(ERRCODE_DUPLICATE_TABLE),
                     errmsg("relation \"%s\" already exists", name)));
   }
+  /* A virtual generated column holds no value to index (GENERATED.md). */
+  std::vector<int32_t> places(includes.begin(), includes.end());
+
+  places.insert(places.end(), reads.begin(), reads.end());
+  for (const sm_index_key_spec_t &k : keys)
+    places.push_back(k.attnum);
+  for (int32_t at : places)
+    if (at >= 0 && ATTRIBUTE_GENERATED_VIRTUAL ==
+                       TupleDescAttr(RelationGetDescr(rel), at)->attgenerated)
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("indexes on virtual generated columns are not "
+                             "supported")));
   /* A constraint's name is the table's, a check's or a foreign key's too. */
   if (stmt->isconstraint &&
       ConstraintNameIsUsed(CONSTRAINT_RELATION, relid, name))

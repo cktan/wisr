@@ -1544,6 +1544,8 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
       has_not_null |= col->not_null;
       att->atthasdef = col->default_expr != NULL;
       att->attidentity = col->identity;
+      /* A generated column's expression is its default (GENERATED.md). */
+      att->attgenerated = col->generated;
     }
     att->attrelid = targetRelId;
     populate_compact_attribute(relation->rd_att, i);
@@ -1554,6 +1556,12 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
   }
   constr = (TupleConstr *)palloc0(sizeof(TupleConstr));
   constr->has_not_null = has_not_null;
+  for (int i = 0; i < desc->ncolumns; i++) {
+    constr->has_generated_stored |=
+        ATTRIBUTE_GENERATED_STORED == desc->columns[i].generated;
+    constr->has_generated_virtual |=
+        ATTRIBUTE_GENERATED_VIRTUAL == desc->columns[i].generated;
+  }
   /* The columns' defaults, as pg_attrdef's rows would give them. */
   for (int i = 0; i < desc->ncolumns; i++)
     if (!desc->columns[i].dropped && desc->columns[i].default_expr != NULL)

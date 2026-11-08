@@ -40,6 +40,34 @@ bool live_attnum(const sm3::table_rec_t &rec, int32_t attnum) {
 }
 
 /*
+ * Refuse rec's column at, generated, unless each column its expression
+ * reads is a live column of rec, not itself, and not generated
+ * (../GENERATED.md §1).
+ */
+int check_generated_reads(const sm3::table_rec_t &rec, size_t at) {
+  for (int32_t r : rec.columns[at].generated_reads) {
+    if (!live_attnum(rec, r) || static_cast<size_t>(r) == at ||
+        rec.columns[r].generated != 0) {
+      return invalid("generated column " + rec.columns[at].name +
+                     " reads no live plain column");
+    }
+  }
+  return 0;
+}
+
+/* Whether a live generated column of rec reads its column at. */
+bool generated_reads(const sm3::table_rec_t &rec, int32_t at) {
+  for (const sm3::column_rec_t &c : rec.columns) {
+    if (!c.dropped && c.generated != 0 &&
+        std::find(c.generated_reads.begin(), c.generated_reads.end(), at) !=
+            c.generated_reads.end()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/*
  * Refuse a missing value that is not a datum of type under typmod:
  * a fixed-width type's exact bytes, or a whole, readable varlena.
  */
@@ -177,6 +205,17 @@ int check_columns(std::span<const sm3::column_spec_t> columns) {
                              " has a type code sm2 lacks, or a typmod its "
                              "type refuses");
     }
+    // A generated column: its expression in its default, no update
+    // default, no identity, and a virtual one nullable, as sm keeps a
+    // null in its place (../GENERATED.md §6).
+    if (c.generated != 0 &&
+        ((c.generated != 's' && c.generated != 'v') || !c.default_expr ||
+         c.on_update_expr || c.identity != 0 ||
+         (c.generated == 'v' && c.not_null))) {
+      return invalid("create table: generated column " + c.name +
+                     " is not STORED or VIRTUAL with an expression, or is "
+                     "an identity column, or a VIRTUAL one NOT NULL");
+    }
     if (c.identity == 0) {
       continue;
     }
@@ -269,11 +308,29 @@ static int make_table(session_t *session, uint64_t nspoid,
                   {},
                   {},
                   {},
+                  {},
                   {}};
   for (const column_spec_t &c : columns) {
-    rec.columns.push_back({c.name, c.type_code, c.typmod, c.not_null, false,
-                           std::nullopt, std::nullopt, c.default_expr,
-                           c.identity, c.identity_seq, c.on_update_expr});
+    rec.columns.push_back({c.name,
+                           c.type_code,
+                           c.typmod,
+                           c.not_null,
+                           false,
+                           std::nullopt,
+                           std::nullopt,
+                           c.default_expr,
+                           c.identity,
+                           c.identity_seq,
+                           c.on_update_expr,
+                           0,
+                           {},
+                           c.generated,
+                           c.generated_reads});
+  }
+  for (size_t i = 0; i < rec.columns.size(); i++) {
+    if (check_generated_reads(rec, i) != 0) {
+      return -1;
+    }
   }
   // Each NOT NULL column's constraint, in the columns' order.
   for (size_t i = 0; i < columns.size(); i++) {
@@ -586,9 +643,28 @@ int add_column(session_t *session, uint64_t oid, const column_spec_t &col,
                        "add column: " + col.name + " is taken");
   }
   rec.columns.push_back(
-      {col.name, col.type_code, col.typmod, col.not_null, false,
+      {col.name,
+       col.type_code,
+       col.typmod,
+       col.not_null,
+       false,
        missing ? std::optional<std::string>(*missing) : std::nullopt,
-       std::nullopt, col.default_expr, 0, 0, col.on_update_expr});
+       std::nullopt,
+       col.default_expr,
+       0,
+       0,
+       col.on_update_expr,
+       0,
+       {},
+       col.generated,
+       col.generated_reads});
+  if (check_generated_reads(rec, rec.columns.size() - 1) != 0) {
+    return -1;
+  }
+  // A virtual column keeps no value, so no missing one.
+  if ('v' == col.generated && missing) {
+    return invalid("add column: " + col.name + " is virtual, with a value");
+  }
   if (col.not_null && name_not_null(session, rec, rec.columns.size() - 1,
                                     col.not_null_name) != 0) {
     return -1;
@@ -610,6 +686,11 @@ int set_not_null(session_t *session, uint64_t oid, std::string_view name,
   }
   if (rec.columns[at].not_null) {
     return 0;
+  }
+  // A virtual column's place holds a null (../GENERATED.md §6).
+  if ('v' == rec.columns[at].generated) {
+    return invalid("set not null: " + std::string(name) +
+                   " is a virtual generated column");
   }
   // Open exclusive, so no other transaction writes a row between
   // the scan and the catalog's change.
@@ -713,6 +794,34 @@ int drop_not_null(session_t *session, uint64_t oid, std::string_view name) {
   return cat_put_table(session, oid, rec);
 }
 
+/* Make a column generated; see sm3.h. */
+int set_generated(session_t *session, uint64_t oid, std::string_view name,
+                  char kind, std::string_view expr,
+                  std::span<const int32_t> reads) {
+  table_rec_t rec;
+  if (0 != cat_get_table_rec(session, oid, rec)) {
+    return -1;
+  }
+  int at = live_column(rec, name);
+  if (at < 0) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "set generated: no column " + std::string(name));
+  }
+  column_rec_t &c = rec.columns[at];
+  if (('s' != kind && 'v' != kind) || 0 != c.generated || c.default_expr ||
+      c.on_update_expr || 0 != c.identity || ('v' == kind && c.not_null)) {
+    return invalid("set generated: " + c.name +
+                   " is not a plain nullable column with no default");
+  }
+  c.generated = kind;
+  c.default_expr = std::string(expr);
+  c.generated_reads.assign(reads.begin(), reads.end());
+  if (0 != check_generated_reads(rec, at)) {
+    return -1;
+  }
+  return cat_put_table(session, oid, rec);
+}
+
 /* Set or drop a column's default; see sm3.h. */
 int set_default(session_t *session, uint64_t oid, std::string_view name,
                 std::optional<std::string_view> expr) {
@@ -726,9 +835,11 @@ int set_default(session_t *session, uint64_t oid, std::string_view name,
                        "set default: no column " + std::string(name));
   }
   column_rec_t &c = rec.columns[at];
-  // An identity column has no default (check_columns).
-  if (0 != c.identity) {
-    return invalid("set default: " + c.name + " is an identity column");
+  // An identity column has no default (check_columns); a generated
+  // one's is its expression.
+  if (0 != c.identity || 0 != c.generated) {
+    return invalid("set default: " + c.name +
+                   " is an identity or a generated column");
   }
   c.default_expr = expr ? std::optional<std::string>(*expr) : std::nullopt;
   return cat_put_table(session, oid, rec);
@@ -771,6 +882,13 @@ static int find_column_use(session_t *session, uint64_t oid,
   for (const check_rec_t &c : rec.checks) {
     if (in(c.reads)) {
       return found(column_use_t::check, c.name);
+    }
+  }
+  // A generated column, or one a generated column reads.
+  for (const column_rec_t &c : rec.columns) {
+    if (!c.dropped && c.generated != 0 &&
+        (&c == &rec.columns[at] || in(c.generated_reads))) {
+      return found(column_use_t::generated, c.name);
     }
   }
   for (const fkey_ref_t &ref : rec.referenced_by) {
@@ -1018,6 +1136,13 @@ int drop_column(session_t *session, uint64_t oid, std::string_view name) {
                                                 " reads " + std::string(name));
     }
   }
+  // A generated column reading it is the host's to drop first
+  // (../GENERATED.md §3).
+  if (generated_reads(rec, at)) {
+    return sm1::seterr(sm1::SM_ERR_INUSE, "drop column: a generated column "
+                                          "reads " +
+                                              std::string(name));
+  }
   // A column a view reads stays (../VIEW.md §5).
   // Another session's temporary view among them (../VIEW.md §12.3).
   for (const view_reader_t &v : cat_view_readers(session, oid)) {
@@ -1125,8 +1250,9 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
                        "create index: constraint " + x.name + " is taken");
   }
   for (int32_t a : reads) {
-    if (!live_attnum(rec, a)) {
-      return invalid("create index: it reads no live column");
+    if (!live_attnum(rec, a) || 'v' == rec.columns[a].generated) {
+      return invalid("create index: it reads no live column, or a virtual "
+                     "generated one");
     }
     x.reads.push_back(a);
   }
@@ -1139,8 +1265,10 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
         return invalid("create index: an expression with nothing to "
                        "evaluate, or of no type sm2 has");
       }
-    } else if (!live_attnum(rec, k.attnum)) {
-      return invalid("create index: a key names no live column");
+    } else if (!live_attnum(rec, k.attnum) ||
+               'v' == rec.columns[k.attnum].generated) {
+      return invalid("create index: a key names no live column, or a "
+                     "virtual generated one");
     } else if (primary && !rec.columns[k.attnum].not_null) {
       return invalid("create index: a primary key on " +
                      rec.columns[k.attnum].name + ", which may be null");
@@ -1161,8 +1289,9 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
                       expr ? k.type_code : uint8_t{0}, expr ? k.typmod : -1});
   }
   for (int32_t a : includes) {
-    if (!live_attnum(rec, a)) {
-      return invalid("create index: an INCLUDE names no live column");
+    if (!live_attnum(rec, a) || 'v' == rec.columns[a].generated) {
+      return invalid("create index: an INCLUDE names no live column, or a "
+                     "virtual generated one");
     }
     x.includes.push_back(a);
   }

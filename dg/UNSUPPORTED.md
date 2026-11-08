@@ -53,13 +53,17 @@ regression files are taken out for it (`test/pgregress`,
   one has none (step 299). No table may have a column named
   `_id`.
 - **CREATE TABLE beyond columns, NOT NULL, PRIMARY KEY, UNIQUE,
-  CHECK and TEMPORARY** — refused: EXCLUDE constraints, `OF
-  type`, `UNLOGGED`, `TABLESPACE`, `USING`. Generated columns,
-  column `COLLATE` and a DEFERRABLE `REFERENCES` are refused too.
+  CHECK, generated columns and TEMPORARY** — refused: EXCLUDE
+  constraints, `OF type`, `UNLOGGED`, `TABLESPACE`, `USING`.
+  Column `COLLATE` and a DEFERRABLE `REFERENCES` are refused too.
   CHECK constraints are built
-  ([`../sm/CHECK.md`](../sm/CHECK.md), step 408). `WITH` takes
-  only `fillfactor` and `autovacuum_enabled`, and ignores them
-  (step 208).
+  ([`../sm/CHECK.md`](../sm/CHECK.md), step 408), and generated
+  columns, stored and virtual
+  ([`../sm/GENERATED.md`](../sm/GENERATED.md), step 412), but
+  for ADD COLUMN of one, SET and DROP EXPRESSION,
+  ALTER COLUMN TYPE of one, and a NOT NULL virtual one. `WITH`
+  takes only `fillfactor` and `autovacuum_enabled`, and ignores
+  them (step 208).
 - **Unlogged tables, temporary sequences, ON COMMIT on a
   permanent table** — refused (step 80).
 - **Materialized views, foreign tables, composite types,

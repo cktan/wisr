@@ -12569,3 +12569,38 @@ had no row there for one.
 - **The regression files**: the 8 that NOT NULL constraints by
   name reach most (step 410) were trimmed again: about 40
   statements run now.
+
+## Step 412: generated columns
+
+[`../sm/GENERATED.md`](../sm/GENERATED.md): a STORED or VIRTUAL
+generated column, kept by sm3, its values computed by
+PostgreSQL's own code, as a check's rows are checked by it.
+
+- **sm3**: a column's record keeps its kind, `s` or `v`, and the
+  columns its expression reads; the expression is its default.
+  `set_generated()` makes a plain column generated. A virtual
+  column is nullable, holds a null, and takes no index; a
+  generated column takes no default; DROP COLUMN of a column an
+  expression reads is `SM_ERR_INUSE`, and so is ALTER COLUMN
+  TYPE of it or of a generated column (`column_use_t::generated`).
+- **sm.h**: `sm_column_spec_t` and `sm_column_def_t` carry
+  `generated` and `generated_reads`; `sm_cat_set_generated()`,
+  `SM_COLUMN_USE_GENERATED`.
+- **digres** (`access/sm/smstore.c`):
+  - CREATE TABLE makes a generated column plain, then cooks its
+    expression against the new table with `cookDefault()`, which
+    checks it as PostgreSQL does, and calls `set_generated()`.
+  - The relation cache sets `attgenerated` and
+    `has_generated_stored` and `has_generated_virtual`, so the
+    executor computes a stored column on INSERT, UPDATE and
+    COPY, and the rewriter a virtual one on a read.
+    `pg_attribute` has `attgenerated`.
+  - PostgreSQL's errors for an index on a virtual column, SET or
+    DROP DEFAULT of a generated column, ALTER COLUMN TYPE of a
+    column an expression reads, and DROP COLUMN of one, whose
+    CASCADE drops the generated columns.
+  - Refused: ADD COLUMN of a generated column, ALTER COLUMN TYPE
+    of one, and a NOT NULL virtual one.
+- **Tests**: `../sm/sm3/test/test_table.cc`, and
+  `test/generated_column.sql`, which gives PostgreSQL 18's output
+  but for the two refusals.

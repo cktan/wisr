@@ -763,6 +763,13 @@ struct sm_column_spec_t {
     const char* on_update_expr = nullptr; /* the host's update default */
     /* Its NOT NULL constraint's name; nullptr: sm3 makes one. */
     const char* not_null_name = nullptr;
+    /*
+     * A generated column's kind, 's' or 'v', or 0 (GENERATED.md):
+     * default_expr is its expression, generated_reads the 0-based
+     * places of the columns it reads.
+     */
+    char                 generated = 0;
+    std::vector<int32_t> generated_reads = {};
 };
 
 /*
@@ -793,6 +800,8 @@ struct sm_column_def_t {
     std::string on_update_expr; /* the host's update default; "" if none */
     uint64_t    not_null_oid;   /* its NOT NULL constraint; 0 if none */
     std::string not_null_name;  /* its name (NOTNULL.md) */
+    char        generated = 0;  /* 's', 'v' or 0 (GENERATED.md) */
+    std::vector<int32_t> generated_reads; /* the columns it reads */
 };
 
 /* Where an index's build stands (sm3::index_state_t). */
@@ -1872,6 +1881,14 @@ int sm_cat_set_default(sm_session_t* session, uint64_t oid, const char* name,
                        const char* expr);
 
 /*
+ * Make the column name of the table oid generated, kind 's' or 'v',
+ * its expression expr reading the columns reads (sm3::set_generated).
+ */
+int sm_cat_set_generated(sm_session_t* session, uint64_t oid,
+                         const char* name, char kind, const char* expr,
+                         const std::vector<int32_t>& reads);
+
+/*
  * A column's new type, as sm_cat_alter_column_type takes it: sm2's
  * code and typmod, and the host's default and update default for
  * the new type, nullptr for none, which replace the column's.
@@ -1935,7 +1952,8 @@ typedef enum sm_column_use_t {
     SM_COLUMN_USE_REFERENCED, /* a foreign key referencing it names it */
     SM_COLUMN_USE_VIEW,       /* a view reads it */
     SM_COLUMN_USE_IDENTITY,   /* it is an identity column */
-    SM_COLUMN_USE_CHECK       /* a check constraint reads it */
+    SM_COLUMN_USE_CHECK,      /* a check constraint reads it */
+    SM_COLUMN_USE_GENERATED   /* it is generated, or a generated one reads it */
 } sm_column_use_t;
 
 /*

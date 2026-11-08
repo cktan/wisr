@@ -647,7 +647,8 @@ static void gen_pg_constraint(Tuplestorestate *ts, TupleDesc desc, Oid only) {
  */
 static void attribute_row(Tuplestorestate *ts, TupleDesc desc, Oid relid,
                           int attnum, const char *name, Oid typid, int32 typmod,
-                          bool notnull, bool hasdef, char identity) {
+                          bool notnull, bool hasdef, char identity,
+                          char generated) {
   Datum values[Natts_pg_attribute];
   bool nulls[Natts_pg_attribute];
   char dropped[NAMEDATALEN];
@@ -684,7 +685,7 @@ static void attribute_row(Tuplestorestate *ts, TupleDesc desc, Oid relid,
   values[Anum_pg_attribute_atthasdef - 1] = BoolGetDatum(hasdef);
   values[Anum_pg_attribute_atthasmissing - 1] = BoolGetDatum(false);
   values[Anum_pg_attribute_attidentity - 1] = CharGetDatum(identity);
-  values[Anum_pg_attribute_attgenerated - 1] = CharGetDatum('\0');
+  values[Anum_pg_attribute_attgenerated - 1] = CharGetDatum(generated);
   values[Anum_pg_attribute_attisdropped - 1] = BoolGetDatum(!OidIsValid(typid));
   values[Anum_pg_attribute_attislocal - 1] = BoolGetDatum(true);
   values[Anum_pg_attribute_attinhcount - 1] = Int16GetDatum(0);
@@ -706,7 +707,7 @@ static void gen_pg_attribute(Tuplestorestate *ts, TupleDesc desc, Oid only) {
   for (int i = 0; i < count; i++)
     for (int a = 0; a < cats[i].natts; a++)
       attribute_row(ts, desc, cats[i].oid, a + 1, cats[i].columns[a].name,
-                    cats[i].columns[a].typid, -1, false, false, '\0');
+                    cats[i].columns[a].typid, -1, false, false, '\0', '\0');
   foreach (l, sm_relations(only)) {
     smstore_relation_t *r = (smstore_relation_t *)lfirst(l);
 
@@ -715,7 +716,7 @@ static void gen_pg_attribute(Tuplestorestate *ts, TupleDesc desc, Oid only) {
     for (int a = 0; a < r->natts; a++)
       attribute_row(ts, desc, r->oid, a + 1, r->attnames[a], r->typids[a],
                     r->typmods[a], r->notnull[a], r->defaults[a] != NULL,
-                    r->identity[a]);
+                    r->identity[a], r->generated[a]);
   }
 }
 

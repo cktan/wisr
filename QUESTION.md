@@ -65,3 +65,20 @@ table with a NOT NULL column. This replaces decision 5 above.
 2. **`NOT VALID` of a NOT NULL constraint is refused; `NO
    INHERIT` is accepted and changes nothing**, as digres accepts
    it today. Recommended.
+
+## Generated columns
+
+[`sm/GENERATED.md`](sm/GENERATED.md): STORED and VIRTUAL, the
+host computing the values with PostgreSQL's own code, sm3
+keeping the kind, the expression and the columns it reads.
+
+1. **Both kinds**, as VIRTUAL is PostgreSQL 18's default.
+   Recommended.
+2. **ALTER COLUMN TYPE of a generated column is refused**, as for
+   a check: sm's rewrite cannot run the host's expression.
+   PostgreSQL computes the column again. Recommended.
+3. **SET EXPRESSION, DROP EXPRESSION and ADD COLUMN ... GENERATED
+   are refused** for now: each would compute every row's value.
+4. **NOT NULL on a virtual column is refused**: sm would see a
+   null in its place. PostgreSQL 18 takes it. Recommended, until
+   NOT NULL can be the host's check for such a column.

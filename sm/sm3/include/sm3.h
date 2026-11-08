@@ -87,6 +87,14 @@ struct column_spec_t {
      * host's choice; empty, sm3 makes one, table_column_not_null.
      */
     std::string not_null_name = {};
+    /*
+     * A generated column's kind, the host's, 's' (STORED) or 'v'
+     * (VIRTUAL), or 0 for none (../GENERATED.md): default_expr is its
+     * expression, and generated_reads the 0-based places of the
+     * columns it reads, none of them generated.
+     */
+    char generated = 0;
+    std::vector<int32_t> generated_reads = {};
 };
 
 /*
@@ -158,6 +166,8 @@ struct column_rec_t {
   std::optional<std::string> on_update_expr; /* the host's, opaque */
   uint64_t not_null_oid = 0;  /* its NOT NULL constraint; 0 if none */
   std::string not_null_name;  /* its name (../NOTNULL.md §2) */
+  char generated = 0;         /* column_spec_t's (../GENERATED.md §2) */
+  std::vector<int32_t> generated_reads; /* column_spec_t's */
   bool operator==(const column_rec_t&) const = default;
 };
 
@@ -269,6 +279,8 @@ struct column_def_t {
     std::optional<std::string> on_update_expr; /* the host's, opaque */
     uint64_t    not_null_oid = 0; /* its NOT NULL constraint; 0 if none */
     std::string not_null_name;    /* its name (../NOTNULL.md §2) */
+    char        generated = 0;    /* column_spec_t's */
+    std::vector<int32_t> generated_reads; /* column_spec_t's */
 };
 
 /* An index of a loaded table. */
@@ -894,6 +906,20 @@ int set_default(session_t* session, uint64_t oid, std::string_view name,
                 std::optional<std::string_view> expr);
 
 /*
+ * Make the live column name of the table oid generated, of kind 's' or
+ * 'v', its expression expr, the host's, reading the columns reads
+ * (../GENERATED.md): what CREATE TABLE and ADD COLUMN do once the
+ * host has cooked the expression against the table. The column must
+ * be plain, with no default and no identity, and a virtual one
+ * nullable; each column read live, plain and not itself; else
+ * SM_ERR_INVALID. No row is read: the host gives a stored column's
+ * values, and a virtual one's place holds a null.
+ */
+int set_generated(session_t* session, uint64_t oid, std::string_view name,
+                  char kind, std::string_view expr,
+                  std::span<const int32_t> reads);
+
+/*
  * A column's new type, as alter_column_type takes it: sm2's code
  * and typmod, and the host's default and update default for the
  * new type, opaque to sm, which replace the column's.
@@ -954,7 +980,8 @@ enum class column_use_t {
     referenced, /* a foreign key that references the table names it */
     view,       /* a view reads it */
     identity,   /* it is an identity column */
-    check       /* a check constraint reads it */
+    check,      /* a check constraint reads it */
+    generated   /* it is a generated column, or one's expression reads it */
 };
 
 /*

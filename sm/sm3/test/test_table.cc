@@ -1003,6 +1003,108 @@ TEST_CASE("set_identity makes a filled NOT NULL column an identity column") {
   REQUIRE(0 == sm3::commit(f.a));
 }
 
+TEST_CASE("a generated column keeps its kind and the columns it reads") {
+  // Verify generated columns in sm3's catalog (../GENERATED.md).
+  // 1. A table with a, b, a stored g reading both and a virtual v
+  //    reading a: each keeps its kind and reads, after a restart too.
+  // 2. A virtual NOT NULL column, one reading itself, a generated
+  //    column or no column is SM_ERR_INVALID.
+  // 3. A default for g, NOT NULL for v, an index on v: SM_ERR_INVALID.
+  // 4. Dropping a is SM_ERR_INUSE, and column_use names g for a and g.
+  // 5. A virtual column added with a missing value is SM_ERR_INVALID;
+  //    without one it is added.
+  // 6. set_generated makes a plain column generated, once; one that
+  //    would read a generated column is SM_ERR_INVALID.
+  jobs_t f;
+  auto col = [](std::string name, uint8_t code, char kind,
+                std::vector<int32_t> reads) {
+    sm3::column_spec_t c{name, code, -1, false};
+    if (kind != 0) {
+      c.default_expr = "expr";
+      c.generated = kind;
+      c.generated_reads = std::move(reads);
+    }
+    return c;
+  };
+  std::vector<sm3::column_spec_t> cols = {
+      col("a", sm2::type_int4.code, 0, {}),
+      col("b", sm2::type_int4.code, 0, {}),
+      col("g", sm2::type_int8.code, 's', {0, 1}),
+      col("v", sm2::type_text.code, 'v', {0})};
+  uint64_t gt = 0;
+  start(f.a);
+  REQUIRE_MESSAGE(0 == sm3::create_table(f.a, sm3::nsp_public, "gt", cols, gt),
+                  sm1::errmsg());
+  REQUIRE(0 == sm3::commit(f.a));
+  f.reload();
+  start(f.a);
+  {
+    sm3::table_rec_t rec;
+    REQUIRE(0 == sm3::cat_get_table_rec(f.a, gt, rec));
+    CHECK('s' == rec.columns[2].generated);
+    CHECK(std::vector<int32_t>{0, 1} == rec.columns[2].generated_reads);
+    CHECK('v' == rec.columns[3].generated);
+    CHECK(std::vector<int32_t>{0} == rec.columns[3].generated_reads);
+    CHECK(0 == rec.columns[0].generated);
+  }
+
+  uint64_t bad = 0;
+  for (auto bad_cols : {std::vector<sm3::column_spec_t>{
+                            col("a", sm2::type_int4.code, 0, {}),
+                            col("v", sm2::type_int4.code, 'v', {0})},
+                        std::vector<sm3::column_spec_t>{
+                            col("a", sm2::type_int4.code, 's', {0})},
+                        std::vector<sm3::column_spec_t>{
+                            col("a", sm2::type_int4.code, 's', {}),
+                            col("b", sm2::type_int4.code, 's', {0})},
+                        std::vector<sm3::column_spec_t>{
+                            col("a", sm2::type_int4.code, 's', {5})}}) {
+    if (bad_cols.size() == 2 && bad_cols[1].generated == 'v') {
+      bad_cols[1].not_null = true;
+    }
+    CHECK(-1 == sm3::create_table(f.a, sm3::nsp_public, "bad", bad_cols, bad));
+    CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  }
+
+  CHECK(-1 == sm3::set_default(f.a, gt, "g", "1"));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  CHECK(-1 == sm3::set_not_null(f.a, gt, "v"));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  std::vector<sm3::index_key_spec_t> on_v = {{3, false, false, std::nullopt}};
+  uint64_t ix = 0;
+  CHECK(-1 == sm3::create_index(f.a, gt, "gt_v", on_v, {}, false, ix));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+
+  CHECK(-1 == sm3::drop_column(f.a, gt, "a"));
+  CHECK(sm1::SM_ERR_INUSE == sm1::errnum());
+  sm3::column_use_t use = sm3::column_use_t::none;
+  std::string by;
+  REQUIRE(0 == sm3::column_use(f.a, gt, 0, use, by));
+  CHECK(sm3::column_use_t::generated == use);
+  REQUIRE(0 == sm3::column_use(f.a, gt, 2, use, by));
+  CHECK(sm3::column_use_t::generated == use);
+  CHECK("g" == by);
+
+  sm3::column_spec_t w = col("w", sm2::type_int4.code, 'v', {1});
+  std::string four(4, '\0');
+  CHECK(-1 == sm3::add_column(f.a, gt, w, four));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  REQUIRE_MESSAGE(0 == sm3::add_column(f.a, gt, w, std::nullopt),
+                  sm1::errmsg());
+
+  // set_generated makes a plain column generated, once.
+  REQUIRE(0 == sm3::add_column(f.a, gt, col("p", sm2::type_int4.code, 0, {}),
+                               std::nullopt));
+  const int32_t on_a[] = {0}, on_g[] = {2};
+  REQUIRE_MESSAGE(0 == sm3::set_generated(f.a, gt, "p", 's', "e", on_a),
+                  sm1::errmsg());
+  CHECK(-1 == sm3::set_generated(f.a, gt, "p", 's', "e", on_a));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  CHECK(-1 == sm3::set_generated(f.a, gt, "b", 'v', "e", on_g));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  REQUIRE(0 == sm3::commit(f.a));
+}
+
 TEST_CASE("a NOT NULL column's constraint has an oid and a name") {
   // Verify NOT NULL constraints by name (../NOTNULL.md).
   // 1. jobs's id, NOT NULL at create_table, has jobs_id_not_null and an
