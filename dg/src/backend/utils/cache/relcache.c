@@ -1557,6 +1557,8 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
   constr = (TupleConstr *)palloc0(sizeof(TupleConstr));
   constr->has_not_null = has_not_null;
   for (int i = 0; i < desc->ncolumns; i++) {
+    if (desc->columns[i].dropped)
+      continue;
     constr->has_generated_stored |=
         ATTRIBUTE_GENERATED_STORED == desc->columns[i].generated;
     constr->has_generated_virtual |=

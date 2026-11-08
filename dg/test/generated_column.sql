@@ -13,6 +13,11 @@
 -- 4. DROP COLUMN of a column an expression reads is refused; with
 --    CASCADE the generated columns go too, once no index is on them.
 -- 5. pg_attribute and pg_attrdef show them.
+-- 6. A table whose stored column is dropped takes rows; LIKE ... INCLUDING
+--    GENERATED is refused.
+-- 7. An expression reading its own column or another generated one is
+--    refused; one reading tableoid is taken; a check on a virtual column
+--    reads its expression when it checks the rows there.
 -- The refusals are what is tested, so an error goes on to the next
 -- statement.
 \set ON_ERROR_STOP off
@@ -47,3 +52,30 @@ drop index item_total;
 alter table item drop column qty cascade;
 select * from item order by id;
 drop table item;
+create temp table gd (a int primary key, b int generated always as (a * 2) stored);
+alter table gd drop column b;
+insert into gd values (1);
+select * from gd;
+drop table gd;
+create temp table gs (a int, b int generated always as (a * 2) stored);
+create temp table gl (like gs including generated);
+create temp table gp (like gs);
+select attname, attgenerated from pg_attribute
+  where attrelid = 'gp'::regclass and attnum > 0 order by attnum;
+drop table gs;
+drop table gp;
+create temp table e2 (a int, b int generated always as (b * 2) stored);
+create temp table e3 (a int, b int generated always as (c * 2) stored,
+                      c int generated always as (a * 2));
+create temp table gto (a int, b bool generated always as
+                       (tableoid = 'gto'::regclass) stored);
+insert into gto values (1);
+select * from gto;
+drop table gto;
+create temp table g20 (a int, b int generated always as (a * 2) virtual);
+insert into g20 (a) values (10), (30);
+alter table g20 add check (b < 50);
+alter table g20 add constraint chk check (b < 70) not valid;
+alter table g20 validate constraint chk;
+insert into g20 (a) values (40);
+drop table g20;

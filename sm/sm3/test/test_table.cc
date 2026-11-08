@@ -1015,6 +1015,7 @@ TEST_CASE("a generated column keeps its kind and the columns it reads") {
   //    without one it is added.
   // 6. set_generated makes a plain column generated, once; one that
   //    would read a generated column is SM_ERR_INVALID.
+  // 7. A generated column dropped keeps no kind and no reads.
   jobs_t f;
   auto col = [](std::string name, uint8_t code, char kind,
                 std::vector<int32_t> reads) {
@@ -1102,6 +1103,15 @@ TEST_CASE("a generated column keeps its kind and the columns it reads") {
   CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
   CHECK(-1 == sm3::set_generated(f.a, gt, "b", 'v', "e", on_g));
   CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+
+  // A generated column dropped keeps no kind.
+  REQUIRE_MESSAGE(0 == sm3::drop_column(f.a, gt, "p"), sm1::errmsg());
+  {
+    sm3::table_rec_t rec;
+    REQUIRE(0 == sm3::cat_get_table_rec(f.a, gt, rec));
+    CHECK(0 == rec.columns.back().generated);
+    CHECK(rec.columns.back().generated_reads.empty());
+  }
   REQUIRE(0 == sm3::commit(f.a));
 }
 

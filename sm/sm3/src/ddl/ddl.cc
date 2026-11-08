@@ -1166,6 +1166,8 @@ int drop_column(session_t *session, uint64_t oid, std::string_view name) {
   c.not_null = false;
   c.not_null_oid = 0;
   c.not_null_name.clear();
+  c.generated = 0;
+  c.generated_reads.clear();
   c.missing = std::nullopt;
   return cat_put_table(session, oid, rec);
 }

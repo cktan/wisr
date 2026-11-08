@@ -2045,6 +2045,8 @@ static void add_check(Relation rel, Constraint *con, bool validated,
  */
 static void scan_check(Relation rel, Node *expr, const char *conname) {
   EState *estate = CreateExecutorState();
+  /* A virtual generated column read is its expression, as PostgreSQL's. */
+  expr = expand_generated_columns_in_expr(expr, rel, 1);
   ExprState *exprstate =
       ExecPrepareCheck(make_ands_implicit((Expr *)expr), estate);
   ExprContext *econtext = GetPerTupleExprContext(estate);
@@ -2123,9 +2125,13 @@ static void alter_add_check(Oid relid, Constraint *con) {
 /*
  * Make the column col of the table relid generated (../sm/GENERATED.md):
  * its expression cooked against the table, as PostgreSQL's cookDefault()
- * checks it, and the columns it reads.  The column is there, plain.
+ * checks it, and the columns it reads.  The column is there, plain, as is
+ * each other generated column of defs, the statement's columns: a read of
+ * one, itself among them, is refused here with cookDefault()'s error.  A
+ * system column read, tableoid, is not sm's.
  */
-static void set_generated(Oid relid, ColumnDef *col) {
+static void set_generated(Oid relid, ColumnDef *col,
+                          const std::vector<ColumnDef *> &defs) {
   Relation rel = relation_open(relid, AccessShareLock);
   ParseState *pstate = make_parsestate(NULL);
   ParseNamespaceItem *nsitem = addRangeTableEntryForRelation(
@@ -2141,8 +2147,20 @@ static void set_generated(Oid relid, ColumnDef *col) {
                            att->atttypmod, col->colname, col->generated);
   free_parsestate(pstate);
   pull_varattnos(expr, 1, &attnos);
-  while ((k = bms_next_member(attnos, k)) >= 0)
-    reads.push_back(k + FirstLowInvalidHeapAttributeNumber - 1);
+  while ((k = bms_next_member(attnos, k)) >= 0) {
+    int32_t read = k + FirstLowInvalidHeapAttributeNumber - 1;
+
+    if (read < 0)
+      continue;
+    if ((size_t)read < defs.size() && 0 != defs[read]->generated)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+                      errmsg("cannot use generated column \"%s\" in column "
+                             "generation expression",
+                             defs[read]->colname),
+                      errdetail("A generated column cannot reference another "
+                                "generated column.")));
+    reads.push_back(read);
+  }
   relation_close(rel, NoLock);
   sm_session_t *s = xact_session();
   const char *bin = nodeToString(expr);
@@ -2194,6 +2212,14 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
                       errmsg("column \"%s\" asks for what CREATE TABLE "
                              "does not support yet",
                              col->colname)));
+    /*
+     * LIKE ... INCLUDING GENERATED gives the kind now and the expression
+     * after the table is made, as a cooked default (expandTableLikeClause()).
+     */
+    if (0 != col->generated && NULL == col->raw_default)
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("LIKE ... INCLUDING GENERATED is not supported "
+                             "yet")));
     /* sm keeps a null in a virtual column's place (../sm/GENERATED.md). */
     if (ATTRIBUTE_GENERATED_VIRTUAL == col->generated &&
         column_not_null(stmt, col))
@@ -2242,7 +2268,7 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
   for (ColumnDef *col : defs)
     if (0 != col->generated) {
       CommandCounterIncrement();
-      set_generated((Oid)oid, col);
+      set_generated((Oid)oid, col, defs);
     }
   /* Its checks, cooked against the table now that it is there. */
   if (stmt->constraints != NIL) {

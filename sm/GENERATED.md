@@ -66,8 +66,9 @@ layout changes.
 | --- | --- |
 | `CREATE TABLE` with a generated column | the table is made with the column plain; then the expression is cooked against it by PostgreSQL's `cookDefault()`, with its checks: no other generated column, no subquery, immutable functions only; then `set_generated()` makes the column generated |
 | `ADD COLUMN ... GENERATED` | refused (§6) |
+| `CREATE TABLE ... (LIKE t INCLUDING GENERATED)` | refused: PostgreSQL gives the copy's expression after the table is made, as a cooked default; without `INCLUDING GENERATED` the copy is a plain column, as in PostgreSQL |
+| `DROP COLUMN` of a generated column | its kind and reads go with it, so a row written after has no value computed for it |
 | `DROP COLUMN` of a column an expression reads | refused, PostgreSQL's error, unless `CASCADE`, which drops the generated column too |
-| `DROP COLUMN` of a generated column | dropped |
 | `ALTER COLUMN TYPE` of a column an expression reads | refused, PostgreSQL's error: `cannot alter type of a column used by a generated column` |
 | `ALTER COLUMN TYPE` of a generated column | refused (§6); PostgreSQL computes it again |
 | `SET EXPRESSION`, `DROP EXPRESSION` | refused (§6) |

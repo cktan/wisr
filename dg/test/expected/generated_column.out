@@ -13,6 +13,11 @@
 -- 4. DROP COLUMN of a column an expression reads is refused; with
 --    CASCADE the generated columns go too, once no index is on them.
 -- 5. pg_attribute and pg_attrdef show them.
+-- 6. A table whose stored column is dropped takes rows; LIKE ... INCLUDING
+--    GENERATED is refused.
+-- 7. An expression reading its own column or another generated one is
+--    refused; one reading tableoid is taken; a check on a virtual column
+--    reads its expression when it checks the rows there.
 -- The refusals are what is tested, so an error goes on to the next
 -- statement.
 \set ON_ERROR_STOP off
@@ -36,13 +41,13 @@ select id, label from item where total > 50 order by id;
 (1 row)
 
 insert into item (id, total) values (3, 1);
-psql:test/generated_column.sql:29: ERROR:  cannot insert a non-DEFAULT value into column "total"
+psql:test/generated_column.sql:34: ERROR:  cannot insert a non-DEFAULT value into column "total"
 DETAIL:  Column "total" is a generated column.
 update item set label = 'x';
-psql:test/generated_column.sql:30: ERROR:  column "label" can only be updated to DEFAULT
+psql:test/generated_column.sql:35: ERROR:  column "label" can only be updated to DEFAULT
 DETAIL:  Column "label" is a generated column.
 create index item_label on item (label);
-psql:test/generated_column.sql:31: ERROR:  indexes on virtual generated columns are not supported
+psql:test/generated_column.sql:36: ERROR:  indexes on virtual generated columns are not supported
 create index item_total on item (total);
 set enable_seqscan = off;
 select id from item where total = 20;
@@ -53,19 +58,19 @@ select id from item where total = 20;
 
 reset enable_seqscan;
 alter table item alter column qty type int8;
-psql:test/generated_column.sql:36: ERROR:  cannot alter type of a column used by a generated column
+psql:test/generated_column.sql:41: ERROR:  cannot alter type of a column used by a generated column
 DETAIL:  Column "qty" is used by generated column "total".
 alter table item alter column total type int4;
-psql:test/generated_column.sql:37: ERROR:  ALTER COLUMN TYPE of a generated column is not supported yet
+psql:test/generated_column.sql:42: ERROR:  ALTER COLUMN TYPE of a generated column is not supported yet
 alter table item alter column total set default 1;
-psql:test/generated_column.sql:38: ERROR:  column "total" of relation "item" is a generated column
+psql:test/generated_column.sql:43: ERROR:  column "total" of relation "item" is a generated column
 HINT:  Use ALTER TABLE ... ALTER COLUMN ... SET EXPRESSION instead.
 alter table item alter column label drop default;
-psql:test/generated_column.sql:39: ERROR:  column "label" of relation "item" is a generated column
+psql:test/generated_column.sql:44: ERROR:  column "label" of relation "item" is a generated column
 create temp table bad (a int, b int generated always as (a * 2) virtual not null);
-psql:test/generated_column.sql:40: ERROR:  a NOT NULL virtual generated column is not supported yet
+psql:test/generated_column.sql:45: ERROR:  a NOT NULL virtual generated column is not supported yet
 alter table item drop column qty;
-psql:test/generated_column.sql:41: ERROR:  cannot drop column qty of table item because other objects depend on it
+psql:test/generated_column.sql:46: ERROR:  cannot drop column qty of table item because other objects depend on it
 DETAIL:  column label of table item depends on column qty of table item
 column total of table item depends on column qty of table item
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
@@ -90,7 +95,7 @@ select pg_get_expr(adbin, adrelid) from pg_attrdef
 
 drop index item_total;
 alter table item drop column qty cascade;
-psql:test/generated_column.sql:47: NOTICE:  drop cascades to 2 other objects
+psql:test/generated_column.sql:52: NOTICE:  drop cascades to 2 other objects
 DETAIL:  drop cascades to column label of table item
 drop cascades to column total of table item
 select * from item order by id;
@@ -101,3 +106,54 @@ select * from item order by id;
 (2 rows)
 
 drop table item;
+create temp table gd (a int primary key, b int generated always as (a * 2) stored);
+alter table gd drop column b;
+insert into gd values (1);
+select * from gd;
+ a 
+---
+ 1
+(1 row)
+
+drop table gd;
+create temp table gs (a int, b int generated always as (a * 2) stored);
+create temp table gl (like gs including generated);
+psql:test/generated_column.sql:61: ERROR:  LIKE ... INCLUDING GENERATED is not supported yet
+create temp table gp (like gs);
+select attname, attgenerated from pg_attribute
+  where attrelid = 'gp'::regclass and attnum > 0 order by attnum;
+ attname | attgenerated 
+---------+--------------
+ a       | 
+ b       | 
+(2 rows)
+
+drop table gs;
+drop table gp;
+create temp table e2 (a int, b int generated always as (b * 2) stored);
+psql:test/generated_column.sql:67: ERROR:  cannot use generated column "b" in column generation expression
+DETAIL:  A generated column cannot reference another generated column.
+create temp table e3 (a int, b int generated always as (c * 2) stored,
+                      c int generated always as (a * 2));
+psql:test/generated_column.sql:69: ERROR:  cannot use generated column "c" in column generation expression
+DETAIL:  A generated column cannot reference another generated column.
+create temp table gto (a int, b bool generated always as
+                       (tableoid = 'gto'::regclass) stored);
+insert into gto values (1);
+select * from gto;
+ a | b 
+---+---
+ 1 | t
+(1 row)
+
+drop table gto;
+create temp table g20 (a int, b int generated always as (a * 2) virtual);
+insert into g20 (a) values (10), (30);
+alter table g20 add check (b < 50);
+psql:test/generated_column.sql:77: ERROR:  check constraint "g20_b_check" of relation "g20" is violated by some row
+alter table g20 add constraint chk check (b < 70) not valid;
+alter table g20 validate constraint chk;
+insert into g20 (a) values (40);
+psql:test/generated_column.sql:80: ERROR:  new row for relation "g20" violates check constraint "chk"
+DETAIL:  Failing row contains (40, virtual).
+drop table g20;

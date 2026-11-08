@@ -69,23 +69,15 @@ SELECT * FROM test_like_id_2;  -- identity was not copied
 --dg-cascade
 --dg DROP TABLE test_like_id_1, test_like_id_2, test_like_id_3;
 
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE test_like_gen_1 (a int, b int GENERATED ALWAYS AS (a * 2) STORED, c int GENERATED ALWAYS AS (a * 3) VIRTUAL);
---dg-cascade
---dg \d test_like_gen_1
---dg-cascade
---dg INSERT INTO test_like_gen_1 (a) VALUES (1);
---dg-cascade
---dg SELECT * FROM test_like_gen_1;
---dg-cascade
---dg CREATE TABLE test_like_gen_2 (LIKE test_like_gen_1);
---dg-cascade
---dg \d test_like_gen_2
---dg-cascade
---dg INSERT INTO test_like_gen_2 (a) VALUES (1);
---dg-cascade
---dg SELECT * FROM test_like_gen_2;
---dg-cascade
+CREATE TABLE test_like_gen_1 (a int, b int GENERATED ALWAYS AS (a * 2) STORED, c int GENERATED ALWAYS AS (a * 3) VIRTUAL);
+\d test_like_gen_1
+INSERT INTO test_like_gen_1 (a) VALUES (1);
+SELECT * FROM test_like_gen_1;
+CREATE TABLE test_like_gen_2 (LIKE test_like_gen_1);
+\d test_like_gen_2
+INSERT INTO test_like_gen_2 (a) VALUES (1);
+SELECT * FROM test_like_gen_2;
+--dg-skip: LIKE ... INCLUDING GENERATED is not supported yet
 --dg CREATE TABLE test_like_gen_3 (LIKE test_like_gen_1 INCLUDING GENERATED);
 --dg-cascade
 --dg \d test_like_gen_3
@@ -97,26 +89,20 @@ SELECT * FROM test_like_id_2;  -- identity was not copied
 --dg DROP TABLE test_like_gen_1, test_like_gen_2, test_like_gen_3;
 
 -- also test generated column with a "forward" reference (bug #16342)
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE test_like_4 (b int DEFAULT 42,
---dg   c int GENERATED ALWAYS AS (a * 2) STORED,
---dg   a int CHECK (a > 0));
---dg-cascade
---dg \d test_like_4
---dg-cascade
---dg CREATE TABLE test_like_4a (LIKE test_like_4);
---dg-cascade
+CREATE TABLE test_like_4 (b int DEFAULT 42,
+  c int GENERATED ALWAYS AS (a * 2) STORED,
+  a int CHECK (a > 0));
+\d test_like_4
+CREATE TABLE test_like_4a (LIKE test_like_4);
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg CREATE TABLE test_like_4b (LIKE test_like_4 INCLUDING DEFAULTS);
---dg-cascade
+--dg-skip: LIKE ... INCLUDING GENERATED is not supported yet
 --dg CREATE TABLE test_like_4c (LIKE test_like_4 INCLUDING GENERATED);
---dg-cascade
+--dg-skip: LIKE ... INCLUDING GENERATED is not supported yet
 --dg CREATE TABLE test_like_4d (LIKE test_like_4 INCLUDING DEFAULTS INCLUDING GENERATED);
---dg-cascade
---dg \d test_like_4a
---dg-cascade
---dg INSERT INTO test_like_4a (a) VALUES(11);
---dg-cascade
---dg SELECT a, b, c FROM test_like_4a;
+\d test_like_4a
+INSERT INTO test_like_4a (a) VALUES(11);
+SELECT a, b, c FROM test_like_4a;
 --dg-cascade
 --dg \d test_like_4b
 --dg-cascade
@@ -139,9 +125,8 @@ SELECT * FROM test_like_id_2;  -- identity was not copied
 -- Test renumbering of Vars when combining LIKE with inheritance
 --dg-skip: type ? is not supported yet
 --dg CREATE TABLE test_like_5 (x point, y point, z point);
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE test_like_5x (p int CHECK (p > 0),
---dg    q int GENERATED ALWAYS AS (p * 2) STORED);
+CREATE TABLE test_like_5x (p int CHECK (p > 0),
+   q int GENERATED ALWAYS AS (p * 2) STORED);
 --dg-cascade
 --dg CREATE TABLE test_like_5c (LIKE test_like_4 INCLUDING ALL)
 --dg   INHERITS (test_like_5, test_like_5x);
@@ -366,29 +351,26 @@ DROP VIEW ctlv1;
 --dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
 --dg CREATE SERVER ctl_s0 FOREIGN DATA WRAPPER ctl_dummy;
 
---dg-skip: column "?" asks for what CREATE TABLE does not support yet
---dg CREATE TABLE ctl_table(a int PRIMARY KEY,
---dg   b varchar COMPRESSION pglz,
---dg   c int GENERATED ALWAYS AS (a * 2) STORED,
---dg   d bigint GENERATED ALWAYS AS IDENTITY,
---dg   e int DEFAULT 1);
+CREATE TABLE ctl_table(a int PRIMARY KEY,
+  b varchar COMPRESSION pglz,
+  c int GENERATED ALWAYS AS (a * 2) STORED,
+  d bigint GENERATED ALWAYS AS IDENTITY,
+  e int DEFAULT 1);
 
---dg-cascade
---dg CREATE INDEX ctl_table_a_key ON ctl_table(a);
+CREATE INDEX ctl_table_a_key ON ctl_table(a);
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON COLUMN ctl_table.b IS 'Column b';
---dg-cascade
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS ctl_table_stat ON a,b FROM ctl_table;
---dg-cascade
---dg ALTER TABLE ctl_table ADD CONSTRAINT foo CHECK (b = 'text');
---dg-cascade
+ALTER TABLE ctl_table ADD CONSTRAINT foo CHECK (b = 'text');
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ctl_table ALTER COLUMN b SET STORAGE MAIN;
 
 --dg-cascade
 --dg \d+ ctl_table
 
 -- Test EXCLUDING ALL
---dg-cascade
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
 --dg CREATE FOREIGN TABLE ctl_foreign_table1(LIKE ctl_table EXCLUDING ALL) SERVER ctl_s0;
 --dg-cascade
 --dg \d+ ctl_foreign_table1
@@ -400,7 +382,7 @@ DROP VIEW ctlv1;
 
 -- Test INCLUDING ALL
 -- INDEXES, IDENTITY, COMPRESSION, STORAGE are not copied.
---dg-cascade
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
 --dg CREATE FOREIGN TABLE ctl_foreign_table2(LIKE ctl_table INCLUDING ALL) SERVER ctl_s0;
 --dg-cascade
 --dg \d+ ctl_foreign_table2
@@ -439,8 +421,7 @@ DROP TABLE ctl_stats3_child;
 DROP TABLE ctl_stats4_parent;
 DROP TABLE ctl_stats4_child;
 
---dg-cascade
---dg DROP TABLE ctl_table;
+DROP TABLE ctl_table;
 --dg-cascade
 --dg DROP FOREIGN TABLE ctl_foreign_table1;
 --dg-cascade

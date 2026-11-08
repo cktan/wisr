@@ -12600,7 +12600,16 @@ PostgreSQL's own code, as a check's rows are checked by it.
     column an expression reads, and DROP COLUMN of one, whose
     CASCADE drops the generated columns.
   - Refused: ADD COLUMN of a generated column, ALTER COLUMN TYPE
-    of one, and a NOT NULL virtual one.
+    of one, a NOT NULL virtual one, and `LIKE ... INCLUDING
+    GENERATED`, whose copy PostgreSQL gives its expression after
+    the table is made, as a cooked default.
+- **DROP COLUMN of a generated column** takes its kind and reads
+  with it, and the relation cache counts live columns alone:
+  a dropped stored column had left `has_generated_stored` set,
+  and the next INSERT crashed the server. The regression files
+  found it.
 - **Tests**: `../sm/sm3/test/test_table.cc`, and
   `test/generated_column.sql`, which gives PostgreSQL 18's output
-  but for the two refusals.
+  but for the refusals, a dropped stored column among its cases.
+- **The regression files**: the 9 with generated columns were
+  trimmed again: about 500 statements run now.
