@@ -294,10 +294,31 @@ It is not designed, and no case has been checked.
 
 ### 2.2 `sm_tbl_open` is too heavy
 
-**Built, target not agreed.** A statement that reads nothing now
-costs digres 3.5% more than PostgreSQL, not 12%, and costs the
-same with 16 secondary indexes as with none. No target was set,
-so this stays open until one is.
+**Closed 2026-11-08: built, and at parity.** A statement that
+reads nothing costs digres 1% less than PostgreSQL, and the same
+with 16 secondary indexes as with none. It was 12% more, and 3.5%
+more on 2026-11-06. The target is parity on `WHERE false`.
+
+**Measured again 2026-11-08** by `bench/idxopen.sh`, at
+`823d0e85`, on the release build, aarch64. Instructions a
+statement, prepared, superuser, by index count. The text and
+tables below this one are the measure of 2026-11-06, kept as
+history.
+
+| Statement | Index kind | System | 0 | 1 | 4 | 16 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `WHERE false` | lsm | digres | 22,288 | 22,285 | 22,285 | 22,286 |
+| | btree | digres | 22,290 | 22,306 | 22,321 | 22,316 |
+| | btree | PostgreSQL | 22,405 | 22,405 | 22,410 | 22,513 |
+| point read | lsm | digres | 40,724 | 42,653 | 44,758 | 43,694 |
+| | btree | digres | 40,706 | 42,053 | 41,876 | 41,874 |
+| | btree | PostgreSQL | 39,932 | 39,976 | 40,185 | 40,325 |
+
+- `WHERE false` is 0.990 to 0.996 of PostgreSQL's. The spread of
+  PostgreSQL's cell at 16 indexes is 15.7%; digres's are 0.05%.
+- A point read is 1.02 to 1.11 of PostgreSQL's: 1.04 to 1.05 with
+  btree indexes, 1.07 to 1.11 with lsm indexes at 1 to 16.
+  How a point read's cost moves with the data is §2.3.
 
 **What it does now.**
 
