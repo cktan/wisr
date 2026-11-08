@@ -407,8 +407,10 @@ static void sm_error(const char *what) {
 
 /*
  * Call f, a call into sm that may wait for another transaction, until it
- * does not fail on an interrupted wait.  lock_wait says the wait is for a
- * lock, so lock_timeout bounds it; a wait for an index's build is none.
+ * does not fail on an interrupted wait.  lock_wait says the call itself is
+ * a wait for a lock, so lock_timeout bounds it from the call.  When it is
+ * false, smstore_lock_wait() still bounds each lock or transaction wait
+ * inside the call; a call that waits for neither is not bounded.
  * 1. Call f.  An interrupt in this thread's wait mask ends sm's wait, with
  *    SM_ERR_INTERRUPTED (miscinit.c sets the mask).
  * 2. Return what f returned, unless it failed with SM_ERR_INTERRUPTED.
