@@ -308,6 +308,9 @@ is 0 and the row key is empty.
 
 ## The log hook
 
+The log hook sends sm's text messages, at error, warning and
+info level, to the host. The host decides where they go.
+
 The hook is sm1's ([`sm1/API.md`](sm1/API.md), "Logging").
 
 ```cpp
@@ -337,6 +340,10 @@ process, because a thread may still be calling the one it
 replaces.
 
 ## Home directories and databases
+
+A home directory holds the global system database, every user
+database, the text log and the temporary files. Each database is
+its own RocksDB instance.
 
 The Database Manager holds the design ([`DBMGR.md`](DBMGR.md)).
 The first
