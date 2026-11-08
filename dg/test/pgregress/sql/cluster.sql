@@ -96,7 +96,7 @@ INSERT INTO clstr_tst (b, c) VALUES (1111, 'this should fail');
 --dg 	AND indisclustered;
 
 -- Try changing indisclustered
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE clstr_tst CLUSTER ON clstr_tst_b_c;
 --dg-cascade
 --dg SELECT pg_class.relname FROM pg_index, pg_class, pg_class AS pg_class_2
@@ -106,7 +106,7 @@ INSERT INTO clstr_tst (b, c) VALUES (1111, 'this should fail');
 --dg 	AND indisclustered;
 
 -- Try turning off all clustering
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE clstr_tst SET WITHOUT CLUSTER;
 SELECT pg_class.relname FROM pg_index, pg_class, pg_class AS pg_class_2
 WHERE pg_class.oid=indexrelid

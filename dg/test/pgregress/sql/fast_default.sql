@@ -100,33 +100,29 @@ CREATE TABLE T(pk INT NOT NULL PRIMARY KEY, c_int INT DEFAULT 1);
 
 INSERT INTO T VALUES (1), (2);
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE T ADD COLUMN c_bpchar BPCHAR(5) DEFAULT 'hello',
---dg               ALTER COLUMN c_int SET DEFAULT 2;
+ALTER TABLE T ADD COLUMN c_bpchar BPCHAR(5) DEFAULT 'hello',
+              ALTER COLUMN c_int SET DEFAULT 2;
 
 INSERT INTO T VALUES (3), (4);
 
 
---dg-cascade
---dg ALTER TABLE T ADD COLUMN c_text TEXT  DEFAULT 'world',
---dg               ALTER COLUMN c_bpchar SET DEFAULT 'dog';
+ALTER TABLE T ADD COLUMN c_text TEXT  DEFAULT 'world',
+              ALTER COLUMN c_bpchar SET DEFAULT 'dog';
 
 INSERT INTO T VALUES (5), (6);
 
---dg-cascade
---dg ALTER TABLE T ADD COLUMN c_date DATE DEFAULT '2016-06-02',
---dg               ALTER COLUMN c_text SET DEFAULT 'cat';
+ALTER TABLE T ADD COLUMN c_date DATE DEFAULT '2016-06-02',
+              ALTER COLUMN c_text SET DEFAULT 'cat';
 
 INSERT INTO T VALUES (7), (8);
 
---dg-cascade
---dg ALTER TABLE T ADD COLUMN c_timestamp TIMESTAMP DEFAULT '2016-09-01 12:00:00',
---dg               ADD COLUMN c_timestamp_null TIMESTAMP,
---dg               ALTER COLUMN c_date SET DEFAULT '2010-01-01';
+ALTER TABLE T ADD COLUMN c_timestamp TIMESTAMP DEFAULT '2016-09-01 12:00:00',
+              ADD COLUMN c_timestamp_null TIMESTAMP,
+              ALTER COLUMN c_date SET DEFAULT '2010-01-01';
 
 INSERT INTO T VALUES (9), (10);
 
---dg-cascade
+--dg-skip: type ? is not supported yet
 --dg ALTER TABLE T ADD COLUMN c_array TEXT[]
 --dg                   DEFAULT '{"This", "is", "the", "real", "world"}',
 --dg               ALTER COLUMN c_timestamp SET DEFAULT '1970-12-31 11:12:13',
@@ -480,20 +476,17 @@ ALTER TABLE T ADD COLUMN c_text TEXT DEFAULT 'Hello';
 
 INSERT INTO T VALUES (5), (6);
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE T ALTER COLUMN c_text SET DEFAULT 'world',
---dg               ALTER COLUMN c_int  SET DEFAULT 1;
+ALTER TABLE T ALTER COLUMN c_text SET DEFAULT 'world',
+              ALTER COLUMN c_int  SET DEFAULT 1;
 
 INSERT INTO T VALUES (7), (8);
 
---dg-cascade
---dg SELECT * FROM T ORDER BY pk;
+SELECT * FROM T ORDER BY pk;
 
 -- Add an index
 CREATE INDEX i ON T(c_int, c_text);
 
---dg-cascade
---dg SELECT c_text FROM T WHERE c_int = -1;
+SELECT c_text FROM T WHERE c_int = -1;
 
 --dg-cascade
 --dg SELECT comp();
@@ -676,13 +669,11 @@ SELECT * FROM vtype;
 CREATE TABLE vtype2 (a int);
 INSERT INTO vtype2 VALUES (1);
 ALTER TABLE vtype2 ADD COLUMN b varchar(10) DEFAULT 'xxx';
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE vtype2 ALTER COLUMN b SET DEFAULT 'yyy';
+ALTER TABLE vtype2 ALTER COLUMN b SET DEFAULT 'yyy';
 INSERT INTO vtype2 VALUES (2);
 
 ALTER TABLE vtype2 ALTER COLUMN b TYPE varchar(20) USING b::varchar(20);
---dg-cascade
---dg SELECT * FROM vtype2;
+SELECT * FROM vtype2;
 
 
 -- Ensure that defaults are checked when evaluating whether HOT update

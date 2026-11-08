@@ -1003,6 +1003,72 @@ TEST_CASE("set_identity makes a filled NOT NULL column an identity column") {
   REQUIRE(0 == sm3::commit(f.a));
 }
 
+TEST_CASE("drop_not_null and set_default change a column's record") {
+  // Verify drop_not_null and set_default, ALTER COLUMN's DROP NOT NULL,
+  // SET DEFAULT and DROP DEFAULT.
+  // 1. id, NOT NULL, is made nullable, and again; a row with id null
+  //    is then inserted.
+  // 2. state takes a default, then another; after a restart it has the
+  //    second; then it is dropped.
+  // 3. A primary key's column keeps NOT NULL: SM_ERR_INUSE.
+  // 4. An identity column keeps NOT NULL and takes no default:
+  //    SM_ERR_INVALID.
+  // 5. A column not there is SM_ERR_NOTFOUND for both.
+  jobs_t f;
+  start(f.a);
+  REQUIRE_MESSAGE(0 == sm3::drop_not_null(f.a, f.jobs, "id"), sm1::errmsg());
+  CHECK(0 == sm3::drop_not_null(f.a, f.jobs, "id"));
+  sm3::table_t *t = f.write(f.a);
+  CHECK(!sm3::tbl_def(t).columns[0].not_null);
+  std::string state = sm2::make_varlena("s"), owner = sm2::make_varlena("o");
+  std::vector<sm2::datum_t> v = {sm2::datum_from_int32(0),
+                                 sm2::datum_from_ptr(state.data()),
+                                 sm2::datum_from_ptr(owner.data())};
+  const bool id_null[3] = {true, false, false};
+  uint64_t rowno = 0;
+  CHECK_MESSAGE(0 == sm3::tbl_insert(t, v, id_null, rowno), sm1::errmsg());
+  sm3::tbl_close(t);
+
+  REQUIRE(0 == sm3::set_default(f.a, f.jobs, "state", "'free'"));
+  REQUIRE(0 == sm3::set_default(f.a, f.jobs, "state", "'taken'"));
+  REQUIRE(0 == sm3::commit(f.a));
+  f.reload();
+  start(f.a);
+  t = f.write(f.a);
+  CHECK(std::optional<std::string>("'taken'") ==
+        sm3::tbl_def(t).columns[1].default_expr);
+  sm3::tbl_close(t);
+  REQUIRE(0 == sm3::set_default(f.a, f.jobs, "state", std::nullopt));
+  t = f.write(f.a);
+  CHECK(!sm3::tbl_def(t).columns[1].default_expr);
+  sm3::tbl_close(t);
+
+  std::vector<sm3::column_spec_t> cols = {{"k", sm2::type_int4.code, -1, true},
+                                          {"g", sm2::type_int8.code, -1, true}};
+  std::vector<sm3::index_key_spec_t> on_k = {{0, false, false, std::nullopt}};
+  uint64_t keyed = 0, pk = 0, seq = 0;
+  REQUIRE(0 == sm3::create_table(f.a, sm3::nsp_public, "keyed", cols, keyed));
+  REQUIRE_MESSAGE(0 == sm3::create_index(f.a, keyed, "keyed_pkey", on_k, {},
+                                         true, pk, true, true),
+                  sm1::errmsg());
+  CHECK(-1 == sm3::drop_not_null(f.a, keyed, "k"));
+  CHECK(sm1::SM_ERR_INUSE == sm1::errnum());
+
+  REQUIRE(0 == sm3::create_sequence(f.a, sm3::nsp_public, "s", 1, 1, seq));
+  REQUIRE_MESSAGE(0 == sm3::set_identity(f.a, keyed, "g", 'a', seq),
+                  sm1::errmsg());
+  CHECK(-1 == sm3::drop_not_null(f.a, keyed, "g"));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  CHECK(-1 == sm3::set_default(f.a, keyed, "g", "1"));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+
+  CHECK(-1 == sm3::drop_not_null(f.a, keyed, "nope"));
+  CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+  CHECK(-1 == sm3::set_default(f.a, keyed, "nope", "1"));
+  CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+  REQUIRE(0 == sm3::commit(f.a));
+}
+
 TEST_CASE("a scanned row outlives other calls on its session") {
   // Verify how long a cursor's row is good for (include/sm.h).
   // 1. Three rows are committed. A cursor over the heap is opened,

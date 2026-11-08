@@ -635,6 +635,60 @@ int set_not_null(session_t *session, uint64_t oid, std::string_view name) {
   return cat_put_table(session, oid, rec);
 }
 
+/* Let a column hold a null again; see sm3.h. */
+int drop_not_null(session_t *session, uint64_t oid, std::string_view name) {
+  table_rec_t rec;
+  if (0 != cat_get_table_rec(session, oid, rec)) {
+    return -1;
+  }
+  int at = live_column(rec, name);
+  if (at < 0) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "drop not null: no column " + std::string(name));
+  }
+  column_rec_t &c = rec.columns[at];
+  if (!c.not_null) {
+    return 0;
+  }
+  // An identity column is NOT NULL (check_columns).
+  if (0 != c.identity) {
+    return invalid("drop not null: " + c.name + " is an identity column");
+  }
+  // A primary key's columns are NOT NULL (create_index).
+  for (const index_rec_t &x : rec.indexes) {
+    for (const index_key_rec_t &k : x.keys) {
+      if (x.primary && k.attnum == at) {
+        return sm1::seterr(sm1::SM_ERR_INUSE, "drop not null: " + c.name +
+                                                  " is in the primary key " +
+                                                  x.name);
+      }
+    }
+  }
+  c.not_null = false;
+  return cat_put_table(session, oid, rec);
+}
+
+/* Set or drop a column's default; see sm3.h. */
+int set_default(session_t *session, uint64_t oid, std::string_view name,
+                std::optional<std::string_view> expr) {
+  table_rec_t rec;
+  if (0 != cat_get_table_rec(session, oid, rec)) {
+    return -1;
+  }
+  int at = live_column(rec, name);
+  if (at < 0) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "set default: no column " + std::string(name));
+  }
+  column_rec_t &c = rec.columns[at];
+  // An identity column has no default (check_columns).
+  if (0 != c.identity) {
+    return invalid("set default: " + c.name + " is an identity column");
+  }
+  c.default_expr = expr ? std::optional<std::string>(*expr) : std::nullopt;
+  return cat_put_table(session, oid, rec);
+}
+
 /*
  * What keeps rec's column at from changing type, a view first, into
  * use, with its name in by; see sm3.h. A plain index takes the new

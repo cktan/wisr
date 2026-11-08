@@ -4473,6 +4473,109 @@ static void drop_column(Oid relid, const char *relname, const char *name,
   sm_error("drop a column");
 }
 
+/*
+ * The live column name of the table relid, named relname, in def, as this
+ * transaction sees it: its place, or an error with PostgreSQL's words if
+ * there is none.
+ */
+static size_t live_column_of(Oid relid, const char *relname, const char *name,
+                             sm_table_def_t &def) {
+  if (table_def_now(relid, def))
+    for (size_t i = 0; i < def.columns.size(); i++)
+      if (!def.columns[i].dropped && def.columns[i].name == name)
+        return i;
+  ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
+                  errmsg("column \"%s\" of relation \"%s\" does not exist",
+                         name, relname)));
+  return 0; /* not reached */
+}
+
+/*
+ * ALTER COLUMN name SET NOT NULL, or with set false DROP NOT NULL, of the
+ * table relid, as PostgreSQL's ATExecSetNotNull() and ATExecDropNotNull()
+ * refuse them.  SET reads every row at sm's latest view, under the table's
+ * lock X (sm3::set_not_null); DROP changes the record alone.
+ */
+static void alter_not_null(Oid relid, const char *relname, const char *name,
+                           bool set) {
+  sm_session_t *s = xact_session();
+  sm_table_def_t def;
+  size_t at = live_column_of(relid, relname, name, def);
+
+  if (set) {
+    if (0 == waiting([&] { return sm_cat_set_not_null(s, relid, name); }))
+      return;
+    if (SM_ERR_NOTNULL == sm_errnum())
+      ereport(ERROR, (errcode(ERRCODE_NOT_NULL_VIOLATION),
+                      errmsg("column \"%s\" of relation \"%s\" contains "
+                             "null values",
+                             name, relname)));
+    sm_error("set a column NOT NULL");
+  }
+  if (0 != def.columns[at].identity)
+    ereport(ERROR,
+            (errcode(ERRCODE_SYNTAX_ERROR),
+             errmsg("column \"%s\" of relation \"%s\" is an identity column",
+                    name, relname)));
+  if (0 == waiting([&] { return sm_cat_drop_not_null(s, relid, name); }))
+    return;
+  if (SM_ERR_INUSE == sm_errnum())
+    ereport(ERROR, (errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+                    errmsg("column \"%s\" is in a primary key", name)));
+  sm_error("drop a column's NOT NULL");
+}
+
+/*
+ * ALTER COLUMN cmd->name SET DEFAULT cmd->def, or DROP DEFAULT with no def,
+ * of the table relid, as PostgreSQL's ATExecColumnDefault() refuses them.
+ * A column with an update default keeps it, and its defaults are of
+ * update_default_kind(); without a plain default, the update default is
+ * its insert default again (ONUPDATE.md §2).
+ */
+static void alter_column_default(Oid relid, const char *relname,
+                                 AlterTableCmd *cmd) {
+  const char *name = cmd->name;
+  sm_session_t *s = xact_session();
+  sm_table_def_t def;
+  size_t at = live_column_of(relid, relname, name, def);
+  const sm_column_def_t &c = def.columns[at];
+  const char *expr = NULL;
+
+  if (0 != c.identity)
+    ereport(ERROR,
+            (errcode(ERRCODE_SYNTAX_ERROR),
+             errmsg("column \"%s\" of relation \"%s\" is an identity column",
+                    name, relname),
+             NULL != cmd->def ? 0
+                              : errhint("Use %s instead.",
+                                        "ALTER TABLE ... ALTER COLUMN ... "
+                                        "DROP IDENTITY")));
+  if (NULL != cmd->def) {
+    /* The column's type as PostgreSQL has it, a domain's or a varchar's. */
+    Relation rel = relation_open(relid, AccessShareLock);
+    Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), at);
+    Oid typid = att->atttypid;
+    int32 typmod = att->atttypmod;
+
+    relation_close(rel, NoLock);
+    if (c.has_on_update && !update_default_kind(cmd->def))
+      ereport(ERROR,
+              (errcode(ERRCODE_INVALID_COLUMN_DEFINITION),
+               errmsg("column \"%s\" has an update default, so its defaults "
+                      "must be constants, CURRENT_TIMESTAMP, LOCALTIMESTAMP "
+                      "or CURRENT_DATE",
+                      name)));
+    ParseState *pstate = make_parsestate(NULL);
+    Node *cooked = cookDefault(pstate, cmd->def, typid, typmod, name, 0);
+
+    free_parsestate(pstate);
+    expr = nodeToString(cooked);
+  } else if (c.has_on_update)
+    expr = c.on_update_expr.c_str();
+  if (0 != waiting([&] { return sm_cat_set_default(s, relid, name, expr); }))
+    sm_error("set a column's default");
+}
+
 static void add_fkey(Oid relid, const char *relname, Constraint *con);
 static void drop_constraint(Oid relid, const char *relname, const char *name,
                             bool missing_ok, bool cascade);
@@ -4772,6 +4875,10 @@ void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
       validate_constraint(relid, relname, cmd->name);
     else if (AT_AlterColumnType == cmd->subtype)
       alter_column_type(relid, relname, cmd);
+    else if (AT_SetNotNull == cmd->subtype || AT_DropNotNull == cmd->subtype)
+      alter_not_null(relid, relname, cmd->name, AT_SetNotNull == cmd->subtype);
+    else if (AT_ColumnDefault == cmd->subtype)
+      alter_column_default(relid, relname, cmd);
     else
       drop_column(relid, relname, cmd->name, cmd->missing_ok,
                   cmd->behavior == DROP_CASCADE);

@@ -136,13 +136,13 @@ regression files are taken out for it (`test/pgregress`,
 ## 3. DDL
 
 - **ALTER TABLE beyond ADD COLUMN, DROP COLUMN, ALTER COLUMN
-  TYPE, ADD and DROP CONSTRAINT of a foreign key, a primary key,
-  a unique or a check constraint, a foreign key's or a check's
-  VALIDATE CONSTRAINT, and RENAME** — refused:
-  `ADD CONSTRAINT ... USING INDEX`, `SET SCHEMA`,
-  `SET`/`DROP NOT NULL`, `SET DEFAULT`, row level security,
-  replica identity (step 231); dropping a column an index uses
-  (step 110). A primary key added or dropped re-keys the rows,
+  TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD and DROP
+  CONSTRAINT of a foreign key, a primary key, a unique or a check
+  constraint, a foreign key's or a check's VALIDATE CONSTRAINT,
+  and RENAME** — refused:
+  `ADD CONSTRAINT ... USING INDEX`, `SET SCHEMA`, row level
+  security, replica identity (step 231); dropping a column an
+  index uses (step 110). A primary key added or dropped re-keys the rows,
   which a scan then gives in key order ([`PKDDL.md`](PKDDL.md),
   step 312).
 - **ALTER COLUMN TYPE of a column an expression or a partial

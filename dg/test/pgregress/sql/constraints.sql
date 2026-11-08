@@ -790,24 +790,19 @@ CREATE TABLE notnull_tbl1 (a INTEGER NOT NULL NOT NULL);
 --dg-differs: no error where PostgreSQL has: constraint "?" for relation "?" already exists
 --dg ALTER TABLE notnull_tbl1 ADD COLUMN b INT CONSTRAINT notnull_tbl1_a_not_null NOT NULL;
 -- DROP NOT NULL gets rid of both the attnotnull flag and the constraint itself
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE notnull_tbl1 ALTER a DROP NOT NULL;
---dg-cascade
---dg \d+ notnull_tbl1
+ALTER TABLE notnull_tbl1 ALTER a DROP NOT NULL;
+\d+ notnull_tbl1
 -- SET NOT NULL puts both back
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE notnull_tbl1 ALTER a SET NOT NULL;
+ALTER TABLE notnull_tbl1 ALTER a SET NOT NULL;
 --dg-differs: the result
 --dg \d+ notnull_tbl1
 -- Doing it twice doesn't create a redundant constraint
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE notnull_tbl1 ALTER a SET NOT NULL;
+ALTER TABLE notnull_tbl1 ALTER a SET NOT NULL;
 --dg-differs: the result
 --dg select conname, contype, conkey from pg_constraint where conrelid = 'notnull_tbl1'::regclass;
 -- Using the "table constraint" syntax also works
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE notnull_tbl1 ALTER a DROP NOT NULL;
---dg-cascade
+ALTER TABLE notnull_tbl1 ALTER a DROP NOT NULL;
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
 --dg ALTER TABLE notnull_tbl1 ADD CONSTRAINT foobar NOT NULL a;
 --dg-cascade
 --dg \d+ notnull_tbl1
@@ -934,13 +929,11 @@ CREATE TABLE ATACC1 (a int, NOT NULL a NO INHERIT) PARTITION BY LIST (a);
 
 -- can't drop not-null in primary key
 CREATE TABLE notnull_tbl2 (a INTEGER PRIMARY KEY);
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE notnull_tbl2 ALTER a DROP NOT NULL;
+ALTER TABLE notnull_tbl2 ALTER a DROP NOT NULL;
 DROP TABLE notnull_tbl2;
 
 CREATE TABLE notnull_tbl3 (a INTEGER NOT NULL, CHECK (a IS NOT NULL));
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE notnull_tbl3 ALTER A DROP NOT NULL;
+ALTER TABLE notnull_tbl3 ALTER A DROP NOT NULL;
 ALTER TABLE notnull_tbl3 ADD b int, ADD CONSTRAINT pk PRIMARY KEY (a, b);
 --dg-differs: the result
 --dg \d notnull_tbl3
@@ -1065,8 +1058,7 @@ CREATE TABLE notnull_tbl5 (a int CONSTRAINT ann NOT NULL,
 --dg CREATE TABLE notnull_tbl5_child () INHERITS (notnull_tbl5);
 --dg-skip: constraint "?" of relation "?" does not exist
 --dg ALTER TABLE ONLY notnull_tbl5 DROP CONSTRAINT ann;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE ONLY notnull_tbl5 ALTER b DROP NOT NULL;
+ALTER TABLE ONLY notnull_tbl5 ALTER b DROP NOT NULL;
 --dg-cascade
 --dg \d+ notnull_tbl5_child
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
@@ -1168,8 +1160,7 @@ UPDATE notnull_tbl1 SET a = 100 WHERE b = 1;
 --dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
 --dg ALTER TABLE notnull_tbl1 ADD NOT NULL a NOT VALID,
 --dg 	ADD NOT NULL b NOT VALID;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE notnull_tbl1 ALTER a DROP NOT NULL;
+ALTER TABLE notnull_tbl1 ALTER a DROP NOT NULL;
 --dg-cascade
 --dg ALTER TABLE notnull_tbl1 DROP CONSTRAINT notnull_tbl1_b_not_null;
 DROP TABLE notnull_tbl1;
@@ -1227,8 +1218,7 @@ CREATE TABLE notnull_inhparent (i int);
 --dg ALTER TABLE notnull_inhchild ADD CONSTRAINT nn1 NOT NULL i; -- error
 --dg-cascade
 --dg EXECUTE get_nnconstraint_info('{notnull_inhparent, notnull_inhchild, notnull_inhgrand}');
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE notnull_inhparent ALTER i SET NOT NULL; -- ok
+ALTER TABLE notnull_inhparent ALTER i SET NOT NULL; -- ok
 --dg-cascade
 --dg EXECUTE get_nnconstraint_info('{notnull_inhparent, notnull_inhchild, notnull_inhgrand}');
 --dg-cascade

@@ -2860,6 +2860,24 @@ int sm_cat_set_not_null(sm_session_t *session, uint64_t oid, const char *name) {
   });
 }
 
+/* Let a column hold a null in the session's transaction. */
+int sm_cat_drop_not_null(sm_session_t *session, uint64_t oid,
+                         const char *name) {
+  return guard(session, [&] {
+    return sm3::drop_not_null(session->sm3, oid, name_of(name));
+  });
+}
+
+/* Set or drop a column's default in the session's transaction. */
+int sm_cat_set_default(sm_session_t *session, uint64_t oid, const char *name,
+                       const char *expr) {
+  return guard(session, [&] {
+    return sm3::set_default(session->sm3, oid, name_of(name),
+                            expr ? std::optional<std::string_view>(expr)
+                                 : std::nullopt);
+  });
+}
+
 /* Change a column's type in the session's transaction. */
 int sm_cat_alter_column_type(sm_session_t *session, uint64_t oid,
                              const char *name, const sm_column_type_t &to,

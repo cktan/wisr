@@ -851,6 +851,27 @@ int add_column(session_t* session, uint64_t oid,
 int set_not_null(session_t* session, uint64_t oid, std::string_view name);
 
 /*
+ * Let the live column name of the table oid hold a null: the
+ * record alone changes, under the table's lock X. One nullable
+ * already is no error. A column of the primary key fails with
+ * SM_ERR_INUSE, and an identity column with SM_ERR_INVALID: both
+ * are NOT NULL. No such column is SM_ERR_NOTFOUND.
+ */
+int drop_not_null(session_t* session, uint64_t oid, std::string_view name);
+
+/*
+ * Set the default of the live column name of the table oid to the
+ * host's expr, opaque to sm, or drop it with std::nullopt: the
+ * record alone changes, under the table's lock X. A row already
+ * there keeps its value, and one written before the column was
+ * added its missing value. The update default stays. An identity
+ * column, which has none, fails with SM_ERR_INVALID; no such column
+ * is SM_ERR_NOTFOUND.
+ */
+int set_default(session_t* session, uint64_t oid, std::string_view name,
+                std::optional<std::string_view> expr);
+
+/*
  * A column's new type, as alter_column_type takes it: sm2's code
  * and typmod, and the host's default and update default for the
  * new type, opaque to sm, which replace the column's.

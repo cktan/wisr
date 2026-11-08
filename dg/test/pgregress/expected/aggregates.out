@@ -1299,19 +1299,36 @@ explain (costs off) select y,z from t2 group by y,z;
 (3 rows)
 
 -- Make the column NOT NULL and ensure we remove the redundant column
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg alter table t2 alter column z set not null;
---dg-cascade
---dg explain (costs off) select y,z from t2 group by y,z;
+alter table t2 alter column z set not null;
+explain (costs off) select y,z from t2 group by y,z;
+      QUERY PLAN      
+----------------------
+ HashAggregate
+   Group Key: z
+   ->  Seq Scan on t2
+(3 rows)
+
 -- When there are multiple supporting unique indexes and the GROUP BY contains
 -- columns to cover all of those, ensure we pick the index with the least
 -- number of columns so that we can remove more columns from the GROUP BY.
---dg-cascade
---dg explain (costs off) select x,y,z from t2 group by x,y,z;
+explain (costs off) select x,y,z from t2 group by x,y,z;
+      QUERY PLAN      
+----------------------
+ HashAggregate
+   Group Key: z
+   ->  Seq Scan on t2
+(3 rows)
+
 -- As above but try ordering the columns differently to ensure we get the
 -- same result.
---dg-cascade
---dg explain (costs off) select x,y,z from t2 group by z,x,y;
+explain (costs off) select x,y,z from t2 group by z,x,y;
+      QUERY PLAN      
+----------------------
+ HashAggregate
+   Group Key: z
+   ->  Seq Scan on t2
+(3 rows)
+
 -- Ensure we don't use a partial index as proof of functional dependency
 drop index t2_z_uidx;
 create index t2_z_uidx on t2 (z) where z > 0;
@@ -1327,8 +1344,7 @@ explain (costs off) select y,z from t2 group by y,z;
 -- NULL constraint on the indexed columns.  Ensure the redundant columns are
 -- removed from the GROUP BY for such a table.
 drop index t2_z_uidx;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg alter table t2 alter column z drop not null;
+alter table t2 alter column z drop not null;
 --dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg create unique index t2_z_uidx on t2(z) nulls not distinct;
 --dg-cascade

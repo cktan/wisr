@@ -22,6 +22,7 @@ struct col_def_t {
   uint8_t type_code;
   int32_t typmod;
   bool not_null;
+  std::optional<std::string> default_expr;   /* the host's, opaque */
   std::optional<std::string> on_update_expr; /* the host's, opaque */
 };
 

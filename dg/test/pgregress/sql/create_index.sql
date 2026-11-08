@@ -1294,7 +1294,7 @@ DROP TABLE testcomment;
 -- Check that indisclustered updates are preserved
 CREATE TABLE concur_clustered(i int);
 CREATE INDEX concur_clustered_i_idx ON concur_clustered(i);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE concur_clustered CLUSTER ON concur_clustered_i_idx;
 --dg-differs: the result
 --dg REINDEX TABLE CONCURRENTLY concur_clustered;
@@ -1305,7 +1305,7 @@ DROP TABLE concur_clustered;
 -- Check that indisreplident updates are preserved.
 CREATE TABLE concur_replident(i int NOT NULL);
 CREATE UNIQUE INDEX concur_replident_i_idx ON concur_replident(i);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE concur_replident REPLICA IDENTITY
 --dg   USING INDEX concur_replident_i_idx;
 --dg-cascade

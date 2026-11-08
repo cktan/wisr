@@ -1844,6 +1844,22 @@ int sm_cat_set_not_null(sm_session_t* session, uint64_t oid,
                         const char* name);
 
 /*
+ * Let the column name of the table oid hold a null: SM_ERR_INUSE
+ * for a primary key's column, SM_ERR_INVALID for an identity
+ * column (sm3::drop_not_null).
+ */
+int sm_cat_drop_not_null(sm_session_t* session, uint64_t oid,
+                         const char* name);
+
+/*
+ * Set the default of the column name of the table oid to the host's
+ * expr, or drop it with expr nullptr; the update default stays.
+ * SM_ERR_INVALID for an identity column (sm3::set_default).
+ */
+int sm_cat_set_default(sm_session_t* session, uint64_t oid, const char* name,
+                       const char* expr);
+
+/*
  * A column's new type, as sm_cat_alter_column_type takes it: sm2's
  * code and typmod, and the host's default and update default for
  * the new type, nullptr for none, which replace the column's.

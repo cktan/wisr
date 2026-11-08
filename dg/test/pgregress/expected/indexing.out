@@ -1266,8 +1266,7 @@ set search_path to regress_indexing;
 --dg create table pk1 partition of pk for values from (0) to (1000);
 create table pk2 (b int, a int);
 alter table pk2 drop column b;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg alter table pk2 alter a set not null;
+alter table pk2 alter a set not null;
 --dg-cascade
 --dg alter table pk attach partition pk2 for values from (1000) to (2000);
 --dg-cascade

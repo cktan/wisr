@@ -33,7 +33,7 @@ SELECT * FROM inhx; /* Empty set since LIKE inherits structure only */
  /* Has ee entry */
 CREATE TABLE inhf (LIKE inhx, LIKE inhx); /* Throw error */
 ERROR:  column "xx" specified more than once
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg CREATE TABLE inhf (LIKE inhx INCLUDING DEFAULTS INCLUDING CONSTRAINTS);
 --dg-cascade
 --dg INSERT INTO inhf DEFAULT VALUES;
@@ -246,16 +246,16 @@ DROP TABLE inhz;
 --dg-cascade
 --dg ALTER TABLE ctlt1 ALTER COLUMN a SET STORAGE MAIN;
 CREATE TABLE ctlt2 (c text NOT NULL);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ctlt2 ALTER COLUMN c SET STORAGE EXTERNAL;
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON COLUMN ctlt2.c IS 'C';
 --dg-skip: constraint "?" for table "?" does not exist
 --dg COMMENT ON CONSTRAINT ctlt2_c_not_null ON ctlt2 IS 't2_c_not_null';
 CREATE TABLE ctlt3 (a text CHECK (length(a) < 5), c text CHECK (length(c) < 7));
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ctlt3 ALTER COLUMN c SET STORAGE EXTERNAL;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ctlt3 ALTER COLUMN a SET STORAGE MAIN;
 CREATE INDEX ctlt3_fnidx ON ctlt3 ((a || c));
 --dg-skip: COMMENT is not supported yet
@@ -265,7 +265,7 @@ CREATE INDEX ctlt3_fnidx ON ctlt3 ((a || c));
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON CONSTRAINT ctlt3_a_check ON ctlt3 IS 't3_a_check';
 CREATE TABLE ctlt4 (a text, c text);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ctlt4 ALTER COLUMN c SET STORAGE EXTERNAL;
 --dg-cascade
 --dg CREATE TABLE ctlt12_storage (LIKE ctlt1 INCLUDING STORAGE, LIKE ctlt2 INCLUDING STORAGE);

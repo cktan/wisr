@@ -566,7 +566,7 @@ insert into toasttest values(repeat('1234567890',10000));
 -- Ensure that some values are uncompressed, to test the faster substring
 -- operation used in that case
 --
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table toasttest alter column f1 set storage external;
 insert into toasttest values(repeat('1234567890',10000));
 insert into toasttest values(repeat('1234567890',10000));
@@ -597,7 +597,7 @@ INSERT INTO toasttest values (repeat('1234567890',300));
 --dg   FROM pg_class where relname = 'toasttest';
 
 TRUNCATE TABLE toasttest;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE toasttest set (toast_tuple_target = 4080);
 INSERT INTO toasttest values (repeat('1234567890',300));
 INSERT INTO toasttest values (repeat('1234567890',300));
@@ -622,7 +622,7 @@ insert into toasttest values(decode(repeat('1234567890',10000),'escape'));
 -- Ensure that some values are uncompressed, to test the faster substring
 -- operation used in that case
 --
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table toasttest alter column f1 set storage external;
 insert into toasttest values(decode(repeat('1234567890',10000),'escape'));
 insert into toasttest values(decode(repeat('1234567890',10000),'escape'));

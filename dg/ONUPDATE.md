@@ -211,12 +211,13 @@ columns a statement named.
   the insert default, as with any added column; the update
   default acts from their next UPDATE.
 - **DROP COLUMN** drops both with the column.
-- **ALTER COLUMN SET DEFAULT and DROP DEFAULT** are refused in
-  digres today ([`UNSUPPORTED.md`](UNSUPPORTED.md#3-ddl) §3).
-  Once built, they change
-  the insert default and leave the update default alone; no
-  ALTER COLUMN form sets or drops an update default, so a
-  column is dropped and added again to change it.
+- **ALTER COLUMN SET DEFAULT and DROP DEFAULT** change the
+  insert default and leave the update default alone. SET
+  DEFAULT takes only the defaults §2 takes. After DROP DEFAULT,
+  the update default is the insert default again, as §2 says
+  of a column with no plain default. No ALTER COLUMN form sets
+  or drops an update default, so a column is dropped and added
+  again to change it.
 - **CREATE TABLE LIKE INCLUDING DEFAULTS** copies the insert
   default and not the update default.
 

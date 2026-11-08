@@ -776,6 +776,15 @@ static Janet table_create(int32_t argc, Janet *argv, bool temp) {
                            c.name.c_str());
             }
             c.on_update_expr = identifier_of(c_items[++k]);
+          } else if ("default" == flag) {
+            // The host's default, which sm keeps unread.
+            if (k + 1 >= c_n ||
+                !janet_checktype(c_items[k + 1], JANET_STRING)) {
+              janet_panicf("table-create: column '%s' takes :default and a "
+                           "string",
+                           c.name.c_str());
+            }
+            c.default_expr = identifier_of(c_items[++k]);
           }
         }
         if (typmod_of(c.type_code, mods, &c.typmod) != 0) {
@@ -812,8 +821,8 @@ static Janet table_create(int32_t argc, Janet *argv, bool temp) {
   // sm3 makes its store, _id sequence and catalog entry.
   std::vector<sm_column_spec_t> specs;
   for (const col_def_t &c : columns) {
-    specs.push_back({c.name.c_str(), c.type_code, c.typmod, c.not_null, nullptr,
-                     0, 0,
+    specs.push_back({c.name.c_str(), c.type_code, c.typmod, c.not_null,
+                     c.default_expr ? c.default_expr->c_str() : nullptr, 0, 0,
                      c.on_update_expr ? c.on_update_expr->c_str() : nullptr});
   }
   uint64_t oid = 0;
@@ -946,6 +955,56 @@ static Janet cfun_alter_column_type(int32_t argc, Janet *argv) {
   if (sm_cat_alter_column_type(s->session, t->def->oid, col_name.c_str(), to,
                                keep ? nullptr : retype_conv, &r) != 0) {
     panic_sm_error("alter-column-type");
+  }
+  return janet_wrap_nil();
+}
+
+/* The oid of the table name for op, under X, as the DDL takes it. */
+static uint64_t ddl_table(session_ctx_t *s, const std::string &name,
+                          const char *op) {
+  return need_table(s, name, SM_LOCKMODE_EX, op)->def->oid;
+}
+
+/* (set-not-null table column): ALTER COLUMN ... SET NOT NULL. */
+static Janet cfun_set_not_null(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 2);
+  session_ctx_t *s = require_session();
+  std::string col = identifier_of(argv[1]);
+  uint64_t oid = ddl_table(s, identifier_of(argv[0]), "set-not-null");
+  if (sm_cat_set_not_null(s->session, oid, col.c_str()) != 0) {
+    panic_sm_error("set-not-null");
+  }
+  return janet_wrap_nil();
+}
+
+/* (drop-not-null table column): ALTER COLUMN ... DROP NOT NULL. */
+static Janet cfun_drop_not_null(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 2);
+  session_ctx_t *s = require_session();
+  std::string col = identifier_of(argv[1]);
+  uint64_t oid = ddl_table(s, identifier_of(argv[0]), "drop-not-null");
+  if (sm_cat_drop_not_null(s->session, oid, col.c_str()) != 0) {
+    panic_sm_error("drop-not-null");
+  }
+  return janet_wrap_nil();
+}
+
+/*
+ * (set-default table column ["text"]): ALTER COLUMN ... SET DEFAULT,
+ * the host's text, or DROP DEFAULT with none.
+ */
+static Janet cfun_set_default(int32_t argc, Janet *argv) {
+  janet_arity(argc, 2, 3);
+  session_ctx_t *s = require_session();
+  std::string col = identifier_of(argv[1]);
+  std::optional<std::string> expr;
+  if (3 == argc) {
+    expr = janet_getcstring(argv, 2);
+  }
+  uint64_t oid = ddl_table(s, identifier_of(argv[0]), "set-default");
+  if (sm_cat_set_default(s->session, oid, col.c_str(),
+                         expr ? expr->c_str() : nullptr) != 0) {
+    panic_sm_error("set-default");
   }
   return janet_wrap_nil();
 }
@@ -1368,7 +1427,7 @@ static Janet tuple_of(const std::vector<Janet> &items) {
 
 /*
  * A column of def as table-create takes it:
- * [name :type mods... :not-null :on-update "text"].
+ * [name :type mods... :not-null :default "text" :on-update "text"].
  */
 static Janet column_form(const sm_column_def_t &c) {
   std::vector<Janet> items = {janet_csymbolv(c.name.c_str()),
@@ -1378,6 +1437,10 @@ static Janet column_form(const sm_column_def_t &c) {
   }
   if (c.not_null) {
     items.push_back(janet_ckeywordv("not-null"));
+  }
+  if (c.has_default) {
+    items.push_back(janet_ckeywordv("default"));
+    items.push_back(janet_cstringv(c.default_expr.c_str()));
   }
   if (c.has_on_update) {
     items.push_back(janet_ckeywordv("on-update"));
@@ -3325,6 +3388,9 @@ static const JanetReg s_rel_cfuns[] = {
     {"_index-create", cfun_index_create, "internal"},
     {"_add-primary-key", cfun_add_primary_key, "internal"},
     {"_alter-column-type", cfun_alter_column_type, "internal"},
+    {"_set-not-null", cfun_set_not_null, "internal"},
+    {"_drop-not-null", cfun_drop_not_null, "internal"},
+    {"_set-default", cfun_set_default, "internal"},
     {"_index-drop", cfun_index_drop, "internal"},
     {"_index-wait", cfun_index_wait, "internal"},
     {"_index-state", cfun_index_state, "internal"},
@@ -3442,6 +3508,15 @@ static const char *s_prelude = R"janet(
 
 (defmacro alter-column-type [tbl col type & rest]
   ~(_alter-column-type (string ',tbl) (string ',col) ',type ,;rest))
+
+(defmacro set-not-null [tbl col]
+  ~(_set-not-null (string ',tbl) (string ',col)))
+
+(defmacro drop-not-null [tbl col]
+  ~(_drop-not-null (string ',tbl) (string ',col)))
+
+(defmacro set-default [tbl col & rest]
+  ~(_set-default (string ',tbl) (string ',col) ,;rest))
 
 (defmacro fkey-rename [tbl name new-name]
   ~(_fkey-rename (string ',tbl) (string ',name) (string ',new-name)))

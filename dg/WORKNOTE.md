@@ -12472,3 +12472,38 @@ by sm3 and checked by PostgreSQL's executor.
   breaks the check after a REPEATABLE READ transaction's
   snapshot: ADD CONSTRAINT and VALIDATE CONSTRAINT both refuse
   it.
+
+## Step 409: ALTER COLUMN SET/DROP NOT NULL and SET/DROP DEFAULT
+
+The decisions are in [`../QUESTION.md`](../QUESTION.md).
+
+- **sm3** (`drop_not_null()`, `set_default()` in
+  `../sm/sm3/src/ddl/ddl.cc`): each changes the column's record
+  alone, under the table's lock X. DROP NOT NULL of a primary
+  key's column is `SM_ERR_INUSE`; of an identity column, and a
+  default for one, `SM_ERR_INVALID`, as sm3 keeps an identity
+  column NOT NULL with no default. SET NOT NULL is
+  `set_not_null()`, which reads every row at the latest view.
+- **sm.h**: `sm_cat_drop_not_null()`, `sm_cat_set_default()`.
+  rel takes `set-not-null`, `drop-not-null` and `set-default`,
+  and `table-create` and `describe-table` a column's `:default`.
+- **digres** (`alter_not_null()`, `alter_column_default()` in
+  `access/sm/smstore.c`): PostgreSQL's errors, a primary key's
+  column, an identity column and null values among them. SET
+  DEFAULT cooks the default for the column's type. A column with
+  an update default takes only the defaults
+  [`ONUPDATE.md`](ONUPDATE.md#2-what-it-means) §2 takes, and
+  after DROP DEFAULT its update default is its insert default.
+  The gate in `AlterTableLookupRelation()` lets the three
+  subcommands through.
+- **Tests**: `../sm/sm3/test/test_table.cc`,
+  `../sm/rel/test/test_alter_column.rel`,
+  `test/alter_column.sql`, and `test/alter_column.sh`: SET NOT
+  NULL at REPEATABLE READ fails on a null committed after the
+  snapshot, and an identity column's refusals. server.sh's
+  refused ALTER is SET STATISTICS now.
+- **The regression files**: the 34 that skipped the ALTER TABLE
+  subcommands were trimmed again, with alter_table and
+  create_table_like: about 100 statements run now. The skips for
+  the subcommands left, `SET SCHEMA` and storage among them, are
+  180.
