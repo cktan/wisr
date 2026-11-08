@@ -52,6 +52,7 @@ constexpr uint8_t txn_aborted = 3;
 int finish_commit(sm1::session_t *s, bool prepared);
 void publish_commit(sm1::session_t *s, uint64_t commit_ts) noexcept;
 int resolve(db_t *db, const std::string &gid, bool commit_it);
+bool pending_prepared(sm1::session_t *s);
 
 /*
  * The on_commit functions of the transaction this thread has just
@@ -77,14 +78,15 @@ void run_committed_fns() {
  * Resolve the session's own prepared transaction, from its
  * sm1::commit or sm1::abort. Another session may resolve it first,
  * even between the caller's check and this call; the session
- * then simply has no transaction, as if it had seen that.
+ * then simply has no transaction, as if it had seen that. While
+ * another resolver holds it, the session keeps the gid and fails
+ * with SM_ERR_NOTFOUND, to try again if that resolver fails.
  */
 int resolve_own(sm1::session_t *s, bool commit_it) {
   // Resolve the transaction by gid.
   if (resolve(s->db, s->prepared_gid, commit_it) != 0) {
-    // Resolved elsewhere first: the session simply has none.
-    if (sm1::errnum() == sm1::SM_ERR_NOTFOUND) {
-      s->prepared_gid.clear();
+    // A held entry is still in doubt: only an absent entry ends it.
+    if (sm1::SM_ERR_NOTFOUND == sm1::errnum() && !pending_prepared(s)) {
       return set_error(sm1::SM_ERR_NOTRANS, "no active transaction");
     }
     // Still in doubt: the session keeps the gid, to try again.

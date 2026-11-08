@@ -1421,6 +1421,11 @@ resolved it first, the session has no transaction:
 Holding the entry, and not erasing it, lets a failed resolution
 put the transaction back with no allocation.
 
+If another resolver holds the entry, the preparing session's
+commit or abort returns `SM_ERR_NOTFOUND` and keeps its gid.
+It remains in doubt until the entry is removed. If the other
+resolver fails, the preparing session can retry its decision.
+
 **Commit** is §8.2 from the claim of `commit_ts`.
 
 1. Claim `commit_ts`. If the lease renewal fails, the transaction

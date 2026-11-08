@@ -472,8 +472,12 @@ int begin(session_t* session, xctlevel_t level, bool read_only = false);
  * longer active whatever the result, but for SM_ERR_INVALID (a
  * bulk load is open) and SM_ERR_DOOMED (a rollback failed).
  *
+ * A prepared transaction that another resolver holds fails with
+ * SM_ERR_NOTFOUND and stays in doubt: the session may try again.
+ *
  * Errors: SM_ERR_SERIALIZATION (retryable), SM_ERR_NOTRANS,
- * SM_ERR_INVALID, SM_ERR_DOOMED,
+ * SM_ERR_INVALID, SM_ERR_DOOMED, SM_ERR_NOTFOUND (another resolver
+ * holds the prepared transaction),
  * SM_ERR_IO (no commit record was written).
  */
 int commit(session_t* session);
@@ -487,7 +491,8 @@ int commit(session_t* session);
  * Must not be called after a retryable error, which already
  * aborted the transaction.
  *
- * Errors: SM_ERR_NOTRANS.
+ * Errors: SM_ERR_NOTRANS, SM_ERR_NOTFOUND (another resolver holds
+ * the prepared transaction, which stays in doubt).
  */
 int abort(session_t* session);
 

@@ -781,6 +781,8 @@ and closes any open scan cursors on this session.
 For a prepared transaction, this is the coordinator's
 commit decision: validation already happened at prepare time,
 but `SM_ERR_IO` leaves it in doubt.
+`SM_ERR_NOTFOUND` means another resolver holds it. The session
+stays in doubt until that resolver finishes the resolution.
 
 On `SM_ERR_SERIALIZATION` the transaction has been aborted
 and its effects discarded; the caller retries.
@@ -791,13 +793,13 @@ reached the log, so the outcome is unknown. After the
 database is reopened, the transaction is committed or not
 according to what reached the log.
 
-On `SM_ERR_IO` the transaction did not commit: persisting the
-lease that covers its commit timestamp failed, before its
-commit record was written, and it is aborted.
+On `SM_ERR_IO`, an ordinary transaction did not commit.
+The timestamp lease write failed before the commit record
+was written. The transaction is aborted.
 
 Errors: `SM_ERR_SERIALIZATION` (retryable),
-`SM_ERR_NOTRANS`, `SM_ERR_IO` (no commit record was
-written).
+`SM_ERR_NOTRANS`, `SM_ERR_NOTFOUND` (a prepared resolver holds
+the transaction), `SM_ERR_IO` (no commit record was written).
 
 ### int sm1::abort(sm1::session_t* session)
 
@@ -807,11 +809,14 @@ open scan cursors on this session.
 
 Aborting a **prepared** transaction is legal and is the
 coordinator's abort decision.
+`SM_ERR_NOTFOUND` leaves it in doubt while another resolver
+holds it.
 
 Must not be called after a retryable error, which already
 aborted the transaction.
 
-Errors: `SM_ERR_NOTRANS`.
+Errors: `SM_ERR_NOTRANS`, `SM_ERR_NOTFOUND` (a prepared resolver
+holds the transaction).
 
 ### int sm1::on_commit(sm1::session_t* session, std::function<void()> fn)
 
@@ -1309,6 +1314,11 @@ unresolved, the preparing session's `sm1::begin` fails with
 preparing session has no transaction: its `sm1::commit` and
 `sm1::abort` fail with `SM_ERR_NOTRANS`, and `sm1::begin`
 succeeds.
+
+While another resolver holds the gid, the preparing session's
+commit or abort returns `SM_ERR_NOTFOUND` and keeps the gid.
+The session remains in doubt. If the other resolver fails,
+the preparing session can retry its decision.
 
 A failed write of the prepared record aborts the process
 (`sm0::fatal()`): the record may or may not have reached the

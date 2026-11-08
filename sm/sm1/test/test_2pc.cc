@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <future>
 #include <mutex>
 #include <set>
 #include <string>
@@ -256,6 +257,69 @@ TEST_CASE("a commit of a prepared transaction that fails can be retried") {
   CHECK(listed(r).empty());
   sm1::closedb(s);
   sm1::closedb(r);
+}
+
+TEST_CASE("a competing resolver does not lose the preparing session's gid") {
+  // Verify a busy resolver leaves the preparing session able to retry.
+  // 1. Prepare an update on its original session.
+  // 2. Stall another resolver at its timestamp lease write.
+  // 3. Attempt commit or abort on the original session.
+  // 4. Confirm that session remains in doubt.
+  // 5. Let the competing resolver succeed or fail.
+  // 6. Retry the original decision if the transaction remains prepared.
+  // 7. Confirm the final row value and an empty prepared registry.
+  for (bool commit_own : {false, true}) {
+    for (bool other_succeeds : {false, true}) {
+      CAPTURE(commit_own);
+      CAPTURE(other_succeeds);
+      tpc_fixture_t f;
+      sm1::session_t *s = f.open();
+      sm1::session_t *r = f.open();
+      REQUIRE(0 == sm1::begin(s, sm1::xctlevel_t::repeatable_read));
+      REQUIRE(0 == set(s, "a", "1"));
+      REQUIRE(0 == sm1::prepare(s, "g1"));
+
+      std::promise<void> entered, resume;
+      auto go = resume.get_future();
+      // Force the competing commit through the controllable lease write.
+      s->db->ts_limit.store(0);
+      s->db->test_before_lease = [&] {
+        entered.set_value();
+        go.wait();
+        return other_succeeds ? rocksdb::Status::OK()
+                              : rocksdb::Status::IOError("injected");
+      };
+      int other_rc = 0;
+      std::thread resolver([&] { other_rc = sm1::commit_prepared(r, "g1"); });
+      entered.get_future().wait();
+      CHECK(-1 == (commit_own ? sm1::commit(s) : sm1::abort(s)));
+      CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+      CHECK(sm1::in_doubt(s));
+      resume.set_value();
+      resolver.join();
+      s->db->test_before_lease = nullptr;
+
+      if (other_succeeds) {
+        CHECK(0 == other_rc);
+        CHECK_FALSE(sm1::in_doubt(s));
+        CHECK(-1 == (commit_own ? sm1::commit(s) : sm1::abort(s)));
+        CHECK(sm1::SM_ERR_NOTRANS == sm1::errnum());
+      } else {
+        CHECK(-1 == other_rc);
+        CHECK(sm1::in_doubt(s));
+        CHECK(1u == listed(r).size());
+        CHECK(0 == (commit_own ? sm1::commit(s) : sm1::abort(s)));
+      }
+      CHECK(listed(r).empty());
+      CHECK(read_now(r, "a") == (other_succeeds || commit_own ? "1" : "0"));
+      // Clean up a failed assertion's unresolved transaction too.
+      if (!listed(r).empty()) {
+        CHECK(0 == sm1::abort_prepared(r, "g1"));
+      }
+      sm1::closedb(s);
+      sm1::closedb(r);
+    }
+  }
 }
 
 TEST_CASE("sm1::in_doubt holds from prepare until the gid is resolved") {
