@@ -43,10 +43,11 @@ select conname, contype, conkey from pg_constraint
   where conrelid = 'job2'::regclass order by conname;
       conname       | contype | conkey 
 --------------------+---------+--------
+ job2_pkey          | p       | {1}
  job_id_not_null    | n       | {1}
  job_owner_not_null | n       | {2}
  note_set           | n       | {3}
-(3 rows)
+(4 rows)
 
 alter table job drop constraint job_owner_not_null;
 insert into job values (1, null, 'n', 1);

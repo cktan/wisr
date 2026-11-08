@@ -1360,11 +1360,10 @@ create table inh_parent2(b int constraint nn not null);
 create table inh_nn_parent(a int);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table inh_nn_child() inherits (inh_nn_parent);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
---dg alter table inh_nn_parent add not null a no inherit;
+alter table inh_nn_parent add not null a no inherit;
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table inh_nn_child2() inherits (inh_nn_parent);
---dg-cascade
+--dg-differs: the result
 --dg select conrelid::regclass, conname, contype, conkey,
 --dg  (select attname from pg_attribute where attrelid = conrelid and attnum = conkey[1]),
 --dg  coninhcount, conislocal, connoinherit
@@ -1380,9 +1379,9 @@ create table inh_nn_parent(a int);
 --dg CREATE TABLE inh_nn_parent (a int, NOT NULL a NO INHERIT);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE inh_nn_child() INHERITS (inh_nn_parent);
---dg-cascade
+--dg-differs: another error: cannot create not-null constraint "?" on column "?" of table "?"
 --dg ALTER TABLE inh_nn_parent ADD CONSTRAINT nna NOT NULL a;
---dg-cascade
+--dg-differs: no error where PostgreSQL has: cannot change NO INHERIT status of NOT NULL constraint "?" on relation "?"
 --dg ALTER TABLE inh_nn_parent ALTER a SET NOT NULL;
 --dg-cascade
 --dg DROP TABLE inh_nn_parent cascade;
@@ -1495,7 +1494,7 @@ drop table inh_parent, inh_child;
 create table inh_parent (a int primary key);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table inh_child (a int primary key) inherits (inh_parent);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE, CHECK and NOT NULL yet
 --dg alter table inh_parent add constraint inh_parent_excl exclude ((1) with =);
 alter table inh_parent add constraint inh_parent_uq unique (a);
 alter table inh_parent add constraint inh_parent_fk foreign key (a) references inh_parent (a);
@@ -1615,8 +1614,7 @@ create table inh_nn4 (f5 int, f4 float, f2 text, f3 int, f1 int);
 --dg  conrelid::regclass::text in ('inh_nn1', 'inh_nn2', 'inh_nn3', 'inh_nn4')
 --dg  order by 2, 1;
 -- A constraint that's NO INHERIT can be dropped without damaging children
---dg-skip: constraint "?" of relation "?" does not exist
---dg alter table inh_nn1 drop constraint inh_nn1_f1_not_null;
+alter table inh_nn1 drop constraint inh_nn1_f1_not_null;
 --dg-cascade
 --dg select conrelid::regclass, conname, coninhcount, conislocal, connoinherit
 --dg  from pg_constraint where contype = 'n' and
@@ -1668,7 +1666,7 @@ delete from inh_nn2;
 --dg alter table inh_nn1 alter constraint inh_nn1_f1_not_null inherit;
 --dg-cascade
 --dg alter table inh_nn3 alter constraint nn3_f1 inherit;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-cascade
 --dg alter table inh_nn1 alter constraint inh_nn1_f1_not_null inherit; -- now it works
 --dg-cascade
 --dg select conrelid::regclass, conname, conkey, coninhcount, conislocal, connoinherit

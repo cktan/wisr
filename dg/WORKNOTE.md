@@ -12546,3 +12546,26 @@ NOT NULL column a constraint with a name and an oid, a row of type
   output but for `lsm` and NOT VALID. `test/check_constraint.out`
   shows a LIKE copy's NOT NULL row, and
   `slt/key_constraint_catalog.test` reads only key constraints.
+
+## Step 411: a constraint's index depends on its constraint
+
+`CREATE TABLE ... (LIKE t INCLUDING INDEXES)` made the copy of a
+primary key or a unique constraint a plain index:
+PostgreSQL's `generateClonedIndexStmt()` asks
+`get_index_constraint()`, which reads `pg_depend`, and digres
+had no row there for one.
+
+- **`pg_depend`** (`gen_pg_depend()` in `catalog/catrel.c`) has a
+  row for each primary key's or unique constraint's index: the
+  index depends on its constraint, internal, as PostgreSQL
+  records it. The constraint's oid is its index's.
+- **So LIKE copies them as constraints**, and DROP INDEX of one
+  is refused with PostgreSQL's error, `cannot drop index t_pkey
+  because constraint t_pkey on table t requires it`, which
+  PostgreSQL's dependency code raises.
+- **Tests**: `slt/key_constraint_catalog.test` reads a LIKE
+  copy's constraints, its results PostgreSQL 18's;
+  `test/not_null_constraint.sql` shows the copy's primary key.
+- **The regression files**: the 8 that NOT NULL constraints by
+  name reach most (step 410) were trimmed again: about 40
+  statements run now.

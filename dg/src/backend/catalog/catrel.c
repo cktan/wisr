@@ -961,7 +961,9 @@ static void gen_pg_sequence(Tuplestorestate *ts, TupleDesc desc, Oid only) {
 /*
  * pg_depend's rows: digres records no dependencies but a sequence's on the
  * column that owns it -- automatic for a serial's, internal for an identity
- * column's, as PostgreSQL records them.
+ * column's -- and a primary key's or unique constraint's index's on the
+ * constraint, internal, as PostgreSQL records them.  The constraint's oid
+ * is its index's (key_row()).  get_index_constraint() reads the latter.
  */
 static void gen_pg_depend(Tuplestorestate *ts, TupleDesc desc, Oid only) {
   Datum values[Natts_pg_depend];
@@ -972,6 +974,18 @@ static void gen_pg_depend(Tuplestorestate *ts, TupleDesc desc, Oid only) {
   foreach (l, sm_relations(only)) {
     smstore_relation_t *r = (smstore_relation_t *)lfirst(l);
 
+    if (r->kind == RELKIND_INDEX && r->constraint) {
+      values[Anum_pg_depend_classid - 1] = ObjectIdGetDatum(RelationRelationId);
+      values[Anum_pg_depend_objid - 1] = ObjectIdGetDatum(r->oid);
+      values[Anum_pg_depend_objsubid - 1] = Int32GetDatum(0);
+      values[Anum_pg_depend_refclassid - 1] =
+          ObjectIdGetDatum(ConstraintRelationId);
+      values[Anum_pg_depend_refobjid - 1] = ObjectIdGetDatum(r->oid);
+      values[Anum_pg_depend_refobjsubid - 1] = Int32GetDatum(0);
+      values[Anum_pg_depend_deptype - 1] = CharGetDatum(DEPENDENCY_INTERNAL);
+      tuplestore_putvalues(ts, desc, values, nulls);
+      continue;
+    }
     if (r->kind != RELKIND_SEQUENCE || !OidIsValid(r->owner))
       continue;
     values[Anum_pg_depend_classid - 1] = ObjectIdGetDatum(RelationRelationId);

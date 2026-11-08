@@ -223,7 +223,7 @@ CREATE TABLE ctlt2 (c text NOT NULL);
 --dg ALTER TABLE ctlt2 ALTER COLUMN c SET STORAGE EXTERNAL;
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON COLUMN ctlt2.c IS 'C';
---dg-skip: constraint "?" for table "?" does not exist
+--dg-skip: COMMENT is not supported yet
 --dg COMMENT ON CONSTRAINT ctlt2_c_not_null ON ctlt2 IS 't2_c_not_null';
 
 CREATE TABLE ctlt3 (a text CHECK (length(a) < 5), c text CHECK (length(c) < 7));
@@ -309,14 +309,13 @@ ROLLBACK;
 CREATE TABLE noinh_con_copy (a int CHECK (a > 0) NO INHERIT, b int not null,
 	c int not null no inherit);
 
---dg-skip: constraint "?" for table "?" does not exist
+--dg-skip: COMMENT is not supported yet
 --dg COMMENT ON CONSTRAINT noinh_con_copy_b_not_null ON noinh_con_copy IS 'not null b';
---dg-skip: constraint "?" for table "?" does not exist
+--dg-skip: COMMENT is not supported yet
 --dg COMMENT ON CONSTRAINT noinh_con_copy_c_not_null ON noinh_con_copy IS 'not null c no inherit';
 
---dg-skip: constraint "?" for table "?" does not exist
---dg CREATE TABLE noinh_con_copy1 (LIKE noinh_con_copy INCLUDING CONSTRAINTS INCLUDING COMMENTS);
---dg-cascade
+CREATE TABLE noinh_con_copy1 (LIKE noinh_con_copy INCLUDING CONSTRAINTS INCLUDING COMMENTS);
+--dg-differs: the result
 --dg \d+ noinh_con_copy1
 
 --dg-cascade
@@ -327,12 +326,11 @@ CREATE TABLE noinh_con_copy (a int CHECK (a > 0) NO INHERIT, b int not null,
 --dg ORDER BY conname COLLATE "C";
 
 -- fail, as partitioned tables don't allow NO INHERIT constraints
---dg-differs: another error: constraint "?" for table "?" does not exist
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE noinh_con_copy1_parted (LIKE noinh_con_copy INCLUDING ALL)
 --dg   PARTITION BY LIST (a);
 
---dg-cascade
---dg DROP TABLE noinh_con_copy, noinh_con_copy1;
+DROP TABLE noinh_con_copy, noinh_con_copy1;
 
 
 /* LIKE with other relation kinds */

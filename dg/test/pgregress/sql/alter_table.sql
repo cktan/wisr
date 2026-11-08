@@ -416,14 +416,12 @@ ALTER TABLE constraint_rename_cache
 --dg-skip: constraint "?" of relation "?" does not exist
 --dg ALTER TABLE constraint_rename_cache
 --dg   RENAME CONSTRAINT constraint_rename_cache_pkey TO constraint_rename_pkey_new;
---dg-skip: constraint "?" for table "?" does not exist
---dg CREATE TABLE like_constraint_rename_cache
---dg   (LIKE constraint_rename_cache INCLUDING ALL);
---dg-cascade
+CREATE TABLE like_constraint_rename_cache
+  (LIKE constraint_rename_cache INCLUDING ALL);
+--dg-differs: the result
 --dg \d like_constraint_rename_cache
 DROP TABLE constraint_rename_cache;
---dg-cascade
---dg DROP TABLE like_constraint_rename_cache;
+DROP TABLE like_constraint_rename_cache;
 
 -- FOREIGN KEY CONSTRAINT adding TEST
 
@@ -960,19 +958,17 @@ create table atacc1 (id int not null);
 alter table atacc1 alter column id drop not null, add primary key (id);
 drop table atacc1;
 create table atacc1 (id int constraint atacc1_id_nn not null);
---dg-skip: constraint "?" of relation "?" does not exist
---dg alter table atacc1 drop constraint atacc1_id_nn, add primary key (id);
+alter table atacc1 drop constraint atacc1_id_nn, add primary key (id);
 drop table atacc1;
 -- ADD PRIMARY KEY must prefer an explicitly named replacement NOT NULL.
 create table atacc1 (id int not null);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: cannot create not-null constraint "?" on column "?" of table "?"
 --dg alter table atacc1 alter column id drop not null,
 --dg   add primary key (id), add constraint atacc1_id_nn not null id;
 drop table atacc1;
 create table atacc1 (id int not null);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
---dg alter table atacc1 alter column id drop not null,
---dg   add constraint atacc1_id_nn not null id, add primary key (id);
+alter table atacc1 alter column id drop not null,
+  add constraint atacc1_id_nn not null id, add primary key (id);
 drop table atacc1;
 -- The replacement NOT NULL constraint must propagate to the partitions too.
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
@@ -1123,8 +1119,7 @@ drop table atacc1;
 --dg-cascade
 --dg ALTER TABLE atnnparted ADD CONSTRAINT dummy_constr NOT NULL id NOT VALID;
 CREATE TABLE atnnpart1 (col1 int, id int);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
---dg ALTER TABLE atnnpart1 ADD CONSTRAINT another_constr NOT NULL id;
+ALTER TABLE atnnpart1 ADD CONSTRAINT another_constr NOT NULL id;
 ALTER TABLE atnnpart1 ADD PRIMARY KEY (id);
 --dg-cascade
 --dg ALTER TABLE atnnparted ATTACH PARTITION atnnpart1 FOR VALUES IN ('1');
@@ -1720,13 +1715,13 @@ drop table anothertab;
 -- Test index handling in alter table column type (cf. bugs #15835, #15865)
 create table anothertab(f1 int primary key, f2 int unique,
                         f3 int, f4 int, f5 int);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE, CHECK and NOT NULL yet
 --dg alter table anothertab
 --dg   add exclude using btree (f3 with =);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE, CHECK and NOT NULL yet
 --dg alter table anothertab
 --dg   add exclude using btree (f4 with =) where (f4 is not null);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE, CHECK and NOT NULL yet
 --dg alter table anothertab
 --dg   add exclude using btree (f4 with =) where (f5 > 0);
 alter table anothertab
@@ -2773,7 +2768,7 @@ CREATE INDEX comment_test_index ON comment_test(indexed_col);
 --dg COMMENT ON CONSTRAINT comment_test_positive_col_check ON comment_test IS 'CHECK constraint on comment_test.positive_col';
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON CONSTRAINT comment_test_pk ON comment_test IS 'PRIMARY KEY constraint of comment_test';
---dg-skip: constraint "?" for table "?" does not exist
+--dg-skip: COMMENT is not supported yet
 --dg COMMENT ON CONSTRAINT id_notnull_constraint ON comment_test IS 'NOT NULL constraint of comment_test';
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON INDEX comment_test_pk IS 'Index backing the PRIMARY KEY of comment_test';
@@ -3037,7 +3032,7 @@ DROP TABLE ataddindex;
 
 CREATE TABLE ataddindex(f1 VARCHAR(10));
 INSERT INTO ataddindex(f1) VALUES ('foo'), ('a');
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE, CHECK and NOT NULL yet
 --dg ALTER TABLE ataddindex
 --dg   ALTER f1 SET DATA TYPE TEXT,
 --dg   ADD EXCLUDE ((f1 LIKE 'a') WITH =);
@@ -3066,14 +3061,13 @@ CREATE TABLE atnotnull1 ();
 ALTER TABLE atnotnull1
   ADD COLUMN a INT,
   ALTER a SET NOT NULL;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
---dg ALTER TABLE atnotnull1
---dg   ADD COLUMN b INT,
---dg   ADD NOT NULL b;
+ALTER TABLE atnotnull1
+  ADD COLUMN b INT,
+  ADD NOT NULL b;
 ALTER TABLE atnotnull1
   ADD COLUMN c INT,
   ADD PRIMARY KEY (c);
---dg-cascade
+--dg-differs: the result
 --dg \d+ atnotnull1
 
 -- cannot drop column that is part of the partition key

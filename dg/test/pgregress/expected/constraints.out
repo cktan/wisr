@@ -820,18 +820,30 @@ COMMIT; -- should not fail
 --dg DROP TABLE deferred_excl;
 -- verify constraints created for NOT NULL clauses
 CREATE TABLE notnull_tbl1 (a INTEGER NOT NULL NOT NULL);
---dg-differs: the result
---dg \d+ notnull_tbl1
+\d+ notnull_tbl1
+                               Table "public.notnull_tbl1"
+ Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+--------------+-------------
+ a      | integer |           | not null |         | plain   |              | 
+Not-null constraints:
+    "notnull_tbl1_a_not_null" NOT NULL "a"
+
 -- specifying an existing constraint is a no-op
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
---dg ALTER TABLE notnull_tbl1 ADD CONSTRAINT notnull_tbl1_a_not_null NOT NULL a;
+ALTER TABLE notnull_tbl1 ADD CONSTRAINT notnull_tbl1_a_not_null NOT NULL a;
 -- but using a different constraint name is not allowed
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
---dg ALTER TABLE notnull_tbl1 ADD CONSTRAINT nn NOT NULL a;
---dg-differs: the result
---dg \d+ notnull_tbl1
+ALTER TABLE notnull_tbl1 ADD CONSTRAINT nn NOT NULL a;
+ERROR:  cannot create not-null constraint "nn" on column "a" of table "notnull_tbl1"
+DETAIL:  A not-null constraint named "notnull_tbl1_a_not_null" already exists for this column.
+\d+ notnull_tbl1
+                               Table "public.notnull_tbl1"
+ Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+--------------+-------------
+ a      | integer |           | not null |         | plain   |              | 
+Not-null constraints:
+    "notnull_tbl1_a_not_null" NOT NULL "a"
+
 -- duplicate name
---dg-differs: no error where PostgreSQL has: constraint "?" for relation "?" already exists
+--dg-differs: another error: column "?" of relation "?" already exists
 --dg ALTER TABLE notnull_tbl1 ADD COLUMN b INT CONSTRAINT notnull_tbl1_a_not_null NOT NULL;
 -- DROP NOT NULL gets rid of both the attnotnull flag and the constraint itself
 ALTER TABLE notnull_tbl1 ALTER a DROP NOT NULL;
@@ -843,18 +855,33 @@ ALTER TABLE notnull_tbl1 ALTER a DROP NOT NULL;
 
 -- SET NOT NULL puts both back
 ALTER TABLE notnull_tbl1 ALTER a SET NOT NULL;
---dg-differs: the result
---dg \d+ notnull_tbl1
+\d+ notnull_tbl1
+                               Table "public.notnull_tbl1"
+ Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+--------------+-------------
+ a      | integer |           | not null |         | plain   |              | 
+Not-null constraints:
+    "notnull_tbl1_a_not_null" NOT NULL "a"
+
 -- Doing it twice doesn't create a redundant constraint
 ALTER TABLE notnull_tbl1 ALTER a SET NOT NULL;
---dg-differs: the result
---dg select conname, contype, conkey from pg_constraint where conrelid = 'notnull_tbl1'::regclass;
+select conname, contype, conkey from pg_constraint where conrelid = 'notnull_tbl1'::regclass;
+         conname         | contype | conkey 
+-------------------------+---------+--------
+ notnull_tbl1_a_not_null | n       | {1}
+(1 row)
+
 -- Using the "table constraint" syntax also works
 ALTER TABLE notnull_tbl1 ALTER a DROP NOT NULL;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
---dg ALTER TABLE notnull_tbl1 ADD CONSTRAINT foobar NOT NULL a;
---dg-cascade
---dg \d+ notnull_tbl1
+ALTER TABLE notnull_tbl1 ADD CONSTRAINT foobar NOT NULL a;
+\d+ notnull_tbl1
+                               Table "public.notnull_tbl1"
+ Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+--------------+-------------
+ a      | integer |           | not null |         | plain   |              | 
+Not-null constraints:
+    "foobar" NOT NULL "a"
+
 DROP TABLE notnull_tbl1;
 -- Verify that constraint names and NO INHERIT are properly considered when
 -- multiple constraint are specified, either explicitly or via SERIAL/PK/etc,
@@ -864,20 +891,50 @@ create table notnull_tbl1 (a int primary key constraint foo not null);
 --dg-differs: the result
 --dg \d+ notnull_tbl1
 create table notnull_tbl2 (a serial, constraint foo not null a);
---dg-differs: the result
---dg \d+ notnull_tbl2
+\d+ notnull_tbl2
+                                               Table "public.notnull_tbl2"
+ Column |  Type   | Collation | Nullable |                 Default                 | Storage | Stats target | Description 
+--------+---------+-----------+----------+-----------------------------------------+---------+--------------+-------------
+ a      | integer |           | not null | nextval('notnull_tbl2_a_seq'::regclass) | plain   |              | 
+Not-null constraints:
+    "foo" NOT NULL "a"
+
 create table notnull_tbl3 (constraint foo not null a, a int generated by default as identity);
---dg-differs: the result
---dg \d+ notnull_tbl3
+\d+ notnull_tbl3
+                                            Table "public.notnull_tbl3"
+ Column |  Type   | Collation | Nullable |             Default              | Storage | Stats target | Description 
+--------+---------+-----------+----------+----------------------------------+---------+--------------+-------------
+ a      | integer |           | not null | generated by default as identity | plain   |              | 
+Not-null constraints:
+    "foo" NOT NULL "a"
+
 create table notnull_tbl4 (a int not null constraint foo not null);
---dg-differs: the result
---dg \d+ notnull_tbl4
+\d+ notnull_tbl4
+                               Table "public.notnull_tbl4"
+ Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+--------------+-------------
+ a      | integer |           | not null |         | plain   |              | 
+Not-null constraints:
+    "foo" NOT NULL "a"
+
 create table notnull_tbl5 (a int constraint foo not null constraint foo not null);
---dg-differs: the result
---dg \d+ notnull_tbl5
+\d+ notnull_tbl5
+                               Table "public.notnull_tbl5"
+ Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+--------------+-------------
+ a      | integer |           | not null |         | plain   |              | 
+Not-null constraints:
+    "foo" NOT NULL "a"
+
 create table notnull_tbl6 (like notnull_tbl1, constraint foo not null a);
---dg-differs: the result
---dg \d+ notnull_tbl6
+\d+ notnull_tbl6
+                               Table "public.notnull_tbl6"
+ Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+--------------+-------------
+ a      | integer |           | not null |         | plain   |              | 
+Not-null constraints:
+    "foo" NOT NULL "a"
+
 drop table notnull_tbl2, notnull_tbl3, notnull_tbl4, notnull_tbl5, notnull_tbl6;
 -- error cases:
 create table notnull_tbl_fail (a serial constraint foo not null constraint bar not null);
@@ -975,8 +1032,8 @@ ERROR:  not-null constraints on partitioned tables cannot be NO INHERIT
 --dg-cascade
 --dg DROP TABLE ATACC1, ATACC2, ATACC3;
 -- Can't have two constraints with the same name
---dg-differs: no error where PostgreSQL has: constraint "?" for relation "?" already exists
---dg CREATE TABLE notnull_tbl2 (a INTEGER CONSTRAINT blah NOT NULL, b INTEGER CONSTRAINT blah NOT NULL);
+CREATE TABLE notnull_tbl2 (a INTEGER CONSTRAINT blah NOT NULL, b INTEGER CONSTRAINT blah NOT NULL);
+ERROR:  constraint "blah" for relation "notnull_tbl2" already exists
 -- can't drop not-null in primary key
 CREATE TABLE notnull_tbl2 (a INTEGER PRIMARY KEY);
 ALTER TABLE notnull_tbl2 ALTER a DROP NOT NULL;
@@ -1106,8 +1163,7 @@ CREATE TABLE notnull_tbl5 (a int CONSTRAINT ann NOT NULL,
 	b int CONSTRAINT bnn NOT NULL);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE notnull_tbl5_child () INHERITS (notnull_tbl5);
---dg-skip: constraint "?" of relation "?" does not exist
---dg ALTER TABLE ONLY notnull_tbl5 DROP CONSTRAINT ann;
+ALTER TABLE ONLY notnull_tbl5 DROP CONSTRAINT ann;
 ALTER TABLE ONLY notnull_tbl5 ALTER b DROP NOT NULL;
 --dg-cascade
 --dg \d+ notnull_tbl5_child
@@ -1130,9 +1186,9 @@ WHERE conrelid = ANY($1)
 ORDER BY conrelid::regclass::text COLLATE "C", conname;
 CREATE TABLE notnull_tbl1 (a int, b int);
 INSERT INTO notnull_tbl1 VALUES (NULL, 1), (300, 3);
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
---dg ALTER TABLE notnull_tbl1 ADD CONSTRAINT nn NOT NULL a; -- error
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+ALTER TABLE notnull_tbl1 ADD CONSTRAINT nn NOT NULL a; -- error
+ERROR:  column "a" of relation "notnull_tbl1" contains null values
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_tbl1 ADD CONSTRAINT nn NOT NULL a NOT VALID; -- ok
 -- even an invalid not-null forbids new nulls
 --dg-cascade
@@ -1169,7 +1225,7 @@ CREATE TABLE notnull_tbl1_copy (LIKE notnull_tbl1);
 CREATE TABLE notnull_tbl1_child2 (c int, b int, a int);
 --dg-cascade
 --dg ALTER TABLE notnull_tbl1_child2 INHERIT notnull_tbl1;	-- nope
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_tbl1_child2 ADD NOT NULL a NOT VALID;
 --dg-cascade
 --dg ALTER TABLE notnull_tbl1_child2 INHERIT notnull_tbl1;
@@ -1193,7 +1249,7 @@ UPDATE notnull_tbl1 SET a = 100 WHERE b = 1;
 -- dropping an invalid constraint is possible
 --dg-cascade
 --dg CREATE TABLE notnull_tbl1 (a int, b int);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_tbl1 ADD NOT NULL a NOT VALID,
 --dg 	ADD NOT NULL b NOT VALID;
 ALTER TABLE notnull_tbl1 ALTER a DROP NOT NULL;
@@ -1204,7 +1260,7 @@ DROP TABLE notnull_tbl1;
 CREATE TABLE notnull_tbl1 (a int);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE notnull_tbl1_chld () INHERITS (notnull_tbl1);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_tbl1 ADD CONSTRAINT nntbl1_a NOT NULL a NOT VALID;
 --dg-cascade
 --dg ALTER TABLE notnull_tbl1 ALTER CONSTRAINT nntbl1_a NO INHERIT;
@@ -1219,16 +1275,15 @@ CREATE TABLE notnull_tbl1 (a int);
 -- have an invalid one
 --dg-cascade
 --dg CREATE TABLE notnull_tbl1 (a int);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_tbl1 ADD CONSTRAINT nn_parent NOT NULL a not valid;
 CREATE TABLE notnull_chld0 (a int, CONSTRAINT nn_chld0 NOT NULL a);
 --dg-cascade
 --dg ALTER TABLE notnull_tbl1 INHERIT notnull_chld0; --error
---dg-skip: constraint "?" of relation "?" does not exist
---dg ALTER TABLE notnull_chld0 DROP CONSTRAINT nn_chld0;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+ALTER TABLE notnull_chld0 DROP CONSTRAINT nn_chld0;
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_chld0 ADD CONSTRAINT nn_chld0 NOT NULL a not valid;
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE, SET and DROP NOT NULL, SET and DROP DEFAULT, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE notnull_tbl1 INHERIT notnull_chld0; --now ok
 -- parents and child not-null will all be validated.
 --dg-cascade
@@ -1242,7 +1297,7 @@ CREATE TABLE notnull_inhparent (i int);
 --dg CREATE TABLE notnull_inhchild (i int) INHERITS (notnull_inhparent);
 --dg-cascade
 --dg CREATE TABLE notnull_inhgrand () INHERITS (notnull_inhparent, notnull_inhchild);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_inhparent ADD CONSTRAINT nn NOT NULL i NOT VALID;
 --dg-cascade
 --dg ALTER TABLE notnull_inhchild ADD CONSTRAINT nn1 NOT NULL i; -- error
@@ -1267,7 +1322,7 @@ CREATE TABLE notnull_tbl1_2(a int, CONSTRAINT nn2 NOT NULL a, b int);
 --dg ALTER TABLE notnull_tbl1 ATTACH PARTITION notnull_tbl1_2 FOR VALUES IN (3,4);
 CREATE TABLE notnull_tbl1_3(a int, b int);
 INSERT INTO notnull_tbl1_3 values(NULL,1);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_tbl1_3 add CONSTRAINT nn3 NOT NULL a NOT VALID;
 --dg-cascade
 --dg ALTER TABLE notnull_tbl1 ATTACH PARTITION notnull_tbl1_3 FOR VALUES IN (NULL,5);
@@ -1289,7 +1344,7 @@ INSERT INTO notnull_tbl1_3 values(NULL,1);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE pp_nn (a int, b int, NOT NULL a) PARTITION BY LIST (a);
 CREATE TABLE pp_nn_1(a int, b int);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE pp_nn_1 ADD CONSTRAINT nn1 NOT NULL a NOT VALID;
 --dg-cascade
 --dg ALTER TABLE pp_nn ATTACH PARTITION pp_nn_1 FOR VALUES IN (NULL,5); --error
@@ -1304,7 +1359,7 @@ CREATE TABLE pp_nn_1(a int, b int);
 --dg CREATE TABLE pp_nn (a int) PARTITION BY HASH (a);
 --dg-cascade
 --dg CREATE TABLE pp_nn_1 PARTITION OF pp_nn FOR VALUES WITH (MODULUS 2, REMAINDER 0);
---dg-cascade
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE pp_nn_1 ADD CONSTRAINT nn NOT NULL a NOT VALID;
 --dg-cascade
 --dg ALTER TABLE ONLY pp_nn ADD PRIMARY KEY (a);
@@ -1315,8 +1370,7 @@ CREATE TABLE pp_nn_1(a int, b int);
 --dg CREATE TABLE pp_nn (a int) PARTITION BY HASH (a);
 --dg-cascade
 --dg CREATE TABLE pp_nn_1 PARTITION OF pp_nn FOR VALUES WITH (MODULUS 2, REMAINDER 0);
---dg-cascade
---dg ALTER TABLE pp_nn_1 ADD CONSTRAINT nn NOT NULL a NO INHERIT;
+ALTER TABLE pp_nn_1 ADD CONSTRAINT nn NOT NULL a NO INHERIT;
 --dg-cascade
 --dg ALTER TABLE ONLY pp_nn ADD PRIMARY KEY (a);
 --dg-cascade
@@ -1324,7 +1378,7 @@ CREATE TABLE pp_nn_1(a int, b int);
 -- Create table with NOT NULL INVALID constraint, for pg_upgrade.
 CREATE TABLE notnull_tbl1_upg (a int, b int);
 INSERT INTO notnull_tbl1_upg VALUES (NULL, 1), (NULL, 2), (300, 3);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_tbl1_upg ADD CONSTRAINT nn NOT NULL a NOT VALID;
 -- Inherit test for pg_upgrade
 CREATE TABLE notnull_parent_upg (a int);
@@ -1332,7 +1386,7 @@ CREATE TABLE notnull_parent_upg (a int);
 --dg CREATE TABLE notnull_child_upg () INHERITS (notnull_parent_upg);
 --dg-cascade
 --dg ALTER TABLE notnull_child_upg ADD CONSTRAINT nn NOT NULL a;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_parent_upg ADD CONSTRAINT nn NOT NULL a NOT VALID;
 --dg-cascade
 --dg SELECT conrelid::regclass, contype, convalidated, conislocal
@@ -1351,7 +1405,7 @@ CREATE TABLE notnull_part1_2_upg (a int, CONSTRAINT nn2 NOT NULL a, b int);
 --dg ALTER TABLE notnull_part1_upg ATTACH PARTITION notnull_part1_2_upg FOR VALUES IN (3,4);
 CREATE TABLE notnull_part1_3_upg (a int, b int);
 INSERT INTO notnull_part1_3_upg values(NULL,1);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg ALTER TABLE notnull_part1_3_upg add CONSTRAINT nn3 NOT NULL a NOT VALID;
 --dg-cascade
 --dg ALTER TABLE notnull_part1_upg ATTACH PARTITION notnull_part1_3_upg FOR VALUES IN (NULL,5);
@@ -1361,7 +1415,7 @@ INSERT INTO notnull_part1_3_upg values(NULL,1);
 create table constr_parent (a int);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table constr_child (a int) inherits (constr_parent);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg alter table constr_parent add not null a not valid;
 --dg-cascade
 --dg alter table constr_child validate constraint constr_parent_a_not_null;
@@ -1370,7 +1424,7 @@ create table constr_parent (a int);
 create table constr_parent2 (a int);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table constr_child2 () inherits (constr_parent2);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY, UNIQUE and CHECK yet
+--dg-skip: a NOT VALID NOT NULL constraint is not supported yet
 --dg alter table constr_parent2 add not null a not valid;
 --dg-cascade
 --dg alter table constr_child2 validate constraint constr_parent2_a_not_null;
