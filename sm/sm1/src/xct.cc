@@ -84,17 +84,18 @@ void run_committed_fns() {
  * then simply has no transaction, as if it had seen that.
  */
 int resolve_own(sm1::session_t *s, bool commit_it) {
-  // Take the gid; the session no longer refers to it.
-  std::string gid = s->prepared_gid;
-  s->prepared_gid.clear();
   // Resolve the transaction by gid.
-  if (resolve(s->db, gid, commit_it) != 0) {
+  if (resolve(s->db, s->prepared_gid, commit_it) != 0) {
     // Resolved elsewhere first: the session simply has none.
     if (sm1::errnum() == sm1::SM_ERR_NOTFOUND) {
+      s->prepared_gid.clear();
       return set_error(sm1::SM_ERR_NOTRANS, "no active transaction");
     }
+    // Still in doubt: the session keeps the gid, to try again.
     return -1;
   }
+  // Resolved: the session no longer refers to the gid.
+  s->prepared_gid.clear();
   return 0;
 }
 

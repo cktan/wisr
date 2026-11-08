@@ -642,8 +642,15 @@ static int persist_lease(db_t *db, const char *key, uint64_t new_limit) {
   // The lease must be durable before any value under it.
   rocksdb::WriteOptions wo;
   wo.sync = true;
-  // Persist the new lease.
-  rocksdb::Status s = db->rdb->Put(wo, db->cf_meta, key, val);
+  // Let a test fail the lease write.
+  rocksdb::Status s;
+  if (db->test_before_lease) {
+    s = db->test_before_lease();
+  }
+  // Persist the new lease unless the hook failed it.
+  if (s.ok()) {
+    s = db->rdb->Put(wo, db->cf_meta, key, val);
+  }
   // Fail if the new lease did not persist.
   if (!s.ok()) {
     return set_status_error(s, "persist lease");

@@ -228,6 +228,36 @@ TEST_CASE("prepare, then commit or abort on the preparing session") {
   sm1::closedb(r);
 }
 
+TEST_CASE("a commit of a prepared transaction that fails can be retried") {
+  // Verify a failed commit on the preparing session leaves the
+  // transaction in doubt, and the session can still resolve it.
+  // 1. Update "a" and prepare as "g1".
+  // 2. Fail the timestamp lease, so the commit fails.
+  // 3. The session is still in doubt, and "g1" is still listed.
+  // 4. Commit again, with the lease working: the change is visible.
+  tpc_fixture_t f;
+  sm1::session_t *s = f.open();
+  sm1::session_t *r = f.open();
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(set(s, "a", "1") == 0);
+  REQUIRE(sm1::prepare(s, "g1") == 0);
+  // Make the next commit_ts need a new lease, and fail the write.
+  s->db->ts_limit.store(0);
+  s->db->test_before_lease = [] {
+    return rocksdb::Status::IOError("injected");
+  };
+  CHECK(sm1::commit(s) != 0);
+  s->db->test_before_lease = nullptr;
+  CHECK(sm1::in_doubt(s));
+  REQUIRE(listed(r).size() == 1);
+  CHECK(read_now(r, "a") == "0");
+  REQUIRE(sm1::commit(s) == 0);
+  CHECK(read_now(r, "a") == "1");
+  CHECK(listed(r).empty());
+  sm1::closedb(s);
+  sm1::closedb(r);
+}
+
 TEST_CASE("sm1::in_doubt holds from prepare until the gid is resolved") {
   // Verify that in_doubt names exactly a session whose prepared
   // transaction no session has resolved yet.

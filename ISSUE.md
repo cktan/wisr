@@ -44,6 +44,12 @@ with no report.
    a set that grows and shrinks; only the sanitizer sees the
    order.
 
+**Closed 2026-11-08:** `resolve_own()` cleared `prepared_gid`
+before it resolved. After a lease failure the transaction stayed
+in doubt, and only its gid could resolve it. The session now
+clears the gid only once the transaction is resolved, or gone. A
+test fails the lease by a hook, then commits again.
+
 **Closed:** `find_now()` at READ COMMITTED, with a row moved
 since the statement's snapshot, gives the conflict with both
 kinds of index. A test showed no failure. A move in the narrower
@@ -71,9 +77,6 @@ Smaller points:
   scans, and clear their sm1 cursors at commit and abort: then
   `tbl_scanend` frees only its wrapper, at the cost of a list
   update on every scan.
-- `resolve_own()` clears `prepared_gid` before it resolves. After
-  a lease failure the transaction stays in doubt, and only its
-  gid can resolve it.
 - A prepare after a bulk load is refused, but the reason it had
   no longer holds (`XCTMGR.md`).
 

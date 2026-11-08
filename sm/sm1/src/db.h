@@ -635,6 +635,9 @@ struct db_t {
   /* Test hook, as test_before_commit, for a prepared one's ABORTED record. */
   std::function<rocksdb::Status()> test_before_abort_prepared;
 
+  /* Test hook, as test_before_commit, for a timestamp lease's write. */
+  std::function<rocksdb::Status()> test_before_lease;
+
   /* Destroy the CF handles and close RocksDB. */
   ~db_t();
 };
