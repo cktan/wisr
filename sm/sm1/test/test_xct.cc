@@ -207,6 +207,92 @@ TEST_CASE("a stalled commit holds back every later commit's visibility") {
   sm1::closedb(c);
 }
 
+TEST_CASE("commits wait behind every older commit, and wake once visible") {
+  // Verify each waiting commit is woken only when visible_ts reaches
+  // its commit_ts, with several waiting and two older ones stalled
+  // (db_commit_wait(), ../XCTMGR.md §8.4).
+  // 1. A claims its commit_ts, and its status record write stalls.
+  // 2. B commits: it waits behind A.
+  // 3. C claims its commit_ts, and its record write stalls too.
+  // 4. D commits: it waits behind A and C.
+  // 5. Release C: B, C and D still wait, as A is older than all.
+  // 6. Release A: every commit returns, and a new snapshot sees all
+  //    four rows.
+  xct_fixture_t f;
+  sm1::session_t *a = f.first();
+  sm1::session_t *b = f.open();
+  sm1::session_t *c = f.open();
+  sm1::session_t *d = f.open();
+  sm1::session_t *r = f.open();
+
+  std::promise<void> a_in, c_in, a_go, c_go;
+  std::shared_future<void> a_went = a_go.get_future().share();
+  std::shared_future<void> c_went = c_go.get_future().share();
+  std::atomic<int> calls{0};
+  f.db()->test_before_commit = [&](uint64_t) {
+    int n = calls++;
+    if (0 == n) {
+      a_in.set_value();
+      a_went.wait();
+    } else if (2 == n) {
+      c_in.set_value();
+      c_went.wait();
+    }
+    return rocksdb::Status::OK();
+  };
+  // A commit on a thread of its own, done once it returns.
+  auto run = [&](sm1::session_t *s, const char *key, std::atomic<bool> &done) {
+    return std::thread([&f, s, key, &done] {
+      CHECK(commit_one(s, f.store(), key) == 0);
+      done = true;
+    });
+  };
+  // Until the hook has been called n times.
+  auto reach = [&](int n) {
+    while (calls < n) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  };
+  std::atomic<bool> a_done{false}, b_done{false}, c_done{false}, d_done{false};
+  std::thread ta = run(a, "a", a_done);
+  a_in.get_future().wait();
+  std::thread tb = run(b, "b", b_done);
+  reach(2);
+  std::thread tc = run(c, "c", c_done);
+  c_in.get_future().wait();
+  std::thread td = run(d, "d", d_done);
+  reach(4);
+  // Time for B and D to have returned, were they not to wait.
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  CHECK_FALSE(b_done);
+  CHECK_FALSE(d_done);
+
+  c_go.set_value();
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  CHECK_FALSE(b_done);
+  CHECK_FALSE(c_done);
+  CHECK_FALSE(d_done);
+
+  a_go.set_value();
+  ta.join();
+  tb.join();
+  tc.join();
+  td.join();
+  f.db()->test_before_commit = nullptr;
+  CHECK(a_done);
+  CHECK(b_done);
+  CHECK(c_done);
+  CHECK(d_done);
+  REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
+  for (const char *key : {"a", "b", "c", "d"}) {
+    CHECK(get(r, f.store(), key) == "v");
+  }
+  REQUIRE(sm1::commit(r) == 0);
+  for (sm1::session_t *s : {b, c, d, r}) {
+    sm1::closedb(s);
+  }
+}
+
 /*
  * The failed-commit child: commit "old" in a new store and write
  * the storeid to stdout, then commit "x" with its status write

@@ -11955,3 +11955,61 @@ DG has no triggers, so `session_replication_role` and
   `test/pgregress` set these. They are trimmed again, and now
   skip the `SET` and `RESET` with "unrecognized configuration
   parameter".
+
+## Step 405: a visible commit wakes only the commits it makes visible
+
+`../sm/NEXT.md` §1 item 5: after step 377, `ins` and `fk` at 16
+clients ran at about 0.86 of PostgreSQL's tps. This step finds
+why, and removes half of it.
+
+- **Method**: as step 376, on `main` at `0e883e01`:
+  `digres-release` and PostgreSQL 18.6, `ins` and `fk` at 16
+  clients, 10 s a run, the systems alternated; each server's
+  `fsync` and `fdatasync` counted by a preloaded library; gdb
+  stack samples of the session threads; and, in a build not
+  committed, counters in `db_commit_wait()`.
+- **The group is smaller, whatever the sync time**: a sync of
+  digres covered 5.7 to 6.0 commits, PostgreSQL's 7.3 to 7.6,
+  with syncs from 580 µs to 1,540 µs. A cost outside the sync
+  would shrink as syncs grow; this one did not. So a digres
+  commit waited through more syncs: 16 clients over 5.9 a sync
+  is 2.7 sync times a commit, against PostgreSQL's 2.1.
+- **Where the sessions waited** (`ins`, 240 samples): 53% in
+  line for a sync, 19% in `db_commit_wait()`, 10% in RocksDB's
+  write queue.
+- **The counters**: 65% of commits waited in
+  `db_commit_wait()`, 454 µs each. At least 142 µs of it came
+  after `visible_ts` already covered the commit: `db_commit_done()`
+  woke every waiter on `visible_cv`, and each took `alloc_mu`
+  in turn, the mutex of every claim of a `commit_ts` and of a
+  keyless table's `_id`.
+- **sm1** (`db_commit_done()`, `db_commit_wait()`,
+  `../sm/XCTMGR.md` §8.4): a commit that must wait joins
+  `visible_head`, a list oldest first, under `alloc_mu`, and
+  sleeps on a semaphore of its own. The commit that raises
+  `visible_ts` takes out the prefix it made visible, and wakes
+  those, oldest first, once `alloc_mu` is let go. A woken
+  commit takes no lock. `visible_cv` is gone.
+- **Measured**, as above, two rounds:
+
+  | | commits a sync | a waiting commit's wait | tps, syncs of about 600 µs |
+  | --- | --- | --- | --- |
+  | digres before | 5.7 to 6.0 | 454 µs | 9,109 to 9,255 |
+  | digres after | 6.6 to 6.8 | 216 to 225 µs | 10,136 to 10,895 |
+  | PostgreSQL | 7.3 to 7.6 | none | 9,615 to 10,261, syncs of about 770 µs |
+
+  Two commits in three still wait, now about 0.4 of a sync.
+- **Why they still wait**: a commit claims its `commit_ts`,
+  then writes its record through RocksDB's write queue, so the
+  records reach the WAL out of `commit_ts` order. A sync starts
+  while some older commit is still in the queue, and the newer
+  commits it covers wait for that commit's sync. PostgreSQL has
+  no such wait: its snapshot is a set of xids, and a commit is
+  visible once its xid leaves the proc array. `../sm/XCTMGR.md`
+  §8.5 writes this down as a shortcoming, with what could
+  remove it.
+- **Tests**: sm1's `test_xct.cc`, four commits, two of them
+  stalled before their records: the two others wait until the
+  older is released, a release of the newer stalled one wakes
+  none, and all four are then seen. No rel, dg or isolation
+  test can stall a commit's record write.

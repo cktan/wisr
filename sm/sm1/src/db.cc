@@ -745,27 +745,52 @@ int db_claim_commit_ts(db_t *db, uint64_t *out) {
 }
 
 /*
- * Mark commit_ts done, under alloc_mu, the sequencer's mutex.
- * 1. Leave the sequencer.
+ * Mark commit_ts done.
+ * 1. Under alloc_mu, the sequencer's mutex, leave the sequencer.
  * 2. Advance visible_ts: one below the oldest commit in progress, or
  *    everything handed out so far if none is. New values are always
  *    above what was handed out, so visible_ts never moves backwards.
- * 3. If visible_ts rose, wake the commits waiting for theirs to be
- *    visible (db_commit_wait()).
+ * 3. If visible_ts rose, take out of the list the waiting commits it
+ *    made visible (db_commit_wait()): a prefix, as the list is oldest
+ *    first.
+ * 4. Let alloc_mu go, and wake those commits, oldest first.
+ *
+ * Step 4 wakes only the commits made visible, each on a semaphore of
+ * its own, and a woken commit takes no lock: a wake of every waiter
+ * made each take alloc_mu in turn, about 140 µs a waiting commit at
+ * 16 clients, and held back the claims of new commit_ts meanwhile.
  */
 void db_commit_done(db_t *db, uint64_t commit_ts) {
-  // Hold alloc_mu, the sequencer's mutex.
-  std::lock_guard<std::mutex> guard(db->alloc_mu);
-  // This commit is no longer in progress.
-  db->committing.erase(commit_ts);
-  // Publish up to just below the oldest commit still in progress.
-  uint64_t v = db->committing.empty() ? db->global_ts.load() - 1
-                                      : *db->committing.begin() - 1;
-  // Never move visible_ts backwards.
-  if (v > db->visible_ts.load()) {
-    db->visible_ts.store(v);
-    // Wake the commits waiting for theirs to be visible.
-    db->visible_cv.notify_all();
+  visible_waiter_t *woken = nullptr;
+  {
+    // Hold alloc_mu, the sequencer's mutex.
+    std::lock_guard<std::mutex> guard(db->alloc_mu);
+    // This commit is no longer in progress.
+    db->committing.erase(commit_ts);
+    // Publish up to just below the oldest commit still in progress.
+    uint64_t v = db->committing.empty() ? db->global_ts.load() - 1
+                                        : *db->committing.begin() - 1;
+    // Never move visible_ts backwards.
+    if (v > db->visible_ts.load()) {
+      db->visible_ts.store(v);
+      // The waiters now visible: the list's prefix at or below v.
+      visible_waiter_t *last = nullptr;
+      for (visible_waiter_t *w = db->visible_head;
+           nullptr != w && w->commit_ts <= v; w = w->next) {
+        last = w;
+      }
+      if (nullptr != last) {
+        woken = db->visible_head;
+        db->visible_head = last->next;
+        last->next = nullptr;
+      }
+    }
+  }
+  // A woken commit may return at once, its waiter gone: read next first.
+  while (nullptr != woken) {
+    visible_waiter_t *next = woken->next;
+    woken->wake.release();
+    woken = next;
   }
 }
 
@@ -799,8 +824,11 @@ void db_commit_done(db_t *db, uint64_t commit_ts) {
  * So the commit waits here, after its done, until visible_ts reaches
  * its commit_ts: only behind older commits still writing their
  * records -- with group commit often the same sync -- and not at all
- * when none is older. It holds alloc_mu only while it checks, and its
- * row locks until it returns, as it held them through its own sync.
+ * when none is older. It holds alloc_mu only to check and to join the
+ * list of waiters, and sleeps on a semaphore of its own, which the
+ * commit that makes it visible releases (db_commit_done()). It holds
+ * its row locks until it returns, as it held them through its own
+ * sync.
  *
  * It is NOT cut short by an interrupt, unlike every other wait in sm
  * (../CODE.md §7): the transaction has committed, and a
@@ -809,10 +837,25 @@ void db_commit_done(db_t *db, uint64_t commit_ts) {
  * process aborts (finish_commit(), db_sync_wal()).
  */
 void db_commit_wait(db_t *db, uint64_t commit_ts) {
-  // Hold alloc_mu, the sequencer's mutex, which visible_cv waits on.
-  std::unique_lock<std::mutex> guard(db->alloc_mu);
-  db->visible_cv.wait(guard,
-                      [&] { return db->visible_ts.load() >= commit_ts; });
+  visible_waiter_t w;
+  w.commit_ts = commit_ts;
+  {
+    // Hold alloc_mu, the sequencer's mutex, to read visible_ts and
+    // join the list in one step: no raise falls between them.
+    std::lock_guard<std::mutex> guard(db->alloc_mu);
+    if (db->visible_ts.load() >= commit_ts) {
+      return;
+    }
+    // Join the list in commit_ts order.
+    visible_waiter_t **link = &db->visible_head;
+    while (nullptr != *link && (*link)->commit_ts < commit_ts) {
+      link = &(*link)->next;
+    }
+    w.next = *link;
+    *link = &w;
+  }
+  // Sleep until the commit that makes this one visible takes it out.
+  w.wake.acquire();
 }
 
 /*

@@ -1071,9 +1071,24 @@ miss its own rows. PostgreSQL makes a commit visible before
 COMMIT returns: any snapshot taken after, in any session, sees
 it.
 
-So after `db_commit_done`, `db_commit_wait` waits on
-`visible_cv`, under `alloc_mu`, until `visible_ts >= commit_ts`.
-`db_commit_done` signals it whenever `visible_ts` rises.
+So after `db_commit_done`, `db_commit_wait` waits until
+`visible_ts >= commit_ts`:
+
+1. Under `alloc_mu`, it checks `visible_ts`, and returns if it is
+   past its `commit_ts`.
+2. Else it joins `visible_head`, a list of waiting commits,
+   oldest first, still under `alloc_mu`.
+3. It sleeps on a semaphore of its own.
+4. The `db_commit_done` that raises `visible_ts` past it takes it
+   out of the list and releases the semaphore, once `alloc_mu` is
+   let go.
+5. The woken commit returns: it takes no lock.
+
+Each waiter has a semaphore of its own, so a raise wakes only the
+commits it makes visible. One condition variable for all would
+make every waiter take `alloc_mu` in turn, with the claims of new
+commits behind them: at 16 clients a waiting commit then waits
+about 450 µs, against 225 µs (`../dg/WORKNOTE.md` step 405).
 
 - It waits only behind older commits in progress, with group sync
   often on the same sync. With none older it does not wait.
@@ -1089,6 +1104,111 @@ So after `db_commit_done`, `db_commit_wait` waits on
 - A validation failure after the claim calls `db_commit_done`
   with nothing published, which raises `visible_ts` for the
   commits behind it.
+
+### 8.5 Shortcoming: a commit waits for an older commit's sync
+
+**Warning: this wait is a significant shortcoming of digres
+against PostgreSQL.** Under many concurrent writers, two commits
+in three wait for an older commit's sync after their own, and a
+sync covers about a ninth fewer commits than PostgreSQL's.
+PostgreSQL has no such wait. The cause is the snapshot itself,
+one number (§3.1), so no tuning removes it.
+
+**A worked example: the failure.** Three sessions, each statement
+its own transaction, and a WAL sync of 600 µs. A inserts an
+order; B and C each take one pen from stock, so C needs B's row
+lock:
+
+```sql
+-- session A
+insert into orders values (7, 'pen');
+-- session B
+update stock set n = n - 1 where item = 'pen';
+-- session C, just after B
+update stock set n = n - 1 where item = 'pen';  -- waits for B's lock
+```
+
+What digres does, in µs:
+
+```
+t=0     A claims commit_ts 100; its record waits in RocksDB's write queue
+t=5     B claims 101, writes its record, and leads sync S1
+        S1 covers what the WAL holds now: B's record, not A's
+t=20    A's record reaches the WAL; A waits in line for the next sync
+t=605   S1 ends: B's record is durable
+        visible_ts stays 99, as A, at 100, is still in progress
+        B waits in db_commit_wait(), and still holds its lock on 'pen'
+        S2 starts, for A
+t=1205  S2 ends: A is done, and visible_ts rises to 101
+        B returns, 600 µs after its record was durable,
+        and lets its lock on 'pen' go
+        C takes the lock only now
+```
+
+B's commit took two syncs, not one, for a row of A's that it
+never read. C waited for A's sync too, through B's lock. In
+PostgreSQL B returns at t=605, and C's update runs then. B cannot
+return at t=605 in digres either: a snapshot taken then, at
+`visible_ts` 99, would not see B's update, so B's next statement
+would read `n` as it was before (§8.4).
+
+**The cause**, in the order a commit runs:
+
+1. It claims its `commit_ts` (`db_claim_commit_ts()`).
+2. It validates under SSI, then writes its record through
+   RocksDB's write queue (`finish_commit()`, §8.2).
+3. So the records reach the WAL in an order that is not
+   `commit_ts` order. A sync covers what the WAL holds when the
+   sync starts.
+4. `visible_ts` rises only to one below the oldest commit still
+   in progress (§3.2).
+5. So a commit whose sync ends before an older commit's sync
+   waits for that sync too (§8.4).
+
+With syncs back to back, as under load, a sync almost always
+starts while some older commit is still in the write queue.
+
+**Measured** (`../dg/WORKNOTE.md` step 405): 16 clients, each
+insert its own transaction (`../bench.old/rowlocks.sh`, `ins`
+and `fk`), on aarch64 under WSL2:
+
+- 67% of commits wait in `db_commit_wait()`, about 220 µs each:
+  0.4 of a sync of about 600 µs.
+- A sync covers about 6.7 commits, PostgreSQL's about 7.5. So a
+  digres commit spans about 2.4 sync times, and PostgreSQL's
+  about 2.1.
+- At equal sync times digres commits about 0.89 as many
+  transactions a second as PostgreSQL. On this machine a sync
+  of digres is shorter, about 600 µs against 770 µs, which hides
+  the loss: with the disk steady, the two run about even.
+
+**Why PostgreSQL does not wait.** A PostgreSQL snapshot is a set
+of xids. A commit becomes visible when its xid leaves the proc
+array (`ProcArrayEndTransaction()`), just after its own WAL
+flush, in any order. Its only wait on other writers, in
+`XLogFlush()`, is for WAL inserts at lower positions to finish
+their copy into the WAL buffers: microseconds, not a sync.
+
+**What else it costs:**
+
+- A commit's latency grows by up to one sync.
+- A commit holds its row locks through the wait (§8.4). So the
+  next writer of a hot row, a foreign key's parent among them,
+  waits that sync too.
+- One stalled sync holds back every newer commit, and every new
+  snapshot stays below it.
+
+**What could remove it.** Neither is designed yet:
+
+1. **Records in `commit_ts` order in the WAL.** The commit that
+   leads a sync writes the waiting commits' records in one batch,
+   in `commit_ts` order, then syncs. Each commit a sync covers
+   then has every older one covered. It also saves one trip
+   through RocksDB's write queue a commit. It changes the commit
+   protocol of §8.2.
+2. **A snapshot that is a set**, PostgreSQL's way. It removes the
+   order, but makes snapshots expensive to take and visibility
+   expensive to test (§13.1).
 
 ---
 
@@ -1459,7 +1579,7 @@ each `PREPARED` record:
 
 | Mutex | Guards |
 | --- | --- |
-| `alloc_mu` | the leases, `committing`, and `visible_cv`'s wait |
+| `alloc_mu` | the leases, `committing`, and `visible_head`, the commits waiting to be visible |
 | `snap_mu` | `snapshots`, the registered begin snapshots |
 | `txn_mu` | `active`, `xid_owner`, the commit cache |
 | `ssi_mu` | `ssi_nodes`, `ssi_points`, `ssi_ranges`, `ssi_by_xid`, `ssi_restored` |
@@ -1505,10 +1625,11 @@ dropped       4-byte count, then 8-byte storeids
 ### 11.4 Trade-offs
 
 - **`visible_ts` serializes publication.** A stalled commit holds
-  back new snapshots. The WAL sync bounds this, and group sync
-  shares one sync across the batch (§3.2). The alternative makes
-  snapshots expensive to take and visibility expensive to test
-  (§13.1).
+  back new snapshots, and under many writers two commits in three
+  wait for an older commit's sync: a sync covers about a ninth
+  fewer commits than PostgreSQL's at 16 clients (§8.5). The
+  alternative makes snapshots expensive to take and visibility
+  expensive to test (§13.1).
 - **SSI fails transactions that would have been fine.** That is
   the price of readers that never block and never deadlock
   (§7.4). Callers must be able to retry.

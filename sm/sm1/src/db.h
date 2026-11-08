@@ -291,6 +291,17 @@ struct sync_waiter_t {
   std::binary_semaphore wake{0};
 };
 
+/*
+ * A commit waiting for visible_ts to reach its commit_ts
+ * (db_commit_wait()), on its own stack. The commit that raises
+ * visible_ts past it takes it out of the list and releases wake.
+ */
+struct visible_waiter_t {
+  uint64_t commit_ts = 0;           /* the commit_ts to be visible */
+  visible_waiter_t *next = nullptr; /* the next newer, under alloc_mu */
+  std::binary_semaphore wake{0};
+};
+
 struct db_t {
   std::string name;
   rocksdb::DB *rdb = nullptr;
@@ -346,11 +357,10 @@ struct db_t {
   /* The ts and object-id allocators and their leases (../DBMGR.md §17.1). */
   std::mutex alloc_mu;
   /*
-   * Signalled, under alloc_mu, when visible_ts rises: a commit
-   * waits on it until its own commit_ts is visible
-   * (db_commit_wait(), ../XCTMGR.md).
+   * The commits waiting for their commit_ts to be visible, oldest
+   * first, under alloc_mu (db_commit_wait(), ../XCTMGR.md §8.4).
    */
-  std::condition_variable visible_cv;
+  visible_waiter_t *visible_head = nullptr;
   uint64_t lease = 0;
   /*
    * The timestamp counter. Values are taken with fetch_add and
