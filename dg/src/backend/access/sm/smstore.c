@@ -1885,6 +1885,40 @@ static std::string check_host(const char *ccbin, bool enforced,
   return host;
 }
 
+/*
+ * Find sequence functions. sm does not track their CHECK dependencies.
+ */
+static bool check_sequence_walker(Node *node, void *context) {
+  if (node == NULL)
+    return false;
+  if (IsA(node, NextValueExpr))
+    return true;
+  if (IsA(node, FuncExpr)) {
+    Oid funcid = castNode(FuncExpr, node)->funcid;
+    const char *name = get_func_name(funcid);
+
+    if (get_func_namespace(funcid) == PG_CATALOG_NAMESPACE && name != NULL &&
+        (strcmp(name, "nextval") == 0 || strcmp(name, "currval") == 0 ||
+         strcmp(name, "lastval") == 0 || strcmp(name, "setval") == 0 ||
+         strcmp(name, "pg_sequence_parameters") == 0 ||
+         strcmp(name, "pg_sequence_last_value") == 0 ||
+         strcmp(name, "pg_get_sequence_data") == 0 ||
+         strcmp(name, "pg_get_serial_sequence") == 0))
+      return true;
+  }
+  return expression_tree_walker(node, check_sequence_walker, context);
+}
+
+/* Refuse sequence calls because sm does not track their dependencies. */
+static void check_no_sequence(Node *expr) {
+  if (check_sequence_walker(expr, NULL))
+    ereport(
+        ERROR,
+        (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+         errmsg("sequence calls are not supported in CHECK constraints"),
+         errdetail("digres does not track CHECK dependencies on sequences.")));
+}
+
 static bool table_def_now(Oid oid, sm_table_def_t &out);
 static void forget_table(Oid relid);
 
@@ -1971,6 +2005,8 @@ static sm_check_def_t make_check(Relation rel, Constraint *con, Node *expr,
   sm_check_def_t check;
   Bitmapset *attnos = NULL;
   int attno = -1;
+
+  check_no_sequence(expr);
 
   if (!table_def_now(relid, def))
     elog(ERROR, "table %u is not in sm", relid);
@@ -4415,7 +4451,7 @@ static void fill_column(Oid relid, Expr *expr, Oid typid, int32 typmod);
 /*
  * ADD COLUMN col to rel, the table relid, in sm: NOT NULL and a DEFAULT
  * only, or a serial or an identity column as parse analysis made it
- * (add_generated_column()).
+ * (add_generated_column()). Return false if IF NOT EXISTS skips it.
  * 1. Evaluate the default now, unless it calls something volatile.  Rows
  *    already there read this value.
  * 2. Add the column.  NOT NULL with no default needs the table empty.
@@ -4424,7 +4460,7 @@ static void fill_column(Oid relid, Expr *expr, Oid typid, int32 typmod);
  * 4. Check NOT NULL of every row, after step 3.
  * 5. Make an identity column identity, once it is NOT NULL.
  */
-static void add_column(Oid relid, const char *relname, ColumnDef *col,
+static bool add_column(Oid relid, const char *relname, ColumnDef *col,
                        bool if_not_exists) {
   Node *raw_default = NULL;
   bool not_null = col->is_not_null;
@@ -4519,7 +4555,7 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
       })) {
     if (NULL == volatile_default) {
       forget_table(relid);
-      return;
+      return true;
     }
     fill_column(relid, volatile_default, typid, typmod);
     if (not_null) {
@@ -4553,7 +4589,7 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
     }
     /* The handles opened to fill it hold the column as it was made. */
     forget_table(relid);
-    return;
+    return true;
   }
   if (sm_errnum() == SM_ERR_DUPKEY) {
     if (!if_not_exists)
@@ -4564,7 +4600,7 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
             (errcode(ERRCODE_DUPLICATE_COLUMN),
              errmsg("column \"%s\" of relation \"%s\" already exists, skipping",
                     col->colname, relname)));
-    return;
+    return false;
   }
   if (sm_errnum() == SM_ERR_NOTNULL)
     ereport(ERROR, (errcode(ERRCODE_NOT_NULL_VIOLATION),
@@ -4577,6 +4613,7 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
                     errdetail("A NOT NULL column with no default is added "
                               "only to an empty table no one else is using.")));
   sm_error("add a column");
+  return false; /* not reached */
 }
 
 static void drop_column(Oid relid, const char *relname, const char *name,
@@ -4861,7 +4898,8 @@ static bool generated_column(AlterTableCmd *cmd) {
 
 /*
  * ADD COLUMN of a serial or an identity column, cmd of stmt, as
- * PostgreSQL's ALTER TABLE does it.
+ * PostgreSQL's ALTER TABLE does it. IF NOT EXISTS skips an existing
+ * column before creating its sequence or running generated subcommands.
  * 1. Run parse analysis, which makes it a column with its sequence.
  * 2. Run the sequence's CREATE SEQUENCE, before the column.
  * 3. Add the column.  add_column() gives each row a value.
@@ -4870,6 +4908,19 @@ static bool generated_column(AlterTableCmd *cmd) {
  */
 static void add_generated_column(Oid relid, const char *relname,
                                  AlterTableStmt *stmt, AlterTableCmd *cmd) {
+  ColumnDef *col = castNode(ColumnDef, cmd->def);
+  sm_table_def_t def;
+
+  if (cmd->missing_ok && table_def_now(relid, def))
+    for (const sm_column_def_t &c : def.columns)
+      if (!c.dropped && c.name == col->colname) {
+        ereport(
+            NOTICE,
+            (errcode(ERRCODE_DUPLICATE_COLUMN),
+             errmsg("column \"%s\" of relation \"%s\" already exists, skipping",
+                    col->colname, relname)));
+        return;
+      }
   AlterTableStmt *one = makeNode(AlterTableStmt);
   ParseState *pstate = make_parsestate(NULL);
   List *before = NIL, *after = NIL;
@@ -5104,7 +5155,9 @@ void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
     else if (AT_AddColumn == cmd->subtype) {
       ColumnDef *col = castNode(ColumnDef, cmd->def);
 
-      add_column(relid, relname, col, cmd->missing_ok);
+      /* A skipped column also skips its CHECKs. */
+      if (!add_column(relid, relname, col, cmd->missing_ok))
+        continue;
       /*
        * Its CHECKs, which this statement still holds in the column, once
        * the column is there: the rows already there checked with its value.

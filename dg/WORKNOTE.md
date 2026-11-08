@@ -12613,3 +12613,40 @@ PostgreSQL's own code, as a check's rows are checked by it.
   but for the refusals, a dropped stored column among its cases.
 - **The regression files**: the 9 with generated columns were
   trimmed again: about 500 statements run now.
+
+## Step 413: A skipped column skips its CHECKs
+
+- **Found**: `ADD COLUMN IF NOT EXISTS` skipped a column but
+  still installed its CHECKs. It could reject existing rows or
+  silently add a new constraint.
+- **Change**: `add_column()` reports whether it added the
+  column. A skipped addition skips that column's CHECKs and
+  leaves later ALTER subcommands to run. A skipped serial or
+  identity column returns before creating its sequence.
+- **Tests**: `test/check_skip_column.sql` checks existing rows,
+  empty tables, and repeated additions in one ALTER. It fails
+  before the fix. Its expected output comes from PostgreSQL 18.
+  The storage layers cannot express IF NOT EXISTS: it is a
+  digres command option.
+- **Validation**: the new test and the existing CHECK test pass
+  alone and in eight sessions. The full debug digres suite
+  passes parsing, SQL, initdb, server and SQL logic tests.
+  All 231 PostgreSQL regression files pass with the installed
+  PostgreSQL 18 binaries.
+
+## Step 414: refuse sequence calls in CHECK constraints
+
+- **Found**: a CHECK could call a sequence without recording a
+  dependency. `DROP SEQUENCE` then succeeded, and a later write
+  failed when it evaluated the CHECK.
+- **Change**: digres rejects sequence value and metadata functions
+  while it cooks a CHECK. This runs only during DDL. Full sequence
+  dependency tracking needs catalog and drop-path changes, so the
+  supported SQL is now narrower.
+- **Tests**: `test/check_sequence.sql` covers sequence functions
+  in `CREATE TABLE` and `ALTER TABLE`. The skipped-column
+  regression remains in `test/check_skip_column.sql`.
+- **Validation**: the full debug digres suite passes. The SQL
+  tests pass alone and in eight sessions, and `server.sh` and all
+  65 SQL logic test files pass. All 231 PostgreSQL regressions
+  also pass with the installed PostgreSQL 18 binaries.

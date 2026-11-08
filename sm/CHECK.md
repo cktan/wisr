@@ -151,6 +151,9 @@ CONSTRAINT value = constraint | check
 - **`ALTER TABLE ... ADD COLUMN ... CHECK`** adds the column,
   then adds the check as above: the rows already there are
   checked with the new column's value.
+  `IF NOT EXISTS` skips the column's checks when the column
+  exists. A skipped serial or identity column creates no
+  sequence.
 - **`VALIDATE CONSTRAINT`** of a check reads the rows, and sets
   it valid.
 - **`DROP CONSTRAINT`** and **`RENAME CONSTRAINT`** of a check.
@@ -179,7 +182,7 @@ CONSTRAINT value = constraint | check
 | `ALTER COLUMN TYPE` of a column a check reads | refused (§7) |
 | `TRUNCATE` | the check stays |
 | a transaction that adds a check, then aborts | the entry goes with it, as any catalog change |
-| a check calling a volatile function | allowed, as in PostgreSQL: its result is the host's |
+| a check calling a volatile function | allowed, except sequence functions (§7) |
 | a database copied to another instance | the check is in its directory, with its expression |
 
 ## 7. Decided
@@ -197,3 +200,7 @@ Decided by the user, 2026-11-07:
 3. **`NOT ENFORCED` and `NO INHERIT` are accepted and kept.** A
    check not enforced is kept and never evaluated; `NO INHERIT`
    changes nothing, with no inheritance.
+4. **Sequence functions in CHECK constraints are refused.** sm3
+   does not track dependencies from checks to sequences. Digres
+   rejects sequence value and metadata functions when it cooks
+   the check.
