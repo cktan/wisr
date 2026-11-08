@@ -166,13 +166,10 @@ static inline bool btmask_contains(BackendTypeMask mask, BackendType t) {
 }
 
 /* The socket number we are listening for connections on */
-thread_local /*LOCAL*/ int PostPortNumber = DEF_PGPORT;
 
 /* The directory names for Unix socket(s) */
-thread_local /*LOCAL*/ char *Unix_socket_directories;
 
 /* The TCP listen address(es) */
-thread_local /*LOCAL*/ char *ListenAddresses;
 
 /*
  * SuperuserReservedConnections is the number of backends reserved for
@@ -192,8 +189,6 @@ thread_local /*LOCAL*/ char *ListenAddresses;
  * connections.  Note that pre-existing superuser and
  * pg_use_reserved_connections connections don't count against the limits.
  */
-thread_local /*LOCAL*/ int SuperuserReservedConnections;
-thread_local /*LOCAL*/ int ReservedConnections;
 
 /* The socket(s) we're listening to: at most this many. */
 #define MAXLISTEN	64
@@ -205,9 +200,6 @@ thread_local /*LOCAL*/ int PreAuthDelay = 0;
 thread_local /*LOCAL*/ int AuthenticationTimeout = 60;
 
 thread_local /*LOCAL*/ bool log_hostname; /* for ps display and logging */
-
-thread_local /*LOCAL*/ bool enable_bonjour = false;
-thread_local /*LOCAL*/ char *bonjour_name;
 
 /*
  * When terminating child processes after fatal errors, like a crash of a
@@ -651,6 +643,12 @@ void PostmasterMain(int argc, char *argv[]) {
   if (!SelectConfigFiles(userDoption, pcb->progname))
     ExitPostmaster(2);
 
+  /*
+   * The settings that change only with a restart are final: copy them into
+   * pcb, which every thread reads, before any thread starts.
+   */
+  publish_postmaster_settings();
+
   if (output_config_variable != NULL) {
     /*
      * If this is a runtime-computed GUC, it hasn't yet been initialized,
@@ -706,12 +704,13 @@ void PostmasterMain(int argc, char *argv[]) {
   /*
    * Check for invalid combinations of GUC settings.
    */
-  if (SuperuserReservedConnections + ReservedConnections >= MaxConnections) {
+  if (pcb->SuperuserReservedConnections + pcb->ReservedConnections >=
+      pcb->MaxConnections) {
     write_stderr("%s: \"superuser_reserved_connections\" (%d) plus "
                  "\"reserved_connections\" (%d) must be less than "
                  "\"max_connections\" (%d)\n",
-                 pcb->progname, SuperuserReservedConnections,
-                 ReservedConnections, MaxConnections);
+                 pcb->progname, pcb->SuperuserReservedConnections,
+                 pcb->ReservedConnections, pcb->MaxConnections);
     ExitPostmaster(1);
   }
 
@@ -856,14 +855,14 @@ void PostmasterMain(int argc, char *argv[]) {
   pms().ListenSockets = (pgsocket *)palloc(MAXLISTEN * sizeof(pgsocket));
   on_proc_exit(CloseServerPorts, 0);
 
-  if (ListenAddresses) {
+  if (pcb->ListenAddresses) {
     char *rawstring;
     List *elemlist;
     ListCell *l;
     int success = 0;
 
     /* Need a modifiable copy of ListenAddresses */
-    rawstring = pstrdup(ListenAddresses);
+    rawstring = pstrdup(pcb->ListenAddresses);
 
     /* Parse string into list of hostnames */
     if (!SplitGUCList(rawstring, ',', &elemlist)) {
@@ -877,13 +876,13 @@ void PostmasterMain(int argc, char *argv[]) {
       char *curhost = (char *)lfirst(l);
 
       if (strcmp(curhost, "*") == 0)
-        status =
-            ListenServerPort(AF_UNSPEC, NULL, (unsigned short)PostPortNumber,
-                             NULL, pms().ListenSockets, &pms().NumListenSockets, MAXLISTEN);
+        status = ListenServerPort(
+            AF_UNSPEC, NULL, (unsigned short)pcb->PostPortNumber, NULL,
+            pms().ListenSockets, &pms().NumListenSockets, MAXLISTEN);
       else
-        status =
-            ListenServerPort(AF_UNSPEC, curhost, (unsigned short)PostPortNumber,
-                             NULL, pms().ListenSockets, &pms().NumListenSockets, MAXLISTEN);
+        status = ListenServerPort(
+            AF_UNSPEC, curhost, (unsigned short)pcb->PostPortNumber, NULL,
+            pms().ListenSockets, &pms().NumListenSockets, MAXLISTEN);
 
       if (status == STATUS_OK) {
         success++;
@@ -906,7 +905,7 @@ void PostmasterMain(int argc, char *argv[]) {
 
 #ifdef USE_BONJOUR
   /* Register for Bonjour only if we opened TCP socket(s) */
-  if (enable_bonjour && pms().NumListenSockets > 0) {
+  if (pcb->enable_bonjour && pms().NumListenSockets > 0) {
     DNSServiceErrorType err;
 
     /*
@@ -915,9 +914,9 @@ void PostmasterMain(int argc, char *argv[]) {
      * DNS-SD docs whether this would be appropriate if we have bound to
      * just a subset of the available network interfaces.
      */
-    err = DNSServiceRegister(&bonjour_sdref, 0, 0, bonjour_name,
-                             "_postgresql._tcp.", NULL, NULL,
-                             pg_hton16(PostPortNumber), 0, NULL, NULL, NULL);
+    err = DNSServiceRegister(
+        &bonjour_sdref, 0, 0, pcb->bonjour_name, "_postgresql._tcp.", NULL,
+        NULL, pg_hton16(pcb->PostPortNumber), 0, NULL, NULL, NULL);
     if (err != kDNSServiceErr_NoError)
       ereport(LOG, (errmsg("DNSServiceRegister() failed: error code %ld",
                            (long)err)));
@@ -932,14 +931,14 @@ void PostmasterMain(int argc, char *argv[]) {
   }
 #endif
 
-  if (Unix_socket_directories) {
+  if (pcb->Unix_socket_directories) {
     char *rawstring;
     List *elemlist;
     ListCell *l;
     int success = 0;
 
     /* Need a modifiable copy of Unix_socket_directories */
-    rawstring = pstrdup(Unix_socket_directories);
+    rawstring = pstrdup(pcb->Unix_socket_directories);
 
     /* Parse string into list of directories */
     if (!SplitDirectoriesString(rawstring, ',', &elemlist)) {
@@ -952,9 +951,9 @@ void PostmasterMain(int argc, char *argv[]) {
     foreach (l, elemlist) {
       char *socketdir = (char *)lfirst(l);
 
-      status = ListenServerPort(AF_UNIX, NULL, (unsigned short)PostPortNumber,
-                                socketdir, pms().ListenSockets, &pms().NumListenSockets,
-                                MAXLISTEN);
+      status = ListenServerPort(
+          AF_UNIX, NULL, (unsigned short)pcb->PostPortNumber, socketdir,
+          pms().ListenSockets, &pms().NumListenSockets, MAXLISTEN);
 
       if (status == STATUS_OK) {
         success++;
@@ -999,21 +998,22 @@ void PostmasterMain(int argc, char *argv[]) {
   /*
    * Write the external PID file if requested
    */
-  if (external_pid_file) {
-    FILE *fpidfile = fopen(external_pid_file, "w");
+  if (pcb->external_pid_file) {
+    FILE *fpidfile = fopen(pcb->external_pid_file, "w");
 
     if (fpidfile) {
       fprintf(fpidfile, "%d\n", MyProcPid);
       fclose(fpidfile);
 
       /* Make PID file world readable */
-      if (chmod(external_pid_file, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH) != 0)
+      if (chmod(pcb->external_pid_file,
+                S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH) != 0)
         write_stderr("%s: could not change permissions of external PID file "
                      "\"%s\": %m\n",
-                     pcb->progname, external_pid_file);
+                     pcb->progname, pcb->external_pid_file);
     } else
       write_stderr("%s: could not write external PID file \"%s\": %m\n",
-                   pcb->progname, external_pid_file);
+                   pcb->progname, pcb->external_pid_file);
 
     on_proc_exit(unlink_external_pid_file, 0);
   }
@@ -1109,8 +1109,8 @@ static void CloseServerPorts(int status, Datum arg) {
  * on_proc_exit callback to delete external_pid_file
  */
 static void unlink_external_pid_file(int status, Datum arg) {
-  if (external_pid_file)
-    unlink(external_pid_file);
+  if (pcb->external_pid_file)
+    unlink(pcb->external_pid_file);
 }
 
 /*

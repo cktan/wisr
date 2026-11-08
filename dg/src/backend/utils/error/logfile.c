@@ -43,7 +43,6 @@
 #include "utils/logfile.h"
 
 /* The settings, as guc_tables.c sets them: a thread's copy each. */
-thread_local /*LOCAL*/ bool Logging_collector = false;
 thread_local /*LOCAL*/ int Log_RotationAge = HOURS_PER_DAY * MINS_PER_HOUR;
 thread_local /*LOCAL*/ int Log_RotationSize = 10 * 1024;
 thread_local /*LOCAL*/ char *Log_directory = NULL;
@@ -246,7 +245,7 @@ void logfile_open(void) {
   logfile_state_t *st = shmem->logfile.get();
   bool opened;
 
-  if (!Logging_collector)
+  if (!pcb->Logging_collector)
     return;
 
   /* The directory may exist; if not, the open below reports a failure. */
@@ -279,7 +278,7 @@ void logfile_reload(void) {
   logfile_state_t *st = shmem->logfile.get();
   bool changed;
 
-  if (!Logging_collector)
+  if (!pcb->Logging_collector)
     return;
 
   std::lock_guard<std::mutex> guard(shmem->stderr_mutex);

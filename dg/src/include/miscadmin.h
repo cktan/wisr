@@ -190,9 +190,6 @@ extern int CurrentProcPid(void);
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool ExitOnAnyError;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT int NBuffers;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int MaxConnections;
-
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MyProcPid;
 extern thread_local /*LOCAL*/ PGDLLIMPORT pg_time_t MyStartTime;
 extern thread_local /*LOCAL*/ PGDLLIMPORT TimestampTz MyStartTimestamp;
@@ -437,7 +434,6 @@ extern void BaseInit(void);
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool IgnoreSystemIndexes;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char
     *session_preload_libraries_string;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *shared_preload_libraries_string;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *local_preload_libraries_string;
 
 extern void CreateDataDirLockFile(bool amPostmaster);

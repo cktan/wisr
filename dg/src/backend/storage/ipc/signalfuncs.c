@@ -242,7 +242,7 @@ Datum pg_reload_conf(PG_FUNCTION_ARGS) {
  * GRANT system.
  */
 Datum pg_rotate_logfile(PG_FUNCTION_ARGS) {
-  if (!Logging_collector) {
+  if (!pcb->Logging_collector) {
     ereport(
         WARNING,
         (errmsg("rotation not possible because log collection not active")));

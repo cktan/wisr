@@ -255,7 +255,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_parser_stats;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_planner_stats;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_executor_stats;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_statement_stats;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *event_source;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool check_function_bodies;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool current_role_is_superuser;
@@ -275,10 +274,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT double log_xact_sample_rate;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *backtrace_functions;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT int temp_file_limit;
-
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *cluster_name;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *ConfigFileName;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *external_pid_file;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *application_name;
 
@@ -368,6 +363,7 @@ extern void ProcessConfigFile(GucContext context);
 extern char *convert_GUC_name_for_parameter_acl(const char *name);
 extern void check_GUC_name_for_parameter_acl(const char *name);
 extern void InitializeGUCOptions(void);
+extern void publish_postmaster_settings(void);
 extern bool SelectConfigFiles(const char *userDoption, const char *progname);
 extern void ResetAllOptions(void);
 extern void AtStart_GUC(void);

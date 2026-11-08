@@ -12806,3 +12806,31 @@ plans.
   checked the old purge's flush by count is replaced.
 - **Found too**: digres installs no log hook for sm, so sm's
   errors are lost ([`ISSUE.md`](ISSUE.md) issue 27).
+
+## Step 419: restart-only settings are read from pcb
+
+A setting with context `PGC_POSTMASTER` cannot change while the
+server runs, so a thread copy of it is wasted, and a code path
+could read it before the thread has it.
+
+- **`pcb->name`** holds each one: `enable_bonjour`,
+  `Trace_connection_negotiation`, `Logging_collector`,
+  `MaxConnections`, `SuperuserReservedConnections`,
+  `ReservedConnections`, `NBuffers`, `PostPortNumber`,
+  `Unix_socket_permissions`, `max_files_per_process`,
+  `bonjour_name`, `shared_preload_libraries_string`,
+  `event_source`, `Unix_socket_group`, `Unix_socket_directories`,
+  `ListenAddresses`, `external_pid_file`, `cluster_name` and
+  `ConfigFileName`. `DataDir` and `log_timezone` were there.
+- **`publish_postmaster_settings()`** copies them from the GUC
+  variables, right after `SelectConfigFiles()`, before any
+  thread starts. A string is a `strdup()`, never freed.
+  `SelectConfigFiles()` sets `ConfigFileName` itself, as it
+  finds the file, because reading the file needs it.
+- **The GUC variables are `static` in `guc_tables.c`**, with
+  the table: they are the storage the GUC code writes, in each
+  thread, and no other file declares them.
+- **Reads changed** in `postmaster.c`, `postinit.c`,
+  `pqcomm.c`, `pmchild.c`, `fd.c`, `miscinit.c`, `ps_status.c`,
+  `datadir.c`, `backend_startup.c`, `logfile.c`,
+  `signalfuncs.c`, `variable.c`, `elog.c` and `guc.c`.

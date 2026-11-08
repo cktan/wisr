@@ -950,7 +950,7 @@ const char *show_log_file_mode(void) {
 const char *show_unix_socket_permissions(void) {
   static thread_local /*LOCAL*/ char buf[12];
 
-  snprintf(buf, sizeof(buf), "%04o", Unix_socket_permissions);
+  snprintf(buf, sizeof(buf), "%04o", pcb->Unix_socket_permissions);
   return buf;
 }
 

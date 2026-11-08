@@ -16,7 +16,6 @@
 #define LOGFILE_H
 
 /* The settings (guc_tables.c). */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool Logging_collector;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_RotationAge;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_RotationSize;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *Log_directory;

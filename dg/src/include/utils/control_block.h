@@ -178,6 +178,34 @@ typedef struct pcb_t {
   TimestampTz PgStartTime = 0; /* timestamp.c: when the server started */
   pg_tz *log_timezone = nullptr; /* pgtz.c: timezone for log timestamps */
 
+  /*
+   * -- settings that change only with a restart (PGC_POSTMASTER) --
+   * guc_tables.c: copied from the GUC variables by
+   * publish_postmaster_settings() once the postmaster has read its
+   * settings, before the first thread starts; ConfigFileName by
+   * SelectConfigFiles().  Read these, never the GUC variables, which each
+   * thread has a copy of.  A string is malloc'd, never freed, or NULL.
+   */
+  bool enable_bonjour = false;
+  bool Trace_connection_negotiation = false;
+  bool Logging_collector = false;
+  int MaxConnections = 0;
+  int SuperuserReservedConnections = 0;
+  int ReservedConnections = 0;
+  int NBuffers = 0;
+  int PostPortNumber = 0;
+  int Unix_socket_permissions = 0;
+  int max_files_per_process = 0;
+  char *bonjour_name = nullptr;
+  char *shared_preload_libraries_string = nullptr;
+  char *event_source = nullptr;
+  char *Unix_socket_group = nullptr;
+  char *Unix_socket_directories = nullptr;
+  char *ListenAddresses = nullptr;
+  char *external_pid_file = nullptr;
+  char *cluster_name = nullptr;
+  char *ConfigFileName = nullptr;
+
   /* -- how the process runs -- */
   /*
    * globals.c: true in the postmaster and its sessions; false in a

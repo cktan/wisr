@@ -32,6 +32,7 @@
 #include "tcop/backend_startup.h"
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
+#include "utils/control_block.h"
 #include "utils/guc_hooks.h"
 #include "utils/injection_point.h"
 #include "utils/memutils.h"
@@ -40,7 +41,6 @@
 #include "utils/varlena.h"
 
 /* GUCs */
-thread_local /*LOCAL*/ bool Trace_connection_negotiation = false;
 thread_local /*LOCAL*/ uint32 log_connections = 0;
 thread_local /*LOCAL*/ char *log_connections_string = NULL;
 
@@ -373,7 +373,7 @@ static int ProcessSSLStartup(Port *port) {
     goto reject;
   }
 
-  if (Trace_connection_negotiation)
+  if (pcb->Trace_connection_negotiation)
     ereport(LOG, (errmsg("direct SSL connection accepted")));
   return STATUS_OK;
 #else
@@ -382,7 +382,7 @@ static int ProcessSSLStartup(Port *port) {
 #endif
 
 reject:
-  if (Trace_connection_negotiation)
+  if (pcb->Trace_connection_negotiation)
     ereport(LOG, (errmsg("direct SSL connection rejected")));
   return STATUS_ERROR;
 }
@@ -496,7 +496,7 @@ retry:
     SSLok = 'N'; /* No support for SSL */
 #endif
 
-    if (Trace_connection_negotiation) {
+    if (pcb->Trace_connection_negotiation) {
       if (SSLok == 'S')
         ereport(LOG, (errmsg("SSLRequest accepted")));
       else
@@ -559,7 +559,7 @@ retry:
       GSSok = 'G';
 #endif
 
-    if (Trace_connection_negotiation) {
+    if (pcb->Trace_connection_negotiation) {
       if (GSSok == 'G')
         ereport(LOG, (errmsg("GSSENCRequest accepted")));
       else

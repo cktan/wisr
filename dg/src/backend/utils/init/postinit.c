@@ -289,13 +289,13 @@ void InitializeMaxBackends(void) {
   Assert(pcb->MaxBackends == 0);
 
   /* Note that this does not include "auxiliary" processes */
-  pcb_main()->MaxBackends = MaxConnections;
+  pcb_main()->MaxBackends = pcb->MaxConnections;
 
   if (pcb->MaxBackends > MAX_BACKENDS)
     ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                     errmsg("too many server processes configured"),
                     errdetail("\"max_connections\" (%d) must be less than %d.",
-                              MaxConnections, MAX_BACKENDS + 1)));
+                              pcb->MaxConnections, MAX_BACKENDS + 1)));
 }
 
 /*
@@ -523,10 +523,11 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
    * reserved connection limits.
    */
   if (AmRegularBackendProcess() && !am_superuser &&
-      (SuperuserReservedConnections + ReservedConnections) > 0 &&
-      !session_have_free(SuperuserReservedConnections + ReservedConnections,
+      (pcb->SuperuserReservedConnections + pcb->ReservedConnections) > 0 &&
+      !session_have_free(pcb->SuperuserReservedConnections +
+                             pcb->ReservedConnections,
                          &nfree)) {
-    if (nfree < SuperuserReservedConnections)
+    if (nfree < pcb->SuperuserReservedConnections)
       ereport(FATAL, (errcode(ERRCODE_TOO_MANY_CONNECTIONS),
                       errmsg("remaining connection slots are reserved for "
                              "roles with the %s attribute",

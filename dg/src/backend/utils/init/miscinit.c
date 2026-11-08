@@ -1029,8 +1029,8 @@ static void CreateLockFile(const char *filename, bool amPostmaster,
    * the datadir lockfile later.
    */
   snprintf(buffer, sizeof(buffer), "%d\n%s\n" INT64_FORMAT "\n%d\n%s\n",
-           amPostmaster ? (int)my_pid : -((int)my_pid), pcb->DataDir, MyStartTime,
-           PostPortNumber, socketDir);
+           amPostmaster ? (int)my_pid : -((int)my_pid), pcb->DataDir,
+           MyStartTime, pcb->PostPortNumber, socketDir);
 
   /*
    * In a standalone backend, the next line (LOCK_FILE_LINE_LISTEN_ADDR)
@@ -1364,7 +1364,6 @@ void ValidatePgVersion(const char *path) {
  * start and at backend start
  */
 thread_local /*LOCAL*/ char *session_preload_libraries_string = NULL;
-thread_local /*LOCAL*/ char *shared_preload_libraries_string = NULL;
 thread_local /*LOCAL*/ char *local_preload_libraries_string = NULL;
 
 /*
@@ -1426,8 +1425,8 @@ static void load_libraries(const char *libraries, const char *gucname,
  */
 void process_shared_preload_libraries(void) {
   pcb_main()->process_shared_preload_libraries_in_progress = true;
-  load_libraries(shared_preload_libraries_string, "shared_preload_libraries",
-                 false);
+  load_libraries(pcb->shared_preload_libraries_string,
+                 "shared_preload_libraries", false);
   pcb_main()->process_shared_preload_libraries_in_progress = false;
   pcb_main()->process_shared_preload_libraries_done = true;
 }

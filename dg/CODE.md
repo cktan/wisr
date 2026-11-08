@@ -202,6 +202,14 @@ digres is one process; each session is a thread of it.
   - `tcb` is a pointer (`thread_local tcb_t *tcb`), made at a
     thread's start and freed at its end, and NULL while it is
     being freed. A signal handler checks for NULL.
+  - **A setting that changes only with a restart
+    (`PGC_POSTMASTER`) is read as `pcb->name`**, never as the
+    GUC variable, which each thread has a copy of.
+    `publish_postmaster_settings()` (`guc_tables.c`) copies it
+    into `pcb_t` once the postmaster has read its settings; the
+    variable is `static` there, so no other file can name it.
+    A new such setting adds a `pcb_t` field and a line in that
+    function.
   - **A LOCAL global moves into `tcb_t`** when a change
     touches it. Put new state in a block from the start.
 - **`src/tools/process_wide.txt`** lists the writable globals

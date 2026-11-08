@@ -308,11 +308,11 @@ void init_ps_display(const char *fixed_part) {
 #define PROGRAM_NAME_PREFIX "postgres: "
 #endif
 
-  if (*cluster_name == '\0') {
+  if (*pcb->cluster_name == '\0') {
     snprintf(ps_buffer, ps_buffer_size, PROGRAM_NAME_PREFIX "%s ", fixed_part);
   } else {
     snprintf(ps_buffer, ps_buffer_size, PROGRAM_NAME_PREFIX "%s: %s ",
-             cluster_name, fixed_part);
+             pcb->cluster_name, fixed_part);
   }
 
   ps_buffer_cur_len = ps_buffer_fixed_size = strlen(ps_buffer);

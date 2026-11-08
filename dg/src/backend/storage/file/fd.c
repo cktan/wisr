@@ -144,7 +144,6 @@
  * less than
  * what the postmaster's initial probe suggests will work.
  */
-thread_local /*LOCAL*/ int max_files_per_process = 1000;
 
 /*
  * Maximum number of file descriptors a thread opens for operations that fd.c
@@ -797,7 +796,7 @@ void set_max_safe_fds(void) {
                    ceiling + NUM_RESERVED_FDS, FD_MINFREE + NUM_RESERVED_FDS)));
 
   pcb_main()->max_safe_fds_per_thread =
-      Max(Min(ceiling / threads, max_files_per_process), FD_MINFREE);
+      Max(Min(ceiling / threads, pcb->max_files_per_process), FD_MINFREE);
 
   elog(DEBUG2, "max_safe_fds_per_thread = %d, ceiling = %d, threads = %d",
        pcb->max_safe_fds_per_thread, ceiling, threads);

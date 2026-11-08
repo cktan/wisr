@@ -100,8 +100,6 @@
 /*
  * Configuration options
  */
-thread_local /*LOCAL*/ int Unix_socket_permissions;
-thread_local /*LOCAL*/ char *Unix_socket_group;
 
 /*
  * Where the Unix socket files are (list of palloc'd strings):
@@ -600,7 +598,7 @@ int ListenServerPort(int family, const char *hostName,
      * to use a value similar to the maximum number of child processes
      * that the postmaster will permit.
      */
-    maxconn = MaxConnections * 2;
+    maxconn = pcb->MaxConnections * 2;
 
     err = listen(fd, maxconn);
     if (err < 0) {
@@ -678,8 +676,8 @@ static int Setup_AF_UNIX(const char *sock_path) {
    * before we listen() to avoid a window where unwanted connections could
    * get accepted.
    */
-  Assert(Unix_socket_group);
-  if (Unix_socket_group[0] != '\0') {
+  Assert(pcb->Unix_socket_group);
+  if (pcb->Unix_socket_group[0] != '\0') {
 #ifdef WIN32
     elog(WARNING, "configuration item \"unix_socket_group\" is not supported "
                   "on this platform");
@@ -688,16 +686,16 @@ static int Setup_AF_UNIX(const char *sock_path) {
     unsigned long val;
     gid_t gid;
 
-    val = strtoul(Unix_socket_group, &endptr, 10);
+    val = strtoul(pcb->Unix_socket_group, &endptr, 10);
     if (*endptr == '\0') { /* numeric group id */
       gid = val;
     } else { /* convert group name to id */
       struct group *gr;
 
-      gr = getgrnam(Unix_socket_group);
+      gr = getgrnam(pcb->Unix_socket_group);
       if (!gr) {
-        ereport(LOG,
-                (errmsg("group \"%s\" does not exist", Unix_socket_group)));
+        ereport(LOG, (errmsg("group \"%s\" does not exist",
+                             pcb->Unix_socket_group)));
         return STATUS_ERROR;
       }
       gid = gr->gr_gid;
@@ -711,7 +709,7 @@ static int Setup_AF_UNIX(const char *sock_path) {
 #endif
   }
 
-  if (chmod(sock_path, Unix_socket_permissions) == -1) {
+  if (chmod(sock_path, pcb->Unix_socket_permissions) == -1) {
     ereport(LOG, (errcode_for_file_access(),
                   errmsg("could not set permissions of file \"%s\": %m",
                          sock_path)));
