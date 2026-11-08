@@ -61,7 +61,9 @@ struct sm2::index_scan_t {
   bool cut = false;     /* the last entry's cut flag */
   uint64_t id = 0;      /* the last entry's row's _id, 0 if keyed */
   std::string row;      /* its row's key, where made here */
-  std::string value;    /* a primary key's entry value, made here */
+  /* A tree's: its row's key, in the cursor's copy of its leaf. */
+  std::string_view tree_row;
+  std::string value; /* a primary key's entry value, made here */
   /* idx_scan_key's, a variable-width one made a varlena in place */
   std::vector<std::optional<std::string>> datums;
 };
@@ -1075,11 +1077,9 @@ int idx_scan_entry(index_scan_t *scan, uint64_t &id, bool &cut,
   scan->key = key;
   scan->cut = 0 != (value[0] & tree::entry_cut);
   row = key.substr(relid_len + cols_len);
-  // An index of a table gives its row's key from the entry's key
-  // (idx_scan_row); only one with no table keeps a copy.
-  if (nullptr == ix->rel) {
-    scan->row.assign(row);
-  }
+  // Viewed, not copied: the cursor's copy of the leaf holds it
+  // (idx_scan_row).
+  scan->tree_row = row;
   scan->id = 0;
   std::string_view r = row;
   if (!ix->keyed && !get_be(r, scan->id)) {
@@ -1113,6 +1113,9 @@ std::string_view idx_scan_row(const index_scan_t *scan) {
   const index_t *ix = scan->index;
   if (ix->rel != nullptr) {
     return scan->key.substr(relid_len);
+  }
+  if (scan->cursor) {
+    return scan->tree_row;
   }
   return scan->row;
 }

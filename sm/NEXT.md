@@ -30,39 +30,35 @@ and so are the catalog tables psql reads
    PostgreSQL; a sequential scan may, as OLTP runs none. The
    measure is three queries of `../bench/run.sh` on
    `usertable`, 10,000 rows, with btree indexes. Instructions a
-   statement, from `../PARITY.md` §3.2:
+   statement, the slope of 5,000 and 25,000 prepared statements
+   under `perf stat`, the server pinned (`../dg/WORKNOTE.md`
+   step 407):
 
    | Query | What it reads | digres | PostgreSQL | Ratio |
    | --- | --- | --- | --- | --- |
-   | q1 | 8 entries of the `lastname` index, a count | 63,071 | 60,170 | 1.05 |
-   | q2 | 183 entries of the `state` index, a count | 241,411 | 148,062 | 1.63 |
-   | q3 | 8 rows, found by the `lastname` index | 176,393 | 86,009 | 2.05 |
+   | q1 | 8 entries of the `lastname` index, a count | 66,100 | 62,100 | 1.06 |
+   | q2 | 183 entries of the `state` index, a count | 216,900 | 150,800 | 1.44 |
+   | q3 | 8 rows, found by the `lastname` index | 178,000 | 89,100 | 2.00 |
 
-   Since then, `7f381103` made q2 4.3% cheaper. Latency is 1.19,
-   1.29 and 1.74 times PostgreSQL's (`../PERF.md`). The fixed
-   cost of a statement is at parity, so the gap is the cost of
-   an entry and of a row.
+   The fixed cost of a statement is at parity, so the gap is the
+   cost of an entry and of a row.
 
    - **q1 passes.** The gap is its 8 entries and one descent.
-   - **q2 fails by the cost of an entry**: about 1,000
-     instructions, against PostgreSQL's 530. The tree cursor
-     takes about half of it, the executor the rest. In order:
-     1. **Copy an entry once**: built. sm3's batch views the
-        cursor's copy of one leaf, and ends with it
-        (`BTREEINDEX.md` §5.3). q2 went from 245.5k to 230.0k
-        instructions, 1.52 times PostgreSQL's 150.8k; q1 and q3
-        about 1% fewer (aarch64 under WSL2, 2026-11-07).
-     2. **Hand out a leaf's entries from the pinned leaf**:
-        dropped (2026-11-07). PostgreSQL copies each entry too:
-        `_bt_saveitem()` copies an index-only scan's tuple, then
-        unlocks the page. A pin is a latch (`BUFMGR.md` §1.3),
-        so a pin held across calls would make writers wait on
-        the reader. A leaf id kept as a hint, pinned only if in
-        the pool, was measured: q2 0.2% fewer instructions, q1
-        1.2% and q3 0.3% more, as a hit saves only page 0's
-        search and a random probe's miss costs a pin.
-     What is left of q2's gap is the cursor's per-entry work and
-     the executor. Parity needs a count in sm, one tuple a leaf,
+   - **q2 passes.** An entry costs about 360 instructions more
+     than PostgreSQL's, half of it the executor. Built:
+     1. **Copy an entry once**: sm3's batch views the cursor's
+        copy of one leaf, and ends with it (`BTREEINDEX.md`
+        §5.3). q2 245.5k to 230.0k.
+     2. **A tree's row key viewed, not copied, and its columns'
+        decodability asked once a batch**: q2 230.0k to 216.9k.
+     Dropped (2026-11-07): **handing out a leaf's entries from
+     the pinned leaf**. PostgreSQL copies each entry too:
+     `_bt_saveitem()` copies an index-only scan's tuple, then
+     unlocks the page. A pin is a latch (`BUFMGR.md` §1.3), so a
+     pin held across calls would make writers wait on the
+     reader. A leaf id kept as a hint, pinned only if in the
+     pool, was measured: q2 0.2% fewer instructions, q1 1.2% and
+     q3 0.3% more. Parity needs a count in sm, one tuple a leaf,
      which helps `count(*)` alone.
    - **q3 fails by the cost of a row**: about 13,200
      instructions beyond its entry, against PostgreSQL's 3,200.

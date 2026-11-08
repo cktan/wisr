@@ -1908,9 +1908,10 @@ static int tree_fill(scan_t *scan) {
     }
   }
   scan->want_rows.clear();
-  // Whether the index's keys give their columns back, found once a batch.
-  const bool decodable =
-      scan->entries_only && sm2::idx_decodable(t->indexes[scan->index]);
+  // Whether the index's keys give their columns back, found once a
+  // batch, not once an entry (tbl_scan_plain()).
+  scan->key_decodable = sm2::idx_decodable(t->indexes[scan->index]);
+  const bool decodable = scan->entries_only && scan->key_decodable;
   while (scan->n < want && !scan->entries_done) {
     // The next entry past the leaf's would copy the next leaf over the
     // batch's keys, so the batch ends here.
@@ -2289,8 +2290,7 @@ int tbl_scan_cols(scan_t *scan, std::span<sm2::datum_t> values,
 /* Whether the last tree entry's key gives its columns back; see sm3.h. */
 bool tbl_scan_plain(const scan_t *scan) {
   return !scan->closed && scan->entries && 0 != scan->n &&
-         !scan->cuts[scan->last] &&
-         sm2::idx_decodable(scan->table->indexes[scan->index]);
+         !scan->cuts[scan->last] && scan->key_decodable;
 }
 
 /* The next row's bytes; see sm3.h. */

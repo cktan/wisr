@@ -12054,3 +12054,44 @@ through RocksDB's write queue, so records reached the WAL out of
   then go in `commit_ts` order. `test_groupsync.cc` counts the
   commit queue, and its test of the handoff checks that the next
   leader's batch holds all five commits behind it.
+
+## Step 407: a tree's row key viewed, not copied
+
+`../sm/NEXT.md` §1 item 3: q2, 183 entries of a btree counted,
+ran 1.52 times PostgreSQL's instructions, against a goal of 1.5.
+
+- **Profile**: callgrind on `digres-release`, collection off
+  until asked, dumps after 300 and after 1,300 more q2s; self
+  costs per function, the difference over 1,000. The total,
+  230.1k a statement, matches `perf stat`'s 230.0k. digres's own code
+  took about 118k, 645 an entry: `idx_scan_entry()` 132,
+  `tbl_scannxt()` 128, `cursor_next()` 93, the leaf's copy 76,
+  `smstore_index_getentry()` and `smstore_index_getrowno()` 66
+  each, and the checks of a whole key 32.
+- **Found**: `idx_scan_entry()` copied each entry's row key into
+  `scan->row`. `f15ea66a` kept that copy only for an index with
+  no `rel`, meaning to skip it for a table's; but only a primary
+  key sets `rel`, so every secondary tree still copied. And
+  `tbl_scan_plain()` asked `idx_decodable()` once an entry.
+- **sm2** (`idx_scan_entry()`, `idx_scan_row()` in
+  `../sm/sm2/src/rel/index.cc`): a tree's row key is a view into
+  the cursor's copy of its leaf, as its entry's key is.
+  `idx_scan_row()` returns it; its contract, valid until the next
+  call on the cursor, holds.
+- **sm3** (`tree_fill()`, `tbl_scan_plain()`): whether the tree's
+  keys give their columns back is read once a batch, into
+  `key_decodable`.
+- **Measured**, instructions a statement, the slope of 5,000 and
+  25,000 prepared statements under `perf stat`, the server
+  pinned, on the same data after a restart:
+
+  | Query | before | after | PostgreSQL | ratio |
+  | --- | --- | --- | --- | --- |
+  | q1 | 66,900 | 66,100 | 62,100 | 1.06 |
+  | q2 | 229,900 | 216,900 | 150,800 | 1.44 |
+  | q3 | 177,900 | 178,000 | 89,100 | 2.00 |
+
+- **Tests**: no change of behavior; sm3's unique-tree tests read
+  `idx_scan_row()` of a tree against the row's key, and the
+  tree tests of sm3, rel and dg read rows and keys across
+  leaves.

@@ -1345,8 +1345,8 @@ client (`../PERF.md`). Latency over PostgreSQL's:
 | q2, 183 entries of `state`, a count | 2.96 | 1.29 |
 | q3, 8 rows found by `lastname` | 2.40 | 1.74 |
 
-A tree's instructions a statement are 1.05, 1.63 and 2.05 times
-PostgreSQL's (`../PARITY.md` §3.2).
+A tree's instructions a statement are 1.06, 1.44 and 2.00 times
+PostgreSQL's (`NEXT.md` §1, `../dg/WORKNOTE.md` step 407).
 
 Writes and loads, from the old bench (`../bench.old/DESIGN.md`):
 `wide_mixed`, a million rows, its `c2` index, the root at page 0
@@ -1359,8 +1359,7 @@ Writes and loads, from the old bench (`../bench.old/DESIGN.md`):
 | a million rows, seconds | 66 | 12 |
 
 - **The goal, 1.5× of PostgreSQL's instructions, is met by q1
-  alone.** q2's gap is the cost of an entry, mostly the tree
-  cursor's copies. q3's gap is a row's read, mostly RocksDB's
+  and q2, not by q3.** q3's gap is a row's read, mostly RocksDB's
   `MultiGet` (`../PARITY.md` §4, `NEXT.md` §1).
 - **A load is 5.6 times an LSM Index's on that machine**, against
   1.5 in §10.1, on both builds, and why is not known. Its profile

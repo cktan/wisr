@@ -78,6 +78,8 @@ struct sm3::scan_t {
   std::string key; /* the recheck's entry key, its buffer reused */
   bool entries_done = false;
   bool entries_only = false;
+  /* Whether the tree's keys give their columns back, read each batch. */
+  bool key_decodable = false;
   bool reread = false; /* rollback or released pins invalidated the batch */
   bool closed = false; /* its transaction ended; never reopened */
   /* tbl_scan_cols's by-reference datums. */
