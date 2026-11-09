@@ -222,6 +222,45 @@ and so are the catalog tables psql reads
     too, and ingests the pages with the rows. Still open:
     whether `CREATE INDEX` can share the builder, as it runs
     beside writers.
+11. **Types move into sm, with their ADT operations and
+    functions.** Decided 2026-11-09. Two reasons:
+    - sm evaluates expressions without digres: an index
+      expression, a partial index, a check.
+    - sm plugs into another SQL system, not digres alone.
+
+    Today sm2 holds a type's storage: its datum, text, order and
+    key ([`sm2/TYPE.md`](sm2/TYPE.md)). digres holds the rest, in
+    PostgreSQL's `utils/adt`: the operators, casts, aggregates
+    and functions of a type. For `decimal64` and `decimal128`
+    that is arithmetic, rounding, `sqrt`, `ln` and the rest
+    ([`../dg/DECIMAL.md`](../dg/DECIMAL.md#25-arithmetic) §2.5).
+
+    The scope is the types of [`sm2/TYPE.md`](sm2/TYPE.md#3-the-types)
+    §3: bool, integers, floats, decimal, text, bytea, date and
+    time, interval, uuid. Types that need a session or the
+    catalog (`regclass`, enums, ranges, arrays, `jsonb`, text
+    search) stay in digres. In order:
+    1. **decimal**: new code, with no PostgreSQL code to keep.
+    2. **Types with no session state**: integers, bool, uuid,
+       bytea.
+    3. **Types that read a setting**: date and time, interval,
+       float text, text. Hold until the hooks below are
+       settled.
+
+    To settle:
+    - the hooks for what a session sets: `DateStyle`,
+      `TimeZone`, `extra_float_digits`, collation and locale;
+    - the errors: sm's error state, and how a host maps it to
+      its own codes and text;
+    - the interface of an operation in `sm.h`. digres calls it
+      as a plain C call, with no handle or session lookup, so
+      the instruction counts of a statement do not move;
+    - what stays in digres: the SQL names, the typmod rules and
+      PostgreSQL's error text;
+    - moved code that is PostgreSQL's own (timestamp, interval,
+      float text, string functions) keeps its copyright notice
+      ([`../CLAUDE.md`](../CLAUDE.md)), and the 231 regression
+      files must pass unchanged.
 
 Low priority:
 
