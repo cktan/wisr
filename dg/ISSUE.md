@@ -86,3 +86,61 @@ one of:
 - **Run `_PG_init()` once per process**, with process-wide
   hooks under a lock. Undoes the per-session hooks
   ([`WORKNOTE.md`](WORKNOTE.md) step 222).
+
+---
+
+## Issue 28: an index scan with a null key reads the whole index
+
+Found 2026-11-09 by `bench/soak.sh`, in a delete that took 25 ms
+a statement and grew slower as the table grew.
+
+A key of an index scan can be null at run time: the value of
+an InitPlan (a subquery run once) that returns no row. A
+comparison with null is never true, so such a scan meets no row.
+PostgreSQL sees the null key when the scan starts and returns at
+once. digres reads the whole index and checks each entry.
+
+**To reproduce.** On a table `enrollment (student_id, class_id,
+grade)` of 100,000 rows with `create index on enrollment using
+btree (class_id, student_id)`:
+
+    delete from enrollment where student_id = 5 and class_id =
+      (select class_id from enrollment where false);
+
+- digres: 141 ms. The plan is `Index Scan using enrollment_class`
+  with `Index Cond: ((class_id = (InitPlan 1).col1) AND
+  (student_id = 5))`, and the scan reads all 100,000 entries.
+- PostgreSQL 18: under 1 ms.
+- The time grows with the table. `class_id IN (subquery)` has no
+  null key, and takes 1.4 ms.
+- A real workload meets it as `class_id = (select … offset N)`,
+  when the student has N rows or fewer.
+
+**The cause, from reading `smstore_index_beginscan()`**
+(`dg/src/backend/access/sm/smstore.c`):
+
+1. `plain_key()` refuses a key with `SK_ISNULL`, so the key
+   gives the scan no bound.
+2. With no bound on `class_id`, the next column, `student_id`,
+   bounds nothing either: the leading column comes first.
+3. The scan then reads every entry, and `keys_met()` refuses
+   each one for the null key (`SK_ISNULL`).
+
+**The fix** is to end the scan before it reads. In
+`smstore_index_beginscan()`, if a key has `SK_ISNULL` and neither
+`SK_SEARCHNULL` nor `SK_SEARCHNOTNULL`, make the scan return no
+row, as it does now for a null array key ("it meets no row").
+A btree operator is strict, so a null argument never holds. The
+cost is a loop over the keys, which the function makes already.
+The same holds for a scan on a table's primary key: check it
+too.
+
+**Tests when it is fixed:**
+
+- `dg/test`: the delete above, and a select with the same
+  condition, on a table of 100,000 rows, each under a time limit
+  that a whole-index scan cannot meet.
+- `sm/rel/test`: a scan with a null key returns no row. This
+  needs the layer to take a null key, which it may not.
+- `bench/soak/drop_class.sql` may then use `class_id = (…)`
+  again; it uses `IN` to avoid this issue.
