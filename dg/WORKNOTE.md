@@ -13006,7 +13006,10 @@ reaper's pass beside the btree reaper's
   settled.
 - **`sm1::row_reap_pass()`** takes the queue, reads W once, and
   for each key settled at W deletes its OLD entries and writes
-  CURR again with no `prev`, under the key's latch.
+  CURR again with no `prev`, under the key's latch. The copy is
+  stamped with its writer's `commit_ts`: a `CF:txn` sweep may have
+  stamped the stored CURR and deleted the status record (a review
+  found it; the test checks the stamp).
 - **The pool**: the first thread asks `sm1::row_reaps_pending()`,
   with no session, and runs the row pass after the btree pass.
   `sm_set_btree_reaper_workers()` is `sm_set_reaper_workers()`,

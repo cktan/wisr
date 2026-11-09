@@ -1732,3 +1732,29 @@ TEST_CASE("a writer that aborts after a reap puts the reaped version back") {
   CHECK(sm1::row_reap_pass(f.s, &stop) == 0);
   CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
 }
+
+TEST_CASE("the row reaper writes CURR again stamped with its commit_ts") {
+  // Verify CURR outlives its writer's status record once reaped: a CF:txn
+  // sweep that stamped the stored CURR deletes the record, so the copy the
+  // reaper writes must carry the stamp itself (../GC.md §1, §13.5).
+  // 1. Insert k and update it: with no compaction, CURR is unstamped.
+  // 2. Note its writer's commit_ts from the status record.
+  // 3. Read k and reap it.
+  // 4. CURR is stamped with that commit_ts, has no prev, and reads v2.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  chain_put(f.s, c, "k", "v2", false);
+  chain_version_t before = curr_of(f.s, c, "k");
+  REQUIRE(!(before.flags & version_stamped));
+  uint64_t ts = 0;
+  REQUIRE(XCT_COMMITTED == xct_status(f.s->db, before.xid, &ts));
+
+  CHECK(read_one(f.s, c, "k") == "v2");
+  REQUIRE(sm1::row_reap_pass(f.s) == 1);
+  chain_version_t after = curr_of(f.s, c, "k");
+  CHECK((after.flags & version_stamped));
+  CHECK(after.commit_ts == ts);
+  CHECK(after.prev == 0);
+  CHECK(read_one(f.s, c, "k") == "v2");
+}

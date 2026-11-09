@@ -977,7 +977,11 @@ A row pass, `sm1::row_reap_pass()`:
 4. Walk the chain from `prev`, and collect the ids, until `prev`
    is 0 or an id is missing.
 5. Write one `WriteBatch`: a `Delete` of each id, and CURR again
-   with `prev` set to 0. Then let go of the latch.
+   with `prev` set to 0, stamped with its writer's `commit_ts`.
+   Then let go of the latch. Unstamped, the copy could outlive its
+   writer's status record: a `CF:txn` sweep that stamped the
+   stored CURR deletes the record (§1), as for any copy a write
+   makes (`stamp_copy()`).
 6. A pool's detach ends a pass after the key it is on.
 
 Step 5 writes the row again, its whole payload. Without it, a

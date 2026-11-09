@@ -1362,9 +1362,12 @@ void chain_repair(db_t *db, const hint_queue_t::batch_t &repairs) {
  *    (../GC.md §13.3).
  * 3. Walk the chain from prev, and collect the ids, until prev is 0
  *    or an id is missing.
- * 4. In one batch, Delete each id, and write CURR again with no prev.
- *    A Delete, not a SingleDelete: an OLD key can be written more than
- *    once (../GC.md §4.5).
+ * 4. In one batch, Delete each id, and write CURR again with no prev,
+ *    stamped with its writer's commit_ts, as stamp_copy() stamps a
+ *    copy: a CF:txn sweep may have stamped the stored CURR, to delete
+ *    the writer's status record next, and an unstamped copy would then
+ *    read as aborted. A Delete, not a SingleDelete: an OLD key can be
+ *    written more than once (../GC.md §4.5).
  */
 int reap_one(db_t *db, const store_t &st, uint64_t storeid, rocksdb::Slice key,
              uint64_t w) {
@@ -1406,6 +1409,8 @@ int reap_one(db_t *db, const store_t &st, uint64_t storeid, rocksdb::Slice key,
     id = v.prev;
   }
   head.prev = 0;
+  head.flags |= version_stamped;
+  head.commit_ts = ts;
   batch.Put(st.cf, curr_key(key), chain_value(head, false));
   rocksdb::Status status = st.rdb->Write(store_write_options(st), &batch);
   if (!status.ok()) {
