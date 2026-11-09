@@ -1032,10 +1032,15 @@ Built:
   after a reap puts the reaped version back; `stop` ends a pass;
   the CURR written again is stamped with its commit_ts; a `CF:txn`
   sweep run inside a reap, by the debug build's `g_reap_hook`, then
-  an empty commit cache, leaves the row readable.
+  an empty commit cache, leaves the row readable. Writers, readers,
+  a repeatable read reader and a reaper thread on the same keys:
+  every read is a committed value, a held snapshot's reads stay,
+  and a last pass leaves no OLD entry. `make tsan` runs it under
+  the thread sanitizer.
 - **mvcc**: `g03`, by the driver's verb `reap`: a pass spares a
   chain a snapshot needs, and cuts it once the snapshot ends.
-- **sm3** (`test_tree.cc`): the pool's thread runs the row pass.
+- **sm3** (`test_tree.cc`): the pool's thread runs the row pass,
+  under the thread sanitizer too (`make tsan`).
 
 Not built:
 
@@ -1043,7 +1048,5 @@ Not built:
   atomic.
 - A detach stops and joins the threads while a pass runs, and
   loses nothing a later open needs.
-- Under the thread sanitizer: writers, readers and the reapers'
-  threads on the same keys.
 - The scratch test of §13.2, kept as a test: OLD entries after
   many updates.
