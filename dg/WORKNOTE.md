@@ -13097,3 +13097,21 @@ the table; PostgreSQL's took under 1 ms.
   NOT NULL` and a null array find theirs. Without the fix the
   null-key scans show 1. sm's tests cannot express it: sm is never
   asked for the scan.
+
+## Step 430: the row reaper under the thread sanitizer
+
+The row reaper's pass ran beside writers and readers only in
+single-threaded tests ([`../sm/GC.md`](../sm/GC.md#138-tests)
+§13.8).
+
+- **Test** (`sm1/test/test_chain.cc`): two writers, two readers at
+  read committed, a repeatable read reader and a reaper thread on
+  the same 8 keys. Every read is a value its key's writer
+  committed, and never an older one; a held snapshot's reads stay;
+  after all end, a last pass leaves no OLD entry.
+- **`make tsan` in sm1**: the test under the thread sanitizer, on
+  RocksDB built with it, as sm3's are; `ROCKSDB` names the library
+  to link. sm3's `make tsan` runs the pool's row pass test too.
+- **Checked**: without the key's latch in `reap_one()` the test
+  fails, every run, with OLD entries left; without the hint queue's
+  mutex the thread sanitizer reports the race with `take()`.

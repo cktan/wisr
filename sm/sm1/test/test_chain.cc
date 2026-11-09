@@ -1810,3 +1810,137 @@ TEST_CASE(
   CHECK(read_one(f.s, c, "k") == "v5");
 }
 #endif
+
+TEST_CASE("the row reaper reaps beside writers and readers of the same keys") {
+  // Verify the row pass races nothing it shares keys with (../GC.md
+  // §13.5), for the thread sanitizer (make tsan) as for a plain build.
+  // 1. Insert 8 keys. Two writers each own 4, and update each of them 150
+  //    times, a value k<i>:<n> with n rising for its key.
+  // 2. Two readers at read committed read keys at random, which queues
+  //    them: each value is its key's, and n never goes back.
+  // 3. A repeatable read reader reads every key, waits, and reads them
+  //    again: the same values, as a pass spares a chain it needs.
+  // 4. A reaper thread runs passes on a session of its own, as the pool
+  //    does, until the others end; it reaps some keys meanwhile.
+  // 5. After all end, every key is read and a last pass runs: no OLD
+  //    entry is left, and each key reads its writer's last value.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  constexpr int keys = 8, writes = 300;
+  auto key_of = [](int i) { return "k" + std::to_string(i); };
+  for (int i = 0; i < keys; i++) {
+    chain_put(f.s, c, key_of(i), key_of(i) + ":0", true);
+  }
+  std::atomic<bool> writing{true}, stop{false};
+  std::atomic<int> errors{0};
+  std::atomic<int64_t> reaped{0};
+  std::vector<int> last_n(keys, 0);
+  auto fail = [&](const char *) { errors++; };
+  auto value_n = [&](int i, std::string_view v) {
+    std::string prefix = key_of(i) + ":";
+    if (v.substr(0, prefix.size()) != prefix) {
+      return -1;
+    }
+    return atoi(std::string(v.substr(prefix.size())).c_str());
+  };
+  std::vector<std::thread> threads;
+  for (int w = 0; w < 2; w++) {
+    sm1::session_t *s = f.open();
+    threads.emplace_back([&, s, w] {
+      for (int n = 1; n <= writes / 2; n++) {
+        for (int i = w; i < keys; i += 2) {
+          if (0 != sm1::begin(s, sm1::xctlevel_t::read_committed) ||
+              0 != sm1::chain_update(s, c, key_of(i),
+                                     key_of(i) + ":" + std::to_string(n)) ||
+              0 != sm1::commit(s)) {
+            fail("write");
+            sm1::abort(s);
+          }
+        }
+      }
+      // The final value of each of its keys, read after all end.
+      for (int i = w; i < keys; i += 2) {
+        last_n[i] = writes / 2;
+      }
+    });
+  }
+  for (int r = 0; r < 2; r++) {
+    sm1::session_t *s = f.open();
+    threads.emplace_back([&, s, r] {
+      std::vector<int> seen(keys, 0);
+      for (unsigned i = r; writing.load(); i = i * 5 + 3) {
+        int k = static_cast<int>(i % keys);
+        std::string_view v;
+        if (0 != sm1::begin(s, sm1::xctlevel_t::read_committed) ||
+            0 != sm1::chain_read(s, c, key_of(k), v)) {
+          fail("read");
+          sm1::abort(s);
+          continue;
+        }
+        int n = value_n(k, v);
+        if (n < seen[k]) {
+          fail("went back");
+        }
+        seen[k] = n;
+        sm1::commit(s);
+      }
+    });
+  }
+  {
+    sm1::session_t *s = f.open();
+    threads.emplace_back([&, s] {
+      while (writing.load()) {
+        std::vector<std::string> first(keys);
+        if (0 != sm1::begin(s, sm1::xctlevel_t::repeatable_read)) {
+          fail("begin");
+          continue;
+        }
+        for (int i = 0; i < keys; i++) {
+          std::string_view v;
+          if (0 != sm1::chain_read(s, c, key_of(i), v)) {
+            fail("snapshot read");
+          }
+          first[i] = std::string(v);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        for (int i = 0; i < keys; i++) {
+          std::string_view v;
+          if (0 != sm1::chain_read(s, c, key_of(i), v) || v != first[i]) {
+            fail("snapshot moved");
+          }
+        }
+        sm1::commit(s);
+      }
+    });
+  }
+  sm1::session_t *rs = f.open();
+  std::thread reaper([&] {
+    while (!stop.load()) {
+      int64_t n = sm1::row_reap_pass(rs, &stop);
+      if (n < 0) {
+        fail("pass");
+      } else {
+        reaped += n;
+      }
+      std::this_thread::yield();
+    }
+  });
+  threads[0].join();
+  threads[1].join();
+  writing = false;
+  for (size_t i = 2; i < threads.size(); i++) {
+    threads[i].join();
+  }
+  stop = true;
+  reaper.join();
+  CHECK(errors.load() == 0);
+  CHECK(reaped.load() > 0);
+
+  for (int i = 0; i < keys; i++) {
+    CHECK(read_one(f.s, c, key_of(i)) ==
+          key_of(i) + ":" + std::to_string(last_n[i]));
+  }
+  REQUIRE(sm1::row_reap_pass(f.s) >= 0);
+  std::vector<std::string> payloads;
+  CHECK(old_entries(f.s, c, &payloads).empty());
+}
