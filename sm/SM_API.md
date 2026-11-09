@@ -18,6 +18,7 @@ The count is the number of entries.
 
 | Section | Covers | Entries |
 |---|---|---|
+| [How a host uses sm.h](#how-a-host-uses-smh) | The order of calls, and a first program | 0 |
 | [Conventions](#conventions) | Rules for every entry: return values, error state, handles, memory, threads | 0 |
 | [Build](#build) | The flags the library was built with | 1 |
 | [Errors](#errors) | Read, keep and set the thread's error state | 7 |
@@ -35,10 +36,119 @@ The count is the number of entries.
 | [Statistics](#statistics) | Sizes, counters and planner statistics | 9 |
 | [Table and index DDL](#table-and-index-ddl) | Create, alter and drop a table or an index | 19 |
 
+## How a host uses sm.h
+
+A host does these things in this order. Each step names the
+section that has the calls.
+
+1. **Set up a home directory, once.** `sm_init` makes a
+   directory a wisr home.
+   ([Home directories](#home-directories-and-databases))
+2. **Attach it, once for each process.** `sm_attach` gives an
+   environment, `sm_env_t`. `sm_mkdb` makes a database in it.
+3. **Open a session.** `sm_opendb` gives a session,
+   `sm_session_t`, on one database. A session runs one
+   transaction at a time, on one thread at a time.
+4. **Begin a transaction.** `sm_begin`. Do the work, then
+   `sm_commit` or `sm_abort`. ([Transactions](#transactions))
+5. **Make the schema.** Create a table with
+   `sm_cat_create_table`. ([The catalog](#the-catalog),
+   [Table and index DDL](#table-and-index-ddl))
+6. **Open a table to use it.** `sm_tbl_open` gives a table
+   handle. It writes rows with `sm_tbl_insert`, `sm_tbl_update`
+   and `sm_tbl_delete`, and reads them with `sm_tbl_read` or a
+   cursor. ([Tables](#tables),
+   [Cursors](#cursors-over-rows-and-index-entries))
+7. **Close in the opposite order.** Close the cursors and the
+   tables, end the transaction, then `sm_closedb` and
+   `sm_detach`.
+
+### A first program
+
+This program makes a database with one table of one `int8`
+column, inserts a row, and reads it back. It leaves out the
+error handling after the first call, to keep the steps clear:
+each call returns -1 on error, as
+[Conventions](#return-values) says.
+
+```cpp
+#include "sm.h"
+
+// 1. Make a home directory, attach it, and make a database.
+sm_init("/data/home");                        // once in the home's life
+sm_env_t* env;
+sm_attach("/data/home", &env);                // once in each process
+sm_mkdb(env, "mydb", nullptr);                // nullptr: default options
+
+// 2. Open a session on the database.
+sm_session_t* sess;
+if (sm_opendb(env, "mydb", nullptr, &sess) != 0) {
+    fprintf(stderr, "%s: %s\n", sm_errname(), sm_errmsg());
+    return 1;
+}
+
+// 3. In one transaction, make the table. Type code 4 is int8.
+sm_begin(sess, SM_XCT_READ_COMMITTED, 0);
+std::vector<sm_column_spec_t> cols = {{"a", 4, -1, false}};
+uint64_t oid;
+sm_cat_create_table(sess, SM_NSP_PUBLIC, "t", cols, &oid);
+sm_commit(sess);
+
+// 4. In the next transaction, insert a row.
+sm_begin(sess, SM_XCT_READ_COMMITTED, 0);
+sm_tbl_t* tbl;
+sm_tbl_open(sess, oid, SM_LOCKMODE_IX, &tbl);  // IX: we will write
+sm_datum_t v = SM_DATUM_FROM_INT64(42);
+bool isnull = false;
+uint64_t id;                                   // the new row's _id
+sm_tbl_insert(tbl, &v, &isnull, 1, &id);
+sm_tbl_close(tbl);                             // the lock stays until commit
+sm_commit(sess);
+
+// 5. In a third transaction, scan the table and print each row.
+sm_begin(sess, SM_XCT_READ_COMMITTED, 1);      // 1: read only
+sm_tbl_open(sess, oid, SM_LOCKMODE_IS, &tbl);  // IS: we will read
+sm_rel_scan_t* scan;
+sm_tbl_scan(tbl, 0, UINT64_MAX, &scan);        // every _id
+const void* tuple;
+size_t len;
+while (sm_rel_scannxt(scan, &id, &tuple, &len) == 0) {
+    sm_datum_t d;
+    bool isnull;
+    sm_tbl_deform(tbl, tuple, len, &d, &isnull, 1);
+    printf("%lld\n", (long long)SM_DATUM_TO_INT64(d));
+}
+sm_rel_scanend(scan);                          // end the cursor first
+sm_tbl_close(tbl);
+sm_commit(sess);
+
+// 6. Close the session, then detach.
+sm_closedb(sess);
+sm_detach(env, 0);
+```
+
+The sections below give each call. A pointer a call hands out,
+such as `tuple` above, is good only until the next call on its
+cursor ([Memory](#memory)).
+
 ## Conventions
 
 These rules hold for every entry. An entry states only what
 differs.
+
+**In short:**
+
+- A call returns 0 on success and -1 on error. 1 is not an
+  error: it means "none" or "the end".
+- The error state is per thread. Read it with `sm_errnum` and
+  `sm_errmsg` right after a call that returned -1.
+- Some errors abort the transaction, and some leave it active.
+  The table in [The error state](#the-error-state) says which.
+- Close every handle you open. End a cursor before the next
+  `sm_begin`.
+- A pointer to a row points into engine memory. Copy what you
+  keep.
+- Use a session from one thread at a time.
 
 ### Words
 
@@ -228,6 +338,13 @@ string if sm0, sm1, sm2, sm3 and the wrapper agree, such as `-O3
 
 ## Errors
 
+**In short.** After a call returns -1, ask which error it was,
+and whether the work can be tried again. `sm_errnum` gives the
+code, `sm_errmsg` the text, and `sm_retryable` says if a new
+transaction may succeed. `sm_errdup` says which index a
+`SM_ERR_DUPKEY` met. `sm_seterr` lets the host record an error of
+its own.
+
 The error state is level 0's, thread-local
 ([`sm0/README.md`](sm0/README.md),
 [`DESIGN.md`](DESIGN.md#5-cross-level-decisions) §5).
@@ -340,6 +457,12 @@ process, because a thread may still be calling the one it
 replaces.
 
 ## Home directories and databases
+
+**In short.** Use these calls at the start and end of a
+process. `sm_init` runs once for a home directory. `sm_attach`
+and `sm_detach` bracket the process. `sm_mkdb` and `sm_rmdb`
+make and delete a database. `sm_opendb` and `sm_closedb` bracket
+each session.
 
 A home directory holds the global system database, every user
 database, the text log and the temporary files. Each database is
@@ -523,6 +646,14 @@ active transaction. A prepared transaction stays in doubt.
 `session` is invalid after the call, whether it succeeds or not.
 
 ## Transactions
+
+**In short.** A session runs one transaction at a time:
+`sm_begin`, the work, then `sm_commit` or `sm_abort`. A
+transaction holds statements (`sm_stmt_*`), which decide what its
+reads see, and savepoints (`sm_savepoint`, `sm_rollback`,
+`sm_forget`), which undo part of its writes. A row read into a
+pin (`sm_unpin`) stays valid until the pin is released. The last
+calls show who waits for whom (`sm_waits_for`, `sm_lock_status`).
 
 The Transaction Manager holds the design
 ([`XCTMGR.md`](XCTMGR.md)), and the
@@ -883,6 +1014,11 @@ Errors: `SM_ERR_NOSAVEPOINT`.
 
 ## Two-phase commit
 
+**In short.** `sm_prepare` makes a transaction durable but
+undecided, under a global id. Any session can then end it with
+`sm_commit_prepared` or `sm_abort_prepared`, also after a
+restart. `sm_list_prepared` shows the ones still open.
+
 The Transaction Manager holds the design
 ([`XCTMGR.md`](XCTMGR.md#10-two-phase-commit) §10).
 
@@ -945,6 +1081,11 @@ Errors: `SM_ERR_NOTFOUND`.
 
 ## Sequences, below the catalog
 
+**In short.** A sequence is a named counter. `sm_mkseq` makes
+one, `sm_nextseq` draws the next value, and `sm_rmseq` removes
+it. Use the catalog calls ([The catalog](#the-catalog)) for a
+SQL sequence.
+
 Sequence holds the design ([`SEQUENCE.md`](SEQUENCE.md)). These
 are counters of
 the caller's own, with a name and no namespace. SQL's CREATE
@@ -988,6 +1129,12 @@ Errors: `SM_ERR_NOTFOUND`, `SM_ERR_INVALID` (`out` is NULL, or
 the sequence is past `UINT64_MAX`).
 
 ## Types and collations
+
+**In short.** A value is an `sm_datum_t`. These calls find a
+type by its code (`sm_type`), turn text into a datum and back
+(`sm_type_in`, `sm_type_out`), and convert numbers
+(`sm_datum_from_*`, `sm_datum_to_*`). A collation orders text
+(`sm_collation_open`).
 
 These are sm2's ([`sm2/TYPE.md`](sm2/TYPE.md), and
 [`LSMINDEX.md`](LSMINDEX.md#23-text-and-collations) §2.3 for
@@ -1127,6 +1274,12 @@ Prints a non-null value of `type` under `typmod` as PostgreSQL's
 canonical text into `text`, as the type's typoutput does.
 
 ## Cursors over rows and index entries
+
+**In short.** To read many rows, open a cursor with a call from
+[Tables](#tables), then call `sm_rel_scannxt` (rows) or
+`sm_idx_scannxt` (index entries) until it returns 1. Seek to move
+the cursor, and end it with `sm_rel_scanend` or `sm_idx_scanend`
+before the next `sm_begin`. `sm_tup_encode` builds a tuple.
 
 The Row Store and the index modules hold the design
 ([`ROWSTORE.md`](ROWSTORE.md), [`LSMINDEX.md`](LSMINDEX.md),
@@ -1370,6 +1523,13 @@ void sm_idx_scanend(sm_idx_scan_t* scan);
 Closes a cursor.
 
 ## The catalog
+
+**In short.** The catalog holds the names: namespaces (SQL's
+schemas), tables, indexes and sequences. Create, drop and look up
+by name here, and get an oid. Then pass the oid to `sm_tbl_open`
+to use a table. A change shows to the session's own transaction
+at once, and to others at commit. The `epoch` and `publishes`
+calls tell a cache when the catalog changed.
 
 The Catalog holds the design ([`CATALOG.md`](CATALOG.md)), with
 Namespace
@@ -1745,6 +1905,10 @@ transaction sees it), `SM_ERR_INVALID` (past `UINT64_MAX`).
 
 ## Views
 
+**In short.** sm stores a view's name and the host's query, and
+keeps the view true to the relations it reads. Create, replace,
+rename and drop a view here, and look it up by name or oid.
+
 View holds the design ([`VIEW.md`](VIEW.md)). A view is a name in
 a
 namespace, a relation's, with the host's query behind it. sm
@@ -1903,6 +2067,13 @@ those the transaction has dropped.
 
 ## Index builds, TOAST and the btree reaper
 
+**In short.** These calls set up background work, mostly
+before the first `sm_opendb`. `sm_set_index_evaluator` tells sm
+how to compute an index expression. `sm_set_toast` says the host
+reads long values stored out of line. `sm_set_reaper_workers` and
+`sm_reaper_run` control the cleaning of B-tree indexes.
+`sm_cat_index_wait` waits for an index build to end.
+
 The Index Builder ([`INDEXBUILD.md`](INDEXBUILD.md)), TOAST
 ([`TOAST.md`](TOAST.md#2-design) §2) and
 the B-tree Index
@@ -2041,6 +2212,15 @@ Returns whether `val`, a non-null variable-width value, is a
 TOAST pointer.
 
 ## Tables
+
+**In short.** Open a table with `sm_tbl_open`, in a mode that
+says read (`SM_LOCKMODE_IS`) or write (`SM_LOCKMODE_IX`).
+Write with `sm_tbl_insert`, `sm_tbl_update` and
+`sm_tbl_delete`, or load many rows with `sm_tbl_load_*`. Read one
+row with `sm_tbl_read`, or many with a cursor (`sm_tbl_scan`,
+`sm_tbl_idx_scan`). Unpack a row with `sm_tbl_deform`. Close the
+table with `sm_tbl_close`; its lock stays until the transaction
+ends.
 
 An open table `sm_tbl_t` is a table's definition under the
 table-oid lock, its heap and its indexes. A write through it
@@ -2664,6 +2844,12 @@ is past the attribute count).
 
 ## Statistics
 
+**In short.** These calls give the size of a table or an index
+(`sm_tbl_size`, `sm_tbl_idx_size`), the cost of a lookup
+(`sm_tbl_probes`) and the planner's statistics (`sm_tbl_stats`).
+`sm_tbl_analyze` refreshes the statistics, and `sm_tbl_compact`
+compacts the table, as SQL's VACUUM does.
+
 Statistics holds the design
 ([`STATISTICS.md`](STATISTICS.md#9-the-design) §9). The size
 calls
@@ -2813,6 +2999,12 @@ keeps the ones it was given, whatever is analyzed since.
   reads one.
 
 ## Table and index DDL
+
+**In short.** Create, alter and drop tables, columns, indexes and
+foreign keys here. Each call works in the session's
+transaction and shows to others at commit. Most take the
+table's lock in X mode until the end of the transaction, so
+they wait for readers and writers of the table.
 
 The Catalog holds the design ([`CATALOG.md`](CATALOG.md#8-ddl)
 §8), with Temporary
