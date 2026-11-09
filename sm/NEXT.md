@@ -192,7 +192,7 @@ and so are the catalog tables psql reads
    misses some ([`BTREEINDEX.md`](BTREEINDEX.md#92-vacuum) §9.2
    gives the cases and why
    that is enough). A temporary table's trees are still walked.
-9. **Smaller btree leaf entries**
+9. **Smaller btree leaf entries: prefix compression**
    ([`BTREEINDEX.md`](BTREEINDEX.md#43-entries) §4.3, §12).
    A leaf entry is its key, its value and 6 bytes of lengths
    and slot (`sm2/src/tree/page.h`, `entry_size()`). An index on
