@@ -1542,8 +1542,9 @@ held_end lk_c
 # kind of the lock it waits on (../sm/LOCKMGR.md section 3.10).
 # 1. E, in a transaction, locks lkst's row 2 for update; F updates row 2 and
 #    waits.
-# 2. pg_lock_status() lists E's X on the row, granted, and F's, waited for,
-#    each a tuple of lkst.
+# 2. pg_lock_status() lists E's X on the row, granted, and F's NKU, waited
+#    for, as an update that keeps the row's key asks (../sm/LOCKMGR.md
+#    section 1.13), each a tuple of lkst.
 # 3. E commits: F's update goes through.
 held_start lk_e
 held_start lk_f
@@ -1572,7 +1573,7 @@ done
 tuple_rows > "$work/lock_status3.out" 2>&1
 cat > "$work/lock_status3.want" <<'ROWS'
 e|tuple|lkst|X|t
-f|tuple|lkst|X|f
+f|tuple|lkst|NKU|f
 ROWS
 cmp -s "$work/lock_status3.out" "$work/lock_status3.want" ||
   fail "lock status lists a write waiting on a row's lock"

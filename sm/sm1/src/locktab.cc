@@ -7,7 +7,10 @@
 
 namespace {
 
-/* A mode as an index into the tables below: IS, IX, S, SIX, X. */
+/*
+ * A mode as an index into the tables below: IS, IX, S, SIX, X, then the
+ * row modes KS and NKU (../LOCKMGR.md §1.13).
+ */
 int rank(sm_lockmode_t m) {
   switch (m) {
   case SM_LOCKMODE_IS:
@@ -20,6 +23,10 @@ int rank(sm_lockmode_t m) {
     return 3;
   case SM_LOCKMODE_EX:
     return 4;
+  case SM_LOCKMODE_KS:
+    return 5;
+  case SM_LOCKMODE_NKU:
+    return 6;
   }
   return 4;
 }
@@ -28,32 +35,45 @@ int rank(sm_lockmode_t m) {
 
 namespace wisr {
 
-/* Gray's compatibility of two modes; see locktab.h. */
+/*
+ * The compatibility of two modes; see locktab.h. Gray's five, and the
+ * row modes KS and NKU among a row's S and X. A row mode and an
+ * intention mode never meet, as a row lock never meets an oid lock:
+ * such a pair is no.
+ */
 bool lock_compatible(sm_lockmode_t a, sm_lockmode_t b) {
-  static const bool ok[5][5] = {
-      /*        IS     IX     S      SIX    X    */
-      /* IS  */ {true, true, true, true, false},
-      /* IX  */ {true, true, false, false, false},
-      /* S   */ {true, false, true, false, false},
-      /* SIX */ {true, false, false, false, false},
-      /* X   */ {false, false, false, false, false},
+  static const bool ok[7][7] = {
+      /*        IS     IX     S      SIX    X      KS     NKU   */
+      /* IS  */ {true, true, true, true, false, false, false},
+      /* IX  */ {true, true, false, false, false, false, false},
+      /* S   */ {true, false, true, false, false, true, false},
+      /* SIX */ {true, false, false, false, false, false, false},
+      /* X   */ {false, false, false, false, false, false, false},
+      /* KS  */ {false, false, true, false, false, true, true},
+      /* NKU */ {false, false, false, false, false, true, false},
   };
   return ok[rank(a)][rank(b)];
 }
 
-/* The weakest mode covering both; see locktab.h. */
+/*
+ * The weakest mode covering both; see locktab.h. Among a row's modes KS
+ * is below S and NKU, and S with NKU is X; a row mode with an intention
+ * mode, which never meet, is X.
+ */
 sm_lockmode_t lock_cover(sm_lockmode_t a, sm_lockmode_t b) {
-  static const sm_lockmode_t sup[5][5] = {
-      {SM_LOCKMODE_IS, SM_LOCKMODE_IX, SM_LOCKMODE_SH, SM_LOCKMODE_SIX,
-       SM_LOCKMODE_EX},
-      {SM_LOCKMODE_IX, SM_LOCKMODE_IX, SM_LOCKMODE_SIX, SM_LOCKMODE_SIX,
-       SM_LOCKMODE_EX},
-      {SM_LOCKMODE_SH, SM_LOCKMODE_SIX, SM_LOCKMODE_SH, SM_LOCKMODE_SIX,
-       SM_LOCKMODE_EX},
-      {SM_LOCKMODE_SIX, SM_LOCKMODE_SIX, SM_LOCKMODE_SIX, SM_LOCKMODE_SIX,
-       SM_LOCKMODE_EX},
-      {SM_LOCKMODE_EX, SM_LOCKMODE_EX, SM_LOCKMODE_EX, SM_LOCKMODE_EX,
-       SM_LOCKMODE_EX},
+  constexpr sm_lockmode_t IS = SM_LOCKMODE_IS, IX = SM_LOCKMODE_IX,
+                          S = SM_LOCKMODE_SH, SIX = SM_LOCKMODE_SIX,
+                          X = SM_LOCKMODE_EX, KS = SM_LOCKMODE_KS,
+                          NKU = SM_LOCKMODE_NKU;
+  static const sm_lockmode_t sup[7][7] = {
+      /*        IS   IX   S    SIX  X  KS   NKU */
+      /* IS  */ {IS, IX, S, SIX, X, X, X},
+      /* IX  */ {IX, IX, SIX, SIX, X, X, X},
+      /* S   */ {S, SIX, S, SIX, X, S, X},
+      /* SIX */ {SIX, SIX, SIX, SIX, X, X, X},
+      /* X   */ {X, X, X, X, X, X, X},
+      /* KS  */ {X, X, S, X, X, KS, NKU},
+      /* NKU */ {X, X, X, X, X, NKU, NKU},
   };
   return sup[rank(a)][rank(b)];
 }
@@ -119,12 +139,12 @@ namespace {
 
 /* The modes that conflict with each mode, as bits by their values. */
 struct conflict_masks_t {
-  uint32_t of[5] = {};
+  uint32_t of[7] = {};
 
-  /* Read them off Gray's table, once. */
+  /* Read them off the compatibility table, once. */
   conflict_masks_t() {
-    for (int want = 0; want < 5; want++) {
-      for (int held = 0; held < 5; held++) {
+    for (int want = 0; want < 7; want++) {
+      for (int held = 0; held < 7; held++) {
         if (!wisr::lock_compatible(static_cast<sm_lockmode_t>(held),
                                    static_cast<sm_lockmode_t>(want))) {
           of[want] |= uint32_t(1) << held;

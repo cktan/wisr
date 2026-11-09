@@ -21,6 +21,8 @@ struct sm2::rel_t {
   const tup_desc_t *desc; /* own_desc, or the one rel_open_desc borrows */
   std::span<const sm2::key_column_t> key; /* borrowed; none: by _id */
   std::span<const int32_t> key_atts;      /* each key column's attribute */
+  /* rel_set_key_columns's, borrowed: what an update must keep */
+  std::span<const int32_t> key_columns;
   std::string id_seq;
   std::string toast_seq; /* "" if the rel moves no datum out of line */
   bool toasts;           /* a toast_seq, and a variable-width attribute */

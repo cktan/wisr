@@ -135,8 +135,9 @@ any kind.
 ### 1.4 Modes and conversion
 
 `sm_lockmode_t` is Gray's five, for locking at several
-granularities, defined once in `include/sm_lock.h` and shared by
-sm1 and the C wrapper. Its values are persisted.
+granularities, and two modes of rows alone, KS and NKU (§1.13),
+defined once in `include/sm_lock.h` and shared by sm1 and the C
+wrapper. Its values are persisted.
 
 | Held \ asked | IS | IX | S | SIX | X |
 | --- | --- | --- | --- | --- | --- |
@@ -193,7 +194,8 @@ session's own (§3.4).
 5. With `as_read`, fail with `SM_ERR_SELFMODIFIED` if this
    transaction wrote that version after the statement began.
 6. If no other transaction's version is in flight and `lock_try`
-   succeeds, let the latch go and go to step 9.
+   succeeds, let the latch go and go to step 9. In KS, a chained
+   version in flight that kept its key is no obstacle (§1.13).
 7. Let the latch go. A try form returns 1 here.
 8. Wait for the writer in flight, or for the holders that
    conflict, and go to step 3.
@@ -238,8 +240,9 @@ T2 at REPEATABLE READ:
 ```
 
 The levels differ in where staleness is caught, not in whether it
-is. `sm1::lock_oid` runs no such check: no version of an oid can
-exist.
+is. In KS only a commit that changed the key fails the check
+(§1.13). `sm1::lock_oid` runs no such check: no version of an oid
+can exist.
 
 The check reads no version of its own. It uses the `commit_ts`
 of the read under the latch, step 4 of `sm1::lock_row`. No
@@ -258,9 +261,11 @@ protocol with the Lock Manager. `sm1::insert`, `sm1::update` and
 `sm1::erase`, and their `chain_` forms, do these steps:
 
 1. Take the latch of `(storeid, key)`.
-2. Unless the store is temporary, call `lock_write_check`. If
-   another transaction holds a lock that conflicts with a write,
-   let the latch go, call `lock_wait` for X, and go to step 1.
+2. Unless the store is temporary, call `lock_write_check` in
+   the write's mode: X, or NKU for a chained update that keeps
+   its key (§1.13). If another transaction holds a lock that
+   conflicts with it, let the latch go, call `lock_wait` in that
+   mode, and go to step 1.
 3. Read the newest version of the key. If another transaction
    wrote it and still runs, let the latch go, call
    `lock_wait_xact`, and go to step 1.
@@ -355,7 +360,8 @@ marked lock.
 | rollback to a savepoint taken before the lock | lock released, mark gone with it |
 
 - The mark is one bit on the session's own lock list, so no mutex
-  guards it. Only the exclusive holder reads or sets it.
+  guards it. Only a holder in X or NKU reads or sets it: either
+  keeps every other writer out (§1.13).
 - A successful write clears it. Left set, a later write would
   pass the check with no fresh read.
 - The mark is single-use. A later write needs no read while the
@@ -473,6 +479,96 @@ waits on every holder whose mode conflicts. That is the cost of
 shared modes. A wait on a transaction is an edge to the session
 that runs it. A prepared transaction waits on no one, so no cycle
 passes through it.
+
+### 1.13 Key-share modes
+
+A foreign key's check locks its parent row, so that the key it
+checked stays until the check's transaction ends. With S, the
+parent's every update waits for that transaction, one that leaves
+the key alone too:
+
+```sql
+create table customer (id int8 primary key, name text, phone text);
+create table orders (id int8 primary key,
+                     customer_id int8 references customer (id));
+-- A: begin; insert into orders values (100, 7);  holds customer 7
+-- B: update customer set phone = '555-0101' where id = 7;
+--    waits for A under S; with KS, goes ahead
+```
+
+PostgreSQL's four row modes are four of sm1's:
+
+| sm1 | PostgreSQL | Taken by |
+| --- | --- | --- |
+| KS | `FOR KEY SHARE` | a foreign key's check of its parent row |
+| S | `FOR SHARE` | `FOR SHARE`; sm3's arbiter and index build |
+| NKU | `FOR NO KEY UPDATE` | that clause; an update that keeps its key, as its write's mode |
+| X | `FOR UPDATE` | that clause; any other write |
+
+Among them:
+
+| Held \ asked | KS | S | NKU | X |
+| --- | --- | --- | --- | --- |
+| KS | ok | ok | ok | no |
+| S | ok | ok | no | no |
+| NKU | ok | no | no | no |
+| X | no | no | no | no |
+
+**They are row modes.** `sm1::lock_row` takes them;
+`sm1::lock_oid` refuses them with `SM_ERR_INVALID`. A row lock
+never meets an oid lock (§1.3), so KS and NKU never meet IS, IX
+or SIX; the table says no for any such pair. A conversion goes to
+the weakest mode covering both: KS is below S and NKU, and S with
+NKU is X.
+
+**A key column** is a column of a unique index on columns alone,
+not partial, and not an `INCLUDE` column: PostgreSQL's
+`INDEX_ATTR_BITMAP_KEY`. A pending unique index counts: one X too
+many is safe, one too few is not.
+
+**An update keeps its key** if no key column changes. The primary
+key never changes in place: a change moves the row, a delete and
+an insert (`../CLUSTER.md` §4). So the columns to compare are the
+key columns of the unique indexes but the primary key. sm3 keeps
+them in the table's definition (`table_def_t::key_columns`) and
+names them to sm2 as it opens the table
+(`sm2::rel_set_key_columns`). A table with none keeps its key on
+every update.
+
+**The compare is made under the key's latch**, against the
+version the write replaces. A row read earlier will not do: at
+READ COMMITTED another transaction may commit a change to a key
+column between that read and the write, and an update judged to
+keep the key would then pass a KS lock it should wait for. So
+`sm1::chain_update` takes `key_kept_fn`, sm2's, which reads the
+key columns of the old and the new tuple. `chain_write` calls it
+after it reads the version it checks against (§1.7 step 3), and
+only then calls `lock_write_check`, in NKU if the key is kept,
+else X.
+
+**The version says it kept the key**: `version_key_kept`
+(`0x08`), a flag of the chained value, in CURR and in the copy
+OLD keeps of it. An insert, a delete, a move and an update that
+changes a key are X, unflagged.
+
+**KS passes over a version that kept its key.** Under the latch,
+`sm1::chain_lock_row` in KS takes the lock over another
+transaction's version in flight when that version is flagged
+and is no tombstone (§1.5 step 6). If the same writer later
+writes the key again and changes it, its write is X, meets the
+KS lock, and waits.
+
+**KS's currency check** (§1.6), above READ COMMITTED, fails only
+on a version committed after the snapshot that changed the key: a
+tombstone, or one not flagged. It walks the key's versions newer
+than the snapshot, CURR, then OLD by `prev`. A committed update
+that kept the key is passed over, as PostgreSQL's `FOR KEY SHARE`
+passes over it (`heap_lock_tuple()`: `TM_BeingModified` and
+`TM_Updated` both reach the test of `HEAP_KEYS_UPDATED`).
+
+**A versioned store** carries no flag: its writes are an index's
+entries, never a row a foreign key locks. KS on one waits for any
+version in flight, as S does.
 
 ## 2. Lock subjects
 
@@ -1063,6 +1159,26 @@ that mutex, and sees the new definition
 - **Hashing a lock's name is safe; hashing a key is not.** A name
   collision costs a false wait. A key collision would refuse a
   value that is free.
+
+### 4.12 A foreign key's check and its parent's writes
+
+| Case | What happens |
+| --- | --- |
+| a child's insert (KS), then the parent's non-key update | no wait: KS and NKU |
+| a child's insert, then the parent's key update or delete | the parent's write, X, waits for the child's transaction |
+| the parent's non-key update in flight, then a child's insert | KS passes over the flagged version |
+| the parent's key change in flight, then a child's insert | KS waits for the writer; the old key gone, the child's insert fails |
+| `FOR SHARE`, then a non-key update | NKU waits for S, as in PostgreSQL |
+| two children's inserts on one parent | KS and KS |
+| a key changed and changed back, A to B to A | each write is X |
+| an `INCLUDE` column changed | NKU: not a key column |
+| a primary key changed | the row moves: X |
+| an abort, a savepoint's rollback | the version is dead or gone; its flag with it |
+| prepare, crash, restart | the record keeps each mode, KS and NKU among them; the flag is in the version |
+| REPEATABLE READ, a key-kept commit since the snapshot | KS succeeds; S, NKU and X fail with `SM_ERR_CONFLICT` |
+| a temporary table | no row lock (§1.5 step 2) |
+| a keyless table, rows by `_id` | its key columns are its unique indexes'; with none, every update keeps its key |
+| the GC, a stamp, the `CF:txn` sweep | a stamp keeps the flags; no filter reads the new one |
 
 ## 5. Rejected
 

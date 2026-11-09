@@ -702,8 +702,9 @@ The re-read is enforced, not requested:
 | rollback to a savepoint taken before the lock | lock released, mark gone with it |
 
 - **The mark is one bit on the session's own lock list**, not on
-  the shared table, so neither call takes a mutex. Only the
-  exclusive holder reads or sets it. The lock is held from the
+  the shared table, so neither call takes a mutex. Only a holder
+  in X or NKU (`LOCKMGR.md` §1.13), which every other writer
+  waits for, reads or sets it. The lock is held from the
   refused write on, so the newest committed version cannot change
   between the read and the write.
 - **The mark is single-use.** Left set, a write after a savepoint

@@ -1467,12 +1467,29 @@ int chain_insert(session_t* session, uint64_t storeid,
 /* sm1::insert_new, of a chained key. */
 int chain_insert_new(session_t* session, uint64_t storeid,
                      std::string_view key, std::string_view data);
-/* sm1::update, of a chained key; with pin, keeping the row replaced. */
-int chain_update(session_t* session, uint64_t storeid,
-                 std::string_view key, std::string_view data);
+/*
+ * Whether an update keeps its row's key (../LOCKMGR.md §1.13): given
+ * ctx, the tuple the update replaces and the new one, true if no key
+ * column of the row changes. It runs under the key's latch, so it
+ * may not call sm1; it is noexcept, and a doubt is false.
+ */
+typedef bool (*key_kept_fn)(void* ctx, std::string_view old_tuple,
+                            std::string_view new_tuple) noexcept;
+
+/*
+ * sm1::update, of a chained key; with pin, keeping the row replaced.
+ * With kept, an update that keeps its key, as kept says against the
+ * version it replaces, is written in NKU: it does not wait for a KS
+ * lock, and its version is flagged so that KS passes over it
+ * (../LOCKMGR.md §1.13). Without, every update is X.
+ */
 int chain_update(session_t* session, uint64_t storeid,
                  std::string_view key, std::string_view data,
-                 rawpin_t* pin, std::string_view& old);
+                 key_kept_fn kept = nullptr, void* ctx = nullptr);
+int chain_update(session_t* session, uint64_t storeid,
+                 std::string_view key, std::string_view data,
+                 rawpin_t* pin, std::string_view& old,
+                 key_kept_fn kept = nullptr, void* ctx = nullptr);
 /* sm1::erase, of a chained key; with pin, keeping the row erased. */
 int chain_erase(session_t* session, uint64_t storeid,
                 std::string_view key);

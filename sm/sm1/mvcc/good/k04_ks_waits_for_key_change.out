@@ -1,0 +1,57 @@
+# k04 -- a key-share lock waits for an update in flight that changed
+# the key, then fails its currency check.
+#
+# T1's update changes R1's key, unflagged. T2's KS lock waits for
+# T1. When T1 commits, the newest version of R1 changed the key
+# after T2's snapshot, so T2's lock fails with conflict, as
+# PostgreSQL's FOR KEY SHARE fails on HEAP_KEYS_UPDATED.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T2 read R1 -> 0
+@3 T1 write R1 t1 -> ok
+@4 T2 lock R1 keyshare blocks -> blocked
+@5 T1 commit -> ok
+@4 T2 lock R1 keyshare blocks -> conflict (resumed)
+@6 check last T2 conflict -> satisfied
+@7 T2 abort -> notrans
+@8 check committed T1 -> satisfied
+@9 check row R1 t1 -> satisfied
+== pairing RR/S == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T2 read R1 -> 0
+@3 T1 write R1 t1 -> ok
+@4 T2 lock R1 keyshare blocks -> blocked
+@5 T1 commit -> ok
+@4 T2 lock R1 keyshare blocks -> conflict (resumed)
+@6 check last T2 conflict -> satisfied
+@7 T2 abort -> notrans
+@8 check committed T1 -> satisfied
+@9 check row R1 t1 -> satisfied
+== pairing S/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T2 read R1 -> 0
+@3 T1 write R1 t1 -> ok
+@4 T2 lock R1 keyshare blocks -> blocked
+@5 T1 commit -> ok
+@4 T2 lock R1 keyshare blocks -> conflict (resumed)
+@6 check last T2 conflict -> satisfied
+@7 T2 abort -> notrans
+@8 check committed T1 -> satisfied
+@9 check row R1 t1 -> satisfied
+== pairing S/S == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T2 read R1 -> 0
+@3 T1 write R1 t1 -> ok
+@4 T2 lock R1 keyshare blocks -> blocked
+@5 T1 commit -> ok
+@4 T2 lock R1 keyshare blocks -> conflict (resumed)
+@6 check last T2 conflict -> satisfied
+@7 T2 abort -> notrans
+@8 check committed T1 -> satisfied
+@9 check row R1 t1 -> satisfied

@@ -1537,11 +1537,12 @@ int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t id, sm_pin_ref_t* ref,
 
 /*
  * Lock the row with _id id in mode without writing it, to the end
- * of the transaction: SM_LOCKMODE_SH, as a foreign key check locks
- * the parent row and SELECT ... FOR SHARE a row it read, which
- * other readers of the key may share and a writer waits for; or
- * SM_LOCKMODE_EX, as SELECT ... FOR UPDATE. Any mode but
- * SM_LOCKMODE_SH needs the table opened to write. The row need not
+ * of the transaction, in a row mode (../LOCKMGR.md §1.13):
+ * SM_LOCKMODE_KS, as a foreign key check locks the parent row,
+ * which an update that keeps the row's key passes; SM_LOCKMODE_SH,
+ * as SELECT ... FOR SHARE, which every writer waits for;
+ * SM_LOCKMODE_NKU, as FOR NO KEY UPDATE; or SM_LOCKMODE_EX, as FOR
+ * UPDATE. NKU and EX need the table opened to write. The row need not
  * exist. It waits as a write does. A row the transaction changed
  * after the running statement began is not locked:
  * SM_ERR_SELFMODIFIED, as a write of it, which a FOR UPDATE cursor

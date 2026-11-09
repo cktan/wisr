@@ -497,12 +497,14 @@ int lock_try(sm1::session_t *session, const lockid_t &id, sm1::lockmode_t mode,
 
 /*
  * For a write (../LOCKMGR.md §1.7): 2 if another transaction holds
- * a lock on (storeid, key) that a write conflicts with, else 0,
- * converting the session's own lock on the key, if it holds one,
- * to exclusive. A write without a lock of its own takes none.
+ * a lock on (storeid, key) that a write in mode conflicts with, else
+ * 0, converting the session's own lock on the key, if it holds one,
+ * to cover mode. mode is X, or NKU for a chained update that keeps
+ * its key (§1.13). A write without a lock of its own takes none.
  */
 int lock_write_check(sm1::session_t *session, uint64_t storeid,
-                     rocksdb::Slice key);
+                     rocksdb::Slice key,
+                     sm1::lockmode_t mode = sm1::SM_LOCKMODE_EX);
 
 /*
  * Block until no other transaction holds the lock id in a mode

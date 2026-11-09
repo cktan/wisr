@@ -110,16 +110,51 @@ int write_new(sm2::rel_t *rel, std::string_view key, std::string_view tuple) {
 }
 
 /*
+ * Whether new_tuple has old_tuple's key columns, rel_t's, bit for
+ * bit, as PostgreSQL's heap_attr_equals compares them: sm1's
+ * key_kept_fn, called under the key's latch. A tuple that cannot be
+ * read changes the key, the safe answer.
+ */
+bool key_kept(void *ctx, std::string_view old_tuple,
+              std::string_view new_tuple) noexcept {
+  const auto *rel = static_cast<const sm2::rel_t *>(ctx);
+  const auto &schema = rel->desc->schema;
+  for (int32_t att : rel->key_columns) {
+    sm2::datum_t a = 0, b = 0;
+    bool anull = false, bnull = false;
+    if (sm2::tup_decode(*rel->desc, old_tuple, att, a, anull) != 0 ||
+        sm2::tup_decode(*rel->desc, new_tuple, att, b, bnull) != 0) {
+      return false;
+    }
+    if (anull != bnull) {
+      return false;
+    }
+    if (anull) {
+      continue;
+    }
+    std::string_view x, y;
+    if (sm2::datum_bytes(schema[att].type, schema[att].typmod, a, x) != 0 ||
+        sm2::datum_bytes(schema[att].type, schema[att].typmod, b, y) != 0 ||
+        x != y) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/*
  * Replace the row at key with tuple, already checked; with pin, the
- * tuple replaced pinned into it, and old viewing it.
+ * tuple replaced pinned into it, and old viewing it. A chained row's
+ * update says whether it keeps its key by key_kept.
  */
 int write_update(sm2::rel_t *rel, std::string_view key, std::string_view tuple,
                  sm1::rawpin_t *pin, std::string_view *old) {
   std::string k = row_key(rel->relid, key);
   if (rel->chained) {
     return pin ? sm1::chain_update(rel->session, rel->storeid, k, tuple, pin,
-                                   *old)
-               : sm1::chain_update(rel->session, rel->storeid, k, tuple);
+                                   *old, key_kept, rel)
+               : sm1::chain_update(rel->session, rel->storeid, k, tuple,
+                                   key_kept, rel);
   }
   return pin ? sm1::update(rel->session, rel->storeid, k, tuple, pin, *old)
              : sm1::update(rel->session, rel->storeid, k, tuple);
@@ -668,6 +703,11 @@ std::span<const attribute_t> rel_schema(const rel_t *rel) {
 
 /* Whether a rel is keyed by a primary key; see sm2.h. */
 bool rel_keyed(const rel_t *rel) { return !rel->key.empty(); }
+
+/* Name a rel's key columns, which an update must keep; see sm2.h. */
+void rel_set_key_columns(rel_t *rel, std::span<const int32_t> attnums) {
+  rel->key_columns = attnums;
+}
 
 /* Whether a rel's rows are a chained store's; see sm2.h. */
 bool rel_chained(const rel_t *rel) { return rel->chained; }

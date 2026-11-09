@@ -620,6 +620,15 @@ void rel_close(rel_t* rel);
 /* The schema a rel lays its rows out by. */
 std::span<const attribute_t> rel_schema(const rel_t* rel);
 
+/*
+ * Name a rel's key columns (../LOCKMGR.md §1.13), attnums, 0-based,
+ * borrowed: the columns of its unique indexes but the primary key.
+ * An update of a chained rel that changes none of them, bit for bit,
+ * keeps its key: sm1 writes it in NKU and flags it, and a KS lock
+ * passes over it. None, the default: every update keeps its key.
+ */
+void rel_set_key_columns(rel_t* rel, std::span<const int32_t> attnums);
+
 /* Whether a rel is keyed by a primary key, not by _id. */
 bool rel_keyed(const rel_t* rel);
 
