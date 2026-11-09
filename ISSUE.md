@@ -191,6 +191,57 @@ remains in place.
 Smaller points:
 
 
+### A bulk load's sort is interrupted, at times
+
+**Open, seen once, 2026-11-09.** `dg/test/server.sh` failed in a
+full `make test` on `main` at `57991774`, the debug build. A
+`COPY` into an empty keyed table, a bulk load, failed:
+
+```text
+ERROR:  could not end a bulk load: sort: interrupted
+STATEMENT:  copy tl1 from '.../build/test/server/load.tsv'
+```
+
+The checks after it that read `tl1` failed with it ("bulk load",
+"copy of a taken key into a table with rows", "a failed copy into
+a table with rows"). Two runs of `server.sh` alone after it did
+not repeat it.
+
+**What is known.** The sort fails in `check_interrupt()`
+(`sm/sm0/src/sort.cc`) when any bit of `sm_wait_mask()` is
+pending on the calling thread. Bits are a thread's own (`sm_sys.h`),
+so something interrupted the session's thread while its load
+sorted. The COPY runs in a session of its own, which sets no
+timeout and is cancelled by nothing. Not known: which bit it was.
+
+**Checked, and unlikely.** Earlier in `server.sh`, eight sessions
+set `statement_timeout` to 1 to 8 seconds by `ALTER SYSTEM`, and
+`ALTER SYSTEM RESET ALL` removes them. No reload runs between the
+two, and the file is read only at a reload, so none should have
+applied. A reload from elsewhere between them would make a timeout
+of a second or more live, which a load of 100,000 rows can pass.
+
+**Suspects, not checked:**
+
+- The lock-wait timer (`sm_set_lock_wait_hook()`, closed issue
+  above): "an expired timer stays armed until the alarm handler
+  reports it". A bit left from an earlier wait could reach a
+  later sort.
+- A bit digres raises to a session for its own reasons, such as
+  a catch-up or a barrier, that a sort takes as an interrupt.
+
+**First to do:**
+
+1. Print the pending bits in the sort's error, so the next failure
+   names its bit.
+2. Run the bulk-load part of `server.sh` in a loop, alone and
+   beside a load, until it fails.
+
+The same full run, and one run alone, also failed at other
+checks that passed the next time: "logging_collector: rotation
+by size" and "tls: verify-full with the CA". `server.sh` was flaky
+on this box that day; another user's processes ran on it.
+
 ## 2. Costs to profile
 
 Found 2026-11-06 by `bench/privcheck.sh`, not by a review.
