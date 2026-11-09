@@ -2,7 +2,8 @@
 
 This plan runs a school web app against digres for 4 hours.
 It shows whether digres leaks memory or gets slower with time.
-It is a plan only: the scripts do not exist yet.
+The scripts are `soak.sh`, `soak/schema.sql`, the transaction
+scripts in `soak/`, and `soak/report.py`.
 
 ## 1. Objective and pass criteria
 
@@ -33,7 +34,9 @@ The school is fictitious. All names come from a fixed seed.
 | enrollment | about 100000 | student_id, class_id, grade |
 
 - Primary key of `enrollment` is (student_id, class_id).
-- Secondary indexes: `enrollment(class_id)`, `class(prof_id)`.
+- Secondary indexes, both `USING btree` (digres makes lsm ones
+  by default): `enrollment(class_id, student_id)` and
+  `class(prof_id)`.
 - A drop-class deletes the enrollment row.
 
 Transaction mix, by count:
@@ -43,15 +46,24 @@ Transaction mix, by count:
 | 80% | student schedule (join of enrollment and class) | read |
 | | prof schedule, class roster, a student's grades | read |
 | 10% | set the grade of a student in a class | update |
-| 5% | drop a class | delete |
+| 5% | drop a class: delete one enrollment | delete |
 | 5% | add a class: check capacity, insert enrollment | insert |
 
 - The update share (15%) is the grade update (10%) plus the
   drop (5%).
 - Delete and insert are equal, so the table size stays steady.
-- Ids follow a Zipf-like skew: some students and classes are hot.
-  Hot rows give conflicts between add and drop on a full class.
-- A serialization failure is counted and retried, not an error.
+- The roster read and the grade update pick a class with a Zipf
+  skew: some classes are hot. Students and profs are uniform.
+- The add picks a class uniformly. With hot classes the adds
+  would fail on full classes, the deletes would not, and the
+  table would shrink without end.
+- The add runs `SERIALIZABLE`, so two students cannot take the
+  last seat. The other transactions run at the default level.
+- The drop deletes with `class_id IN (subquery)`. The form
+  `class_id = (subquery)` hits a digres bug: an empty subquery
+  gives a NULL key, and digres scans the whole index.
+- A serialization failure is retried (`--max-tries=10`) and
+  counted, not an error.
 
 ## 3. Roles
 
@@ -78,7 +90,10 @@ failures, and reports latency by interval.
 - The reconnecting group finds leaks at connection teardown.
 - The persistent group finds leaks in a long session: plan
   caches, snapshots, open iterators.
-- Both groups run at the same time, for 4 hours (`-T 14400`).
+- Each group has one role: three student clients and two prof
+  clients reconnect; three student and one prof client stay.
+- Both groups run at the same time, for 4 hours after the
+  warm-up (`DURATION=15300` in `soak.sh`).
 - The query count is a floor, not the limit: the run must also
   pass 100k queries, and it will, by a wide margin.
 
@@ -101,7 +116,8 @@ failures, and reports latency by interval.
 11. Stop the server with SIGINT, start it again, and check that
     the data is intact.
 12. Do steps 2 to 11 for PostgreSQL 18, with the settings of
-    `run.sh`, for the comparison.
+    `run.sh`, for the comparison. It runs 2 hours after the
+    warm-up, not 4: it is the reference curve.
 13. Write the report (section 8).
 
 ## 6. Sampler
@@ -111,8 +127,8 @@ A script writes one CSV row each minute to `bench/build/soak`.
 - For the postmaster and each backend, from `/proc`: RSS, PSS,
   thread count and open file descriptor count.
 - Size of the data directory.
-- RocksDB statistics: block cache use, memtable size, number of
-  files, pending compaction bytes.
+- The number of files in the data directory. RocksDB's own
+  statistics are not visible from outside the server.
 - The client side: the `pgbench` progress line (tps, latency,
   failures, retries).
 
@@ -120,8 +136,8 @@ A script writes one CSV row each minute to `bench/build/soak`.
 
 - No class has more enrollments than its capacity.
 - No enrollment row names a student or a class that is absent.
-- The row counts equal the number that the clients committed
-  (inserts minus deletes, from the `pgbench` logs).
+- The row count of `enrollment` is the same by a table scan, by
+  the primary key and by the secondary index.
 - Restart: the server starts again with no error in its log,
   and the counts above are the same.
 
