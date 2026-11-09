@@ -1307,8 +1307,8 @@ call reaches into the primary's memory, and so does
 | --- | --- |
 | `xct_status(db, xid, &commit_ts)` | the active table, the commit cache, and `CF:txn` |
 | the watermark it judges against | the registered snapshots |
-| `db->purges`, `gc_cv` | the in-process purge queue |
-| `db->repairs` (`chain_report()`) | the in-process queue of chained keys to put back |
+| `db->purges`, `gc_cv` | the in-process purge queue, a bounded hint ([`GC.md`](GC.md#46-the-hint-queues) §4.6) |
+| `db->repairs` (`chain_report()`) | the in-process queue of chained keys to put back, bounded the same way |
 | `db->gc_filter_errors` | the counter the `CF:txn` sweep consults |
 
 The first two are inputs the worker lacks. The last three are

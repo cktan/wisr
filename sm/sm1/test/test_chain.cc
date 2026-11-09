@@ -666,9 +666,11 @@ TEST_CASE("compaction reports a dead chained version, and GC puts it back") {
   // readers pass them, and the compaction filter queues the key for
   // the GC worker, which puts the version before them back.
   // 1. Insert k = v1 and n = n1 and commit; update k to v2 and v3,
-  //    insert m, delete n, and abort.
+  //    insert m, delete n, and abort. Commit another store, so a
+  //    snapshot is past the dead versions' timestamps.
   // 2. Readers see k = v1, n = n1 and no m; the dead versions are
-  //    still each key's newest, and a read queues nothing.
+  //    still each key's newest, and the reads queue the three keys,
+  //    once each.
   // 3. Compact, and run GC once: k's newest version is v1 again, n's
   //    n1, and m's key is gone; the old versions passed are unlinked.
   chain_fixture_t f;
@@ -681,7 +683,13 @@ TEST_CASE("compaction reports a dead chained version, and GC puts it back") {
   REQUIRE(sm1::chain_insert(f.s, c, "m", "m1") == 0);
   REQUIRE(sm1::chain_erase(f.s, c, "n") == 0);
   REQUIRE(sm1::abort(f.s) == 0);
+  // A commit past the dead versions' timestamps: a reader's snapshot
+  // then reaches them, and finds their writer dead.
+  mkchain(f.s);
 
+  // Hold gc_run_mu, which a GC run takes first, so the database's own
+  // GC thread takes nothing from the queue meanwhile.
+  std::unique_lock<std::mutex> run(f.s->db->gc_run_mu);
   begin_xct(f.s);
   CHECK(chain_get(f.s, c, "k") == "v1");
   CHECK(chain_get(f.s, c, "n") == "n1");
@@ -694,10 +702,8 @@ TEST_CASE("compaction reports a dead chained version, and GC puts it back") {
   CHECK(payload == "v3");
   curr_of(f.s, c, "m", &payload);
   CHECK(payload == "m1");
-  {
-    std::lock_guard<std::mutex> guard(f.s->db->gc_mu);
-    CHECK(f.s->db->repairs.empty());
-  }
+  CHECK(f.s->db->repairs.size() == 3);
+  run.unlock();
 
   compact_chain(f.s, c);
   gc_run_once(f.s->db);
@@ -1086,6 +1092,52 @@ std::vector<std::string> batch_reads(sm1::session_t *s, uint64_t storeid,
 }
 
 } // namespace
+
+TEST_CASE("a read reports a dead chained version, and GC puts it back") {
+  // Verify each kind of read queues the dead newest version it passes
+  // (../GC.md §4.2), so a repair needs no compaction.
+  // 1. Insert p, b and s, commit, then update each and abort: each
+  //    key's newest version is dead. Commit another store, so a
+  //    snapshot is past the dead versions' timestamps.
+  // 2. Read p by a point read, b by a batch read and s by a cursor,
+  //    then read all three again.
+  // 3. The queue holds the three keys, once each.
+  // 4. Run GC once, with no compaction: each key's newest version is
+  //    the one before the abort.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  for (const char *k : {"p", "b", "s"}) {
+    chain_put(f.s, c, k, std::string(k) + "1", true);
+  }
+  begin_xct(f.s);
+  for (const char *k : {"p", "b", "s"}) {
+    REQUIRE(sm1::chain_update(f.s, c, k, "dead") == 0);
+  }
+  REQUIRE(sm1::abort(f.s) == 0);
+  // A commit past the dead versions' timestamps: a reader's snapshot
+  // then reaches them, and finds their writer dead.
+  mkchain(f.s);
+
+  {
+    // Hold gc_run_mu, so the database's own GC thread takes nothing.
+    std::lock_guard<std::mutex> run(f.s->db->gc_run_mu);
+    for (int round = 0; round < 2; round++) {
+      begin_xct(f.s);
+      CHECK(chain_get(f.s, c, "p") == "p1");
+      CHECK(batch_reads(f.s, c, {"b"}) == std::vector<std::string>{"b1"});
+      CHECK(chain_rows(f.s, c, "s", 1, "s", 1) ==
+            std::vector<std::string>{"s=s1"});
+      commit_xct(f.s);
+    }
+    CHECK(f.s->db->repairs.size() == 3);
+  }
+  gc_run_once(f.s->db);
+  for (const char *k : {"p", "b", "s"}) {
+    std::string payload;
+    curr_of(f.s, c, k, &payload);
+    CHECK(payload == std::string(k) + "1");
+  }
+}
 
 TEST_CASE("a batch read gives each key's row as a single read does") {
   // Verify sm1::chain_read_batch against sm1::chain_read

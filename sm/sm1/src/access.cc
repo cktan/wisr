@@ -21,9 +21,12 @@ using namespace wisr;
 
 namespace {
 
-/* 1 if version v is visible at view, 0 if not, -1 on error (../XCTMGR.md §3.3).
+/*
+ * 1 if version v is visible at view, 0 if not, -1 on error (../XCTMGR.md §3.3).
+ * When v is not visible because its writer is dead, *dead is set, if given.
  */
-int visible(db_t *db, const version_t &v, const view_t &view) {
+int visible(db_t *db, const version_t &v, const view_t &view,
+            bool *dead = nullptr) {
   // Our own write: visible unless a rollback undid it.
   if (view.xid != 0 && v.xid == view.xid) {
     return v.seq <= view.seq_hwm; // own write, savepoint-aware
@@ -39,10 +42,20 @@ int visible(db_t *db, const version_t &v, const view_t &view) {
     commit_ts = v.commit_ts;
   } else {
     // Otherwise resolve the writer through CF:txn.
-    int r = xct_resolve(db, v.xid, &commit_ts);
-    // Not committed, or an error: not visible.
-    if (r <= 0) {
-      return r;
+    switch (xct_status(db, v.xid, &commit_ts)) {
+    case XCT_COMMITTED:
+      break;
+    case XCT_DEAD:
+      // Not visible; the caller may queue the dead version for repair.
+      if (dead) {
+        *dead = true;
+      }
+      return 0;
+    case XCT_ERROR:
+      return -1;
+    default:
+      // In flight: not visible.
+      return 0;
     }
   }
   // Visible if it committed at or before our snapshot.
@@ -1128,8 +1141,9 @@ void access_undo_add(sm1::session_t *s, sm1::session_t::undo_t undo) {
 }
 
 /* The visibility test of ../XCTMGR.md §3.3, for chain.cc. */
-int access_visible(db_t *db, const version_t &v, const view_t &view) {
-  return visible(db, v, view);
+int access_visible(db_t *db, const version_t &v, const view_t &view,
+                   bool *dead) {
+  return visible(db, v, view, dead);
 }
 
 /* Step past an invisible version, as a read does, for chain.cc. */

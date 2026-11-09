@@ -675,8 +675,9 @@ int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
   return 0;
 }
 
-int chain_resolve(sm1::session_t *s, const store_t &st, const view_t &view,
-                  int r, chain_version_t &v, sm1::rawpin_t *pin);
+int chain_resolve(sm1::session_t *s, const store_t &st, uint64_t storeid,
+                  rocksdb::Slice key, const view_t &view, int r,
+                  chain_version_t &v, sm1::rawpin_t *pin);
 
 /*
  * The version of key a reader at view sees, into pin: 0, 1 if it
@@ -694,25 +695,37 @@ int chain_get(sm1::session_t *s, const store_t &st, uint64_t storeid,
   defer { db_read_leave(s->db, epoch); };
   chain_version_t v;
   int r = get_curr(st, key, &pin->got, &v);
-  return chain_resolve(s, st, view, r, v, pin);
+  return chain_resolve(s, st, storeid, key, view, r, v, pin);
 }
 
 /*
  * From v, a key's newest version as get_curr() read it with r, to
  * the version a reader at view sees, into pin, following the chain
  * through OLD: 0, 1 if it sees none, or -1 (../ROWSTORE.md §5.3). The
- * caller holds a read epoch.
+ * caller holds a read epoch. key is the userkey: when its newest
+ * version is a dead writer's, the read queues the key for the worker
+ * to put the version before it back (../GC.md §4.2).
  */
-int chain_resolve(sm1::session_t *s, const store_t &st, const view_t &view,
-                  int r, chain_version_t &v, sm1::rawpin_t *pin) {
+int chain_resolve(sm1::session_t *s, const store_t &st, uint64_t storeid,
+                  rocksdb::Slice key, const view_t &view, int r,
+                  chain_version_t &v, sm1::rawpin_t *pin) {
+  // The first version is the newest, CURR's; the rest are OLD's.
+  bool newest = true;
   for (;;) {
     if (r != 0) {
       return r;
     }
-    int seen = access_visible(s->db, v.as_version(), view);
+    bool dead = false;
+    int seen =
+        access_visible(s->db, v.as_version(), view, newest ? &dead : nullptr);
     if (seen < 0) {
       return -1;
     }
+    // A temporary store's keys are not the worker's to repair.
+    if (dead && nullptr == st.owner) {
+      chain_report(s->db, storeid, key, v.xid);
+    }
+    newest = false;
     if (seen == 1) {
       if (v.flags & version_tombstone) {
         return 1;
@@ -956,7 +969,11 @@ int read_chained_batch(sm1::session_t *s, uint64_t storeid,
         return set_error(sm1::SM_ERR_CORRUPT, "malformed version");
       }
     }
-    r = chain_resolve(s, st, view, r, v, pin);
+    // The userkey is the slice less its class byte.
+    r = chain_resolve(
+        s, st, storeid,
+        rocksdb::Slice(slices[i].data() + 1, slices[i].size() - 1), view, r, v,
+        pin);
     if (r < 0) {
       return -1;
     }
@@ -1000,6 +1017,9 @@ sm1::scan_t *scan_chained(sm1::session_t *s, uint64_t storeid,
   c->seq_hwm = view.seq_hwm;
   c->chained = true;
   c->cf = st.cf;
+  c->chain_storeid = storeid;
+  // A temporary store's keys are not the worker's to repair.
+  c->report_dead = nullptr == st.owner;
   // Under SERIALIZABLE, register the range before the snapshot, so a
   // write into it after the snapshot finds the SIREAD entry (../ROWSTORE.md
   // §5.6). A temporary store takes none.
@@ -1045,14 +1065,14 @@ sm1::scan_t *scan_chained(sm1::session_t *s, uint64_t storeid,
 /*
  * Whether view sees v, as access_visible: a stamped version here,
  * the common case, by its stamps alone (../XCTMGR.md §3.3, access.cc
- * visible()).
+ * visible()). *dead is set as access_visible sets it.
  */
 int chain_visible(wisr::db_t *db, const wisr::chain_version_t &v,
-                  const wisr::view_t &view) {
+                  const wisr::view_t &view, bool *dead) {
   if (v.flags & version_stamped) {
     return v.wts <= view.snapshot_ts && v.commit_ts <= view.snapshot_ts;
   }
-  return wisr::access_visible(db, v.as_version(), view);
+  return wisr::access_visible(db, v.as_version(), view, dead);
 }
 
 } // namespace
@@ -1183,26 +1203,27 @@ int chain_restore(db_t *db, const store_t &st, rocksdb::Slice key, uint64_t xid,
 /* Queue a chained key whose newest version is dead; see db.h. */
 void chain_report(db_t *db, uint64_t storeid, rocksdb::Slice key,
                   uint64_t xid) {
-  std::lock_guard<std::mutex> guard(db->gc_mu);
-  db->repairs.push_back({storeid, key.ToString(), xid});
+  // A full queue or a key already queued drops this one: a hint.
+  db->repairs.push(storeid, xid, std::string_view(key.data(), key.size()));
 }
 
 /* Put back each queued chained key; see db.h. */
-void chain_repair(db_t *db, const std::vector<db_t::repair_t> &repairs) {
-  for (const db_t::repair_t &r : repairs) {
+void chain_repair(db_t *db, const hint_queue_t::batch_t &repairs) {
+  repairs.for_each([&](const hint_queue_t::record_t &r) {
     store_t st = db_store(db, r.storeid);
     // A store dropped since has nothing to repair.
     if (!st.chained) {
-      continue;
+      return;
     }
+    rocksdb::Slice key(r.key.data(), r.key.size());
     // Under the key's latch, so no write of it comes between.
-    std::lock_guard<std::mutex> latch(lock_latch(db, r.storeid, r.key));
-    if (chain_restore(db, st, r.key, r.xid, 0) != 0) {
+    std::lock_guard<std::mutex> latch(lock_latch(db, r.storeid, key));
+    if (chain_restore(db, st, key, r.xid, 0) != 0) {
       log_msg(sm1::loglevel_t::warn,
               "database {}: a chained key could not be put back: {}",
               db->name.c_str(), sm1::errmsg());
     }
-  }
+  });
 }
 
 /* The id after the store's last old version; see db.h. */
@@ -1257,13 +1278,22 @@ int chain_scan_next(sm1::scan_t *c, std::string_view &key,
       c->state = -1;
       return set_error(sm1::SM_ERR_CORRUPT, "malformed version");
     }
-    // Walk the key's chain to the version the cursor sees.
+    // Walk the key's chain to the version the cursor sees. The first
+    // version is the newest, CURR's.
+    bool newest = true;
     for (;;) {
-      int r = chain_visible(db, v, view);
+      bool dead = false;
+      int r = chain_visible(db, v, view, newest ? &dead : nullptr);
       if (r < 0) {
         c->state = -1;
         return -1;
       }
+      // Queue a dead newest version for the worker (../GC.md §4.2).
+      if (dead && c->report_dead) {
+        chain_report(db, c->chain_storeid, rocksdb::Slice(c->last_examined),
+                     v.xid);
+      }
+      newest = false;
       if (1 == r) {
         // A tombstone hides the key; a row is handed out, lent by the
         // iterator or by got until the next call.

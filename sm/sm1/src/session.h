@@ -374,6 +374,12 @@ struct sm1::scan_t {
    */
   bool chained = false;
   rocksdb::ColumnFamilyHandle *cf = nullptr; /* a chained cursor's store */
+  /*
+   * A chained cursor queues the dead newest versions it passes
+   * (../GC.md §4.2) for this store, unless the store is temporary.
+   */
+  uint64_t chain_storeid = 0;
+  bool report_dead = false;
   rocksdb::PinnableSlice got;
 };
 
@@ -788,8 +794,12 @@ sm1::scan_t *access_scan(sm1::session_t *session, uint64_t storeid,
 int access_write(sm1::session_t *session, uint64_t storeid, write_op_t op,
                  rocksdb::Slice key, rocksdb::Slice data, sm1::rawpin_t *pin);
 
-/* 1 if v is visible at view, 0 if not, -1 on error (../XCTMGR.md §3.3). */
-int access_visible(db_t *db, const version_t &v, const view_t &view);
+/*
+ * 1 if v is visible at view, 0 if not, -1 on error (../XCTMGR.md §3.3).
+ * *dead is set, if given, when v is invisible because its writer is dead.
+ */
+int access_visible(db_t *db, const version_t &v, const view_t &view,
+                   bool *dead = nullptr);
 
 /* Step past v, invisible at view: under SSI, owe its writer an edge. */
 int access_skip(sm1::session_t *session, const version_t &v,

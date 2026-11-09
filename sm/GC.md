@@ -245,6 +245,16 @@ For an OLD entry:
 A failed status lookup in steps 3 to 6 keeps the entry, and
 counts a doubt.
 
+**What queues a key.** Two callers queue a chained key whose
+newest version is dead (`chain_report()`): the filter, in step 3
+above, and a reader. A reader that passes a dead CURR version
+queues its key. The point read, the batch read and the cursor do
+it, but not for a temporary store. A reader finds the writer
+dead only when its snapshot is past the version's `wts`. A
+version above every snapshot is passed with no lookup, and
+waits until a later commit moves the snapshots past it. Both
+callers use the hint queue (§4.6).
+
 **The repair.** `chain_repair()` runs on the worker. For each
 queued key:
 
@@ -282,6 +292,49 @@ database that made it. Its purges and repairs write with no log,
 as any of its writes does (`store_write_options()`). DBMGR.md
 gives the order a database closes in, which waits out such a
 compaction.
+
+### 4.6 The hint queues
+
+The filter and readers queue what they find and cannot do: a
+dead chained version to put back (`repairs`, §4.2), a tombstone
+to purge (`purges`, §5). A queue is a hint, so it may not grow
+without bound. A key it drops is found again by the next
+compaction that meets it, or by the next reader. Both queues are
+a `hint_queue_t` (`sm1/src/hintq.h`) with a lock of its own.
+
+A record is the store, the writer's xid (0 for a purge) and the
+key. A queue holds:
+
+- one buffer of 32 MB, made by the first push. Untouched pages
+  cost no memory.
+- a 1-bit Bloom filter with one hash function, over the store
+  and the key: 2^23 bits, 1 MB.
+
+To push a key:
+
+1. Hash the store and the key, and load the filter's word. If the
+   bit is set, stop.
+2. Set the bit with an atomic `fetch_or`. If another caller set
+   it first, stop.
+3. Under the queue's mutex, make the buffer if none exists.
+4. If the record does not fit, clear the bit and stop.
+5. Append the record.
+
+To take the queue, the worker does this, once in each run:
+
+1. Under the queue's mutex, hand the buffer to the worker and
+   leave none.
+2. In the same hold, clear every bit of the filter. A push that
+   set its bit before this appends to the next buffer.
+3. Read the records without the lock.
+
+A key met again after a take is queued again, and its second
+repair or purge finds nothing to do. One hash function is what
+makes the clear safe: with two or more, clearing a bit could
+hide another key (BTREEINDEX.md §9.4). Two keys that share a bit
+are one: the second is not queued, and the next compaction or
+reader meets it again. A dead version has no mark in the data to
+find it by, as a btree leaf has, so this is the only backstop.
 
 ---
 
@@ -329,12 +382,14 @@ meets both fails. So:
 - The purge erases by SingleDelete. A version the filter erases
   meanwhile gets two; RocksDB's compaction skips the first.
 
-**The queue holds a key once** (`purge_ids`). Each compaction
-that meets a tombstone before its purge queues it again; a mass
+**The queue holds a key once** (§4.6). Each compaction that
+meets a tombstone before its purge queues it again; a mass
 delete's level-0 files are met by many, and a queue that kept
-every one held each key about 25 times. The worker empties the
-queue and the set together, so a key met again after that is
-queued again, and erased again, harmlessly.
+every one held each key about 25 times. The filter of the queue
+stops a key already queued. The worker empties the queue and the
+filter together, so a key met again after that is queued again,
+and erased again, harmlessly. The queue is bounded: a full
+buffer drops the key.
 
 **The queue is volatile.** An entry lost to a crash is queued
 again by the next compaction that meets the tombstone.
@@ -404,8 +459,8 @@ stops it first of all.
 A run does these steps, under `gc_run_mu`, one run at a time:
 
 1. Take the watermark once, for the whole run.
-2. Under `gc_mu`, take the queued purges and repairs, and the
-   drops the watermark has passed.
+2. Take the queued purges and repairs (§4.6), and under `gc_mu`
+   the drops the watermark has passed.
 3. Put back the chained keys compaction found dead (§4.2).
 4. Purge the queued tombstones (§5).
 5. Drop each store whose drop the watermark has passed (§6).
@@ -606,7 +661,8 @@ State in `db_t`:
 | `snapshots`, `snap_since`, `snap_warned` | `snap_mu` | §3 |
 | `gc_ready` | atomic | §4.4 |
 | `gc_thread`, `gc_stopping`, `gc_cv` | `gc_mu` | §7 |
-| `purges`, `repairs`, `drops` | `gc_mu` | the queues; `drops` is a multimap from `commit_ts` to storeid |
+| `purges`, `repairs` | their own mutex | `hint_queue_t` (§4.6) |
+| `drops` | `gc_mu` | a multimap from `commit_ts` to storeid |
 | `gc_run_mu` | itself | one GC run at a time; `gc_sweep_txn()`, the sweep for tests, takes it too |
 | `read_epoch`, `readers[2]` | atomic | §8.3 |
 | `sweep_pending`, `sweep_w0`, `sweep_epoch` | `gc_run_mu` | §8.2 |
@@ -698,8 +754,14 @@ Paths are relative to `sm1/`.
   starts past its threshold. A cursor from before the pass holds
   it back, and a pin's iterator from before it is not sought
   again.
+- **`test/test_hintq.cc`.** The hint queue hands back what was
+  pushed, holds a key once until it is taken, drops a key when
+  full, and loses no accepted key when four threads push while
+  another takes.
 - **`test/test_chain.cc`.** Compaction reports a dead chained
-  version, and GC puts it back. GC harvests what no snapshot of a
+  version, and GC puts it back. A point read, a batch read and a
+  cursor each queue a dead version they pass, and GC puts it
+  back with no compaction. GC harvests what no snapshot of a
   chained store needs. GC drops unlinked OLD entries, and the
   sweep keeps chained reads right.
 - **`test/test_2pc.cc`.** A prepared drop commits by gid after a

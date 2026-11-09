@@ -29,14 +29,6 @@ using namespace wisr;
 
 namespace {
 
-/* A queued purge's identity: its store, then its tombstone's key. */
-std::string purge_id(uint64_t storeid, const rocksdb::Slice &key) {
-  std::string id;
-  sm0::put_be64(id, storeid);
-  id.append(key.data(), key.size());
-  return id;
-}
-
 /*
  * One compaction's filter. RocksDB gives each compaction thread
  * its own instance, so the mutable per-key state needs no lock.
@@ -148,13 +140,11 @@ private:
     // A tombstone is queued for purging, not dropped here.
     if (v.flags & version_tombstone) {
       // Queue the delete for purging; dropping it here could
-      // resurrect older versions outside this compaction.
-      std::lock_guard<std::mutex> guard(m_db->gc_mu);
-      // Queue the tombstone's key once: each compaction that meets it
-      // before the purge would queue it again (../PURGE_PLAN.md §2.4).
-      std::string id = purge_id(m_storeid, key);
-      if (m_db->purge_ids.insert(std::move(id)).second) {
-        m_db->purges.push_back({m_storeid, key.ToString()});
+      // resurrect older versions outside this compaction. The queue
+      // takes a key once: each compaction that meets it before the
+      // purge would queue it again (../PURGE_PLAN.md §2.4).
+      if (m_db->purges.push(m_storeid, 0,
+                            std::string_view(key.data(), key.size()))) {
         // Wake the worker.
         m_db->gc_cv.notify_one();
       }
@@ -370,15 +360,15 @@ private:
  * A version a compaction erases meanwhile gets a second SingleDelete,
  * which a compaction skips (db/compaction/compaction_iterator.cc).
  */
-void purge_one(db_t *db, const db_t::purge_t &p) {
+void purge_one(db_t *db, uint64_t storeid, rocksdb::Slice tombstone) {
   // Find the store's CF.
-  store_t st = db_store(db, p.storeid);
+  store_t st = db_store(db, storeid);
   // Skip a store already dropped.
   if (!st.cf) {
     return; // the store's CF is already gone
   }
   // End the range just past the key's oldest version.
-  std::string end = version_bound(version_userkey(p.key), '\xff');
+  std::string end = version_bound(version_userkey(tombstone), '\xff');
   rocksdb::Slice upper(end);
   rocksdb::ReadOptions ro;
   ro.iterate_upper_bound = &upper;
@@ -386,7 +376,7 @@ void purge_one(db_t *db, const db_t::purge_t &p) {
   std::unique_ptr<rocksdb::Iterator> it(st.rdb->NewIterator(ro, st.cf));
   rocksdb::WriteBatch batch;
   uint64_t bytes = 0;
-  for (it->Seek(p.key); it->Valid(); it->Next()) {
+  for (it->Seek(tombstone); it->Valid(); it->Next()) {
     batch.SingleDelete(st.cf, it->key());
     bytes += it->key().size();
   }
@@ -398,7 +388,7 @@ void purge_one(db_t *db, const db_t::purge_t &p) {
     s = st.rdb->Write(wo, &batch);
   }
   if (s.ok()) {
-    rocksdb::Slice userkey = version_userkey(p.key);
+    rocksdb::Slice userkey = version_userkey(tombstone);
     count_write(st, std::string_view(userkey.data(), userkey.size()), bytes);
     return;
   }
@@ -406,7 +396,7 @@ void purge_one(db_t *db, const db_t::purge_t &p) {
   // meets it queues it again. Nobody waits on this, so log it.
   log_msg(sm1::loglevel_t::error,
           "database {}: purge in column family store.{} failed: {}",
-          db->name.c_str(), p.storeid, s.ToString().c_str());
+          db->name.c_str(), storeid, s.ToString().c_str());
 }
 
 /*
@@ -693,18 +683,12 @@ void gc_queue_drops(db_t *db, uint64_t commit_ts,
 void gc_run_once(db_t *db) {
   // One GC run at a time.
   std::lock_guard<std::mutex> run(db->gc_run_mu);
-  std::vector<db_t::purge_t> purges;
   std::vector<uint64_t> drops;
-  std::vector<db_t::repair_t> repairs;
   // Take the watermark once, for the whole run.
   uint64_t watermark = db_watermark(db);
   {
     // Hold gc_mu while taking work from the queues.
     std::lock_guard<std::mutex> guard(db->gc_mu);
-    // Take every queued purge; a key met again from now is queued again.
-    purges.swap(db->purges);
-    db->purge_ids.clear();
-    repairs.swap(db->repairs);
     // Take the drops the watermark has passed.
     auto end = db->drops.upper_bound(watermark);
     for (auto it = db->drops.begin(); it != end; ++it) {
@@ -714,14 +698,19 @@ void gc_run_once(db_t *db) {
     db->drops.erase(db->drops.begin(), end);
   }
 
+  // Take every queued repair and purge, outside gc_mu: a queue has its
+  // own lock. A key met again from now is queued again.
+  hint_queue_t::batch_t repairs = db->repairs.take();
+  hint_queue_t::batch_t purges = db->purges.take();
+
   // Put back the chained keys compaction found dead.
   chain_repair(db, repairs);
 
   // Purge first: a key queued from a store about to be
   // dropped is simply skipped once its CF is gone.
-  for (const db_t::purge_t &p : purges) {
-    purge_one(db, p);
-  }
+  purges.for_each([&](const hint_queue_t::record_t &p) {
+    purge_one(db, p.storeid, rocksdb::Slice(p.key.data(), p.key.size()));
+  });
 
   // Drop each store no snapshot can see.
   for (uint64_t storeid : drops) {

@@ -12909,3 +12909,32 @@ and the local socket never does.
   client of PostgreSQL 17 or later with TLS; PostgreSQL 18's is
   now built `--with-ssl=openssl` (`../README.md`). Under the
   thread sanitizer, `tls.sh` reports no race.
+
+## Step 423: the GC queues are bounded hints
+
+[`../sm/GC.md`](../sm/GC.md#46-the-hint-queues) §4.6: the queue of
+purges and the queue of repairs held a string for each key, and
+grew without bound.
+
+- **Found**: the purge queue held a key once (`purge_ids`), but
+  nothing bounded it, and the repair queue held a key each time a
+  compaction met it. A queue is a hint: a key it drops is met
+  again.
+- **sm1** (`../sm/sm1/src/hintq.h`): both queues are a
+  `hint_queue_t`. It is one buffer of 32 MB, made by the first
+  push, with a 1-bit Bloom filter of 1 MB in front. The worker
+  takes the whole buffer and clears the filter in one hold of the
+  queue's mutex. A full buffer drops the key.
+- **Readers queue a dead version**: a point read, a batch read and
+  a cursor that pass a dead newest version of a chained key call
+  `chain_report()`, as the compaction filter does. A reader finds
+  the writer dead only when its snapshot is past the version's
+  `wts`; a version above every snapshot is passed with no lookup.
+- **Tests**: `../sm/sm1/test/test_hintq.cc`, and
+  `../sm/sm1/test/test_chain.cc`, where each kind of read queues a
+  dead key and GC puts the version back with no compaction. The
+  mvcc scenarios cannot express it: they do not force a
+  compaction or run the worker.
+- **Found too**: `test/tls.sh` looked for psql 17's `\conninfo`
+  text. PostgreSQL 18's psql prints a table, so the check failed
+  on a server that was over TLS. It accepts both now.

@@ -41,8 +41,8 @@ BTREEINDEX.md for index entries.
 - **A read of a chained key is a `Get`** of CURR. It follows the
   chain while it does not see the version.
 - **An abort repairs nothing.** Readers pass a dead version by
-  the chain. The next write of the key, or the Garbage Collector,
-  removes it.
+  the chain, and queue its key. The next write of the key, or the
+  Garbage Collector, removes it.
 - **A pin keeps a row's bytes in memory**, so a client reads them
   where RocksDB has them. A ref with a generation makes a stale
   handle fail and not read freed memory.
@@ -754,8 +754,9 @@ The re-read is enforced, not requested:
   mark go last.
 - **An abort repairs nothing.** Its versions are dead by the
   status lookup. Readers pass them by the chain, at a hop each.
-  The next write of the key overwrites one. The Garbage Collector
-  repairs the rest. Aborts are rare.
+  The next write of the key overwrites one. A reader that passes
+  one queues its key, and the Garbage Collector repairs the rest
+  ([`GC.md`](GC.md#42-chained-keys) §4.2). Aborts are rare.
 - **A crash is an abort**: there is nothing to recover. The
   `WriteBatch` keeps CURR and OLD together.
 
