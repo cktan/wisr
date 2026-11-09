@@ -198,6 +198,7 @@ can be read at a glance. Several steps may share a time.
 | `rmstore` | — | `ok`: drops the second store |
 | `mkstore` | — | `ok`: creates a store, whose storeid is not printed |
 | `lsstore` | — | `<n> stores` |
+| `reap` | — | the keys a row reaper pass reaped (`sm1::row_reap_pass`, [`../../GC.md`](../../GC.md#135-reaping-by-the-reapers-threads) §13.5): `0`, `1`, … |
 
 Error names are symbolic, never numbers or messages:
 `conflict`, `serialization`, `dupkey`, `notfound`, `notrans`,

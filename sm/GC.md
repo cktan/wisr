@@ -798,7 +798,7 @@ each reaper has a backstop. Two reapers exist or are planned:
 | Garbage | dead entries of a leaf, and in-doubt bits | OLD entries behind a settled CURR |
 | Noticed by | a reader or a writer of the leaf | a reader of the key |
 | Queue | `reap_queue_t`: 262,144 slots of 32 bytes, a 1-bit filter | `hint_queue_t` (§4.6) |
-| Worker | the btree reaper's threads, and `VACUUM` | the row reaper's threads |
+| Worker | the reapers' threads (BTREEINDEX.md §9.9), and `VACUUM` | the reapers' threads |
 | Backstop | the in-doubt bit in the page; `VACUUM` | the compaction filter (§4.2) |
 | Document | BTREEINDEX.md §9 | this section |
 
@@ -885,7 +885,7 @@ written more than once, as the repair flags it (§5).
 ### 13.4 Reaping by the writer
 
 **Not to be built, for now** (decided 2026-11-08). A writer reaps
-nothing: the row reaper's threads (§13.5) and the compaction
+nothing: the reapers' threads (§13.5) and the compaction
 filter remove the OLD entries. The writer's reap costs one Get
 and one `Delete` on every update. It saves I/O only while the
 copy it deletes is still in the memtable: the flush then writes a
@@ -926,53 +926,61 @@ reaped. The chain grows for the snapshot that needs it. When
 the snapshot ends, the next write of the key reaps the whole
 chain at once.
 
-### 13.5 Reaping by the row reaper's threads
+### 13.5 Reaping by the reapers' threads
 
 A writer reaps nothing (§13.4). Each update leaves one OLD entry,
 and a key updated while a snapshot was held keeps a long chain.
-The row reaper's threads reap the keys that readers queue, as the
-btree reaper's threads reap leaves (BTREEINDEX.md §9.6).
+The row reaper reaps the keys that readers queue.
 
-**The threads.** A database has a pool of its own, in sm1, as the
-OLD entries are sm1's. sm1 makes the threads as it opens the
-database, beside the GC worker (`gc_start()` in `db_open()`), and
-stops and joins them as it closes it (`gc_stop()`). They are made
-at the open, not at an overflow: a thread that cannot start at an
-overflow has no caller to tell. The GC worker keeps its own
-queues, the repairs and the purges (§4.6), and its sweep; it does
-not reap.
+**The threads.** A database has one pool of reaper threads, in
+sm3, which run the btree reaper's passes and the row reaper's
+(BTREEINDEX.md §9.9). The first thread, each second, asks sm1
+whether keys wait (`sm1::row_reaps_pending()`), with no session.
+If keys wait, it opens a session and runs the row pass
+(`sm1::row_reap_pass()`), after the btree pass. The other threads
+run btree passes alone. The GC worker keeps its own queues, the
+repairs and the purges (§4.6), and its sweep; it does not reap.
 
-**No session.** A thread works on the database itself, under each
-key's write latch, as the GC worker's repair does. So it holds no
-session, and never keeps the db reaper (DBMGR.md §5.2) from
-closing a database left idle.
+**Only under a catalog.** The pool is sm3's, made as a catalog
+attaches. A database that sm1 opens with no catalog gets no row
+pass: the compaction filter alone removes its OLD entries. In
+digres every database has a catalog.
+
+**No session between passes.** A pass opens a session only when
+keys wait, and closes it at the end, so the pool never keeps the
+db reaper (DBMGR.md §5.2) from closing a database left idle.
 
 To queue a key:
 
-1. A reader that resolves a settled CURR version with a `prev`
-   other than 0 queues the key. A temporary store queues
-   nothing. A key that is written and never read again is not
-   queued: the compaction filter removes its OLD entries.
-2. The key goes to a `hint_queue_t` of its own, `reaps` (§4.6).
-   A key already queued stops the push. A push that finds the
-   buffer full wakes the threads.
+1. A reader that sees a key's CURR version, committed and not its
+   own, with a `prev` other than 0, queues the key: a point read,
+   a batch read and a cursor alike. A tombstone counts. A
+   temporary store queues nothing.
+2. The reader does not judge whether CURR is settled. That needs
+   W, read under `snap_mu`, a mutex on the read path. The pass
+   judges it, with W read once.
+3. The key goes to a `hint_queue_t` of its own, `reaps` (§4.6).
+   A key already queued stops the push, and a full queue drops
+   it. Either way the next read queues it again.
 
-Each thread runs this loop:
+A key that is written and never read again is not queued: the
+compaction filter removes its OLD entries.
 
-1. Sleep for a second, or until a push finds the queue full, or
-   until the database closes.
-2. If the queue is empty, go to step 1.
-3. Take the queue (`hint_queue_t::take()`). The first thread runs
-   each second; the others run only while the queue is full.
-4. Read W once for the batch.
-5. For each key, take the key's write latch, and read CURR again.
-   If CURR is not settled at W, skip the key.
-6. Walk the chain and collect the ids, as §13.4 step 4.
-7. Write one `WriteBatch`: a `Delete` of each id, and CURR again
+A row pass, `sm1::row_reap_pass()`:
+
+1. Take the queue (`hint_queue_t::take()`).
+2. Read W once for the batch.
+3. For each key, take the key's write latch, and read CURR again.
+   If CURR is gone, has a `prev` of 0, or is not settled at W,
+   skip the key: a key not yet settled is queued again by a later
+   read.
+4. Walk the chain from `prev`, and collect the ids, until `prev`
+   is 0 or an id is missing.
+5. Write one `WriteBatch`: a `Delete` of each id, and CURR again
    with `prev` set to 0. Then let go of the latch.
-8. Go to step 1. A close ends a batch after the key it is on.
+6. A pool's detach ends a pass after the key it is on.
 
-Step 7 writes the row again, its whole payload. Without it, a
+Step 5 writes the row again, its whole payload. Without it, a
 reader would find the same `prev` on the next read and queue the
 key again for ever. The cost is a copy of the row once for each
 reaped key. A writer's reap has no such cost, as its write
@@ -995,23 +1003,19 @@ replaces CURR anyway.
   a key that nobody reads again, for a push on every update and
   no read. It touches the path of an update, so it needs a
   measure, and the user's approval, as the writer's reap did.
-- **The reader's trigger.** A reader must read W to know a
-  version is settled, which `db_watermark()` takes under
-  `snap_mu`. A cached W, in an atomic, would keep it off the
-  read path. Not measured: the cost of the check on a point read
-  (`q0`), where parity with PostgreSQL is the target.
+- **The reader's push.** The reader reads no W (§13.5), but
+  hashes the key and loads a word of the queue's filter on each
+  read of a key with a `prev`. Its cost on a point read (`q0`),
+  where parity with PostgreSQL is the target, is measured before
+  it is merged.
 - **Whether the threads' reap is needed.** The threads earn their
   row copies only if a large store holds much OLD garbage under
   RocksDB's own compactions. Measure that first (§13.2).
-- **The number of threads, and who sets it.** The btree reaper's
-  are 4 a database, set by `sm_set_btree_reaper_workers()`. The
-  row reaper's could take the same shape, with 0 for a test that
-  runs a pass itself, as `rel` runs the btree reaper's by
-  `(btree-reaper-pass)`.
 - **A budget on a busy system.** Each reaped key writes its row
-  again. The btree reaper bounds a busy system's pass to 100
-  pages a second (`btree_reaper_budget()`); the row reaper may
-  need a bound of its own, set from a measure.
+  again, and a row pass takes the whole queue. The btree reaper
+  bounds a busy system's pass to 100 pages a second
+  (`btree_reaper_budget()`); the row reaper may need a bound of
+  its own, set from a measure.
 
 ### 13.8 Tests planned
 
@@ -1027,10 +1031,12 @@ replaces CURR anyway.
   batch is atomic.
 - A key written and never read is not queued: its OLD entries
   wait for the filter.
-- A full queue wakes the threads; a close stops and joins them
-  while a batch runs, and loses nothing a later open needs.
+- A detach stops and joins the threads while a pass runs, and
+  loses nothing a later open needs.
+- A database opened with no catalog runs no row pass, and its
+  OLD entries wait for the filter.
 - A temporary store is not queued.
-- Under the thread sanitizer: writers, readers and the row
-  reaper's threads on the same keys.
+- Under the thread sanitizer: writers, readers and the reapers'
+  threads on the same keys.
 - The scratch test of §13.2, kept as a test: OLD entries after
   many updates.

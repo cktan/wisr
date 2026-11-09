@@ -2471,16 +2471,16 @@ static Janet cfun_compact(int32_t argc, Janet *argv) {
 }
 
 /*
- * (btree-reaper-pass): one pass of the btree reaper of the session's
- * database (sm_btree_reaper_run), on this thread. A script gets no btree reaper
+ * (reaper-pass): one pass of the btree reaper of the session's
+ * database (sm_reaper_run), on this thread. A script gets no btree reaper
  * thread.
  */
-static Janet cfun_btree_reaper_pass(int32_t argc, Janet *argv) {
+static Janet cfun_reaper_pass(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 0);
   (void)argv;
   session_ctx_t *s = require_session();
-  if (sm_btree_reaper_run(get_catalog().env(), s->db_name.c_str()) != 0) {
-    panic_sm_error("btree-reaper-pass sm_btree_reaper_run");
+  if (sm_reaper_run(get_catalog().env(), s->db_name.c_str()) != 0) {
+    panic_sm_error("reaper-pass sm_reaper_run");
   }
   return janet_wrap_nil();
 }
@@ -3460,8 +3460,7 @@ static const JanetReg s_rel_cfuns[] = {
     {"_lock-row", cfun_lock_row, "internal"},
     {"_truncate", cfun_truncate, "internal"},
     {"_compact", cfun_compact, "internal"},
-    {"btree-reaper-pass", cfun_btree_reaper_pass,
-     "one pass of the btree reaper"},
+    {"reaper-pass", cfun_reaper_pass, "one pass of the btree reaper"},
     {"_load", cfun_load, "internal"},
     {"_table-size", cfun_table_size, "internal"},
     {"_analyze", cfun_analyze, "internal"},

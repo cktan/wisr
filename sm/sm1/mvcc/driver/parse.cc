@@ -83,7 +83,7 @@ const verb_t STEP_VERBS[] = {
     {"rollback", 1, 1},   {"lock", 2, 2},         {"seek", 2, 2},
     {"stmt", 0, 0},       {"lookup", 1, 1},       {"rmstore", 0, 0},
     {"readlatest", 1, 1}, {"update-where", 4, 4}, {"move", 1, 1},
-    {"lockread", 2, 2},   {"lockoid", 2, 2},
+    {"lockread", 2, 2},   {"lockoid", 2, 2},      {"reap", 0, 0},
 };
 
 const verb_t CHECK_VERBS[] = {

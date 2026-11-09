@@ -1606,3 +1606,129 @@ TEST_CASE("an update over the writer's own key change is not flagged") {
   CHECK(sm1::chain_trylock_row(u, c, "k", sm1::SM_LOCKMODE_KS) == 0);
   commit_xct(u);
 }
+
+namespace {
+
+/* The CURR version of key in the chained store c, decoded. */
+chain_version_t curr_of(sm1::session_t *s, uint64_t c, const std::string &k) {
+  std::string buf;
+  return raw_version(s, c, false, k, "", buf);
+}
+
+/* Read key in its own read committed transaction: what a reader sees. */
+std::string read_one(sm1::session_t *s, uint64_t c, std::string_view k) {
+  begin_xct(s);
+  std::string v = chain_get(s, c, k);
+  commit_xct(s);
+  return v;
+}
+
+} // namespace
+
+TEST_CASE("the row reaper cuts the chain behind a settled CURR a reader saw") {
+  // Verify the row pass of ../GC.md §13.5.
+  // 1. Insert k and update it four times: four OLD entries.
+  // 2. Read k: the reader queues it, as row_reaps_pending says.
+  // 3. Run a pass: it reaps k, no OLD entry is left, and CURR has no
+  //    prev and reads the last value.
+  // 4. Read k again: with no prev, it is not queued.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  for (const char *v : {"v2", "v3", "v4", "v5"}) {
+    chain_put(f.s, c, "k", v, false);
+  }
+  std::vector<std::string> payloads;
+  CHECK(old_entries(f.s, c, &payloads).size() == 4);
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
+  CHECK(read_one(f.s, c, "k") == "v5");
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 1);
+
+  CHECK(sm1::row_reap_pass(f.s) == 1);
+  payloads.clear();
+  CHECK(old_entries(f.s, c, &payloads).empty());
+  CHECK(curr_of(f.s, c, "k").prev == 0);
+  CHECK(read_one(f.s, c, "k") == "v5");
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
+  CHECK(sm1::row_reaps_pending(f.home.env(), "none") == 0);
+}
+
+TEST_CASE("the row reaper leaves a chain a snapshot still needs") {
+  // Verify that a CURR not settled is skipped, and reaped once it is.
+  // 1. A repeatable read reader t reads k = v1, holding W back.
+  // 2. Update k twice, then read it in another transaction: queued.
+  // 3. A pass reaps nothing, and t still reads v1 through the chain.
+  // 4. t ends. Read k again, and a pass reaps it: t's snapshot is gone.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  sm1::session_t *t = f.open();
+  begin_xct(t, sm1::xctlevel_t::repeatable_read);
+  CHECK(chain_get(t, c, "k") == "v1");
+  chain_put(f.s, c, "k", "v2", false);
+  chain_put(f.s, c, "k", "v3", false);
+  CHECK(read_one(f.s, c, "k") == "v3");
+  CHECK(sm1::row_reap_pass(f.s) == 0);
+  CHECK(chain_get(t, c, "k") == "v1");
+  commit_xct(t);
+
+  CHECK(read_one(f.s, c, "k") == "v3");
+  CHECK(sm1::row_reap_pass(f.s) == 1);
+  std::vector<std::string> payloads;
+  CHECK(old_entries(f.s, c, &payloads).empty());
+}
+
+TEST_CASE("a key with no chain, a reader's own write and a temporary store "
+          "are not queued") {
+  // Verify the reader's push of ../GC.md §13.5 queues nothing it need not.
+  // 1. Insert k and read it: no prev, not queued.
+  // 2. Update k and read it in the same transaction: the reader's own
+  //    version, not queued.
+  // 3. In a temporary chained store, update a key and read it: not
+  //    queued.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  CHECK(read_one(f.s, c, "k") == "v1");
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
+  begin_xct(f.s);
+  REQUIRE(sm1::chain_update(f.s, c, "k", "v2") == 0);
+  CHECK(chain_get(f.s, c, "k") == "v2");
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
+  commit_xct(f.s);
+
+  uint64_t tmp = 0;
+  begin_xct(f.s);
+  REQUIRE(sm1::mkstore(f.s, tmp, true, true) == 0);
+  REQUIRE(sm1::chain_insert(f.s, tmp, "t", "w1") == 0);
+  commit_xct(f.s);
+  begin_xct(f.s);
+  REQUIRE(sm1::chain_update(f.s, tmp, "t", "w2") == 0);
+  commit_xct(f.s);
+  CHECK(read_one(f.s, tmp, "t") == "w2");
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
+}
+
+TEST_CASE("a writer that aborts after a reap puts the reaped version back") {
+  // Verify the repair of ../GC.md §13.3 part 4 after a row pass.
+  // 1. Update k, read it, and reap it: CURR has no prev.
+  // 2. Update k again, uncommitted, then abort.
+  // 3. A read sees the reaped version, whose OLD copy the writer made.
+  // 4. A pass with stop set reaps nothing, and leaves the queue taken.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  chain_put(f.s, c, "k", "v2", false);
+  CHECK(read_one(f.s, c, "k") == "v2");
+  REQUIRE(sm1::row_reap_pass(f.s) == 1);
+  begin_xct(f.s);
+  REQUIRE(sm1::chain_update(f.s, c, "k", "v3") == 0);
+  REQUIRE(sm1::abort(f.s) == 0);
+  CHECK(read_one(f.s, c, "k") == "v2");
+
+  chain_put(f.s, c, "k", "v4", false);
+  CHECK(read_one(f.s, c, "k") == "v4");
+  std::atomic<bool> stop{true};
+  CHECK(sm1::row_reap_pass(f.s, &stop) == 0);
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
+}

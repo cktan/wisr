@@ -637,3 +637,14 @@ const char *sm1::build_flags() {
   return "unknown";
 #endif
 }
+
+/* The keys queued for the row reaper of dbname, with no session; see sm1.h. */
+size_t sm1::row_reaps_pending(sm1::env_t *env, std::string_view dbname) {
+  if (nullptr == env) {
+    return 0;
+  }
+  // Under env's mutex, so the db reaper cannot close the database here.
+  std::lock_guard<std::mutex> guard(env->mu);
+  auto it = env->dbs.find(std::string(dbname));
+  return env->dbs.end() == it ? 0 : it->second->reaps.size();
+}

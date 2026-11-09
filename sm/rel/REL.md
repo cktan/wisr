@@ -776,17 +776,19 @@ tree's entries whose rows are settled without them go too
 (compact jobs)
 ```
 
-### `(btree-reaper-pass)`
-Runs one pass of the btree reaper of the session's database, on
-this thread (`sm_btree_reaper_run`,
+### `(reaper-pass)`
+Runs one pass of the reapers of the session's database, on this
+thread (`sm_reaper_run`,
 [`../BTREEINDEX.md`](../BTREEINDEX.md#9-reaping-vacuum-and-the-btree-reaper)
-§9). A script
-gets no btree reaper thread, so a tree's entries change only by this
-and by `(compact)`. A pass reaps the leaves that readers and
-writers queued, with no transaction of its own.
+§9): the btree reaper's pass, then the row reaper's
+([`../GC.md`](../GC.md#135-reaping-by-the-reapers-threads)
+§13.5). A script gets no reaper thread, so a tree's entries change
+only by this and by `(compact)`. A pass reaps the leaves and the
+keys that readers and writers queued, with no transaction of its
+own.
 
 ```janet
-(btree-reaper-pass)
+(reaper-pass)
 ```
 
 ### `(table-size table)`

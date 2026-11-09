@@ -546,6 +546,13 @@ struct db_t {
    * again by the next compaction that meets it.
    */
   hint_queue_t repairs;
+  /*
+   * Chained keys whose CURR a reader saw committed with a prev, for
+   * the row reaper's pass to cut the chain behind it once it is
+   * settled (../GC.md §13.5). A bounded hint: a key it drops is
+   * queued again by the next read.
+   */
+  hint_queue_t reaps;
   std::multimap<uint64_t, uint64_t> drops; /* commit_ts -> storeid */
   std::thread gc_thread;
   std::mutex gc_run_mu; /* one gc_run_once at a time */
