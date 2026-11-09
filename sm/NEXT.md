@@ -255,11 +255,12 @@ and so are the catalog tables psql reads
     - where a result of variable size gets its memory (text,
       bytea, concatenation, `replace`). Two forms: the caller
       supplies a buffer, which allocates nothing and suits
-      fixed-width results; or the caller passes sm0's `arena_t`
-      (`sm0/include/sm0_arena.h`), and digres backs it with
-      `palloc()` in the current context. An allocator hook is
-      not preferred: it costs an indirect call and hides who
-      owns the memory;
+      fixed-width results; or the caller passes an allocator
+      with the call. sm0's `arena_t` cannot be backed by
+      `palloc()` as built (`sm0/include/sm0_arena.h`). A global
+      allocator hook is not preferred: it hides who owns the
+      memory. The options are in
+      [`TYPEMOVE_PLAN.md`](TYPEMOVE_PLAN.md);
     - the hooks for what a session sets: `DateStyle`,
       `TimeZone`, `extra_float_digits`, collation and locale;
     - the errors: sm's error state, and how a host maps it to
