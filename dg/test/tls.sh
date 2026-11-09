@@ -81,7 +81,7 @@ tls_psql() {
 
 # 4. TLS, and the certificate it is.
 tls_psql "sslmode=require" -c '\conninfo' > "$tw/conninfo.out" 2>&1
-grep -q 'SSL connection (protocol: TLS' "$tw/conninfo.out" ||
+grep -qi 'SSL Connection|true\|SSL connection (protocol: TLS' "$tw/conninfo.out" ||
   fail "tls: sslmode=require is over TLS"
 [ "$(tls_psql "sslmode=verify-full sslrootcert=$tw/ca.crt" \
   -c 'select 1' 2> "$tw/verify.err")" = 1 ] ||
