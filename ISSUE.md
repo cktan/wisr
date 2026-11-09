@@ -126,7 +126,7 @@ gap between its lookup and its read was not forced.
 
 ### Bulk-load fallback ignores `lock_timeout`
 
-**Fixed in the working tree, reproduced 2026-11-08.**
+**Closed 2026-11-08** by `09b80676`, reproduced the same day.
 Found on branch
 `wip-insert-select-bulk`, at `62e7a3f2`. An
 `INSERT ... SELECT` into a table with rows uses the loader's

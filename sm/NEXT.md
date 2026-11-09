@@ -336,11 +336,6 @@ Owed, and blocking nothing above:
   long stamping takes under load, which is what the size
   should be set from.
 
-- **A parent's other columns wait for its children.** sm1 has
-  no pair of modes like PostgreSQL's `FOR KEY SHARE` and `FOR
-  NO KEY UPDATE`, so an update of a parent row that leaves its
-  key alone still waits for a child's transaction, which holds
-  the row shared.
 - **`lock_timeout`, and the rest of no-wait.** A lock that
   does not wait is built for a row (`sm1::trylock_row`,
   `sm_tbl_trylock`) and for a table's table-oid lock
@@ -401,9 +396,13 @@ Owed, and blocking nothing above:
 - **What PostgreSQL's isolation specs found**
   (`../dg/test/isolation_specs.txt`,
   [`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step
-  169), beyond the key-share modes above: sm1
-  has no wait queue to reorder, so a soft deadlock PostgreSQL
-  untangles ends a transaction (`deadlock-soft`).
+  169): sm1 has no wait queue to reorder, so a soft deadlock
+  PostgreSQL untangles ends a transaction (`deadlock-soft`), and
+  a holder that upgrades its row lock waits behind the waiters
+  (`tuplelock-upgrade-no-deadlock`). A write's conversion of its
+  own row lock to X outlives a rollback to a savepoint taken
+  before it (`delete-abort-savept-2`); it stays, by decision of
+  2026-11-08.
 - **digres's OID is 32 bits; sm's is 64.** sm gives every
   table, index, view, sequence and namespace a `uint64_t` oid,
   and digres narrows each to PostgreSQL's 32-bit `Oid`
