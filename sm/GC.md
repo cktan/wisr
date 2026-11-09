@@ -33,7 +33,8 @@ place of its `xid`.
 The filter is a RocksDB compaction filter. Compaction already
 visits every key, so collection adds no pass of its own. There is
 no vacuum thread for versions. The dead entries of a B-tree Index
-are not this module's: BTREEINDEX.md's cleaner removes them.
+are not this module's: BTREEINDEX.md's cleaner removes them (§13
+has it beside the OLD reaper, a design).
 
 ### 1.2 Why a version carries a stamp
 
@@ -773,3 +774,215 @@ Paths are relative to `sm1/`.
 - **`mvcc`.** None: the scenario driver cannot force a
   compaction.
 
+---
+
+## 13. The reapers
+
+**Status: the btree cleaner is built. The OLD reaper is a design,
+not built.**
+
+A **reaper** removes garbage that a compaction does not reach. A
+reader or a writer notices the garbage and queues a hint. A
+worker removes the garbage from the queue. A hint may be lost, so
+each reaper has a backstop. Two reapers exist or are planned:
+
+| | Btree cleaner | OLD reaper |
+| --- | --- | --- |
+| Status | built | design |
+| Garbage | dead entries of a leaf, and in-doubt bits | OLD entries behind a settled CURR |
+| Noticed by | a reader or a writer of the leaf | the writer of the key; a reader |
+| Queue | `clean_queue_t`: 262,144 slots of 32 bytes, a 1-bit filter | `hint_queue_t` (§4.6) |
+| Worker | the cleaner thread, and `VACUUM` | the GC worker |
+| Backstop | the in-doubt bit in the page; `VACUUM` | the compaction filter (§4.2) |
+| Document | BTREEINDEX.md §9 | this section |
+
+The version filter (§4) is not a reaper. It rides on compaction
+and has no queue of its own.
+
+### 13.1 The btree cleaner
+
+[`BTREEINDEX.md`](BTREEINDEX.md#9-cleaning-vacuum-and-the-cleaner)
+§9 is the design of record. In short:
+
+1. A reader or a writer that finds a leaf not all visible queues
+   it (BTREEINDEX.md §9.5). It sets a bit of the queue's filter
+   first, so a leaf is queued once.
+2. The cleaner thread takes a leaf from the queue (BTREEINDEX.md
+   §9.6). It clears the leaf's filter bit as it takes it.
+3. It reads the rows of the entries with the in-doubt bit set,
+   with no latch held on the leaf.
+4. It pins the leaf exclusively, and judges those entries again.
+5. It removes the dead entries, and clears the bit of each entry
+   settled and live. An entry not settled keeps its bit.
+6. It sets the leaf all visible when no bit is left, and writes
+   the leaf once.
+
+The queue is a hint. The in-doubt bit is in the page, so a leaf
+lost from the queue stays marked, and its next reader or writer
+queues it again (BTREEINDEX.md §9.4). `VACUUM` cleans the leaves
+on the queue (BTREEINDEX.md §9.2). The cleaner does not judge an
+entry itself: the entry's row decides, and
+`sm2::rel_read_settled` says whether the row is settled.
+
+### 13.2 Why OLD needs a reaper
+
+Only a compaction removes an OLD entry (§4.2). A flush does not,
+and neither does a restart. Measured on 2026-11-09, on the debug
+build, one chained store of 100,000 keys, each written once and
+updated four times:
+
+| Stage | OLD entries | SST files |
+| --- | --- | --- |
+| After the writes | 400,000 | 3 |
+| After a flush, and after a reopen | 400,000 | 4 |
+| After a forced `CompactRange` of the store | 0 | 1 |
+
+The forced compaction took 614 ms for 21 MB. A file no
+compaction picks keeps its garbage. Not measured: how much a
+large store holds under RocksDB's own compactions.
+
+### 13.3 When an OLD entry is garbage
+
+A **settled** CURR version is committed, with a `commit_ts` at or
+below the watermark W. Every snapshot that is registered, or will
+register, is at or above W. So every snapshot sees a settled CURR
+version and stops there (ROWSTORE.md §5.3, step 5). Nothing
+behind it is reached: every OLD entry on its chain is garbage.
+The same holds for a settled tombstone.
+
+The argument has four parts:
+
+1. A snapshot is taken and registered under `snap_mu`, and W is
+   read under it. So no snapshot lands below a W in use
+   (`db.h`).
+2. A reader at a snapshot at or above W sees a settled version,
+   as its `commit_ts` is at or below W.
+3. A reader that read an earlier CURR, and not the settled one,
+   cannot be on its way into the chain behind the settled
+   version. It read before the writer of the settled version
+   wrote. Its snapshot was taken before that write, so the
+   settled version committed after the snapshot, with a
+   `commit_ts` above it. W is at or below that snapshot, so the
+   `commit_ts` is above W, and the version is not settled.
+4. A writer that replaces the settled version and then aborts
+   does not change this. The repair puts the settled version back
+   from the copy the writer made in OLD, and it never reads
+   further back (§4.2).
+
+So the rule that an unlinked entry waits for the watermark
+(ROWSTORE.md §3.5) does not apply. That rule guards a reader on
+its way to the live version behind a dead one. Behind a settled
+version no reader can be on its way (part 3). The reaper deletes
+the entries with a `Delete`, not a `SingleDelete`: an OLD key is
+written more than once, as the repair flags it (§5).
+
+### 13.4 Reaping by the writer
+
+A writer of a key already reads CURR. It decides in the same
+write, with no queue.
+
+1. Find the CURR version H, as `chain_write()` does.
+2. If H is dead, or in flight, stop. The existing rules apply
+   (ROWSTORE.md §4.2).
+3. Resolve H's writer (`stamp_copy()`). If H committed above W,
+   stop.
+4. Walk the chain behind H: Get the OLD entry named by `H.prev`,
+   then the one named by its `prev`, until `prev` is 0 or an id
+   is missing. Keep the ids.
+5. Move H to OLD under a fresh id, as now, with `prev` set to 0.
+   The chain behind the copy is cut.
+6. Add a `Delete` of each id from step 4 to the same
+   `WriteBatch`. The new CURR names the copy as its `prev`.
+
+The batch is atomic: CURR, the copy and the deletes land
+together. After the write the chain of the key is the new CURR,
+and one OLD entry, the copy of H. While no snapshot is held
+back, the OLD entries of a key stay one.
+
+The walk costs one Get for each OLD entry behind H. After the
+first reap there is one. The next write reaps the copy: its
+`prev` is 0, as step 5 made it, and the walk reads it to learn
+that. A flag in the CURR version could say that its `prev` entry
+ends the chain, which would save that Get (§13.7).
+
+If a snapshot holds W back, H is not settled, and nothing is
+reaped. The chain grows for the snapshot that needs it. When
+the snapshot ends, the next write of the key reaps the whole
+chain at once.
+
+### 13.5 Reaping by the worker
+
+The writer reaps the chain behind the key it writes. A key that
+nobody writes again keeps one OLD entry, or a long chain if it
+was written while a snapshot was held. The worker reaps those
+keys, from a queue, as the cleaner reaps leaves.
+
+1. A reader that resolves a settled CURR version with a `prev`
+   other than 0 queues the key. A writer that stopped at step 3
+   of §13.4 for a held-back W queues it too. A temporary store
+   queues nothing.
+2. The key goes to a `hint_queue_t` of its own, `reaps` (§4.6).
+   A key already queued stops the push.
+3. The worker takes the queue in each run, with the other queues.
+4. For each key, it takes the key's write latch, and reads CURR
+   again. If CURR is not settled, it skips the key.
+5. It walks the chain and collects the ids, as §13.4 step 4.
+6. It writes one `WriteBatch`: a `Delete` of each id, and CURR
+   again with `prev` set to 0.
+
+Step 6 writes the row again, its whole payload. Without it, a
+reader would find the same `prev` on the next read and queue the
+key again for ever. The cost is a copy of the row once for each
+reaped key. A writer's reap has no such cost, as its write
+replaces CURR anyway.
+
+### 13.6 What a reaper does not do
+
+- **It does not replace the filter.** The filter still drops
+  every OLD entry a compaction meets (§4.2), and a restart or a
+  lost hint leaves entries only for it.
+- **It does not repair.** A dead CURR version is the repair's
+  (§4.2). The reaper stops at a version that is not settled.
+- **It does not judge a snapshot.** It reads W once, as a
+  compaction does, and skips a key it cannot judge.
+
+### 13.7 To settle
+
+- **The cost of the writer's reap.** One Get for the OLD entry
+  behind H, and a `Delete` record, on every update. It touches
+  the path of an update, so the cost needs a measure, and the
+  user's approval, before a line is written. The alternatives:
+  reap only when the chain is longer than one; or reap on the
+  worker alone.
+- **A flag for the end of a chain.** A bit of the CURR flags,
+  `chain_prev_ends`, set when step 5 cuts the chain, would let
+  the next write delete the copy with no Get. It changes the
+  value format, which a rewrite of old data does not need: an
+  old version has no bit, and is walked.
+- **The reader's trigger.** A reader must read W to know a
+  version is settled, which `db_watermark()` takes under
+  `snap_mu`. A cached W, in an atomic, would keep it off the
+  read path. Not measured: the cost of the check on a point read
+  (`q0`), where parity with PostgreSQL is the target.
+- **Whether the worker's reap is needed.** If the writer's reap
+  keeps most of the garbage out, the worker may not earn its row
+  copies. Measure how much a large store holds first (§13.2).
+
+### 13.8 Tests planned
+
+- A writer reaps: update a key five times with no snapshot, and
+  its OLD entries are one. Hold a snapshot, update, end it, and
+  the next write leaves one.
+- A held-back W reaps nothing, and the old snapshot reads its
+  version.
+- A writer that aborts after a reap: the repair puts the settled
+  version back, and a read sees it.
+- A crash between the write and its reap loses nothing: the
+  batch is atomic.
+- The worker's reap: a key written once and read never again is
+  reaped, and its CURR reads the same.
+- A temporary store is not queued.
+- Under the thread sanitizer: writers, readers and the worker on
+  the same keys.
+- The scratch test of §13.2, kept as a test: OLD entries after
+  many updates.
