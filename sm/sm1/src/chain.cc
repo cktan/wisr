@@ -187,6 +187,7 @@ struct checked_t {
   bool moved = false;     /* it is a move's tombstone */
   uint64_t commit_ts = 0; /* its commit_ts; 0 for an own version or none */
   uint32_t own_seq = 0;   /* an own version's seq, else 0 */
+  bool own_kept = false;  /* an own version flagged version_key_kept */
   uint64_t inflight = 0;  /* another's uncommitted writer, to wait for */
   bool inflight_kept = false; /* its version kept the key, no tombstone */
   bool head_dead = false;     /* CURR holds a dead transaction's version */
@@ -225,6 +226,7 @@ int chain_latest(sm1::session_t *s, const store_t &st, rocksdb::Slice key,
       c->live = !(v->flags & version_tombstone);
       c->moved = v->flags & version_moved;
       c->own_seq = v->seq;
+      c->own_kept = v->flags & version_key_kept;
       return 0;
     }
     uint64_t ts = v->commit_ts;
@@ -375,8 +377,13 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
         continue;
       }
       // An update that keeps its key, against the version it replaces,
-      // read under this latch, is NKU (../LOCKMGR.md §1.13).
+      // read under this latch, is NKU (../LOCKMGR.md §1.13). Over an
+      // own version, that version must have kept it too: the flag says
+      // the key is the last committed version's, and an earlier write
+      // of this transaction that changed it, or inserted the row, is
+      // not to be hidden.
       if (op == WRITE_UPDATE && kept && cp->live &&
+          (cp->own_seq == 0 || cp->own_kept) &&
           kept(ctx, chain_found_row(*cp),
                std::string_view(data.data(), data.size()))) {
         mode = sm1::SM_LOCKMODE_NKU;

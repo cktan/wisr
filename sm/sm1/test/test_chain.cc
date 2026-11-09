@@ -1521,3 +1521,36 @@ TEST_CASE("KS's currency check passes a committed update that kept the key") {
   CHECK(sm1::chain_lock_row(r[2], c, "k", sm1::SM_LOCKMODE_KS) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
 }
+
+TEST_CASE("an update over the writer's own key change is not flagged") {
+  // Verify that the flag says the key is the last committed version's.
+  // 1. In one transaction, update k changing the key, then again with a
+  //    kept that says yes: neither version is flagged, and kept is
+  //    not asked, as the version it would compare against changed it.
+  // 2. A KS trylock of another session answers 1: it waits for the
+  //    writer, as for any key change.
+  // 3. In one transaction, insert j, then update it with a kept that
+  //    says yes: the update is not flagged, and KS waits for it.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  sm1::session_t *u = f.open();
+  kept_probe_t no, yes;
+  no.answer = false;
+  begin_xct(f.s);
+  REQUIRE(sm1::chain_update(f.s, c, "k", "v2", probe_kept, &no) == 0);
+  REQUIRE(sm1::chain_update(f.s, c, "k", "v3", probe_kept, &yes) == 0);
+  CHECK(yes.calls == 0);
+  std::string buf;
+  CHECK(!(raw_version(f.s, c, false, "k", "", buf).flags & version_key_kept));
+  begin_xct(u);
+  CHECK(sm1::chain_trylock_row(u, c, "k", sm1::SM_LOCKMODE_KS) == 1);
+
+  REQUIRE(sm1::chain_insert(f.s, c, "j", "w1") == 0);
+  REQUIRE(sm1::chain_update(f.s, c, "j", "w2", probe_kept, &yes) == 0);
+  CHECK(!(raw_version(f.s, c, false, "j", "", buf).flags & version_key_kept));
+  CHECK(sm1::chain_trylock_row(u, c, "j", sm1::SM_LOCKMODE_KS) == 1);
+  commit_xct(f.s);
+  CHECK(sm1::chain_trylock_row(u, c, "k", sm1::SM_LOCKMODE_KS) == 0);
+  commit_xct(u);
+}

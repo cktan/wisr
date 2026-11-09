@@ -549,7 +549,11 @@ else X.
 **The version says it kept the key**: `version_key_kept`
 (`0x08`), a flag of the chained value, in CURR and in the copy
 OLD keeps of it. An insert, a delete, a move and an update that
-changes a key are X, unflagged.
+changes a key are X, unflagged. The flag says the key is the last
+committed version's. So an update over the transaction's own
+version is flagged only if that version is flagged too: a key
+change or an insert earlier in the transaction is not hidden by
+a later update that keeps the key it made.
 
 **KS passes over a version that kept its key.** Under the latch,
 `sm1::chain_lock_row` in KS takes the lock over another
@@ -1171,6 +1175,8 @@ that mutex, and sees the new definition
 | `FOR SHARE`, then a non-key update | NKU waits for S, as in PostgreSQL |
 | two children's inserts on one parent | KS and KS |
 | a key changed and changed back, A to B to A | each write is X |
+| a key changed, then a non-key update, in one transaction | the second write is X, unflagged: KS waits for the writer, and its currency check fails on the commit |
+| a row inserted, then updated, in one transaction | the update is X, unflagged: KS waits for the insert |
 | an `INCLUDE` column changed | NKU: not a key column |
 | a primary key changed | the row moves: X |
 | an abort, a savepoint's rollback | the version is dead or gone; its flag with it |

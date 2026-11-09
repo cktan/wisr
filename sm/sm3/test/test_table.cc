@@ -3161,6 +3161,8 @@ TEST_CASE("an update that keeps the key passes a key-share lock") {
   //    state and owner, keeping id: it does not wait.
   // 3. B's update of id is X, which A's KS refuses: SM_ERR_BLOCKED.
   // 4. Both commit; the row is B's kept update.
+  // 5. B changes id, then updates state, keeping the id it made: A's
+  //    KS lock is SM_ERR_BLOCKED, as the key change is still B's.
   jobs_t f;
   std::shared_ptr<const sm3::table_def_t> def =
       sm3::cat_get_table(f.cat, f.jobs);
@@ -3194,6 +3196,20 @@ TEST_CASE("an update that keeps the key passes a key-share lock") {
   CHECK(get(ta, r1) == "1|taken|b");
   sm3::tbl_close(ta);
   REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.a), true) == 0);
+  start(f.a);
+  start(f.b);
+  tb = f.write(f.b);
+  REQUIRE_MESSAGE(set(tb, r1, 2, "taken", "b") == 0, sm1::errmsg());
+  REQUIRE_MESSAGE(set(tb, r1, 2, "done", "b") == 0, sm1::errmsg());
+  ta = f.write(f.a, sm1::SM_LOCKMODE_IS);
+  CHECK(sm3::tbl_lock(ta, r1, sm1::SM_LOCKMODE_KS) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  sm3::tbl_close(ta);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+  REQUIRE(sm3::abort(f.a) == 0);
 }
 
 TEST_CASE("a truncate empties the table and its indexes, with its "

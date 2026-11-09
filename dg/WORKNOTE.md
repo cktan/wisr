@@ -12926,14 +12926,18 @@ transaction that had inserted one of its children
   under the key's latch, against the version replaced, by
   sm2's `key_kept_fn`, which `sm1::chain_update` takes. The
   version is flagged `version_key_kept`; KS passes over it in
-  flight, and its currency check passes over it committed.
+  flight, and its currency check passes over it committed. The
+  flag says the key is the last committed version's: an update
+  over the transaction's own version is flagged only if that one
+  is, so an earlier key change or insert is not hidden (`k10`,
+  `k12`).
 - **The key columns** are those of the unique indexes on columns
   alone, not partial, but the primary key:
   `table_def_t::key_columns`, named to sm2 by
   `sm2::rel_set_key_columns`.
 - **digres** maps PostgreSQL's four row modes to sm's in
   `smstore_lock_row()`; `pg_locks` shows `KS` and `NKU`.
-- **Tests**: the scenarios `k01` to `k08`, with the driver's
+- **Tests**: the scenarios `k01` to `k12`, with the driver's
   `keyshare` and `nokeyupdate` modes, `write ... keykept` and
   the directive `stores chained`; sm1's unit tests of the
   matrix, the flag, the pass-over and the currency check;

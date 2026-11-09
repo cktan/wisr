@@ -1582,6 +1582,35 @@ held_wait lk_f "f updated" || fail "lock status: F updates the row"
 held_end lk_e
 held_end lk_f
 
+# Verify that FOR KEY SHARE passes an update in flight that keeps the row's
+# key, and waits for one whose transaction changed the key before, though
+# its last update kept the key it made (../sm/LOCKMGR.md section 1.13).
+# 1. K, in a transaction, updates ksp's row 1, v alone: FOR KEY SHARE
+#    NOWAIT in another session takes the row.
+# 2. K changes code, a unique column, then updates v again: FOR KEY SHARE
+#    NOWAIT fails, as the key change is K's, not yet committed.
+# 3. K commits: FOR KEY SHARE takes the row, and it holds K's values.
+local_psql -c 'create table ksp (id int8 primary key, code int4 unique, v int4)' \
+  -c 'insert into ksp values (1, 10, 1)' > /dev/null 2>&1
+held_start ks_k
+held_send ks_k "begin; update ksp set v = 2 where id = 1; select 'k kept';"
+held_wait ks_k "k kept" || fail "key share: K updates v"
+[ "$(local_psql -c 'select id from ksp where id = 1 for key share nowait' \
+  2> "$work/ks1.err")" = 1 ] ||
+  fail "key share passes an update in flight that keeps the key"
+held_send ks_k "update ksp set code = 20 where id = 1;
+update ksp set v = 3 where id = 1; select 'k changed';"
+held_wait ks_k "k changed" || fail "key share: K changes code, then v"
+local_psql -c 'select id from ksp where id = 1 for key share nowait' \
+  > "$work/ks2.out" 2>&1 && fail "key share passes a key change in flight"
+grep -q 'could not obtain lock on row' "$work/ks2.out" ||
+  fail "key share refuses a key change in flight, and says why"
+held_send ks_k "commit; select 'k done';"
+held_wait ks_k "k done" || fail "key share: K commits"
+[ "$(local_psql -c 'select code, v from ksp where id = 1 for key share')" = "20|3" ] ||
+  fail "key share after the key change commits"
+held_end ks_k
+
 # Verify that reading the catalogs takes no lock: a catalog's rows are
 # compiled in and never change, so no lock would guard anything of them,
 # and nothing waits on a virtual xid's lock.
