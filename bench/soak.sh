@@ -10,6 +10,7 @@
 #
 #   DURATION  seconds of the run, warm-up included (14400)
 #   WARMUP    seconds at the start that the report does not score (900)
+#   SHARED_BUFFERS  the server's shared_buffers (2GB)
 #   SRV_CPUS  CPUs of the server (0-1)
 #   CLI_CPUS  CPUs of the clients (2-3)
 #
@@ -173,7 +174,7 @@ else
   printf 'jit = off\nmax_parallel_workers_per_gather = 0\n' \
     >> "$work/data/postgresql.conf"
 fi
-printf "shared_buffers = 2GB\nlisten_addresses = ''\n" \
+printf "shared_buffers = %s\nlisten_addresses = ''\n" "${SHARED_BUFFERS:-2GB}" \
   >> "$work/data/postgresql.conf"
 nstart=0
 start_server || { echo "soak: server did not start" >&2; exit 1; }

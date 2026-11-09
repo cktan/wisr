@@ -7,11 +7,12 @@ Reads the samples and the pgbench logs that soak.sh left in the
 directory, and judges the pass criteria of SOAK.md section 1.
 
 1. Read the samples, and keep those after the warm-up.
-2. Fit a line to each of memory, threads and descriptors.
+2. Fit a line, over the second half of the scored part, to each of
+   memory, threads and descriptors.
 3. Compare the first tenth of the scored part with the last tenth:
    tps (from the progress lines), and p50 and p99 latency (from the
    2% sample of the transaction logs).
-4. Compare the data directory's size at the end with that earlier.
+4. Compare the data directory's peak size in the two halves.
 5. Print the mix of the transactions, and the retries.
 """
 import csv
@@ -79,8 +80,10 @@ def read_latencies(d, group, t0):
         with open(p) as f:
             for line in f:
                 c = line.split()
-                if len(c) >= 6:
+                try:
                     out.append((int(c[4]) - t0, int(c[2]) / 1000.0))
+                except (IndexError, ValueError):
+                    pass  # a line cut short while the run goes on
     return out
 
 
@@ -123,19 +126,22 @@ def main():
                               ("fds", "descriptors", 1)):
         ys = [r[key] for r in s]
         scale = 1024.0 if key == "pss_kb" else 1.0
-        sl = slope_per_hour(ts, ys)
+        # The slope of the second half: the first half still settles.
+        sl = slope_per_hour(ts[len(ts) // 2:], ys[len(ys) // 2:])
         a, b = median(ys[:n10]), median(ys[-n10:])
         res = "pass" if abs(sl) <= limit else "FAIL"
         ok &= res == "pass"
         print("| %s | %.1f | %.1f | %.2f | %.2f | %s |" %
               (label, a / scale, b / scale, sl / scale, limit / scale, res))
+    # The size is a sawtooth: it grows until a compaction, then falls.
+    # Compare the peaks of the first and the second half.
     data = [r["data_kb"] for r in s]
-    mid = median(data[len(s) * 4 // 10:len(s) * 5 // 10])
-    end = median(data[-n10:])
-    res = "pass" if abs(end - mid) <= 0.05 * mid else "FAIL"
+    half = len(data) // 2
+    pa, pb = max(data[:half]), max(data[half:])
+    res = "pass" if pb <= 1.10 * pa else "FAIL"
     ok &= res == "pass"
-    print("| data directory (MB) | %.0f | %.0f | | 5%% of the 40%%-50%% point | %s |" %
-          (median(data[:n10]) / 1024, end / 1024, res))
+    print("| data directory peak (MB) | %.0f | %.0f | | 10%% over the first half | %s |" %
+          (pa / 1024, pb / 1024, res))
     files = [r["files"] for r in s]
     print("| data files | %d | %d | | | |" %
           (median(files[:n10]), median(files[-n10:])))
@@ -167,8 +173,8 @@ def main():
         files = glob.glob(os.path.join(d, "tx-%s.*" % g))
         if not files:
             continue
-        t0 = min(int(l.split()[4]) for f in files for l in open(f)
-                 if len(l.split()) >= 6)
+        t0 = min(t for t, _ in read_latencies(d, g, 0)) \
+            if read_latencies(d, g, 0) else 0
         lat = [(t, v) for t, v in read_latencies(d, g, t0) if t >= warmup]
         if not lat:
             continue

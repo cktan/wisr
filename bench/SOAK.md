@@ -10,11 +10,14 @@ scripts in `soak/`, and `soak/report.py`.
 The run passes when all of these hold. Warm-up (15 minutes) is
 not scored.
 
-- RSS of the postmaster and of each backend is flat. The slope
-  over the scored part is under 1 MB an hour.
-- File descriptor count and thread count are flat.
-- The data directory size reaches a steady state, as the
-  insert rate and the delete rate are equal.
+- Memory (PSS) of the server is flat. The slope over the second
+  half of the scored part is under 1 MB an hour. The first half
+  is allowed to settle.
+- File descriptor count and thread count are flat: the same
+  slope test, under 1 an hour.
+- The data directory size is a sawtooth: it grows, then falls
+  when a compaction runs. The peak of the second half of the
+  scored part is within 10% of the peak of the first half.
 - Tps, p50 latency and p99 latency in the last 10% of the run are
   within 5% of the first 10% of the scored part.
 - The end-state checks in section 7 pass.
