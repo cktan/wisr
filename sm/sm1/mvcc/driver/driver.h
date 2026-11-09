@@ -96,6 +96,7 @@ struct permutation_t {
 struct script_t {
   std::string path;
   std::string pairings = "all";
+  bool chained_only = false; /* stores chained: run on chained stores */
   std::vector<session_decl_t> sessions;
   std::vector<std::pair<std::string, std::string>> seeds; /* row, value */
   std::vector<item_t> items;

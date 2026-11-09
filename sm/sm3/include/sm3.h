@@ -330,6 +330,13 @@ struct table_def_t {
     std::vector<sm2::attribute_t> schema;
     sm2::tup_desc_t               desc;    /* over schema */
     std::vector<index_def_t>      indexes;
+    /*
+     * Its key columns (../LOCKMGR.md §1.13): the key columns of its
+     * unique indexes on columns alone, not partial, but the primary
+     * key, 0-based, ascending, each once. An update that changes
+     * none of them keeps its key.
+     */
+    std::vector<int32_t>          key_columns;
     table_rec_t                   rec;     /* the record it was built from */
 };
 
@@ -1737,12 +1744,13 @@ int tbl_read_latest(table_t* table, uint64_t id, pin_ref_t& ref,
 
 /*
  * Lock the row with _id id in mode without writing it, as
- * sm2::rel_lock does, to the end of the transaction: shared, as a
- * foreign key check locks the parent row and SELECT ... FOR SHARE
- * a row it read, which other readers of the key may share and a
- * writer waits for; or exclusive, as SELECT ... FOR UPDATE. The
- * row need not exist. It waits as a write does. A mode other than
- * shared needs the table opened to write, SM_ERR_INVALID if not.
+ * sm2::rel_lock does, to the end of the transaction, in one of the
+ * row modes (../LOCKMGR.md §1.13): KS, as a foreign key check locks
+ * the parent row, which an update that keeps the row's key passes;
+ * S, as SELECT ... FOR SHARE, which every writer waits for; NKU, as
+ * FOR NO KEY UPDATE; or X, as FOR UPDATE. The row need not exist.
+ * It waits as a write does. NKU and X need the table opened to
+ * write, SM_ERR_INVALID if not.
  * Above read committed, a row committed since the snapshot fails
  * with SM_ERR_CONFLICT, as sm1::lock_row says. The row is one the
  * running statement read (sm1::lock_row's as_read): one the

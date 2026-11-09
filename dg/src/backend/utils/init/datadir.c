@@ -305,7 +305,7 @@ std::vector<int> datadir_sm_blockers(int pid) {
   return pids;
 }
 
-/* sm's name for a lock mode, as pg_locks shows it: Gray's, not PostgreSQL's. */
+/* sm's name for a lock mode, as pg_locks shows it: sm's, not PostgreSQL's. */
 static const char *datadir_mode_name(sm_lockmode_t mode) {
   switch (mode) {
   case SM_LOCKMODE_IS:
@@ -318,6 +318,10 @@ static const char *datadir_mode_name(sm_lockmode_t mode) {
     return "SIX";
   case SM_LOCKMODE_EX:
     return "X";
+  case SM_LOCKMODE_KS:
+    return "KS";
+  case SM_LOCKMODE_NKU:
+    return "NKU";
   }
   return "?";
 }

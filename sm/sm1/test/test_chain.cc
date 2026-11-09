@@ -1443,3 +1443,166 @@ TEST_CASE("rows of an ascending batch stay in their pins past the call") {
   }
   commit_xct(f.s);
 }
+
+namespace {
+
+/* What a key_kept_fn saw, and what it answers. */
+struct kept_probe_t {
+  bool answer = true;
+  int calls = 0;
+  std::string old_row, new_row;
+};
+
+/* A key_kept_fn that records its rows and answers the probe's answer. */
+bool probe_kept(void *ctx, std::string_view old_row,
+                std::string_view new_row) noexcept {
+  auto *p = static_cast<kept_probe_t *>(ctx);
+  p->calls++;
+  p->old_row = std::string(old_row);
+  p->new_row = std::string(new_row);
+  return p->answer;
+}
+
+} // namespace
+
+TEST_CASE("an update that keeps its key is flagged, and passes a KS lock") {
+  // Verify the NKU write of ../LOCKMGR.md §1.13 against KS.
+  // 1. Insert k = v1, then hold k in KS in session t.
+  // 2. Update k to v2 with a kept that says yes: it does not wait,
+  //    and kept saw v1 and v2.
+  // 3. Confirm CURR's version is flagged key-kept.
+  // 4. A KS lock of another session passes over the version in flight;
+  //    an S lock would wait, so trylock in S answers 1.
+  // 5. Commit all; update k to v3 with no kept: the version is not
+  //    flagged, and OLD's copy of v2 keeps its flag.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  sm1::session_t *t = f.open();
+  sm1::session_t *u = f.open();
+  begin_xct(t);
+  REQUIRE(sm1::chain_lock_row(t, c, "k", sm1::SM_LOCKMODE_KS) == 0);
+
+  kept_probe_t probe;
+  begin_xct(f.s);
+  REQUIRE_MESSAGE(sm1::chain_update(f.s, c, "k", "v2", probe_kept, &probe) == 0,
+                  sm1::errmsg());
+  CHECK(probe.calls == 1);
+  CHECK(probe.old_row == "v1");
+  CHECK(probe.new_row == "v2");
+  std::string buf;
+  CHECK((raw_version(f.s, c, false, "k", "", buf).flags & version_key_kept));
+
+  begin_xct(u, sm1::xctlevel_t::repeatable_read);
+  CHECK(sm1::chain_trylock_row(u, c, "k", sm1::SM_LOCKMODE_KS) == 0);
+  CHECK(sm1::chain_trylock_row(u, c, "k", sm1::SM_LOCKMODE_SH) == 1);
+  commit_xct(f.s);
+  commit_xct(t);
+  commit_xct(u);
+
+  chain_put(f.s, c, "k", "v3", false);
+  CHECK(!(raw_version(f.s, c, false, "k", "", buf).flags & version_key_kept));
+  CHECK((raw_version(f.s, c, true, "k", "v2", buf).flags & version_key_kept));
+}
+
+TEST_CASE("an update that changes its key waits for KS, and KS waits for it") {
+  // Verify that a key-changing write is X: it meets KS both ways.
+  // 1. Hold k in KS in session t.
+  // 2. In another thread, update k with a kept that says no: it waits.
+  // 3. Commit t: the update goes in, unflagged.
+  // 4. With the update in flight, a KS trylock answers 1.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  sm1::session_t *t = f.open();
+  sm1::session_t *u = f.open();
+  begin_xct(t);
+  REQUIRE(sm1::chain_lock_row(t, c, "k", sm1::SM_LOCKMODE_KS) == 0);
+
+  kept_probe_t probe;
+  probe.answer = false;
+  std::atomic<int> done{-2};
+  std::thread th([&] {
+    REQUIRE(sm1::begin(f.s, sm1::xctlevel_t::read_committed) == 0);
+    done = sm1::chain_update(f.s, c, "k", "v2", probe_kept, &probe);
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  CHECK(done == -2);
+  commit_xct(t);
+  th.join();
+  REQUIRE(done == 0);
+  std::string buf;
+  CHECK(!(raw_version(f.s, c, false, "k", "", buf).flags & version_key_kept));
+
+  begin_xct(u);
+  CHECK(sm1::chain_trylock_row(u, c, "k", sm1::SM_LOCKMODE_KS) == 1);
+  commit_xct(f.s);
+  CHECK(sm1::chain_trylock_row(u, c, "k", sm1::SM_LOCKMODE_KS) == 0);
+  commit_xct(u);
+}
+
+TEST_CASE("KS's currency check passes a committed update that kept the key") {
+  // Verify the check of ../LOCKMGR.md §1.6 in KS, above read committed.
+  // 1. Begin three repeatable read readers of k = v1.
+  // 2. Update k to v2, keeping the key, and commit.
+  // 3. The first reader's KS lock is taken; the second's S lock fails
+  //    with SM_ERR_CONFLICT.
+  // 4. Update k to v3, changing the key, and commit: the third
+  //    reader's KS lock fails with SM_ERR_CONFLICT, though v2 kept it.
+  // A conflict ends its transaction, so neither failed reader aborts.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  sm1::session_t *r[3];
+  for (sm1::session_t *&s : r) {
+    s = f.open();
+    begin_xct(s, sm1::xctlevel_t::repeatable_read);
+    CHECK(chain_get(s, c, "k") == "v1");
+  }
+  kept_probe_t probe;
+  begin_xct(f.s);
+  REQUIRE(sm1::chain_update(f.s, c, "k", "v2", probe_kept, &probe) == 0);
+  commit_xct(f.s);
+
+  CHECK(sm1::chain_lock_row(r[0], c, "k", sm1::SM_LOCKMODE_KS) == 0);
+  commit_xct(r[0]);
+  CHECK(sm1::chain_lock_row(r[1], c, "k", sm1::SM_LOCKMODE_SH) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
+
+  chain_put(f.s, c, "k", "v3", false);
+  CHECK(sm1::chain_lock_row(r[2], c, "k", sm1::SM_LOCKMODE_KS) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
+}
+
+TEST_CASE("an update over the writer's own key change is not flagged") {
+  // Verify that the flag says the key is the last committed version's.
+  // 1. In one transaction, update k changing the key, then again with a
+  //    kept that says yes: neither version is flagged, and kept is
+  //    not asked, as the version it would compare against changed it.
+  // 2. A KS trylock of another session answers 1: it waits for the
+  //    writer, as for any key change.
+  // 3. In one transaction, insert j, then update it with a kept that
+  //    says yes: the update is not flagged, and KS waits for it.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  sm1::session_t *u = f.open();
+  kept_probe_t no, yes;
+  no.answer = false;
+  begin_xct(f.s);
+  REQUIRE(sm1::chain_update(f.s, c, "k", "v2", probe_kept, &no) == 0);
+  REQUIRE(sm1::chain_update(f.s, c, "k", "v3", probe_kept, &yes) == 0);
+  CHECK(yes.calls == 0);
+  std::string buf;
+  CHECK(!(raw_version(f.s, c, false, "k", "", buf).flags & version_key_kept));
+  begin_xct(u);
+  CHECK(sm1::chain_trylock_row(u, c, "k", sm1::SM_LOCKMODE_KS) == 1);
+
+  REQUIRE(sm1::chain_insert(f.s, c, "j", "w1") == 0);
+  REQUIRE(sm1::chain_update(f.s, c, "j", "w2", probe_kept, &yes) == 0);
+  CHECK(!(raw_version(f.s, c, false, "j", "", buf).flags & version_key_kept));
+  CHECK(sm1::chain_trylock_row(u, c, "j", sm1::SM_LOCKMODE_KS) == 1);
+  commit_xct(f.s);
+  CHECK(sm1::chain_trylock_row(u, c, "k", sm1::SM_LOCKMODE_KS) == 0);
+  commit_xct(u);
+}

@@ -2568,6 +2568,10 @@ static bool mode_covers(sm_lockmode_t held, sm_lockmode_t want) {
     return want == SM_LOCKMODE_IX || want == SM_LOCKMODE_IS;
   case SM_LOCKMODE_IS:
     return want == SM_LOCKMODE_IS;
+  case SM_LOCKMODE_KS:
+  case SM_LOCKMODE_NKU:
+    /* Row modes: no table is held in one. */
+    return false;
   }
   return false;
 }
@@ -9790,8 +9794,9 @@ TM_Result smstore_delete(Relation rel, const RowKey *key,
  * already, and this reads the version to check again (sm_tbl_read_latest);
  * the row is kept, so the executor's next fetch of it is this version.
  *
- * Else it is SELECT ... FOR UPDATE's or FOR SHARE's: the row is locked in
- * sm, shared or exclusive, to the end of the transaction, waiting for
+ * Else it is SELECT ... FOR UPDATE's or FOR SHARE's, or a foreign key's
+ * check: the row is locked in sm, in the sm mode of PostgreSQL's, KEY SHARE,
+ * SHARE, NO KEY UPDATE or UPDATE, to the end of the transaction, waiting for
  * another transaction that holds it or has written it -- or, with NOWAIT,
  * failing, and with SKIP LOCKED answering TM_WouldBlock.  Above READ
  * COMMITTED, sm fails the lock, and the transaction, if the row changed
@@ -9826,7 +9831,11 @@ TM_Result smstore_lock_row(Relation rel, const RowKey *key,
 
   slot->tts_tableOid = oid;
   if (!after_write) {
-    sm_lockmode_t smmode = share ? SM_LOCKMODE_SH : SM_LOCKMODE_EX;
+    /* PostgreSQL's four row modes are four of sm's (LOCKMGR.md 1.13). */
+    sm_lockmode_t smmode = mode == LockTupleKeyShare         ? SM_LOCKMODE_KS
+                           : mode == LockTupleShare          ? SM_LOCKMODE_SH
+                           : mode == LockTupleNoKeyExclusive ? SM_LOCKMODE_NKU
+                                                             : SM_LOCKMODE_EX;
     int rc;
 
     /*

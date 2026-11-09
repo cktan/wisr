@@ -520,6 +520,9 @@ int open_rels(table_t *table) {
                          toast_seq, table->rel) != 0) {
     return -1;
   }
+  // So that an update judges, under the row's latch, whether it kept
+  // the key a KS lock guards (../LOCKMGR.md §1.13).
+  sm2::rel_set_key_columns(table->rel, def.key_columns);
   table->indexes.assign(def.indexes.size(), nullptr);
   return 0;
 }
@@ -1501,6 +1504,11 @@ int tbl_read_latest(table_t *table, uint64_t id, pin_ref_t &ref,
   });
 }
 
+/* Whether mode is a shared row mode, S or KS, writing nothing. */
+static bool shared_row_mode(sm1::lockmode_t mode) {
+  return mode == sm1::SM_LOCKMODE_SH || mode == sm1::SM_LOCKMODE_KS;
+}
+
 /*
  * Lock a keyless table's row with _id id, waiting or not; see sm3.h.
  * A row there is none of has nothing to lock, and a read of it then
@@ -1508,8 +1516,8 @@ int tbl_read_latest(table_t *table, uint64_t id, pin_ref_t &ref,
  */
 static int lock_row(table_t *table, uint64_t id, sm1::lockmode_t mode,
                     bool nowait) {
-  // Only a shared lock sits under a table opened to read.
-  if (mode != sm1::SM_LOCKMODE_SH && need_writable(table) != 0) {
+  // Only a shared lock, S or KS, sits under a table opened to read.
+  if (!shared_row_mode(mode) && need_writable(table) != 0) {
     return -1;
   }
   std::string key;
@@ -1640,8 +1648,8 @@ int tbl_read_latest(table_t *table, const row_key_t &key, pin_ref_t &ref,
  */
 static int lock_key(table_t *table, const row_key_t &key, sm1::lockmode_t mode,
                     bool nowait) {
-  // Only a shared lock sits under a table opened to read.
-  if (sm1::SM_LOCKMODE_SH != mode && 0 != need_writable(table)) {
+  // Only a shared lock, S or KS, sits under a table opened to read.
+  if (!shared_row_mode(mode) && 0 != need_writable(table)) {
     return -1;
   }
   std::string k;

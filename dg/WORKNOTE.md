@@ -12938,3 +12938,37 @@ grew without bound.
 - **Found too**: `test/tls.sh` looked for psql 17's `\conninfo`
   text. PostgreSQL 18's psql prints a table, so the check failed
   on a server that was over TLS. It accepts both now.
+
+## Step 424: key-share row locks
+
+A foreign key's check locked its parent row `FOR SHARE`, so an
+update of the parent's other columns waited for every open
+transaction that had inserted one of its children
+([`../sm/LOCKMGR.md`](../sm/LOCKMGR.md#113-key-share-modes)
+§1.13).
+
+- **Two row modes in sm1**: KS (`FOR KEY SHARE`) and NKU
+  (`FOR NO KEY UPDATE`), `SM_LOCKMODE_KS` and
+  `SM_LOCKMODE_NKU`, with PostgreSQL's conflicts among KS, S,
+  NKU and X. `sm1::lock_oid` refuses them.
+- **An update that keeps its key is NKU**: the compare is made
+  under the key's latch, against the version replaced, by
+  sm2's `key_kept_fn`, which `sm1::chain_update` takes. The
+  version is flagged `version_key_kept`; KS passes over it in
+  flight, and its currency check passes over it committed. The
+  flag says the key is the last committed version's: an update
+  over the transaction's own version is flagged only if that one
+  is, so an earlier key change or insert is not hidden (`k10`,
+  `k12`).
+- **The key columns** are those of the unique indexes on columns
+  alone, not partial, but the primary key:
+  `table_def_t::key_columns`, named to sm2 by
+  `sm2::rel_set_key_columns`.
+- **digres** maps PostgreSQL's four row modes to sm's in
+  `smstore_lock_row()`; `pg_locks` shows `KS` and `NKU`.
+- **Tests**: the scenarios `k01` to `k12`, with the driver's
+  `keyshare` and `nokeyupdate` modes, `write ... keykept` and
+  the directive `stores chained`; sm1's unit tests of the
+  matrix, the flag, the pass-over and the currency check;
+  sm3's test of the key columns; and the isolation specs that
+  need the four modes.

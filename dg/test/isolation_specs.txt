@@ -11,6 +11,7 @@ delete-abort-savept             pass
 inplace-inval                   pass
 insert-conflict-do-nothing      pass
 insert-conflict-do-update       pass
+insert-conflict-do-update-2     pass
 lock-nowait                     pass
 multixact-no-deadlock           pass
 nowait                          pass
@@ -22,24 +23,25 @@ skip-locked                     pass
 skip-locked-2                   pass
 skip-locked-3                   pass
 skip-locked-4                   pass
-# sm1 has no wait queue to reorder, and five lock modes for PostgreSQL's
+fk-contention                   pass
+fk-deadlock                     pass
+lock-update-traversal           pass
+multixact-no-forget             pass
+propagate-lock-delete           pass
+tuplelock-conflict              pass
+tuplelock-update                pass
+update-locked-tuple             pass
+# sm1 has no wait queue to reorder, and five table lock modes for PostgreSQL's
 # eight: it ends a transaction where PostgreSQL untangles a soft deadlock
 deadlock-soft                   fail
 deadlock-soft-2                 fail
-# no FOR KEY SHARE or FOR NO KEY UPDATE: they are FOR SHARE and FOR UPDATE
-delete-abort-savept-2           fail
-lock-update-traversal           fail
-multixact-no-forget             fail
-tuplelock-conflict              fail
-tuplelock-update                fail
+# a holder that upgrades its row lock waits behind the waiters on the row,
+# where PostgreSQL lets it go first: sm1 reports the deadlock it makes
 tuplelock-upgrade-no-deadlock   fail
-# the same, met by a foreign key's check: it locks the parent row FOR KEY
-# SHARE, which is FOR SHARE, so an update of the parent's other columns
-# waits for the child's transaction, and two may deadlock
-fk-contention                   fail
-fk-deadlock                     fail
-propagate-lock-delete           fail
-update-locked-tuple             fail
+# a write converts its own row lock to X, and a rollback to a savepoint
+# taken before the write keeps the conversion: s2's FOR NO KEY UPDATE waits
+# for s1's commit
+delete-abort-savept-2           fail
 # an unconstrained numeric is numeric(18, 3) (DECIMAL.md): 0 prints 0.000
 read-only-anomaly               fail
 timeouts                        fail
@@ -47,5 +49,4 @@ timeouts                        fail
 drop-owned-grant                fail
 intra-grant-inplace             fail
 truncate-conflict               fail
-insert-conflict-do-update-2     fail
 merge-join                      fail

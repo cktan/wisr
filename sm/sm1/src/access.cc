@@ -358,14 +358,18 @@ int write_row(sm1::session_t *s, write_op_t op, uint64_t storeid,
   return 0;
 }
 
-/* -1 unless s may take a lock in mode: an active transaction. */
-int lock_check(sm1::session_t *s, sm1::lockmode_t mode) {
+/*
+ * -1 unless s may take a lock in mode: an active transaction, and one of
+ * Gray's five, or with row one of a row's modes too, KS and NKU
+ * (../LOCKMGR.md §1.13).
+ */
+int lock_check(sm1::session_t *s, sm1::lockmode_t mode, bool row = false) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
   }
-  // Reject a mode that is not one of Gray's five.
-  if (static_cast<int>(mode) < 0 || static_cast<int>(mode) > 4) {
+  int last = row ? sm1::SM_LOCKMODE_NKU : sm1::SM_LOCKMODE_SIX;
+  if (static_cast<int>(mode) < 0 || static_cast<int>(mode) > last) {
     return set_error(sm1::SM_ERR_INVALID, "unknown lock mode {}", (int)mode);
   }
   return 0;
@@ -386,7 +390,7 @@ int lock_object(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode,
 int lock_versioned(sm1::session_t *s, uint64_t storeid, const char *key,
                    size_t klen, sm1::lockmode_t mode, bool nowait, bool as_read,
                    uint16_t kind) {
-  if (lock_check(s, mode) != 0) {
+  if (lock_check(s, mode, true) != 0) {
     return -1;
   }
   // Validate the storeid and key at the current view.
@@ -578,8 +582,9 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
                      "sm1_read_latest requires a lock held on the key, or "
                      "a write of it by this transaction");
   }
-  // An exclusive holder may now write.
-  if (held && mode == sm1::SM_LOCKMODE_EX) {
+  // A holder no other writer passes, X or NKU, may now write: an
+  // NKU holder's write that changes the key converts to X first.
+  if (held && (mode == sm1::SM_LOCKMODE_EX || mode == sm1::SM_LOCKMODE_NKU)) {
     lock_set_latest(s, storeid, k);
   }
   // Moved to another key: the caller's row lives on there.

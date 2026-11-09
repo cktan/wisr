@@ -201,6 +201,20 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
     }
     t->indexes.push_back(std::move(d));
   }
+  // The columns a key-share lock guards, a pending index's too: one
+  // NKU write judged X is safe, one X judged NKU is not.
+  for (const sm3::index_def_t &d : t->indexes) {
+    // eval is empty for a plain index, neither partial nor of
+    // expressions.
+    if (d.unique && !d.primary && d.eval.empty()) {
+      t->key_columns.insert(t->key_columns.end(), d.key_attnums.begin(),
+                            d.key_attnums.end());
+    }
+  }
+  std::sort(t->key_columns.begin(), t->key_columns.end());
+  t->key_columns.erase(
+      std::unique(t->key_columns.begin(), t->key_columns.end()),
+      t->key_columns.end());
   out = std::move(t);
   return 0;
 }
