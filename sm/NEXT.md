@@ -78,11 +78,10 @@ and so are the catalog tables psql reads
      instructions beyond its entry, against PostgreSQL's 3,200.
      RocksDB's `MultiGet` takes 9,000 of it, and RocksDB's
      settings are already tuned. With no cost in RocksDB at all,
-     q3 is still 1.2 times PostgreSQL. One large change closes
-     the gap: **a table's rows in sm's own pages**, as a tree
-     keeps an index's entries. It gives parity, and is a redesign
-     of the row store. A cache of rows was dropped (2026-11-08):
-     it targets q3 alone, so it is not acceptable.
+     q3 is still 1.2 times PostgreSQL. No change is planned.
+     Dropped: **a cache of rows** (2026-11-08), as it targets q3
+     alone; and **a table's rows in sm's own pages** (2026-11-09),
+     a redesign of the row store. It would give parity.
 
    For lsm indexes, the default, q1 to q3 are 1.41, 2.96 and
    2.40 times PostgreSQL's latency ([`../PERF.md`](../PERF.md)).
