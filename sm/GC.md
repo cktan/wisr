@@ -330,7 +330,10 @@ To take the queue, the worker does this, once in each run:
 3. Read the records without the lock.
 
 A key met again after a take is queued again, and its second
-repair or purge finds nothing to do. One hash function is what
+repair or purge finds nothing to do. A push that set its bit just
+before a take appends to the next buffer with its bit cleared: a
+second push of the key then queues it again, in the same batch.
+That is harmless too. One hash function is what
 makes the clear safe: with two or more, clearing a bit could
 hide another key (BTREEINDEX.md §9.4). Two keys that share a bit
 are one: the second is not queued, and the next compaction or
@@ -383,14 +386,17 @@ meets both fails. So:
 - The purge erases by SingleDelete. A version the filter erases
   meanwhile gets two; RocksDB's compaction skips the first.
 
-**The queue holds a key once** (§4.6). Each compaction that
-meets a tombstone before its purge queues it again; a mass
+**The queue holds a key about once** (§4.6). Each compaction
+that meets a tombstone before its purge queues it again; a mass
 delete's level-0 files are met by many, and a queue that kept
 every one held each key about 25 times. The filter of the queue
-stops a key already queued. The worker empties the queue and the
-filter together, so a key met again after that is queued again,
-and erased again, harmlessly. The queue is bounded: a full
-buffer drops the key.
+stops a key already queued. It is a best effort, not a promise:
+a key that shares a bit with a queued one is dropped, and a push
+that races a take can queue a key twice. The worker empties the
+queue and the filter together, so a key met again after that is
+queued again. A second purge of a key reads no version, as the
+first erased them, and writes nothing. The queue is bounded: a
+full buffer drops the key.
 
 **The queue is volatile.** An entry lost to a crash is queued
 again by the next compaction that meets the tombstone.
@@ -939,8 +945,9 @@ replaces CURR anyway.
 ### 13.6 What a reaper does not do
 
 - **It does not replace the filter.** The filter still drops
-  every OLD entry a compaction meets (§4.2), and a restart or a
-  lost hint leaves entries only for it.
+  each OLD entry a compaction meets that no snapshot needs: one
+  unlinked, or displaced by a version committed at or below W
+  (§4.2). A restart or a lost hint leaves entries only for it.
 - **It does not repair.** A dead CURR version is the repair's
   (§4.2). The reaper stops at a version that is not settled.
 - **It does not judge a snapshot.** It reads W once, as a
@@ -979,8 +986,10 @@ replaces CURR anyway.
   version back, and a read sees it.
 - A crash between the write and its reap loses nothing: the
   batch is atomic.
-- The worker's reap: a key written once and read never again is
-  reaped, and its CURR reads the same.
+- The worker's reap: update a key while a snapshot holds W back,
+  so that the writer queues it (§13.5 step 1), then end the
+  snapshot. The key is read never again, and the worker reaps
+  it: no OLD entry is left, and its CURR reads the same.
 - A temporary store is not queued.
 - Under the thread sanitizer: writers, readers and the worker on
   the same keys.

@@ -2168,7 +2168,8 @@ int chain_read_latest(session_t* session, uint64_t storeid,
                       std::string_view& data);
 int chain_read_batch(session_t* session, uint64_t storeid,
                      const std::string_view* keys, size_t n,
-                     rawpin_t** pins, std::string_view* data, int* rc);
+                     rawpin_t** pins, std::string_view* data, int* rc,
+                     batch_iter_t* iter = nullptr);
 int chain_lock_row(session_t* session, uint64_t storeid,
                    std::string_view key, lockmode_t mode,
                    bool as_read = false, uint16_t kind = 0);
@@ -2184,7 +2185,35 @@ call ([`../ROWSTORE.md`](../ROWSTORE.md)): key `i`'s row into
 pin then empty. The keys' newest versions are read together,
 in RocksDB's MultiGet, in any order; each key is checked,
 takes its SIREAD entry and is resolved as a single read of it
-is. Returns 0, or -1 on an error, the rows then undefined.
+is. Keys in ascending order are read by one iterator: `iter`'s,
+if given, brought up to date, or one made and kept in `iter`. A
+batch whose keys are too far apart to step between marks
+`iter`, and its later batches of the store are read by MultiGet
+alone. Returns 0, or -1 on an error, the rows then undefined.
+
+### sm1::batch_iter_t* sm1::batch_iter_new(bool scattered = false)
+
+A batch read's iterator, which the caller keeps from one
+`sm1::chain_read_batch` to the next, as a cursor reads its rows
+in batches ([`../ROWSTORE.md`](../ROWSTORE.md) §7.2). It holds no
+RocksDB iterator yet. With `scattered`, the caller says its keys
+are far apart in the store, as an uncorrelated index's rows are:
+every batch is read by MultiGet alone, and `iter` never holds
+an iterator.
+
+The caller makes it, keeps it and frees it. sm1 lets go of the
+RocksDB iterator it holds at the end of the transaction, at a
+rollback to a savepoint, and as the session closes. So an
+unfreed `batch_iter_t` holds no RocksDB files.
+
+### void sm1::batch_iter_free(sm1::batch_iter_t* iter)
+
+Let go of `iter`'s RocksDB iterator, then free `iter`. A
+`nullptr` is a no-op.
+
+### bool sm1::batch_iter_held(const sm1::batch_iter_t* iter)
+
+Whether `iter` holds a RocksDB iterator now. For tests.
 
 ### int sm1::store_chained(sm1::session_t* session, uint64_t storeid, bool& out)
 
