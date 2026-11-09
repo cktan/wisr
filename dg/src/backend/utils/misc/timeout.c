@@ -128,6 +128,29 @@ static int set_alarm_timer(long secs, int usecs) {
   return 0;
 }
 
+/*
+ * Cancel this thread's timer, and take an INTERRUPT_ALARM it raised
+ * already, as a timeout is disabled.  PostgreSQL leaves its timer
+ * armed (schedule_alarm()), and a SIGALRM that finds no timeout due
+ * costs nothing.  Here a stale ALARM ends work in sm that cannot be
+ * retried, such as a bulk load's final sort (ISSUE.md): an
+ * authentication timeout, disabled at once, fired a second later in a
+ * COPY.  A caller with timeouts left calls schedule_alarm() after, which
+ * arms the timer for the earliest, at once if it is due.
+ * 1. Cancel the timer: it raises nothing more.
+ * 2. Clear signal_pending, so that schedule_alarm() arms the next one.
+ * 3. Take the ALARM bit: what it was for is due again by step 2's timer,
+ *    or not at all.
+ */
+static void cancel_alarm(void) {
+  if (ts().alarm_timer != 0) {
+    sm_timer_cancel(ts().alarm_timer);
+    ts().alarm_timer = 0;
+  }
+  ts().signal_pending = false;
+  (void)sm_take(INTERRUPT_ALARM);
+}
+
 /*****************************************************************************
  * Internal helper functions
  *
@@ -689,14 +712,20 @@ void disable_timeout(TimeoutId id, bool keep_indicator) {
   disable_alarm();
 
   /* Find the timeout and remove it from the active list. */
-  if (ts().all_timeouts[id].active)
+  bool removed = ts().all_timeouts[id].active;
+  if (removed)
     remove_timeout_index(find_active_timeout(id));
 
   /* Mark it inactive, whether it was active or not. */
   if (!keep_indicator)
     ts().all_timeouts[id].indicator = false;
 
-  /* Reschedule the interrupt, if any timeouts remain active. */
+  /*
+   * No stale interrupt: with a timeout removed, the timer is cancelled,
+   * then armed again for the earliest timeout left, if any (cancel_alarm()).
+   */
+  if (removed)
+    cancel_alarm();
   if (ts().num_active_timeouts > 0)
     schedule_alarm(GetCurrentTimestamp());
 }
@@ -720,19 +749,27 @@ void disable_timeouts(const DisableTimeoutParams *timeouts, int count) {
   disable_alarm();
 
   /* Cancel the timeout(s). */
+  bool removed = false;
   for (i = 0; i < count; i++) {
     TimeoutId id = timeouts[i].id;
 
     Assert(ts().all_timeouts[id].timeout_handler != NULL);
 
-    if (ts().all_timeouts[id].active)
+    if (ts().all_timeouts[id].active) {
       remove_timeout_index(find_active_timeout(id));
+      removed = true;
+    }
 
     if (!timeouts[i].keep_indicator)
       ts().all_timeouts[id].indicator = false;
   }
 
-  /* Reschedule the interrupt, if any timeouts remain active. */
+  /*
+   * No stale interrupt: with a timeout removed, the timer is cancelled,
+   * then armed again for the earliest timeout left, if any (cancel_alarm()).
+   */
+  if (removed)
+    cancel_alarm();
   if (ts().num_active_timeouts > 0)
     schedule_alarm(GetCurrentTimestamp());
 }
@@ -749,8 +786,10 @@ void disable_all_timeouts(bool keep_indicators) {
   /*
    * We used to disable the timer interrupt here, but in common usage
    * patterns it's cheaper to leave it enabled; that may save us from having
-   * to enable it again shortly.  See comments in schedule_alarm().
+   * to enable it again shortly.  See comments in schedule_alarm().  digres
+   * cancels it: a stale ALARM ends work in sm (cancel_alarm()).
    */
+  cancel_alarm();
 
   ts().num_active_timeouts = 0;
 

@@ -13024,3 +13024,20 @@ reaper's pass beside the btree reaper's
   the pass through their suites alone.
 - **Measured** by `bench/idxopen.sh`, which takes `COUNTS`,
   `UPDATED` and `DIGRES` now.
+
+## Step 427: a disabled timeout leaves no timer set
+
+A COPY's bulk load failed with `sort: interrupted` in
+`server.sh` ([`../ISSUE.md`](../ISSUE.md)). A session's
+timeouts share one sm timer. PostgreSQL's `timeout.c` leaves it
+armed when a timeout is disabled, and the ALARM it raises later,
+with nothing due, ended the load's final sort, which cannot be
+retried.
+
+- **`cancel_alarm()`** (`timeout.c`): when an active timeout is
+  disabled, cancel the timer and take its ALARM bit, then arm it
+  for the earliest timeout left, if any. `disable_all_timeouts()`
+  cancels it too.
+- **Test**: `test/copy_alarm.sh`, sourced by `server.sh`: COPYs
+  under a stale `statement_timeout` timer, alone and inside a
+  transaction whose `transaction_timeout` stays active.
