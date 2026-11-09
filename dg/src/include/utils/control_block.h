@@ -372,13 +372,13 @@ typedef struct tcb_t {
   /*
    * utils/hooks.h: the hooks loaded libraries set, all NULL at first; a
    * session starts with its parent's (session_thread_start()).  A
-   * library's own statics are not the session's (dg/ISSUE.md issue 1).
+   * library's own statics are not the session's (ISSUE.md dg issue 1).
    */
   std::unique_ptr<hooks_t, hooks_free_t> hooks;
   /*
    * dfmgr.c, explain_state.c: the libraries loaded and the EXPLAIN
    * extensions registered; a session starts with its parent's, and loads
-   * none of its own (dg/ISSUE.md issue 1)
+   * none of its own (ISSUE.md dg issue 1)
    */
   std::unique_ptr<dfmgr_state_t, dfmgr_state_free_t> dfmgr;
   std::unique_ptr<explain_registry_t, explain_registry_free_t> explain;

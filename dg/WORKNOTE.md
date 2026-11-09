@@ -6708,7 +6708,7 @@ file through the postmaster's last node, and a session's
 - No library is built in the tree, so no test loads one.
 - A library's own statics are still the process's: a second
   session that `LOAD`s it runs its `_PG_init()` again on them.
-  [`ISSUE.md`](ISSUE.md) issue 1 records it, not to be fixed
+  [`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 1 records it, not to be fixed
   soon, and
   `internal_load_library()` asserts that no session thread
   loads a library.
@@ -7016,7 +7016,7 @@ from another's had nothing to tell.
 - **"cannot affect row a second time"**: ON CONFLICT DO UPDATE
   and MERGE told the case by the row's xmin being their own
   transaction's, which never held. The checks are gone, and the
-  gap they leave is [`ISSUE.md`](ISSUE.md) issue 2: digres keeps
+  gap they leave is [`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 2: digres keeps
   the first
   row and drops the second's update. MERGE does not write yet.
   `test/slt/on_conflict_twice.test` holds PostgreSQL's answer
@@ -7122,7 +7122,7 @@ longer needs is deleted, as here:
 
 ## Step 237: ON CONFLICT DO UPDATE refuses a row twice
 
-[`ISSUE.md`](ISSUE.md) issue 2, from step 233. An `INSERT ... ON
+[`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 2, from step 233. An `INSERT ... ON
 CONFLICT DO
 UPDATE` whose rows conflict with each other, as `values (1, 0),
 (1, 1)` on a key, kept the first row and dropped the second's
@@ -7142,7 +7142,7 @@ told the case by the row's xmin; digres assigns none.
 - `test/slt/on_conflict_twice.test` holds PostgreSQL's answers
   alone now: both cases fail and leave the table as it was, and
   the join UPDATE passes. Issue 2 is removed from
-  [`ISSUE.md`](ISSUE.md).
+  [`ISSUE.md`](../ISSUE.md#3-digres-known-issues).
 
 ## Step 238: views are sm's
 
@@ -7550,7 +7550,7 @@ first call, failed `internal_load_library()`'s assertion that
 no session thread loads one, and took the server down:
 PostgreSQL's `create_function_c`, on its first statement.
 Dynamic loading is to be redesigned and redone
-([`ISSUE.md`](ISSUE.md)
+([`ISSUE.md`](../ISSUE.md#3-digres-known-issues)
 issue 1); until then it is disabled.
 
 - **`internal_load_library()` refuses every library**, with
@@ -8869,7 +8869,7 @@ has one.
 
 ## Step 300: a numrange aligns as its decimal128 bounds do
 
-[`ISSUE.md`](ISSUE.md) issue 3: a numeric range in an array or a
+[`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 3: a numeric range in an array or a
 multirange lost a bound, `ARRAY[numrange(1, 2), numrange(3,
 4), numrange(5, 6)]` giving `[3,2475880078570760549798248448)`
 for its second. numrange's bounds are decimal128s, aligned to
@@ -8927,7 +8927,7 @@ column, is a decimal64, and numrange's subtype is decimal128.
 
 A duplicate key in a table made in the open transaction, with
 a UNIQUE column, said `could not open relation with OID N`
-([`ISSUE.md`](ISSUE.md) issue 6): the savepoint of the issue's
+([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 6): the savepoint of the issue's
 repro had
 nothing to do with it. And a unique index made on a table the
 transaction had already written was not kept: the duplicate
@@ -8956,7 +8956,7 @@ went in, `INSERT 0 1`.
 A temporary table that empties at commit, referenced by a
 foreign key of a table that keeps its rows, committed and
 emptied, leaving the child's rows referencing none
-([`ISSUE.md`](ISSUE.md) issue 7). PostgreSQL's `heap_truncate()`
+([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 7). PostgreSQL's `heap_truncate()`
 first
 calls `heap_truncate_check_FKs(rels, true)`, which refuses
 the commit; digres's `PreCommit_on_commit_actions()` truncated
@@ -8979,7 +8979,7 @@ each table by `smstore_truncate()` and skipped the check.
 ## Step 304: a cursor reads as its DECLARE did on each FETCH
 
 A cursor saw its own transaction's writes made after its
-DECLARE ([`ISSUE.md`](ISSUE.md) issue 4): a row deleted after it
+DECLARE ([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 4): a row deleted after it
 was
 gone once the cursor was rewound, `MOVE BACKWARD ALL`, and a
 row inserted after it was there. Not rewinds alone: a nested
@@ -9034,7 +9034,7 @@ command id.
 ## Step 305: FOR UPDATE passes over a row changed since
 
 A FOR UPDATE cursor returned a row its transaction updated or
-deleted after the DECLARE ([`ISSUE.md`](ISSUE.md) issue 5), where
+deleted after the DECLARE ([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 5), where
 PostgreSQL's row lock answers `TM_SelfModified` and
 `ExecLockRows()` passes over the row. It was not SERIALIZABLE
 alone: at REPEATABLE READ and SERIALIZABLE the old row came
@@ -9079,7 +9079,7 @@ version; a deleted one there was passed over as gone.
 
 `INSERT ... ON CONFLICT` at REPEATABLE READ or SERIALIZABLE
 failed with sm1's `sm1_read_latest requires READ COMMITTED`
-when two of its rows had one key ([`ISSUE.md`](ISSUE.md) issue
+when two of its rows had one key ([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue
 9). Not the
 message alone: DO NOTHING, which PostgreSQL runs, inserting
 the first row and passing over the second, failed with it;
@@ -9171,7 +9171,7 @@ is digres's own: PostgreSQL refuses it
 ## Step 307b: nothing is made in pg_catalog
 
 `CREATE TABLE pg_catalog.t ()` made a table
-([`ISSUE.md`](ISSUE.md) issue
+([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue
 8), as did CREATE VIEW and CREATE SEQUENCE there. PostgreSQL
 refuses one in `heap_create()`, which a relation made in sm
 does not reach. In digres no catalog is in sm: the 28 in
@@ -9206,7 +9206,7 @@ taken name looks in sm alone: `CREATE TABLE pg_catalog.pg_class
 ## Step 308: a SET DEFAULT column named twice is kept once
 
 A foreign key's `ON DELETE SET DEFAULT (d, d)` or `SET NULL
-(d, d, d)` kept every column named ([`ISSUE.md`](ISSUE.md) issue
+(d, d, d)` kept every column named ([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue
 11), where
 PostgreSQL's `validateFkOnDeleteSetColumns()` drops a repeat.
 Not the definition alone: the action's UPDATE set `d` twice,
@@ -9231,7 +9231,7 @@ could not be deleted at all.
 
 `CREATE TABLE t (LIKE a, LIKE a)` failed with sm's `could not
 create a table: create table: a column without a name, or two
-with one: xx` ([`ISSUE.md`](ISSUE.md) issue 10). Not LIKE alone:
+with one: xx` ([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 10). Not LIKE alone:
 any column
 named twice, `(a int, a int)` or `(LIKE a, xx text)`, did; the
 table was refused, as PostgreSQL refuses it, with sm's words.
@@ -9256,7 +9256,7 @@ specified more than once`, is not on a table in sm's path.
 ## Step 310: the hash access method cannot exclude, rightly
 
 `pg_indexam_has_property(hash, 'can_exclude')` is false in
-digres and true in PostgreSQL ([`ISSUE.md`](ISSUE.md) issue 12).
+digres and true in PostgreSQL ([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 12).
 Closed as
 digres's answer, not a bug. `amutils.c` computes the property
 from the method's `amgettuple`, a scan an exclusion constraint
@@ -11697,7 +11697,7 @@ a role with
 an md5 hash as its password cannot log in. Over TCP the hash
 also crossed the network in the clear, and an md5 hash of a
 password and a role name can be checked against a guess
-offline. [`ISSUE.md`](ISSUE.md) held it as an open question; the
+offline. [`ISSUE.md`](../ISSUE.md#3-digres-known-issues) held it as an open question; the
 user chose
 to refuse it everywhere. Design:
 [`../aa/ROLE.md`](../aa/ROLE.md#51-a-password-set-in-cleartext)
@@ -11725,7 +11725,7 @@ to refuse it everywhere. Design:
 A logged statement masks each string after the keyword
 `PASSWORD` (step 380). A statement with `PASSWORD` misspelled,
 such as `ALTER ROLE r PASWORD 'x'`, fails to parse, and its
-`STATEMENT:` line showed the password. [`ISSUE.md`](ISSUE.md)
+`STATEMENT:` line showed the password. [`ISSUE.md`](../ISSUE.md#3-digres-known-issues)
 held it as an
 open question; the user chose to mask a failed role statement,
 and to leave `pg_stat_activity` as PostgreSQL's. Design:
@@ -11754,7 +11754,7 @@ on digres, and reports where digres differs
 ([`DUCKPLAN.md`](DUCKPLAN.md),
 [`test/duck/README.md`](test/duck/README.md)). What it found and
 what was not fixed
-is in [`ISSUE.md`](ISSUE.md), issues 15 to 26.
+is in [`ISSUE.md`](../ISSUE.md#3-digres-known-issues), issues 15 to 26.
 
 - **The runner**, `test/duck/duckrun.cc`, beyond the plan:
   - DuckDB writes a loop variable `{i}`, not `${i}`: both are
@@ -12771,7 +12771,7 @@ files, without a process, a thread or a pipe.
 
 ## Step 419: the tombstone purge erases by SingleDelete
 
-[`ISSUE.md`](ISSUE.md) issue 22, a mass delete's purge stalling
+[`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 22, a mass delete's purge stalling
 every writer, fixed as [`../sm/PURGE_PLAN.md`](../sm/PURGE_PLAN.md)
 plans.
 
@@ -12805,7 +12805,7 @@ plans.
   a savepoint's rolled-back version compacts away. The test that
   checked the old purge's flush by count is replaced.
 - **Found too**: digres installs no log hook for sm, so sm's
-  errors are lost ([`ISSUE.md`](ISSUE.md) issue 27).
+  errors are lost ([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 27).
 
 ## Step 419: restart-only settings are read from pcb
 
