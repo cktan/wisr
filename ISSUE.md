@@ -191,56 +191,46 @@ remains in place.
 Smaller points:
 
 
-### A bulk load's sort is interrupted, at times
+### A bulk load's sort was interrupted by a stale timer
 
-**Open, seen once, 2026-11-09.** `dg/test/server.sh` failed in a
-full `make test` on `main` at `57991774`, the debug build. A
-`COPY` into an empty keyed table, a bulk load, failed:
+**Closed 2026-11-09.** `dg/test/server.sh` failed once in a full
+`make test` on `main` at `57991774`: a `COPY` into an empty keyed
+table, a bulk load, failed with
 
 ```text
 ERROR:  could not end a bulk load: sort: interrupted
-STATEMENT:  copy tl1 from '.../build/test/server/load.tsv'
 ```
 
-The checks after it that read `tl1` failed with it ("bulk load",
-"copy of a taken key into a table with rows", "a failed copy into
-a table with rows"). Two runs of `server.sh` alone after it did
-not repeat it.
+**Cause.** A session's timeouts share one sm timer
+(`timeout.c`), which raises `INTERRUPT_ALARM` on the session's
+thread. PostgreSQL leaves that timer armed when a timeout is
+disabled, as a SIGALRM that finds nothing due is harmless
+(`schedule_alarm()`). In digres the stale ALARM still lands, and
+a load's final sort (`check_interrupt()`, `sm/sm0/src/sort.cc`)
+stops on any bit in the wait mask and cannot be retried.
+`server.sh` starts its server with `authentication_timeout=1`:
+each session's authentication timeouts, disabled at once, rang a
+second later, in a COPY that had just started.
 
-**What is known.** The sort fails in `check_interrupt()`
-(`sm/sm0/src/sort.cc`) when any bit of `sm_wait_mask()` is
-pending on the calling thread. Bits are a thread's own (`sm_sys.h`),
-so something interrupted the session's thread while its load
-sorted. The COPY runs in a session of its own, which sets no
-timeout and is cancelled by nothing. Not known: which bit it was.
+1. A session disables its last active timeout, or one of several;
+   the timer stays set for the one disabled.
+2. The timer fires with nothing due, during the load's final sort.
+3. The sort fails with `SM_ERR_INTERRUPTED`, and the COPY with it.
 
-**Checked, and unlikely.** Earlier in `server.sh`, eight sessions
-set `statement_timeout` to 1 to 8 seconds by `ALTER SYSTEM`, and
-`ALTER SYSTEM RESET ALL` removes them. No reload runs between the
-two, and the file is read only at a reload, so none should have
-applied. A reload from elsewhere between them would make a timeout
-of a second or more live, which a load of 100,000 rows can pass.
+Reproduced by `statement_timeout` set around a `SELECT 1`, then
+cleared, then a COPY of 100,000 rows: 11 of 31 delays from 300
+to 600 ms failed, every run.
 
-**Suspects, not checked:**
+**Fix.** `timeout.c` cancels the timer and takes its ALARM bit when
+a timeout is disabled (`cancel_alarm()`), then arms it again for
+the earliest timeout left, if any. No timer stays set for a
+timeout that is gone.
 
-- The lock-wait timer (`sm_set_lock_wait_hook()`, closed issue
-  above): "an expired timer stays armed until the alarm handler
-  reports it". A bit left from an earlier wait could reach a
-  later sort.
-- A bit digres raises to a session for its own reasons, such as
-  a catch-up or a barrier, that a sort takes as an interrupt.
-
-**First to do:**
-
-1. Print the pending bits in the sort's error, so the next failure
-   names its bit.
-2. Run the bulk-load part of `server.sh` in a loop, alone and
-   beside a load, until it fails.
-
-The same full run, and one run alone, also failed at other
-checks that passed the next time: "logging_collector: rotation
-by size" and "tls: verify-full with the CA". `server.sh` was flaky
-on this box that day; another user's processes ran on it.
+**Test.** `dg/test/copy_alarm.sh`, sourced by `server.sh`, times a
+COPY, then runs 16 COPYs with a stale `statement_timeout` across
+the last half of that time: alone, and inside a transaction whose
+`transaction_timeout` stays active. Without the fix both fail;
+with only the cancel of the last timeout, the second fails.
 
 ## 2. Costs to profile
 
