@@ -262,7 +262,7 @@ It takes the `xid`, enters the active table and `xid_owner` under
 steps past a version always finds its writer.
 
 A session set by `sm1::set_no_transaction` has no transaction. It
-serves settled reads and page calls (`xct_check_cleaner`,
+serves settled reads and page calls (`xct_check_btree_reaper`,
 BTREEINDEX.md).
 
 ### 4.2 Failures

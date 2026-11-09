@@ -46,7 +46,7 @@ std::string page_key(std::string_view key) {
  * error set.
  */
 int enter_pages(sm1::session_t *s, uint64_t storeid, const store_t *&st) {
-  if (xct_check_cleaner(s) != 0) {
+  if (xct_check_btree_reaper(s) != 0) {
     return -1;
   }
   if (storeid == 0) {

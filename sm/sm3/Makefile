@@ -96,7 +96,7 @@ $(BUILD)/test/%.o: test/%.cc $(FLAGS_FILE)
 test: all
 	$(RUN) $(TEST_BIN) $(TEST_ARGS)
 
-# The cleaner's tests under the thread sanitizer, on a RocksDB built
+# The btree reaper's tests under the thread sanitizer, on a RocksDB built
 # with it, as sm2's tree tests are.
 TSAN_ROCKSDB := $(abspath ../../rocksdb/tsan/librocksdb.a) \
     -lsnappy -llz4 -lzstd -lz -lbz2
@@ -104,7 +104,7 @@ tsan:
 	../../dg/test/rocksdb.sh tsan
 	$(MAKE) BUILD=$(BUILD)/tsan OPTFLAGS="-O1 -g -fsanitize=thread" \
 	    ROCKSDB="$(TSAN_ROCKSDB)" RUN="setarch $$(uname -m) -R" \
-	    TEST_ARGS='-tc="cleaner*,tree: scans agree with the rows while*,tree: the cleaner*"' test
+	    TEST_ARGS='-tc="btree reaper*,tree: scans agree with the rows while*,tree: the btree reaper*"' test
 
 format:
 	clang-format -i $(FORMAT_FILES)

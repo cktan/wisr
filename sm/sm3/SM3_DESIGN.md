@@ -60,7 +60,7 @@ source tree.
 | Namespace | [`../NAMESPACE.md`](../NAMESPACE.md) | SQL's `SCHEMA`: how a name is taken and found | `catalog/`, `ddl/` |
 | Sequence | [`../SEQUENCE.md`](../SEQUENCE.md) | SQL's `CREATE SEQUENCE`, over sm1's counters | `catalog/ddl.cc`, `ddl/ddl.cc` |
 | LSM Index | [`../LSMINDEX.md`](../LSMINDEX.md) | index maintenance by table writes, unique checks, scans, partial and expression indexes | `table/table.cc` |
-| B-tree Index | [`../BTREEINDEX.md`](../BTREEINDEX.md) | the row check, the unique check, `VACUUM` and the cleaner of a tree | `table/table.cc`, `cleaner/` |
+| B-tree Index | [`../BTREEINDEX.md`](../BTREEINDEX.md) | the row check, the unique check, `VACUUM` and the btree reaper of a tree | `table/table.cc`, `btree reaper/` |
 | Index Builder | [`../INDEXBUILD.md`](../INDEXBUILD.md) | fills an index on a table that has rows, while its readers and writers go on | `builder/`, `table/table.cc` |
 | Row Store | [`../ROWSTORE.md`](../ROWSTORE.md) | the row calls, and rows read as pins | `table/` |
 | TOAST | [`../TOAST.md`](../TOAST.md) | values fetched for indexes | `table/table.cc` |
@@ -89,7 +89,7 @@ src/catalog/    keys, values, the load, puts and dels, a session
 src/ddl/        what a CREATE, a DROP or an ALTER does
 src/table/      table writes, index maintenance, scans, pins
 src/builder/    the index build's queue and workers
-src/cleaner/    the queue of B-tree leaves to clean
+src/btree_reaper/    the queue of B-tree leaves to reap
 src/analyze/    the sampler, the estimators, tbl_analyze
 test/           doctest, as in sm1
 ```
@@ -109,7 +109,7 @@ Makefiles when they are missing or out of date.
 
 ```
 DEBUG=1 make -j4 test    the unit tests
-make tsan                the cleaner's tests, under the thread sanitizer
+make tsan                the btree reaper's tests, under the thread sanitizer
 ```
 
 sm3 has no scenario driver of its own. sm1's QA-only

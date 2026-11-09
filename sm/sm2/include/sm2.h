@@ -887,7 +887,7 @@ int toast_fetch(rel_t* rel, std::string_view ptr, std::string& out);
 
 /*
  * toast_fetch of a pointer in a settled row, with no transaction: the
- * cleaner's (../BTREEINDEX.md §9).
+ * btree reaper's (../BTREEINDEX.md §9).
  */
 int toast_fetch_settled(rel_t* rel, std::string_view ptr, std::string& out);
 
@@ -1155,9 +1155,9 @@ void idx_set_leaf_note(index_t* index, leaf_note_fn fn, void* ctx);
 /*
  * idx_vacuum of one leaf of a tree, page pageid: 0, doubt set if an
  * entry is left in doubt; 1 if the page is no longer a leaf; or -1.
- * The cleaner's (../BTREEINDEX.md §9). removed counts the entries gone.
+ * The btree reaper's (../BTREEINDEX.md §9). removed counts the entries gone.
  */
-int idx_clean_leaf(index_t* index, uint64_t pageid,
+int idx_reap_leaf(index_t* index, uint64_t pageid,
                    const std::function<int(std::string_view, std::string_view)>& dead,
                    size_t& removed, bool& doubt);
 

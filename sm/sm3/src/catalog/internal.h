@@ -6,7 +6,7 @@
 #ifndef SM3_INTERNAL_H
 #define SM3_INTERNAL_H
 
-#include "../cleaner/cleaner.h"
+#include "../btree_reaper/btree_reaper.h"
 #include "catalog.h"
 #include "sm3.h"
 
@@ -120,13 +120,13 @@ struct sm3::catalog_t {
   std::atomic<uint64_t> seq{0};
   std::unordered_map<uint64_t, uint64_t> valid_seq; /* index oid -> count */
 
-  /* Transactions begun, the cleaner's measure of busy. */
+  /* Transactions begun, the btree reaper's measure of busy. */
   std::atomic<uint64_t> begins{0};
   /*
-   * The btree cleaner, once attached. Kept until the catalog closes:
+   * The btree reaper, once attached. Kept until the catalog closes:
    * an index opened holds it, to queue a leaf.
    */
-  std::unique_ptr<cleaner_t> cleaner;
+  std::unique_ptr<btree_reaper_t> btree_reaper;
   /*
    * The count at which each table's definition, and its statistics,
    * were last published, for its version (cat_table_version); one

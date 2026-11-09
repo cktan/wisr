@@ -34,9 +34,9 @@ with no report.
    holds to erase its own. It now reads a copy taken under the
    mutex.
 4. **`start_builder()` raced the builder's threads.** A builder
-   thread read `cat->cleaner` while `cleaner_attach()` set it,
-   and the cleaner's fields were set after the pointer. The
-   cleaner is now attached first, before any builder thread
+   thread read `cat->btree_reaper` while `btree_reaper_attach()` set it,
+   and the btree reaper's fields were set after the pointer. The
+   btree reaper is now attached first, before any builder thread
    exists. Not in that review.
 5. **`sm1::lock_status()` took sessions' `fp_mu` in the order of
    an `unordered_set`.** A rehash changes that order, so two

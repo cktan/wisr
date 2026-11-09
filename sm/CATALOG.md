@@ -546,7 +546,7 @@ never edits one in place. It holds:
 - The counts of §4.4.
 - The host's evaluator of partial and expression indexes, and
   whether the host reads TOAST pointers.
-- The btree cleaner, once attached, and a count of transactions
+- The btree reaper, once attached, and a count of transactions
   begun, its measure of busy ([`BTREEINDEX.md`](BTREEINDEX.md)).
 - The environment and database name, for a load of its own.
 

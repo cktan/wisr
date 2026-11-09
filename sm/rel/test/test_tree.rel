@@ -316,7 +316,7 @@
 (session-close "rdr")
 (session-use "default")
 
-# Verify the btree cleaner removes dead entries through sm.h, with no
+# Verify the btree reaper removes dead entries through sm.h, with no
 # (compact) (../BTREEINDEX.md §9).
 # 1. Make a table and a tree, insert rows, move one and delete one.
 # 2. The tree holds their dead entries.
@@ -345,7 +345,7 @@
 (begin :rc)
 (assert-eq (idx-entries clean_state) 4)
 (commit)
-(cleaner-pass)
+(btree-reaper-pass)
 (begin :rc)
 (assert-eq (idx-entries clean_state) 4)
 (commit)
@@ -354,12 +354,12 @@
 (commit)
 (session-close "old")
 (session-use "default")
-(cleaner-pass)
+(btree-reaper-pass)
 (begin :rc)
 (assert-eq (idx-entries clean_state) 2)
 (assert-eq (ids (idx-rows clean_state)) @[3 1])
 (commit)
-(cleaner-pass)
+(btree-reaper-pass)
 (begin :rc)
 (assert-eq (idx-entries clean_state) 2)
 (commit)
@@ -371,7 +371,7 @@
 # 2. Each tree gives every row in its key's order, and a range gives
 #    its rows; the NULL k rows are no duplicates of each other.
 # 3. Every entry is in doubt: an index-only scan reads every row, until
-#    a cleaner pass reads each once and sets the leaves all visible.
+#    a btree reaper pass reads each once and sets the leaves all visible.
 # 4. An insert lands in the built tree; one of a k there fails.
 (def nrows 3000)
 # Row i's k: a permutation of 0..2999 as text, NULL for i below 10.
@@ -403,7 +403,7 @@
                                                    (range nrows))))
 (assert-eq (before :unread) 0)
 (commit)
-(cleaner-pass)
+(btree-reaper-pass)
 (begin :rc)
 (def after (idx-only uload_g :ge ["g3"] :le ["g3"]))
 (assert-eq (after :unread) (length (after :keys)))
@@ -437,11 +437,11 @@
 (commit)
 
 # Verify a load aborted after its end leaves only dead entries, which a
-# cleaner pass removes.
+# btree reaper pass removes.
 # 1. Load 500 rows into an empty table, end the load, and abort.
 # 2. No row is there, and the tree gives none, though it holds 500
 #    entries.
-# 3. After a cleaner pass the tree holds none.
+# 3. After a btree reaper pass the tree holds none.
 (begin :rc)
 (table-create uabort (columns (id :int4 :not-null) (k :text)))
 (index-create uabort_k (table uabort) (key (k :asc)) :unique true :tree true)
@@ -455,7 +455,7 @@
 (assert-eq (ids (idx-rows uabort_k)) @[])
 (assert-eq (idx-entries uabort_k) 500)
 (commit)
-(cleaner-pass)
+(btree-reaper-pass)
 (begin :rc)
 (assert-eq (idx-entries uabort_k) 0)
 (commit)

@@ -1875,41 +1875,41 @@ int tbl_scan_rebound(scan_t* scan, const sm2::bound_t* lo,
                      const sm2::bound_t* hi, bool* widened = nullptr);
 
 /*
- * Attach the btree cleaner to cat (../BTREEINDEX.md §9): whoever finds a
- * tree's leaf not all visible queues it, and workers clean what is
+ * Attach the btree reaper to cat (../BTREEINDEX.md §9): whoever finds a
+ * tree's leaf not all visible queues it, and workers reap what is
  * queued, each pass on a session open() makes, with no transaction.
  * The first worker runs when the system is not busy, or the queue is
  * full; the others only when it is full. Call before the catalog's
  * tables are opened. A test gives no workers, and calls
- * cleaner_run_once. open may be called from any worker.
+ * btree_reaper_run_once. open may be called from any worker.
  */
-int cleaner_attach(catalog_t* cat, std::function<sm1::session_t*()> open,
+int btree_reaper_attach(catalog_t* cat, std::function<sm1::session_t*()> open,
                    size_t workers = 4);
 
 /*
  * Stop and join cat's workers; a no-op with none. The queue stays until
  * the catalog closes, as an open index holds it.
  */
-void cleaner_detach(catalog_t* cat);
+void btree_reaper_detach(catalog_t* cat);
 
 /*
- * One pass of the cleaner, on the calling thread, of at most budget
+ * One pass of the btree reaper, on the calling thread, of at most budget
  * pages: 0, or -1. For tests.
  */
-int cleaner_run_once(catalog_t* cat, size_t budget = SIZE_MAX);
+int btree_reaper_run_once(catalog_t* cat, size_t budget = SIZE_MAX);
 
 /* The pages on cat's queue: for tests. */
-size_t cleaner_queued(const catalog_t* cat);
+size_t btree_reaper_queued(const catalog_t* cat);
 
 /*
- * Clean page pageid of the tree relid of the table def describes, as
- * VACUUM cleans a leaf, on a session whose sm1 session is set for no
+ * Reap page pageid of the tree relid of the table def describes, as
+ * VACUUM reaps a leaf, on a session whose sm1 session is set for no
  * transaction (sm1::set_no_transaction): no lock, no transaction
  * (../BTREEINDEX.md §9). publishes is cat_publishes, read before def was
  * fetched. 0, doubt set if an entry is left in doubt; 1 if there is
- * nothing to clean, the index gone or the page no leaf; or -1.
+ * nothing to reap, the index gone or the page no leaf; or -1.
  */
-int tbl_clean_leaf(session_t* session, std::shared_ptr<const table_def_t> def,
+int tbl_reap_leaf(session_t* session, std::shared_ptr<const table_def_t> def,
                    uint64_t publishes, uint16_t relid, uint64_t pageid,
                    bool& doubt);
 

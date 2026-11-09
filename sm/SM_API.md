@@ -30,7 +30,7 @@ The count is the number of entries.
 | [Cursors over rows and index entries](#cursors-over-rows-and-index-entries) | Scan a table or an index; encode a tuple | 15 |
 | [The catalog](#the-catalog) | Look up and create namespaces, relations, sequences | 22 |
 | [Views](#views) | Create, read and drop a view | 9 |
-| [Index builds, TOAST and the btree cleaner](#index-builds-toast-and-the-btree-cleaner) | Build an index; TOAST; clean a B-tree | 6 |
+| [Index builds, TOAST and the btree reaper](#index-builds-toast-and-the-btree-reaper) | Build an index; TOAST; clean a B-tree | 6 |
 | [Tables](#tables) | Open a table; read and write rows | 36 |
 | [Statistics](#statistics) | Sizes, counters and planner statistics | 9 |
 | [Table and index DDL](#table-and-index-ddl) | Create, alter and drop a table or an index | 19 |
@@ -404,7 +404,7 @@ Detaches `env`. With `force` 0 and a session open, it fails with
 
 1. Abort the active transaction of each open session. A prepared
    transaction stays in doubt.
-2. Stop each catalog's Index Builder and btree cleaner.
+2. Stop each catalog's Index Builder and btree reaper.
 3. Detach sm1, which closes the sessions and the databases.
 4. Free the sessions, the catalogs and `env`.
 
@@ -507,7 +507,7 @@ The first session on a database does more:
    setting.
 4. Start the Index Builder, and queue the indexes a restart left
    pending.
-5. Start the btree cleaner.
+5. Start the btree reaper.
 
 Errors: `SM_ERR_NOTFOUND`.
 
@@ -1901,12 +1901,12 @@ temporary views that read it, with `other` set, which
 §12.3). It leaves out
 those the transaction has dropped.
 
-## Index builds, TOAST and the btree cleaner
+## Index builds, TOAST and the btree reaper
 
 The Index Builder ([`INDEXBUILD.md`](INDEXBUILD.md)), TOAST
 ([`TOAST.md`](TOAST.md#2-design) §2) and
 the B-tree Index
-([`BTREEINDEX.md`](BTREEINDEX.md#9-cleaning-vacuum-and-the-cleaner)
+([`BTREEINDEX.md`](BTREEINDEX.md#9-reaping-vacuum-and-the-btree-reaper)
 §9) hold the designs. The calls
 that set the environment run once, before the first `sm_opendb`.
 
@@ -2003,28 +2003,28 @@ Do not turn it off over tables written with it on.
 
 Errors: `SM_ERR_INVALID` (a database has been opened).
 
-### `sm_set_cleaner_workers`
+### `sm_set_btree_reaper_workers`
 
 ```cpp
-int sm_set_cleaner_workers(sm_env_t* env, int workers);
+int sm_set_btree_reaper_workers(sm_env_t* env, int workers);
 ```
 
-Sets the btree cleaner's threads a database gets, 4 by default,
+Sets the btree reaper's threads a database gets, 4 by default,
 before any database is opened
-([`BTREEINDEX.md`](BTREEINDEX.md#9-cleaning-vacuum-and-the-cleaner)
+([`BTREEINDEX.md`](BTREEINDEX.md#9-reaping-vacuum-and-the-btree-reaper)
 §9). 0 runs none,
-for a test that runs a pass itself with `sm_cleaner_run`. The
+for a test that runs a pass itself with `sm_btree_reaper_run`. The
 call does not check for a negative `workers`.
 
 Errors: `SM_ERR_INVALID` (a database has been opened).
 
-### `sm_cleaner_run`
+### `sm_btree_reaper_run`
 
 ```cpp
-int sm_cleaner_run(sm_env_t* env, const char* dbname);
+int sm_btree_reaper_run(sm_env_t* env, const char* dbname);
 ```
 
-Runs one pass of `dbname`'s btree cleaner on this thread, for
+Runs one pass of `dbname`'s btree reaper on this thread, for
 tests.
 
 Errors: `SM_ERR_NOTFOUND` (no session has opened the database).
@@ -2740,7 +2740,7 @@ Compacts the table's store, SQL's VACUUM:
    no reader needs go.
 2. Remove each tree's dead entries, and set a leaf with no entry
    in doubt all visible
-   ([`BTREEINDEX.md`](BTREEINDEX.md#9-cleaning-vacuum-and-the-cleaner)
+   ([`BTREEINDEX.md`](BTREEINDEX.md#9-reaping-vacuum-and-the-btree-reaper)
    §9).
 
 The call waits for the compaction, seconds for a table of

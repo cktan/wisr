@@ -65,7 +65,7 @@ COPY t FROM 'rows.csv';     -- 10 million rows
 6. Each page goes to a page stream of the load, in page id
    order. The load ingests the pages with the heap's files.
 7. Then page 0 is written as the top level, by `page_write()`.
-8. Each leaf goes on the cleaner's queue. The cleaner reads each
+8. Each leaf goes on the btree reaper's queue. The btree reaper reads each
    row once, clears the bits, and sets the leaves all visible.
 
 ---
@@ -113,11 +113,11 @@ bit, and a leaf set all visible, would be wrong in two cases:
    rows, but an all-visible leaf answers without reading them.
 
 **The cost:** an index-only scan reads each row until the
-cleaner has read them once. PostgreSQL's `COPY` has the same
+btree reaper has read them once. PostgreSQL's `COPY` has the same
 cost: its visibility map is clear until `VACUUM`.
 
-**Recommended: queue each built leaf for the cleaner.** `VACUUM`
-cleans only the queue ([`BTREEINDEX.md`](BTREEINDEX.md#92-vacuum)
+**Recommended: queue each built leaf for the btree reaper.** `VACUUM`
+reaps only the queue ([`BTREEINDEX.md`](BTREEINDEX.md#92-vacuum)
 §9.2), so a leaf no one
 queues stays in doubt after a `VACUUM`. The queue holds 262,144
 pages, about 1 GB of tree. Leaves past that are dropped, and
@@ -200,17 +200,17 @@ unique tree to row-by-row inserts.
 | INCLUDE | not in a tree's entry, as now |
 | cut key | a non-unique entry is cut as now; a unique key too long fails, as now |
 | abort before the close | the load's files and runs are deleted; the tree is the empty page 0 of the open |
-| abort after the close | the pages stay; each entry is in doubt, its row dead; a cleaning removes them |
+| abort after the close | the pages stay; each entry is in doubt, its row dead; a reap removes them |
 | crash before page 0's write | no commit, so an abort; the ingested pages are not reachable, and stay until the store goes. Page ids are not reused, so nothing finds them |
 | savepoint rollback | as now: a load in a savepoint is refused or not as [`BULKLOAD.md`](BULKLOAD.md#35-savepoints) §3.5 says; nothing changes |
 | 2PC | the loader must be closed before the prepare, as now |
 | two writers | none: the table is X, or temporary |
 | old RR snapshot | reads rows; no leaf is all visible (§3.2) |
 | SSI | the heap and every full tree entry key report their writes; a committed reader can retain an SIREAD after releasing the table lock |
-| the cleaner, a page queued before the open | the drop removes the page; the cleaner finds none, or the new page 0, judged again under the latch |
+| the btree reaper, a page queued before the open | the drop removes the page; the btree reaper finds none, or the new page 0, judged again under the latch |
 | other sessions' copies of page 0 | the drop's purge and page 0's write move the frame's version, so a copy is stale and read again ([`BTREEINDEX.md`](BTREEINDEX.md#55-a-sessions-copy-of-page-0) §5.5) |
 | DROP INDEX, TRUNCATE | the table is X for the load |
-| temporary table | built the same way, in its instance; not queued, so `VACUUM` in the session cleans it |
+| temporary table | built the same way, in its instance; not queued, so `VACUUM` in the session reaps it |
 | keyless (`_id`) table | the row's key is the `_id` |
 | a table with rows | not built: entries go as a writer's, as now |
 

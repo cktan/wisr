@@ -17,7 +17,7 @@ by a profile of `main` at 20f43e31.
   25,000 prepared statements. The slope of the two cancels the
   connection and the first plan. The busiest thread is the
   backend: digres is one process, so a count of the process
-  holds the cleaner and RocksDB threads too.
+  holds the btree reaper and RocksDB threads too.
 - Profile: `perf record -e instructions:u -c 10007`. The period
   is prime, so it cannot alias with a loop.
 - Both systems use the same plan for q1 and q2: an index-only

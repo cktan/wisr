@@ -1006,7 +1006,7 @@ size_t cursor_held(const cursor_t &cursor) { return cursor.end - cursor.at; }
 namespace {
 
 /*
- * Clean leaf pageid by the judging of judged, sorted, the entries in
+ * Reap leaf pageid by the judging of judged, sorted, the entries in
  * doubt that a first judging, with no latch, found dead or settled: 0;
  * 1 if pageid is page 0, a leaf no longer; or -1. next takes the leaf's
  * next link, and doubt whether an entry is left in doubt.
@@ -1024,7 +1024,7 @@ namespace {
  * row before the judging, which then finds it unsettled (../BTREEINDEX.md
  * ../BTREEINDEX.md §9).
  */
-int clean_leaf(
+int reap_leaf(
     tree_t &tree, uint64_t pageid, const std::vector<std::string> &judged,
     const std::function<int(std::string_view, std::string_view)> &dead,
     size_t &removed, uint64_t &next, bool &doubt) {
@@ -1084,12 +1084,12 @@ int clean_leaf(
 }
 
 /*
- * Clean page pageid: judge its entries in doubt with no latch, and
- * clean_leaf it if that may change it. 0; 1 if it is no leaf; or -1.
+ * Reap page pageid: judge its entries in doubt with no latch, and
+ * reap_leaf it if that may change it. 0; 1 if it is no leaf; or -1.
  * next takes its next link, and doubt whether an entry is left in
  * doubt.
  */
-int clean_page(
+int reap_page(
     tree_t &tree, uint64_t pageid,
     const std::function<int(std::string_view, std::string_view)> &dead,
     size_t &removed, uint64_t &next, bool &doubt) {
@@ -1132,7 +1132,7 @@ int clean_page(
   if (doubt && judged.empty()) {
     return 0;
   }
-  return clean_leaf(tree, pageid, judged, dead, removed, next, doubt);
+  return reap_leaf(tree, pageid, judged, dead, removed, next, doubt);
 }
 
 } // namespace
@@ -1150,7 +1150,7 @@ int tree_prune(
   for (;;) {
     uint64_t next = 0;
     bool doubt = false;
-    int rc = clean_page(tree, pageid, dead, removed, next, doubt);
+    int rc = reap_page(tree, pageid, dead, removed, next, doubt);
     if (rc < 0) {
       return -1;
     }
@@ -1168,14 +1168,14 @@ int tree_prune(
   }
 }
 
-/* Clean one leaf; see tree.h. */
-int tree_clean_leaf(
+/* Reap one leaf; see tree.h. */
+int tree_reap_leaf(
     tree_t &tree, uint64_t pageid,
     const std::function<int(std::string_view, std::string_view)> &dead,
     size_t &removed, bool &doubt) {
   removed = 0;
   uint64_t next = 0;
-  return clean_page(tree, pageid, dead, removed, next, doubt);
+  return reap_page(tree, pageid, dead, removed, next, doubt);
 }
 
 /* The tree's height; see tree.h. */
@@ -1430,7 +1430,7 @@ int build_end(build_t &b) {
 /* Write a build's page 0, and note its leaves; see tree.h. */
 int build_root(build_t &b) {
   tree_t &tree = *b.tree;
-  // Page 0 is there, an empty leaf: its latch waits out a cleaning of
+  // Page 0 is there, an empty leaf: its latch waits out a reap of
   // it, and its version goes on from the page's.
   pinned_t root;
   if (0 != pin_ex(tree, root_id, true, root)) {

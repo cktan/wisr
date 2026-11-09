@@ -2260,8 +2260,8 @@ every store.
 Lets `session` call `sm1::read_settled`,
 `sm1::read_settled_versioned`, `sm1::pin_page`,
 `sm1::page_enter` and `sm1::page_write` with no transaction, for
-good: a background cleaner's session
-([`../BTREEINDEX.md`](../BTREEINDEX.md#9-cleaning-vacuum-and-the-cleaner)
+good: a background btree reaper's session
+([`../BTREEINDEX.md`](../BTREEINDEX.md#9-reaping-vacuum-and-the-btree-reaper)
 §9). It
 judges a row by its newest version, so it needs no snapshot and
 holds no watermark back. Every other call still needs a

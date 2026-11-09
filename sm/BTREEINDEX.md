@@ -8,7 +8,7 @@ page format and the tree are in `sm2/src/tree/`: `page.h`,
 `page.cc`, `tree.h` and `tree.cc`. The index over a tree is in
 the tree paths of `sm2/src/rel/index.cc`. The row check, the
 unique check and `VACUUM` are in `sm3/src/table/table.cc`. The
-cleaner is in `sm3/src/cleaner/`.
+btree reaper is in `sm3/src/btree_reaper/`.
 
 In short: a Lehman and Yao B-link tree. Its pages are values in
 RocksDB, and frames in the Buffer Manager's pool (BUFMGR.md).
@@ -80,10 +80,10 @@ already, and the rows' MVCC, locks and GC stay sm1's.
   entry.
 - **A settled and live entry**: its row is settled and has the
   entry's key. Every snapshot sees the entry.
-- **An entry in doubt**: its in-doubt bit is set, so a cleaning
+- **An entry in doubt**: its in-doubt bit is set, so a reap
   must read its row (§8.2).
-- **A cleaning** judges the entries in doubt of one leaf (§9.1).
-  `VACUUM` and the cleaner both do it.
+- **A reap** judges the entries in doubt of one leaf (§9.1).
+  `VACUUM` and the btree reaper both do it.
 
 ### 2.2 The tree
 
@@ -97,7 +97,7 @@ already, and the rows' MVCC, locks and GC stay sm1's.
   PostgreSQL btree tuple carries none. A scan reads the row by
   its key at its snapshot, and checks that the row still has the
   entry's key. An entry whose row does not is skipped, and
-  removed later by a cleaning (§9).
+  removed later by a reap (§9).
 - **One exception:** a leaf with the all-visible flag answers an
   index-only scan with no row read (§5.4, §8).
 - **A change to a tree is a top-level transaction of its own.**
@@ -157,13 +157,13 @@ UPDATE t SET status = 'done' WHERE id = 7;
 4. The `UPDATE` inserts `('done', 7)` on page 57, its in-doubt
    bit set, and queues page 57.
 5. The `UPDATE` commits, and the GC watermark passes its commit.
-6. The cleaner takes the queue.
-7. The cleaner cleans page 42. It reads row 7 alone: only that
+6. The btree reaper takes the queue.
+7. The btree reaper reaps page 42. It reads row 7 alone: only that
    entry has its in-doubt bit set. The row is settled, and its
-   key is `'done'`, so the cleaner removes the entry. No in-doubt
+   key is `'done'`, so the btree reaper removes the entry. No in-doubt
    bit is left, so it sets the leaf all visible.
-8. The cleaner cleans page 57. Row 7 is settled and has the key,
-   so the cleaner clears that entry's in-doubt bit. The other 159
+8. The btree reaper reaps page 57. Row 7 is settled and has the key,
+   so the btree reaper clears that entry's in-doubt bit. The other 159
    rows of each leaf are not read.
 
 ---
@@ -461,7 +461,7 @@ A cursor (`cursor_t`) reads a tree in key order, forward only.
    a time in key order, and lets go of the leaf. The leaf is not
    held while rows are read.
 3. If the leaf was not all visible, `cursor_next()` queues it for
-   the cleaner (§9.5).
+   the btree reaper (§9.5).
 4. `cursor_next()` hands out entries from the copy. They stay
    valid until the copy is replaced: `cursor_held()` counts the
    entries left in it.
@@ -637,7 +637,7 @@ returns.
    entry (§6.4).
 6. `page_write()` writes the page whole, then the pin goes.
 7. With no latch held, `insert_and_note()` queues the leaf for
-   the cleaner (§9.5).
+   the btree reaper (§9.5).
 
 Then `idx_insert()` reports the key to SSI, whether the key was
 there or not.
@@ -646,7 +646,7 @@ there or not.
 
 **Nothing is removed by an update or a delete.** The old entry
 stays, and its row, at the old key no longer, makes it dead until
-a cleaning. A primary key's change moves the row
+a reap. A primary key's change moves the row
 ([`CLUSTER.md`](CLUSTER.md)
 §4): its new entries name the new key, and the old ones name a
 key that holds no row.
@@ -791,12 +791,12 @@ latch and one write a page
    page id order. `sm1::load_close()` puts the pages into the
    store with the rows.
 6. `idx_load_root()` writes the top level as page 0, and queues
-   each leaf for the cleaner.
+   each leaf for the btree reaper.
 
 - **Every entry is in doubt**, as an insert's is, and no leaf is
   all visible. The pages stay after an abort, and an old
   snapshot can scan the tree once the table's lock goes at the
-  commit. The cleaner reads each row once.
+  commit. The btree reaper reads each row once.
 - **Each entry's key is a write for SSI**, as an insert's is
   (§2.3). `idx_load()` reports the whole key before the Sort
   drops the row's key from a unique tree's record. A committed
@@ -885,7 +885,7 @@ CONFLICT` arbiters instead.
 
 ## 8. The in-doubt bit and the all-visible flag
 
-Two marks say what a cleaning, and an index-only scan, can skip.
+Two marks say what a reap, and an index-only scan, can skip.
 An entry's in-doubt bit says that its row must be read. A leaf's
 all-visible flag says that no entry on the leaf is in doubt.
 
@@ -901,7 +901,7 @@ all-visible flag says that no entry on the leaf is in doubt.
 - **The bit.** With the flag alone, `VACUUM` reads the row of
   every entry on a leaf that is not all visible, in index order,
   so the reads are scattered over the rows. With the bit, a
-  cleaning reads no other entry's row.
+  reaping reads no other entry's row.
 
 ### 8.2 The in-doubt bit
 
@@ -911,17 +911,17 @@ not grow.
 
 - **An insert** sets the bit, in `tree_value()`. The insert
   writes the page anyway, so the bit costs nothing. An aborted
-  insert's entry therefore has its bit set, and a cleaning finds
+  insert's entry therefore has its bit set, and a reap finds
   it.
 - **A delete, and an update that changes a key,** set the bit on
   the old entry. If the bit is set already, nothing is written.
-  So an entry no cleaning has judged since its insert costs no
+  So an entry no reap has judged since its insert costs no
   write.
 - **An insert that finds its key** sets the bit, as its row just
   changed.
 - **An update that keeps its keys and INCLUDE columns** sets
   nothing: its entry is good at every snapshot (§6.2).
-- **Only a cleaning clears the bit,** under the leaf's latch,
+- **Only a reap clears the bit,** under the leaf's latch,
   when the row is settled and still has the entry's key.
 
 `page_mark_in_doubt()` changes the bit in the page's bytes, with
@@ -932,22 +932,22 @@ no entry decoded.
 **A leaf is all visible only if no entry on it has its in-doubt
 bit set.** So every entry on an all-visible leaf is settled and
 live, and every snapshot there is or will be sees it. A leaf
-keeps a flag, not a count of such entries: a cleaning walks the
+keeps a flag, not a count of such entries: a reap walks the
 whole page, so a count would save nothing.
 
 The flag is cleared by an insert into the leaf, and by a mark on
-an entry of it. Only a cleaning and a split set it.
+an entry of it. Only a reap and a split set it.
 
 ### 8.4 Why a leaf keeps the flag
 
 The flag holds nothing the in-doubt bits do not: it is derived
 from them. Its value is speed, not correctness:
 
-- **A cleaning** skips a clean leaf by one header byte, and
+- **A reap** skips a clean leaf by one header byte, and
   walks no entry. So does `VACUUM`'s walk of a temporary table's
   leaves (§9.2).
 - **A reader** learns by one header byte whether a leaf needs
-  cleaning, and tests no entry to queue it.
+  reaping, and tests no entry to queue it.
 - **An index-only scan** decides for a whole leaf at once, and
   tests no entry.
 
@@ -984,22 +984,22 @@ Only the other half can be. A split reads no row, and adds no
 write: the flags go out in the split's first write. Setting the
 flag here is safe. A writer whose row is written, and who has not
 yet latched, sets its entry's bit and clears the leaf's flag when
-it does, as against a cleaning (§8.6). A root split takes the
+it does, as against a reap (§8.6). A root split takes the
 same path through `page_split()`. An inner page has no such flag.
 
 ### 8.6 Why the latch is enough
 
 The latch is the leaf's EX pin in the pool. A writer writes its
-row first, then latches the leaf to set the bit. A cleaning
+row first, then latches the leaf to set the bit. A reap
 judges an entry again under the latch before it clears the bit:
 
-- If the row was written first, the cleaning reads a version not
+- If the row was written first, the reap reads a version not
   settled, and leaves the bit.
-- If the cleaning holds the latch first, the writer waits, and
+- If the reap holds the latch first, the writer waits, and
   then sets the entry's bit and clears the leaf's flag.
 
 So a writer reads the bit latched too, though the latch costs no
-write. Judged with no latch alone, a cleaning could read the old
+write. Judged with no latch alone, a reap could read the old
 row, and set the flag after the delete had looked. An insert that
 finds its entry there moves no version of the entry. Only its
 row, written first, shows the change, so only the judging under
@@ -1009,22 +1009,22 @@ A scan needs no latch, for the reason in §5.4.
 
 ---
 
-## 9. Cleaning: vacuum and the cleaner
+## 9. Reaping: vacuum and the btree reaper
 
-A cleaning removes dead entries, clears the in-doubt bit of
+A reap removes dead entries, clears the in-doubt bit of
 settled and live entries, and sets a leaf all visible. `VACUUM`
-cleans the leaves on the queue (§9.2). A cleaner thread cleans
+reaps the leaves on the queue (§9.2). A btree reaper thread reaps
 the leaves that readers and writers queue: all of them when the
 system is not busy, and about 100 pages a second when it is
 (§9.9). digres has no autovacuum
 ([`../dg/UNSUPPORTED.md`](../dg/UNSUPPORTED.md)), so the
-cleaner is what keeps a tree clean between `VACUUM`s. §8 defines
-the bit and the flag that a cleaning works from.
+btree reaper is what keeps a tree clean between `VACUUM`s. §8 defines
+the bit and the flag that a reap works from.
 
-### 9.1 Cleaning a leaf
+### 9.1 Reaping a leaf
 
-`VACUUM` and the cleaner use the same procedure, `clean_page()`
-and `clean_leaf()` in `tree.cc`:
+`VACUUM` and the btree reaper use the same procedure, `reap_page()`
+and `reap_leaf()` in `tree.cc`:
 
 1. Pin the leaf SH, copy it, and unpin it.
 2. Skip a leaf set all visible.
@@ -1054,19 +1054,19 @@ row's key from the entry first. A cut entry is judged as any
 other.
 
 A leaf that splits while it is judged keeps its right half's
-entries in doubt until the next cleaning.
+entries in doubt until the next reap.
 
 ### 9.2 `VACUUM`
 
 `VACUUM` reaches `tbl_compact()`: it compacts the store, then
-cleans each tree from the cleaner's queue alone. It does not walk
+reaps each tree from the btree reaper's queue alone. It does not walk
 the leaves.
 
 1. Take every page of the tree off the queue
-   (`clean_queue_t::extract()`), the waiting ones too. Each
+   (`reap_queue_t::extract()`), the waiting ones too. Each
    page's filter bit is cleared as it goes, so a change after
    queues the page again.
-2. Clean each page as the cleaner does (`idx_clean_leaf()`).
+2. Reap each page as the btree reaper does (`idx_reap_leaf()`).
 3. Put a page left with an entry in doubt back on the queue, to
    wait for the watermark.
 
@@ -1083,12 +1083,12 @@ that:
 - **A full queue.** A page that finds no room is dropped, and
   queued again by its next reader or writer.
 - **A restart.** The queue starts empty. A leaf that no reader or
-  writer has touched since is not cleaned by `VACUUM`. Its
+  writer has touched since is not reaped by `VACUUM`. Its
   in-doubt bits are in the page, so nothing is lost: only the
-  cleaning waits.
+  reaping waits.
 - **A leaf that changes while `VACUUM` runs.** Its page left the
   queue before it was read, so the change queues it again. The
-  next `VACUUM` or the cleaner finds it.
+  next `VACUUM` or the btree reaper finds it.
 
 **Why this is enough.** A leaf with an entry in doubt that
 nobody reads or writes costs nothing: no scan meets its dead
@@ -1102,7 +1102,7 @@ leaves for the cost of the queue.
 **The exception.** A temporary table's leaves are never queued
 (§9.5). `VACUUM` walks every leaf of its trees, left to right
 from the leftmost, as PostgreSQL's `btbulkdelete()` does
-(`tree_prune()`). A database opened with no cleaner does the same.
+(`tree_prune()`). A database opened with no btree reaper does the same.
 
 The GC filter does not touch class `0x04`, so GC never removes an
 entry.
@@ -1111,7 +1111,7 @@ entry.
 
 Every change to a page goes through the pool, by the Buffer
 Manager's protocol: a writer's in-doubt bit, a split's two
-halves, and a cleaning's write. The cleaner is no exception for
+halves, and a reap's write. The btree reaper is no exception for
 having no transaction:
 
 1. Pin the page EX. Other pins are waited for, and readers of the
@@ -1130,7 +1130,7 @@ equal to RocksDB's, with nothing to undo.
   judging found dead or settled are read, and it has just read
   them, so they are usually in the block cache. A disk read under
   EX is still possible (§12.1).
-- **Frames.** A cleaning pins one frame at a time, and takes no
+- **Frames.** A reap pins one frame at a time, and takes no
   other pin while it holds it: row reads use no frame. So it can
   wait for a frame without deadlock, and the pool's floor by
   sessions needs no change.
@@ -1140,7 +1140,7 @@ equal to RocksDB's, with nothing to undo.
 The queue is a hint. The in-doubt bit is in the page, so a page
 lost from the queue stays marked, and its next reader or writer
 queues it again. A catalog (one database) has one queue,
-`clean_queue_t`:
+`reap_queue_t`:
 
 - **The queue** is a circular queue: a fixed array of 262,144
   slots, with a head and a tail, under a mutex. A page goes in at
@@ -1156,7 +1156,7 @@ queues it again. A catalog (one database) has one queue,
 - **A false positive** leaves a page off the queue. Its next
   reader or writer tries again. With the queue full, about 3% of
   pages collide.
-- **A cleaner clears a page's filter bit as it takes the page**,
+- **A btree reaper clears a page's filter bit as it takes the page**,
   before it reads the page. So a change after that queues the
   page again. Two pages can share a bit, so this may queue a page
   twice, which costs one more look. One hash function is what
@@ -1175,7 +1175,7 @@ Each does this, by the tree's `leaf_note_fn`, with no latch held:
 2. Set the bit by an atomic `fetch_or`. If another caller set it
    first, stop.
 3. Take the queue's mutex. If the queue is full, clear the bit,
-   wake the cleaner, and stop. The page is dropped, and the
+   wake the btree reaper, and stop. The page is dropped, and the
    oldest pages stay.
 4. Put the page in at the tail.
 
@@ -1186,7 +1186,7 @@ the right one. A split of page 0 queues its two new pages. A
 split made by a post to a parent queues no page, as an inner page
 is no leaf.
 
-A temporary table's pages are not queued: the cleaner cannot read
+A temporary table's pages are not queued: the btree reaper cannot read
 that session's instance. They keep their in-doubt bits for
 `VACUUM`. `use_index()` gives a tree its `leaf_note_fn` only for
 a table that is not temporary.
@@ -1208,7 +1208,7 @@ does not wait. For each page:
 4. Note `cat_publishes()`. Find the table's definition by
    `cat_get_table_by_store()`, and the index by its relid. If the
    store or the index has gone, drop the page.
-5. Clean the leaf (`tbl_clean_leaf()`). A page that is no longer
+5. Reap the leaf (`tbl_reap_leaf()`). A page that is no longer
    a leaf is dropped: page 0 can stop being a leaf.
 6. If an in-doubt bit is left, put the page in at the tail, its
    slot holding the pass's watermark, and set its filter bit, so
@@ -1226,14 +1226,14 @@ page id is safe to latch.
 ### 9.7 A page that waits
 
 A page that waits is not read again until the watermark moves, so
-a long transaction does not make the cleaner read the same rows
+a long transaction does not make the btree reaper read the same rows
 again and again. A page that waits costs a move from head to tail
 under the mutex, and no read. The queue counts the slots that
 wait.
 
 ### 9.8 No transaction
 
-The cleaner starts no sm transaction, opens no table and takes no
+The btree reaper starts no sm transaction, opens no table and takes no
 lock on one. It does not need them:
 
 - Judging an entry reads a row's newest version and compares it
@@ -1241,21 +1241,21 @@ lock on one. It does not need them:
 - A leaf's change is one `page_write()`, one RocksDB write batch,
   atomic by itself. A tree's change already commits when it is
   made (§2.2).
-- So the cleaner holds no snapshot, and never holds back the
+- So the btree reaper holds no snapshot, and never holds back the
   watermark.
 
-What a transaction and a table lock give a reader, the cleaner
+What a transaction and a table lock give a reader, the btree reaper
 gets another way:
 
-| Need | How the cleaner meets it |
+| Need | How the btree reaper meets it |
 | --- | --- |
 | the store stays open | its session keeps a copy of the store's handle until the pass ends: a handle goes with its last copy (`db_drop_store_cf()`). A call on a dropped store fails with `SM_ERR_NOTFOUND`, and the page is dropped |
 | `CF:txn` records stay | `latest_version()` and `chain_latest()`, under every settled read, count it in the read epoch, as for every reader (`db_read_enter()`) |
-| the table's definition | `table_def_t` is in memory, and is not changed once published. The cleaner notes `cat_publishes()` before it fetches the definition, and compares after each row read. If the count moved, the entry stays in doubt. A commit publishes under the catalog's mutex, and a later writer reads the definition under it, so a row written under a newer definition is read only after the count moved. A stale definition therefore judges no row |
+| the table's definition | `table_def_t` is in memory, and is not changed once published. The btree reaper notes `cat_publishes()` before it fetches the definition, and compares after each row read. If the count moved, the entry stays in doubt. A commit publishes under the catalog's mutex, and a later writer reads the definition under it, so a row written under a newer definition is read only after the count moved. A stale definition therefore judges no row |
 | a key out of line | `toast_fetch()` reads by a cursor, which needs a transaction. `toast_fetch_settled()` reads the chunks by `sm1::read_settled_versioned()`, as a chunk is versioned in a chained store too. A settled row's chunks are settled |
-| `DROP INDEX` | not kept out: a cleaning may write a leaf after the drop. The page stays under a relid never used again, until the store goes |
+| `DROP INDEX` | not kept out: a reap may write a leaf after the drop. The page stays under a relid never used again, until the store goes |
 
-`tbl_clean_leaf()` makes a `table_t` from the definition, which
+`tbl_reap_leaf()` makes a `table_t` from the definition, which
 reads nothing, with `settled` true: `settled` sends
 `fetch_cols()` to `toast_fetch_settled()`.
 `sm1::set_no_transaction()` lets a session call `read_settled()`,
@@ -1265,7 +1265,7 @@ transaction. A store is looked up at the newest state.
 
 ### 9.9 The workers
 
-A database has one cleaner thread, and more when the queue
+A database has one btree reaper thread, and more when the queue
 overflows. The first works as the Index Builder's worker does
 (INDEXBUILD.md):
 
@@ -1273,27 +1273,27 @@ overflows. The first works as the Index Builder's worker does
    until a detach stops it.
 2. If the queue is empty, go to step 1.
 3. If every slot waits, and no transaction has begun since the
-   last look, go to step 1. A session here would keep the reaper
+   last look, go to step 1. A session here would keep the db reaper
    from ever closing an idle database.
 4. Set the pass's budget. On a busy system with room in the
-   queue, it is `cleaner_busy_pages`, 100 pages, so about 100
+   queue, it is `btree_reaper_busy_pages`, 100 pages, so about 100
    pages a second. Else it is the whole queue. A busy system is
-   still cleaned: with no autovacuum, a system that is never
-   quiet must not lose its cleaning.
+   still reaped: with no autovacuum, a system that is never
+   quiet must not lose its reaping.
 5. Open a session with the function `start_builder()` gives the
    builder (`src/sm.cc`), and read the watermark.
 6. Run a pass, close the session, and go to step 1.
 
-`cleaner_budget()` holds the rule of the second to fourth steps.
+`btree_reaper_budget()` holds the rule of the second to fourth steps.
 A database has 4 workers, made when its catalog attaches. Three
 sleep, and run a pass only while the queue is full. They are made
 at attach, not at an overflow, as a thread that cannot start at
-an overflow has no caller to tell. `sm_set_cleaner_workers()`
+an overflow has no caller to tell. `sm_set_btree_reaper_workers()`
 sets the count before a database is opened: `rel` sets 0, and
-runs a pass by `(cleaner-pass)`, as its scripts count a tree's
+runs a pass by `(btree-reaper-pass)`, as its scripts count a tree's
 entries.
 
-No worker keeps a session between passes, so the reaper can still
+No worker keeps a session between passes, so the db reaper can still
 close an idle database. A catalog's detach stops the workers and
 joins them, as `builder_detach()` does. A detach ends a pass
 after the leaf it is on.
@@ -1303,11 +1303,11 @@ after the leaf it is on.
 Busy is the count of `sm3::begin()` calls on the catalog since
 the first worker's last look: every transaction begins there. A
 look comes a second after the last pass ends. The system is busy
-if that count is above `cleaner_busy_limit`, 100. The catalog
+if that count is above `btree_reaper_busy_limit`, 100. The catalog
 keeps the count in an atomic counter, `begins`.
 
 The budget also bounds a cycle on a hot leaf: an insert clears
-the flag, a reader queues the page, a cleaning writes 4 KB, and
+the flag, a reader queues the page, a reap writes 4 KB, and
 the next insert clears the flag again.
 
 ### 9.11 Space
@@ -1396,7 +1396,7 @@ cleanings:
 | | A leaf flag alone | With the in-doubt bit |
 | --- | --- | --- |
 | Writer's page puts | 1 | 20 |
-| Row reads to clean the leaf | 160 | 20 |
+| Row reads to reap the leaf | 160 | 20 |
 
 - A page put is not a page I/O. RocksDB is the write-back layer:
   the put is a WAL append and a memtable insert, and a flush
@@ -1404,10 +1404,10 @@ cleanings:
   RocksDB snapshot holds an older one.
 - §10.1 measured a put of 4 KB against an entry of 40 bytes: 27.7
   s against 18 s a million rows, so about 10 µs a put.
-- A cleaning's row reads are scattered, and can each be a disk
+- A reap's row reads are scattered, and can each be a disk
   read. So 10 µs of sequential log traffic buys up to 7 random
   reads fewer in this example.
-- The writer pays in the foreground, and the cleaner saves in the
+- The writer pays in the foreground, and the btree reaper saves in the
   background. Only a bench against PostgreSQL shows whether that
   matters.
 - A reader of a leaf not all visible takes one hash and one load.
@@ -1418,7 +1418,7 @@ cleanings:
   a set leaf among them, as PostgreSQL's vacuum skips an
   all-visible heap page.
 
-### 10.4 Measured with the cleaner
+### 10.4 Measured with the btree reaper
 
 Measured 2026-11-05, optimized builds, 200,000 rows, one index on
 the changed column, one run of each, on a WSL2 machine. An update
@@ -1453,7 +1453,7 @@ and its time is not measured again.
  digres   btree access method, USING btree (or lsm)
             |  scans rows through sm3's cursor
  sm3      index's kind, row check, unique check, DROP,
-          VACUUM's queue pages, the cleaner
+          VACUUM's queue pages, the btree reaper
             |
  sm2      src/tree/   page.cc   bytes of one page, no I/O
                       tree.cc   descent, cursor, insert, split
@@ -1478,14 +1478,14 @@ and its time is not measured again.
 | --- | --- |
 | sm1 | class `0x04`, its comparison and the GC filter's pass-over; a page write outside every transaction; SIREAD and `on_write` on keys that are not stored; the pool; `gc_watermark()`; `set_no_transaction()`; `read_settled_versioned()` |
 | sm2, `src/tree/page.*` | the page's layout, the search of its slots, an entry's insert and a split's halves, on bytes, with no RocksDB; `set_all_visible()`, for which the tree level reads a leaf entry's `value[0]`; `page_mark_in_doubt()` |
-| sm2, `src/tree/tree.*` | descent, cursor, inserts, splits, `tree_mark_in_doubt()`, `clean_page()`, `clean_leaf()`, `tree_prune()` (a temporary table's walk), `tree_clean_leaf()`, `tree_check()`; `leaf_note_fn` |
-| sm2, `src/rel/index.cc` | an index over a tree: the in-doubt bit in `tree_value()`, `idx_insert`, `idx_insert_unique`, `idx_delete`, `idx_scan`, `idx_scan_rebound`, `idx_scan_entry`, `idx_vacuum`, `idx_clean_leaf()`; `value[0]`'s readers test bit `0x01` for cut |
+| sm2, `src/tree/tree.*` | descent, cursor, inserts, splits, `tree_mark_in_doubt()`, `reap_page()`, `reap_leaf()`, `tree_prune()` (a temporary table's walk), `tree_reap_leaf()`, `tree_check()`; `leaf_note_fn` |
+| sm2, `src/rel/index.cc` | an index over a tree: the in-doubt bit in `tree_value()`, `idx_insert`, `idx_insert_unique`, `idx_delete`, `idx_scan`, `idx_scan_rebound`, `idx_scan_entry`, `idx_vacuum`, `idx_reap_leaf()`; `value[0]`'s readers test bit `0x01` for cut |
 | sm2, `src/rel/` | `toast_fetch_settled()` |
-| sm3, `src/table/table.cc` | `still_has()`, `tree_fill()`, `tree_next()`, `unique_tree_insert()`, `tree_find()`, `judge_entry()`, `tbl_clean_leaf()`, with no open table's lock, and `tbl_compact()`, which cleans the queue's pages; `use_index()` gives each tree its `leaf_note_fn`, but for a temporary table |
-| sm3, `src/cleaner/` | the circular queue, the filter, the workers, `cleaner_budget()`, and `cleaner_run_once()` for tests |
+| sm3, `src/table/table.cc` | `still_has()`, `tree_fill()`, `tree_next()`, `unique_tree_insert()`, `tree_find()`, `judge_entry()`, `tbl_reap_leaf()`, with no open table's lock, and `tbl_compact()`, which reaps the queue's pages; `use_index()` gives each tree its `leaf_note_fn`, but for a temporary table |
+| sm3, `src/btree_reaper/` | the circular queue, the filter, the workers, `btree_reaper_budget()`, and `btree_reaper_run_once()` for tests |
 | sm3, `src/catalog/` | `sm3::begin()` counts in `begins`; the index's kind in its definition, and every index operation branching on it (LSMINDEX.md) |
-| sm, `src/sm.cc` | attaches and detaches the cleaner beside the builder; `sm_set_cleaner_workers()` and `sm_cleaner_run()`, for tests |
-| dg | the index access method's costs; `sm_rel_scan_entries()` for an index-only scan. The cleaner needs no dg code: `smstore_index_eval()` adopts any sm thread by `session_thread_adopt()` |
+| sm, `src/sm.cc` | attaches and detaches the btree reaper beside the builder; `sm_set_btree_reaper_workers()` and `sm_btree_reaper_run()`, for tests |
+| dg | the index access method's costs; `sm_rel_scan_entries()` for an index-only scan. The btree reaper needs no dg code: `smstore_index_eval()` adopts any sm thread by `session_thread_adopt()` |
 
 ### 11.3 What a tree asks of sm1
 
@@ -1504,7 +1504,7 @@ and its time is not measured again.
   another transaction still running, for the unique check:
   `sm1::read_newest`, `wait_writer`.
 - A read of a row's newest version only when no snapshot can
-  still see an older one: `sm1::read_settled`, for a cleaning.
+  still see an older one: `sm1::read_settled`, for a reap.
 
 ---
 
@@ -1512,8 +1512,8 @@ and its time is not measured again.
 
 ### 12.1 Open
 
-1. **The limit and the rate.** `cleaner_busy_limit`, 100
-   transactions a second, and `cleaner_busy_pages`, 100 pages a
+1. **The limit and the rate.** `btree_reaper_busy_limit`, 100
+   transactions a second, and `btree_reaper_busy_pages`, 100 pages a
    second, are guesses. A rate that keeps up with a given write
    load needs a bench.
 2. **An index-only scan by entry.** A scan could skip the row of
@@ -1524,12 +1524,12 @@ and its time is not measured again.
    small change to a page's key, not 4 KB. sm uses no merge
    operator yet, and the frames and the GC filter need a design
    for it. Proposed: plain puts, and Merge only if a bench asks.
-4. **Row reads under EX.** A cleaning's second judging can read a
+4. **Row reads under EX.** A reap's second judging can read a
    disk under the leaf's EX pin (§9.3). Measure it.
 5. **A delete's descent.** Whether a delete's extra descent shows
    on the old bench's write-heavy Q11.
 6. **The planner.** `allvisfrac` stays 1. A tree's could be its
-   set leaves over its leaves, counted by a cleaning.
+   set leaves over its leaves, counted by a reap.
 7. **A longer unique key.** Whether a unique index's key refused
    past a third of a page is worth a larger limit.
 8. **A load's cost.** Why a load is 5.6 times an LSM Index's on
@@ -1567,7 +1567,7 @@ is built.
 | Many leaves by one `MultiGet` | an IN list's misses in one read | §5.1 |
 | Copies of the inner pages below page 0 | no pin on them in a probe | §5.5 |
 | Narrow an SIREAD at a cursor's end | fewer false failures | a call with the last key read |
-| Page deletion and merge | a tree that shrinks | **every "no page is freed" above**: pins, cursors, links, the session's copy, the cleaner's stale page ids |
+| Page deletion and merge | a tree that shrinks | **every "no page is freed" above**: pins, cursors, links, the session's copy, the btree reaper's stale page ids |
 
 ---
 
@@ -1575,37 +1575,37 @@ is built.
 
 | Case | What happens |
 | --- | --- |
-| TOAST | an entry is built from the detoasted value; no entry is out of line. `still_has()` fetches a key's value, by a settled read in a cleaning; a row that is gone needs no fetch |
+| TOAST | an entry is built from the detoasted value; no entry is out of line. `still_has()` fetches a key's value, by a settled read in a reap; a row that is gone needs no fetch |
 | non-unique index | §5, §6, and the example in §3 |
-| unique index | §7, an `ON CONFLICT` arbiter too. `tree_insert_unique()` holds the leaf's latch through its check, and a cleaning judges again under the same latch: the bit does not change the check. A leaf is set only when every entry is live: a unique key's dead equals are removed first |
+| unique index | §7, an `ON CONFLICT` arbiter too. `tree_insert_unique()` holds the leaf's latch through its check, and a reap judges again under the same latch: the bit does not change the check. A leaf is set only when every entry is live: a unique key's dead equals are removed first |
 | primary key | not a tree: the rows' keys. No bit, nothing queued |
 | expression index | the key is the expression's value; the recheck evaluates it on the row. `still_has()` runs the evaluator on the worker, adopted as a builder's worker is |
 | partial index | an entry only where the predicate holds; `still_has()` evaluates it, and a row out of the index has no entry |
 | INCLUDE | not stored; read from the row (§4.3). An index-only scan of such an index reads each row |
-| cut key | flagged, and its row read once by a cleaning, then its bit is clear; its leaf may be set; a scan reads its row on any leaf |
+| cut key | flagged, and its row read once by a reap, then its bit is clear; its leaf may be set; a scan reads its row on any leaf |
 | update A → B → A | A → B sets A's bit and inserts B. Back to A finds A's entry and sets its bit, and sets B's. A is judged live and its bit cleared; B is removed |
-| INCLUDE-only update | a key change's path: the entry is marked in doubt, its leaf queued, and a cleaning judges it live (§6.2) |
+| INCLUDE-only update | a key change's path: the entry is marked in doubt, its leaf queued, and a reap judges it live (§6.2) |
 | primary key change | the row moves; new entries name its new key. The old entries' bits are set as a delete's; their row key holds no row, so they are dead |
 | delete then reinsert | the delete sets the bit; the reinsert finds the entry, of the same key and row key; judged live once settled |
 | leaf split | each half recomputed from its entries; the half with the new entry is not set; a queued page id still names the left half |
-| abort, savepoint rollback | a rolled-back insert's entry stays, its bit set, and a cleaning removes it. A rolled-back delete's entry is judged live, and its bit cleared |
+| abort, savepoint rollback | a rolled-back insert's entry stays, its bit set, and a reap removes it. A rolled-back delete's entry is judged live, and its bit cleared |
 | undo-cap overflow | the row's undo; the tree has none: a bit is its own change. As an abort |
 | crash | a top-level change is whole or not there. A row lost leaves a dead entry. A bit is in the WAL before the commit, and a bit whose commit is lost costs one row read. The queue is lost: the next reader or writer of each leaf queues it again |
 | 2PC across restart | the entries committed before the prepare; the prepared row decides. It is not settled, so the bit stays, across a restart too, and the page waits |
 | two writers, one leaf | the leaf's latch orders them; neither waits for the other's transaction |
 | two writers, one unique key | §7: the second waits for the first's transaction |
-| two writers, a cleaning | the leaf's latch orders each bit against a cleaning; the filter's atomic bit, then the queue's mutex, order the queue |
+| two writers, a reap | the leaf's latch orders each bit against a reap; the filter's atomic bit, then the queue's mutex, order the queue |
 | old RR snapshot | it reads the row at its snapshot; an entry made since names a row it cannot see, or one with another key. It holds the watermark, so entries are not settled: bits stay, and the page waits until the watermark moves. Every snapshot is at or past the watermark, so a set leaf's entries are its entries |
-| RC re-read | the row at the statement's snapshot. An entry goes only when no snapshot needs it; the cleaner's own lack of a snapshot does not change that, as the watermark decides |
+| RC re-read | the row at the statement's snapshot. An entry goes only when no snapshot needs it; the btree reaper's own lack of a snapshot does not change that, as the watermark decides |
 | SSI | §2.3; a removal or a bit is no write to SSI |
 | open cursor, Halloween | a cursor holds no page, and reads its batch's rows at its snapshot. An update's new entry ahead of the cursor is read, and its row, at the statement's snapshot, has the old key: skipped. An update clears its leaves' flags before it returns, so an index-only scan reads those leaves' rows. A scan treats the in-doubt bit as data it does not read |
 | GC watermark, `CF:txn` sweep | `rel_read_settled()` decides. The tree holds no xid, so the sweep is unaffected, and a set flag needs neither again. The GC filter does not touch class `0x04` |
-| CREATE INDEX pending | the backfill inserts entries as a writer does, each a top-level change, bits set; an entry already there is marked in doubt. A delete of a row not reached finds no entry, and clears only the flag. The first cleaning reads each row once |
-| DROP INDEX | the pages go once the drop commits, by an `sm1::on_commit` function; a crash first leaves them until the store goes; a relid is never given again. The cleaner takes no lock: the relid is gone, so its queued pages are dropped. A cleaning already running may leave one page under the dead relid, until the store goes |
+| CREATE INDEX pending | the backfill inserts entries as a writer does, each a top-level change, bits set; an entry already there is marked in doubt. A delete of a row not reached finds no entry, and clears only the flag. The first reap reads each row once |
+| DROP INDEX | the pages go once the drop commits, by an `sm1::on_commit` function; a crash first leaves them until the store goes; a relid is never given again. The btree reaper takes no lock: the relid is gone, so its queued pages are dropped. A reap already running may leave one page under the dead relid, until the store goes |
 | TRUNCATE, ALTER rewrite | a new store, with new trees built as CREATE INDEX builds. The old store id finds no table, so its pages are dropped; a write to the old store fails, and the page is dropped |
 | temporary tables | a temporary store's pages, as its rows. Bits as any tree's; not queued, so `VACUUM` in the session |
 | keyless (`_id`) tables | the row key is the `_id` |
-| bulk load, its rollback | into an empty table, built whole (§6.7), bits set and leaves queued; a cleaning removes a rolled-back load's entries. Into a table with rows, entries inserted as rows are |
+| bulk load, its rollback | into an empty table, built whole (§6.7), bits set and leaves queued; a reap removes a rolled-back load's entries. Into a table with rows, entries inserted as rows are |
 
 ---
 
@@ -1624,9 +1624,9 @@ is built.
   entry: a leaf whose newest writer is old can hold an entry
   whose row is gone.
 - **A leaf flag alone, with no bit on an entry.** It puts a leaf
-  once between two cleanings, not once an entry, but a cleaning
+  once between two cleanings, not once an entry, but a reap
   reads every entry's row on a leaf not set, and a scan or a
-  cleaner cannot tell which entries changed (§10.3).
+  btree reaper cannot tell which entries changed (§10.3).
 - **A queue of old keys beside the bit.** A lost key could set a
   leaf all visible over a dead entry.
 - **`VACUUM` led by the store's OLD.** OLD ids rise, so the
@@ -1642,28 +1642,28 @@ is built.
     one.
   - **The GC removes OLD versions first.** The compaction
     filter drops a version no snapshot reaches, and
-    `tbl_compact()` compacts the store before it cleans a tree.
+    `tbl_compact()` compacts the store before it reaps a tree.
     Keeping the versions for `VACUUM` keeps garbage.
   - **The queue gives the same leaves for less.** OLD costs a
     read of each version, its index keys made again, and a
     descent to each key's leaf. A miss of the queue costs only
     until the leaf's next reader or writer queues it.
-- **A count of entries in doubt on a leaf.** A cleaning walks the
+- **A count of entries in doubt on a leaf.** A reap walks the
   whole page, so a count would save nothing.
 - **A cut entry keeping its leaf unset.** That would queue the
   leaf for ever.
 - **Judging a whole leaf under its latch.** A leaf that cannot be
   set would keep its readers and writers waiting on its rows. A
   first judging with no latch filters it.
-- **A cleaner that runs in a transaction.** Its snapshot would
+- **A btree reaper that runs in a transaction.** Its snapshot would
   hold back the watermark, and it needs none (§9.8).
 - **Two or more hash functions in the filter.** Clearing a bit
   could hide other pages.
-- **Stopping cleaning on a busy system.** With no autovacuum, a
-  system that is never quiet must not lose its cleaning.
+- **Stopping reaping on a busy system.** With no autovacuum, a
+  system that is never quiet must not lose its reaping.
 - **Workers made at an overflow.** A thread that cannot start
   then has no caller to tell.
-- **A worker that keeps a session between passes.** The reaper
+- **A worker that keeps a session between passes.** The db reaper
   could never close an idle database.
 - **RocksDB's block cache as the page cache.** A page was once an
   entry of the block cache, read with no latch. The Buffer
@@ -1699,21 +1699,21 @@ is built.
   split's post cut short, and writers with cursors running.
   `test_index.cc` and `test_tree_index.cc`, for an index over a
   tree.
-- **sm3**: `test_cleaner.cc`, for the queue and the rule for a
+- **sm3**: `test_btree_reaper.cc`, for the queue and the rule for a
   pass. `test_tree.cc` and `test_toast.cc`, for queueing, a pass,
   a page that waits, a tree gone, and a key out of line, through
-  `cleaner_run_once()`. `make tsan` in sm3, for a pass beside
+  `btree_reaper_run_once()`. `make tsan` in sm3, for a pass beside
   readers and writers.
-- **rel**: `test_tree.rel`, through `sm.h`, by `(cleaner-pass)`,
+- **rel**: `test_tree.rel`, through `sm.h`, by `(btree-reaper-pass)`,
   and `test_tree_split.rel`.
 - **aa, sq**: not reached.
 - **dg**: `dg/test/slt/btree_tree*.test`. `server.sh`, the
-  cleaner running: index scans agree with a sequential scan, an
+  btree reaper running: index scans agree with a sequential scan, an
   expression and a partial index among them. SQL cannot count a
   tree's dead entries, so `test_tree.rel` proves they go.
 - **Not tested**: the three workers that run on a full queue, as
   a test cannot fill 262,144 slots quickly. The rule they follow
-  is tested, in `cleaner_budget()`.
+  is tested, in `btree_reaper_budget()`.
 
 ### 15.1 Running them
 

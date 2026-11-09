@@ -217,7 +217,7 @@ PostgreSQL's, between `initdb` and starting a server.
 6. Make the temporary instance anew, before any database opens.
 7. Recover every database the root db names (§9.1), with the
    default options, and close it again.
-8. Start the reaper thread (§5.2).
+8. Start the db reaper thread (§5.2).
 
 Step 7 is at attach so that no database waits for its first
 session to be recovered, and so that a database that cannot be
@@ -240,7 +240,7 @@ changes nothing about what closing means: a prepared transaction
 stays in doubt, because it is durable and owned by its
 coordinator, and not by the process that prepared it. Force does
 not preempt other threads: none may be inside a call on those
-sessions. Detach then stops the reaper, closes the databases left
+sessions. Detach then stops the db reaper, closes the databases left
 idle, and closes the temporary instance and the root db.
 
 ### 4.4 One process per home directory
@@ -322,13 +322,13 @@ state of every other module.
 3. Drop the temporary stores the session still holds.
 4. Unregister the session.
 5. If it was the last session, close the database at once when
-   `idle_close_ms` is 0. Else note the time and wake the reaper.
+   `idle_close_ms` is 0. Else note the time and wake the db reaper.
 
-The reaper is one thread an environment. It closes each database
+The db reaper is one thread an environment. It closes each database
 that has had no session for `idle_close_ms`, 60 seconds by
 default, and sleeps until the next is due. A session that comes
 in meanwhile finds the database as it was: caches warm, and no
-reopen to pay. The reaper runs until `sm1::detach`.
+reopen to pay. The db reaper runs until `sm1::detach`.
 
 `db_t::~db_t` closes a database in this order:
 
@@ -1385,7 +1385,7 @@ Paths are relative to `sm1/`.
 
 ```
 include/sm1.h           public C++ API, namespace sm1
-src/env.cc              init/attach/detach, root db, db sweep, reaper
+src/env.cc              init/attach/detach, root db, db sweep, db reaper
 src/db.cc               mkdb/rmdb, CF setup, CF create/drop, storeid→CF map,
                         allocators
 src/session.cc          opendb/closedb, the registry of open databases
@@ -1446,7 +1446,7 @@ for a failed write, and are empty outside tests.
 
 `env_t` (`sm1/src/env.h`) holds the home's path, the block cache,
 the buffer pool, `wal_env`, the root db, the temporary instance,
-the registry, the session set and the reaper. `env_t::mu` guards
+the registry, the session set and the db reaper. `env_t::mu` guards
 the root db, the registry and the session set.
 
 ### 13.3 `db_open()`

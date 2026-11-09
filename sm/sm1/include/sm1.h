@@ -1746,7 +1746,7 @@ int read_settled_versioned(session_t* session, uint64_t storeid,
  * Let session call sm1::read_settled, sm1::read_settled_versioned,
  * sm1::pin_page, sm1::page_enter
  * and sm1::page_write with no transaction, for good: a background
- * cleaner's session (../BTREEINDEX.md §9), which judges a row by its
+ * btree reaper's session (../BTREEINDEX.md §9), which judges a row by its
  * newest version, and so needs no snapshot and holds no watermark
  * back. A store is looked up at the newest state. Every other call
  * still needs a transaction. A store's handle stays with the session

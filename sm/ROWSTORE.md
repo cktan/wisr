@@ -904,12 +904,12 @@ against 1.1 µs in key order.
   rows its equal entries name (BTREEINDEX.md). It locks nothing.
   `sm1::wait_writer` waits for the writer it named, as a write
   waits for an uncommitted version, and the caller reads again.
-- **`read_settled`** is the cleaner's. A row is not settled if
+- **`read_settled`** is the btree reaper's. A row is not settled if
   another's or the session's own write is in flight, or if it
   committed past the watermark. It locks nothing and waits for no
   one. `read_settled_versioned` reads a versioned key in any
   store, a TOAST chunk's in a chained store.
-- **`sm1::set_no_transaction`** lets a cleaner's session make
+- **`sm1::set_no_transaction`** lets a btree reaper's session make
   settled reads with no transaction, for good. It needs no
   snapshot, and holds no watermark back.
 

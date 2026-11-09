@@ -769,24 +769,24 @@ puts the version before it back within a second or so
 ([`../GC.md`](../GC.md#42-chained-keys) §4.2). It takes the
 table's lock as a reader. A
 tree's entries whose rows are settled without them go too
-([`../BTREEINDEX.md`](../BTREEINDEX.md#9-cleaning-vacuum-and-the-cleaner)
+([`../BTREEINDEX.md`](../BTREEINDEX.md#9-reaping-vacuum-and-the-btree-reaper)
 §9).
 
 ```janet
 (compact jobs)
 ```
 
-### `(cleaner-pass)`
-Runs one pass of the btree cleaner of the session's database, on
-this thread (`sm_cleaner_run`,
-[`../BTREEINDEX.md`](../BTREEINDEX.md#9-cleaning-vacuum-and-the-cleaner)
+### `(btree-reaper-pass)`
+Runs one pass of the btree reaper of the session's database, on
+this thread (`sm_btree_reaper_run`,
+[`../BTREEINDEX.md`](../BTREEINDEX.md#9-reaping-vacuum-and-the-btree-reaper)
 §9). A script
-gets no cleaner thread, so a tree's entries change only by this
-and by `(compact)`. A pass cleans the leaves that readers and
+gets no btree reaper thread, so a tree's entries change only by this
+and by `(compact)`. A pass reaps the leaves that readers and
 writers queued, with no transaction of its own.
 
 ```janet
-(cleaner-pass)
+(btree-reaper-pass)
 ```
 
 ### `(table-size table)`

@@ -189,7 +189,7 @@ int sm1::closedb(sm1::session_t *session) {
     env->sessions.erase(session);
     lock_unregister(session);
     // Drop the session count; the last session closes the database,
-    // or leaves it to the reaper for its idle time.
+    // or leaves it to the db reaper for its idle time.
     if (--db->nsessions == 0) {
       // Close at once if the database keeps no idle time.
       if (db->idle_close_ms == 0) {
@@ -199,7 +199,7 @@ int sm1::closedb(sm1::session_t *session) {
         delete db;
       } else {
         db->idle_since = std::chrono::steady_clock::now();
-        // The reaper closes it once its idle time has passed.
+        // The db reaper closes it once its idle time has passed.
         env->idle_cv.notify_one();
       }
     }

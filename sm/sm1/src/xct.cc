@@ -1388,7 +1388,7 @@ int xct_check_readonly(sm1::session_t *s) {
 }
 
 /* xct_check_active, unless s works with no transaction; see session.h. */
-int xct_check_cleaner(sm1::session_t *s) {
+int xct_check_btree_reaper(sm1::session_t *s) {
   return nullptr != s && s->no_transaction ? 0 : xct_check_active(s);
 }
 

@@ -22,7 +22,7 @@ layer. [`PERF.md`](PERF.md) measures how fast DG runs against PG.
 | Row identity | Physical tuple ID (`ctid`: block + offset) | Primary key bytes, or hidden `int8` `_id` if keyless |
 | Table organization | Unordered heap + separate B-tree for PK | Index-organized (clustered on PK or `_id`) |
 | Database portability | Cluster-bound (shared XIDs, OIDs, WAL, `global/`) | Self-contained directory (`base/X` holds data, catalog, WAL); its import not built yet |
-| Garbage collection | `VACUUM` and autovacuum processes | Automatic in `sm1`, and a btree's dead entries by a background cleaner; `VACUUM` compacts RocksDB stores and cleans btree leaves |
+| Garbage collection | `VACUUM` and autovacuum processes | Automatic in `sm1`, and a btree's dead entries by a background btree reaper; `VACUUM` compacts RocksDB stores and cleans btree leaves |
 | Durability & recovery | PG WAL (`pg_wal`), checkpointer, redo recovery | RocksDB WAL and flush; `CHECKPOINT` is a no-op |
 | Transactions & MVCC | Heap `xmin`/`xmax`, `pg_xact` SLRU, snapshots | `sm1` MVCC on RocksDB; no XID columns on rows |
 | `SERIALIZABLE` | Predicate locks and SSI in shared memory | `sm1` serializable isolation |

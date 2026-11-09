@@ -387,12 +387,12 @@ void idx_set_leaf_note(index_t *index, leaf_note_fn fn, void *ctx) {
   index->pages.note_ctx = ctx;
 }
 
-/* Clean one leaf of a tree; see sm2.h. */
-int idx_clean_leaf(
+/* Reap one leaf of a tree; see sm2.h. */
+int idx_reap_leaf(
     index_t *index, uint64_t pageid,
     const std::function<int(std::string_view, std::string_view)> &dead,
     size_t &removed, bool &doubt) {
-  return tree::tree_clean_leaf(
+  return tree::tree_reap_leaf(
       index->pages, pageid,
       [&](std::string_view key, std::string_view value) {
         return judge_entry(dead, key, value);

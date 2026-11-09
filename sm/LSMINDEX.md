@@ -912,7 +912,7 @@ Where each is the better, measured or estimated, in instructions:
 | a unique key, at most | 4,096 bytes | about 1.3 KB |
 | an index-only scan | yes: an entry is MVCC | no row read on an all-visible leaf; else reads the row |
 | an indexed insert, written | about 40 bytes | the page, up to 4 KB |
-| dead entries | none, GC drops versions | until a cleaning |
+| dead entries | none, GC drops versions | until a reap |
 
 ## 9. Costs accepted
 

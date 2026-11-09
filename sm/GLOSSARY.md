@@ -24,7 +24,7 @@ document. Use these and no others in code comments and documents.
 | Row Store | row store | [`ROWSTORE.md`](ROWSTORE.md) | row keys, versions, chains, the read and write paths | `sm1/src/access.cc`, `chain.cc`, `sm2/src/rel/rel.cc` |
 | TOAST | toast | [`TOAST.md`](TOAST.md) | a datum stored out of line | `sm2/src/rel/toast.cc` |
 | LSM Index | lsm index | [`LSMINDEX.md`](LSMINDEX.md) | an index whose entries are sm1 keys | `sm2/src/rel/index.cc` |
-| B-tree Index | btree index | [`BTREEINDEX.md`](BTREEINDEX.md) | an index of its own pages, its in-doubt bit, the cleaner | `sm2/src/tree/`, `sm3/src/cleaner/` |
+| B-tree Index | btree index | [`BTREEINDEX.md`](BTREEINDEX.md) | an index of its own pages, its in-doubt bit, the btree reaper | `sm2/src/tree/`, `sm3/src/btree_reaper/` |
 | Index Builder | builder | [`INDEXBUILD.md`](INDEXBUILD.md) | concurrent index builds | `sm3/src/builder/` |
 | Catalog | catalog | [`CATALOG.md`](CATALOG.md) | definitions in memory and on disk, DDL | `sm3/src/catalog/`, `sm3/src/ddl/` |
 | Namespace | namespace | [`NAMESPACE.md`](NAMESPACE.md) | a schema, and name lookup | `sm3/src/ddl/ddl.cc` |

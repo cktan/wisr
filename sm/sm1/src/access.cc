@@ -1332,7 +1332,7 @@ static int versioned_settled(sm1::session_t *s, const store_t &st,
 /* The store of a settled read of key, nullptr with the error set. */
 static const store_t *enter_settled(sm1::session_t *s, uint64_t storeid,
                                     std::string_view key) {
-  if (xct_check_cleaner(s) != 0 ||
+  if (xct_check_btree_reaper(s) != 0 ||
       enter(s, xct_view(s), storeid, key.data(), key.size()) != 0) {
     return nullptr;
   }

@@ -145,7 +145,7 @@ of each.
   entries are sm1 keys
 - [`BTREEINDEX.md`](BTREEINDEX.md) — B-tree Index: an index of
   its own pages, its
-  in-doubt bit, the cleaner
+  in-doubt bit, the btree reaper
 - [`INDEXBUILD.md`](INDEXBUILD.md) — Index Builder: concurrent
   index builds
 - [`CATALOG.md`](CATALOG.md) — Catalog: definitions in memory and

@@ -120,7 +120,7 @@ exceptions, both under the leaf's EX:
 - `tree_insert_unique()` reads rows to judge entries of the
   prefix on the leaf, and a miss is a disk read. Readers of that
   leaf wait. A unique check's entries of one prefix are few.
-- `clean_leaf()` judges again only what is to go. The first
+- `reap_leaf()` judges again only what is to go. The first
   judgement of a leaf runs with no pin, from a copy. So a clean
   leaf takes no row read under EX
   ([`BTREEINDEX.md`](BTREEINDEX.md)).
@@ -135,7 +135,7 @@ began on. A root's split swaps the sibling for a second new page.
 call. A function that changes a page reads it through that pin,
 as a second pin would deadlock with the first. Its callers are
 `latch_covering()`, `write_split()`, `tree_insert_unique()`'s
-walk and `clean_leaf()`.
+walk and `reap_leaf()`.
 
 ### 1.4 The write protocol
 
@@ -540,7 +540,7 @@ opaque `frame_t`.
 **What a call checks first** (`enter_pages`):
 
 1. An active transaction, not prepared or doomed, or a session
-   set by `sm1::set_no_transaction`, a cleaner's
+   set by `sm1::set_no_transaction`, a btree reaper's
    ([`BTREEINDEX.md`](BTREEINDEX.md)).
 2. A store other than 0.
 3. A store live at the view (`catalog_lookup`): a hash look-up in

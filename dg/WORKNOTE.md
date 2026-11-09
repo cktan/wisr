@@ -12972,3 +12972,23 @@ transaction that had inserted one of its children
   matrix, the flag, the pass-over and the currency check;
   sm3's test of the key columns; and the isolation specs that
   need the four modes.
+
+## Step 425: the reapers are named for what they reap
+
+Three threads were named apart from what they do. They are now
+the btree reaper, the row reaper and the db reaper.
+
+- **The btree reaper** was the btree cleaner: sm3's
+  `src/btree_reaper/`, `btree_reaper_t`, `reap_queue_t`,
+  `idx_reap_leaf()`, `sm_set_btree_reaper_workers()`,
+  `sm_btree_reaper_run()` and `rel`'s `(btree-reaper-pass)`. Its
+  act on a leaf is a reap.
+- **The row reaper** was the OLD reaper, a design: it reaps the
+  OLD entries behind a settled CURR. It gets threads of its own,
+  a pool a database in sm1, as the btree reaper has
+  ([`../sm/GC.md`](../sm/GC.md#135-reaping-by-the-row-reapers-threads)
+  §13.5); the GC worker does not reap. A writer reaps nothing,
+  for now: its reap costs a Get and a `Delete` on every update,
+  and saves I/O only while the copy is in the memtable (§13.4).
+- **The db reaper** was sm1's reaper, the thread that closes a
+  database left idle (`env_start_db_reaper()`).

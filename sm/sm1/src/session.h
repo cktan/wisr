@@ -414,7 +414,7 @@ int xct_check_active(sm1::session_t *session);
  * xct_check_active, but for a session set for no transaction, which
  * has none to check: a settled read's and a page call's check.
  */
-int xct_check_cleaner(sm1::session_t *session);
+int xct_check_btree_reaper(sm1::session_t *session);
 
 /* Fail with READONLY if session's transaction was declared read-only. */
 int xct_check_readonly(sm1::session_t *session);

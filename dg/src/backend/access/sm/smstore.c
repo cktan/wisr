@@ -7389,7 +7389,8 @@ static int smstore_index_eval(void *ctx, uint64_t table, uint64_t index,
   MemoryContext old;
   int rc = 0;
 
-  /* One of sm's builders or cleaners, at its first call: made able to run. */
+  /* One of sm's builders or btree reapers, at its first call: made able to run.
+   */
   session_thread_adopt();
   old = CurrentMemoryContext;
   PG_TRY();

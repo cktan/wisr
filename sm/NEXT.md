@@ -188,7 +188,7 @@ and so are the catalog tables psql reads
    - an option in `sm_options_t` that digres's GUC sets, as
      `block_cache_bytes` is set now.
 8. **A list of the btree leaves that need vacuum**: built.
-   VACUUM cleans the leaves on the cleaner's queue alone, and
+   VACUUM reaps the leaves on the btree reaper's queue alone, and
    misses some ([`BTREEINDEX.md`](BTREEINDEX.md#92-vacuum) §9.2
    gives the cases and why
    that is enough). A temporary table's trees are still walked.
