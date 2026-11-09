@@ -152,17 +152,11 @@ digres 13,200 instructions beyond the entry, and 9,000 of them
 are RocksDB's `MultiGet`. The settings are already tuned (16 KB
 blocks, restart interval 4, a hash index in the block, a
 prefix bloom filter). If RocksDB's whole cost went to zero, q3
-would still be 105,000, 1.2 times PostgreSQL. Two things could
-close it, and both are large:
-
-- A row cache in sm, in its buffer pool, keyed by the row's key
-  and version, as the tree pages are. A hit would cost 1,000 to
-  2,000 a row. q3 would be about 115,000, 1.35 times
-  PostgreSQL. It needs a design for the MVCC version in the key
-  and for invalidation.
-- Keep a table's rows in sm's own pages, as the tree does for
-  an index. This is the change that gives parity, and it is a
-  redesign of the row store.
+would still be 105,000, 1.2 times PostgreSQL. One thing could
+close it, and it is large: keep a table's rows in sm's own
+pages, as the tree does for an index. This gives parity, and is
+a redesign of the row store. A cache of rows was dropped
+(2026-11-08): it targets q3 alone, so it is not acceptable.
 
 ## 5. Not done, and not known
 
