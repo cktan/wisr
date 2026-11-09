@@ -11,6 +11,7 @@
 #include "../catalog/internal.h"
 #include "pin.h"
 #include "sm0_defer.h"
+#include "sm_sys.h"
 
 #include <algorithm>
 #include <cassert>
@@ -1315,6 +1316,12 @@ int tbl_load_add(loader_t *l, std::span<const sm2::datum_t> values,
   table_t *table = l->table;
   if (l->load == nullptr) {
     return tbl_insert(table, values, isnull, id);
+  }
+  // Once, before the row goes in: its streams stop for no interrupt
+  // (sm1::load_stream), so a failure leaves nothing to undo, and the
+  // caller may hand the row again.
+  if (sm_should_stop()) {
+    return sm1::seterr(sm1::SM_ERR_INTERRUPTED, "load: interrupted");
   }
   if (need_not_null(table, isnull) != 0) {
     return -1;

@@ -258,9 +258,9 @@ check named.
    to expect".
 4. **Sort the findings.** For each one, decide whether it is a
    bug or a known difference. Reduce a bug to its smallest SQL.
-   - A bug: add it to [`dg/ISSUE.md`](ISSUE.md), with the
-     smallest SQL. Do
-     not fix it in this work.
+   - A bug: add it to
+     [`ISSUE.md`](../ISSUE.md#3-digres-known-issues), with the
+     smallest SQL. Do not fix it in this work.
    - A known difference: add it to `known.txt`, with its reason.
      [`dg/UNSUPPORTED.md`](UNSUPPORTED.md) lists what digres refuses on purpose, so
      a refusal it lists is a known difference.
@@ -318,7 +318,7 @@ A file is skipped by the rules under "The format".
   commit, as [`CLAUDE.md`](../CLAUDE.md) requires.
 - This work changes only `dg/test/duck/`,
   [`dg/test/slt/README.md`](test/slt/README.md)'s one line, and
-  [`dg/ISSUE.md`](ISSUE.md). No file
+  [`ISSUE.md`](../ISSUE.md). No file
   in `sm/`, `dg/src/` or any existing test changes. If you think
   one must, stop and ask.
 - Do not fix a bug it finds: report it.

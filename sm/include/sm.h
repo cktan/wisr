@@ -1460,7 +1460,12 @@ int sm_tbl_insert_arbiter(sm_tbl_t* tbl, const sm_datum_t* values,
  * table's other writes fail with SM_ERR_INVALID. After one the
  * transaction cannot be prepared. After a failed call the
  * transaction is to be aborted; a load not ended is ended by its
- * transaction's end, and its handle freed by sm_tbl_close.
+ * transaction's end, and its handle freed by sm_tbl_close. One
+ * failure may be followed: sm_tbl_load_add's SM_ERR_INTERRUPTED, an
+ * interrupt found before the row went in, after which the same row
+ * may be handed again. A load's sorts stop for an interrupt only
+ * between rows and at sm_tbl_load_end, and then only as the host's
+ * stop function judges it (sm_sys.h's sm_set_stop_fn).
  */
 int sm_tbl_load_begin(sm_tbl_t* tbl);
 

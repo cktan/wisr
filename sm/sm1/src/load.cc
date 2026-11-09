@@ -481,6 +481,9 @@ int sm1::load_stream(sm1::loader_t *l, bool ascending, size_t &stream,
   opt.budget = l->s->db->load_sort_bytes;
   opt.unique = true;
   opt.manual_spill = true;
+  // A row goes into several streams: one stopped part way through them
+  // could not be added again. The caller checks between rows.
+  opt.interruptible_input = false;
   sm0::sort_t *sort = nullptr;
   if (0 != sm0::sort_open(opt, sort)) {
     return -1;

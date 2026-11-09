@@ -48,8 +48,8 @@ static void StoreIndexTuple(IndexOnlyScanState *node, TupleTableSlot *slot,
  */
 static smstore_scan_t *begin_sm_scan(IndexOnlyScanState *node) {
   smstore_scan_t *scan = smstore_index_beginscan(
-      node->ss.ss_currentRelation, node->ioss_RelationDesc,
-      node->ioss_ScanKeys, node->ioss_NumScanKeys);
+      node->ss.ss_currentRelation, node->ioss_RelationDesc, node->ioss_ScanKeys,
+      node->ioss_NumScanKeys, &node->ioss_Instrument);
 
   if (((IndexOnlyScan *)node->ss.ps.plan)->nocols)
     smstore_index_nocols(scan);

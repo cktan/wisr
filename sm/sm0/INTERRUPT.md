@@ -212,6 +212,31 @@ nothing pending and sleep again: correct, and noisy only under
 many waiters. A condition variable per waiter is the later
 optimisation.
 
+### 5.1 Work that cannot be retried
+
+A wait can end on any bit in the mask: the caller acts on the
+interrupt and calls again. Some work cannot be called again
+once it fails part way, such as a bulk load's final sort. For
+it, a bit in the mask is not enough to stop: the host says.
+
+```cpp
+typedef bool (*sm_stop_fn)(void);
+void sm_set_stop_fn(sm_stop_fn fn);  // the host's, for every thread
+bool sm_should_stop(void);
+```
+
+`sm_should_stop()` is false at once, a relaxed load, with no bit
+of the mask pending. Else it asks the host's function, or is true
+with none. The function runs inside the library's call, on the
+thread: it may act on what is pending, but must not unwind out of
+the call. An `ALARM` asks the host to check its timeouts; most
+do not stop a statement, such as a client connection check, and
+the host answers false for them.
+
+Such work polls `sm_should_stop()` in place of the pending bits.
+Work a caller retries from its start polls it once there, before
+it changes anything, so a failure leaves nothing to redo.
+
 ## 6. Timers
 
 ```cpp
@@ -303,6 +328,13 @@ leaves no bit behind.
   `SM_ERR_INTERRUPTED`; sm takes no bit.
 - sm3's wait for an index build (`builder_wait`) is a
   `sm_wait()` on the builder's condition, the same way.
+- sm0's sort polls `sm_should_stop()` (§5.1). A sort opened with
+  `interruptible_input` off, as a bulk load's streams are, polls
+  only as it ends: a load's row goes into several streams, and one
+  stopped part way through them could not be added again.
+  `sm3::tbl_load_add()` polls once instead, before the row goes in.
+- sm1's buffer pool polls `sm_should_stop()` while it looks for a
+  frame to take.
 - sm3's builder workers are sm's own threads, with a bit of
   sm's own: a detach raises it in each worker building one of
   the catalog's indexes, so one waiting on a transaction does
@@ -330,6 +362,14 @@ leaves no bit behind.
   POSIX timer per thread.
 - `SM_ERR_INTERRUPTED` from an sm call goes to its usual cancel
   or terminate processing.
+- Its stop function (§5.1) is `InterruptsStopWork()`
+  (`storage/ipc/procsignal.c`): it runs the `ALARM` handler, then
+  says whether `ProcessInterrupts()` would raise an error. A cancel,
+  an end or a quit stays pending for `CHECK_FOR_INTERRUPTS()`.
+- `timeout.c` leaves no timer armed for a timeout disabled
+  (`cancel_alarm()`): PostgreSQL leaves it, as a SIGALRM that finds
+  nothing due is harmless, but here its `ALARM` would still be
+  judged.
 
 ## 10. Tests
 

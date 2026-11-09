@@ -2,8 +2,8 @@
 
 Status: built ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step
 411), as the user decided (§8). It fixes
-[`../dg/ISSUE.md`](../dg/ISSUE.md) issue 22: the purge of a mass
-delete stalls every writer.
+[`../ISSUE.md`](../ISSUE.md#3-digres-known-issues) dg issue 22:
+the purge of a mass delete stalls every writer.
 
 ---
 

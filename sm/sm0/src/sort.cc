@@ -163,9 +163,12 @@ size_t shared_prefix(std::string_view first, std::string_view key) {
          first.begin();
 }
 
-/* Fail if the calling thread has an interrupt to act on. */
+/*
+ * Fail if the calling thread is to stop for an interrupt: a bit of its
+ * wait mask pending, as the host judges it (sm_should_stop()).
+ */
 int check_interrupt() {
-  if (0 != (sm_pending() & sm_wait_mask())) {
+  if (sm_should_stop()) {
     return sm0::set_error(SM_ERR_INTERRUPTED, "sort: interrupted");
   }
   return 0;
@@ -185,6 +188,7 @@ int duplicate_key() {
 struct item_order_t {
   size_t offset;
   bool unique;
+  bool checks = true; /* stop for an interrupt (interruptible_input) */
   bool duplicate = false;
   uint64_t compares = 0; /* counted by the range, off the hot path */
 
@@ -273,7 +277,7 @@ int quick_sort(item_t *a, size_t n, size_t depth, item_order_t &order) {
     if (order.duplicate) {
       return 0;
     }
-    if (n >= interrupt_interval && 0 != check_interrupt()) {
+    if (order.checks && n >= interrupt_interval && 0 != check_interrupt()) {
       return -1;
     }
     if (0 == depth) {
@@ -410,15 +414,16 @@ bool grow_items(sort_t *sort) {
  *    for these records, so it can be no bad guess.
  * 2. Leave input already in order as it is, which one pass finds.
  * 3. Otherwise sort the items, which moves no record: by std::sort,
- *    or under unique by quick_sort, which can stop.
+ *    or under unique by quick_sort, which can stop, for an interrupt
+ *    only with checks.
  */
-int order_items(sort_t *sort) {
+int order_items(sort_t *sort, bool checks) {
   const sm0::sort_options_t &opt = sort->options;
   std::vector<item_t> &items = sort->items;
   for (item_t &item : items) {
     item.abbrev = abbreviate(key_of(item.record), sort->prefix);
   }
-  item_order_t order{sort->prefix, opt.unique};
+  item_order_t order{sort->prefix, opt.unique, checks};
   bool sorted = true;
   for (size_t i = 1; sorted && !order.duplicate && i < items.size(); i++) {
     sorted = !order.less(items[i], items[i - 1]);
@@ -545,9 +550,9 @@ private:
  * 2. Write them, as they are: a record is the same in a run.
  * 3. Give the arena back. The array stays for the next run.
  */
-int spill(sort_t *sort) {
+int spill(sort_t *sort, bool checks) {
   size_t at;
-  if (0 != order_items(sort) || 0 != new_run(sort, at)) {
+  if (0 != order_items(sort, checks) || 0 != new_run(sort, at)) {
     return -1;
   }
   run_writer_t writer(sort, at);
@@ -805,7 +810,10 @@ int sm0::sort_put(sort_t *sort, std::string_view key, std::string_view value) {
   if (sort->done) {
     return set_error(SM_ERR_INVALID, "sort: the input has ended");
   }
-  if (0 == sort->items.size() % interrupt_interval && 0 != check_interrupt()) {
+  // An input a caller cannot retry part way stops for no interrupt.
+  bool checks = sort->options.interruptible_input;
+  if (checks && 0 == sort->items.size() % interrupt_interval &&
+      0 != check_interrupt()) {
     return -1;
   }
   const sort_options_t &opt = sort->options;
@@ -819,7 +827,7 @@ int sm0::sort_put(sort_t *sort, std::string_view key, std::string_view value) {
       sort->items.size() == sort->items.capacity()) {
     full = !grow_items(sort);
   }
-  if (full && !sort->items.empty() && 0 != spill(sort)) {
+  if (full && !sort->items.empty() && 0 != spill(sort, checks)) {
     return -1;
   }
   size_t body = varint_size(key.size()) + key.size() + value.size();
@@ -844,7 +852,8 @@ int sm0::sort_spill(sort_t *sort) {
   if (sort->done) {
     return set_error(SM_ERR_INVALID, "sort: the input has ended");
   }
-  return sort->items.empty() ? 0 : spill(sort);
+  return sort->items.empty() ? 0
+                             : spill(sort, sort->options.interruptible_input);
 }
 
 /*
@@ -865,9 +874,9 @@ int sm0::sort_done(sort_t *sort) {
   }
   sort->done = true;
   if (sort->runs.empty()) {
-    return order_items(sort);
+    return order_items(sort, true);
   }
-  if (!sort->items.empty() && 0 != spill(sort)) {
+  if (!sort->items.empty() && 0 != spill(sort, true)) {
     return -1;
   }
   std::vector<item_t>().swap(sort->items);

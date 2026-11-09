@@ -232,6 +232,37 @@ the last half of that time: alone, and inside a transaction whose
 `transaction_timeout` stays active. Without the fix both fail;
 with only the cancel of the last timeout, the second fails.
 
+### A bulk load failed under a harmless timeout, and could add a row twice
+
+**Closed 2026-11-09.** Found while closing the stale timer above.
+
+1. **With `client_connection_check_interval` set, every COPY bulk
+   load failed**, `could not end a bulk load: sort: interrupted`, 3
+   of 3. The check is an active timeout whose handler only looks at
+   the client's socket, but its `ALARM` stopped the load's final
+   sort, which cannot be retried.
+2. **A load's row could go in twice.** `tbl_load_add()` puts a row
+   into its rows' stream, then each index's. An index's sort could
+   stop for an interrupt after the row went in, and digres's
+   `waiting()` hands the row again when `CHECK_FOR_INTERRUPTS()`
+   raises no error: a keyless table would hold it twice, under two
+   `_id`s. Not seen, as the first failed the load first.
+
+**Fix.** sm0's `sm_set_stop_fn()` and `sm_should_stop()`
+(`sm/sm0/INTERRUPT.md` §5.1): work that cannot be retried asks the
+host whether what is pending stops it. digres's
+`InterruptsStopWork()` runs the `ALARM` handler, then says whether
+`ProcessInterrupts()` would raise an error. A load's streams stop
+for no interrupt as rows go in (`interruptible_input`), and
+`tbl_load_add()` checks once, before the row goes in.
+
+**Tests.** sm0: the stop function judges a sort's interrupt, and a
+sort with its input not interruptible stops only at its end. sm3:
+a load's row interrupted leaves nothing, and goes in once again.
+dg (`test/copy_alarm.sh`): a COPY under a 1 ms connection check
+loads every row once, in each index; `statement_timeout` still ends
+a COPY.
+
 ## 2. Costs to profile
 
 Found 2026-11-06 by `bench/privcheck.sh`, not by a review.
@@ -540,3 +571,95 @@ writes a page for each entry (`idx_load()` in
 builds the tree from the bottom up, one write a page, into the
 load's files. A unique tree's duplicate is found by the sort,
 with no row read.
+
+## 3. digres: known issues
+
+Moved here from `dg/ISSUE.md`. The numbers are digres's own, and
+the code and [`dg/WORKNOTE.md`](dg/WORKNOTE.md) cite them as "dg
+issue N". They are not the numbers of the sections above.
+
+Problems found and left unfixed, each with what it would take to
+fix. The code it concerns points here by number. A fixed issue is
+removed, and its number is not used again: issue 2, ON CONFLICT
+DO UPDATE affecting a row twice, was fixed in
+[`dg/WORKNOTE.md`](dg/WORKNOTE.md) step
+237; issue 3, a numeric range in an array or a multirange losing
+its bound, in step 300; issue 6, a duplicate key in a table made
+in a savepoint saying the wrong error, in step 302; issue 7, ON
+COMMIT DELETE ROWS ignoring a foreign key into the table, in step
+303; issue 4, a cursor seeing its own transaction's later DELETE,
+in step 304; issue 5, a FOR UPDATE cursor returning a row updated
+after it was declared, in step 305; issue 9, ON CONFLICT above
+READ COMMITTED saying sm1's error, in step 306; issue 8, a table
+made in pg_catalog, in step 307b; issue 11, a foreign key keeping
+a SET DEFAULT column twice, in step 308; issue 10, CREATE TABLE
+(LIKE a, LIKE a) saying sm's error, in step 309; issue 13, a FOR
+UPDATE cursor now and then reading no rows, in step 315; issue
+14, a dropped column staying in its own transaction, in step 384;
+issue 16, lock_timeout ending CREATE INDEX's wait for its build,
+in step 385; issue 20, ALTER COLUMN TYPE's lock timeout saying
+57014, in step 386; issue 18, nextval() in a read-only
+transaction, in step 387; issue 23, a table renamed to its own
+name, in step 388; issue 25, OWNED BY saying 22023, in step 389;
+issue 26, a column's NULL constraint refused, in step 390; issue
+24, a missing schema reported as a missing relation, in step 391;
+issue 19, ALTER SCHEMA RENAME failing with an internal error, in
+step 392, where it is now refused; issue 22, the purge of a mass
+delete stalling every writer, in step 419; issue 27, sm's log
+messages dropped, by `datadir_set_sm_log()`, which the postmaster
+and initdb install; issue 28, an index scan with a null key
+reading the whole index, in step 429; and issues 15 and 17, ALTER COLUMN TYPE
+losing a committed update and ADD COLUMN NOT NULL counting
+deleted rows, in step 394. Issue 12, the hash access
+method saying it cannot exclude, was closed as digres's answer,
+not a bug, in step 310: digres has no hash index. Issue 21, a
+bare numeric rounding its places past 17 digits, was closed so in
+step 393: the code does it on purpose, and
+[`dg/DECIMAL.md`](dg/DECIMAL.md) now says
+so.
+
+### dg issue 1: a library a session loads shares its statics
+
+A PostgreSQL extension keeps its state in static variables and
+sets it in `_PG_init()`, once per backend: each backend is a
+process, with its own copy. digres's sessions are threads of
+one process, and `dlopen` loads a library once for all of them,
+so its statics are one for the process. A library a session
+loads after it starts, by `LOAD` or a C function's first call,
+breaks:
+
+- **Each session's load runs `_PG_init()` again** on the same
+  statics. The usual hook chain, `prev_planner_hook =
+  planner_hook; planner_hook = my_planner;`, keeps one
+  `prev_planner_hook`: the last session to load the library
+  sets it, from its own hooks (`tcb->hooks`), and every other
+  session's `my_planner` then calls that session's previous
+  hook, a library it may never have loaded.
+- **The write is a data race** with any other session calling
+  the hook meanwhile.
+
+`shared_preload_libraries` is safe: `_PG_init()` runs once, in
+the postmaster, and each session starts with a copy of what it
+set (`session_thread_start()`: `tcb->hooks`, `tcb->dfmgr`,
+`tcb->explain`).
+
+**Loading is disabled until it is redesigned.** dfmgr.c's
+`internal_load_library()` refuses every library with an error,
+`loading library "..." is not supported yet`: `LOAD`, a C
+function, `shared_preload_libraries` and the session's preload
+settings alike. It asserted that no session thread loaded one,
+which took the server down on PostgreSQL's
+`create_function_c`. No library is built in the tree, so
+nothing digres runs loaded one.
+
+**The fix is to redesign dynamic loading and redo it**, from
+one of:
+
+- **Load libraries only through `shared_preload_libraries`**,
+  and refuse a session's `LOAD` and later loads with an error,
+  not an assert. Simple and safe; a session loses `LOAD`.
+- **Require a digres extension to keep its state
+  `thread_local`.** `LOAD` stays; every extension must change.
+- **Run `_PG_init()` once per process**, with process-wide
+  hooks under a lock. Undoes the per-session hooks
+  ([`dg/WORKNOTE.md`](dg/WORKNOTE.md) step 222).

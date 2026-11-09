@@ -59,7 +59,7 @@ its catalog is being replaced, not created
   way, a step
   at a time.
 - [`CODE.md`](CODE.md): the rules for changing the code.
-- [`ISSUE.md`](ISSUE.md): the problems known and left unfixed.
+- [`ISSUE.md`](../ISSUE.md): the problems known and left unfixed.
 - [`UNSUPPORTED.md`](UNSUPPORTED.md): what of PostgreSQL digres
   refuses, has
   removed, or does otherwise.
@@ -217,7 +217,7 @@ More is to be cut, a piece at a time.
 ## Known incompatibilities
 
 Where digres behaves otherwise than PostgreSQL, by choice;
-[`ISSUE.md`](ISSUE.md) has the bugs.
+[`ISSUE.md`](../ISSUE.md#3-digres-known-issues) has the bugs.
 
 - **A scan begun inside a savepoint ends at a rollback to
   it.** A FETCH inside a savepoint may begin a scan again, as

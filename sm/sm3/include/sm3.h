@@ -1670,7 +1670,9 @@ int tbl_load_open(table_t* table, loader_t*& out);
  * Hand over one row; its _id is known at once. It fails as
  * tbl_insert does for what it sees in the row; a duplicate key
  * fails here once rows are being inserted, and at the close
- * otherwise. After a failure the transaction is to be aborted.
+ * otherwise. After a failure the transaction is to be aborted, but
+ * for SM_ERR_INTERRUPTED: an interrupt to act on (sm_should_stop()),
+ * found before the row went in, so the row may be handed again.
  */
 int tbl_load_add(loader_t* loader, std::span<const sm2::datum_t> values,
                  std::span<const bool> isnull, uint64_t& id);

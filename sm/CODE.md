@@ -163,6 +163,10 @@ the two differ, [`CLAUDE.md`](../CLAUDE.md) wins.
   for its batch (`finish_commit()` in `sm1/src/xct.cc`). It is
   bounded by two syncs, each of which finishes or aborts the
   process.
+- **Work that cannot be retried polls `sm_should_stop()`**, not
+  the pending bits: the host says whether what is pending stops
+  it ([`sm0/INTERRUPT.md`](sm0/INTERRUPT.md) §5.1). A call a
+  caller retries polls once, before it changes anything.
 - **Threads are `std::thread`, locks `std::mutex`**, every
   mutex held by an RAII guard, so unwinding releases it.
 - **sm writes no log of its own.** It reports through the
