@@ -102,7 +102,7 @@ static TupleTableSlot *IndexNext(IndexScanState *node) {
     if (node->iss_SmScan == NULL)
       node->iss_SmScan = smstore_index_beginscan(
           node->ss.ss_currentRelation, node->iss_RelationDesc,
-          node->iss_ScanKeys, node->iss_NumScanKeys);
+          node->iss_ScanKeys, node->iss_NumScanKeys, &node->iss_Instrument);
     while (smstore_index_getnext(node->iss_SmScan, slot)) {
       /* A key on an expression is checked here, by the quals, on the row. */
       if (!smstore_index_recheck(node->iss_SmScan))
@@ -986,7 +986,8 @@ IndexScanState *ExecInitIndexScan(IndexScan *node, EState *estate, int eflags) {
       indexstate->iss_NumRuntimeKeys == 0)
     indexstate->iss_SmScan = smstore_index_beginscan(
         indexstate->ss.ss_currentRelation, indexstate->iss_RelationDesc,
-        indexstate->iss_ScanKeys, indexstate->iss_NumScanKeys);
+        indexstate->iss_ScanKeys, indexstate->iss_NumScanKeys,
+        &indexstate->iss_Instrument);
 
   /*
    * all done.

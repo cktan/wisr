@@ -13064,3 +13064,36 @@ the row went in and `waiting()` handed it again
 - **Tests**: sm0's stop function and `interruptible_input`; sm3's
   interrupted row; `test/copy_alarm.sh`'s COPY under a 1 ms
   connection check, and `statement_timeout` still ending a COPY.
+
+## Step 429: an index scan with a null key reads nothing
+
+Issue 28, found by `bench/soak.sh`: a key of an index scan whose
+value is null at run time, from an InitPlan that returned no
+row, gave the scan no bound, and every entry was read and
+refused. A delete took 141 ms on 100,000 rows, and grew with
+the table; PostgreSQL's took under 1 ms.
+
+- **`smstore_index_beginscan()`**: a key with `SK_ISNULL`, and
+  neither `SK_SEARCHNULL` nor `SK_SEARCHNOTNULL`, makes the scan
+  empty before it reads, as PostgreSQL's `_bt_preprocess_keys()`
+  ends it: a btree operator is strict. One check covers the
+  index scan, the index-only scan and a primary key's scan, which
+  all begin there.
+- **Measured**, debug build, 100,000 rows: the delete from 337 to
+  0.8 ms, the select from 190 to 0.7 ms.
+- **EXPLAIN ANALYZE's Index Searches** counts an sm scan's searches
+  now, as PostgreSQL 18's btree counts its descents: one for each
+  probe opened, and one for each row a primary key's list reads by
+  its key (`count_searches()`). It printed 0 for every sm scan
+  before. `smstore_index_beginscan()` takes the plan node's
+  `IndexScanInstrumentation`.
+- **Test**: `test/select_null_key.sql`, by `run.sh`: first the same
+  scan keyed by a subquery that returns a class, which shows `Index
+  Searches: 1` and its row, so the counts are read for a scan that
+  runs; then an index scan, an index-only scan, a primary key's
+  scan and a delete keyed by a subquery of no row each show `Index
+  Searches: 0` and meet no row;
+  a scan with a key shows 1, and lists one a value; `IS NULL`, `IS
+  NOT NULL` and a null array find theirs. Without the fix the
+  null-key scans show 1. sm's tests cannot express it: sm is never
+  asked for the scan.
