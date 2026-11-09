@@ -80,9 +80,8 @@ struct sm_env_t {
   std::unordered_set<sm_session_t *> sessions;
   sm_index_eval_fn eval = nullptr; /* the host's evaluator, set once */
   void *eval_ctx = nullptr;
-  bool toast = false; /* the host reads TOAST pointers (sm_set_toast) */
-  size_t btree_reaper_workers =
-      4; /* a catalog's (sm_set_btree_reaper_workers) */
+  bool toast = false;        /* the host reads TOAST pointers (sm_set_toast) */
+  size_t reaper_workers = 4; /* a catalog's (sm_set_reaper_workers) */
 };
 
 /*
@@ -443,7 +442,10 @@ static int start_builder(sm_env_t *env, std::string_view dbname,
             sm1::session_t *s = nullptr;
             return sm1::opendb(e, name, s) == 0 ? s : nullptr;
           },
-          env->btree_reaper_workers) != 0) {
+          env->reaper_workers,
+          // The row reaper's queue, read with no session.
+          [e, name]() -> size_t { return sm1::row_reaps_pending(e, name); }) !=
+      0) {
     return -1;
   }
   if (sm3::builder_attach(cat, [e, name]() -> sm1::session_t * {
@@ -611,36 +613,34 @@ int sm_set_toast(sm_env_t *env, int on) {
 }
 
 /* Set a catalog's btree reaper threads, before any is opened; see sm.h. */
-int sm_set_btree_reaper_workers(sm_env_t *env, int workers) {
+int sm_set_reaper_workers(sm_env_t *env, int workers) {
   return guard(nullptr, [&] {
     if (!env) {
-      return null_arg("sm_set_btree_reaper_workers", "env");
+      return null_arg("sm_set_reaper_workers", "env");
     }
     std::lock_guard lock(env->mu);
     if (!env->catalogs.empty()) {
-      return sm1::seterr(
-          sm1::SM_ERR_INVALID,
-          "sm_set_btree_reaper_workers: a database has been opened");
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "sm_set_reaper_workers: a database has been opened");
     }
-    env->btree_reaper_workers = static_cast<size_t>(workers);
+    env->reaper_workers = static_cast<size_t>(workers);
     return 0;
   });
 }
 
 /* Run one pass of dbname's btree reaper on this thread; see sm.h. */
-int sm_btree_reaper_run(sm_env_t *env, const char *dbname) {
+int sm_reaper_run(sm_env_t *env, const char *dbname) {
   return guard(nullptr, [&] {
     if (!env) {
-      return null_arg("sm_btree_reaper_run", "env");
+      return null_arg("sm_reaper_run", "env");
     }
     sm3::catalog_t *cat = nullptr;
     {
       std::lock_guard lock(env->mu);
       auto it = env->catalogs.find(name_of(dbname));
       if (it == env->catalogs.end()) {
-        return sm1::seterr(
-            sm1::SM_ERR_NOTFOUND,
-            "sm_btree_reaper_run: no session has opened the database");
+        return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                           "sm_reaper_run: no session has opened the database");
       }
       cat = it->second;
     }

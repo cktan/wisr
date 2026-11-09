@@ -25,21 +25,22 @@
 # 7. Report the median of ROUNDS (5) slopes, their spread, and what an
 #    index adds, from the tables of 0 and 16.
 #
-# digres is ../dg/build/digres-release ("make -C dg release"). PGBIN is
+# digres is DIGRES, or ../dg/build/digres-release ("make -C dg release"). PGBIN is
 # PostgreSQL 18's bin (~/p/postgres18/install/bin). SRV_CPU and CLI_CPU
-# are the CPUs of the server and of pgbench.
+# are the CPUs of the server and of pgbench. COUNTS (0 1 4 16) are the
+# tables' index counts; UPDATED=1 updates every row once after the load.
 cd "$(dirname "$0")" || exit 1
 set -u
 root=$(cd .. && pwd)
 work=$PWD/build/idxopen
-digres=$root/dg/build/digres-release
+digres=${DIGRES:-$root/dg/build/digres-release}
 pgbin=${PGBIN:-$HOME/p/postgres18/install/bin}
 n1=${N1:-10000}
 n2=${N2:-60000}
 rounds=${ROUNDS:-5}
 srv_cpu=${SRV_CPU:-2}
 cli_cpu=${CLI_CPU:-4}
-counts="0 1 4 16"
+counts=${COUNTS:-0 1 4 16}
 
 rm -rf "$work"
 mkdir -p "$work"
@@ -63,6 +64,10 @@ table_sql() {
   done
   echo "create table $name (id int8 primary key$cols);"
   echo "insert into $name select g$vals from generate_series(1, 100000) g;"
+  # UPDATED=1: every row updated once, so each has an older version.
+  if [ "${UPDATED:-0}" = 1 ]; then
+    echo "update $name set c16 = c16 + 1;"
+  fi
   for i in $(seq "$count"); do
     echo "create index on $name $clause (c$i);"
   done

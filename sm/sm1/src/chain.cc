@@ -28,6 +28,26 @@ using namespace wisr;
 
 namespace wisr {
 
+/*
+ * Queue storeid's chained key for the row reaper, if v, its CURR
+ * version that a reader sees, has a prev and is not own_xid's
+ * uncommitted write (../GC.md §13.5). Inline: the read path
+ * pays one test for a key with no prev.
+ */
+static inline void chain_note_reap(db_t *db, uint64_t storeid,
+                                   rocksdb::Slice key, const chain_version_t &v,
+                                   uint64_t own_xid) {
+  if (0 == v.prev) {
+    return;
+  }
+  // The reader's own uncommitted version is no one's to reap.
+  if (!(v.flags & version_stamped) && 0 != own_xid && v.xid == own_xid) {
+    return;
+  }
+  // A full queue or a key already queued drops this one: a hint.
+  db->reaps.push(storeid, 0, std::string_view(key.data(), key.size()));
+}
+
 /* The same version as the visibility test takes it. */
 version_t chain_version_t::as_version() const {
   version_t v;
@@ -826,6 +846,11 @@ int chain_resolve(sm1::session_t *s, const store_t &st, uint64_t storeid,
     if (dead && nullptr == st.owner) {
       chain_report(s->db, storeid, key, v.xid);
     }
+    // A CURR seen, with a chain behind it, for the row reaper to cut
+    // once it is settled (../GC.md §13.5).
+    if (newest && seen == 1 && nullptr == st.owner) {
+      chain_note_reap(s->db, storeid, key, v, s->xid);
+    }
     newest = false;
     if (seen == 1) {
       if (v.flags & version_tombstone) {
@@ -1327,6 +1352,84 @@ void chain_repair(db_t *db, const hint_queue_t::batch_t &repairs) {
   });
 }
 
+#ifndef NDEBUG
+/* The row reaper's test hook; see chain.h. */
+std::atomic<reap_hook_fn> g_reap_hook{nullptr};
+#endif
+
+/*
+ * Cut the chain behind key's CURR version if it is settled at w
+ * (../GC.md §13.5): 1 if reaped, 0 if skipped, -1 on an error.
+ * 1. Under the key's latch, so no write of it comes between, read
+ *    CURR again. Skip a key gone, or with no prev.
+ * 2. Skip it unless CURR committed at or below w: every snapshot then
+ *    sees it and stops there, so nothing behind it is read
+ *    (../GC.md §13.3).
+ * 3. Walk the chain from prev, and collect the ids, until prev is 0
+ *    or an id is missing.
+ * 4. In one batch, Delete each id, and write CURR again with no prev,
+ *    stamped with its writer's commit_ts, as stamp_copy() stamps a
+ *    copy: a CF:txn sweep may have stamped the stored CURR, to delete
+ *    the writer's status record next, and an unstamped copy would then
+ *    read as aborted. A Delete, not a SingleDelete: an OLD key can be
+ *    written more than once (../GC.md §4.5).
+ */
+int reap_one(db_t *db, const store_t &st, uint64_t storeid, rocksdb::Slice key,
+             uint64_t w) {
+  std::lock_guard<std::mutex> latch(lock_latch(db, storeid, key));
+  // Hold a read epoch until the statuses are resolved.
+  uint64_t epoch = db_read_enter(db);
+  defer { db_read_leave(db, epoch); };
+  rocksdb::PinnableSlice buf;
+  chain_version_t head;
+  int r = get_curr(st, key, &buf, &head);
+  if (0 != r || 0 == head.prev) {
+    return r < 0 ? -1 : 0;
+  }
+  uint64_t ts = head.commit_ts;
+  if (!(head.flags & version_stamped)) {
+    xct_state_t state = xct_status(db, head.xid, &ts);
+    if (XCT_ERROR == state) {
+      return -1;
+    }
+    if (XCT_COMMITTED != state) {
+      return 0;
+    }
+  }
+  if (ts > w) {
+    return 0;
+  }
+#ifndef NDEBUG
+  // A test's stand-in for what may run between the read and the write.
+  if (reap_hook_fn hook = g_reap_hook.load()) {
+    hook(db);
+  }
+#endif
+  rocksdb::WriteBatch batch;
+  for (uint64_t id = head.prev; 0 != id;) {
+    rocksdb::PinnableSlice older;
+    chain_version_t v;
+    r = get_old(st, id, &older, &v);
+    if (r < 0) {
+      return -1;
+    }
+    if (1 == r) {
+      break;
+    }
+    batch.Delete(st.cf, old_key(id));
+    id = v.prev;
+  }
+  head.prev = 0;
+  head.flags |= version_stamped;
+  head.commit_ts = ts;
+  batch.Put(st.cf, curr_key(key), chain_value(head, false));
+  rocksdb::Status status = st.rdb->Write(store_write_options(st), &batch);
+  if (!status.ok()) {
+    return set_status_error(status, "reap a chain");
+  }
+  return 1;
+}
+
 /* The id after the store's last old version; see db.h. */
 uint64_t chain_next_old(rocksdb::DB *rdb, rocksdb::ColumnFamilyHandle *cf) {
   // The old keys are the store's last versions, below its pages
@@ -1393,6 +1496,12 @@ int chain_scan_next(sm1::scan_t *c, std::string_view &key,
       if (dead && c->report_dead) {
         chain_report(db, c->chain_storeid, rocksdb::Slice(c->last_examined),
                      v.xid);
+      }
+      // A CURR seen, with a chain behind it, for the row reaper
+      // (../GC.md §13.5).
+      if (newest && 1 == r && c->report_dead) {
+        chain_note_reap(db, c->chain_storeid, rocksdb::Slice(c->last_examined),
+                        v, c->session->xid);
       }
       newest = false;
       if (1 == r) {
@@ -1657,4 +1766,36 @@ int sm1::chain_read(sm1::session_t *session, uint64_t storeid,
     return xct_check_active(session);
   }
   return read_chained(session, storeid, key, &session->readpin, data);
+}
+
+/* One pass of the row reaper over the session's database; see sm1.h. */
+int64_t sm1::row_reap_pass(sm1::session_t *session,
+                           const std::atomic<bool> *stop) {
+  if (nullptr == session) {
+    return set_error(sm1::SM_ERR_INVALID, "sm1_row_reap_pass: no session");
+  }
+  db_t *db = session->db;
+  hint_queue_t::batch_t keys = db->reaps.take();
+  if (0 == keys.count()) {
+    return 0;
+  }
+  // W once for the batch: a key settled at it stays settled.
+  uint64_t w = db_watermark(db);
+  int64_t reaped = 0;
+  bool failed = false;
+  keys.for_each([&](const hint_queue_t::record_t &rec) {
+    if (failed || (nullptr != stop && stop->load())) {
+      return;
+    }
+    store_t st = db_store(db, rec.storeid);
+    // A store dropped since has nothing to reap.
+    if (!st.chained) {
+      return;
+    }
+    int r = reap_one(db, st, rec.storeid,
+                     rocksdb::Slice(rec.key.data(), rec.key.size()), w);
+    failed = r < 0;
+    reaped += r > 0 ? 1 : 0;
+  });
+  return failed ? -1 : reaped;
 }

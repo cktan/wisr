@@ -1875,16 +1875,20 @@ int tbl_scan_rebound(scan_t* scan, const sm2::bound_t* lo,
                      const sm2::bound_t* hi, bool* widened = nullptr);
 
 /*
- * Attach the btree reaper to cat (../BTREEINDEX.md §9): whoever finds a
- * tree's leaf not all visible queues it, and workers reap what is
- * queued, each pass on a session open() makes, with no transaction.
+ * Attach the reapers' threads to cat (../BTREEINDEX.md §9.9): whoever
+ * finds a tree's leaf not all visible queues it, and workers reap what
+ * is queued, each pass on a session open() makes, with no transaction.
  * The first worker runs when the system is not busy, or the queue is
- * full; the others only when it is full. Call before the catalog's
- * tables are opened. A test gives no workers, and calls
- * btree_reaper_run_once. open may be called from any worker.
+ * full; the others only when it is full. The first also runs the row
+ * reaper's pass (../GC.md §13.5) when row_pending, asked with no
+ * session, says keys wait; with none, it runs no row pass. Call before
+ * the catalog's tables are opened. A test gives no workers, and calls
+ * btree_reaper_run_once. open and row_pending may be called from any
+ * worker.
  */
 int btree_reaper_attach(catalog_t* cat, std::function<sm1::session_t*()> open,
-                   size_t workers = 4);
+                        size_t workers = 4,
+                        std::function<size_t()> row_pending = {});
 
 /*
  * Stop and join cat's workers; a no-op with none. The queue stays until
@@ -1893,8 +1897,8 @@ int btree_reaper_attach(catalog_t* cat, std::function<sm1::session_t*()> open,
 void btree_reaper_detach(catalog_t* cat);
 
 /*
- * One pass of the btree reaper, on the calling thread, of at most budget
- * pages: 0, or -1. For tests.
+ * One pass of the reapers, on the calling thread: the btree reaper's,
+ * of at most budget pages, then the row reaper's. 0, or -1. For tests.
  */
 int btree_reaper_run_once(catalog_t* cat, size_t budget = SIZE_MAX);
 

@@ -12992,3 +12992,35 @@ the btree reaper, the row reaper and the db reaper.
   and saves I/O only while the copy is in the memtable (§13.4).
 - **The db reaper** was sm1's reaper, the thread that closes a
   database left idle (`env_start_db_reaper()`).
+
+## Step 426: the reapers' threads reap rows too
+
+A database's reaper threads, sm3's pool of 4, run the row
+reaper's pass beside the btree reaper's
+([`../sm/GC.md`](../sm/GC.md#135-reaping-by-the-reapers-threads)
+§13.5, [`../sm/BTREEINDEX.md`](../sm/BTREEINDEX.md) §9.9).
+
+- **A reader queues a key** whose CURR it sees committed with a
+  `prev`, in sm1's `reaps` queue: a point read, a batch read and
+  a cursor. It reads no watermark: the pass judges whether CURR is
+  settled.
+- **`sm1::row_reap_pass()`** takes the queue, reads W once, and
+  for each key settled at W deletes its OLD entries and writes
+  CURR again with no `prev`, under the key's latch. The copy is
+  stamped with its writer's `commit_ts`: a `CF:txn` sweep may have
+  stamped the stored CURR and deleted the status record (a review
+  found it). A test checks the stamp; another runs a sweep inside
+  a reap, by the debug build's `g_reap_hook` in `reap_one()`, then
+  empties the commit cache: the row still reads.
+- **The pool**: the first thread asks `sm1::row_reaps_pending()`,
+  with no session, and runs the row pass after the btree pass.
+  `sm_set_btree_reaper_workers()` is `sm_set_reaper_workers()`,
+  `sm_btree_reaper_run()` is `sm_reaper_run()`, and `rel`'s
+  `(btree-reaper-pass)` is `(reaper-pass)`: each runs both.
+- **Tests**: sm1's unit tests of the pass, a held snapshot, what
+  is not queued, and an abort after a reap; the scenario `g03`,
+  with the driver's verb `reap`; sm3's test of the pool's row
+  pass. `rel` and dg's tests cannot see an OLD entry, and run
+  the pass through their suites alone.
+- **Measured** by `bench/idxopen.sh`, which takes `COUNTS`,
+  `UPDATED` and `DIGRES` now.

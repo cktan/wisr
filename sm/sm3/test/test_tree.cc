@@ -128,10 +128,14 @@ public:
     sm3::cat_close(cat);
   }
 
-  /* Attach the btree reaper, with workers threads running it. */
+  /*
+   * Attach the reapers, with workers threads running them, and the row
+   * reaper's queue as sm.cc gives it.
+   */
   void btree_reaper(size_t workers = 0) {
     REQUIRE(sm3::btree_reaper_attach(
-                cat, [this] { return try_open(); }, workers) == 0);
+                cat, [this] { return try_open(); }, workers,
+                [this] { return sm1::row_reaps_pending(env(), "db"); }) == 0);
   }
 
   /* Attach the catalog to the builder, and queue what is pending. */
@@ -2013,6 +2017,50 @@ TEST_CASE("tree: the btree reaper's thread runs with no VACUUM") {
     REQUIRE(sm3::commit(f.a) == 0);
   }
   CHECK(1u == entries);
+  sm3::btree_reaper_detach(f.cat);
+}
+
+TEST_CASE("tree: the reapers' thread runs the row reaper's pass") {
+  // Verify the pool of ../BTREEINDEX.md §9.9 runs the row pass of
+  // ../GC.md §13.5.
+  // 1. Attach one worker. Insert a row, update it, commit.
+  // 2. Read the row: the reader queues it for the row reaper.
+  // 3. Within ten seconds the worker's pass has taken the key.
+  // 4. The row reads the same.
+  trees_t f;
+  f.btree_reaper(1);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  row_t r(1, "old", "O");
+  uint64_t id = 0;
+  REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  row_t kept(1, "old", "P");
+  REQUIRE(sm3::tbl_update(t, id, kept.d(), kept.null()) == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  std::string_view tuple;
+  REQUIRE(sm3::tbl_read(t, id, tuple) == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  size_t pending = sm1::row_reaps_pending(f.env(), "db");
+  CHECK(1u == pending);
+  for (int i = 0; i < 100 && 0 != pending; i++) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    pending = sm1::row_reaps_pending(f.env(), "db");
+  }
+  CHECK(0u == pending);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  REQUIRE(sm3::tbl_read(t, id, tuple) == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
   sm3::btree_reaper_detach(f.cat);
 }
 

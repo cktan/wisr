@@ -50,6 +50,7 @@
 #include "sm_options.h"
 
 #include <cstddef>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -1760,6 +1761,24 @@ void set_no_transaction(session_t* session);
  * or below it is seen by every snapshot.
  */
 uint64_t gc_watermark(session_t* session);
+
+/*
+ * One pass of the row reaper over session's database (../GC.md §13.5):
+ * take the keys readers queued, and cut the chain behind each CURR
+ * version now settled, deleting its OLD entries and writing CURR again
+ * with no prev. A key not settled, or changed, is skipped: a later
+ * read queues it again. stop, if given and set, ends the pass after
+ * the key it is on. Needs no transaction. Returns the keys reaped, or
+ * -1 on an error, which drops the rest of the batch.
+ */
+int64_t row_reap_pass(session_t* session,
+                      const std::atomic<bool>* stop = nullptr);
+
+/*
+ * The keys queued for the row reaper of database dbname in env, with
+ * no session: 0 if the database is not open (../GC.md §13.5).
+ */
+size_t row_reaps_pending(env_t* env, std::string_view dbname);
 
 /*
  * The newest version of key in storeid, past the snapshot, as a

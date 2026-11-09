@@ -41,10 +41,9 @@ int catalog_t::env_attach(const char *path, bool toast,
   // evaluator must be in place before a database is opened.
   // And whether long values go out of line, likewise.
   // And no btree reaper thread: a script counts a tree's entries, which a
-  // tick would change, so it runs a pass by (btree-reaper-pass).
+  // tick would change, so it runs a pass by (reaper-pass).
   if (sm_set_index_evaluator(env, index_eval, nullptr) != 0 ||
-      sm_set_toast(env, toast) != 0 ||
-      sm_set_btree_reaper_workers(env, 0) != 0) {
+      sm_set_toast(env, toast) != 0 || sm_set_reaper_workers(env, 0) != 0) {
     sm_detach(env, 1);
     return -1;
   }

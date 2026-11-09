@@ -232,6 +232,12 @@ std::string execute(worker_t *w, const item_t &it) {
                  : row_insert(w->sess, w->store, a[0], a[1]);
     return rc == 0 ? "ok" : error_name();
   }
+  if (it.verb == "reap") {
+    // reap: one row reaper pass (../../GC.md §13.5), printing the
+    // keys it reaped; on a versioned store none is ever queued.
+    int64_t n = sm1::row_reap_pass(w->sess);
+    return n < 0 ? error_name() : std::to_string(n);
+  }
   if (it.verb == "delete") {
     return row_erase(w->sess, w->store, a[0]) == 0 ? "ok" : error_name();
   }

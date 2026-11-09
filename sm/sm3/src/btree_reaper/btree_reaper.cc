@@ -165,7 +165,8 @@ namespace {
 
 /*
  * Reap the pages on the queue when the pass begins, one at a time, at
- * most budget of them (../BTREEINDEX.md §9): 0, or -1 with no session
+ * most budget of them (../BTREEINDEX.md §9); then, with rows, the keys
+ * queued for the row reaper (../GC.md §13.5): 0, or -1 with no session
  * to do it with.
  * 1. Open a session with no transaction, and read the watermark, made
  *    above 0, as a slot's 0 is a page that does not wait.
@@ -176,9 +177,11 @@ namespace {
  *    watermark to move. A failure drops the page: the queue is a hint,
  *    and the page's bits are still there. A store dropped meanwhile
  *    fails so, and is no error to report.
- * 5. Close the session, so the reaper can close an idle database.
+ * 5. With rows, run the row reaper's pass on the same session. A
+ *    failure is logged: its keys are a hint, queued again by a read.
+ * 6. Close the session, so the db reaper can close an idle database.
  */
-int run_pass(btree_reaper_t *c, size_t budget) {
+int run_pass(btree_reaper_t *c, size_t budget, bool rows) {
   sm1::session_t *s = c->open();
   if (nullptr == s) {
     return -1;
@@ -218,13 +221,18 @@ int run_pass(btree_reaper_t *c, size_t budget) {
                    page.relid, page.pageid, sm1::errmsg());
     }
   }
+  if (rows && !c->stop.load() && sm1::row_reap_pass(s, &c->stop) < 0) {
+    sm0::log_msg(sm1::loglevel_t::warn, "row reaper: {}", sm1::errmsg());
+  }
   return 0;
 }
 
 /*
  * A worker: sleep a second, or until the queue is full or a detach
  * stops it, then run a pass if one is due. The first runs by
- * btree_reaper_budget. The others, for an overflow, run only on a full queue.
+ * btree_reaper_budget, and runs the row pass when keys wait for it
+ * (../BTREEINDEX.md §9.9). The others, for an overflow, run only on a
+ * full queue, and run no row pass.
  */
 void worker(btree_reaper_t *c, bool first) {
   std::unique_lock lock(c->mu);
@@ -241,8 +249,11 @@ void worker(btree_reaper_t *c, bool first) {
                                    btree_reaper_busy_limit);
       c->begins = now;
     }
-    if (0 != budget) {
-      run_pass(c, budget);
+    // Asked with no session: a session here would keep the db reaper
+    // from closing an idle database.
+    bool rows = first && c->row_pending && 0 != c->row_pending();
+    if (0 != budget || rows) {
+      run_pass(c, budget, rows);
     }
     lock.lock();
   }
@@ -252,13 +263,14 @@ void worker(btree_reaper_t *c, bool first) {
 
 /* Attach the btree reaper to a catalog; see sm3.h. */
 int btree_reaper_attach(catalog_t *cat, std::function<sm1::session_t *()> open,
-                        size_t workers) {
+                        size_t workers, std::function<size_t()> row_pending) {
   if (!cat->btree_reaper) {
     cat->btree_reaper = std::make_unique<btree_reaper_t>();
     cat->btree_reaper->cat = cat;
   }
   btree_reaper_t *c = cat->btree_reaper.get();
   c->open = std::move(open);
+  c->row_pending = std::move(row_pending);
   c->stopping = false;
   c->stop = false;
   // The threads are made now, and sleep until there is work: making
@@ -290,7 +302,7 @@ void btree_reaper_detach(catalog_t *cat) {
 
 /* One pass, for tests; see sm3.h. */
 int btree_reaper_run_once(catalog_t *cat, size_t budget) {
-  return run_pass(cat->btree_reaper.get(), budget);
+  return run_pass(cat->btree_reaper.get(), budget, true);
 }
 
 /* The pages queued, for tests; see sm3.h. */

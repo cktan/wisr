@@ -1265,33 +1265,41 @@ transaction. A store is looked up at the newest state.
 
 ### 9.9 The workers
 
-A database has one btree reaper thread, and more when the queue
-overflows. The first works as the Index Builder's worker does
-(INDEXBUILD.md):
+A database has one pool of reaper threads. They run the btree
+reaper's passes and the row reaper's (GC.md §13.5). The first
+works as the Index Builder's worker does (INDEXBUILD.md):
 
-1. Sleep for a second, or until a caller finds the queue full, or
-   until a detach stops it.
-2. If the queue is empty, go to step 1.
-3. If every slot waits, and no transaction has begun since the
-   last look, go to step 1. A session here would keep the db reaper
-   from ever closing an idle database.
-4. Set the pass's budget. On a busy system with room in the
-   queue, it is `btree_reaper_busy_pages`, 100 pages, so about 100
-   pages a second. Else it is the whole queue. A busy system is
-   still reaped: with no autovacuum, a system that is never
-   quiet must not lose its reaping.
+1. Sleep for a second, or until a caller finds the btree queue
+   full, or until a detach stops it.
+2. Set the btree pass's budget, 0 if it has nothing to do:
+   - 0 if the btree queue is empty;
+   - 0 if every slot waits and no transaction has begun since the
+     last look;
+   - on a busy system with room in the queue,
+     `btree_reaper_busy_pages`, 100 pages, so about 100 pages a
+     second; a busy system is still reaped, as with no
+     autovacuum a system that is never quiet must not lose its
+     reaping;
+   - else the whole queue.
+3. Ask sm1 whether keys wait for the row reaper
+   (`sm1::row_reaps_pending()`). It asks with no session.
+4. If the budget is 0 and no key waits, go to step 1. A session
+   here would keep the db reaper from ever closing an idle
+   database.
 5. Open a session with the function `start_builder()` gives the
    builder (`src/sm.cc`), and read the watermark.
-6. Run a pass, close the session, and go to step 1.
+6. Run the btree pass, if its budget is not 0. Then run the row
+   pass (`sm1::row_reap_pass()`), if keys wait.
+7. Close the session, and go to step 1.
 
-`btree_reaper_budget()` holds the rule of the second to fourth steps.
-A database has 4 workers, made when its catalog attaches. Three
-sleep, and run a pass only while the queue is full. They are made
-at attach, not at an overflow, as a thread that cannot start at
-an overflow has no caller to tell. `sm_set_btree_reaper_workers()`
-sets the count before a database is opened: `rel` sets 0, and
-runs a pass by `(btree-reaper-pass)`, as its scripts count a tree's
-entries.
+`btree_reaper_budget()` holds the rule of step 2. A database has
+4 workers, made when its catalog attaches. Three sleep, and run a
+btree pass only while the btree queue is full; they run no row
+pass. They are made at attach, not at an overflow, as a thread
+that cannot start at an overflow has no caller to tell.
+`sm_set_reaper_workers()` sets the count before a database is
+opened: `rel` sets 0, and runs both passes by `(reaper-pass)`,
+as its scripts count a tree's entries.
 
 No worker keeps a session between passes, so the db reaper can still
 close an idle database. A catalog's detach stops the workers and
@@ -1484,7 +1492,7 @@ and its time is not measured again.
 | sm3, `src/table/table.cc` | `still_has()`, `tree_fill()`, `tree_next()`, `unique_tree_insert()`, `tree_find()`, `judge_entry()`, `tbl_reap_leaf()`, with no open table's lock, and `tbl_compact()`, which reaps the queue's pages; `use_index()` gives each tree its `leaf_note_fn`, but for a temporary table |
 | sm3, `src/btree_reaper/` | the circular queue, the filter, the workers, `btree_reaper_budget()`, and `btree_reaper_run_once()` for tests |
 | sm3, `src/catalog/` | `sm3::begin()` counts in `begins`; the index's kind in its definition, and every index operation branching on it (LSMINDEX.md) |
-| sm, `src/sm.cc` | attaches and detaches the btree reaper beside the builder; `sm_set_btree_reaper_workers()` and `sm_btree_reaper_run()`, for tests |
+| sm, `src/sm.cc` | attaches and detaches the btree reaper beside the builder; `sm_set_reaper_workers()` and `sm_reaper_run()`, for tests |
 | dg | the index access method's costs; `sm_rel_scan_entries()` for an index-only scan. The btree reaper needs no dg code: `smstore_index_eval()` adopts any sm thread by `session_thread_adopt()` |
 
 ### 11.3 What a tree asks of sm1
@@ -1704,7 +1712,7 @@ is built.
   a page that waits, a tree gone, and a key out of line, through
   `btree_reaper_run_once()`. `make tsan` in sm3, for a pass beside
   readers and writers.
-- **rel**: `test_tree.rel`, through `sm.h`, by `(btree-reaper-pass)`,
+- **rel**: `test_tree.rel`, through `sm.h`, by `(reaper-pass)`,
   and `test_tree_split.rel`.
 - **aa, sq**: not reached.
 - **dg**: `dg/test/slt/btree_tree*.test`. `server.sh`, the

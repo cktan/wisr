@@ -1,0 +1,38 @@
+# g03 -- the row reaper cuts a chain only when no snapshot needs it.
+#
+# T1 reads R1 at its snapshot, holding the watermark back. T2 updates
+# R1 twice and commits. T3's read of R1 queues the key for the row
+# reaper, whose pass, run by T2 with no transaction, reaps nothing:
+# CURR is not settled, and T1 still reads 0 through the chain. Once T1
+# ends, a read queues R1 again, and a pass reaps it; every reader then
+# sees T2's last value (../../GC.md §13.5).
+
+
+== pairing RR/RR == T1=RR T2=RR T3=RC
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@3 T2 write R1 a -> ok
+@3 T2 commit -> ok
+@4 T2 begin -> ok
+@4 T2 write R1 b -> ok
+@4 T2 commit -> ok
+@5 T3 begin -> ok
+@5 T3 read R1 -> b
+@5 T3 commit -> ok
+@6 T2 reap -> 0
+@7 check last T2 0 -> satisfied
+@8 T1 read R1 -> 0
+@9 check last T1 0 -> satisfied
+@10 T1 commit -> ok
+@11 T3 begin -> ok
+@11 T3 read R1 -> b
+@11 T3 commit -> ok
+@12 T2 reap -> 1
+@13 check last T2 1 -> satisfied
+@14 T3 begin -> ok
+@14 T3 read R1 -> b
+@14 T3 commit -> ok
+@15 T2 reap -> 0
+@16 check last T2 0 -> satisfied
+@17 check row R1 b -> satisfied

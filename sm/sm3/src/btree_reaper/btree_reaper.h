@@ -129,6 +129,7 @@ struct btree_reaper_t {
   catalog_t *cat = nullptr;
   reap_queue_t queue;
   std::function<sm1::session_t *()> open; /* a session for a pass */
+  std::function<size_t()> row_pending;    /* keys the row pass waits on */
   std::mutex mu;                          /* guards stopping */
   std::condition_variable cv;             /* stopping, or the queue full */
   bool stopping = false;

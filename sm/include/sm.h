@@ -1314,13 +1314,13 @@ int sm_set_toast(sm_env_t* env, int on);
 /*
  * The btree reaper's threads a database gets, 4 by default, set
  * before any database is opened (../BTREEINDEX.md §9). 0 runs none: for a
- * test, which runs a pass itself by sm_btree_reaper_run. A negative
+ * test, which runs a pass itself by sm_reaper_run. A negative
  * count is not checked.
  */
-int sm_set_btree_reaper_workers(sm_env_t* env, int workers);
+int sm_set_reaper_workers(sm_env_t* env, int workers);
 
 /* One pass of dbname's btree reaper, on this thread: for tests. */
-int sm_btree_reaper_run(sm_env_t* env, const char* dbname);
+int sm_reaper_run(sm_env_t* env, const char* dbname);
 
 /* Whether val, a non-null variable-width value, is a TOAST pointer. */
 static inline bool sm_datum_is_toast(sm_datum_t val) {

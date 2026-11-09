@@ -2003,29 +2003,31 @@ Do not turn it off over tables written with it on.
 
 Errors: `SM_ERR_INVALID` (a database has been opened).
 
-### `sm_set_btree_reaper_workers`
+### `sm_set_reaper_workers`
 
 ```cpp
-int sm_set_btree_reaper_workers(sm_env_t* env, int workers);
+int sm_set_reaper_workers(sm_env_t* env, int workers);
 ```
 
-Sets the btree reaper's threads a database gets, 4 by default,
-before any database is opened
+Sets the reaper threads a database gets, 4 by default, before
+any database is opened. They run the btree reaper's passes
 ([`BTREEINDEX.md`](BTREEINDEX.md#9-reaping-vacuum-and-the-btree-reaper)
-§9). 0 runs none,
-for a test that runs a pass itself with `sm_btree_reaper_run`. The
+§9) and the row reaper's
+([`GC.md`](GC.md#135-reaping-by-the-reapers-threads) §13.5).
+0 runs none,
+for a test that runs a pass itself with `sm_reaper_run`. The
 call does not check for a negative `workers`.
 
 Errors: `SM_ERR_INVALID` (a database has been opened).
 
-### `sm_btree_reaper_run`
+### `sm_reaper_run`
 
 ```cpp
-int sm_btree_reaper_run(sm_env_t* env, const char* dbname);
+int sm_reaper_run(sm_env_t* env, const char* dbname);
 ```
 
-Runs one pass of `dbname`'s btree reaper on this thread, for
-tests.
+Runs one pass of `dbname`'s reapers on this thread, for tests:
+the btree reaper's pass, then the row reaper's.
 
 Errors: `SM_ERR_NOTFOUND` (no session has opened the database).
 

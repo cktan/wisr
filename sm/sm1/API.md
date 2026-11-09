@@ -2272,6 +2272,29 @@ transaction.
 The GC watermark of the session's database: the oldest snapshot
 still registered, or everything published if none.
 
+### int64_t sm1::row_reap_pass(sm1::session_t* session, const std::atomic<bool>* stop = nullptr)
+
+One pass of the row reaper over the session's database
+([`../GC.md`](../GC.md#135-reaping-by-the-reapers-threads)
+§13.5). It takes the chained keys readers queued: a reader queues
+a key whose CURR version it sees committed with an older version
+behind it. For each key whose CURR is now settled, at or below
+the watermark read once for the pass, it deletes the OLD entries
+of the chain and writes CURR again with no `prev`. A key not
+settled, gone, or changed is skipped, and a later read queues it
+again. `stop`, if given and set, ends the pass after the key it is
+on. It needs no transaction: the reapers' threads run it on a
+session of their pass.
+
+Returns the keys reaped, or -1 on an error, which drops the rest
+of the batch.
+
+### size_t sm1::row_reaps_pending(sm1::env_t* env, std::string_view dbname)
+
+The keys queued for the row reaper of database `dbname`, read with
+no session, so that asking never keeps a database open: 0 if the
+database is not open.
+
 ### int sm1::read_newest(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::rawpin_t* pin, std::string_view& data, uint64_t& writer)
 
 The newest version of `key`, past the snapshot, as a unique
