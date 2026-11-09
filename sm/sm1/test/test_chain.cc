@@ -1758,3 +1758,55 @@ TEST_CASE("the row reaper writes CURR again stamped with its commit_ts") {
   CHECK(after.prev == 0);
   CHECK(read_one(f.s, c, "k") == "v2");
 }
+
+#ifndef NDEBUG
+namespace {
+
+/* What the sweep started in the reap hook returned; -2 before it ran. */
+std::atomic<int64_t> g_hook_sweep{-2};
+
+/* A reap hook that starts a CF:txn sweep where a race would run it. */
+void sweep_in_reap(db_t *db) { g_hook_sweep = gc_sweep_txn(db, true); }
+
+/* Empty the commit cache, as eviction or a restart would. */
+void evict_commit_cache(db_t *db) {
+  std::lock_guard<std::mutex> guard(db->txn_mu);
+  for (db_t::cache_slot_t &slot : db->cache) {
+    slot.xid = 0;
+  }
+}
+
+} // namespace
+
+TEST_CASE(
+    "a CF:txn sweep that overlaps a reap leaves the reaped row readable") {
+  // Verify the race a review found: a sweep run between the reaper's read
+  // of CURR's status and its write, then the status record deleted and the
+  // commit cache emptied (../GC.md §1, §13.5).
+  // 1. Insert k and update it four times: CURR is unstamped, with a chain.
+  // 2. Read k, so that it is queued.
+  // 3. Reap, with the hook starting a sweep at the race point: the sweep
+  //    stamps the stored CURR, and waits for the reaper's read epoch.
+  // 4. After the pass, finish the sweep: it deletes the status records.
+  // 5. Empty the commit cache, and read k: it is v5, not gone.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  for (const char *v : {"v2", "v3", "v4", "v5"}) {
+    chain_put(f.s, c, "k", v, false);
+  }
+  REQUIRE(!(curr_of(f.s, c, "k").flags & version_stamped));
+  CHECK(read_one(f.s, c, "k") == "v5");
+
+  g_hook_sweep = -2;
+  g_reap_hook = sweep_in_reap;
+  int64_t reaped = sm1::row_reap_pass(f.s);
+  g_reap_hook = nullptr;
+  REQUIRE(reaped == 1);
+  CHECK(g_hook_sweep == 0);
+  CHECK(gc_sweep_txn(f.s->db, false) > 0);
+
+  evict_commit_cache(f.s->db);
+  CHECK(read_one(f.s, c, "k") == "v5");
+}
+#endif

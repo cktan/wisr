@@ -34,7 +34,7 @@ The filter is a RocksDB compaction filter. Compaction already
 visits every key, so collection adds no pass of its own. There is
 no vacuum thread for versions. The dead entries of a B-tree Index
 are not this module's: BTREEINDEX.md's btree reaper removes them (§13
-has it beside the row reaper, a design).
+has it beside the row reaper).
 
 ### 1.2 Why a version carries a stamp
 
@@ -784,8 +784,8 @@ Paths are relative to `sm1/`.
 
 ## 13. The reapers
 
-**Status: the btree reaper is built. The row reaper is a design,
-not built. A writer reaps nothing (§13.4).**
+**Status: the btree reaper and the row reaper are built, run by
+one pool of threads (§13.5). A writer reaps nothing (§13.4).**
 
 A **reaper** removes garbage that a compaction does not reach. A
 reader or a writer notices the garbage and queues a hint. A
@@ -794,7 +794,7 @@ each reaper has a backstop. Two reapers exist or are planned:
 
 | | Btree reaper | Row reaper |
 | --- | --- | --- |
-| Status | built | design |
+| Status | built | built |
 | Garbage | dead entries of a leaf, and in-doubt bits | OLD entries behind a settled CURR |
 | Noticed by | a reader or a writer of the leaf | a reader of the key |
 | Queue | `reap_queue_t`: 262,144 slots of 32 bytes, a 1-bit filter | `hint_queue_t` (§4.6) |
@@ -1021,25 +1021,28 @@ replaces CURR anyway.
   (`btree_reaper_budget()`); the row reaper may need a bound of
   its own, set from a measure.
 
-### 13.8 Tests planned
+### 13.8 Tests
 
-- The threads' reap: update a key five times, then read it: the
-  reader queues it, a thread reaps it, no OLD entry is left, and
-  its CURR reads the same.
-- A held-back W: a key queued while a snapshot is older than its
-  CURR is skipped, and the old snapshot reads its version.
-- A writer that aborts after a thread's reap: the repair puts the
-  settled version back from the writer's copy, and a read sees
-  it.
-- A crash during a thread's batch loses nothing: each key's
-  batch is atomic.
-- A key written and never read is not queued: its OLD entries
-  wait for the filter.
+Built:
+
+- **sm1** (`test_chain.cc`): a reader queues a key and a pass
+  reaps it, with no OLD entry left; a held snapshot keeps its
+  chain until it ends; a key with no chain, a reader's own write
+  and a temporary store are not queued; a writer that aborts
+  after a reap puts the reaped version back; `stop` ends a pass;
+  the CURR written again is stamped with its commit_ts; a `CF:txn`
+  sweep run inside a reap, by the debug build's `g_reap_hook`, then
+  an empty commit cache, leaves the row readable.
+- **mvcc**: `g03`, by the driver's verb `reap`: a pass spares a
+  chain a snapshot needs, and cuts it once the snapshot ends.
+- **sm3** (`test_tree.cc`): the pool's thread runs the row pass.
+
+Not built:
+
+- A crash during a pass loses nothing: each key's batch is
+  atomic.
 - A detach stops and joins the threads while a pass runs, and
   loses nothing a later open needs.
-- A database opened with no catalog runs no row pass, and its
-  OLD entries wait for the filter.
-- A temporary store is not queued.
 - Under the thread sanitizer: writers, readers and the reapers'
   threads on the same keys.
 - The scratch test of §13.2, kept as a test: OLD entries after

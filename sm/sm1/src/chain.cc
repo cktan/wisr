@@ -1352,6 +1352,11 @@ void chain_repair(db_t *db, const hint_queue_t::batch_t &repairs) {
   });
 }
 
+#ifndef NDEBUG
+/* The row reaper's test hook; see chain.h. */
+std::atomic<reap_hook_fn> g_reap_hook{nullptr};
+#endif
+
 /*
  * Cut the chain behind key's CURR version if it is settled at w
  * (../GC.md §13.5): 1 if reaped, 0 if skipped, -1 on an error.
@@ -1394,6 +1399,12 @@ int reap_one(db_t *db, const store_t &st, uint64_t storeid, rocksdb::Slice key,
   if (ts > w) {
     return 0;
   }
+#ifndef NDEBUG
+  // A test's stand-in for what may run between the read and the write.
+  if (reap_hook_fn hook = g_reap_hook.load()) {
+    hook(db);
+  }
+#endif
   rocksdb::WriteBatch batch;
   for (uint64_t id = head.prev; 0 != id;) {
     rocksdb::PinnableSlice older;

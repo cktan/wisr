@@ -23,6 +23,7 @@
 
 #include <stdint.h>
 
+#include <atomic>
 #include <string>
 
 #include <rocksdb/slice.h>
@@ -69,6 +70,18 @@ std::string curr_key(rocksdb::Slice userkey);
 
 /* The old key of id: key_class_old | be64(id). */
 std::string old_key(uint64_t id);
+
+#ifndef NDEBUG
+/*
+ * For tests, in a debug build alone: a function the row reaper calls in
+ * reap_one(), after it reads CURR's status and before it writes, with
+ * the key's latch and its read epoch held, so a test can run what a
+ * race would put there (../GC.md §13.5). nullptr calls none.
+ */
+struct db_t;
+using reap_hook_fn = void (*)(db_t *db);
+extern std::atomic<reap_hook_fn> g_reap_hook;
+#endif
 
 } // namespace wisr
 

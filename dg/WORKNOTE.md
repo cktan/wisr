@@ -13009,7 +13009,9 @@ reaper's pass beside the btree reaper's
   CURR again with no `prev`, under the key's latch. The copy is
   stamped with its writer's `commit_ts`: a `CF:txn` sweep may have
   stamped the stored CURR and deleted the status record (a review
-  found it; the test checks the stamp).
+  found it). A test checks the stamp; another runs a sweep inside
+  a reap, by the debug build's `g_reap_hook` in `reap_one()`, then
+  empties the commit cache: the row still reads.
 - **The pool**: the first thread asks `sm1::row_reaps_pending()`,
   with no session, and runs the row pass after the btree pass.
   `sm_set_btree_reaper_workers()` is `sm_set_reaper_workers()`,
