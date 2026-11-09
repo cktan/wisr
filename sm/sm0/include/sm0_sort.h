@@ -69,6 +69,14 @@ struct sort_options_t {
   size_t max_run_records = 0;
   /* A run ends once its records reach this many bytes; 0 for no limit. */
   size_t max_run_size = 0;
+  /*
+   * sort_put and sort_spill stop for an interrupt (sm_should_stop()),
+   * with SM_ERR_INTERRUPTED. Off for a caller that cannot retry one
+   * part way, as a bulk load's row that has gone into some sorts and
+   * not others: it checks for an interrupt itself, between rows.
+   * sort_done and sort_next stop for one either way.
+   */
+  bool interruptible_input = true;
 };
 
 /*

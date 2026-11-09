@@ -232,6 +232,37 @@ the last half of that time: alone, and inside a transaction whose
 `transaction_timeout` stays active. Without the fix both fail;
 with only the cancel of the last timeout, the second fails.
 
+### A bulk load failed under a harmless timeout, and could add a row twice
+
+**Closed 2026-11-09.** Found while closing the stale timer above.
+
+1. **With `client_connection_check_interval` set, every COPY bulk
+   load failed**, `could not end a bulk load: sort: interrupted`, 3
+   of 3. The check is an active timeout whose handler only looks at
+   the client's socket, but its `ALARM` stopped the load's final
+   sort, which cannot be retried.
+2. **A load's row could go in twice.** `tbl_load_add()` puts a row
+   into its rows' stream, then each index's. An index's sort could
+   stop for an interrupt after the row went in, and digres's
+   `waiting()` hands the row again when `CHECK_FOR_INTERRUPTS()`
+   raises no error: a keyless table would hold it twice, under two
+   `_id`s. Not seen, as the first failed the load first.
+
+**Fix.** sm0's `sm_set_stop_fn()` and `sm_should_stop()`
+(`sm/sm0/INTERRUPT.md` §5.1): work that cannot be retried asks the
+host whether what is pending stops it. digres's
+`InterruptsStopWork()` runs the `ALARM` handler, then says whether
+`ProcessInterrupts()` would raise an error. A load's streams stop
+for no interrupt as rows go in (`interruptible_input`), and
+`tbl_load_add()` checks once, before the row goes in.
+
+**Tests.** sm0: the stop function judges a sort's interrupt, and a
+sort with its input not interruptible stops only at its end. sm3:
+a load's row interrupted leaves nothing, and goes in once again.
+dg (`test/copy_alarm.sh`): a COPY under a 1 ms connection check
+loads every row once, in each index; `statement_timeout` still ends
+a COPY.
+
 ## 2. Costs to profile
 
 Found 2026-11-06 by `bench/privcheck.sh`, not by a review.

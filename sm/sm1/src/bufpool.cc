@@ -382,7 +382,7 @@ int bufpool_t::victim(frame_t *&out) {
       out = f;
       return 0;
     }
-    if (0 != (sm_pending() & sm_wait_mask())) {
+    if (sm_should_stop()) {
       return interrupted();
     }
     // Every frame pinned or aged: give their holders the processor.

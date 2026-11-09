@@ -13041,3 +13041,26 @@ retried.
 - **Test**: `test/copy_alarm.sh`, sourced by `server.sh`: COPYs
   under a stale `statement_timeout` timer, alone and inside a
   transaction whose `transaction_timeout` stays active.
+
+## Step 428: a harmless timeout stops no bulk load
+
+With `client_connection_check_interval` set, every COPY bulk load
+failed: the check's `ALARM` stopped the load's final sort. And a
+load's row could go in twice, if an index's sort stopped after
+the row went in and `waiting()` handed it again
+([`../ISSUE.md`](../ISSUE.md)).
+
+- **sm0**: `sm_set_stop_fn()` and `sm_should_stop()`: work that
+  cannot be retried asks the host whether what is pending stops
+  it (`../sm/sm0/INTERRUPT.md` §5.1). The sort and the buffer
+  pool's search for a frame ask it.
+- **digres**: `InterruptsStopWork()` (`procsignal.c`), set by
+  `miscinit.c`, runs the `ALARM` handler and says whether
+  `ProcessInterrupts()` would raise an error.
+- **A load's row**: its streams' sorts take input with
+  `interruptible_input` off; `sm3::tbl_load_add()` checks once,
+  before the row goes in, so its `SM_ERR_INTERRUPTED` leaves
+  nothing, and the row may be handed again.
+- **Tests**: sm0's stop function and `interruptible_input`; sm3's
+  interrupted row; `test/copy_alarm.sh`'s COPY under a 1 ms
+  connection check, and `statement_timeout` still ending a COPY.

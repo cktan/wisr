@@ -61,6 +61,7 @@ extern void SetInterruptHandler(uint32 bit, interrupt_handler_t handler);
 extern void InterruptSelf(uint32 bits);
 extern void InterruptSelfLater(uint32 bits);
 extern void DeliverInterrupts(void);
+extern bool InterruptsStopWork(void);
 extern uint32 InterruptsOfSignal(int sig);
 
 #endif /* PROCSIGNAL_H */
