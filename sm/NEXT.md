@@ -246,7 +246,20 @@ and so are the catalog tables psql reads
        float text, text. Hold until the hooks below are
        settled.
 
+    This move is not easy. The code in `utils/adt` does not
+    copy over. **Moved code cannot call `palloc()`**: it needs
+    PostgreSQL's `CurrentMemoryContext`, a session's state, and
+    sm must run without digres.
+
     To settle:
+    - where a result of variable size gets its memory (text,
+      bytea, concatenation, `replace`). Two forms: the caller
+      supplies a buffer, which allocates nothing and suits
+      fixed-width results; or the caller passes sm0's `arena_t`
+      (`sm0/include/sm0_arena.h`), and digres backs it with
+      `palloc()` in the current context. An allocator hook is
+      not preferred: it costs an indirect call and hides who
+      owns the memory;
     - the hooks for what a session sets: `DateStyle`,
       `TimeZone`, `extra_float_digits`, collation and locale;
     - the errors: sm's error state, and how a host maps it to
