@@ -139,11 +139,6 @@ thread_local /*LOCAL*/ int effective_cache_size = DEFAULT_EFFECTIVE_CACHE_SIZE;
 
 thread_local /*LOCAL*/ Cost disable_cost = 1.0e10;
 
-thread_local /*LOCAL*/ bool enable_nestloop = true;
-thread_local /*LOCAL*/ bool enable_mergejoin = true;
-thread_local /*LOCAL*/ bool enable_hashjoin = true;
-thread_local /*LOCAL*/ bool enable_partitionwise_join = false;
-thread_local /*LOCAL*/ bool enable_partitionwise_aggregate = false;
 thread_local /*LOCAL*/ bool enable_partition_pruning = true;
 thread_local /*LOCAL*/ bool enable_presorted_aggregate = true;
 thread_local /*LOCAL*/ bool enable_async_append = true;
@@ -2602,7 +2597,7 @@ void initial_cost_nestloop(PlannerInfo *root, JoinCostWorkspace *workspace,
   Cost inner_rescan_run_cost;
 
   /* Count up disabled nodes. */
-  disabled_nodes = enable_nestloop ? 0 : 1;
+  disabled_nodes = tcb->guc.enable_nestloop ? 0 : 1;
   disabled_nodes += inner_path->disabled_nodes;
   disabled_nodes += outer_path->disabled_nodes;
 
@@ -2964,7 +2959,7 @@ void initial_cost_mergejoin(PlannerInfo *root, JoinCostWorkspace *workspace,
   Assert(outerstartsel <= outerendsel);
   Assert(innerstartsel <= innerendsel);
 
-  disabled_nodes = enable_mergejoin ? 0 : 1;
+  disabled_nodes = tcb->guc.enable_mergejoin ? 0 : 1;
 
   /* cost of source data */
 
@@ -3399,7 +3394,7 @@ void initial_cost_hashjoin(PlannerInfo *root, JoinCostWorkspace *workspace,
   size_t space_allowed; /* unused */
 
   /* Count up disabled nodes. */
-  disabled_nodes = enable_hashjoin ? 0 : 1;
+  disabled_nodes = tcb->guc.enable_hashjoin ? 0 : 1;
   disabled_nodes += inner_path->disabled_nodes;
   disabled_nodes += outer_path->disabled_nodes;
 

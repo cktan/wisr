@@ -3417,7 +3417,7 @@ static RelOptInfo *create_grouping_paths(PlannerInfo *root,
      * support grouping sets.  create_ordinary_grouping_paths() will check
      * additional conditions, such as whether input_rel is partitioned.
      */
-    if (enable_partitionwise_aggregate && !parse->groupingSets)
+    if (tcb->guc.enable_partitionwise_aggregate && !parse->groupingSets)
       extra.patype = PARTITIONWISE_AGGREGATE_FULL;
     else
       extra.patype = PARTITIONWISE_AGGREGATE_NONE;

@@ -45,11 +45,6 @@ typedef enum {
 
 /* parameter variables and flags (see also optimizer.h) */
 extern thread_local /*LOCAL*/ PGDLLIMPORT Cost disable_cost;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_nestloop;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_mergejoin;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_hashjoin;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_partitionwise_join;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_partitionwise_aggregate;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_partition_pruning;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_presorted_aggregate;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_async_append;

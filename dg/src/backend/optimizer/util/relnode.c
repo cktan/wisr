@@ -35,6 +35,7 @@
 #include "rewrite/rewriteManip.h"
 #include "utils/hsearch.h"
 #include "utils/lsyscache.h"
+#include "utils/control_block.h"
 
 typedef struct JoinHashEntry {
   Relids join_relids; /* hash key --- MUST BE FIRST */
@@ -1775,7 +1776,7 @@ static void build_joinrel_partition_info(PlannerInfo *root, RelOptInfo *joinrel,
   PartitionScheme part_scheme;
 
   /* Nothing to do if partitionwise join technique is disabled. */
-  if (!enable_partitionwise_join) {
+  if (!tcb->guc.enable_partitionwise_join) {
     Assert(!IS_PARTITIONED_REL(joinrel));
     return;
   }

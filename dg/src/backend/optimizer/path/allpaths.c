@@ -50,6 +50,7 @@
 #include "rewrite/rewriteManip.h"
 #include "utils/hooks.h"
 #include "utils/lsyscache.h"
+#include "utils/control_block.h"
 
 /* Bitmask flags for pushdown_safety_info.unsafeFlags */
 #define UNSAFE_HAS_VOLATILE_FUNC		(1 << 0)
@@ -683,7 +684,7 @@ static void set_append_rel_size(PlannerInfo *root, RelOptInfo *rel, Index rti,
    * flag; currently, we only consider partitionwise joins with the baserel
    * if its targetlist doesn't contain a whole-row Var.
    */
-  if (enable_partitionwise_join && rel->reloptkind == RELOPT_BASEREL &&
+  if (tcb->guc.enable_partitionwise_join && rel->reloptkind == RELOPT_BASEREL &&
       rte->relkind == RELKIND_PARTITIONED_TABLE &&
       bms_is_empty(rel->attr_needed[InvalidAttrNumber - rel->min_attr]))
     rel->consider_partitionwise_join = true;

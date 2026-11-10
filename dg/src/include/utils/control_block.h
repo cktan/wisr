@@ -451,6 +451,11 @@ typedef struct tcb_guc_t {
   bool enable_hashagg = true;          /* costsize.c */
   bool enable_material = true;         /* costsize.c */
   bool enable_memoize = true;          /* costsize.c */
+  bool enable_nestloop = true;         /* costsize.c */
+  bool enable_mergejoin = true;        /* costsize.c */
+  bool enable_hashjoin = true;         /* costsize.c */
+  bool enable_partitionwise_join = false;      /* costsize.c */
+  bool enable_partitionwise_aggregate = false; /* costsize.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

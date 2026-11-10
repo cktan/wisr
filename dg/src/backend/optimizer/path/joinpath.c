@@ -163,7 +163,7 @@ void add_paths_to_joinrel(PlannerInfo *root, RelOptInfo *joinrel,
    * way of implementing a full outer join, so override enable_mergejoin if
    * it's a full join.
    */
-  if (enable_mergejoin || jointype == JOIN_FULL)
+  if (tcb->guc.enable_mergejoin || jointype == JOIN_FULL)
     extra.mergeclause_list =
         select_mergejoin_clauses(root, joinrel, outerrel, innerrel,
                                  restrictlist, jointype, &mergejoin_allowed);
@@ -265,7 +265,7 @@ void add_paths_to_joinrel(PlannerInfo *root, RelOptInfo *joinrel,
    * before being joined.  As above, disregard enable_hashjoin for full
    * joins, because there may be no other alternative.
    */
-  if (enable_hashjoin || jointype == JOIN_FULL)
+  if (tcb->guc.enable_hashjoin || jointype == JOIN_FULL)
     hash_inner_and_outer(root, joinrel, outerrel, innerrel, jointype, &extra);
 
   /*
