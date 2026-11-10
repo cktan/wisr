@@ -663,3 +663,53 @@ one of:
 - **Run `_PG_init()` once per process**, with process-wide
   hooks under a lock. Undoes the per-session hooks
   ([`dg/WORKNOTE.md`](dg/WORKNOTE.md) step 222).
+
+### dg issue 29: seven settings stay plain thread_locals
+
+The move of the settings into the control blocks
+([`dg/GUCPLAN.md`](dg/GUCPLAN.md) §9) left seven settings
+outside `tcb->guc`: `escape_string_warning`,
+`standard_conforming_strings`, `backslash_quote`,
+`bytea_output`, `constraint_exclusion`, `xmloption` and
+`IntervalStyle`.
+
+- **Why they stay.** `sq/` (the parser library) or `sm/` reads
+  each one. Those libraries cannot see `tcb`, which is in
+  `dg/`.
+- **What they cost now.** Each is a `thread_local` variable
+  that the GUC table points at. Its initial value is not in a
+  control block, and the plan's rule that every field starts at
+  its boot value does not reach it.
+
+**What closes it:** give the library a way to get the value
+from `dg/`, then move the setting into `tcb->guc`. Choose one:
+
+- **An assign hook** in `dg/` stores the value into a
+  `thread_local` that the library owns.
+- **A parameter**: the caller in `dg/` passes the value in the
+  call that needs it.
+
+### dg issue 30: four hot-path settings stay plain thread_locals
+
+The move of the settings into the control blocks
+([`dg/GUCPLAN.md`](dg/GUCPLAN.md) §9) left four settings
+outside `tcb->guc`: `client_min_messages`,
+`log_min_messages`, `log_min_error_statement` and `trace_sort`.
+
+- **Why they stay.** Each is read on a hot path.
+  `errstart()` reads the first three on every message the
+  server may log, and the sort code reads `trace_sort` inside
+  a per-tuple loop.
+- **What a move costs.** Each read loads the `tcb` pointer
+  first, then the field. The cost is small but it is on every
+  call, and [`CLAUDE.md`](CLAUDE.md) says to ask before a
+  change that could slow a hot path.
+
+**What closes it:** the owner decides, after a measure of the
+cost on the optimized build (`dg/build/digres-release`). Choose
+one:
+
+- **Move them.** Accept the extra load of `tcb`, if the measure
+  shows no change that matters.
+- **Keep them as they are.** Each stays a `thread_local`; the
+  initial-value rule of the plan does not reach it.
