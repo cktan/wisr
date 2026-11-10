@@ -1,0 +1,154 @@
+# GUC plan: settings by who writes them and who reads them
+
+This plan moves the GUC variables into the control blocks
+([`CODE.md`](CODE.md) §3, `src/include/utils/control_block.h`).
+It moves a variable only when a change needs it. It never moves
+all of them in one operation.
+
+## 1. State today
+
+- The build has 210 settings: 11 `INTERNAL`, 23 `POSTMASTER`,
+  36 `SIGHUP`, 2 `BACKEND`, 2 `SU_BACKEND`, 31 `SUSET` and 105
+  `USERSET`.
+- Each thread builds its own table and variables with
+  `InitializeGUCOptions()`.
+- A new session gets its spawner's non-default settings as text
+  (`write_nondefault_variables_to()` and
+  `read_nondefault_variables_from()`).
+- Each session re-reads the config file on `INTERRUPT_RELOAD`
+  (`ProcessConfigFile()` in `postgres.c`). The postmaster
+  signals the sessions to do so.
+- The `POSTMASTER` and `INTERNAL` settings are in `pcb_t`
+  already (`publish_postmaster_settings()` in `guc_tables.c`).
+- The six file-logger settings are in `pcb_t` too, guarded by
+  `shmem->stderr_mutex` (`publish_log_file_settings()`).
+
+## 2. The three groups
+
+| Group | Block | Who writes | Who reads |
+|---|---|---|---|
+| 1 | `pcb` | the postmaster | the postmaster; any thread, for a constant |
+| 2 | `pcb->shared` | the postmaster, on a reload | the postmaster and the other threads |
+| 3 | `tcb`, in `tcb->guc` | each thread | that thread alone |
+
+- **Group 1** is what the postmaster reads and writes. A
+  constant, fixed after startup, may be read by other threads.
+- **Group 2** changes after the first thread starts. Guard
+  each member with an atomic, or with an immutable snapshot
+  struct that the postmaster swaps under a mutex. A reader
+  takes a coherent copy of the snapshot.
+- **Group 3** is every setting a session can `SET`. It lives
+  in a `tcb->guc` struct, one field for each variable.
+- **Classify by reader, not by context.** A `SIGHUP` setting
+  goes to group 1 if only the postmaster reads it. It goes to
+  group 2 if a session reads it.
+
+### 2.1 Where each setting goes
+
+| Group | Settings |
+|---|---|
+| 1 | The 23 `POSTMASTER` and 11 `INTERNAL` settings (done). The `SIGHUP` settings only the postmaster reads: `ssl_ca_file`, `ssl_cert_file`, `ssl_crl_dir`, `ssl_crl_file`, `ssl_dh_params_file`, `ssl_key_file`, `ssl_groups`, `ssl_min_protocol_version`, `ssl_max_protocol_version`, `ssl_passphrase_command`, `ssl_passphrase_command_supports_reload`, `send_abort_for_crash`, `send_abort_for_kill`. |
+| 2 | `log_line_prefix`, `syslog_facility`, `syslog_ident`, `syslog_sequence_numbers`, `syslog_split_messages` (`elog.c` reads them in every thread). The six file-logger settings (now in `pcb`). `ssl`, `log_hostname`, `authentication_timeout`, `allow_alter_system`, `oauth_validator_libraries`. |
+| 3 | The 105 `USERSET`, 31 `SUSET`, 2 `BACKEND` and 2 `SU_BACKEND` settings. `log_connections`, `log_disconnections`, `post_auth_delay` and `ignore_system_indexes` are here because the session reads them at connect or disconnect. |
+| No reader found | `ssl_ciphers`, `ssl_prefer_server_ciphers`, `ssl_tls13_ciphers`, `krb_server_keyfile`, `krb_caseins_users`, `gss_accept_delegation`, `pre_auth_delay`. They are compiled out, not removed ([`CODE.md`](CODE.md) §7): keep them, in group 1. |
+
+- The `SIGHUP` and `BACKEND` rows come from a search for
+  readers. Check each setting again when it moves.
+  `authentication_timeout`, for one, is read in `postinit.c`
+  and in `be-secure-openssl.c`.
+
+## 3. Why this is correct
+
+- **Group 1 has no data race.** The postmaster writes a
+  constant before it starts a thread. The creation of a thread
+  orders that write before every read in it.
+- **Group 2 is safe because of its guard.** The postmaster
+  rewrites it while threads read it. An atomic covers one
+  value. A snapshot covers a set that must agree, such as the
+  `ssl_*` settings.
+- **Group 3 matches PostgreSQL.** A forked backend inherits the
+  postmaster's GUC state, with its source and `reset_val`. A
+  thread that starts with a copy of its spawner's settings
+  does the same.
+- **The copy runs in the spawner's thread, before the child
+  starts.** If the child read the postmaster's block from its
+  own thread, it would race with a reload. A reload and a
+  spawn run in the postmaster's thread, so a child sees the
+  old settings or the new ones, never a mix.
+  `session_thread_start()` works this way today.
+- **A session needs no reload.** A `SIGHUP` setting cannot be
+  `SET` by a session, so its own copy only repeats the
+  postmaster's. A `USERSET` or `SUSET` setting is private to
+  the session once it is set.
+
+## 4. Behavior changes
+
+- A reload no longer reaches a running session. Only a new
+  connection sees the new defaults.
+- `RESET` returns a setting to its value at session start.
+- `SHOW` of a group 1 or group 2 setting in a session shows
+  the value at session start.
+- `pg_reload_conf()` still works, but it acts on the postmaster
+  only. `pg_conf_load_time` and `pg_file_settings` become
+  simpler, as only the postmaster applies the file.
+- A thread that digres did not start (`session_thread_adopt()`,
+  sm's index builders) has no spawner. It keeps the compiled-in
+  defaults, as now.
+- Record these changes in `DG-vs-PG.md`.
+
+## 5. How a variable moves
+
+The text copy at thread start stays, for every setting, moved
+or not. This keeps one variable's move small.
+
+1. Add the field to the right block, with a comment that names
+   the file where the variable was defined.
+2. Bind the table entry. For group 3,
+   `build_guc_variables()` sets the entry's `variable` pointer
+   to `&tcb->guc.name` as it builds the thread's table.
+   `tcb_init()` runs first, and the table lives as long as the
+   `tcb`.
+3. Change the read sites to read the field.
+4. Remove the old `thread_local` variable, and its `extern`.
+5. Run the test suite.
+
+- The copy of the whole block, with the table metadata (source,
+  `scontext`, `srole`, `reset_val` and the non-default list),
+  would replace the text copy. It is possible only after every
+  group 3 variable has moved. Decide then whether it is worth
+  doing.
+- Moving a group 3 variable adds a load of the `tcb` pointer
+  on each read. Ask before you move a variable the planner or
+  the executor reads in a hot loop ([`CLAUDE.md`](../CLAUDE.md)).
+
+## 6. Steps
+
+1. **Confirm the starting state.**
+   - Run `DEBUG=1 make -C dg -j4 test` and save the log.
+   - Check that every caller of `InitializeGUCOptions()` has a
+     `tcb` first: `session_thread_main()`,
+     `session_thread_adopt()`, `parse_tool.c` and the
+     postmaster.
+2. **Stop the sessions reloading.**
+   - Remove the `INTERRUPT_RELOAD` handler and the
+     `ConfigReloadPending` check in `postgres.c`.
+   - Remove `SignalChildren(SIGHUP)` in `postmaster.c`.
+   - Remove the code in `ProcessConfigFileInternal()` that
+     skips the load time in a session thread.
+   - Add a test: a held session keeps the old value after a
+     reload, and a new session gets the new one. Add it to
+     `dg/test` and `server.sh`.
+   - Change the `server.sh` check that expects the same load
+     time in a held session and a new one.
+3. **Add an empty `tcb->guc` and the binding.** No variable
+   moves yet.
+4. **Move a variable when a change needs it**, as section 5
+   says. Start with the first setting a change touches.
+5. **Update the documents once**: [`CODE.md`](CODE.md) §3, the
+   header of `control_block.h`, [`WORKNOTE.md`](WORKNOTE.md),
+   `DG-vs-PG.md` and `src/backend/utils/misc/README`.
+
+## 7. Open question
+
+- The stop of session reloads (step 2) changes every setting
+  at once. Do it first, or when the first variable moves?
