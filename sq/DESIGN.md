@@ -1,17 +1,18 @@
 # DESIGN — sq, the SQL parser
 
-sq is a library that parses PostgreSQL 18's SQL: text in, a tree
-of nodes out. It is what digres parses with.
-[`README.md`](README.md) says
-how to build and test it and `include/sq.h` is the interface;
-this document says how it is put together, and why.
+sq is a library that parses PostgreSQL 18's SQL: text goes in,
+and a tree of nodes comes out. digres parses with it.
 
-sq knows the grammar and nothing else. It reads no catalog, so
-it does not know what a name names, and it has no notion of what
-its caller supports: every statement PostgreSQL's parser
-accepts, sq accepts and builds the whole tree for. It accepts
-one thing more, digres's `ON UPDATE` after a column's default
-(§2).
+- [`README.md`](README.md) says how to build and test it.
+- `include/sq.h` is the interface.
+- This document says how sq is put together, and why.
+
+sq knows the grammar and nothing else. It reads no catalog, so it
+does not know what a name refers to. It also has no notion of
+what its caller supports. Every statement that PostgreSQL's
+parser accepts, sq accepts, and builds the whole tree for. sq
+accepts one thing more: digres's `ON UPDATE` after a column's
+default (§2).
 
 ---
 
@@ -36,377 +37,424 @@ one thing more, digres's `ON UPDATE` after a column's default
      and string they are made of
 ```
 
-Two calls go down it, `sq_parse` for a list of statements and
-`sq_parse_type_name` for one type name. A third, `sq_to_string`,
-prints a node as PostgreSQL's `nodeToString()` would.
+Two calls go down this path:
 
-The interface is C in style, as `../sm/include/sm.h` is: an
-`int` result, 0 or -1; the error read back from the calling
-thread; names prefixed `sq_`. Three C++ types cross it and no
-others: `std::string_view` for text in, `std::string` for text
-out, `std::vector` for a tree's statements. A node's list is
-PostgreSQL's `List`, under sq's name (§3).
+- `sq_parse` parses a list of statements.
+- `sq_parse_type_name` parses one type name.
+
+A third call, `sq_to_string`, prints a node as PostgreSQL's
+`nodeToString()` would.
+
+The interface is C in style, as `../sm/include/sm.h` is:
+
+- a call returns an `int`, 0 or -1;
+- the calling thread reads the error back;
+- names start with `sq_`.
+
+Three C++ types cross the interface, and no others:
+
+- `std::string_view`, for text in;
+- `std::string`, for text out;
+- `std::vector`, for a tree's statements.
+
+A node's list is PostgreSQL's `List`, under sq's name (§3).
 
 ## 2. What is PostgreSQL's, and what is sq's
 
 sq is PostgreSQL's parser, kept as close to PostgreSQL's source
-as its interface allows, so that a fix upstream can be carried
-over by reading two files side by side.
+as its interface allows. So a fix upstream can be carried over
+by reading two files side by side.
 
 | What | Where | How it relates to PostgreSQL |
 | --- | --- | --- |
-| The node definitions | `spec/*.h` | PostgreSQL's headers, unedited, but `nodetags.h`, digres's copy (§3) |
+| The node definitions | `spec/*.h` | PostgreSQL's headers, unedited, except `nodetags.h`, which is digres's copy (§3) |
 | The keyword list | `spec/kwlist.h` | PostgreSQL's, unedited |
-| The scanner | `src/scan.l` | a fork: the rules are PostgreSQL's, untouched |
-| The grammar | `src/gram.y` | a fork: the rules are PostgreSQL's, untouched |
+| The scanner | `src/scan.l` | a fork; the rules are PostgreSQL's, untouched |
+| The grammar | `src/gram.y` | a fork; the rules are PostgreSQL's, untouched |
 | The lookahead filter | `src/parser.cc` | PostgreSQL's `parser.c`, line for line |
 | Node constructors | `src/makefuncs.cc` | PostgreSQL's `makefuncs.c`, renamed |
 | The nodes, their printer, copy and equality | generated | written by `gen/gen_nodes.py` from `spec/` |
 | The keyword hash | generated | `gen/gen_keywords.py`: PostgreSQL's `PerfectHash.pm` in Python |
-| digres's checks | generated, into `../dg` | by `gen/gen_nodes.py`: that sq's nodes are digres's, and what digres refuses (§11) |
+| digres's checks | generated, into `../dg` | by `gen/gen_nodes.py`: checks that sq's nodes are digres's, and what digres refuses (§11) |
 | The tree, errors, lists, UTF-8 | `src/tree.cc`, `error.cc`, `list.cc`, `utf8.cc` | sq's own |
 
-What a fork changes is the code around the rules, never a rule:
+A fork changes the code around the rules, never a rule:
 
-- A node is one of sq's. `SelectStmt` is `sq_select_stmt_t`,
-  its `targetList` is `target_list`, and the helpers have names
-  to match.
+- A node is one of sq's. `SelectStmt` is `sq_select_stmt_t`, its
+  `targetList` is `target_list`, and the helpers have matching
+  names.
 - An error is raised sq's way (§5), not with `ereport`.
-- Everything is made in the tree being built (§4), where
-  PostgreSQL allocates in its current memory context.
+- Everything is made in the tree being built (§4). PostgreSQL
+  allocates in its current memory context instead.
 - The text is UTF-8. PostgreSQL asks what the encoding is; sq
   never does.
 
 **One rule is digres's, not PostgreSQL's**: `DEFAULT b_expr ON
-UPDATE` in `ColConstraintElem`, a column's update default, what
-an UPDATE that does not assign the column writes in it
-([`../dg/ONUPDATE.md`](../dg/ONUPDATE.md)). It makes
-the `Constraint` that `DEFAULT b_expr` makes, with
-`generated_when` set to `'u'`, a field a default does not
-otherwise use, so no node changes. It needs no token of its own
-and no change to the lookahead filter: after a default, nothing
-in PostgreSQL's grammar goes on with `ON`. A port carries it
-over as it carries the forks.
+UPDATE` in `ColConstraintElem`. This is a column's update
+default: what an UPDATE writes in the column when it does not
+assign it ([`../dg/ONUPDATE.md`](../dg/ONUPDATE.md)).
 
-**Porting to a later PostgreSQL** is, in order: replace the
-headers in `spec/` and run `make nodes`; carry the changes to
-`scan.l`, `gram.y`, `parser.c` and `makefuncs.c` into the forks
-by hand; make new expected files with that PostgreSQL (§8).
+- The rule makes the same `Constraint` that `DEFAULT b_expr`
+  makes, with `generated_when` set to `'u'`. A default does not
+  otherwise use that field, so no node changes.
+- It needs no token of its own, and no change to the lookahead
+  filter. After a default, nothing in PostgreSQL's grammar
+  continues with `ON`.
+- A port carries the rule over, as it carries the forks.
+
+**To port sq to a later PostgreSQL:**
+
+1. Replace the headers in `spec/`, and run `make nodes`.
+2. Carry the changes to `scan.l`, `gram.y`, `parser.c` and
+   `makefuncs.c` into the forks, by hand.
+3. Make new expected files with that PostgreSQL (§8).
 
 ## 3. The tree
 
-`include/sq_nodes.h` has a struct for each node PostgreSQL's
-grammar can build, 216 of them, and it is generated. The
-generator reads PostgreSQL's own headers, the way PostgreSQL's
-`gen_node_support.pl` does, so that a node's fields, their order
-and what each is are PostgreSQL's by construction and not by
-transcription. The header is committed, so that it can be read,
-and the tests fail if it is not what the generator writes.
+`include/sq_nodes.h` has a struct for each node that
+PostgreSQL's grammar can build: 216 of them. The header is
+generated. The generator reads PostgreSQL's own headers, as
+PostgreSQL's `gen_node_support.pl` does. So a node's fields,
+their order and their types are PostgreSQL's by construction,
+not by copying them by hand. The header is committed, so it can
+be read, and the tests fail if it differs from what the
+generator writes.
 
-What changes on the way from PostgreSQL's struct to sq's:
+These things change from PostgreSQL's struct to sq's:
 
-- **Names.** Types end `_t` and carry `sq_`; fields are
-  snake_case; an enum's values carry `SQ_`, which keeps them
-  apart from PostgreSQL's own where digres includes both.
-- **A list is an `sq_list_t *`**, PostgreSQL's `List` under
-  sq's name, NULL where PostgreSQL has `NIL`. A list is itself
-  a node, and stands where any node may go — an element of
-  another list, a field typed `Node *`.
-- **Text is a `const char*`**, owned by the tree. NULL is
+- **Names.** Types start with `sq_` and end with `_t`. Fields
+  are snake_case. An enum's values start with `SQ_`, which keeps
+  them apart from PostgreSQL's own where digres includes both.
+- **A list is an `sq_list_t *`**: PostgreSQL's `List` under sq's
+  name. It is NULL where PostgreSQL has `NIL`. A list is itself
+  a node, and can stand where any node can: as an element of
+  another list, or in a field of type `Node *`.
+- **Text is a `const char*`**, owned by the tree. NULL means
   absent, which PostgreSQL tells apart from empty: `COMMENT ...
   IS NULL` and `IS ''` are different trees.
-- **Every node derives from `sq_node_t`**, which holds the tag,
-  and sets its own tag when made; but one whose first field is
-  a node, as `CreateForeignTableStmt`'s is a `CreateStmt`,
-  holds its tag there, as PostgreSQL's does.
+- **Every node derives from `sq_node_t`**, which holds the tag.
+  Each node sets its own tag when it is made. The exception is a
+  node whose first field is a node, as `CreateForeignTableStmt`'s
+  first field is a `CreateStmt`. That node holds its tag in the
+  first field, as PostgreSQL's does.
 
-Fields that only PostgreSQL's analyzer fills are kept, zero or
-NULL from the parser: a node is PostgreSQL's node, whole.
+sq keeps the fields that only PostgreSQL's analyzer fills. The
+parser leaves them zero or NULL. A node is PostgreSQL's node,
+whole.
 
-**A node is digres's, byte for byte.** Its fields are
-PostgreSQL's in PostgreSQL's order, an `A_Const` holds its value
-in place in PostgreSQL's union, and its tag is digres's number
-for it, from `spec/nodetags.h`, a copy of digres's own (a node
-digres has none of takes a number past its last). digres so
-reads sq's tree as its own nodes, with nothing converted, and
-holds that at compile time (§11).
+**A node is digres's, byte for byte.**
+
+- Its fields are PostgreSQL's, in PostgreSQL's order.
+- An `A_Const` holds its value in place, in PostgreSQL's union.
+- Its tag is digres's number for it, from `spec/nodetags.h`,
+  which is a copy of digres's own. A node that digres does not
+  have takes a number after digres's last one.
+
+So digres reads sq's tree as its own nodes, with nothing
+converted. digres checks this at compile time (§11).
 
 **The printer writes PostgreSQL's names**, not sq's:
 `sq_select_stmt_t` prints as `{SELECTSTMT :distinctClause ...`.
-Its text is `nodeToString()`'s byte for byte, with locations
-hidden as PostgreSQL hides them, or shown, as its
-`nodeToStringWithLocations()` shows them. That is what makes
-PostgreSQL's own output a test of sq (§8), and it is what the
+Its text is `nodeToString()`'s, byte for byte. Locations are
+hidden as PostgreSQL hides them, or shown as PostgreSQL's
+`nodeToStringWithLocations()` shows them. This makes
+PostgreSQL's own output a test of sq (§8), which is what the
 printer is for.
 
 ## 4. Ownership
 
 **A tree owns everything.** `sq_tree_t` keeps a store of every
-node and every string made for it and frees them all in its
+node and every string made for it, and frees them all in its
 destructor. Nothing in a tree is freed by hand, and nothing
-points outside it: text is copied in, so a tree outlives what it
-was parsed from. A tree moves and does not copy.
+points outside it. Text is copied in, so a tree outlives the
+text it was parsed from. A tree can be moved, but not copied.
 
 **Nodes, lists and text are cut from the tree's arena**, as
-PostgreSQL's `palloc` cuts from a memory context: blocks, the
-first of 4 kB made with the first piece, each next twice the
-last up to 1 MB, freed together. No node has a destructor. A list grows as
-PostgreSQL's `list.c` grows one: its first cells in place after
-it, then an array of its own, grown by realloc. A parse so makes
-no allocation per node, list or string, which made its cost
-twice PostgreSQL's. Whatever changes a list runs in a parse, or
-with a tree named current.
+PostgreSQL's `palloc` cuts them from a memory context.
 
-**Or they go where the caller says.** `sq_options_t`'s
-allocator, alloc and realloc, takes the arena's place: digres's
-is its current memory context, so it keeps, grows and frees
-sq's nodes and lists as its own. The store itself is cut from
-it too, and no arena block is made, so a parse asks `malloc`
-for none of its nodes. What the allocator hands out the tree
-never frees. A failed alloc returns NULL, and sq reports running
-out of memory as it does any error.
+- The arena is a series of blocks, freed together. The first
+  block is 4 kB, made with the first piece. Each next block is
+  twice the last, up to 1 MB.
+- No node has a destructor.
+- A list grows as PostgreSQL's `list.c` grows one. Its first
+  cells are in place after it. Then it gets an array of its own,
+  grown by realloc.
+- So a parse makes no allocation for each node, list or string.
+  Those allocations made a parse cost twice PostgreSQL's.
+- Code that changes a list runs in a parse, or with a tree set
+  as the current tree.
+
+**Or they go where the caller says.** The allocator in
+`sq_options_t`, an alloc and a realloc, takes the place of the
+arena.
+
+- digres's allocator is its current memory context. So digres
+  keeps, grows and frees sq's nodes and lists as its own.
+- The tree's store is also cut from the allocator, and no arena
+  block is made. So a parse asks `malloc` for none of its nodes.
+- The tree never frees what the allocator gives out.
+- A failed alloc returns NULL. sq reports running out of memory
+  as it reports any error.
 
 **WARNING: do not put digres's nodes in an arena.** digres needs
-this allocator, because PostgreSQL does not treat the tree as
+the allocator, because PostgreSQL does not treat the tree as
 read-only. A branch that removed the allocator, `wip-sq-arena`,
-was dropped on 2026-11-04 for these reasons:
+was dropped on 2026-11-04, for these reasons:
 
 - **The tree is not const.** `sq_parse()` gives the caller a tree
-  it may change, and digres's analyzer changes it.
+  that it may change, and digres's analyzer changes it.
 - **Each node and each list's array must be `palloc` memory.**
   PostgreSQL grows and frees them itself: `list.c` calls
-  `repalloc`, `pfree` and `GetMemoryChunkContext()`. Each reads
-  the chunk header in front of the pointer. A piece cut from an
-  arena has no chunk header, even if the arena's block came from
-  `palloc`.
-- **PostgreSQL annotates the nodes.** Parse analysis writes in
+  `repalloc`, `pfree` and `GetMemoryChunkContext()`. Each of
+  these reads the chunk header in front of the pointer. A piece
+  cut from an arena has no chunk header, even if the arena's
+  block came from `palloc`.
+- **PostgreSQL writes into the nodes.** Parse analysis writes in
   them. `parse_utilcmd.c` appends to the `constraints` list of a
   `ColumnDef` that the grammar made. `plancache.c` copies a raw
   tree, because "the parser tends to scribble on its input".
-- **PostgreSQL duplicates the nodes.** `copyObject()` copies a
-  raw tree or a part of it, as `plancache.c` does, into the
-  current memory context. Each node must so have the tag and the
+- **PostgreSQL copies the nodes.** `copyObject()` copies a raw
+  tree, or a part of one, into the current memory context, as
+  `plancache.c` does. So each node must have the tag and the
   layout that PostgreSQL's copy functions expect.
 
-The arena is for a caller that only reads the tree, as sq's
-tools and tests do.
+The arena is for a caller that only reads the tree, as sq's tools
+and tests do.
 
-This is what makes cleanup after an error one line. A parse that
-fails halfway has made hundreds of nodes, some reachable from
-bison's stack and some from nowhere. The tree owns them all the
-same, and emptying it frees them.
+**Ownership makes cleanup after an error one line.** A parse that
+fails halfway has made hundreds of nodes. Some are reachable from
+bison's stack, and some from nowhere. The tree owns them all the
+same, and emptying the tree frees them. Three things make this
+work:
 
-- **The grammar's actions make nodes in "the current tree"**, a
-  per-thread pointer that `sq_parse` sets for as long as it
-  runs. PostgreSQL's actions do the same with its current memory
-  context. The alternative, passing the tree to each of some 800
-  calls, would have rewritten every action and gained nothing: a
-  parse is on one thread and builds one tree.
+- **The grammar's actions make nodes in "the current tree"**: a
+  per-thread pointer that `sq_parse` sets while it runs.
+  PostgreSQL's actions do the same with its current memory
+  context. The alternative was to pass the tree to each of about
+  800 calls. That would have rewritten every action and gained
+  nothing, because a parse runs on one thread and builds one
+  tree.
 - **bison's stacks** come from the parse, not from `malloc`, and
-  go with it. bison would free its own on a normal return, which
-  an error raised from an action is not.
-- **flex's state** is held by `scanner_t`, in room inside it,
-  as is the copy of the text flex scans when the text is short:
-  a scan asks `malloc` for none of it. Its destructor releases
+  go with it. bison frees its own stacks only on a normal return,
+  and an error raised from an action is not one.
+- **flex's state** is held in room inside `scanner_t`. So is
+  flex's copy of the text, when the text is short. So a scan asks
+  `malloc` for none of it. The destructor of `scanner_t` releases
   what a long text took, however the scan ends.
 
 So RAII reaches everything, and `sq.h` has no free function.
 
 ## 5. Errors
 
-A failed call returns -1 and leaves the error for the calling
-thread to read: a code, a message, PostgreSQL's SQLSTATE, the
-position in characters, and PostgreSQL's detail and hint where
-it has them. A server sends those to its client as they are.
+A failed call returns -1, and leaves the error for the calling
+thread to read. The error has:
 
-- **Three codes.** `SQ_ERR_PARSE` is the SQL's fault, and the
-  SQLSTATE says how; `SQ_ERR_NOMEM` and `SQ_ERR_EXCEPTION` are
-  not.
+- a code;
+- a message;
+- PostgreSQL's SQLSTATE;
+- the position, in characters;
+- PostgreSQL's detail and hint, where it has them.
+
+A server sends these to its client as they are.
+
+- **Three codes.** `SQ_ERR_PARSE` means the SQL is at fault, and
+  the SQLSTATE says how. `SQ_ERR_NOMEM` and `SQ_ERR_EXCEPTION`
+  are not the SQL's fault.
 - **The message is formatted into a fixed per-thread buffer**,
-  with no allocation, so that running out of memory can be
-  reported.
-- **Inside a parse, an error is a private exception.** A raise
-  records the thread's error and throws; the call catches it
-  and returns -1. PostgreSQL leaves from wherever it is by
-  `longjmp`, and its helpers are written to: this keeps them the
-  shape they are upstream. flex's own fatal path, which would
+  with no allocation, so that sq can report running out of
+  memory.
+- **Inside a parse, an error is a private exception.**
+  1. A raise records the thread's error, and throws.
+  2. The call catches the exception, and returns -1.
+
+  PostgreSQL leaves from wherever it is by `longjmp`, and its
+  helpers are written for that. The exception keeps them in the
+  shape they have upstream. flex's own fatal path, which would
   call `exit()`, leaves the same way. No exception crosses the
   interface.
-- **A notice is not an error.** An identifier cut to 63 bytes,
-  or a warning about escapes, goes to the caller's hook as it
-  happens and the parse goes on. With no hook it is dropped.
+- **A notice is not an error.** A notice is, for example, an
+  identifier cut to 63 bytes, or a warning about escapes. It
+  goes to the caller's hook as it happens, and the parse goes on.
+  With no hook, the notice is dropped.
 
-**Settings come in `sq_options_t`**: PostgreSQL's three that
-change how a string literal is read, the notice hook, and the
-allocator (§4). NULL is PostgreSQL's defaults.
+**Settings come in `sq_options_t`**: PostgreSQL's three settings
+that change how a string literal is read, the notice hook, and
+the allocator (§4). NULL means PostgreSQL's defaults.
 
 ## 6. Lists in the grammar
 
-A node's list is an `sq_list_t *`, and the grammar builds lists
-piecemeal across many rules, passes them about, appends to them
-and nests them, as PostgreSQL does with `List *`. In the grammar
-a list is therefore a handle, `list_ref_t`: NIL, or the name of
-an `sq_list_t` in the tree. PostgreSQL's list functions are kept
-over it by their own names, so an action reads as it does
-upstream.
+A node's list is an `sq_list_t *`. The grammar builds lists
+piece by piece across many rules. It passes them around, appends
+to them and nests them, as PostgreSQL does with `List *`. So in
+the grammar, a list is a handle, `list_ref_t`: NIL, or the name
+of an `sq_list_t` in the tree. PostgreSQL's list functions are
+kept over the handle, by their own names, so an action reads as
+it does upstream.
 
 **Assigning a handle to a node's field shares the list**, as
-PostgreSQL's assignment shares a `List *`: an action written
+PostgreSQL's assignment shares a `List *`. So an action written
 upstream reads the same here.
 
 ## 7. Threads
 
 Any number of threads may parse at once, each into its own tree.
-Nothing is shared between two parses: the scanner and grammar
-keep their state in the call, and the three things that are per
-thread — the error, the current tree, and a notice hook's
-arguments — are thread-local or the caller's.
+Two parses share nothing. The scanner and grammar keep their
+state in the call. Three things are per thread: the error, the
+current tree, and a notice hook's arguments. Each of them is
+thread-local, or belongs to the caller.
 
 A tree, once made, may be read from any number of threads.
 
 ## 8. How it is known to be right
 
-sq's claim is that it parses as PostgreSQL does, so the test is
-PostgreSQL: what its scanner and parser print for a text is what
-sq must print. The one rule of digres's (§2) is the exception:
-`test/on_update.sql` and the two `test/err_on_update_*.sql`
-files expect sq's own output, and the corpus below shows that
-PostgreSQL's text parses as it did.
+sq claims to parse as PostgreSQL does. So the test is
+PostgreSQL: what PostgreSQL's scanner and parser print for a
+text is what sq must print.
 
-Until sq could stand alone it was built beside PostgreSQL's own
+The one rule of digres's (§2) is the exception.
+`test/on_update.sql` and the two `test/err_on_update_*.sql`
+files expect sq's own output. The corpus below shows that
+PostgreSQL's text still parses as it did.
+
+Until sq could stand alone, it was built beside PostgreSQL's own
 parser, compiled from `../dg`, and compared with it directly.
-That parser is no longer built here. Its answers are:
+That parser is no longer built here. Its answers are kept:
 
 - **`test/*/expected/`**: for each SQL file here, what
-  PostgreSQL's parser printed — the trees, or the error with its
-  position, detail and hint — and for some, the trees again with
-  every location shown, and what its scanner printed. 96 files:
-  statements of every family, one for each error the scanner
-  raises, one for each error an action of the grammar raises,
-  and type names.
+  PostgreSQL's parser printed: the trees, or the error with its
+  position, detail and hint. For some files, it also holds the
+  trees again with every location shown, and what PostgreSQL's
+  scanner printed. There are 96 files: statements of every
+  family, one for each error the scanner raises, one for each
+  error that a grammar action raises, and type names.
 - **`test/regress.digest`**: for each of the 233 scripts of
-  PostgreSQL's regression SQL, a digest of what its scanner
-  printed for the whole script, of what its parser printed for
-  each of the script's pieces, and of the same trees with their
-  locations. Over 700,000 tokens and 49,034 pieces, which
-  include the SQL that is wrong on purpose. `make corpus-test`
-  holds sq to it, given the scripts.
+  PostgreSQL's regression SQL, three digests:
+  - of what PostgreSQL's scanner printed for the whole script;
+  - of what its parser printed for each piece of the script;
+  - of the same trees, with their locations.
 
-Neither can be made again without PostgreSQL's parser. They are
-to be remade when sq is ported to a later one, with that one.
+  That is over 700,000 tokens and 49,034 pieces, including the
+  SQL that is wrong on purpose. Given the scripts,
+  `make corpus-test` holds sq to the digests.
+- **Locations.** `sq_to_string_with_locations` prints them.
+  `expected/*.loc`, and the third digest in
+  `test/regress.digest`, hold what PostgreSQL's parser gave, for
+  the 28 files of statements here and the 49,034 pieces.
+  PostgreSQL's parser was built again from this repository's
+  history to write them.
+
+Neither the expected files nor the digests can be made again
+without PostgreSQL's parser. When sq is ported to a later
+PostgreSQL, they are to be made again with that one.
 
 What PostgreSQL cannot show is tested by hand, in `test/*.cc`:
 the notice hook, the options, positions in characters,
 ownership, and that nothing leaks. Those tests are linked with a
-leak checker, so a node or string a tree failed to free fails
-them; `make tsan` runs them under the thread sanitizer.
+leak checker, so a node or string that a tree failed to free
+fails them. `make tsan` runs them under the thread sanitizer.
 
-Two checks are on sq's own consistency: `test/nodes.sh`, that
-the committed node header is what the generator writes; and
-`test/alone.sh`, that nothing sq is built from is outside `sq/`.
+Two checks cover sq's own consistency:
+
+- `test/nodes.sh` checks that the committed node header is what
+  the generator writes.
+- `test/alone.sh` checks that nothing sq is built from is
+  outside `sq/`.
 
 ## 9. Known trade-offs
 
-- **A tree holds a little more than its nodes need**: a list's
-  cells outgrown, in place or in an array the arena does not
-  give back, and the scanner's strings no node kept, until the
-  tree goes. In digres's memory context, a realloc gives an
-  outgrown array back.
-- **sq's tags are digres's.** A node that digres adds or drops
-  before the value nodes in its headers moves their numbers;
-  digres's build then fails its checks until `spec/nodetags.h`
-  is copied over again and `make nodes` run.
-- **Text is assumed to be UTF-8 and is not checked.** Text that
-  is not is scanned as PostgreSQL's scanner would scan it; a
-  server is expected to have checked what a client sent, as
+- **A tree holds a little more memory than its nodes need.** It
+  keeps a list's outgrown cells, in place or in an array that
+  the arena does not give back. It also keeps the scanner's
+  strings that no node kept. Both stay until the tree goes. In
+  digres's memory context, a realloc gives an outgrown array
+  back.
+- **sq's tags are digres's.** If digres adds or drops a node
+  before the value nodes in its headers, their numbers move.
+  digres's build then fails its checks, until `spec/nodetags.h`
+  is copied over again and `make nodes` is run.
+- **Text is assumed to be UTF-8, and is not checked.** Text that
+  is not UTF-8 is scanned as PostgreSQL's scanner would scan it.
+  A server is expected to check what a client sent, as
   PostgreSQL does before it parses. A NUL byte is refused.
 - **The forks are forks.** A change upstream is carried over by
-  hand. What sq changed is confined to the code around the
-  rules, which is what keeps that tractable, but for one rule
-  of digres's (§2).
+  hand. sq's changes are confined to the code around the rules,
+  which keeps this manageable. The one exception is digres's
+  rule (§2).
 - **PostgreSQL's naming survives in two places**: the grammar's
-  symbols, which are grammar and not code, and the list
-  functions, kept by PostgreSQL's names so that actions read as
-  they do upstream.
-- **An `Oid` field is 32 bits**, as in PostgreSQL; digres's is
-  to be 64
+  symbols, which are grammar and not code; and the list
+  functions, which keep PostgreSQL's names so that actions read
+  as they do upstream.
+- **An `Oid` field is 32 bits**, as in PostgreSQL. digres's is
+  to be 64 bits
   ([`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
-  §10). Every such field in a parse
-  tree is the analyzer's to fill, and zero from sq.
+  §10). The analyzer fills every such field in a parse tree, and
+  sq leaves them zero.
 
 ## 10. What is deliberately not here
 
 - **Analysis.** Turning a tree into a query is catalog lookups
-  from end to end. It is digres's.
+  from end to end. It belongs to digres.
 - **Any notion of "supported".** sq parses `CREATE FUNCTION` as
-  it parses anything. digres refuses what it does not handle,
-  when it meets the node.
-- **PostgreSQL's headers.** sq's nodes are laid out as
-  digres's, but sq includes none of digres's headers; the
-  layout comes from the generator, and digres checks it (§11).
-- **Deparsing**, a tree back to SQL text.
-- **Other encodings**, and the PL/pgSQL parse modes: their rules
-  are in the grammar, as they are in PostgreSQL's, with no call
-  that reaches them.
+  it parses anything else. digres refuses what it does not
+  handle, when it meets the node.
+- **PostgreSQL's headers.** sq's nodes are laid out as digres's,
+  but sq includes none of digres's headers. The layout comes from
+  the generator, and digres checks it (§11).
+- **Deparsing**: turning a tree back into SQL text.
+- **Other encodings, and the PL/pgSQL parse modes.** Their rules
+  are in the grammar, as they are in PostgreSQL's, but no call
+  reaches them.
 
 ## 11. How digres uses it
 
-digres links `build/libsq.a` and has no grammar or scanner for
-SQL of its own. Its `raw_parser()` is sq's one caller there
-(`../dg/src/backend/parser/parser.c`):
+digres links `build/libsq.a`, and has no SQL grammar or scanner
+of its own. Its `raw_parser()` is sq's one caller in digres
+(`../dg/src/backend/parser/parser.c`). `raw_parser()`:
 
-- It passes the session's three settings in `sq_options_t`,
-  and an allocator that is its current memory context, by
-  `palloc` and `repalloc` that return NULL when out of memory.
-- It hands sq's statements to the analyzer as they are: they
-  are digres's nodes. `sq_nodes.c`, which sq's generator writes
-  when digres is built, holds that at compile time, a
+- **passes the session's three settings** in `sq_options_t`. It
+  also passes an allocator that is its current memory context:
+  `palloc` and `repalloc`, which return NULL when out of memory.
+- **hands sq's statements to the analyzer as they are**, because
+  they are digres's nodes. sq's generator writes `sq_nodes.c`
+  when digres is built. It checks this at compile time, with a
   `static_assert` for each node's tag and size, each field's
-  offset and each enum's value; and refuses what digres has no
-  part of: a publication's or subscription's statement, and any
-  statement naming one as an object (`REFUSED` and
-  `REFUSED_OBJECTS` in `gen/gen_nodes.py`), in a statement or a
-  SQL function's body.
-- It raises sq's error as the server's own, with its SQLSTATE,
+  offset, and each enum's value. It also refuses the statements
+  that digres has no part in: a publication's or subscription's
+  statement, and any statement that names one as an object
+  (`REFUSED` and `REFUSED_OBJECTS` in `gen/gen_nodes.py`). It
+  refuses them in a statement, or in a SQL function's body.
+- **raises sq's error as the server's own**, with its SQLSTATE,
   position, detail and hint.
+- **keeps a notice, and reports it after sq returns.** If digres
+  reported it from sq's hook, an error raised while reporting
+  would be an exception inside sq. sq catches every exception,
+  and would report that error as its own.
 
-digres raises an error as a C++ exception, so the tree is an
-ordinary object there, freed by its destructor however
-`raw_parser()` leaves; its nodes stay in the memory context.
-
-- **A notice is kept and reported after sq returns.** Reported
-  from sq's hook, an error raised while reporting would be an
-  exception inside sq, which catches everything and would report
-  it as its own.
+digres raises an error as a C++ exception. So in digres the tree
+is an ordinary object, freed by its destructor however
+`raw_parser()` leaves. Its nodes stay in the memory context.
 
 digres is checked with sq's own tests. `digres --parse` prints
-what `build/sq_parse` prints, for `raw_parser()`, so the
-expected files and digests of §8 hold digres's parser to what
-PostgreSQL's printed, locations among it.
+what `build/sq_parse` prints, for `raw_parser()`. So the expected
+files and digests of §8 hold digres's parser to what
+PostgreSQL's printed, locations included.
+`digres --parse --locations` is held to the same files.
 
 ## What is left
 
-None of it is owed to a step. Each is a choice made on the way
-and written where it was made:
+None of it is owed to a step. Each item is a choice made on the
+way, and written where it was made:
 
 - **A tree holds a little more memory than its nodes need**: a
-  list's outgrown cells, and the scanner's strings no node kept
-  (§9). A list assigned to a field is shared, not
-  copied (§6).
-- ~~The locations in a tree are not held by a test that
-  stays.~~ They are now. `sq_to_string_with_locations` prints
-  them; `expected/*.loc` and a third digest in
-  `test/regress.digest` hold what PostgreSQL's parser gave, for
-  the 28 files of statements here and the 49,034 pieces. That
-  parser was built again from this repository's history to
-  write them. digres's `digres --parse --locations` is held to
-  the same files.
-- **The expected files and digests cannot be remade** without
-  PostgreSQL's parser. Porting sq to a later PostgreSQL begins
-  with making them from that one (§2, §8).
+  list's outgrown cells, and the scanner's strings that no node
+  kept (§9). A list assigned to a field is shared, not copied
+  (§6).
+- **The expected files and digests cannot be made again**
+  without PostgreSQL's parser. A port of sq to a later
+  PostgreSQL begins by making them with that one (§2, §8).
 - **`make corpus-test` needs PostgreSQL 18.6's regression SQL**,
   which is not in this repository.
-- **An `Oid` field is 32 bits**; digres's is to be 64.
-- **Text is not checked to be UTF-8.**
+- **An `Oid` field is 32 bits**; digres's is to be 64 (§9).
+- **Text is not checked to be UTF-8** (§9).
 - **`spi.c` in digres** can still be handed a PL/pgSQL parse
   mode, which `raw_parser()` now refuses.

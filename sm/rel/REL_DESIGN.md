@@ -6,23 +6,21 @@ Status: built; the design of record for the `rel` test driver.
 
 ## 1. What is rel?
 
-`rel` is a dedicated, interactive relational test driver and
-script interpreter for the `wisr` storage engine
-(`include/sm.h`).
+`rel` is an interactive test driver and script interpreter for
+the `wisr` storage engine (`include/sm.h`). It works with
+relations and rows, without SQL.
 
-Why does a storage engine need a specialized driver without SQL?
-Because SQL query engines are bloated beasts! When testing an
-MVCC engine, tuple formats, serializable snapshot isolation
-(SSI), Cahill pivot detection, index maintenance, savepoints,
-and two-phase commit, you do not want a 50,000-line SQL parser,
-planner, and cost-based optimizer standing between your test
-and the storage manager. Every bug in the parser or planner
-obfuscates whether the underlying database engine actually works!
+**Why no SQL.** The tests target the storage engine: MVCC, tuple
+formats, serializable snapshot isolation (SSI), Cahill's pivot
+detection, index maintenance, savepoints and two-phase commit. A
+SQL parser, planner and optimizer between the test and the
+storage manager would add tens of thousands of lines of code. A
+bug in that code would hide whether the storage engine works.
 
-In classical database systems (like IBM System R's RSS test
-drivers or modern storage test harnesses), engineers manipulate
-relations and rows directly. `rel` provides an interpreter that
-simulates a full relational database without SQL:
+Classical systems test their storage the same way: IBM System
+R's test drivers for its storage system (RSS), and modern storage
+test harnesses, work on relations and rows directly. `rel` is an
+interpreter that acts as a relational database without SQL:
 
 - Tables have typed schemas and secondary indexes.
 - Operations manipulate rows directly via first-class tuples.
@@ -36,26 +34,24 @@ simulates a full relational database without SQL:
 
 ## 2. Language Choice: Janet
 
-To manipulate rows directly and execute commands with minimal
-syntactic baggage, `rel` is Janet: it embeds the Janet
-interpreter (`libjanet`) and registers its builtins in Janet's
-core environment, so a script is a Janet program.
+`rel` is Janet. It embeds the Janet interpreter (`libjanet`),
+and registers its builtins in Janet's core environment. So a
+script is a Janet program, which works on rows directly with
+little syntax.
 
-Why Janet over Python or Lua?
+Why Janet, and not Python or Lua?
 
-1. **First-Class Tuples:** Janet natively distinguishes array
-   brackets `[...]` for data tuples and parentheses `(...)` for
-   expressions and commands. A relational row is literally a
-   tuple: `[1 "Albert Einstein" 44 true]`.
-2. **Keywords as Enums:** Types and options are native keywords
-   prefixed with `:` (e.g., `:int4`, `:text`, `:serializable`,
-   `:asc`, `:desc`, `:unique`).
-3. **Simplicity First:** Janet is one small embeddable C
-   library. We don't need to drag in a Python virtual machine
-   or Lua runtime into `wisr`'s lean build.
-4. **Scripting and Assertions:** Every operation is an expression
-   that returns a value, making assertions and multi-statement
-   transactions trivial to compose.
+1. **First-class tuples.** Janet has brackets `[...]` for data
+   tuples, and parentheses `(...)` for expressions and commands.
+   A row is a tuple: `[1 "Albert Einstein" 44 true]`.
+2. **Keywords as enums.** Types and options are Janet keywords,
+   which start with `:`. Examples: `:int4`, `:text`,
+   `:serializable`, `:asc`, `:desc`, `:unique`.
+3. **A small library.** Janet is one small C library to embed.
+   The build needs no Python virtual machine and no Lua runtime.
+4. **Expressions everywhere.** Every operation is an expression
+   that returns a value. So assertions, and transactions of
+   several statements, are easy to compose.
 
 ### 2.1 Lexical Elements and Literals
 
@@ -76,16 +72,15 @@ Why Janet over Python or Lua?
 
 ## 3. High-Level Relational Model (Without SQL)
 
-`rel` provides a relational simulation layer on top of `sm.h`.
-In this layer, tables and indexes are named relational entities
-that manage the underlying `sm_` stores, sequences, row rels,
-and index rels automatically.
+`rel` is a relational layer on top of `sm.h`. In this layer,
+tables and indexes have names. A table or an index manages its
+`sm_` stores, sequences, row rels and index rels for the script.
 
 ### 3.1 Data Types
 
-`rel` supports all frozen types defined in
-[`sm2/TYPE.md`](../sm2/TYPE.md) and
-exposed via `sm_type(code)`:
+`rel` supports every frozen type that
+[`sm2/TYPE.md`](../sm2/TYPE.md) defines and `sm_type(code)`
+exposes:
 
 | Keyword | Code | sm2 Type | Description |
 | --- | --- | --- | --- |
@@ -109,8 +104,8 @@ exposed via `sm_type(code)`:
 
 ### 3.2 Defining Tables and Indexes
 
-Tables define an ordered list of named attributes. Each attribute
-specifies a type and optional flags (`:not-null`).
+A table has an ordered list of named columns. Each column has a
+type, and optional flags (`:not-null`).
 
 ```lisp
 # Create table 'users'
@@ -124,8 +119,8 @@ specifies a type and optional flags (`:not-null`).
 (table-drop users)
 ```
 
-Indexes are created on existing tables, specifying indexed key
-columns, sort order, and uniqueness.
+An index is created on an existing table. It names its key
+columns, their sort order, and whether it is unique.
 
 ```lisp
 # Create secondary unique index on 'users' by name ascending
@@ -147,11 +142,16 @@ columns, sort order, and uniqueness.
 
 ### 3.3 Direct Row Manipulation
 
-Rows are manipulated directly as tuples without SQL
-`INSERT INTO`, `UPDATE`, or `DELETE` syntax. A row of a table
-without a primary key is named by its `_id`, as below; one of a
-table with one (`table-create`'s `(primary-key ...)`, or
-`add-primary-key`) by its key's values, a tuple:
+A script works on rows directly, as tuples, with no SQL
+`INSERT INTO`, `UPDATE` or `DELETE`. How a row is named depends
+on its table:
+
+- In a table without a primary key, a row is named by its `_id`,
+  as in the examples below.
+- In a table with a primary key, a row is named by its key's
+  values, as a tuple. A table gets a primary key from
+  `table-create`'s `(primary-key ...)`, or from
+  `add-primary-key`.
 
 ```lisp
 # 1. Insert a row directly: returns generated _id (e.g. 1)
@@ -177,9 +177,9 @@ table with one (`table-create`'s `(primary-key ...)`, or
 
 ### 3.4 Direct Relational Scans and Queries
 
-Instead of SQL queries, `rel` uses direct table and index scans,
-which return Janet arrays; Janet's own `filter` and `map`
-compose over them, and `rel` adds no stream operators:
+Instead of SQL queries, `rel` has table scans and index scans.
+They return Janet arrays. Janet's own `filter` and `map` work on
+the arrays, so `rel` adds no stream operators:
 
 ```lisp
 # Table scan: scan all rows from _id 1 to 100
@@ -199,14 +199,13 @@ compose over them, and `rel` adds no stream operators:
 
 ## 4. Statement Mapping to `include/sm.h`
 
-Every statement in `rel` maps directly to one or more `sm_`
-functions in `include/sm.h`. `rel` supports two levels of
-statements:
+Every statement in `rel` maps to one or more `sm_` functions in
+`include/sm.h`. `rel` has two levels of statements:
 
-1. **High-Level Relational Statements:** Coordinate row rels and
-   attached secondary indexes automatically.
-2. **Low-Level Direct `sm_` Statements:** Expose the exact C
-   API calls for granular unit testing of individual API handles.
+1. **High-level relational statements** manage a table's row rel
+   and its secondary indexes together.
+2. **Low-level `sm_` statements** expose the exact C API calls,
+   to unit test each API handle.
 
 ### 4.1 Environment and Database Lifecycle
 
@@ -217,12 +216,14 @@ statements:
 | `(env-detach [:force true])` | `sm_detach(env, force)` | Detaches home dir |
 | `(db-create name [opts])` | `sm_mkdb(env, name, opt)` | Creates database |
 | `(db-drop name)` | `sm_rmdb(env, name)` | Drops database |
-| `(db-list)` | `sm_lsdb(env, &names, &n)` | Lists databases |
+| `(db-list)` | `sm_lsdb(env, names)` | Lists databases |
 | `(db-open name [opts])` | `sm_opendb(env, name, opt, &s)` | Opens DB session |
 | `(db-close)` | `sm_closedb(session)` | Closes session |
 
-Database options in `(db-create name {:durability-sync 0 ...})`
-map directly to `sm_options_t`; the others keep their defaults:
+The options in `(db-create name {:durability-sync 0 ...})` map
+to fields of `sm_options_t`. Fields not given keep their
+defaults:
+
 - `:durability-sync` -> `opt.durability_sync`
 - `:deadlock-ms` -> `opt.deadlock_ms`
 
@@ -239,11 +240,12 @@ map directly to `sm_options_t`; the others keep their defaults:
 | `(rollback depth)` | `sm_rollback(s, depth)` | Undoes to savepoint |
 | `(forget depth)` | `sm_forget(s, depth)` | Drops savepoint |
 | `(prepare gid)` | `sm_prepare(s, gid)` | Prepares 2PC xct |
-| `(prepared-list)` | `sm_list_prepared(s, ...)` | Lists prepared xcts |
+| `(prepared-list)` | `sm_list_prepared(s, list)` | Lists prepared xcts |
 | `(commit-prepared gid)` | `sm_commit_prepared(s, gid)` | Commits prepared |
 | `(abort-prepared gid)` | `sm_abort_prepared(s, gid)` | Aborts prepared |
 
-Isolation levels map directly to `sm_xctlevel_t`:
+The isolation levels map to `sm_xctlevel_t`:
+
 - `:rc` or `:read-committed` -> `SM_XCT_READ_COMMITTED`
 - `:rr` or `:repeatable-read` -> `SM_XCT_REPEATABLE_READ`
 - `:ser` or `:serializable` -> `SM_XCT_SERIALIZABLE`
@@ -251,17 +253,20 @@ Isolation levels map directly to `sm_xctlevel_t`:
 ### 4.3 High-Level Table and Index Operations
 
 Tables and indexes live in sm3's catalog
-([`../CATALOG.md`](../CATALOG.md)), through the C API's
-`sm_cat_*` calls,
-in the `public` namespace. DDL is transactional -- undone by
-abort and by rollback to a savepoint, private to its session
-until commit -- and a table outlives a restart. `rel` keeps no
-catalog of its own.
+([`../CATALOG.md`](../CATALOG.md)), in the `public` namespace.
+`rel` reaches them through the C API's `sm_cat_*` calls, and
+keeps no catalog of its own.
+
+DDL is transactional:
+
+- an abort, or a rollback to a savepoint, undoes it;
+- it is private to its session until commit;
+- a table outlives a restart.
 
 #### `(table-create <name> (columns ...))`
 1. Builds an `sm_column_spec_t` per column: its name, type code,
    typmod and `:not-null`.
-2. Calls `sm_cat_create_table(s, SM_NSP_PUBLIC, name, cols, n,
+2. Calls `sm_cat_create_table(s, SM_NSP_PUBLIC, name, cols,
    &oid)`, which makes the table's store, `_id` sequence and
    catalog entry.
 
@@ -274,39 +279,41 @@ catalog of its own.
 1. Opens the table under its table-oid lock X, as the DDL takes
    it, to resolve the key and INCLUDE column names to their
    places.
-2. Calls `sm_cat_create_index(s, table, name, keys, nkey,
-   includes, ninclude, unique, &oid)`, which records the index
-   under the table's next relid. On a table made in the same
-   transaction the index is filled and valid at once. On any
-   other it is recorded as pending, and filled in the
-   background after the transaction commits
-   ([`../INDEXBUILD.md`](../INDEXBUILD.md#2-the-protocol) §2).
+2. Calls `sm_cat_create_index(s, table, name, keys, includes,
+   unique, eval, reads, &oid)`, which records the index
+   under the table's next relid.
+   - On a table made in the same transaction, the index is
+     filled, and valid at once.
+   - On any other table, the index is recorded as pending. It
+     is filled in the background after the transaction commits
+     ([`../INDEXBUILD.md`](../INDEXBUILD.md#2-the-protocol) §2).
 
-A partial or an expression index is evaluated by the host, not
-by the storage manager
-([`../INDEXBUILD.md`](../INDEXBUILD.md#2-the-protocol) §2), and
-`rel` is
-the host. It gives the storage manager its evaluator with
-`sm_set_index_evaluator` when a home is attached. The
-evaluator is C++ and touches nothing of Janet's, because the
-index build calls it from worker threads, where the Janet
-interpreter may not run. So it is a fixed one and not a script's
-function, over two forms:
-- `:where (col value)`: the row is in the index if `col`, as
-  its type prints it, is `value`;
+The host evaluates a partial or an expression index, not the
+storage manager
+([`../INDEXBUILD.md`](../INDEXBUILD.md#2-the-protocol) §2). Here,
+`rel` is the host. When a home is attached, `rel` gives the
+storage manager its evaluator with `sm_set_index_evaluator`.
+
+The evaluator is C++, and touches nothing of Janet's. The index
+build calls it from worker threads, where the Janet interpreter
+may not run. So the evaluator is fixed, not a script's function.
+It handles two forms:
+
+- `:where (col value)`: the row is in the index if `col`, as its
+  type prints it, is `value`;
 - `(lower col)` or `(upper col)` as a key column, of a text
   column.
 
-`index-create` writes what it parsed into the index's blob,
-which the storage manager keeps and hands back, with the
-columns it reads. `describe-table` reads the blob to give both
-forms back.
+`index-create` writes what it parsed into the index's blob. The
+storage manager keeps the blob, with the columns it reads, and
+hands it back. `describe-table` reads the blob to give both forms
+back.
 
 #### `(index-wait <idx_name>)`
 1. Calls `sm_cat_index_oid` for the index and its table.
 2. Calls `sm_cat_index_wait(s, table, index)`, outside a
-   transaction, which blocks until the build has ended and
-   fails with the build's own error if it failed.
+   transaction. The call blocks until the build has ended. If
+   the build failed, the call fails with the build's own error.
 
 #### `(index-state <idx_name>)`
 1. Opens the index's table under its table-oid lock IS.
@@ -327,54 +334,71 @@ forms back.
    that is not empty and the two built in.
 
 #### `(list-namespaces)`
-1. Calls `sm_cat_list_namespaces(s, &names)`.
+1. Calls `sm_cat_list_namespaces(s, names)`.
 2. Returns the names, sorted, as an array of strings.
 
 #### `(list-tables)`
-1. Calls `sm_cat_list_tables(s, SM_NSP_PUBLIC, &names, &n)`,
+1. Calls `sm_cat_list_tables(s, SM_NSP_PUBLIC, names)`,
    which takes no lock.
 2. Returns the names, sorted, as an array of strings.
 
 #### `(describe-table <name> [:include-indices])`
 1. Opens the table under its table-oid lock IS, as a read does.
 2. Renders each live column of its `sm_table_def_t` in
-   `table-create`'s form, its typmod as the numbers after the
-   type, and with the flag each index as a struct of
-   `index-create`'s clauses, all as bracket tuples.
+   `table-create`'s form, with its typmod as the numbers after
+   the type.
+3. With `:include-indices`, also renders each index as a struct
+   of `index-create`'s clauses.
+
+All of it is rendered as bracket tuples.
 
 ### 4.4 High-Level Row DML Operations
 
-Each statement first opens its table by name: `sm_cat_table_oid`,
-then `sm_tbl_open` -- `SM_LOCKMODE_IS` to read,
-`SM_LOCKMODE_IX` to write -- which holds the table's
-table-oid lock to the end of the transaction and opens its rows
-and its indexes under it. `sm_tbl_def` gives its definition.
+Each statement first opens its table by name:
+
+1. `sm_cat_table_oid` finds the table's oid.
+2. `sm_tbl_open` opens the table: `SM_LOCKMODE_IS` to read,
+   `SM_LOCKMODE_IX` to write. It holds the table-oid lock to the
+   end of the transaction, and opens the table's rows and
+   indexes under it.
+3. `sm_tbl_def` gives the table's definition.
+
 The handle is closed when the session's next statement begins.
 
-A write is one call. sm3 writes the row and then every
-index the write changes
-([`../INDEXBUILD.md`](../INDEXBUILD.md#2-the-protocol) §2); `rel`
-names
-no index and computes no key. The call sets no savepoint, so a
-write that fails partway, on a duplicate in a unique index for
-one, has left its earlier steps done. `rel` then aborts the
-transaction, as PostgreSQL does on an error, and that undoes
-them. `SM_ERR_UPDATED`, `SM_ERR_BLOCKED` and
-`SM_ERR_SELFMODIFIED`, a row the statement already changed,
-are outcomes, not errors, and leave the transaction active.
-One limit follows:
-a `SM_ERR_BLOCKED` that struck after the row's write, on a
-later index, cannot be repeated safely, and a script that
-meets one must abort.
+**A write is one call.** sm3 writes the row, then every index the
+write changes
+([`../INDEXBUILD.md`](../INDEXBUILD.md#2-the-protocol) §2). `rel`
+names no index and computes no key.
 
-The calls below are shown by `_id`. In a table with a primary
-key, `read`, `read-latest`, `lock-row`, `update` and `delete`
-take the key's values and call the same function's
-`sm_row_key_t` overload; `scan`'s bounds are key values, and it
-calls `sm_tbl_idx_scan_rows` on the primary key, giving
-`[key row]` pairs; `(read-keys <table> [key ...])` reads many
-rows in one `sm_tbl_read_keys`
-([`../ROWSTORE.md`](../ROWSTORE.md)).
+**A failed write aborts the transaction.** The call sets no
+savepoint. So a write that fails partway, for example on a
+duplicate in a unique index, leaves its earlier steps done.
+`rel` then aborts the transaction, as PostgreSQL does on an
+error, and the abort undoes them.
+
+Three results are outcomes, not errors, and leave the
+transaction active:
+
+- `SM_ERR_UPDATED`;
+- `SM_ERR_BLOCKED`;
+- `SM_ERR_SELFMODIFIED`: a row that the statement already
+  changed.
+
+**Caution:** a `SM_ERR_BLOCKED` that came after the row's write,
+on a later index, cannot be repeated safely. A script that meets
+one must abort.
+
+**Tables with a primary key.** The calls below are shown by
+`_id`. In a table with a primary key:
+
+- `read`, `read-latest`, `lock-row`, `update` and `delete` take
+  the key's values, and call the `sm_row_key_t` overload of the
+  same function;
+- `scan`'s bounds are key values. It calls
+  `sm_tbl_idx_scan_rows` on the primary key, and gives
+  `[key row]` pairs;
+- `(read-keys <table> [key ...])` reads many rows in one
+  `sm_tbl_read_keys` ([`../ROWSTORE.md`](../ROWSTORE.md)).
 
 #### `(insert <table> <row-tuple>)`
 1. Validates that `<row-tuple>` matches column count and types.
@@ -382,9 +406,10 @@ rows in one `sm_tbl_read_keys`
    `bool isnull[]`, as PostgreSQL's `Datum` and nulls:
    - By-value types (bool, integers, floats) held in the
      Datum itself.
-   - Strings and bytea built as PostgreSQL varlenas with
-     1-byte or 4-byte header ([`sm2/VARLENA.md`](../sm2/VARLENA.md)), the Datum
-     pointing at them.
+   - Strings and bytea are built as PostgreSQL varlenas, with a
+     1-byte or 4-byte header
+     ([`sm2/VARLENA.md`](../sm2/VARLENA.md)). The Datum points at
+     them.
    - Any other type parsed from its canonical text by
      `sm_type_in`.
 3. Calls `sm_tbl_insert(tbl, values, isnull, n, &id)`.
@@ -398,7 +423,7 @@ rows in one `sm_tbl_read_keys`
 2. If return is 1, returns `nil` ("no row").
 3. Calls `sm_tbl_deform(tbl, tuple, len, values, isnull,
    ncols)`.
-4. Decodes each value into a `rel-lisp` value:
+4. Decodes each value into a Janet value:
    - Integers and floats to numbers.
    - Varlenas decoded to strings.
    - Any other type to its canonical text, via `sm_type_out`;
@@ -419,19 +444,20 @@ rows in one `sm_tbl_read_keys`
 
 #### `(update <table> <id> <new-row-tuple>)`
 1. Converts `<new-row-tuple>` into `values[]` and `isnull[]`.
-2. Calls `sm_tbl_update(tbl, id, values, isnull, n,
+2. Calls `sm_tbl_update(tbl, id, values, isnull, n, &ref,
    &old_tuple, &old_len)`.
-3. If it fails, aborts the transaction, except on
-   `SM_ERR_UPDATED`, which keeps the row lock for the
-   `read-latest` that must come before the write is repeated,
-   and on `SM_ERR_BLOCKED`.
+3. If it fails, aborts the transaction. There are two
+   exceptions:
+   - `SM_ERR_UPDATED` keeps the row lock. The script must call
+     `read-latest` before it repeats the write.
+   - `SM_ERR_BLOCKED` leaves the transaction active.
 4. Calls `sm_tbl_deform` on `old_tuple` to recover the old
    values.
 5. Returns decoded old tuple vector.
 
 #### `(delete <table> <id>)`
-1. Calls `sm_tbl_delete(tbl, id, &old_tuple, &old_len)`,
-   and on failure does as `update`.
+1. Calls `sm_tbl_delete(tbl, id, &ref, &old_tuple, &old_len)`.
+   On failure, it does as `update` does.
 2. Calls `sm_tbl_deform` on `old_tuple`.
 3. Returns decoded deleted tuple vector.
 
@@ -464,8 +490,8 @@ rows in one `sm_tbl_read_keys`
 
 ### 4.5 Low-Level Direct `sm_` Builtins
 
-For verifying error conditions directly, `rel` exposes the
-calling thread's error state as unadorned `sm:` primitives:
+To check error conditions directly, `rel` exposes the calling
+thread's error state as plain `sm:` primitives:
 
 | Builtin | `sm.h` Equivalent |
 | --- | --- |
@@ -483,28 +509,30 @@ Stores, row rels and indexes are reached only through tables.
 
 ## 5. Multi-Session Concurrency and Test Harness
 
-`rel` runs one session at a time, on one thread, so a step
-that would wait for another session's lock would hang the
-script. `(qa-nowait true)` makes such a step fail with
-`ERR_BLOCKED` instead, the transaction left active, and the
-script repeats the step once the other session has let go
-([`../LOCKMGR.md`](../LOCKMGR.md#32-the-lock-table) §3.2). That
-is how a script says "this
-step blocks", with no thread and no sleep. A session polling
-this way is never a deadlock victim, so deadlocks are tested
-in C++ instead. `test/test_blocking.rel` and
-`test/test_recheck.rel` are written this way; the second runs
-the worked examples of
-[`../LSMINDEX.md`](../LSMINDEX.md#77-read-committed) §7.7 step
+MVCC, SSI and Cahill's pivot detection exist to prevent
+concurrency anomalies. To test them, a script interleaves the
+operations of several concurrent sessions.
+
+**Blocking without threads.** `rel` runs one session at a time,
+on one thread. So a step that waits for another session's lock
+would hang the script. Instead:
+
+1. `(qa-nowait true)` makes such a step fail with `ERR_BLOCKED`,
+   and leaves the transaction active
+   ([`../LOCKMGR.md`](../LOCKMGR.md#32-the-lock-table) §3.2).
+2. The script switches to the other session, which lets go of
+   the lock.
+3. The script repeats the step.
+
+That is how a script says "this step blocks", with no thread and
+no sleep. A session that polls this way is never a deadlock
+victim, so deadlocks are tested in C++ instead.
+`test/test_blocking.rel` and `test/test_recheck.rel` are written
+this way. The second runs the worked examples of
+[`../LSMINDEX.md`](../LSMINDEX.md#77-read-committed) §7.7, step
 for step.
 
-
-Concurrency anomalies and isolation verification are the entire
-reason `wisr` implements MVCC, SSI, and Cahill pivot detection.
-Testing these requires interleaving operations from multiple
-concurrent sessions.
-
-`rel` supports first-class session switching:
+`rel` switches between sessions by name:
 
 ```lisp
 # Open two concurrent sessions on 'testdb'
@@ -537,14 +565,14 @@ concurrent sessions.
 
 ### 5.1 Test Assertions
 
-`rel` includes testing primitives that fail the test run with
-detailed diagnostics when an invariant is violated:
+`rel` has test primitives. When an invariant does not hold, they
+fail the test run with detailed diagnostics:
 
-- `(assert-eq <actual> <expected>)`: Value equality check.
-- `(assert-nil <expr>)`: Verifies expression evaluates to `nil`.
-- `(assert-count <n> <list>)`: Verifies row count.
-- `(assert-err <code> <expr>)`: Verifies `expr` fails with
-  the error `code`, as `:err-dupkey`.
+- `(assert-eq <actual> <expected>)`: the two values are equal.
+- `(assert-nil <expr>)`: the expression evaluates to `nil`.
+- `(assert-count <n> <list>)`: the list has `n` rows.
+- `(assert-err <code> <expr>)`: `expr` fails with the error
+  `code`, such as `:err-dupkey`.
 
 Any failure can also be caught with Janet's `try`, and its
 code read with `(sm:errname)`, as in the example above.
@@ -553,9 +581,8 @@ code read with `(sm:errname)`, as in the example above.
 
 ## 6. Architecture of the `rel` Interpreter
 
-`rel` is implemented in standard C++20, linked with
-`build/libsm.a` and with `libjanet`, its one dependency beyond
-the stack's own.
+`rel` is written in standard C++20. It links `build/libsm.a`,
+and `libjanet`, its one dependency outside the stack.
 
 ```
 +-------------------------------------------------------------+
@@ -581,7 +608,7 @@ the stack's own.
 
 ### 6.1 Component Structure
 
-Reading, parsing and evaluating are Janet's; `rel` adds its
+Janet reads, parses and evaluates the script. `rel` adds its
 builtins (`rel/src/`):
 
 1. **Builtins (`rel_ops.cc`):**
@@ -599,21 +626,24 @@ builtins (`rel/src/`):
      them, each with its `sm_tbl_t*`, until the session's
      next statement.
 4. **Driver Main (`main.cc`):**
-   - Supports interactive REPL mode when launched without args.
-   - Executes script files when passed a path:
-     `rel <script.rel>`, or one expression with `rel -e`.
-   - Exits with 0 on test success, non-zero on assertion failure.
+   - Without arguments, runs an interactive REPL.
+   - With a path, runs a script file: `rel <script.rel>`. With
+     `rel -e`, runs one expression.
+   - Exits with 0 when the tests pass, and with a non-zero code
+     when an assertion fails.
 
 ---
 
 ## 7. Example Script: Complete Test Walkthrough
 
-Here is what an end-to-end test script in `rel` looks like:
+This is a complete test script in `rel`. Its home is under
+`bench/build`, not `/tmp`
+([`../../CLAUDE.md`](../../CLAUDE.md)):
 
 ```lisp
 # test_isolation.rel -- verify repeatable-read snapshot isolation
-(env-init "/tmp/wisr_rel_test")
-(env-attach "/tmp/wisr_rel_test")
+(env-init "bench/build/rel_test")
+(env-attach "bench/build/rel_test")
 (db-create "testdb" {:durability-sync 0})
 
 (session-open s1 "testdb")
