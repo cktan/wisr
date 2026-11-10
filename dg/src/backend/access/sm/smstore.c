@@ -664,7 +664,7 @@ static sm_session_t *xact_session(void) {
     savepoints_begin(s);
     return s;
   }
-  if (sm_begin(s, xact_level(), XactReadOnly) != 0)
+  if (sm_begin(s, xact_level(), tcb->guc.XactReadOnly) != 0)
     sm_error("begin a transaction");
   sm_xact_open = true;
   statement_pending = true;

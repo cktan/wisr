@@ -46,6 +46,7 @@
 #include "utils/tuplesort.h"
 #include "utils/typcache.h"
 #include "utils/xml.h"
+#include "utils/control_block.h"
 
 /* Hook for plugins to get control in ExplainOneQuery() */
 
@@ -3183,7 +3184,7 @@ static void show_buffer_usage(ExplainState *es, const BufferUsage *usage) {
     ExplainPropertyInteger("Temp Read Blocks", NULL, usage->temp_blks_read, es);
     ExplainPropertyInteger("Temp Written Blocks", NULL,
                            usage->temp_blks_written, es);
-    if (track_io_timing) {
+    if (tcb->guc.track_io_timing) {
       ExplainPropertyFloat("Shared I/O Read Time", "ms",
                            INSTR_TIME_GET_MILLISEC(usage->shared_blk_read_time),
                            3, es);

@@ -45,9 +45,9 @@
 #include "storage/fd.h"
 #include "utils/resowner.h"
 #include "utils/wait_event.h"
+#include "utils/control_block.h"
 
 /* GUC: time temporary file I/O, for EXPLAIN (BUFFERS) and statistics. */
-thread_local /*LOCAL*/ bool track_io_timing = false;
 
 /*
  * We break BufFiles into gigabyte-sized segments, regardless of RELSEG_SIZE.
@@ -220,7 +220,7 @@ static void BufFileLoadBuffer(BufFile *file) {
 
   thisfile = file->files[file->curFile];
 
-  if (track_io_timing)
+  if (tcb->guc.track_io_timing)
     INSTR_TIME_SET_CURRENT(io_start);
   else
     INSTR_TIME_SET_ZERO(io_start);
@@ -238,7 +238,7 @@ static void BufFileLoadBuffer(BufFile *file) {
              errmsg("could not read file \"%s\": %m", FilePathName(thisfile))));
   }
 
-  if (track_io_timing) {
+  if (tcb->guc.track_io_timing) {
     INSTR_TIME_SET_CURRENT(io_time);
     INSTR_TIME_ACCUM_DIFF(pgBufferUsage.temp_blk_read_time, io_time, io_start);
   }
@@ -291,7 +291,7 @@ static void BufFileDumpBuffer(BufFile *file) {
 
     thisfile = file->files[file->curFile];
 
-    if (track_io_timing)
+    if (tcb->guc.track_io_timing)
       INSTR_TIME_SET_CURRENT(io_start);
     else
       INSTR_TIME_SET_ZERO(io_start);
@@ -303,7 +303,7 @@ static void BufFileDumpBuffer(BufFile *file) {
                       errmsg("could not write to file \"%s\": %m",
                              FilePathName(thisfile))));
 
-    if (track_io_timing) {
+    if (tcb->guc.track_io_timing) {
       INSTR_TIME_SET_CURRENT(io_time);
       INSTR_TIME_ACCUM_DIFF(pgBufferUsage.temp_blk_write_time, io_time,
                             io_start);

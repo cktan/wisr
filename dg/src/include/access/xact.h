@@ -37,8 +37,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int XactIsoLevel;
 #define IsolationUsesXactSnapshot() (XactIsoLevel >= XACT_REPEATABLE_READ)
 
 /* Xact read-only state */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool DefaultXactReadOnly;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool XactReadOnly;
 
 /* flag for logging statements in this transaction */
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool xact_is_sampled;
@@ -47,7 +45,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool xact_is_sampled;
  * Xact is deferrable -- only meaningful (currently) for read only
  * SERIALIZABLE transactions
  */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool DefaultXactDeferrable;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool XactDeferrable;
 
 /*

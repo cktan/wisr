@@ -472,6 +472,11 @@ typedef struct tcb_guc_t {
   bool log_parser_stats = false;               /* guc_tables.c */
   bool log_planner_stats = false;              /* guc_tables.c */
   bool log_executor_stats = false;             /* guc_tables.c */
+  bool track_io_timing = false;                /* buffile.c */
+  bool update_process_title = true;            /* ps_status.c */
+  bool DefaultXactReadOnly = false;            /* xact.c */
+  bool XactReadOnly;                           /* xact.c */
+  bool DefaultXactDeferrable = false;          /* xact.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

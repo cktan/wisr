@@ -479,7 +479,7 @@ void assign_timezone_abbreviations(const char *newval, void *extra) {
  * RecoveryInProgress() in contexts where shared memory is not accessible.
  */
 bool check_transaction_read_only(bool *newval, void **extra, GucSource source) {
-  if (*newval == false && XactReadOnly && IsTransactionState()) {
+  if (*newval == false && tcb->guc.XactReadOnly && IsTransactionState()) {
     /* Can't go to r/w mode inside a r/o transaction */
     if (IsSubTransaction()) {
       GUC_check_errcode(ERRCODE_ACTIVE_SQL_TRANSACTION);

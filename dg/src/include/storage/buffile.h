@@ -37,7 +37,6 @@ typedef struct BufFile BufFile;
  */
 
 /* Whether a temporary file's reads and writes are timed. */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool track_io_timing;
 
 extern BufFile *BufFileCreateTemp(bool interXact);
 extern void BufFileClose(BufFile *file);

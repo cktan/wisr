@@ -56,10 +56,6 @@
 thread_local /*LOCAL*/ int DefaultXactIsoLevel = XACT_READ_COMMITTED;
 thread_local /*LOCAL*/ int XactIsoLevel = XACT_READ_COMMITTED;
 
-thread_local /*LOCAL*/ bool DefaultXactReadOnly = false;
-thread_local /*LOCAL*/ bool XactReadOnly;
-
-thread_local /*LOCAL*/ bool DefaultXactDeferrable = false;
 thread_local /*LOCAL*/ bool XactDeferrable;
 
 /*
@@ -721,8 +717,8 @@ static void StartTransaction(void) {
   /*
    * Make sure we've reset xact state variables
    */
-  XactReadOnly = DefaultXactReadOnly;
-  XactDeferrable = DefaultXactDeferrable;
+  tcb->guc.XactReadOnly = tcb->guc.DefaultXactReadOnly;
+  XactDeferrable = tcb->guc.DefaultXactDeferrable;
   XactIsoLevel = DefaultXactIsoLevel;
   MyXactFlags = 0;
 
@@ -1164,14 +1160,14 @@ void StartTransactionCommand(void) {
  */
 void SaveTransactionCharacteristics(SavedTransactionCharacteristics *s) {
   s->save_XactIsoLevel = XactIsoLevel;
-  s->save_XactReadOnly = XactReadOnly;
+  s->save_XactReadOnly = tcb->guc.XactReadOnly;
   s->save_XactDeferrable = XactDeferrable;
 }
 
 void RestoreTransactionCharacteristics(
     const SavedTransactionCharacteristics *s) {
   XactIsoLevel = s->save_XactIsoLevel;
-  XactReadOnly = s->save_XactReadOnly;
+  tcb->guc.XactReadOnly = s->save_XactReadOnly;
   XactDeferrable = s->save_XactDeferrable;
 }
 
@@ -2572,7 +2568,7 @@ static void CommitSubTransaction(void) {
    * upper is read-write while the child is read-only; GUC will incorrectly
    * think it should leave the child state in place.
    */
-  XactReadOnly = s->prevXactReadOnly;
+  tcb->guc.XactReadOnly = s->prevXactReadOnly;
 
   CurrentResourceOwner = s->parent->curTransactionOwner;
   CurTransactionResourceOwner = s->parent->curTransactionOwner;
@@ -2665,7 +2661,7 @@ static void AbortSubTransaction(void) {
    * redundant with GUC's cleanup but we may as well do it for consistency
    * with the commit case.
    */
-  XactReadOnly = s->prevXactReadOnly;
+  tcb->guc.XactReadOnly = s->prevXactReadOnly;
 
   RESUME_INTERRUPTS();
 }
@@ -2742,7 +2738,7 @@ static void PushTransaction(void) {
   s->state = TRANS_DEFAULT;
   s->blockState = TBLOCK_SUBBEGIN;
   GetUserIdAndSecContext(&s->prevUser, &s->prevSecContext);
-  s->prevXactReadOnly = XactReadOnly;
+  s->prevXactReadOnly = tcb->guc.XactReadOnly;
 
   CurrentTransactionState = s;
 

@@ -60,6 +60,7 @@
 #include "utils/guc.h"
 #include "utils/hooks.h"
 #include "utils/lsyscache.h"
+#include "utils/control_block.h"
 
 /* Hook for plugins to get control in ProcessUtility() */
 
@@ -353,7 +354,7 @@ static int ClassifyUtilityCommandAsReadOnly(Node *parsetree) {
  * some callers have checked XactReadOnly for themselves.
  */
 void PreventCommandIfReadOnly(const char *cmdname) {
-  if (XactReadOnly)
+  if (tcb->guc.XactReadOnly)
     ereport(ERROR,
             (errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
              /* translator: %s is name of a SQL command, eg CREATE */
@@ -469,7 +470,8 @@ void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 
   /* Prohibit read/write commands in read-only states. */
   readonly_flags = ClassifyUtilityCommandAsReadOnly(parsetree);
-  if (readonly_flags != COMMAND_IS_STRICTLY_READ_ONLY && XactReadOnly) {
+  if (readonly_flags != COMMAND_IS_STRICTLY_READ_ONLY &&
+      tcb->guc.XactReadOnly) {
     CommandTag commandtag = CreateCommandTag(parsetree);
 
     if ((readonly_flags & COMMAND_OK_IN_READ_ONLY_TXN) == 0)
