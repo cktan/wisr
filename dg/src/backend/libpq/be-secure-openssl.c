@@ -157,15 +157,16 @@ int be_tls_init(bool isServerStart) {
   /*
    * Load and verify server's certificate and private key
    */
-  if (SSL_CTX_use_certificate_chain_file(context, ssl_cert_file) != 1) {
+  if (SSL_CTX_use_certificate_chain_file(context,
+                                         pcb->ssl_cert_file.c_str()) != 1) {
     ereport(isServerStart ? FATAL : LOG,
             (errcode(ERRCODE_CONFIG_FILE_ERROR),
              errmsg("could not load server certificate file \"%s\": %s",
-                    ssl_cert_file, SSLerrmessage(ERR_get_error()))));
+                    pcb->ssl_cert_file.c_str(), SSLerrmessage(ERR_get_error()))));
     goto error;
   }
 
-  if (!check_ssl_key_file_permissions(ssl_key_file, isServerStart))
+  if (!check_ssl_key_file_permissions(pcb->ssl_key_file.c_str(), isServerStart))
     goto error;
 
   /*
@@ -173,19 +174,20 @@ int be_tls_init(bool isServerStart) {
    */
   dummy_ssl_passwd_cb_called = false;
 
-  if (SSL_CTX_use_PrivateKey_file(context, ssl_key_file, SSL_FILETYPE_PEM) !=
+  if (SSL_CTX_use_PrivateKey_file(context, pcb->ssl_key_file.c_str(),
+                                  SSL_FILETYPE_PEM) !=
       1) {
     if (dummy_ssl_passwd_cb_called)
       ereport(isServerStart ? FATAL : LOG,
               (errcode(ERRCODE_CONFIG_FILE_ERROR),
                errmsg("private key file \"%s\" cannot be reloaded because it "
                       "requires a passphrase",
-                      ssl_key_file)));
+                      pcb->ssl_key_file.c_str())));
     else
       ereport(isServerStart ? FATAL : LOG,
               (errcode(ERRCODE_CONFIG_FILE_ERROR),
                errmsg("could not load private key file \"%s\": %s",
-                      ssl_key_file, SSLerrmessage(ERR_get_error()))));
+                      pcb->ssl_key_file.c_str(), SSLerrmessage(ERR_get_error()))));
     goto error;
   }
 

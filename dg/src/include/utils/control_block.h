@@ -249,6 +249,19 @@ typedef struct pcb_t {
   int Log_RotationSize = 0;              /* logfile.c, kB */
   bool Log_truncate_on_rotation = false; /* logfile.c */
 
+  /*
+   * -- the postmaster's own reloadable settings (PGC_SIGHUP) --
+   * The main thread alone reads these, so they need no guard even though a
+   * reload writes them: publish_postmaster_reload_settings() (guc_tables.c)
+   * copies them from the GUC variables at start and on each reload. The file
+   * in each comment is where the variable was defined.
+   */
+  bool EnableSSL = false;            /* postmaster.c, GUC "ssl" */
+  bool send_abort_for_crash = false; /* postmaster.c */
+  bool send_abort_for_kill = false;  /* postmaster.c */
+  std::string ssl_cert_file;         /* be-secure.c */
+  std::string ssl_key_file;          /* be-secure.c */
+
   /* -- how the process runs -- */
   /*
    * globals.c: true in the postmaster and its sessions; false in a

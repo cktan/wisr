@@ -421,6 +421,35 @@ static thread_local /*LOCAL*/ int AuthenticationTimeout = 60;
 /* elog.c: syslog_sequence_numbers and syslog_split_messages; shmem->syslog */
 static thread_local /*LOCAL*/ bool syslog_sequence_numbers = true;
 static thread_local /*LOCAL*/ bool syslog_split_messages = true;
+/*
+ * The postmaster's own reloadable settings: only the main thread reads them,
+ * from pcb (publish_postmaster_reload_settings()), not from these variables.
+ */
+static thread_local /*LOCAL*/ bool EnableSSL = false;
+static thread_local /*LOCAL*/ bool send_abort_for_crash = false;
+static thread_local /*LOCAL*/ bool send_abort_for_kill = false;
+static thread_local /*LOCAL*/ char *ssl_cert_file;
+static thread_local /*LOCAL*/ char *ssl_key_file;
+
+/* A string setting as a std::string, "" if it has no value. */
+static std::string setting_string(const char *value) {
+  return value ? value : "";
+}
+
+/*
+ * Copy the postmaster's reloadable settings into the process control block.
+ * Only the main thread reads them, so a write on a reload races with no
+ * reader. publish_shared_settings() calls this at start and on each reload.
+ */
+static void publish_postmaster_reload_settings(void) {
+  pcb_t *b = pcb_main();
+
+  b->EnableSSL = EnableSSL;
+  b->send_abort_for_crash = send_abort_for_crash;
+  b->send_abort_for_kill = send_abort_for_kill;
+  b->ssl_cert_file = setting_string(ssl_cert_file);
+  b->ssl_key_file = setting_string(ssl_key_file);
+}
 
 /*
  * Copy the settings that change on a reload and that every thread reads into
@@ -428,6 +457,9 @@ static thread_local /*LOCAL*/ bool syslog_split_messages = true;
  * and after each reload; the other threads read the copy, never the variable.
  */
 void publish_shared_settings(void) {
+  /* The main thread's own reloadable settings go to pcb, for it alone. */
+  publish_postmaster_reload_settings();
+
   /* Each is independent of the others, so no order is needed between them. */
   shmem->log_hostname.store(log_hostname, std::memory_order_relaxed);
   shmem->authentication_timeout.store(AuthenticationTimeout,

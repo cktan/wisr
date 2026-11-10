@@ -101,10 +101,8 @@ extern ssize_t secure_raw_write(Port *port, const void *ptr, size_t len);
  * declarations for variables defined in be-secure.c
  */
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *ssl_ca_file;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *ssl_cert_file;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *ssl_crl_file;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *ssl_crl_dir;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *ssl_key_file;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int ssl_min_protocol_version;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int ssl_max_protocol_version;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *ssl_passphrase_command;

@@ -196,7 +196,6 @@ static inline bool btmask_contains(BackendTypeMask mask, BackendType t) {
 #define MAXLISTEN	64
 
 /* still more option variables */
-thread_local /*LOCAL*/ bool EnableSSL = false;
 
 thread_local /*LOCAL*/ int PreAuthDelay = 0;
 
@@ -206,8 +205,6 @@ thread_local /*LOCAL*/ int PreAuthDelay = 0;
  * file are written on the assumption that we do -- but developers might
  * prefer to use SIGABRT to collect per-child core dumps.
  */
-thread_local /*LOCAL*/ bool send_abort_for_crash = false;
-thread_local /*LOCAL*/ bool send_abort_for_kill = false;
 
 /* special child processes; NULL when not running */
 
@@ -770,7 +767,7 @@ void PostmasterMain(int argc, char *argv[]) {
    * Initialize SSL library, if specified.
    */
 #ifdef USE_SSL
-  if (EnableSSL)
+  if (pcb->EnableSSL)
     (void)secure_initialize(true);
 #endif
 
@@ -1286,8 +1283,8 @@ static int ServerLoop(void) {
       ereport(LOG,
               /* translator: %s is SIGKILL or SIGABRT */
               (errmsg("issuing %s to recalcitrant children",
-                      send_abort_for_kill ? "SIGABRT" : "SIGKILL")));
-      TerminateChildren(send_abort_for_kill ? SIGABRT : SIGKILL);
+                      pcb->send_abort_for_kill ? "SIGABRT" : "SIGKILL")));
+      TerminateChildren(pcb->send_abort_for_kill ? SIGABRT : SIGKILL);
       /* reset flag so we don't SIGKILL again */
       pms().AbortStartTime = 0;
 
@@ -1448,7 +1445,7 @@ static void process_pm_reload_request(void) {
 
 #ifdef USE_SSL
     /* Reload SSL configuration as well */
-    if (EnableSSL) {
+    if (pcb->EnableSSL) {
       if (secure_initialize(false) != 0)
         ereport(LOG, (errmsg("SSL configuration was not reloaded")));
     } else
@@ -1693,7 +1690,7 @@ static void HandleFatalError(QuitSignalReason reason, bool consider_sigabrt) {
 
   SetQuitSignalReason(reason);
 
-  if (consider_sigabrt && send_abort_for_crash)
+  if (consider_sigabrt && pcb->send_abort_for_crash)
     sigtosend = SIGABRT;
   else
     sigtosend = SIGQUIT;

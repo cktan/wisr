@@ -44,11 +44,8 @@ typedef struct {
 } PMChild;
 
 /* GUC options */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool EnableSSL;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool ClientAuthInProgress;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int PreAuthDelay;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_crash;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_kill;
 
 pg_noreturn extern void PostmasterMain(int argc, char *argv[]);
 extern void InitProcessGlobals(void);
