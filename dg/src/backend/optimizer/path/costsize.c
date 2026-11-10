@@ -107,6 +107,7 @@
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
 #include "utils/tuplesort.h"
+#include "utils/control_block.h"
 
 #define LOG2(x)  (log(x) / 0.693147180559945)
 
@@ -138,11 +139,6 @@ thread_local /*LOCAL*/ int effective_cache_size = DEFAULT_EFFECTIVE_CACHE_SIZE;
 
 thread_local /*LOCAL*/ Cost disable_cost = 1.0e10;
 
-thread_local /*LOCAL*/ bool enable_seqscan = true;
-thread_local /*LOCAL*/ bool enable_indexscan = true;
-thread_local /*LOCAL*/ bool enable_indexonlyscan = true;
-thread_local /*LOCAL*/ bool enable_bitmapscan = true;
-thread_local /*LOCAL*/ bool enable_tidscan = true;
 thread_local /*LOCAL*/ bool enable_sort = true;
 thread_local /*LOCAL*/ bool enable_incremental_sort = true;
 thread_local /*LOCAL*/ bool enable_hashagg = true;
@@ -307,7 +303,7 @@ void cost_seqscan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
   startup_cost += path->pathtarget->cost.startup;
   cpu_run_cost += path->pathtarget->cost.per_tuple * path->rows;
 
-  path->disabled_nodes = enable_seqscan ? 0 : 1;
+  path->disabled_nodes = tcb->guc.enable_seqscan ? 0 : 1;
   path->startup_cost = startup_cost;
   path->total_cost = startup_cost + cpu_run_cost + disk_run_cost;
 }
@@ -447,7 +443,7 @@ void cost_index(IndexPath *path, PlannerInfo *root, double loop_count) {
   }
 
   /* we don't need to check enable_indexonlyscan; indxpath.c does that */
-  path->path.disabled_nodes = enable_indexscan ? 0 : 1;
+  path->path.disabled_nodes = tcb->guc.enable_indexscan ? 0 : 1;
 
   /*
    * Call index-access-method-specific code to estimate the processing cost
@@ -839,7 +835,7 @@ void cost_bitmap_heap_scan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
   startup_cost += path->pathtarget->cost.startup;
   run_cost += path->pathtarget->cost.per_tuple * path->rows;
 
-  path->disabled_nodes = enable_bitmapscan ? 0 : 1;
+  path->disabled_nodes = tcb->guc.enable_bitmapscan ? 0 : 1;
   path->startup_cost = startup_cost;
   path->total_cost = startup_cost + run_cost;
 }
@@ -1002,7 +998,7 @@ void cost_tidscan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
      * should be generating a TID scan only if enable_tidscan=true. Also,
      * if CurrentOfExpr is the qual, there should be only one.
      */
-    Assert(enable_tidscan || IsA(qual, CurrentOfExpr));
+    Assert(tcb->guc.enable_tidscan || IsA(qual, CurrentOfExpr));
     Assert(list_length(tidquals) == 1 || !IsA(qual, CurrentOfExpr));
 
     if (IsA(qual, ScalarArrayOpExpr)) {

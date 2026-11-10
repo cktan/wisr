@@ -441,6 +441,11 @@ typedef struct tcb_guc_t {
   bool quote_all_identifiers = false; /* ruleutils.c */
   bool check_function_bodies = true;  /* pg_proc.c */
   bool Debug_pretty_print = true;     /* guc_tables.c */
+  bool enable_seqscan = true;         /* costsize.c */
+  bool enable_indexscan = true;       /* costsize.c */
+  bool enable_indexonlyscan = true;   /* costsize.c */
+  bool enable_bitmapscan = true;      /* costsize.c */
+  bool enable_tidscan = true;         /* costsize.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

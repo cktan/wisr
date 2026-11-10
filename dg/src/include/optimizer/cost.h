@@ -45,11 +45,6 @@ typedef enum {
 
 /* parameter variables and flags (see also optimizer.h) */
 extern thread_local /*LOCAL*/ PGDLLIMPORT Cost disable_cost;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_seqscan;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_indexscan;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_indexonlyscan;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_bitmapscan;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_tidscan;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_sort;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_incremental_sort;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_hashagg;

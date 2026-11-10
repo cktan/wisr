@@ -63,6 +63,7 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/selfuncs.h"
+#include "utils/control_block.h"
 
 /* GUC parameters */
 thread_local /*LOCAL*/ double cursor_tuple_fraction =
@@ -5791,7 +5792,7 @@ bool plan_cluster_use_sort(Oid tableOid, Oid indexOid) {
   ListCell *lc;
 
   /* We can short-circuit the cost comparison if indexscans are disabled */
-  if (!enable_indexscan)
+  if (!tcb->guc.enable_indexscan)
     return true; /* use sort */
 
   /* Set up mostly-dummy planner state */
