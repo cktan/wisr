@@ -4083,7 +4083,7 @@ static void create_one_window_path(PlannerInfo *root, RelOptInfo *window_rel,
        * No presorted keys or incremental sort disabled, just perform a
        * complete sort.
        */
-      if (presorted_keys == 0 || !enable_incremental_sort)
+      if (presorted_keys == 0 || !tcb->guc.enable_incremental_sort)
         path = (Path *)create_sort_path(root, window_rel, path, window_pathkeys,
                                         -1.0);
       else {
@@ -4357,7 +4357,7 @@ static RelOptInfo *create_final_distinct_paths(PlannerInfo *root,
    */
   if (distinct_rel->pathlist == NIL)
     allow_hash = true; /* we have no alternatives */
-  else if (parse->hasDistinctOn || !enable_hashagg)
+  else if (parse->hasDistinctOn || !tcb->guc.enable_hashagg)
     allow_hash = false; /* policy-based decision not to hash */
   else
     allow_hash = true; /* default */
@@ -4427,7 +4427,7 @@ static List *get_useful_pathkeys_for_distinct(PlannerInfo *root,
    * incremental sort.
    */
   if (list_length(useful_pathkeys) < list_length(needed_pathkeys) &&
-      !enable_incremental_sort)
+      !tcb->guc.enable_incremental_sort)
     return useful_pathkeys_list;
 
   /* Append the remaining PathKey nodes in needed_pathkeys */
@@ -4498,7 +4498,7 @@ static RelOptInfo *create_ordered_paths(PlannerInfo *root,
        * input path).
        */
       if (input_path != cheapest_input_path &&
-          (presorted_keys == 0 || !enable_incremental_sort))
+          (presorted_keys == 0 || !tcb->guc.enable_incremental_sort))
         continue;
 
       /*
@@ -4506,7 +4506,7 @@ static RelOptInfo *create_ordered_paths(PlannerInfo *root,
        * We'll just do a sort if there are no presorted keys and an
        * incremental sort when there are presorted keys.
        */
-      if (presorted_keys == 0 || !enable_incremental_sort)
+      if (presorted_keys == 0 || !tcb->guc.enable_incremental_sort)
         sorted_path = (Path *)create_sort_path(
             root, ordered_rel, input_path, root->sort_pathkeys, limit_tuples);
       else
@@ -6228,7 +6228,7 @@ static Path *make_ordered_path(PlannerInfo *root, RelOptInfo *rel, Path *path,
      * disabled unless it's the cheapest input path).
      */
     if (path != cheapest_path &&
-        (presorted_keys == 0 || !enable_incremental_sort))
+        (presorted_keys == 0 || !tcb->guc.enable_incremental_sort))
       return NULL;
 
     /*
@@ -6236,7 +6236,7 @@ static Path *make_ordered_path(PlannerInfo *root, RelOptInfo *rel, Path *path,
      * just do a sort if there are no presorted keys and an incremental
      * sort when there are presorted keys.
      */
-    if (presorted_keys == 0 || !enable_incremental_sort)
+    if (presorted_keys == 0 || !tcb->guc.enable_incremental_sort)
       path = (Path *)create_sort_path(root, rel, path, pathkeys, limit_tuples);
     else
       path = (Path *)create_incremental_sort_path(root, rel, path, pathkeys,

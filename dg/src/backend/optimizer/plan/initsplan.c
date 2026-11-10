@@ -35,6 +35,7 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/typcache.h"
+#include "utils/control_block.h"
 
 /* These parameters are set by GUC */
 thread_local /*LOCAL*/ int from_collapse_limit;
@@ -1890,7 +1891,7 @@ static void compute_semijoin_info(PlannerInfo *root, SpecialJoinInfo *sjinfo,
   semi_operators = NIL;
   semi_rhs_exprs = NIL;
   all_btree = true;
-  all_hash = enable_hashagg; /* don't consider hash if not enabled */
+  all_hash = tcb->guc.enable_hashagg; /* don't consider hash if not enabled */
   foreach (lc, clause) {
     OpExpr *op = (OpExpr *)lfirst(lc);
     Oid opno;

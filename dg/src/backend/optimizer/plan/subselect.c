@@ -40,6 +40,7 @@
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
+#include "utils/control_block.h"
 
 typedef struct convert_testexpr_context {
   PlannerInfo *root;
@@ -482,7 +483,7 @@ static Node *build_subplan(PlannerInfo *root, Plan *plan, Path *path,
      * is false, then the user does not want us to materialize anything
      * unnecessarily, so we don't.
      */
-    else if (splan->parParam == NIL && enable_material &&
+    else if (splan->parParam == NIL && tcb->guc.enable_material &&
              !ExecMaterializesOutput(nodeTag(plan)))
       plan = materialize_finished_plan(plan);
 

@@ -31,6 +31,7 @@
 #include "utils/hooks.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
+#include "utils/control_block.h"
 
 /* Hook for plugins to get control in add_paths_to_joinrel() */
 
@@ -593,7 +594,7 @@ static Path *get_memoize_path(PlannerInfo *root, RelOptInfo *innerrel,
   List *ph_lateral_vars;
 
   /* Obviously not if it's disabled */
-  if (!enable_memoize)
+  if (!tcb->guc.enable_memoize)
     return NULL;
 
   /*
@@ -1360,7 +1361,7 @@ static void match_unsorted_outer(PlannerInfo *root, RelOptInfo *joinrel,
      * enable_material is off or the path in question materializes its
      * output anyway.
      */
-    if (enable_material && inner_cheapest_total != NULL &&
+    if (tcb->guc.enable_material && inner_cheapest_total != NULL &&
         !ExecMaterializesOutput(inner_cheapest_total->pathtype))
       matpath = (Path *)create_material_path(innerrel, inner_cheapest_total);
   }

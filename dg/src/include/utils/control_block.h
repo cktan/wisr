@@ -446,6 +446,11 @@ typedef struct tcb_guc_t {
   bool enable_indexonlyscan = true;   /* costsize.c */
   bool enable_bitmapscan = true;      /* costsize.c */
   bool enable_tidscan = true;         /* costsize.c */
+  bool enable_sort = true;            /* costsize.c */
+  bool enable_incremental_sort = true; /* costsize.c */
+  bool enable_hashagg = true;          /* costsize.c */
+  bool enable_material = true;         /* costsize.c */
+  bool enable_memoize = true;          /* costsize.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

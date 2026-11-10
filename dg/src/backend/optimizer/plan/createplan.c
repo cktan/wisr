@@ -45,6 +45,7 @@
 #include "partitioning/partprune.h"
 #include "tcop/tcopprot.h"
 #include "utils/lsyscache.h"
+#include "utils/control_block.h"
 
 /*
  * Flag bits that can appear in the flags argument of create_plan_recurse().
@@ -3924,7 +3925,8 @@ static MergeJoin *create_mergejoin_plan(PlannerInfo *root,
      * We choose to use incremental sort if it is enabled and there are
      * presorted keys; otherwise we use full sort.
      */
-    if (enable_incremental_sort && best_path->outer_presorted_keys > 0) {
+    if (tcb->guc.enable_incremental_sort &&
+        best_path->outer_presorted_keys > 0) {
       sort_plan = (Plan *)make_incrementalsort_from_pathkeys(
           outer_plan, best_path->outersortkeys, outer_relids,
           best_path->outer_presorted_keys);
@@ -5254,7 +5256,8 @@ static Sort *make_sort(Plan *lefttree, int numCols, AttrNumber *sortColIdx,
 
   plan = &node->plan;
   plan->targetlist = lefttree->targetlist;
-  plan->disabled_nodes = lefttree->disabled_nodes + (enable_sort == false);
+  plan->disabled_nodes =
+      lefttree->disabled_nodes + (tcb->guc.enable_sort == false);
   plan->qual = NIL;
   plan->lefttree = lefttree;
   plan->righttree = NULL;

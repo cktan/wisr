@@ -39,6 +39,7 @@
 #include "parser/parse_coerce.h"
 #include "utils/hooks.h"
 #include "utils/selfuncs.h"
+#include "utils/control_block.h"
 
 static RelOptInfo *recurse_set_operations(Node *setOp, PlannerInfo *root,
                                           SetOperationStmt *parentOp,
@@ -488,7 +489,7 @@ static void build_setop_child_paths(PlannerInfo *root, RelOptInfo *rel,
        * input path).
        */
       if (subpath != cheapest_input_path &&
-          (presorted_keys == 0 || !enable_incremental_sort))
+          (presorted_keys == 0 || !tcb->guc.enable_incremental_sort))
         continue;
 
       /*
@@ -496,7 +497,7 @@ static void build_setop_child_paths(PlannerInfo *root, RelOptInfo *rel,
        * We'll just do a sort if there are no presorted keys and an
        * incremental sort when there are presorted keys.
        */
-      if (presorted_keys == 0 || !enable_incremental_sort)
+      if (presorted_keys == 0 || !tcb->guc.enable_incremental_sort)
         subpath = (Path *)create_sort_path(rel->subroot, final_rel, subpath,
                                            setop_pathkeys, limittuples);
       else

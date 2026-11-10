@@ -139,12 +139,7 @@ thread_local /*LOCAL*/ int effective_cache_size = DEFAULT_EFFECTIVE_CACHE_SIZE;
 
 thread_local /*LOCAL*/ Cost disable_cost = 1.0e10;
 
-thread_local /*LOCAL*/ bool enable_sort = true;
-thread_local /*LOCAL*/ bool enable_incremental_sort = true;
-thread_local /*LOCAL*/ bool enable_hashagg = true;
 thread_local /*LOCAL*/ bool enable_nestloop = true;
-thread_local /*LOCAL*/ bool enable_material = true;
-thread_local /*LOCAL*/ bool enable_memoize = true;
 thread_local /*LOCAL*/ bool enable_mergejoin = true;
 thread_local /*LOCAL*/ bool enable_hashjoin = true;
 thread_local /*LOCAL*/ bool enable_partitionwise_join = false;
@@ -1686,7 +1681,7 @@ void cost_incremental_sort(Path *path, PlannerInfo *root, List *pathkeys,
   path->rows = input_tuples;
 
   /* should not generate these paths when enable_incremental_sort=false */
-  Assert(enable_incremental_sort);
+  Assert(tcb->guc.enable_incremental_sort);
   path->disabled_nodes = input_disabled_nodes;
 
   path->startup_cost = startup_cost;
@@ -1720,7 +1715,7 @@ void cost_sort(Path *path, PlannerInfo *root, List *pathkeys,
   startup_cost += input_cost;
 
   path->rows = tuples;
-  path->disabled_nodes = input_disabled_nodes + (enable_sort ? 0 : 1);
+  path->disabled_nodes = input_disabled_nodes + (tcb->guc.enable_sort ? 0 : 1);
   path->startup_cost = startup_cost;
   path->total_cost = startup_cost + run_cost;
 }
@@ -1923,7 +1918,8 @@ void cost_material(Path *path, int input_disabled_nodes,
     run_cost += seq_page_cost * npages;
   }
 
-  path->disabled_nodes = input_disabled_nodes + (enable_material ? 0 : 1);
+  path->disabled_nodes =
+      input_disabled_nodes + (tcb->guc.enable_material ? 0 : 1);
   path->startup_cost = startup_cost;
   path->total_cost = startup_cost + run_cost;
 }
@@ -2131,7 +2127,7 @@ void cost_agg(Path *path, PlannerInfo *root, AggStrategy aggstrategy,
     /* Here we are able to deliver output on-the-fly */
     startup_cost = input_startup_cost;
     total_cost = input_total_cost;
-    if (aggstrategy == AGG_MIXED && !enable_hashagg)
+    if (aggstrategy == AGG_MIXED && !tcb->guc.enable_hashagg)
       ++disabled_nodes;
     /* calcs phrased this way to match HASHED case, see note above */
     total_cost += aggcosts->transCost.startup;
@@ -2144,7 +2140,7 @@ void cost_agg(Path *path, PlannerInfo *root, AggStrategy aggstrategy,
   } else {
     /* must be AGG_HASHED */
     startup_cost = input_total_cost;
-    if (!enable_hashagg)
+    if (!tcb->guc.enable_hashagg)
       ++disabled_nodes;
     startup_cost += aggcosts->transCost.startup;
     startup_cost += aggcosts->transCost.per_tuple * input_tuples;
@@ -2985,7 +2981,7 @@ void initial_cost_mergejoin(PlannerInfo *root, JoinCostWorkspace *workspace,
      * We choose to use incremental sort if it is enabled and there are
      * presorted keys; otherwise we use full sort.
      */
-    if (enable_incremental_sort && outer_presorted_keys > 0) {
+    if (tcb->guc.enable_incremental_sort && outer_presorted_keys > 0) {
       cost_incremental_sort(&sort_path, root, outersortkeys,
                             outer_presorted_keys, outer_path->disabled_nodes,
                             outer_path->startup_cost, outer_path->total_cost,
@@ -3236,7 +3232,7 @@ void final_cost_mergejoin(PlannerInfo *root, MergePath *path,
    * Prefer materializing if it looks cheaper, unless the user has asked to
    * suppress materialization.
    */
-  else if (enable_material && mat_inner_cost < bare_inner_cost)
+  else if (tcb->guc.enable_material && mat_inner_cost < bare_inner_cost)
     path->materialize_inner = true;
 
   /*
@@ -3269,7 +3265,7 @@ void final_cost_mergejoin(PlannerInfo *root, MergePath *path,
    * rather than necessary for correctness, we skip it if enable_material is
    * off.
    */
-  else if (enable_material && innersortkeys != NIL &&
+  else if (tcb->guc.enable_material && innersortkeys != NIL &&
            relation_byte_size(inner_path_rows, inner_path->pathtarget->width) >
                work_mem * (Size)1024)
     path->materialize_inner = true;

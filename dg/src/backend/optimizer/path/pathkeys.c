@@ -29,6 +29,7 @@
 #include "partitioning/partbounds.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/lsyscache.h"
+#include "utils/control_block.h"
 
 /* Consider reordering of GROUP BY keys? */
 thread_local /*LOCAL*/ bool enable_group_by_reordering = true;
@@ -453,7 +454,8 @@ List *get_useful_group_keys_orderings(PlannerInfo *root, Path *path) {
     n = group_keys_reorder_by_pathkeys(path->pathkeys, &pathkeys, &clauses,
                                        root->num_groupby_pathkeys);
 
-    if (n > 0 && (enable_incremental_sort || n == root->num_groupby_pathkeys) &&
+    if (n > 0 &&
+        (tcb->guc.enable_incremental_sort || n == root->num_groupby_pathkeys) &&
         compare_pathkeys(pathkeys, root->group_pathkeys) != PATHKEYS_EQUAL) {
       info = makeNode(GroupByOrdering);
       info->pathkeys = pathkeys;

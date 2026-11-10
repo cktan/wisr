@@ -45,12 +45,7 @@ typedef enum {
 
 /* parameter variables and flags (see also optimizer.h) */
 extern thread_local /*LOCAL*/ PGDLLIMPORT Cost disable_cost;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_sort;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_incremental_sort;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_hashagg;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_nestloop;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_material;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_memoize;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_mergejoin;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_hashjoin;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_partitionwise_join;

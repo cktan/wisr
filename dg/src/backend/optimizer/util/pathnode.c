@@ -35,6 +35,7 @@
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/selfuncs.h"
+#include "utils/control_block.h"
 
 typedef enum {
   COSTS_EQUAL,     /* path costs are fuzzily equal */
@@ -1161,7 +1162,7 @@ MemoizePath *create_memoize_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->est_entries = 0;
 
   /* we should not generate this path type when enable_memoize=false */
-  Assert(enable_memoize);
+  Assert(tcb->guc.enable_memoize);
   pathnode->path.disabled_nodes = subpath->disabled_nodes;
 
   /*
@@ -2818,7 +2819,7 @@ SetOpPath *create_setop_path(PlannerInfo *root, RelOptInfo *rel, Path *leftpath,
      * isn't exactly a HashAgg node, it seems close enough to justify
      * letting that switch control it.
      */
-    if (!enable_hashagg)
+    if (!tcb->guc.enable_hashagg)
       pathnode->path.disabled_nodes++;
 
     /*
