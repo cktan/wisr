@@ -333,7 +333,6 @@ static thread_local /*LOCAL*/ char *syslog_ident_str;
 static thread_local /*LOCAL*/ char *server_encoding_string;
 static thread_local /*LOCAL*/ char *server_version_string;
 static thread_local /*LOCAL*/ int server_version_num;
-static thread_local /*LOCAL*/ char *restrict_nonsystem_relation_kind_string;
 
 #ifdef HAVE_SYSLOG
 #define DEFAULT_SYSLOG_FACILITY LOG_LOCAL0
@@ -2727,7 +2726,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       gettext_noop(
           "Prohibits access to non-system relations of specified kinds."),
       NULL, GUC_LIST_INPUT | GUC_NOT_IN_SAMPLE},
-     &restrict_nonsystem_relation_kind_string,
+     &tcb->guc.restrict_nonsystem_relation_kind_string,
      "",
      check_restrict_nonsystem_relation_kind,
      assign_restrict_nonsystem_relation_kind,
@@ -2961,7 +2960,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
                    "to override "
                    "the default behavior."),
       GUC_EXPLAIN},
-     &plan_cache_mode,
+     &tcb->guc.plan_cache_mode,
      PLAN_CACHE_MODE_AUTO,
      plan_cache_mode_options,
      NULL,

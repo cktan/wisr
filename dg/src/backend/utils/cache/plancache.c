@@ -141,7 +141,6 @@ static inline void ResourceOwnerForgetPlanCacheRef(ResourceOwner owner,
 }
 
 /* GUC parameter */
-thread_local /*LOCAL*/ int plan_cache_mode = PLAN_CACHE_MODE_AUTO;
 
 /*
  * InitPlanCache: initialize module during InitPostgres.
@@ -1084,9 +1083,9 @@ static bool choose_custom_plan(CachedPlanSource *plansource,
     return false;
 
   /* Let settings force the decision */
-  if (plan_cache_mode == PLAN_CACHE_MODE_FORCE_GENERIC_PLAN)
+  if (tcb->guc.plan_cache_mode == PLAN_CACHE_MODE_FORCE_GENERIC_PLAN)
     return false;
-  if (plan_cache_mode == PLAN_CACHE_MODE_FORCE_CUSTOM_PLAN)
+  if (tcb->guc.plan_cache_mode == PLAN_CACHE_MODE_FORCE_CUSTOM_PLAN)
     return true;
 
   /* See if caller wants to force the decision */

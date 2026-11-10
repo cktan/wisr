@@ -548,6 +548,8 @@ typedef struct tcb_guc_t {
   int icu_validation_level = 19;               /* pg_locale.c */
   int Log_error_verbosity;                     /* elog.c */
   int log_statement;                           /* postgres.c */
+  int plan_cache_mode;                         /* plancache.c */
+  char *restrict_nonsystem_relation_kind_string; /* guc_tables.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 
