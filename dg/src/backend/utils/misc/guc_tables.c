@@ -286,16 +286,12 @@ static const struct config_enum_entry default_toast_compression_options[] = {
  */
 /* Sessions read shmem->allow_alter_system, not this */
 static thread_local /*LOCAL*/ bool AllowAlterSystem = true;
-thread_local /*LOCAL*/ bool Debug_print_plan = false;
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
 thread_local /*LOCAL*/ bool Debug_write_read_parse_plan_trees;
 thread_local /*LOCAL*/ bool Debug_raw_expression_coverage_test;
 #endif
 
-thread_local /*LOCAL*/ bool log_parser_stats = false;
-thread_local /*LOCAL*/ bool log_planner_stats = false;
-thread_local /*LOCAL*/ bool log_executor_stats = false;
 thread_local /*LOCAL*/ bool log_statement_stats =
     false; /* this is sort of all three
             * above together */
@@ -1092,7 +1088,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      NULL},
     {{"debug_print_plan", PGC_USERSET, LOGGING_WHAT,
       gettext_noop("Logs each query's execution plan."), NULL},
-     &Debug_print_plan,
+     &tcb->guc.Debug_print_plan,
      false,
      NULL,
      NULL,
@@ -1107,7 +1103,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"log_parser_stats", PGC_SUSET, STATS_MONITORING,
       gettext_noop("Writes parser performance statistics to the server log."),
       NULL},
-     &log_parser_stats,
+     &tcb->guc.log_parser_stats,
      false,
      check_stage_log_stats,
      NULL,
@@ -1115,7 +1111,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"log_planner_stats", PGC_SUSET, STATS_MONITORING,
       gettext_noop("Writes planner performance statistics to the server log."),
       NULL},
-     &log_planner_stats,
+     &tcb->guc.log_planner_stats,
      false,
      check_stage_log_stats,
      NULL,
@@ -1123,7 +1119,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"log_executor_stats", PGC_SUSET, STATS_MONITORING,
       gettext_noop("Writes executor performance statistics to the server log."),
       NULL},
-     &log_executor_stats,
+     &tcb->guc.log_executor_stats,
      false,
      check_stage_log_stats,
      NULL,

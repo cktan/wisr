@@ -550,12 +550,12 @@ List *pg_parse_query(const char *query_string) {
 
   TRACE_POSTGRESQL_QUERY_PARSE_START(query_string);
 
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ResetUsage();
 
   raw_parsetree_list = raw_parser(query_string, RAW_PARSE_DEFAULT);
 
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ShowUsage("PARSER STATISTICS");
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
@@ -616,13 +616,13 @@ List *pg_analyze_and_rewrite_fixedparams(RawStmt *parsetree,
   /*
    * (1) Perform parse analysis.
    */
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ResetUsage();
 
   query = parse_analyze_fixedparams(parsetree, query_string, paramTypes,
                                     numParams, queryEnv);
 
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ShowUsage("PARSE ANALYSIS STATISTICS");
 
   /*
@@ -652,7 +652,7 @@ List *pg_analyze_and_rewrite_varparams(RawStmt *parsetree,
   /*
    * (1) Perform parse analysis.
    */
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ResetUsage();
 
   query = parse_analyze_varparams(parsetree, query_string, paramTypes,
@@ -670,7 +670,7 @@ List *pg_analyze_and_rewrite_varparams(RawStmt *parsetree,
                              i + 1)));
   }
 
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ShowUsage("PARSE ANALYSIS STATISTICS");
 
   /*
@@ -702,13 +702,13 @@ List *pg_analyze_and_rewrite_withcb(RawStmt *parsetree,
   /*
    * (1) Perform parse analysis.
    */
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ResetUsage();
 
   query = parse_analyze_withcb(parsetree, query_string, parserSetup,
                                parserSetupArg, queryEnv);
 
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ShowUsage("PARSE ANALYSIS STATISTICS");
 
   /*
@@ -733,7 +733,7 @@ List *pg_rewrite_query(Query *query) {
   if (tcb->guc.Debug_print_parse)
     elog_node_display(LOG, "parse tree", query, tcb->guc.Debug_pretty_print);
 
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ResetUsage();
 
   if (query->commandType == CMD_UTILITY) {
@@ -744,7 +744,7 @@ List *pg_rewrite_query(Query *query) {
     querytree_list = QueryRewrite(query);
   }
 
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ShowUsage("REWRITER STATISTICS");
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
@@ -817,13 +817,13 @@ PlannedStmt *pg_plan_query(Query *querytree, const char *query_string,
 
   TRACE_POSTGRESQL_QUERY_PLAN_START();
 
-  if (log_planner_stats)
+  if (tcb->guc.log_planner_stats)
     ResetUsage();
 
   /* call the optimizer */
   plan = planner(querytree, query_string, cursorOptions, boundParams);
 
-  if (log_planner_stats)
+  if (tcb->guc.log_planner_stats)
     ShowUsage("PLANNER STATISTICS");
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
@@ -872,7 +872,7 @@ PlannedStmt *pg_plan_query(Query *querytree, const char *query_string,
   /*
    * Print plan if debugging.
    */
-  if (Debug_print_plan)
+  if (tcb->guc.Debug_print_plan)
     elog_node_display(LOG, "plan", plan, tcb->guc.Debug_pretty_print);
 
   TRACE_POSTGRESQL_QUERY_PLAN_DONE();
@@ -2925,8 +2925,8 @@ bool check_stage_log_stats(bool *newval, void **extra, GucSource source) {
  * GUC check_hook for log_statement_stats
  */
 bool check_log_stats(bool *newval, void **extra, GucSource source) {
-  if (*newval &&
-      (log_parser_stats || log_planner_stats || log_executor_stats)) {
+  if (*newval && (tcb->guc.log_parser_stats || tcb->guc.log_planner_stats ||
+                  tcb->guc.log_executor_stats)) {
     GUC_check_errdetail("Cannot enable \"log_statement_stats\" when "
                         "\"log_parser_stats\", \"log_planner_stats\", "
                         "or \"log_executor_stats\" is true.");

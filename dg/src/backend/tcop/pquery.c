@@ -29,6 +29,7 @@
 #include "tcop/utility.h"
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
+#include "utils/control_block.h"
 
 /*
  * ActivePortal is the currently executing Portal (the most closely nested,
@@ -633,7 +634,7 @@ bool PortalRun(Portal portal, long count, bool isTopLevel, DestReceiver *dest,
   if (qc)
     InitializeQueryCompletion(qc);
 
-  if (log_executor_stats && portal->strategy != PORTAL_MULTI_QUERY) {
+  if (tcb->guc.log_executor_stats && portal->strategy != PORTAL_MULTI_QUERY) {
     elog(DEBUG3, "PortalRun");
     /* PORTAL_MULTI_QUERY logs its own stats per query */
     ResetUsage();
@@ -759,7 +760,7 @@ bool PortalRun(Portal portal, long count, bool isTopLevel, DestReceiver *dest,
     CurrentResourceOwner = saveResourceOwner;
   PortalContext = savePortalContext;
 
-  if (log_executor_stats && portal->strategy != PORTAL_MULTI_QUERY)
+  if (tcb->guc.log_executor_stats && portal->strategy != PORTAL_MULTI_QUERY)
     ShowUsage("EXECUTOR STATISTICS");
 
   TRACE_POSTGRESQL_QUERY_EXECUTE_DONE();
@@ -1105,7 +1106,7 @@ static void PortalRunMulti(Portal portal, bool isTopLevel, bool setHoldSnapshot,
        */
       TRACE_POSTGRESQL_QUERY_EXECUTE_START();
 
-      if (log_executor_stats)
+      if (tcb->guc.log_executor_stats)
         ResetUsage();
 
       /*
@@ -1143,7 +1144,7 @@ static void PortalRunMulti(Portal portal, bool isTopLevel, bool setHoldSnapshot,
                      portal->queryEnv, altdest, NULL);
       }
 
-      if (log_executor_stats)
+      if (tcb->guc.log_executor_stats)
         ShowUsage("EXECUTOR STATISTICS");
 
       TRACE_POSTGRESQL_QUERY_EXECUTE_DONE();

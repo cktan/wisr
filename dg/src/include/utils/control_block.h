@@ -468,6 +468,10 @@ typedef struct tcb_guc_t {
   bool Debug_copy_parse_plan_trees;            /* guc_tables.c */
   bool Debug_print_parse = false;              /* guc_tables.c */
   bool Debug_print_rewritten = false;          /* guc_tables.c */
+  bool Debug_print_plan = false;               /* guc_tables.c */
+  bool log_parser_stats = false;               /* guc_tables.c */
+  bool log_planner_stats = false;              /* guc_tables.c */
+  bool log_executor_stats = false;             /* guc_tables.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

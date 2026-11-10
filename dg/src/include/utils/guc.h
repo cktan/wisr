@@ -240,7 +240,6 @@ typedef enum {
 #define GUC_UNIT			 (GUC_UNIT_MEMORY | GUC_UNIT_TIME)
 
 /* GUC vars that are actually defined in guc_tables.c, rather than elsewhere */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool Debug_print_plan;
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool
@@ -249,9 +248,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool
     Debug_raw_expression_coverage_test;
 #endif
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_parser_stats;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_planner_stats;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_executor_stats;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_statement_stats;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool current_role_is_superuser;
