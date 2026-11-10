@@ -287,11 +287,8 @@ static const struct config_enum_entry default_toast_compression_options[] = {
 /* Sessions read shmem->allow_alter_system, not this */
 static thread_local /*LOCAL*/ bool AllowAlterSystem = true;
 thread_local /*LOCAL*/ bool Debug_print_plan = false;
-thread_local /*LOCAL*/ bool Debug_print_parse = false;
-thread_local /*LOCAL*/ bool Debug_print_rewritten = false;
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
-thread_local /*LOCAL*/ bool Debug_copy_parse_plan_trees;
 thread_local /*LOCAL*/ bool Debug_write_read_parse_plan_trees;
 thread_local /*LOCAL*/ bool Debug_raw_expression_coverage_test;
 #endif
@@ -1034,7 +1031,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
           "copyObject(), to facilitate catching errors and omissions in "
           "copyObject()."),
       NULL, GUC_NOT_IN_SAMPLE},
-     &Debug_copy_parse_plan_trees,
+     &tcb->guc.Debug_copy_parse_plan_trees,
 /* support for legacy compile-time setting */
 #ifdef COPY_PARSE_PLAN_TREES
      true,
@@ -1081,14 +1078,14 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
 #endif /* DEBUG_NODE_TESTS_ENABLED */
     {{"debug_print_parse", PGC_USERSET, LOGGING_WHAT,
       gettext_noop("Logs each query's parse tree."), NULL},
-     &Debug_print_parse,
+     &tcb->guc.Debug_print_parse,
      false,
      NULL,
      NULL,
      NULL},
     {{"debug_print_rewritten", PGC_USERSET, LOGGING_WHAT,
       gettext_noop("Logs each query's rewritten parse tree."), NULL},
-     &Debug_print_rewritten,
+     &tcb->guc.Debug_print_rewritten,
      false,
      NULL,
      NULL,

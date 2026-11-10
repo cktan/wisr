@@ -465,6 +465,9 @@ typedef struct tcb_guc_t {
   bool Log_disconnections = false;             /* postgres.c */
   bool ExitOnAnyError = false;                 /* globals.c */
   bool log_duration = false;                   /* guc_tables.c */
+  bool Debug_copy_parse_plan_trees;            /* guc_tables.c */
+  bool Debug_print_parse = false;              /* guc_tables.c */
+  bool Debug_print_rewritten = false;          /* guc_tables.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

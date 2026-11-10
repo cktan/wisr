@@ -561,7 +561,7 @@ List *pg_parse_query(const char *query_string) {
 #ifdef DEBUG_NODE_TESTS_ENABLED
 
   /* Optional debugging check: pass raw parsetrees through copyObject() */
-  if (Debug_copy_parse_plan_trees) {
+  if (tcb->guc.Debug_copy_parse_plan_trees) {
     List *new_list = copyObject(raw_parsetree_list);
 
     /* This checks both copyObject() and the equal() routines... */
@@ -730,7 +730,7 @@ List *pg_analyze_and_rewrite_withcb(RawStmt *parsetree,
 List *pg_rewrite_query(Query *query) {
   List *querytree_list;
 
-  if (Debug_print_parse)
+  if (tcb->guc.Debug_print_parse)
     elog_node_display(LOG, "parse tree", query, tcb->guc.Debug_pretty_print);
 
   if (log_parser_stats)
@@ -750,7 +750,7 @@ List *pg_rewrite_query(Query *query) {
 #ifdef DEBUG_NODE_TESTS_ENABLED
 
   /* Optional debugging check: pass querytree through copyObject() */
-  if (Debug_copy_parse_plan_trees) {
+  if (tcb->guc.Debug_copy_parse_plan_trees) {
     List *new_list;
 
     new_list = copyObject(querytree_list);
@@ -793,7 +793,7 @@ List *pg_rewrite_query(Query *query) {
 
 #endif /* DEBUG_NODE_TESTS_ENABLED */
 
-  if (Debug_print_rewritten)
+  if (tcb->guc.Debug_print_rewritten)
     elog_node_display(LOG, "rewritten parse tree", querytree_list,
                       tcb->guc.Debug_pretty_print);
 
@@ -829,7 +829,7 @@ PlannedStmt *pg_plan_query(Query *querytree, const char *query_string,
 #ifdef DEBUG_NODE_TESTS_ENABLED
 
   /* Optional debugging check: pass plan tree through copyObject() */
-  if (Debug_copy_parse_plan_trees) {
+  if (tcb->guc.Debug_copy_parse_plan_trees) {
     PlannedStmt *new_plan = copyObject(plan);
 
     /*
