@@ -18,7 +18,6 @@
 #include "parser/parse_node.h"
 
 /* GUC parameters */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool Transform_null_equals;
 
 extern Node *transformExpr(ParseState *pstate, Node *expr,
                            ParseExprKind exprKind);

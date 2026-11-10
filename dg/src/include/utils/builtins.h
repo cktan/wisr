@@ -79,7 +79,6 @@ extern char *regexp_fixed_prefix(text *text_re, bool case_insensitive,
                                  Oid collation, bool *exact);
 
 /* ruleutils.c */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool quote_all_identifiers;
 extern const char *quote_identifier(const char *ident);
 extern char *quote_qualified_identifier(const char *qualifier,
                                         const char *ident);

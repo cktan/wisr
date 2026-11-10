@@ -290,7 +290,6 @@ thread_local /*LOCAL*/ bool log_duration = false;
 thread_local /*LOCAL*/ bool Debug_print_plan = false;
 thread_local /*LOCAL*/ bool Debug_print_parse = false;
 thread_local /*LOCAL*/ bool Debug_print_rewritten = false;
-thread_local /*LOCAL*/ bool Debug_pretty_print = true;
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
 thread_local /*LOCAL*/ bool Debug_copy_parse_plan_trees;
@@ -307,7 +306,6 @@ thread_local /*LOCAL*/ bool log_statement_stats =
 static thread_local /*LOCAL*/ char *event_source;
 
 thread_local /*LOCAL*/ bool row_security;
-thread_local /*LOCAL*/ bool check_function_bodies = true;
 
 /*
  * This GUC exists solely for backward compatibility, check its definition for
@@ -1105,7 +1103,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      NULL},
     {{"debug_pretty_print", PGC_USERSET, LOGGING_WHAT,
       gettext_noop("Indents parse and plan tree displays."), NULL},
-     &Debug_pretty_print,
+     &tcb->guc.Debug_pretty_print,
      true,
      NULL,
      NULL,
@@ -1183,7 +1181,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
           "return true if expr evaluates to the null value, and false "
           "otherwise. The correct behavior of expr = NULL is to always "
           "return null (unknown).")},
-     &Transform_null_equals,
+     &tcb->guc.Transform_null_equals,
      false,
      NULL,
      NULL,
@@ -1237,7 +1235,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       gettext_noop(
           "Check routine bodies during CREATE FUNCTION and CREATE PROCEDURE."),
       NULL},
-     &check_function_bodies,
+     &tcb->guc.check_function_bodies,
      true,
      NULL,
      NULL,
@@ -1247,7 +1245,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       gettext_noop("When turned on, unquoted NULL in an array input "
                    "value means a null value; "
                    "otherwise it is taken literally.")},
-     &Array_nulls,
+     &tcb->guc.Array_nulls,
      true,
      NULL,
      NULL,
@@ -1379,7 +1377,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
          gettext_noop("When generating SQL fragments, quote all identifiers."),
          NULL,
      },
-     &quote_all_identifiers,
+     &tcb->guc.quote_all_identifiers,
      false,
      NULL,
      NULL,

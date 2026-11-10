@@ -428,8 +428,27 @@ typedef struct shmem_t {
   } syslog;
 } shmem_t;
 
+/*
+ * guc_tables.c: the thread's own GUC settings (group 3 of GUCPLAN.md): the
+ * USERSET, SUSET, BACKEND and SU_BACKEND ones that a session can SET. The
+ * thread's GUC table points at these fields (build_guc_variables()), and the
+ * code reads them as tcb->guc.name. The file in each comment is where the
+ * variable was defined.
+ */
+typedef struct tcb_guc_t {
+  bool Array_nulls = true;            /* arrayfuncs.c */
+  bool Transform_null_equals = false; /* parse_expr.c */
+  bool quote_all_identifiers = false; /* ruleutils.c */
+  bool check_function_bodies = true;  /* pg_proc.c */
+  bool Debug_pretty_print = true;     /* guc_tables.c */
+  /* -- new GUC fields above -- */
+} tcb_guc_t;
+
 /* The thread control block: one for each thread that runs digres code. */
 typedef struct tcb_t {
+  /* -- the thread's own GUC settings -- */
+  tcb_guc_t guc;
+
   /* -- the session -- */
   /* session_registry.c: this session's record, while it is registered */
   std::shared_ptr<session_record_t> session;

@@ -1155,7 +1155,7 @@ static void execute_extension_script(Oid extensionOid,
    * Similarly disable check_function_bodies, to ensure that SQL functions
    * won't be parsed during creation.
    */
-  if (check_function_bodies)
+  if (tcb->guc.check_function_bodies)
     (void)set_config_option("check_function_bodies", "off", PGC_USERSET,
                             PGC_S_SESSION, GUC_ACTION_SAVE, true, 0, false);
 

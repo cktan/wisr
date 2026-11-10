@@ -243,7 +243,6 @@ typedef enum {
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool Debug_print_plan;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool Debug_print_parse;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool Debug_print_rewritten;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool Debug_pretty_print;
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool Debug_copy_parse_plan_trees;
@@ -258,7 +257,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_planner_stats;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_executor_stats;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_statement_stats;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool check_function_bodies;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool current_role_is_superuser;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_duration;

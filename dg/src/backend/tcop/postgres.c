@@ -732,7 +732,7 @@ List *pg_rewrite_query(Query *query) {
   List *querytree_list;
 
   if (Debug_print_parse)
-    elog_node_display(LOG, "parse tree", query, Debug_pretty_print);
+    elog_node_display(LOG, "parse tree", query, tcb->guc.Debug_pretty_print);
 
   if (log_parser_stats)
     ResetUsage();
@@ -796,7 +796,7 @@ List *pg_rewrite_query(Query *query) {
 
   if (Debug_print_rewritten)
     elog_node_display(LOG, "rewritten parse tree", querytree_list,
-                      Debug_pretty_print);
+                      tcb->guc.Debug_pretty_print);
 
   return querytree_list;
 }
@@ -874,7 +874,7 @@ PlannedStmt *pg_plan_query(Query *querytree, const char *query_string,
    * Print plan if debugging.
    */
   if (Debug_print_plan)
-    elog_node_display(LOG, "plan", plan, Debug_pretty_print);
+    elog_node_display(LOG, "plan", plan, tcb->guc.Debug_pretty_print);
 
   TRACE_POSTGRESQL_QUERY_PLAN_DONE();
 
