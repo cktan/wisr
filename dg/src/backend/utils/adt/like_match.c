@@ -17,6 +17,8 @@
  * MATCH_LOWER - define for case (4) to specify case folding for 1-byte chars
  *
  * Copyright (c) 1996-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  * IDENTIFICATION
  *	src/backend/utils/adt/like_match.c

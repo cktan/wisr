@@ -1,3 +1,8 @@
+/*
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
+ */
+
 /*-------------------------------------------------------------------------
  *
  * ps_status.h

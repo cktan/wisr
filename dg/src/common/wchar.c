@@ -4,6 +4,8 @@
  *	  Functions for working with multibyte characters in various encodings.
  *
  * Portions Copyright (c) 1998-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  * IDENTIFICATION
  *	  src/common/wchar.c

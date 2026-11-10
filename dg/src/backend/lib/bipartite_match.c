@@ -8,6 +8,8 @@
  * https://en.wikipedia.org/w/index.php?title=Hopcroft%E2%80%93Karp_algorithm&oldid=593898016
  *
  * Copyright (c) 2015-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  * IDENTIFICATION
  *	  src/backend/lib/bipartite_match.c

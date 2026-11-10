@@ -4,6 +4,8 @@
  *	  Holds the AVX-512 pg_popcount() implementation.
  *
  * Copyright (c) 2024-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  * IDENTIFICATION
  *	  src/port/pg_popcount_avx512.c

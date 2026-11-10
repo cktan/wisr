@@ -4,6 +4,8 @@
  *	  I/O functions, operators, aggregates etc for enum types
  *
  * Copyright (c) 2006-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  *
  * IDENTIFICATION

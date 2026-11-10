@@ -10,6 +10,11 @@
  *   - keywords are looked up in sq's table (src/keywords.cc);
  *   - the text is UTF-8, so the encoding is never asked for;
  *   - the entry points are scanner_t's (src/scan.h), below the rules.
+ *
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for sq,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  */
 #include <ctype.h>
 #include <stdlib.h>

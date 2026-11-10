@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+# Portions Copyright (c) 1994, Regents of the University of California
+# Portions Copyright (c) 2026, CK Tan: the changes for sq,
+# under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
+
 """gen_keywords.py -- write a perfect hash over PostgreSQL's keywords.
 
     gen/gen_keywords.py > build/gen/keyword_hash.h

@@ -7,6 +7,11 @@
  * sq_base_yylex, and the Unicode de-escaping below it are PostgreSQL's
  * line for line; the two calls stand where raw_parser() does, one for
  * each of its modes that digres uses.
+ *
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for sq,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  */
 
 #include <ctype.h>
