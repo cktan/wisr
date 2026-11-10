@@ -1,0 +1,83 @@
+# Verify that SERIALIZABLE lets one of two students take a class's last seat.
+# This is the soak's add_class: count the class's rows by a prefix of a
+# secondary index, insert if there is room. A conflict is the same class;
+# two classes are no conflict, as the SIREAD is the key range, not a page.
+# 1. Make enrollment, keyed (student, class), with an index on (class,
+#    student), once as a tree and once as an lsm index.
+# 2. Seed two classes, with 2 students each; a class holds 3.
+# 3. Two sessions count class 1 and each inserts a student into it.
+# 4. Require the first commit to pass and the second to fail serialization.
+# 5. Two sessions count classes 1 and 2, and each inserts into its own.
+# 6. Require both commits to pass.
+(def test-dir (string (os/getenv "REL_TMP") "/seat_ssi"))
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "db")
+(db-open "db")
+(session-open "s1" "db")
+(session-open "s2" "db")
+
+(defmacro seat-test [tbl idx rd]
+  ~(do
+    (session-use "s1")
+    (begin :ser)
+    (assert-count 2 (,rd ,idx :ge [1] :le [1]))
+    (session-use "s2")
+    (begin :ser)
+    (assert-count 2 (,rd ,idx :ge [1] :le [1]))
+    (session-use "s1")
+    (insert ,tbl [10 1])
+    (session-use "s2")
+    (insert ,tbl [11 1])
+    (session-use "s1")
+    (commit)
+    (session-use "s2")
+    (assert-err :err-serialization (commit))
+    (session-use "s1")
+    (begin :ser)
+    (assert-count 3 (,rd ,idx :ge [1] :le [1]))
+    (commit)
+    (session-use "s1")
+    (begin :ser)
+    (assert-count 3 (,rd ,idx :ge [1] :le [1]))
+    (session-use "s2")
+    (begin :ser)
+    (assert-count 2 (,rd ,idx :ge [2] :le [2]))
+    (session-use "s1")
+    (insert ,tbl [12 1])
+    (session-use "s2")
+    (insert ,tbl [13 2])
+    (session-use "s1")
+    (commit)
+    (session-use "s2")
+    (commit)))
+
+(session-use "default")
+(begin :rc)
+(table-create enr_tree
+  (columns (student_id :int8 :not-null) (class_id :int8 :not-null))
+  (primary-key student_id class_id))
+(index-create enr_tree_class (table enr_tree)
+  (key (class_id :asc) (student_id :asc)) :tree true)
+(table-create enr_lsm
+  (columns (student_id :int8 :not-null) (class_id :int8 :not-null))
+  (primary-key student_id class_id))
+(index-create enr_lsm_class (table enr_lsm)
+  (key (class_id :asc) (student_id :asc)))
+(each row [[1 1] [2 1] [3 2] [4 2]]
+  (insert enr_tree row)
+  (insert enr_lsm row))
+(commit)
+(index-wait enr_tree_class)
+(index-wait enr_lsm_class)
+
+(seat-test enr_tree enr_tree_class idx-rows)
+(seat-test enr_lsm enr_lsm_class idx-scan)
+
+(session-close "s1")
+(session-close "s2")
+(session-use "default")
+(db-close)
+(env-detach)
+(rm-rf test-dir)
+(print "test_seat_ssi.rel passed")
