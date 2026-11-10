@@ -107,8 +107,6 @@ extern size_t strupper_libc(char *dst, size_t dstsize, const char *src,
 
 /* GUC settings */
 
-thread_local /*LOCAL*/ int icu_validation_level = WARNING;
-
 /*
  * lc_time localization cache.
  *
@@ -1541,7 +1539,7 @@ void icu_validate_locale(const char *loc_str) {
   UErrorCode status;
   char lang[ULOC_LANG_CAPACITY];
   bool found = false;
-  int elevel = icu_validation_level;
+  int elevel = tcb->guc.icu_validation_level;
 
   /* no validation */
   if (elevel < 0)

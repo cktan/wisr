@@ -264,7 +264,8 @@ ObjectAddress DefineCollation(ParseState *pstate, List *names, List *parameters,
        * canonicalize to a language tag.
        */
       if (!pcb->IsBinaryUpgrade) {
-        char *langtag = icu_language_tag(colllocale, icu_validation_level);
+        char *langtag =
+            icu_language_tag(colllocale, tcb->guc.icu_validation_level);
 
         if (langtag && strcmp(colllocale, langtag) != 0) {
           ereport(NOTICE,

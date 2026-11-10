@@ -542,6 +542,10 @@ typedef struct tcb_guc_t {
   char *backtrace_functions;                   /* guc_tables.c */
   char *log_connections_string = NULL;         /* backend_startup.c */
   int compute_query_id;                        /* queryjumblefuncs.c */
+  int default_toast_compression;               /* toast_compression.c */
+  int DefaultXactIsoLevel = 1;                 /* xact.c */
+  int XactIsoLevel = 1;                        /* xact.c */
+  int icu_validation_level = 19;               /* pg_locale.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

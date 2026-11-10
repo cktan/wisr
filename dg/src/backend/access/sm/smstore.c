@@ -632,7 +632,7 @@ static void savepoints_begin(sm_session_t *s) {
 
 /* sm's isolation level for PostgreSQL's. */
 static sm_xctlevel_t xact_level(void) {
-  switch (XactIsoLevel) {
+  switch (tcb->guc.XactIsoLevel) {
   case XACT_SERIALIZABLE:
     return SM_XCT_SERIALIZABLE;
   case XACT_REPEATABLE_READ:

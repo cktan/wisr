@@ -468,7 +468,7 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
      * standby, we will fail if we don't change it to something lower.
      * Fortunately, "read committed" is plenty good enough.
      */
-    XactIsoLevel = XACT_READ_COMMITTED;
+    tcb->guc.XactIsoLevel = XACT_READ_COMMITTED;
   }
 
   /*

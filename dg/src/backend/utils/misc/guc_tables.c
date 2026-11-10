@@ -2819,7 +2819,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
       gettext_noop(
           "Sets the default compression method for compressible values."),
       NULL},
-     &default_toast_compression,
+     &tcb->guc.default_toast_compression,
      TOAST_PGLZ_COMPRESSION,
      default_toast_compression_options,
      NULL,
@@ -2830,7 +2830,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
       gettext_noop(
           "Sets the transaction isolation level of each new transaction."),
       NULL},
-     &DefaultXactIsoLevel,
+     &tcb->guc.DefaultXactIsoLevel,
      XACT_READ_COMMITTED,
      isolation_level_options,
      NULL,
@@ -2841,7 +2841,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
       gettext_noop("Sets the current transaction's isolation level."), NULL,
       GUC_NO_RESET | GUC_NO_RESET_ALL | GUC_NOT_IN_SAMPLE |
           GUC_DISALLOW_IN_FILE},
-     &XactIsoLevel,
+     &tcb->guc.XactIsoLevel,
      XACT_READ_COMMITTED,
      isolation_level_options,
      check_transaction_isolation,
@@ -2861,7 +2861,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
     {{"icu_validation_level", PGC_USERSET, CLIENT_CONN_LOCALE,
       gettext_noop("Log level for reporting invalid ICU locale strings."),
       NULL},
-     &icu_validation_level,
+     &tcb->guc.icu_validation_level,
      WARNING,
      icu_validation_level_options,
      NULL,

@@ -41,7 +41,6 @@
 #define UNICODE_CASEMAP_BUFSZ	(UNICODE_CASEMAP_LEN * MAX_MULTIBYTE_CHAR_LEN)
 
 /* GUC settings */
-extern thread_local /*LOCAL*/ PGDLLIMPORT int icu_validation_level;
 
 /* lc_time localization cache */
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *localized_abbrev_days[];

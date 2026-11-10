@@ -510,7 +510,7 @@ bool check_transaction_read_only(bool *newval, void **extra, GucSource source) {
 bool check_transaction_isolation(int *newval, void **extra, GucSource source) {
   int newXactIsoLevel = *newval;
 
-  if (newXactIsoLevel != XactIsoLevel && IsTransactionState()) {
+  if (newXactIsoLevel != tcb->guc.XactIsoLevel && IsTransactionState()) {
     if (FirstSnapshotSet) {
       GUC_check_errcode(ERRCODE_ACTIVE_SQL_TRANSACTION);
       GUC_check_errmsg(

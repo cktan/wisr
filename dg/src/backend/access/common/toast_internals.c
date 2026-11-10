@@ -19,6 +19,7 @@
 #include "access/heaptoast.h"
 #include "access/toast_internals.h"
 #include "miscadmin.h"
+#include "utils/control_block.h"
 
 /* ----------
  * toast_compress_datum -
@@ -45,7 +46,7 @@ Datum toast_compress_datum(Datum value, char cmethod) {
 
   /* If the compression method is not valid, use the current default */
   if (!CompressionMethodIsValid(cmethod))
-    cmethod = default_toast_compression;
+    cmethod = tcb->guc.default_toast_compression;
 
   /*
    * Call appropriate compression routine for the compression method.

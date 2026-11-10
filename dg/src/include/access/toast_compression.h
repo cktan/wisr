@@ -22,7 +22,6 @@
  * but the value is one of the char values defined below, as they appear in
  * pg_attribute.attcompression, e.g. TOAST_PGLZ_COMPRESSION.
  */
-extern thread_local /*LOCAL*/ PGDLLIMPORT int default_toast_compression;
 
 /*
  * Built-in compression method ID.  The toast compression header will store
