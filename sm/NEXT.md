@@ -1,10 +1,15 @@
 # NEXT — what to build next, and in what order
 
-This file holds only what is still to do, across levels. What is
+This file holds what is still to do, across levels. An open
+item states what is left first. After that, it can keep a short
+record of what was built, measured or dropped for it, so the
+reason for what is left stays with it. An item that is done or
+dropped moves to §4, with a pointer to its record. What is
 built or settled is in the design documents:
 [`DESIGN.md`](DESIGN.md) §3 has where each level stands, and
-[`sm3/SM3_DESIGN.md`](sm3/SM3_DESIGN.md#4-structure) §4 has sm3's
-own order of work.
+[`sm3/SM3_DESIGN.md`](sm3/SM3_DESIGN.md#4-structure) §4 has
+sm3's own order of work. The items keep their numbers, so a
+link to an item stays correct.
 
 ---
 
@@ -19,17 +24,6 @@ digres's ([`../dg/STATISTICS.md`](../dg/STATISTICS.md),
 are the catalog tables psql reads
 ([`../dg/SYSCATALOG.md`](../dg/SYSCATALOG.md#6-status) §6).
 
-1. **digres's key-column ALTERs**
-   ([`CLUSTER.md`](CLUSTER.md#11-what-is-left) §11, step 3):
-   built. ADD and DROP PRIMARY KEY, and of a unique constraint
-   ([`../dg/PKDDL.md`](../dg/PKDDL.md)), and `ALTER COLUMN TYPE`
-   of any column, a key column's among them
-   ([`../dg/ALTERTYPE.md`](../dg/ALTERTYPE.md),
-   [`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 378). Left: the
-   dependents PostgreSQL makes again, an expression or a partial
-   index, a foreign key, an identity column's sequence, which
-   digres refuses ([`ALTERTYPE.md`](../dg/ALTERTYPE.md#8-decided)
-   §8). This item is done.
 3. **A secondary index's scan, within 1.5 times PostgreSQL's**
    ([`BTREEINDEX.md`](BTREEINDEX.md),
    [`../PARITY.md`](../PARITY.md), [`../PERF.md`](../PERF.md)).
@@ -91,20 +85,27 @@ are the catalog tables psql reads
    is all key, as MyRocks's.
 5. **A write transaction's two trips through RocksDB's write
    queue** ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 344).
-   An insert writes its uncommitted version at once
-   (`sm1/src/access.cc`, unsynced), and the commit its status
-   record (`sm1/src/xct.cc`, synced), each a write of its own
-   through the one queue. RocksDB syncs the WAL once a group of
-   the writers waiting, and an unsynced write may join a group a
-   commit syncs, so the insert waits for a sync it does not need:
-   at 16 clients about 85% of a session's samples wait in the
-   queue, near half under each write. And a group is as large as
-   the writers waiting when it forms, so anything a transaction
-   does outside the queue costs syncs: 100 µs of `pg_sleep` an
-   insert takes `../bench.old/rowlocks.sh`'s `ins` from about
-   5,600 tps to 4,100, and its `fk`, a foreign key's check of
-   about 70 µs, to 3,950. A plain insert scales 5.1× from 1
-   client to 16. To weigh, each measured on `ins` and `fk`:
+   **Left: twice PostgreSQL's CPU a transaction.** The waits in
+   the queue are fixed: at 16 clients, `ins` and `fk` run about
+   even with PostgreSQL (the built bullets below). The record
+   follows.
+
+   The problem, as found. An insert writes its
+   uncommitted version at once (`sm1/src/access.cc`,
+   unsynced), and the commit its status record
+   (`sm1/src/xct.cc`, synced), each a write of its own through
+   the one queue. RocksDB syncs the WAL once a group of the
+   writers waiting, and an unsynced write may join a group a
+   commit syncs, so the insert waits for a sync it does not
+   need: at 16 clients about 85% of a session's samples wait
+   in the queue, near half under each write. And a group is as
+   large as the writers waiting when it forms, so anything a
+   transaction does outside the queue costs syncs: 100 µs of
+   `pg_sleep` an insert takes `../bench.old/rowlocks.sh`'s `ins`
+   from about 5,600 tps to 4,100, and its `fk`, a foreign key's
+   check of about 70 µs, to 3,950. A plain insert scales 5.1×
+   from 1 client to 16. To weigh, each measured on `ins` and
+   `fk`:
 
    - **RocksDB's own**: `enable_pipelined_write`, the WAL written
      apart from the memtables, measured on 2026-11-01
@@ -160,13 +161,6 @@ are the catalog tables psql reads
      batch, in `commit_ts` order, so no commit waits for an older
      commit's sync. A sync covers 7.6 to 7.9 commits,
      PostgreSQL's 7.3 to 7.8 in the same runs.
-   - **Left: twice PostgreSQL's CPU a transaction.**
-6. **An lsm index's entry as a key alone**: dropped
-   (2026-11-04). An entry's value must keep its version's
-   flags and xid or `commit_ts`: the compaction filter stamps
-   a `commit_ts` over the xid, and can change a value, never a
-   key. What else the value holds saves about 15 bytes an
-   entry and a decode, not worth a change of format.
 7. **A GUC for the frames of sm1's buffer pool** (`bufpool_t`,
    [`BUFMGR.md`](BUFMGR.md)). Today nothing sets the count: sm1
    gives the pool a quarter of `block_cache_bytes`, in frames of
@@ -179,11 +173,6 @@ are the catalog tables psql reads
    - the floor: the GUC cannot go below the pins' floor;
    - an option in `sm_options_t` that digres's GUC sets, as
      `block_cache_bytes` is set now.
-8. **A list of the btree leaves that need vacuum**: built. VACUUM
-   reaps the leaves on the btree reaper's queue alone, and misses
-   some ([`BTREEINDEX.md`](BTREEINDEX.md#92-vacuum) §9.2 gives
-   the cases and why that is enough). A temporary table's trees
-   are still walked.
 9. **Smaller btree leaf entries: prefix compression**
    ([`BTREEINDEX.md`](BTREEINDEX.md#43-entries) §4.3, §12).
    A leaf entry is its key, its value and 6 bytes of lengths
@@ -207,12 +196,13 @@ are the catalog tables psql reads
    mean fewer pages a range scan reads (item 3) and fewer
    splits; an insert still writes its whole page. Each step
    changes the page's format.
-10. **A bulk load builds a B-tree Index from the bottom up**:
-    built ([`BTREEINDEX.md`](BTREEINDEX.md#67-a-bulk-load-builds-the-tree-whole) §6.7, [`BTREELOAD_PLAN.md`](BTREELOAD_PLAN.md)). A load
-    into an empty table sorts each tree's entries, unique trees
-    too, and ingests the pages with the rows. Still open:
-    whether `CREATE INDEX` can share the builder, as it runs
-    beside writers.
+10. **A bulk load builds a B-tree Index from the bottom up.**
+    Left: whether `CREATE INDEX` can share the builder, as it
+    runs beside writers. Built: a load into an empty table
+    sorts each tree's entries, unique trees too, and ingests the
+    pages with the rows
+    ([`BTREEINDEX.md`](BTREEINDEX.md#67-a-bulk-load-builds-the-tree-whole)
+    §6.7, [`BTREELOAD_PLAN.md`](BTREELOAD_PLAN.md)).
 11. **Types move into sm, with their ADT operations and
     functions.** Decided 2026-11-09. Two reasons:
     - sm evaluates expressions without digres: an index
@@ -300,7 +290,7 @@ the full list and the steps behind each entry).
 | Users, authentication, authorization: roles, owners, GRANT and REVOKE are built ([`../aa/ROLE.md`](../aa/ROLE.md)); a column's privileges, a function's, ALTER DEFAULT PRIVILEGES and row-level security fail; peer on the socket and SCRAM over TCP only, with TLS by one setting ([`../aa/ROLE.md`](../aa/ROLE.md#8-decisions) §8); no `pg_hba.conf`, no GSSAPI, no client certificates | policies about 90 | compliance | medium: row-level security, now that roles exist; `pg_hba` is not planned |
 | Code in the server: no PL/pgSQL, no `sql` functions, no `DO`, so no triggers | 820, triggers 48, rules 132 | stored procedures, audit and `updated_at` triggers | large: waits for the scripting language SPI is kept for |
 | CREATE TABLE beyond columns, NOT NULL, PRIMARY KEY, UNIQUE, CHECK, generated columns and TEMPORARY: `OF type`, UNLOGGED; ADD COLUMN of a generated column, SET and DROP EXPRESSION | not counted yet | computed columns added to a table | small: ADD COLUMN computes each row's value from its own columns; CHECK and generated columns are built ([`CHECK.md`](CHECK.md), [`GENERATED.md`](GENERATED.md)) |
-| ALTER TABLE: `SET SCHEMA`, `ADD CONSTRAINT ... USING INDEX`, `SET STATISTICS`, storage, replica identity | 180 | schema migrations | small a subcommand; PRIMARY KEY, CHECK, ALTER COLUMN TYPE, SET/DROP NOT NULL and SET/DROP DEFAULT are built (item 1 above) |
+| ALTER TABLE: `SET SCHEMA`, `ADD CONSTRAINT ... USING INDEX`, `SET STATISTICS`, storage, replica identity | 180 | schema migrations | small a subcommand; PRIMARY KEY, CHECK, ALTER COLUMN TYPE, SET/DROP NOT NULL and SET/DROP DEFAULT are built (§4, item 1) |
 | Partitioning | refused | large time-series tables | large |
 
 - **Largest for adoption:** users and the scripting language;
@@ -477,7 +467,37 @@ Owed, and blocking nothing above:
 
 ---
 
-## 4. What this file is not
+## 4. Done and dropped
+
+Each item keeps its number from §1. Its record is where the
+item points.
+
+1. **digres's key-column ALTERs**
+   ([`CLUSTER.md`](CLUSTER.md#11-what-is-left) §11, step 3):
+   done. ADD and DROP PRIMARY KEY, and of a unique constraint
+   ([`../dg/PKDDL.md`](../dg/PKDDL.md)), and `ALTER COLUMN TYPE`
+   of any column, a key column's among them
+   ([`../dg/ALTERTYPE.md`](../dg/ALTERTYPE.md),
+   [`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 378). digres
+   refuses the dependents that PostgreSQL makes again: an
+   expression or a partial index, a foreign key, an identity
+   column's sequence
+   ([`ALTERTYPE.md`](../dg/ALTERTYPE.md#8-decided) §8).
+6. **An lsm index's entry as a key alone**: dropped
+   (2026-11-04). An entry's value must keep its version's
+   flags and xid or `commit_ts`: the compaction filter stamps
+   a `commit_ts` over the xid, and can change a value, never a
+   key. What else the value holds saves about 15 bytes an
+   entry and a decode, not worth a change of format.
+8. **A list of the btree leaves that need vacuum**: done. VACUUM
+   reaps the leaves on the btree reaper's queue alone, and misses
+   some ([`BTREEINDEX.md`](BTREEINDEX.md#92-vacuum) §9.2 gives
+   the cases and why that is enough). A temporary table's trees
+   are still walked.
+
+---
+
+## 5. What this file is not
 
 Not a replacement for
 [`sm3/SM3_DESIGN.md`](sm3/SM3_DESIGN.md#4-structure) §4, which

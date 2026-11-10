@@ -28,7 +28,7 @@ layer. [`PERF.md`](PERF.md) measures how fast DG runs against PG.
 | `SERIALIZABLE` | Predicate locks and SSI in shared memory | `sm1` serializable isolation |
 | Row & table locks | Shared-memory lock tables + heap tuple header bits | `sm1` lock manager (5 table modes, row locks in memory) |
 | System catalog | Heap tables (`pg_class`, `pg_attribute`, ...) | Compiled-in arrays + `sm3` catalog; virtual read-only relations |
-| Roles & auth | `pg_authid` heap table, `pg_hba.conf`, TLS, GSSAPI | **Redone**: new `aa/` library in `pg_global`; fixed peer / SCRAM-SHA-256 rules; no TLS or GSSAPI |
+| Roles & auth | `pg_authid` heap table, `pg_hba.conf`, TLS, GSSAPI | **Redone**: new `aa/` library in `pg_global`; fixed peer / SCRAM-SHA-256 rules; TLS by one setting; no GSSAPI |
 | Index access methods | B-tree, Hash, GiST, SP-GiST, GIN, BRIN | `lsm` (default) and `btree`, a B-link tree, both in `sm`; no bitmap scans |
 | Procedural languages | PL/pgSQL, SQL functions, C extensions | Removed (SPI remains for a future language) |
 
@@ -45,8 +45,12 @@ layer. [`PERF.md`](PERF.md) measures how fast DG runs against PG.
 - **Thread-local globals.** Every writable global and file-scope
   static variable in DG is marked `thread_local /*LOCAL*/`. The
   build verifies this before linking. Threads share state only
-  through two process-wide structs: `pcb` (read-only after
-  startup) and `shmem` (mutex- or atomic-guarded).
+  through two process-wide structs, `pcb` and `shmem`. Only
+  the main thread writes `pcb`. Most of its fields do not change
+  after startup. A field that changes later is atomic, as the
+  reload time is, or guarded by a mutex, as the file logger's
+  settings are by `shmem->log.mutex`. Each field of `shmem` is
+  atomic, guarded by a mutex, or an object that guards itself.
 - **Exceptions instead of `sigsetjmp`.** DG compiles all backend
   code as C++20. `ereport(ERROR)` throws `pg_error_t`, and
   `proc_exit()` throws `proc_exit_t` to unwind the session thread
@@ -69,10 +73,12 @@ layer. [`PERF.md`](PERF.md) measures how fast DG runs against PG.
   such a directory into another instance is not built yet.
 - **Index-organized tables.** PG stores rows in an unordered heap
   and builds a separate B-tree file for the primary key. DG
-  stores every table in primary-key order in `sm`. A `SELECT`
-  without `ORDER BY` returns rows in key order, and a primary key
-  index uses zero extra bytes. A primary key is capped at 1024
-  encoded bytes.
+  stores every table in primary-key order in `sm`, so a
+  sequential scan reads rows in key order. This does not set the
+  order of a query's result: the plan can use a secondary index,
+  a join, or another operator. Use `ORDER BY` when the result
+  needs an order. A primary key index uses zero extra bytes. A
+  primary key is capped at 1024 encoded bytes.
 - **Row keys replace `ctid`.** PG identifies physical tuples by
   `ctid` (page and slot). DG has no pages or `ctid`. A table
   without a primary key gets a hidden `int8` system column named
@@ -126,13 +132,18 @@ layer. [`PERF.md`](PERF.md) measures how fast DG runs against PG.
   require SCRAM-SHA-256. Column and function privileges, `ALTER
   ROLE ... SET`, and `ALTER DEFAULT PRIVILEGES` fail; role DDL is
   refused in a transaction block.
-- **No TLS or GSSAPI.** Their build options are off. A connection
-  over TCP is not encrypted. Logins use SCRAM, which sends no
-  password; a password set by SQL over TCP must come hashed, as
-  psql's `\password` sends it, and a logged statement never shows
-  a password
+- **TLS by one setting; no GSSAPI.** DG builds with OpenSSL.
+  With `ssl` on, every TCP connection must use TLS, and a local
+  socket connection never does
+  ([`aa/ROLE.md`](aa/ROLE.md#8-decisions) §8). With `ssl` off,
+  a TCP connection is not encrypted. GSSAPI is not built.
+- **Passwords.** Logins use SCRAM, which sends no password. A
+  password in cleartext, set by SQL, is refused over TCP
+  without TLS. Send it hashed, as psql's `\password` does. The
+  local socket and TLS connections accept it
   ([`aa/ROLE.md`](aa/ROLE.md#51-a-password-set-in-cleartext)
-  §5.1). An MD5 password is refused on every connection.
+  §5.1). A logged statement never shows a password. An MD5
+  password is refused on every connection.
 - **Fixed encoding and locale.** Every DG database uses `UTF8`
   encoding and collation `C`. A column's `COLLATE`, `CREATE
   COLLATION`, and an index key collation other than the
@@ -224,10 +235,11 @@ layer. [`PERF.md`](PERF.md) measures how fast DG runs against PG.
   `tid`, and composite/user-defined types cannot be stored as
   table columns.
 - **ALTER TABLE.** DG takes `ADD COLUMN`, `DROP COLUMN`,
-  `ALTER COLUMN TYPE`, `ADD`, `DROP` and `VALIDATE CONSTRAINT`
-  of a foreign key, a primary key or a unique constraint, and
-  `RENAME`. It refuses `SET`/`DROP NOT NULL`, `SET DEFAULT`, a
-  `CHECK` added later, `USING INDEX`, `SET SCHEMA`, `ALTER
+  `ALTER COLUMN TYPE`, `SET`/`DROP NOT NULL`, `SET`/`DROP
+  DEFAULT`, and `RENAME`. It takes `ADD` and `DROP CONSTRAINT`
+  of a foreign key, a primary key, a unique or a `CHECK`
+  constraint, and `VALIDATE CONSTRAINT` of a foreign key or a
+  `CHECK`. It refuses `USING INDEX`, `SET SCHEMA`, `ALTER
   INDEX`, and `ALTER TYPE`. `ALTER COLUMN TYPE` refuses a column
   an expression or partial index, a foreign key, or an identity
   sequence uses, a `COLLATE`, and a `USING` that reads another
@@ -250,16 +262,21 @@ layer. [`PERF.md`](PERF.md) measures how fast DG runs against PG.
 - **Removed or refused SQL features.** Table inheritance,
   declarative partitioning, `MERGE`, triggers, rules, row-level
   security, `LISTEN`/`NOTIFY`, materialized views, foreign data
-  wrappers, tablespaces, large objects, `CHECK` and `EXCLUDE`
-  constraints, `DEFERRABLE` constraints, `NOT ENFORCED` and
-  `MATCH PARTIAL` foreign keys, generated columns, unlogged
-  tables, temporary sequences, `ON COMMIT` on a permanent table,
-  foreign tables, composite types, domains, operators,
-  aggregates, `CREATE DATABASE` options, `ALTER DATABASE`,
-  extensions and `LOAD`, and replication (`PUBLICATION`,
-  `SUBSCRIPTION`, base backup, PITR, archiving, hot standby)
-  are removed or refused
+  wrappers, tablespaces, large objects, `EXCLUDE` constraints,
+  `DEFERRABLE` constraints, `NOT ENFORCED` and `MATCH PARTIAL`
+  foreign keys, unlogged tables, temporary sequences, `ON COMMIT`
+  on a permanent table, foreign tables, composite types, domains,
+  operators, aggregates, `CREATE DATABASE` options, `ALTER
+  DATABASE`, extensions and `LOAD`, and replication
+  (`PUBLICATION`, `SUBSCRIPTION`, base backup, PITR, archiving,
+  hot standby) are removed or refused
   ([`dg/UNSUPPORTED.md`](dg/UNSUPPORTED.md)).
+- **Generated columns.** `CREATE TABLE` takes stored and
+  virtual generated columns
+  ([`sm/GENERATED.md`](sm/GENERATED.md)). DG refuses `ADD
+  COLUMN` of a generated column, `SET` and `DROP EXPRESSION`,
+  `ALTER COLUMN TYPE` of a generated column, and a `NOT NULL`
+  virtual column ([`dg/UNSUPPORTED.md`](dg/UNSUPPORTED.md)).
 - **Added in DG: `DEFAULT ... ON UPDATE`.** Because DG has no
   triggers, it extends column definitions with `DEFAULT expr ON
   UPDATE` ([`dg/ONUPDATE.md`](dg/ONUPDATE.md)), which writes

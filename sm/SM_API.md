@@ -34,7 +34,7 @@ The count is the number of entries.
 | [Index builds, TOAST and the btree reaper](#index-builds-toast-and-the-btree-reaper) | Build an index; TOAST; clean a B-tree | 6 |
 | [Tables](#tables) | Open a table; read and write rows | 36 |
 | [Statistics](#statistics) | Sizes, counters and planner statistics | 9 |
-| [Table and index DDL](#table-and-index-ddl) | Create, alter and drop a table or an index | 19 |
+| [Table and index DDL](#table-and-index-ddl) | Create, alter and drop a table, a column, an index or a constraint | 27 |
 
 ## How a host uses sm.h
 
@@ -1683,6 +1683,7 @@ struct sm_table_def_t {
     uint64_t                     version = 0;
     std::vector<sm_fkey_def_t>   fkeys;         /* its own */
     std::vector<sm_fkey_ref_t>   referenced_by; /* those that reference it */
+    std::vector<sm_check_def_t>  checks;        /* its check constraints */
 };
 
 struct sm_column_def_t {
@@ -1697,6 +1698,10 @@ struct sm_column_def_t {
     uint64_t    identity_seq;   /* an identity column's sequence */
     bool        has_on_update;
     std::string on_update_expr; /* the host's update default; "" if none */
+    uint64_t    not_null_oid;   /* its NOT NULL constraint; 0 if none */
+    std::string not_null_name;  /* its name (NOTNULL.md) */
+    char        generated = 0;  /* 's', 'v' or 0 (GENERATED.md) */
+    std::vector<int32_t> generated_reads; /* the columns it reads */
 };
 
 enum sm_index_state_t {
@@ -1739,7 +1744,8 @@ struct sm_fkey_ref_t {
 ```
 
 `schema` holds the columns' attributes, as sm2 lays a row out by
-them. `sm_fkey_def_t` is under `sm_cat_create_fkey`.
+them. `sm_fkey_def_t` is under `sm_cat_create_fkey`, and
+`sm_check_def_t` is under `sm_cat_create_check`.
 
 `version` tells a host when what it caches of the table is stale.
 It is the count of the catalog's publish that last changed the
@@ -2985,20 +2991,22 @@ keeps the ones it was given, whatever is analyzed since.
 
 ## Table and index DDL
 
-**In short.** Create, alter and drop tables, columns, indexes and
-foreign keys here. Each call works in the session's
-transaction and shows to others at commit. Most take the
-table's lock in X mode until the end of the transaction, so
+**In short.** Create, alter and drop tables, columns, indexes,
+foreign keys and check constraints here. Each call works in the
+session's transaction and shows to others at commit. Most take
+the table's lock in X mode until the end of the transaction, so
 they wait for readers and writers of the table.
 
 The Catalog holds the design ([`CATALOG.md`](CATALOG.md#8-ddl)
 §8), with Temporary Table ([`TEMPTABLE.md`](TEMPTABLE.md)), Index
 Builder ([`INDEXBUILD.md`](INDEXBUILD.md)) and Foreign Key
-([`FOREIGNKEY.md`](FOREIGNKEY.md)). Each call works in the
-session's transaction. A call on an existing table takes its
-table-oid lock X to the end of the transaction, unless the table
-is temporary or the entry says otherwise. A table not there is
-`SM_ERR_NOTFOUND`.
+([`FOREIGNKEY.md`](FOREIGNKEY.md)), Check
+([`CHECK.md`](CHECK.md)), NOT NULL ([`NOTNULL.md`](NOTNULL.md))
+and Generated Column ([`GENERATED.md`](GENERATED.md)). Each call
+works in the session's transaction. A call on an existing table
+takes its table-oid lock X to the end of the transaction, unless
+the table is temporary or the entry says otherwise. A table not
+there is `SM_ERR_NOTFOUND`.
 
 ### `sm_cat_create_table`
 
@@ -3012,6 +3020,9 @@ struct sm_column_spec_t {
     char        identity = 0;     /* 'a', 'd' or 0 */
     uint64_t    identity_seq = 0; /* an identity column's sequence */
     const char* on_update_expr = nullptr; /* the host's update default */
+    const char* not_null_name = nullptr;  /* nullptr: sm3 names it */
+    char        generated = 0;            /* 's', 'v' or 0 */
+    std::vector<int32_t> generated_reads = {}; /* columns it reads */
 };
 
 int sm_cat_create_table(sm_session_t* session, uint64_t nspoid,
@@ -3025,6 +3036,15 @@ store, its `_id` sequence and its definition. The session's
 transaction sees it at once, and others at commit. An identity
 column owns its sequence from then on.
 
+A NOT NULL column gets a NOT NULL constraint. `not_null_name` is
+its name. With `nullptr`, sm3 makes the name
+`<table>_<column>_not_null`.
+
+A generated column has `generated` `'s'` (stored) or `'v'`
+(virtual). Its `default_expr` is its expression.
+`generated_reads` holds the 0-based places of the columns that
+the expression reads.
+
 Errors:
 
 - `SM_ERR_DUPKEY` (the name is taken)
@@ -3033,7 +3053,10 @@ Errors:
   one; a type code sm2 lacks, or a typmod its type refuses; an
   identity column that is not a NOT NULL smallint, integer or
   bigint with a sequence of this namespace, owned by none, and no
-  default
+  default; a generated column with a kind other than `'s'` or
+  `'v'`, no expression, an update default, or an identity; a
+  virtual column that is NOT NULL; a generated column that reads
+  itself, a generated column, or a column that is not there
 
 ### `sm_cat_create_temp_table`
 
@@ -3089,15 +3112,15 @@ int sm_cat_add_column(sm_session_t* session, uint64_t oid,
 
 Appends `col` to the table `oid`. A row written before it reads
 it as the datum `*missing` of `col`'s type, or as null when
-`missing` is NULL. A NOT NULL column with no `missing` needs an
-empty table.
+`missing` is NULL. A NOT NULL column with no `missing` needs a
+table with no live row, among the latest committed rows.
 
 Errors:
 
 - `SM_ERR_BLOCKED` (NOT NULL with no `missing`, and the table is
   in use: the call does not wait)
 - `SM_ERR_NOTNULL` (NOT NULL with no `missing`, and the table has
-  rows)
+  a live row)
 - `SM_ERR_DUPKEY` (a live column has the name)
 - `SM_ERR_INVALID` (as a column of `sm_cat_create_table`, a
   `missing` that is not a datum of the type, or an identity
@@ -3107,15 +3130,87 @@ Errors:
 
 ```cpp
 int sm_cat_set_not_null(sm_session_t* session, uint64_t oid,
-                        const char* name);
+                        const char* name, const char* constraint = nullptr);
 ```
 
-Makes the column `name` of the table `oid` NOT NULL. The call
-scans the table, and a row older than the column counts by its
-missing value. A column already NOT NULL returns 0 with no scan.
+Makes the column `name` of the table `oid` NOT NULL. Its NOT NULL
+constraint gets the name `constraint`. With `nullptr`, sm3 makes
+the name, as `sm_cat_create_table` does. A column already NOT
+NULL returns 0 with no scan.
+
+The call scans the latest committed rows of the table, under the
+table-oid lock X. It also reads a row that committed after the
+transaction's snapshot. A row older than the column counts by
+its missing value.
 
 Errors: `SM_ERR_NOTNULL` (a row holds a null in it),
-`SM_ERR_NOTFOUND` (no such column).
+`SM_ERR_NOTFOUND` (no such column), `SM_ERR_DUPKEY` (another
+constraint of the table has the name `constraint`),
+`SM_ERR_INVALID` (a virtual generated column).
+
+### `sm_cat_rename_not_null`
+
+```cpp
+int sm_cat_rename_not_null(sm_session_t* session, uint64_t oid,
+                           const char* name, const char* to);
+```
+
+Renames the NOT NULL constraint of the column `name` of the table
+`oid` to `to`.
+
+Errors: `SM_ERR_NOTFOUND` (no such column, or the column is not
+NOT NULL), `SM_ERR_DUPKEY` (`to` is empty, or another constraint
+of the table has the name).
+
+### `sm_cat_drop_not_null`
+
+```cpp
+int sm_cat_drop_not_null(sm_session_t* session, uint64_t oid,
+                         const char* name);
+```
+
+Lets the column `name` of the table `oid` hold a null, and drops
+its NOT NULL constraint. A column that is not NOT NULL returns 0.
+
+Errors: `SM_ERR_NOTFOUND` (no such column), `SM_ERR_INUSE` (a
+column of the primary key), `SM_ERR_INVALID` (an identity
+column).
+
+### `sm_cat_set_default`
+
+```cpp
+int sm_cat_set_default(sm_session_t* session, uint64_t oid, const char* name,
+                       const char* expr);
+```
+
+Sets the default of the column `name` of the table `oid` to the
+host's `expr`. With `expr` `nullptr`, it drops the default. The
+update default does not change.
+
+Errors: `SM_ERR_NOTFOUND` (no such column), `SM_ERR_INVALID` (an
+identity column, or a generated column).
+
+### `sm_cat_set_generated`
+
+```cpp
+int sm_cat_set_generated(sm_session_t* session, uint64_t oid,
+                         const char* name, char kind, const char* expr,
+                         const std::vector<int32_t>& reads);
+```
+
+Makes the column `name` of the table `oid` a generated column of
+`kind`, `'s'` or `'v'` ([`GENERATED.md`](GENERATED.md)). Its
+expression is the host's `expr`, and `reads` holds the 0-based
+places of the columns that the expression reads.
+
+Errors:
+
+- `SM_ERR_NOTFOUND` (no such column)
+- `SM_ERR_INVALID`: a kind other than `'s'` or `'v'`; a column
+  that is generated, an identity column, or has a default or an
+  update default; a virtual kind for a NOT NULL column; a column
+  in `reads` that is not there, is generated, or is the column
+  itself
 
 ### `sm_cat_alter_column_type`
 
@@ -3421,3 +3516,66 @@ int sm_cat_fkey(sm_session_t* session, uint64_t fkey, uint64_t* table,
 Gives the foreign key with the oid `fkey` and its table, the
 child, as the session's transaction sees them. Returns 0, or 1 if
 there is none. It takes no lock: the host holds the child's.
+
+### `sm_cat_create_check`
+
+```cpp
+struct sm_check_def_t {
+    uint64_t             oid = 0;
+    std::string          name;
+    std::vector<int32_t> columns;   /* the columns it reads */
+    bool                 validated = true;
+    std::string          host;      /* the host's bytes */
+};
+
+int sm_cat_create_check(sm_session_t* session, uint64_t table,
+                        const sm_check_def_t& def, uint64_t* oid);
+```
+
+Adds the check constraint `def` to `table`
+([`CHECK.md`](CHECK.md#51-sm3) §5.1), and sets its oid in
+`oid`. sm ignores `def.oid`. `columns` holds the 0-based places
+of the columns that the expression reads. `host` holds the
+expression and its flags, which sm never reads.
+
+sm reads no row. The host checks the rows, and `validated` is
+its statement that it checked them. After the call, a drop or a
+type change of a column in `columns` is `SM_ERR_INUSE`.
+
+Errors: `SM_ERR_INVALID` (no name, or a column in `columns` that
+is not there), `SM_ERR_DUPKEY` (another constraint of the table
+has the name).
+
+### `sm_cat_drop_check`
+
+```cpp
+int sm_cat_drop_check(sm_session_t* session, uint64_t table, uint64_t check);
+```
+
+Drops the check constraint `check` of `table`.
+
+Errors: `SM_ERR_NOTFOUND`.
+
+### `sm_cat_validate_check`
+
+```cpp
+int sm_cat_validate_check(sm_session_t* session, uint64_t table,
+                          uint64_t check);
+```
+
+Marks the check constraint `check` of `table` validated. The host
+checks the rows first.
+
+Errors: `SM_ERR_NOTFOUND`.
+
+### `sm_cat_rename_check`
+
+```cpp
+int sm_cat_rename_check(sm_session_t* session, uint64_t table, uint64_t check,
+                        const char* name);
+```
+
+Renames the check constraint `check` of `table` to `name`.
+
+Errors: `SM_ERR_NOTFOUND`, `SM_ERR_DUPKEY` (another constraint of
+the table has the name), `SM_ERR_INVALID` (no name).

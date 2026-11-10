@@ -94,9 +94,11 @@ These are settled; they bind every level below.
   `sm1`, `sm2` and `sm3` each expose a C++ interface in a
   namespace of their own (`sm1::`, `sm2::`, `sm3::`). Only
   the top level — `include/` and `src/` at the root — wraps
-  the stack in a C API, because only PostgreSQL's C code
-  needs one, and it calls the stack nowhere else. Four
-  rules keep a C++ interface as safe as the C one it
+  the stack in an API of C-style functions, compiled as
+  C++: free `sm_*` functions, opaque handles, and an `int`
+  result. digres, also compiled as C++, calls the stack
+  only there ([`DESIGN.md`](DESIGN.md#1-the-stack) §1).
+  Four rules keep a C++ interface as safe as the C one it
   replaces:
   - *Every level reports failure as sm1 does.* A call returns 0
     or -1, and the code and message are read from the
@@ -106,10 +108,15 @@ These are settled; they bind every level below.
     ([`DESIGN.md`](DESIGN.md#5-cross-level-decisions) §5).
   - *Only the top level catches*, but for the index builder's
     worker. An exception may pass through sm1, sm2 and sm3
-    unchanged; the C wrapper catches everything, because a
-    PostgreSQL `longjmp` across C++ frames, or a C++ exception
-    through PostgreSQL's C frames, is undefined behaviour
-    ([`DESIGN.md`](DESIGN.md#5-cross-level-decisions) §5).
+    unchanged. The wrapper catches everything, so a host sees one
+    error convention: -1 and the thread's error state. For a call
+    on a session, it first aborts the session's transaction,
+    unless it is prepared. digres raises its own errors as the
+    exception `pg_error_t`
+    ([`../dg/CODE.md`](../dg/CODE.md#2-c-compiled-as-c) §2), and
+    catches no other type. So an exception of the stack must not
+    reach it ([`DESIGN.md`](DESIGN.md#5-cross-level-decisions)
+    §5).
   - *A public header is opaque.* It declares handles, not
     layouts — no private members and no RocksDB type — so a
     caller cannot come to depend on a level's internals.
@@ -151,10 +158,10 @@ These are settled; they bind every level below.
   does. A client keeps only what is its own: its SQL, its
   planner, its executor.
 - **Each level ships its own `SMn_OBJECTIVE.md` and
-  `SMn_DESIGN.md`** (sm0's is its [`README.md`](README.md)). This
-  document and [`DESIGN.md`](DESIGN.md) at the top level cover
-  only what spans levels: the stack's shape, its build, and its
-  cross-level decisions. Anything specific to one level's
+  `SMn_DESIGN.md`** (sm0's is its [`README.md`](sm0/README.md)).
+  This document and [`DESIGN.md`](DESIGN.md) at the top level
+  cover only what spans levels: the stack's shape, its build, and
+  its cross-level decisions. Anything specific to one level's
   internals belongs in that level's own documents, not here.
 
 ## Where to read next

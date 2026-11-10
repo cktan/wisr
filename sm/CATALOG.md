@@ -430,7 +430,7 @@ under "What is recorded".
 | meta | format version `int4` |
 | name | kind `int2`, oid `int8`, table oid `int8` or null |
 | table | namespace `int8`, name `text`, storeid `int8`, `_id` sequence `text`, next index relid `int2` |
-| column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null, default `bytea` or null: the host's expression, opaque, kept and never run; identity kind `int2` (`a` or `d`) or null, identity sequence `int8` or null, update default `bytea` or null: the host's expression for what an UPDATE that does not assign the column writes, opaque, kept and never run ([`../dg/ONUPDATE.md`](../dg/ONUPDATE.md)); NOT NULL constraint oid `int8` or null, and its name `text` or null, both set for a NOT NULL column ([`NOTNULL.md`](NOTNULL.md)) |
+| column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null, default `bytea` or null: the host's expression, opaque, kept and never run; identity kind `int2` (`a` or `d`) or null, identity sequence `int8` or null, update default `bytea` or null: the host's expression for what an UPDATE that does not assign the column writes, opaque, kept and never run ([`../dg/ONUPDATE.md`](../dg/ONUPDATE.md)); NOT NULL constraint oid `int8` or null, and its name `text` or null, both set for a NOT NULL column ([`NOTNULL.md`](NOTNULL.md)); generated kind `int2` (`s` or `v`) or null, and the columns its expression reads `bytea` or null: each a 0-based place, 4 bytes in the host's byte order, both set for a generated column, whose default is its expression ([`GENERATED.md`](GENERATED.md)) |
 | index | oid `int8`, name `text`, relid `int2`, unique `bool`, nkey `int4`, ninclude `int4`, three retired and null, eval `bytea` or null, nread `int4` or null, primary `bool` or null, constraint `bool` or null, tree `bool` or null: true, or null for false |
 | index state | state `int2`, error `int2` or null, reason `text` or null, the key of a row that holds a duplicated key, `bytea` or null |
 | key | attnum `int4`, desc `bool`, nulls first `bool`, collation oid `int8` or null, type code `int2` or null, typmod `int4` or null |
@@ -967,12 +967,17 @@ the table's oid lock X to the end of its transaction.
 - **`NOT NULL` with no missing value needs an empty table**
   (`need_empty`). A savepoint is set, and the table-oid lock X is
   taken only if it is free now: busy is `SM_ERR_BLOCKED`. The
-  lock is kept only if the store holds no version at all: rows
-  are `SM_ERR_NOTNULL`. On a failure the savepoint lets the lock
-  go.
-- **`set_not_null(session, oid, name)`** makes a live column
-  `NOT NULL`. It opens the table exclusive and reads every row
-  the transaction sees: `SM_ERR_NOTNULL` if one holds none.
+  lock is kept only if the table holds no live row. A deleted row
+  can leave keys in the store, so a store that is not empty is
+  scanned (`has_live_row`). The scan reads the latest committed
+  rows. A live row is `SM_ERR_NOTNULL`. On a failure the
+  savepoint lets the lock go.
+- **`set_not_null(session, oid, name, constraint)`** makes a
+  live column `NOT NULL`, its constraint named `constraint`, or
+  by sm3 when it is empty. It opens the table exclusive and reads
+  the latest committed rows. This includes a row committed after
+  a `REPEATABLE READ` snapshot. A row that holds a null is
+  `SM_ERR_NOTNULL`.
 - **`set_identity(session, oid, name, identity, seq)`** makes a
   column an identity column whose values come from `seq`
   ([`SEQUENCE.md`](SEQUENCE.md)). `ADD COLUMN` with a volatile

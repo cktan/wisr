@@ -11,8 +11,8 @@ format, sm3's catalog — are argued in that level's own
 ## 1. The stack
 
 ```
-                      PostgreSQL (C)
-                             │  include/ — the one C API
+             digres (PostgreSQL compiled as C++)
+                             │  include/ — the one C-style API
         ┌────────────────────┴─────────────────────────┐
         │  top level  the C wrapper                    │
         │  everything → sm3, but the rest of 2PC,      │
@@ -360,40 +360,49 @@ design:
   | `INVALID`, `NOTRANS`, `INTRANS` | `XX000` | `internal_error` (a bug in the glue) |
   | `EXCEPTION` | `XX000` | `internal_error` (a bug in the stack) |
 - **Running out of memory is fatal to the process, because
-  `std::bad_alloc` can be thrown from inside RocksDB.** RocksDB
-  allocates as it works — a write builds a batch, joins a write
-  group, appends to the WAL, inserts into the memtable — and when
-  an allocation fails, `operator new` throws through RocksDB's
-  own frames. RocksDB reports its errors through `Status` and is
-  not written to be unwound through: it keeps parts of its state
-  consistent by explicit steps, not RAII, and an exception skips
-  them. In a test that failed each allocation inside the status
-  record's write in turn, the write's outcome was unknown — the
-  record had reached the WAL or not, depending on where the
-  exception came from — every later write to that database hung,
-  and closing it could crash. No caller can repair that in
-  process, and none can tell such a `bad_alloc` from a harmless
-  one: an exception from inside RocksDB looks the same as one
-  from sm1's own code, or from inside RocksDB before it touched
-  anything. So every `bad_alloc` is treated as fatal, and only a
-  fresh open's WAL replay recovers — reliably, and with every
-  committed transaction. `sm1::attach` installs a new-handler,
-  unless the host process already has one, that runs when an
-  allocation fails, before anything is thrown: it reports `***
-  FATAL ***` on stderr and through the log hook, then aborts
-  where the allocation failed, before any frame unwinds, so the
-  core holds the failing allocation's own stack. It does so
-  whatever code allocated — sm1, sm2, sm3, the wrapper or the
-  host's own. Telling them apart took a guard on every sm1 entry
-  point, and bought only a `NOMEM` from the levels above that is
-  almost never seen. RocksDB's own background threads run under
-  the same handler. All of it should be very rare: on a default
-  Linux system an allocation seldom fails, since the kernel's OOM
-  killer ends the process first; it takes a hard memory limit to
-  get here. A host with its own handler keeps it, but one that
-  throws is unsupported: sm does not recover from a `bad_alloc`
-  inside it, which can leave RocksDB unreliable and sm1's own
-  state half-changed.
+  `std::bad_alloc` can be thrown from inside RocksDB.**
+
+  *The failure.* RocksDB allocates as it works: a write builds a
+  batch, joins a write group, appends to the WAL, and inserts
+  into the memtable. When an allocation fails, `operator new`
+  throws through RocksDB's own frames. RocksDB reports its
+  errors through `Status`, and is not written to be unwound
+  through. It keeps parts of its state consistent by explicit
+  steps, not by RAII, and an exception skips those steps. One
+  test failed each allocation inside the write of a status
+  record, in turn. The outcome of the write was unknown: the
+  record reached the WAL or not, by where the exception came
+  from. Every later write to that database hung, and closing
+  the database could crash.
+
+  *The policy.* No caller can repair that state in the process.
+  No caller can tell such a `bad_alloc` from a harmless one,
+  either. An exception from inside RocksDB looks the same as
+  one from sm1's own code, or from RocksDB before it changed
+  anything. So every `bad_alloc` is fatal. Only the WAL replay
+  of a new open recovers, and it recovers every committed
+  transaction reliably.
+
+  `sm1::attach` installs a new-handler, unless the host process
+  already has one. The handler runs when an allocation fails,
+  before anything is thrown. It reports `*** FATAL ***` on
+  stderr and through the log hook. Then it aborts where the
+  allocation failed, before any frame unwinds, so the core
+  holds the stack of the failed allocation. It does this for
+  every allocator: sm1, sm2, sm3, the wrapper, or the host. To
+  tell them apart would need a guard on every sm1 entry point.
+  That guard would give only a `NOMEM` from the levels above,
+  which is almost never seen. RocksDB's background threads run
+  under the same handler.
+
+  This failure is very rare. On a default Linux system an
+  allocation seldom fails, because the kernel's OOM killer ends
+  the process first. It takes a hard memory limit to get here.
+
+  *A host's own handler.* A host with its own new-handler keeps
+  it. A handler that throws is not supported. sm does not
+  recover from a `bad_alloc` inside it, so RocksDB can become
+  unreliable and sm1's own state can be half changed.
 - **sm never throws; an exception may pass through it, and only
   the top level catches.** No code in sm throws an exception of
   its own: a failure is -1 and an error code, and there is no
@@ -405,37 +414,39 @@ design:
   sm2 and sm3 unchanged: their entry points catch nothing, and
   what a frame must release on the way is held by an RAII guard,
   such as sm0's `scope_guard_t`, never by a catch and rethrow.
-  The C wrapper is the one catch-all, since it is the only place
-  a C caller can be reached. It catches everything:
-  `std::bad_alloc` becomes `NOMEM` — possible there only before
-  the handler is installed, or under a host's own — anything else
-  `SM_ERR_EXCEPTION`, which means a bug, with `what()` as its
-  message, and if the call involves a session the wrapper aborts
-  that session's transaction before returning -1 — unless the
-  transaction is prepared, which `sm1::in_doubt` tells it: that
-  one is the coordinator's to resolve, and aborting it would
-  break the promise `sm1::prepare` made. A `NOMEM` returned from
-  below is handled the same way: the wrapper aborts the session's
-  transaction, since a data operation that ran out of memory
-  midway may have written part of its change. Aborting is the
-  right recovery because sm1's abort works only in memory — it
-  leaves the active table, which kills the transaction's versions
-  without writing a status record, and releases its cursors, SSI
-  node, created stores and locks — so it scarcely allocates, and
-  it returns whatever a half-done call touched to a known state;
-  every sm1 mutex is held by an RAII guard, so unwinding releases
-  it. Four conditions come with it. Nothing may throw after a
-  commit or prepare point: once the status or `PREPARED` record
-  is written, an abort would kill in memory versions the WAL says
-  are committed. Nothing does: that tail is `noexcept`, running
-  out of memory in it aborts the process as anywhere, and a
-  failed status record write or sync aborts the process. sm2 and
-  sm3 must stay consistent when unwound mid-call, so the abort
-  undoes what a half-done call changed — above all in sm3's
-  in-memory catalog. After `NOMEM`, as after a retryable code,
-  the engine has already aborted, so the glue does not continue
-  the transaction; `NOMEM` is not retryable. And an exception on
-  the GC thread or inside a RocksDB callback never reaches the
+  The C wrapper is the one catch-all, since every call of a host
+  crosses it. A host expects a return code there, not an
+  exception: digres catches only its own `pg_error_t`. The
+  wrapper catches everything: `std::bad_alloc` becomes `NOMEM` —
+  possible there only before the handler is installed, or under a
+  host's own — anything else `SM_ERR_EXCEPTION`, which means a
+  bug, with `what()` as its message, and if the call involves a
+  session the wrapper aborts that session's transaction before
+  returning -1 — unless the transaction is prepared, which
+  `sm1::in_doubt` tells it: that one is the coordinator's to
+  resolve, and aborting it would break the promise `sm1::prepare`
+  made. A `NOMEM` returned from below is handled the same way:
+  the wrapper aborts the session's transaction, since a data
+  operation that ran out of memory midway may have written part
+  of its change. Aborting is the right recovery because sm1's
+  abort works only in memory — it leaves the active table, which
+  kills the transaction's versions without writing a status
+  record, and releases its cursors, SSI node, created stores and
+  locks — so it scarcely allocates, and it returns whatever a
+  half-done call touched to a known state; every sm1 mutex is
+  held by an RAII guard, so unwinding releases it. Four
+  conditions come with it. Nothing may throw after a commit or
+  prepare point: once the status or `PREPARED` record is written,
+  an abort would kill in memory versions the WAL says are
+  committed. Nothing does: that tail is `noexcept`, running out
+  of memory in it aborts the process as anywhere, and a failed
+  status record write or sync aborts the process. sm2 and sm3
+  must stay consistent when unwound mid-call, so the abort undoes
+  what a half-done call changed — above all in sm3's in-memory
+  catalog. After `NOMEM`, as after a retryable code, the engine
+  has already aborted, so the glue does not continue the
+  transaction; `NOMEM` is not retryable. And an exception on the
+  GC thread or inside a RocksDB callback never reaches the
   wrapper, so those boundaries keep catch-alls of their own
   (next). Exceptions stay enabled in every build (§2).
 - **The foreign boundaries report errors; they catch no

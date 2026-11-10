@@ -214,9 +214,9 @@ changes to threads, latches, locks or shared state.
 - **`digres --build` says how a binary was built**: the flags
   of digres, sq and sm, and which RocksDB it links. A release
   build shows `-DNDEBUG` on each, and RocksDB `static`.
-- **Flags are not tracked** by digres's make: after changing
-  them, delete the `*.rel.o` objects under `dg/src` and
-  `sq/build/rel` itself before building the release again.
+- **Flags are not tracked** by the make of dg and sq: after
+  changing them, delete `dg/build/rel` and `sq/build/rel` before
+  building the release again.
 - **A part alone** builds in its own directory, as
   `make -C sm/sm1 -j4`, `DEBUG=1` or not.
 - **`make format`** before a commit. dg is formatted by the

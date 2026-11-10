@@ -76,7 +76,7 @@ valid and whether it is enforced: `ConstrCheck`'s `ccname`,
 ## 3. In the catalog
 
 The `CONSTRAINT` entry of a table already has a kind
-([`FOREIGNKEY.md`](FOREIGNKEY.md#3-in-the-catalog) §3). A check
+([`FOREIGNKEY.md`](FOREIGNKEY.md#3-the-entry) §3). A check
 is kind `c`:
 
 ```

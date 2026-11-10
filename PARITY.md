@@ -187,8 +187,9 @@ earlier run is `main` before any change, the same day.
   the q1 and q3 changes are. The q2 change, 27% more tps, is
   far above it, and the instruction counts agree with it.
 - The instruction ratio of q2 is 1.63, but the latency ratio is
-  1.33. digres runs q2's instructions at a higher IPC (3.3, as
-  PostgreSQL's 3.4), because they are a tight loop.
+  1.33. The measured IPCs, 3.3 for digres and 3.4 for
+  PostgreSQL, do not explain this difference. This run did not
+  find its cause.
 - q1 is 1.05 in user instructions and 1.12 in cycles, user and
   kernel together: digres 50,500 cycles, PostgreSQL 45,200.
   digres runs q1 at an IPC of 1.9, PostgreSQL's at 2.0, and

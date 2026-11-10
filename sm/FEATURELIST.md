@@ -110,9 +110,11 @@ ordered key as the only access path below sm2.
 - [x] online index build — already closed, INDEXBUILD.md §2
 - [x] online ADD COLUMN — via each row's attribute count, as
       PostgreSQL's natts
-- [ ] other online ALTER (type change, drop column) — DROP COLUMN
-      built (`sm_cat_drop_column`); ALTER COLUMN TYPE refused
-      ([`../dg/UNSUPPORTED.md`](../dg/UNSUPPORTED.md))
+- [ ] other online ALTER (type change, drop column)
+      — DROP COLUMN built (`sm_cat_drop_column`); ALTER
+        COLUMN TYPE built, but not online: it rewrites the
+        table under the table-oid lock X
+        ([`../dg/ALTERTYPE.md`](../dg/ALTERTYPE.md))
 
 ## 7. Replication / backup / ops
 
