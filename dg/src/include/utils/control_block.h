@@ -497,6 +497,11 @@ typedef struct tcb_guc_t {
   int IdleInTransactionSessionTimeout = 0;     /* proc.c */
   int TransactionTimeout = 0;                  /* proc.c */
   int IdleSessionTimeout = 0;                  /* proc.c */
+  int extra_float_digits = 1;                  /* float.c */
+  int log_min_duration_sample = -1;            /* guc_tables.c */
+  int log_min_duration_statement = -1;         /* guc_tables.c */
+  int log_parameter_max_length = -1;           /* guc_tables.c */
+  int log_parameter_max_length_on_error = 0;   /* guc_tables.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

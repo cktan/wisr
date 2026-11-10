@@ -1710,7 +1710,7 @@ static void exec_bind_message(StringInfo input_message) {
          * result of encoding conversion, if any was done.
          */
         if (pstring) {
-          if (log_parameter_max_length_on_error != 0) {
+          if (tcb->guc.log_parameter_max_length_on_error != 0) {
             MemoryContext oldcxt;
 
             oldcxt = MemoryContextSwitchTo(MessageContext);
@@ -1718,7 +1718,7 @@ static void exec_bind_message(StringInfo input_message) {
             if (knownTextValues == NULL)
               knownTextValues = palloc0_array(char *, numParams);
 
-            if (log_parameter_max_length_on_error < 0)
+            if (tcb->guc.log_parameter_max_length_on_error < 0)
               knownTextValues[paramno] = pstrdup(pstring);
             else {
               /*
@@ -1729,7 +1729,7 @@ static void exec_bind_message(StringInfo input_message) {
                * might fail to include the trailing ellipsis.
                */
               knownTextValues[paramno] =
-                  pnstrdup(pstring, log_parameter_max_length_on_error +
+                  pnstrdup(pstring, tcb->guc.log_parameter_max_length_on_error +
                                         2 * MAX_MULTIBYTE_CHAR_LEN);
             }
 
@@ -1791,9 +1791,9 @@ static void exec_bind_message(StringInfo input_message) {
      * in future errors, if configured to do so.  (This is saved in the
      * portal, so that they'll appear when the query is executed later.)
      */
-    if (log_parameter_max_length_on_error != 0)
+    if (tcb->guc.log_parameter_max_length_on_error != 0)
       params->paramValuesStr = BuildParamLogString(
-          params, knownTextValues, log_parameter_max_length_on_error);
+          params, knownTextValues, tcb->guc.log_parameter_max_length_on_error);
   } else
     params = NULL;
 
@@ -2178,8 +2178,8 @@ static bool check_log_statement(List *stmt_list) {
  * essentially prevents 2 from being returned).
  */
 int check_log_duration(char *msec_str, bool was_logged) {
-  if (tcb->guc.log_duration || log_min_duration_sample >= 0 ||
-      log_min_duration_statement >= 0 || xact_is_sampled) {
+  if (tcb->guc.log_duration || tcb->guc.log_min_duration_sample >= 0 ||
+      tcb->guc.log_min_duration_statement >= 0 || xact_is_sampled) {
     long secs;
     int usecs;
     int msecs;
@@ -2196,16 +2196,17 @@ int check_log_duration(char *msec_str, bool was_logged) {
      * designed to avoid integer overflow with very long durations: don't
      * compute secs * 1000 until we've verified it will fit in int.
      */
-    exceeded_duration = (log_min_duration_statement == 0 ||
-                         (log_min_duration_statement > 0 &&
-                          (secs > log_min_duration_statement / 1000 ||
-                           secs * 1000 + msecs >= log_min_duration_statement)));
+    exceeded_duration =
+        (tcb->guc.log_min_duration_statement == 0 ||
+         (tcb->guc.log_min_duration_statement > 0 &&
+          (secs > tcb->guc.log_min_duration_statement / 1000 ||
+           secs * 1000 + msecs >= tcb->guc.log_min_duration_statement)));
 
     exceeded_sample_duration =
-        (log_min_duration_sample == 0 ||
-         (log_min_duration_sample > 0 &&
-          (secs > log_min_duration_sample / 1000 ||
-           secs * 1000 + msecs >= log_min_duration_sample)));
+        (tcb->guc.log_min_duration_sample == 0 ||
+         (tcb->guc.log_min_duration_sample > 0 &&
+          (secs > tcb->guc.log_min_duration_sample / 1000 ||
+           secs * 1000 + msecs >= tcb->guc.log_min_duration_sample)));
 
     /*
      * Do not log if log_statement_sample_rate = 0. Log a sample if
@@ -2266,10 +2267,11 @@ static int errdetail_execute(List *raw_parsetree_list) {
  * by log_parameter_max_length not log_parameter_max_length_on_error.
  */
 static int errdetail_params(ParamListInfo params) {
-  if (params && params->numParams > 0 && log_parameter_max_length != 0) {
+  if (params && params->numParams > 0 &&
+      tcb->guc.log_parameter_max_length != 0) {
     char *str;
 
-    str = BuildParamLogString(params, NULL, log_parameter_max_length);
+    str = BuildParamLogString(params, NULL, tcb->guc.log_parameter_max_length);
     if (str && str[0] != '\0')
       errdetail("Parameters: %s", str);
   }
@@ -2294,7 +2296,7 @@ static void bind_param_error_callback(void *arg) {
   if (data->paramval) {
     initStringInfo(&buf);
     appendStringInfoStringQuoted(&buf, data->paramval,
-                                 log_parameter_max_length_on_error);
+                                 tcb->guc.log_parameter_max_length_on_error);
     quotedval = buf.data;
   } else
     quotedval = NULL;

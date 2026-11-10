@@ -307,10 +307,6 @@ thread_local /*LOCAL*/ bool current_role_is_superuser;
 thread_local /*LOCAL*/ int log_min_error_statement = ERROR;
 thread_local /*LOCAL*/ int log_min_messages = WARNING;
 thread_local /*LOCAL*/ int client_min_messages = NOTICE;
-thread_local /*LOCAL*/ int log_min_duration_sample = -1;
-thread_local /*LOCAL*/ int log_min_duration_statement = -1;
-thread_local /*LOCAL*/ int log_parameter_max_length = -1;
-thread_local /*LOCAL*/ int log_parameter_max_length_on_error = 0;
 thread_local /*LOCAL*/ int log_temp_files = -1;
 thread_local /*LOCAL*/ double log_statement_sample_rate = 1.0;
 thread_local /*LOCAL*/ double log_xact_sample_rate = 0;
@@ -1763,7 +1759,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
           "A zero or negative parameter value is added to the standard "
           "number of digits (FLT_DIG or DBL_DIG as appropriate). "
           "Any value greater than zero selects precise output mode.")},
-     &extra_float_digits,
+     &tcb->guc.extra_float_digits,
      1,
      -15,
      3,
@@ -1777,7 +1773,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
                    " Sampling is determined by \"log_statement_sample_rate\"."),
       gettext_noop("-1 disables sampling. 0 means sample all statements."),
       GUC_UNIT_MS},
-     &log_min_duration_sample,
+     &tcb->guc.log_min_duration_sample,
      -1,
      -1,
      INT_MAX,
@@ -1791,7 +1787,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop("-1 disables logging statement durations. 0 means log all "
                    "statement durations."),
       GUC_UNIT_MS},
-     &log_min_duration_statement,
+     &tcb->guc.log_min_duration_statement,
      -1,
      -1,
      INT_MAX,
@@ -1803,7 +1799,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop("Sets the maximum length in bytes of data logged for bind "
                    "parameter values when logging statements."),
       gettext_noop("-1 means log values in full."), GUC_UNIT_BYTE},
-     &log_parameter_max_length,
+     &tcb->guc.log_parameter_max_length,
      -1,
      -1,
      INT_MAX / 2,
@@ -1815,7 +1811,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop("Sets the maximum length in bytes of data logged for bind "
                    "parameter values when logging statements, on error."),
       gettext_noop("-1 means log values in full."), GUC_UNIT_BYTE},
-     &log_parameter_max_length_on_error,
+     &tcb->guc.log_parameter_max_length_on_error,
      0,
      -1,
      INT_MAX / 2,
