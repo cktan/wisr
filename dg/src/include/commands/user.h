@@ -25,7 +25,6 @@
 /* GUCs */
 extern thread_local /*LOCAL*/ PGDLLIMPORT int
     Password_encryption; /* values from enum PasswordType */
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *createrole_self_grant;
 
 /* Hook to check passwords in CreateRole() and AlterRole() */
 typedef void (*check_password_hook_type)(const char *username,

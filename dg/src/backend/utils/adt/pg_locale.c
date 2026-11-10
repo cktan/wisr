@@ -106,8 +106,6 @@ extern size_t strupper_libc(char *dst, size_t dstsize, const char *src,
                             ssize_t srclen, pg_locale_t locale);
 
 /* GUC settings */
-thread_local /*LOCAL*/ char *locale_messages;
-thread_local /*LOCAL*/ char *locale_monetary;
 thread_local /*LOCAL*/ char *locale_numeric;
 thread_local /*LOCAL*/ char *locale_time;
 
@@ -545,11 +543,11 @@ struct lconv *PGLC_localeconv(void) {
    * Use thread-safe method of obtaining a copy of lconv from the operating
    * system.
    */
-  if (pg_localeconv_r(locale_monetary, locale_numeric, &tmp) != 0)
+  if (pg_localeconv_r(tcb->guc.locale_monetary, locale_numeric, &tmp) != 0)
     elog(
         ERROR,
         "could not get lconv for LC_MONETARY = \"%s\", LC_NUMERIC = \"%s\": %m",
-        locale_monetary, locale_numeric);
+        tcb->guc.locale_monetary, locale_numeric);
 
   /* Must copy data now so we can re-encode it. */
   extlconv = &tmp;
@@ -599,7 +597,7 @@ struct lconv *PGLC_localeconv(void) {
     db_encoding_convert(encoding, &worklconv.thousands_sep);
     /* grouping is not text and does not require conversion */
 
-    encoding = pg_get_encoding_from_locale(locale_monetary, true);
+    encoding = pg_get_encoding_from_locale(tcb->guc.locale_monetary, true);
     if (encoding < 0)
       encoding = PG_SQL_ASCII;
 

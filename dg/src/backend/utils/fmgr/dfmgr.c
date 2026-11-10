@@ -77,8 +77,6 @@ void dfmgr_state_free_t::operator()(dfmgr_state_t *state) const {
   delete state;
 }
 
-thread_local /*LOCAL*/ char *Dynamic_library_path;
-
 static void *internal_load_library(const char *libname);
 static char *expand_dynamic_library_name(const char *name);
 static void check_restricted_library_name(const char *name);
@@ -235,8 +233,8 @@ static char *expand_dynamic_library_name(const char *name) {
   have_slash = (first_dir_separator(name) != NULL);
 
   if (!have_slash) {
-    full = find_in_path(name, Dynamic_library_path, "dynamic_library_path",
-                        "$libdir", pcb->pkglib_path);
+    full = find_in_path(name, tcb->guc.Dynamic_library_path,
+                        "dynamic_library_path", "$libdir", pcb->pkglib_path);
     if (full)
       return full;
   } else {
@@ -249,8 +247,8 @@ static char *expand_dynamic_library_name(const char *name) {
   new_ = psprintf("%s%s", name, DLSUFFIX);
 
   if (!have_slash) {
-    full = find_in_path(new_, Dynamic_library_path, "dynamic_library_path",
-                        "$libdir", pcb->pkglib_path);
+    full = find_in_path(new_, tcb->guc.Dynamic_library_path,
+                        "dynamic_library_path", "$libdir", pcb->pkglib_path);
     pfree(new_);
     if (full)
       return full;

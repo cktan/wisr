@@ -526,6 +526,11 @@ typedef struct tcb_guc_t {
   char *client_encoding_string;                /* guc_tables.c */
   char *datestyle_string;                      /* guc_tables.c */
   char *default_table_access_method;           /* tableam.c */
+  char *createrole_self_grant = "";            /* user.c */
+  char *Dynamic_library_path;                  /* dfmgr.c */
+  char *Extension_control_path;                /* extension.c */
+  char *locale_messages;                       /* pg_locale.c */
+  char *locale_monetary;                       /* pg_locale.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

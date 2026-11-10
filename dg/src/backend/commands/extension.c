@@ -76,7 +76,6 @@
 #include "utils/varlena.h"
 
 /* GUC */
-thread_local /*LOCAL*/ char *Extension_control_path;
 
 /* Globally visible state variables */
 thread_local /*LOCAL*/ bool creating_extension = false;
@@ -444,11 +443,11 @@ static List *get_extension_control_directories(void) {
 
   system_dir = psprintf("%s/extension", sharepath);
 
-  if (strlen(Extension_control_path) == 0) {
+  if (strlen(tcb->guc.Extension_control_path) == 0) {
     paths = lappend(paths, system_dir);
   } else {
     /* Duplicate the string so we can modify it */
-    ecp = pstrdup(Extension_control_path);
+    ecp = pstrdup(tcb->guc.Extension_control_path);
 
     for (;;) {
       int len;

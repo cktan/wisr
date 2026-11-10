@@ -91,7 +91,6 @@ typedef struct {
 
 /* GUC parameters */
 thread_local /*LOCAL*/ int Password_encryption = PASSWORD_TYPE_SCRAM_SHA_256;
-thread_local /*LOCAL*/ char *createrole_self_grant = "";
 static thread_local /*LOCAL*/ bool createrole_self_grant_enabled = false;
 static thread_local /*LOCAL*/ GrantRoleOptions createrole_self_grant_options;
 
