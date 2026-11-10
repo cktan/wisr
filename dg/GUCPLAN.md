@@ -116,6 +116,11 @@ or not. This keeps one variable's move small.
 4. Remove the old `thread_local` variable, and its `extern`.
 5. Run the test suite.
 
+- A group 2 variable moves with the same steps, but its field
+  is in `shmem_t` and it needs no table binding. The
+  postmaster copies it from its GUC variable into `shmem` with a
+  `publish_*()` function, at start and on each reload, and
+  every reader reads `shmem`.
 - The copy of the whole block, with the table metadata (source,
   `scontext`, `srole`, `reset_val` and the non-default list),
   would replace the text copy. It is possible only after every
@@ -133,26 +138,48 @@ or not. This keeps one variable's move small.
      `tcb` first: `session_thread_main()`,
      `session_thread_adopt()`, `parse_tool.c` and the
      postmaster.
-2. **Stop the sessions reloading.**
+2. **Add an empty `tcb->guc` and the binding.** No variable
+   moves yet.
+3. **Move a variable when a change needs it**, as section 5
+   says. Start with the first setting a change touches.
+4. **Stop the sessions reloading, only when the gate below is
+   met.**
+   - **Gate:** every `SIGHUP` setting that a session reads is
+     in `shmem` (group 2) and read from there. Until then a
+     session must keep reloading. Without the gate, a session
+     keeps the old value of a setting for its whole life:
+     after `allow_alter_system = off`, a held session could
+     still run `ALTER SYSTEM`, and `log_line_prefix` would stay
+     old.
+   - **Check the gate with the compiler:** make the variable of
+     each `SIGHUP` setting `static` in `guc_tables.c`, as the
+     `POSTMASTER` ones are. A file that still names it fails to
+     build.
    - Remove the `INTERRUPT_RELOAD` handler and the
      `ConfigReloadPending` check in `postgres.c`.
    - Remove `SignalChildren(SIGHUP)` in `postmaster.c`.
    - Remove the code in `ProcessConfigFileInternal()` that
      skips the load time in a session thread.
-   - Add a test: a held session keeps the old value after a
-     reload, and a new session gets the new one. Add it to
-     `dg/test` and `server.sh`.
+   - Add a test: a held session keeps the old value of a
+     `USERSET` setting after a reload, and a new session gets
+     the new one. Add a second test: after
+     `allow_alter_system = off` and a reload, a held session
+     cannot run `ALTER SYSTEM`. Add both to `dg/test` and
+     `server.sh`.
    - Change the `server.sh` check that expects the same load
      time in a held session and a new one.
-3. **Add an empty `tcb->guc` and the binding.** No variable
-   moves yet.
-4. **Move a variable when a change needs it**, as section 5
-   says. Start with the first setting a change touches.
 5. **Update the documents once**: [`CODE.md`](CODE.md) §3, the
    header of `control_block.h`, [`WORKNOTE.md`](WORKNOTE.md),
    `DG-vs-PG.md` and `src/backend/utils/misc/README`.
 
-## 7. Open question
+## 7. Order
 
-- The stop of session reloads (step 2) changes every setting
-  at once. Do it first, or when the first variable moves?
+- Moving the group 2 settings comes before the stop of session
+  reloads, not after. The stop is the last code step.
+- The group 2 settings to move before the gate: `ssl`,
+  `log_hostname`, `log_line_prefix`, `syslog_facility`,
+  `syslog_ident`, `syslog_sequence_numbers`,
+  `syslog_split_messages`, `authentication_timeout`,
+  `allow_alter_system` and `oauth_validator_libraries`. The
+  six file-logger settings are read from `pcb` under
+  `log.mutex` already, so they do not block the gate.
