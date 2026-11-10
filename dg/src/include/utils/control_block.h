@@ -521,6 +521,11 @@ typedef struct tcb_guc_t {
   double hash_mem_multiplier = 2.0;            /* globals.c */
   double VacuumCostDelay = 0;                  /* globals.c */
   double log_statement_sample_rate = 1.0;      /* guc_tables.c */
+  double log_xact_sample_rate = 0;             /* guc_tables.c */
+  double phony_random_seed;                    /* guc_tables.c */
+  char *client_encoding_string;                /* guc_tables.c */
+  char *datestyle_string;                      /* guc_tables.c */
+  char *default_table_access_method;           /* tableam.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

@@ -307,7 +307,6 @@ thread_local /*LOCAL*/ bool current_role_is_superuser;
 thread_local /*LOCAL*/ int log_min_error_statement = ERROR;
 thread_local /*LOCAL*/ int log_min_messages = WARNING;
 thread_local /*LOCAL*/ int client_min_messages = NOTICE;
-thread_local /*LOCAL*/ double log_xact_sample_rate = 0;
 thread_local /*LOCAL*/ char *backtrace_functions;
 
 thread_local /*LOCAL*/ int num_temp_buffers = 1024;
@@ -332,9 +331,6 @@ thread_local /*LOCAL*/ int tcp_user_timeout;
  * and is kept in sync by assign_hooks.
  */
 static thread_local /*LOCAL*/ char *syslog_ident_str;
-static thread_local /*LOCAL*/ double phony_random_seed;
-static thread_local /*LOCAL*/ char *client_encoding_string;
-static thread_local /*LOCAL*/ char *datestyle_string;
 static thread_local /*LOCAL*/ char *server_encoding_string;
 static thread_local /*LOCAL*/ char *server_version_string;
 static thread_local /*LOCAL*/ int server_version_num;
@@ -2184,7 +2180,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
       gettext_noop("Sets the seed for random-number generation."), NULL,
       GUC_NO_SHOW_ALL | GUC_NO_RESET | GUC_NO_RESET_ALL | GUC_NOT_IN_SAMPLE |
           GUC_DISALLOW_IN_FILE},
-     &phony_random_seed,
+     &tcb->guc.phony_random_seed,
      0.0,
      -1.0,
      1.0,
@@ -2220,7 +2216,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
                    "statements."),
       gettext_noop("Use a value between 0.0 (never log) and 1.0 (log all "
                    "statements for all transactions).")},
-     &log_xact_sample_rate,
+     &tcb->guc.log_xact_sample_rate,
      0.0,
      0.0,
      1.0,
@@ -2243,7 +2239,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
     {{"client_encoding", PGC_USERSET, CLIENT_CONN_LOCALE,
       gettext_noop("Sets the client's character set encoding."), NULL,
       GUC_IS_NAME | GUC_REPORT},
-     &client_encoding_string,
+     &tcb->guc.client_encoding_string,
      "SQL_ASCII",
      check_client_encoding,
      assign_client_encoding,
@@ -2271,7 +2267,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       gettext_noop("Also controls interpretation of ambiguous "
                    "date inputs."),
       GUC_LIST_INPUT | GUC_REPORT},
-     &datestyle_string,
+     &tcb->guc.datestyle_string,
      "ISO, MDY",
      check_datestyle,
      assign_datestyle,
@@ -2280,7 +2276,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
     {{"default_table_access_method", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Sets the default table access method for new tables."),
       NULL, GUC_IS_NAME},
-     &default_table_access_method,
+     &tcb->guc.default_table_access_method,
      DEFAULT_TABLE_ACCESS_METHOD,
      check_default_table_access_method,
      NULL,

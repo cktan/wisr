@@ -691,9 +691,9 @@ static void StartTransaction(void) {
 
   /* Determine if statements are logged in this transaction */
   xact_is_sampled =
-      log_xact_sample_rate != 0 &&
-      (log_xact_sample_rate == 1 ||
-       pg_prng_double(&pg_global_prng_state) <= log_xact_sample_rate);
+      tcb->guc.log_xact_sample_rate != 0 &&
+      (tcb->guc.log_xact_sample_rate == 1 ||
+       pg_prng_double(&pg_global_prng_state) <= tcb->guc.log_xact_sample_rate);
 
   /*
    * initialize current transaction state fields

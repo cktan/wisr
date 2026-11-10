@@ -46,8 +46,6 @@
 #define PARALLEL_SEQSCAN_MAX_CHUNK_SIZE		8192
 
 /* GUC variables */
-thread_local /*LOCAL*/ char *default_table_access_method =
-    DEFAULT_TABLE_ACCESS_METHOD;
 
 /* ----------------------------------------------------------------------------
  * Slot functions.
