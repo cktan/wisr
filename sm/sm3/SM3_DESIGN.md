@@ -149,7 +149,7 @@ level as a whole prove these rules:
 - **What is deliberately not here.** sm3 has no types, no key
   encoding and no tuple format: it calls sm2's. It has no SQL, no
   planner and no executor. It has no PostgreSQL dependency
-  ([`../PART4.md`](../PART4.md)).
+  ([`../PGFORK.md`](../PGFORK.md)).
 - **A scan filters nothing.** sm3 has no expression evaluator,
   and will not get one. The host's planner derives the key range,
   and the host's executor applies the rest of the predicate
@@ -168,7 +168,7 @@ level as a whole prove these rules:
 
 - **The version lag is permanent.** digres will always lag
   behind PostgreSQL's releases, and
-  [`../PART4.md`](../PART4.md) already counts that lag as a
+  [`../PGFORK.md`](../PGFORK.md) already counts that lag as a
   liability. The fork replaces the storage and transaction
   layers, and makes PostgreSQL thread safe. So tracking upstream
   releases is harder still.

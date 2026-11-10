@@ -6,7 +6,7 @@
 
 digres has no catalog tables for what is built in: types, functions,
 operators and the rest are compiled in and never change
-(sm/PART4.md section 10). This writes them, from the rows genbki.pl
+(sm/PGFORK.md section 10). This writes them, from the rows genbki.pl
 has already resolved into postgres.bki: every reference there is an
 oid, and every default is filled in.
 
@@ -220,7 +220,7 @@ SCALARS = {
 OID_LISTS = {"oidvector", "_oid"}
 
 #Values postgres.bki leaves for the bootstrap to fill in.digres runs
-#on 64 - bit Linux alone(sm / PART4.md section 10), so each is known here.
+#on 64 - bit Linux alone(sm / PGFORK.md section 10), so each is known here.
 SYMBOLS = {
     "SIZEOF_POINTER": "8",
     "ALIGNOF_POINTER": "d",

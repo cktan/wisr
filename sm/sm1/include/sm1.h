@@ -1330,7 +1330,7 @@ void unpin(rawpin_t* pin);
  * a backward scan (see SM1_OBJECTIVE.md). A caller that needs
  * descending order builds it into the key -- inverted key bytes,
  * scanned forward -- rather than keeping a mirror store for the
- * other direction (PART4.md §5).
+ * other direction (PGFORK.md §5).
  *
  * Both bounds are taken, rather than a start key alone,
  * because under SERIALIZABLE the range is the predicate

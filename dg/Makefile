@@ -73,7 +73,7 @@ FLAVOR ?= obj
 OBJDIR := build/$(FLAVOR)
 
 CXX ?= g++
-# Every .c file is compiled as C++ (sm/PART4.md section 2), and as
+# Every .c file is compiled as C++ (sm/PGFORK.md section 2), and as
 # strict C++: src/tools/cxx_keywords.py renamed the identifiers that
 # are C++ keywords, and src/tools/cxx_casts.py wrote the casts C does
 # not ask for. -w hides the warnings, which nobody has gone through yet.
@@ -393,7 +393,7 @@ src/common/kwlist_d.h: $(I)/parser/kwlist.h src/tools/gen_keywordlist.pl
 	$(PERL) -Isrc/tools src/tools/gen_keywordlist.pl --extern \
 	    -o src/common $<
 
-# The built-in catalog rows, compiled in (sm/PART4.md section 10): from
+# The built-in catalog rows, compiled in (sm/PGFORK.md section 10): from
 # postgres.bki, where genbki.pl has resolved every reference to an oid;
 # and the functions' ACLs from initdb's scripts, which digres runs none of.
 $(I)/catalog/cat_builtin.h: $(I)/catalog/.stamp $(B)/catalog/gen_cat.py

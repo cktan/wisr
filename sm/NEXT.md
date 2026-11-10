@@ -15,9 +15,9 @@ link to an item stays correct.
 
 ## 1. Next
 
-The spike [`PART4.md`](PART4.md#7-recommended-sequencing) §7
+The spike [`PGFORK.md`](PGFORK.md#7-recommended-sequencing) §7
 aimed the stack at is long past: digres runs on it
-([`PART4.md`](PART4.md#10-digres-how-the-fork-is-to-be-made)
+([`PGFORK.md`](PGFORK.md#10-digres-how-the-fork-is-to-be-made)
 §10). Statistics for a planner are built, the stack's part and
 digres's ([`../dg/STATISTICS.md`](../dg/STATISTICS.md),
 [`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) steps 74 to 78), and so

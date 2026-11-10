@@ -1,7 +1,7 @@
 # STATISTICS — what the planner needs, and how wisr gives it
 
 The fork keeps PostgreSQL's planner
-([`PART4.md`](PART4.md#4-the-fork-and-what-it-costs) §4), and the
+([`PGFORK.md`](PGFORK.md#4-the-fork-and-what-it-costs) §4), and the
 planner costs every plan from statistics that PostgreSQL's
 storage has always supplied. This file is the strategy for
 supplying the same, or near enough, from a stack that has no
@@ -134,7 +134,7 @@ to being given.
 **None of those catalogs is stored in the fork.** `pg_class`,
 `pg_statistic` and the rest are heap tables in PostgreSQL, and
 the fork has no heap: its catalog is sm3's
-([`PART4.md`](PART4.md#4-the-fork-and-what-it-costs) §4). The
+([`PGFORK.md`](PGFORK.md#4-the-fork-and-what-it-costs) §4). The
 fork makes `pg_class`'s rows from sm3's catalog when they are
 read ([`../dg/SYSCATALOG.md`](../dg/SYSCATALOG.md)), and a
 `pg_statistic` row when the planner asks (§3.7). There is no
@@ -700,7 +700,7 @@ sm3's statistics; it does not hand over loose numbers.
 | distinct count | the count, negated as a multiplier of **total** rows, nulls included, when it grows with the table. That is PostgreSQL's convention, and §7 found the reason it exists: the row count is refreshed more often than the statistics, so a multiplier stays right as the count drifts — which is exactly what §3.2 does between runs |
 | correlation | correlation with the rows' stored order, the key's, which a sequential scan reads in. The fork has no `ctid` ([`ROWSTORE.md`](ROWSTORE.md#10-digres) §10). PostgreSQL computes its own from the sample in physical order, and relies on the sample being returned that way; sm3 sorts its sample so |
 | a B-tree's height | nothing yet. digres's index access method costs a lookup with PostgreSQL's `btcostestimate` and leaves `tree_height` at -1 ([`../dg/STATISTICS.md`](../dg/STATISTICS.md#22-a-tables-size-live-bytes-scaled-rows) §2.2), so the descent charge, `(height + 1)` times 50 `cpu_operator_cost`, a CPU charge and not page I/O, is 0. Costing a lookup from the sorted runs, the index's bytes and its entries needs weights calibrated (§6), and is left for later |
-| dead rows | none. Vacuum is gone ([`PART4.md`](PART4.md#4-the-fork-and-what-it-costs) §4) |
+| dead rows | none. Vacuum is gone ([`PGFORK.md`](PGFORK.md#4-the-fork-and-what-it-costs) §4) |
 
 Each row of that table is a choice the host can change
 without the stack changing.
@@ -710,7 +710,7 @@ without the stack changing.
 `sm_tbl_analyze` is a call, and when to make it is the host's
 decision. In PostgreSQL the decision is autovacuum's, from
 counts of rows changed, and autovacuum goes with vacuum
-([`PART4.md`](PART4.md#4-the-fork-and-what-it-costs) §4).
+([`PGFORK.md`](PGFORK.md#4-the-fork-and-what-it-costs) §4).
 
 The fork's glue calls the table writes one row at a time, and
 can count them where PostgreSQL's heap code did. The stack
@@ -771,7 +771,7 @@ an analyzed empty table.
 
 ## 6. What was measured
 
-[`PART4.md`](PART4.md#8-what-is-not-verified) §8 and
+[`PGFORK.md`](PGFORK.md#8-what-is-not-verified) §8 and
 [`sm3/SM3_OBJECTIVE.md`](sm3/SM3_OBJECTIVE.md) both listed the
 accuracy of RocksDB's approximate statistics as unverified.
 Four experiments were run against RocksDB 9.11.2 through sm1,
@@ -1034,7 +1034,7 @@ gives that alternative.
 - **The cost is a port.** `compute_scalar_stats` and its helpers
   are copied and adapted into sm3 (§9.5). An upstream fix to them
   is ported by hand, as every upstream fix is
-  ([`PART4.md`](PART4.md#10-digres-how-the-fork-is-to-be-made)
+  ([`PGFORK.md`](PGFORK.md#10-digres-how-the-fork-is-to-be-made)
   §10).
 
 ### 9.2 Sizes, and the unflushed rows

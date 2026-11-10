@@ -4,7 +4,7 @@ Build a storage stack for OLTP that could, eventually, sit under
 a subset of PostgreSQL — the essential parts, not full
 compatibility — in place of its own storage and transaction
 layers. [`FEATURELIST.md`](FEATURELIST.md) says which parts;
-[`PART4.md`](PART4.md) argues what the target costs. Neither is a
+[`PGFORK.md`](PGFORK.md) argues what the target costs. Neither is a
 dependency of anything below, but they shape the decisions at
 every level, because a design that could not host the subset
 would be wasted work at this project's scale.
@@ -46,7 +46,7 @@ stack, instead of per level.
 an executor, multi-process deployment. sm1 keeps its transaction
 table, lock manager and SSI graph in one process's memory, and
 RocksDB permits one writer process, so
-[`PART4.md`](PART4.md#2-the-blocker-the-process-model) §2 makes
+[`PGFORK.md`](PGFORK.md#2-the-blocker-the-process-model) §2 makes
 multi-process the hard blocker for the PostgreSQL target, not a
 phase-1 omission. The answer is to change the target, not sm1:
 the PostgreSQL fork moves from a process per connection to a
@@ -68,7 +68,7 @@ digres (`../dg/`), and the fork is changed substantially:
 besides swapping the storage and transaction layers, it has
 moved from a process per connection to a thread per
 connection so that sm1 is linked into it
-([`PART4.md`](PART4.md#2-the-blocker-the-process-model) §2).
+([`PGFORK.md`](PGFORK.md#2-the-blocker-the-process-model) §2).
 
 ## Goals
 
@@ -81,7 +81,7 @@ connection so that sm1 is linked into it
   predicate scans — usable by a hand-written engine or a
   query layer above them.
 - Every decision at every level checked against the PostgreSQL
-  target in [`PART4.md`](PART4.md), so that the parts of that
+  target in [`PGFORK.md`](PGFORK.md), so that the parts of that
   program which are hard — the process model, the tuple format,
   the collation and type system — are found early, not after a
   level is built around an assumption that forecloses them.
@@ -137,10 +137,10 @@ These are settled; they bind every level below.
   [`sm1/SM1_OBJECTIVE.md`](sm1/SM1_OBJECTIVE.md). The PostgreSQL
   fork adapts to it, by moving to a thread per connection, rather
   than the stack moving behind IPC
-  ([`PART4.md`](PART4.md#2-the-blocker-the-process-model) §2).
+  ([`PGFORK.md`](PGFORK.md#2-the-blocker-the-process-model) §2).
 - **The catalog is sm3's, held in memory.** PostgreSQL's heap
   catalogs are replaced, not kept beside the stack
-  ([`PART4.md`](PART4.md#4-the-fork-and-what-it-costs) §4), so
+  ([`PGFORK.md`](PGFORK.md#4-the-fork-and-what-it-costs) §4), so
   sm1's status record is the one commit point. The catalog is
   loaded into memory at startup and written through to sm2 for
   persistence ([`CATALOG.md`](CATALOG.md#1-design) §1).
@@ -172,7 +172,7 @@ These are settled; they bind every level below.
   level is for, and the decisions that settled its own design.
 - [`FEATURELIST.md`](FEATURELIST.md) — which PostgreSQL features
   wisr targets.
-- [`PART4.md`](PART4.md) — the PostgreSQL target in full,
+- [`PGFORK.md`](PGFORK.md) — the PostgreSQL target in full,
   including the parts of it that are not yet verified.
 - [`DESIGN.md`](DESIGN.md) (this directory) — how the stack fits
   together.

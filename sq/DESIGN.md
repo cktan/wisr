@@ -386,7 +386,7 @@ Two checks cover sq's own consistency:
   as they do upstream.
 - **An `Oid` field is 32 bits**, as in PostgreSQL. digres's is
   to be 64 bits
-  ([`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+  ([`../sm/PGFORK.md`](../sm/PGFORK.md#10-digres-how-the-fork-is-to-be-made)
   §10). The analyzer fills every such field in a parse tree, and
   sq leaves them zero.
 

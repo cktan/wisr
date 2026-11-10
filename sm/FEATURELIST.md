@@ -11,7 +11,7 @@ support. Leave a box unchecked for everything it should not. Add
 a line under any item if the decision needs a reason attached — a
 reason written down here is worth more later than the box itself.
 Once this file stops changing, its decisions move into
-[`OBJECTIVE.md`](OBJECTIVE.md) and [`PART4.md`](PART4.md), and
+[`OBJECTIVE.md`](OBJECTIVE.md) and [`PGFORK.md`](PGFORK.md), and
 this file either stays as the working list or is retired.
 
 Scope note: [`OBJECTIVE.md`](OBJECTIVE.md) already excludes a
@@ -22,7 +22,7 @@ so they are left out of this list except where they force
 something onto storage. What is listed here is the part wisr
 itself must decide to support: types, index access methods,
 constraints, table storage features, and the ecosystem axis
-PART4.md §7 raises but does not settle.
+PGFORK.md §7 raises but does not settle.
 
 **Already settled by sm1 — not on this list.** RC / RR /
 SERIALIZABLE isolation with SSI, two-phase commit, nested
@@ -125,7 +125,7 @@ ordered key as the only access path below sm2.
       — already out of scope ("online backup")
 - [x] row-level security
 
-## 8. Ecosystem axis (PART4.md §7's open question)
+## 8. Ecosystem axis (PGFORK.md §7's open question)
 
 - [x] wire protocol (libpq) — only needed for drop-in client
       compatibility

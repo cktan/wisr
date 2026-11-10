@@ -369,7 +369,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT ErrorContextCallback
  * helpful in such cases.
  *
  * Note: digres raises ereport(ERROR) as a C++ exception, pg_error_t, where
- * PostgreSQL jumps with siglongjmp (sm/PART4.md section 2).  These macros
+ * PostgreSQL jumps with siglongjmp (sm/PGFORK.md section 2).  These macros
  * are a try and a catch of it.  So a local variable modified in the PG_TRY
  * section and used in the PG_CATCH section need not be "volatile", as
  * PostgreSQL requires, and the destructors of whatever is between the

@@ -32,7 +32,7 @@ namespace sm3 {
  * the two, and the first oid handed out, which is PostgreSQL's
  * FirstNormalObjectId: the oids below it are for what is built in,
  * and digres compiles those in with PostgreSQL's own numbers
- * (PART4.md §10).
+ * (PGFORK.md §10).
  */
 constexpr uint64_t nsp_pg_catalog = 11;
 constexpr uint64_t nsp_public = 2200;

@@ -2023,7 +2023,7 @@ that needs
 descending order builds it into the key, inverted key bytes
 scanned forward, rather than keeping a mirror store for the
 other direction
-([`../PART4.md`](../PART4.md#5-the-one-conflict-with-a-decision-already-made)
+([`../PGFORK.md`](../PGFORK.md#5-the-one-conflict-with-a-decision-already-made)
 §5).
 
 The cursor's view is fixed at this call (see "Isolation and

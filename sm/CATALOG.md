@@ -61,7 +61,7 @@ version at its next look.
 - **The Catalog is held in memory.** `cat_open` loads it at
   startup. A change is made in memory and written through to
   store 0, which is used for persistence only. It replaces
-  PostgreSQL's heap catalogs ([`PART4.md`](PART4.md)).
+  PostgreSQL's heap catalogs ([`PGFORK.md`](PGFORK.md)).
 - **There is one commit point.** Store 0 is an MVCC store in the
   same database as the tables. DDL writes its catalog entries and
   its tables' stores in one sm1 transaction. They commit, roll
@@ -84,7 +84,7 @@ version at its next look.
   catalogs and sequences to heap. The fork replaces them, and
   uses sm1's sequences. Physical replication and PITR over
   PostgreSQL's WAL do not apply to data held in RocksDB
-  ([`PART4.md`](PART4.md)).
+  ([`PGFORK.md`](PGFORK.md)).
 - **The Catalog is a repository.** It stores the record it is
   given, finds it again, and forgets it. It makes no store and
   fills no index. It makes one sequence only, a sequence object's
@@ -313,7 +313,7 @@ own catalog store, store 0, under the key prefix `"U"`.
   `FirstNormalObjectId`.
 - **Oids below 16384 are built-in objects.** They are
   PostgreSQL's own numbers, since digres compiles its built-ins
-  in with them ([`PART4.md`](PART4.md)): `pg_catalog` is 11 and
+  in with them ([`PGFORK.md`](PGFORK.md)): `pg_catalog` is 11 and
   `public` is 2200.
 - **An aborted DDL leaves a gap**, as PostgreSQL's oid counter
   does: `nextseq` is not transactional.

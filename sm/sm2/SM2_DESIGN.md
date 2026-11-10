@@ -157,12 +157,12 @@ to sm3, not sm2:
   ([`../STATISTICS.md`](../STATISTICS.md#98-the-calls) §9.8).
 - **Everything above the stack.** sm2 has no SQL, no planner and
   no executor. It builds and tests without a PostgreSQL source
-  tree ([`../PART4.md`](../PART4.md)).
+  tree ([`../PGFORK.md`](../PGFORK.md)).
 
 ### 5.2 Deployment
 
 The fork, digres, is threaded
-([`../PART4.md`](../PART4.md#2-the-blocker-the-process-model)
+([`../PGFORK.md`](../PGFORK.md#2-the-blocker-the-process-model)
 §2). So all the levels link into one server process, and one
 thread at a time uses a session. The boundary above sm2 is a
 function call, not an RPC. An interface of one tuple at a time

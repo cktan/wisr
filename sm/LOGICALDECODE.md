@@ -5,7 +5,7 @@ replica or any other consumer reads to stay in step with it:
 change data capture.
 [`FEATURELIST.md`](FEATURELIST.md#7-replication--backup--ops) §7
 wants logical replication and CDC decoding;
-[`PART4.md`](PART4.md#4-the-fork-and-what-it-costs) §4 and
+[`PGFORK.md`](PGFORK.md#4-the-fork-and-what-it-costs) §4 and
 [`CATALOG.md`](CATALOG.md#1-design) §1 note that sm1 has no
 commit-ordered change feed to build it on. This file is the
 design of one. Nothing here is built, so it has no code yet.

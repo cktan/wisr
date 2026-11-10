@@ -1,6 +1,6 @@
 -- Verify that a statement over constants runs with no catalog tables:
 -- the operators, their functions and the types are found compiled in
--- (sm/PART4.md section 10, the second thing to run).
+-- (sm/PGFORK.md section 10, the second thing to run).
 -- 1. Add two integers: the first statement digres ran.
 -- 2. Multiply, divide and subtract integers in one target list.
 -- 3. Compare integers, which yields booleans.

@@ -16,7 +16,7 @@
  * Implementation
  * --------------
  *
- * digres runs on Linux alone (../sm/PART4.md section 10), and waits with
+ * digres runs on Linux alone (../sm/PGFORK.md section 10), and waits with
  * epoll().  A latch is the thread's wake fd from sm_sys.h, an eventfd that
  * a latch's setter writes through sm_interrupt(), or the thread itself
  * through sm_interrupt_self(), so a set latch is never missed: no signal is

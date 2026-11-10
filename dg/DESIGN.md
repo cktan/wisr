@@ -9,7 +9,7 @@ there. Other documents hold the rest:
 - [`CODE.md`](CODE.md) has the rules for changing the code, and
   the overriding objective: a database is its directory.
 - [`README.md`](README.md) says what runs.
-- [`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+- [`../sm/PGFORK.md`](../sm/PGFORK.md#10-digres-how-the-fork-is-to-be-made)
   §10 says how digres was to be made, and §2 says why the server
   must be threaded.
 
@@ -249,7 +249,7 @@ Do not reopen these without the owner.
   none. sm's lock manager holds row locks, which any number of
   transactions can share, and which end with their transactions.
   sm lacks PostgreSQL's two weaker row lock modes. That is a
-  concurrency gap (PART4.md gap 3), not a reason for multixacts.
+  concurrency gap (PGFORK.md gap 3), not a reason for multixacts.
 - **SERIALIZABLE is sm's.** sm runs serializable transactions
   itself. In a write skew, it fails one transaction with a
   retryable error, SQLSTATE 40001. PostgreSQL's predicate locks,

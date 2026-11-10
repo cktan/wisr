@@ -3256,7 +3256,7 @@ static int specialAttNum(const char *attname) {
  * tableoid, and a row's _id in a table of sm's without a primary key, its
  * key; a table with one names its rows by it, and has no _id
  * (../sm/ROWSTORE.md section 10.1).  sm keeps no transaction ids in a row
- * (../sm/PART4.md section 3), so xmin, xmax, cmin and cmax are no
+ * (../sm/PGFORK.md section 3), so xmin, xmax, cmin and cmax are no
  * relation's column in digres; nor is ctid a system column, as no row has
  * a TID.
  */

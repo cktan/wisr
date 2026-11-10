@@ -94,7 +94,7 @@ by driving the wrapper through the `rel/` test suite.
   one ceiling for the process
 - [`FEATURELIST.md`](FEATURELIST.md) — the PostgreSQL subset wisr
   targets, decided feature by feature; not all of it is built
-- [`PART4.md`](PART4.md) — what it would take to put PostgreSQL
+- [`PGFORK.md`](PGFORK.md) — what it would take to put PostgreSQL
   on this stack, and what that target forces on level 2's design
 
 Paths inside a level's documents are relative to that level, so

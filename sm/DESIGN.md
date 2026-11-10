@@ -682,7 +682,7 @@ break another level's design.
   - Sets of rows in and out were once forced by an IPC boundary
     between a PostgreSQL backend process and sm1. The fork has
     moved PostgreSQL to threads
-    ([`PART4.md`](PART4.md#2-the-blocker-the-process-model)
+    ([`PGFORK.md`](PGFORK.md#2-the-blocker-the-process-model)
     §2). So the boundary is a function call, and the shape is no
     longer forced.
   - The other reason for sets was filter pushdown, and sm3
@@ -701,7 +701,7 @@ break another level's design.
   is written through to sm2. So a DDL statement and the data it
   changes commit in one sm1 transaction, and recovery is
   RocksDB's alone
-  ([`PART4.md`](PART4.md#4-the-fork-and-what-it-costs) §4,
+  ([`PGFORK.md`](PGFORK.md#4-the-fork-and-what-it-costs) §4,
   [`CATALOG.md`](CATALOG.md#1-design) §1).
 - **A host's caches are kept fresh by a version, not by a
   message.** sm sends no notice of a DDL to the sessions that did
@@ -800,7 +800,7 @@ break another level's design.
   built into sm2's encoding, and inherited by every index that
   sm3 builds. The fork's planner is changed never to ask for a
   backward scan
-  ([`PART4.md`](PART4.md#5-the-one-conflict-with-a-decision-already-made)
+  ([`PGFORK.md`](PGFORK.md#5-the-one-conflict-with-a-decision-already-made)
   §5). Descending order comes from inverted key bytes, scanned
   forward.
 
@@ -813,7 +813,7 @@ break another level's design.
   [`sm2/SM2_DESIGN.md`](sm2/SM2_DESIGN.md) or
   [`sm3/SM3_DESIGN.md`](sm3/SM3_DESIGN.md). Read those for how a
   level works.
-- It is not a restatement of [`PART4.md`](PART4.md). Read that
+- It is not a restatement of [`PGFORK.md`](PGFORK.md). Read that
   for the PostgreSQL target in full.
 
 It exists so that a reader can see the whole stack, and the few

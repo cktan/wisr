@@ -45,7 +45,7 @@ index serves a backward scan: not the clustered primary key, and
 not a secondary index a level above builds out of stores.
 Descending order is built into the key. An index with inverted
 key bytes is scanned forward. The stack keeps no mirror copy of
-an index for the other direction ([`PART4.md`](PART4.md)).
+an index for the other direction ([`PGFORK.md`](PGFORK.md)).
 
 The engine cost was part of the reason:
 
@@ -1369,7 +1369,7 @@ Remote compaction distributes a stateless computation over
 immutable inputs. That is a different problem from letting
 several processes use one database, which
 [`sm1/SM1_OBJECTIVE.md`](sm1/SM1_OBJECTIVE.md) rules out and
-[`PART4.md`](PART4.md) shows to be the hard blocker for
+[`PGFORK.md`](PGFORK.md) shows to be the hard blocker for
 PostgreSQL. It needs no part of that decision reopened.
 
 ---
