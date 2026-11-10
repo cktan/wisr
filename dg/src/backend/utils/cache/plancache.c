@@ -1161,7 +1161,7 @@ static double cached_plan_cost(CachedPlan *plan, bool include_planner) {
        */
       int nrelations = list_length(plannedstmt->rtable);
 
-      result += 1000.0 * cpu_operator_cost * (nrelations + 1);
+      result += 1000.0 * tcb->guc.cpu_operator_cost * (nrelations + 1);
     }
   }
 

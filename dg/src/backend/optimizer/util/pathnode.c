@@ -1085,7 +1085,7 @@ GroupResultPath *create_group_result_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.rows = 1;
   pathnode->path.startup_cost = target->cost.startup;
   pathnode->path.total_cost =
-      target->cost.startup + cpu_tuple_cost + target->cost.per_tuple;
+      target->cost.startup + tcb->guc.cpu_tuple_cost + target->cost.per_tuple;
 
   /*
    * Add cost of qual, if any --- but we ignore its selectivity, since our
@@ -1169,8 +1169,8 @@ MemoizePath *create_memoize_path(PlannerInfo *root, RelOptInfo *rel,
    * Add a small additional charge for caching the first entry.  All the
    * harder calculations for rescans are performed in cost_memoize_rescan().
    */
-  pathnode->path.startup_cost = subpath->startup_cost + cpu_tuple_cost;
-  pathnode->path.total_cost = subpath->total_cost + cpu_tuple_cost;
+  pathnode->path.startup_cost = subpath->startup_cost + tcb->guc.cpu_tuple_cost;
+  pathnode->path.total_cost = subpath->total_cost + tcb->guc.cpu_tuple_cost;
   pathnode->path.rows = subpath->rows;
 
   return pathnode;
@@ -1443,7 +1443,7 @@ UniquePath *create_unique_path(PlannerInfo *root, RelOptInfo *rel,
      * probably this is an overestimate.)  This should agree with
      * create_upper_unique_path.
      */
-    sort_path.total_cost += cpu_operator_cost * rel->rows * numCols;
+    sort_path.total_cost += tcb->guc.cpu_operator_cost * rel->rows * numCols;
   }
 
   if (sjinfo->semi_can_hash) {
@@ -2147,7 +2147,7 @@ ProjectionPath *create_projection_path(PlannerInfo *root, RelOptInfo *rel,
     pathnode->path.startup_cost = subpath->startup_cost + target->cost.startup;
     pathnode->path.total_cost =
         subpath->total_cost + target->cost.startup +
-        (cpu_tuple_cost + target->cost.per_tuple) * subpath->rows;
+        (tcb->guc.cpu_tuple_cost + target->cost.per_tuple) * subpath->rows;
   }
 
   return pathnode;
@@ -2247,8 +2247,8 @@ ProjectSetPath *create_set_projection_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.startup_cost = subpath->startup_cost + target->cost.startup;
   pathnode->path.total_cost =
       subpath->total_cost + target->cost.startup +
-      (cpu_tuple_cost + target->cost.per_tuple) * subpath->rows +
-      (pathnode->path.rows - subpath->rows) * cpu_tuple_cost / 2;
+      (tcb->guc.cpu_tuple_cost + target->cost.per_tuple) * subpath->rows +
+      (pathnode->path.rows - subpath->rows) * tcb->guc.cpu_tuple_cost / 2;
 
   return pathnode;
 }
@@ -2408,8 +2408,8 @@ UpperUniquePath *create_upper_unique_path(PlannerInfo *root, RelOptInfo *rel,
    */
   pathnode->path.disabled_nodes = subpath->disabled_nodes;
   pathnode->path.startup_cost = subpath->startup_cost;
-  pathnode->path.total_cost =
-      subpath->total_cost + cpu_operator_cost * subpath->rows * numCols;
+  pathnode->path.total_cost = subpath->total_cost + tcb->guc.cpu_operator_cost *
+                                                        subpath->rows * numCols;
   pathnode->path.rows = numGroups;
 
   return pathnode;
@@ -2651,7 +2651,7 @@ MinMaxAggPath *create_minmaxagg_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.disabled_nodes = initplan_disabled_nodes;
   pathnode->path.startup_cost = initplan_cost + target->cost.startup;
   pathnode->path.total_cost = initplan_cost + target->cost.startup +
-                              target->cost.per_tuple + cpu_tuple_cost;
+                              target->cost.per_tuple + tcb->guc.cpu_tuple_cost;
 
   /*
    * Add cost of qual, if any --- but we ignore its selectivity, since our
@@ -2783,7 +2783,7 @@ SetOpPath *create_setop_path(PlannerInfo *root, RelOptInfo *rel, Path *leftpath,
     pathnode->path.startup_cost =
         leftpath->startup_cost + rightpath->startup_cost;
     pathnode->path.total_cost = leftpath->total_cost + rightpath->total_cost +
-                                cpu_operator_cost *
+                                tcb->guc.cpu_operator_cost *
                                     (leftpath->rows + rightpath->rows) *
                                     list_length(groupList);
 
@@ -2792,7 +2792,7 @@ SetOpPath *create_setop_path(PlannerInfo *root, RelOptInfo *rel, Path *leftpath,
      * charge only operator cost not cpu_tuple_cost, since SetOp does no
      * qual-checking or projection.
      */
-    pathnode->path.total_cost += cpu_operator_cost * outputRows;
+    pathnode->path.total_cost += tcb->guc.cpu_operator_cost * outputRows;
   } else {
     Size hashentrysize;
 
@@ -2802,7 +2802,7 @@ SetOpPath *create_setop_path(PlannerInfo *root, RelOptInfo *rel, Path *leftpath,
      * hash table lookups.
      */
     pathnode->path.startup_cost = leftpath->total_cost + rightpath->total_cost +
-                                  cpu_operator_cost *
+                                  tcb->guc.cpu_operator_cost *
                                       (leftpath->rows + rightpath->rows) *
                                       list_length(groupList);
     pathnode->path.total_cost = pathnode->path.startup_cost;
@@ -2812,7 +2812,7 @@ SetOpPath *create_setop_path(PlannerInfo *root, RelOptInfo *rel, Path *leftpath,
      * charge only operator cost not cpu_tuple_cost, since SetOp does no
      * qual-checking or projection.
      */
-    pathnode->path.total_cost += cpu_operator_cost * outputRows;
+    pathnode->path.total_cost += tcb->guc.cpu_operator_cost * outputRows;
 
     /*
      * Mark the path as disabled if enable_hashagg is off.  While this
@@ -2916,7 +2916,7 @@ LockRowsPath *create_lockrows_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.disabled_nodes = subpath->disabled_nodes;
   pathnode->path.startup_cost = subpath->startup_cost;
   pathnode->path.total_cost =
-      subpath->total_cost + cpu_tuple_cost * subpath->rows;
+      subpath->total_cost + tcb->guc.cpu_tuple_cost * subpath->rows;
 
   return pathnode;
 }

@@ -1888,7 +1888,7 @@ void add_function_cost(PlannerInfo *root, Oid funcid, Node *node,
   }
 
   /* No support function, or it failed, so rely on procost */
-  cost->per_tuple += procform->procost * cpu_operator_cost;
+  cost->per_tuple += procform->procost * tcb->guc.cpu_operator_cost;
 }
 
 /*

@@ -511,6 +511,11 @@ typedef struct tcb_guc_t {
   int debug_discard_caches = 0;                /* inval.c */
   int client_connection_check_interval = 0;    /* postgres.c */
   int scram_sha_256_iterations = 4096;         /* auth-scram.c */
+  double seq_page_cost = 1.0;                  /* costsize.c */
+  double random_page_cost = 4.0;               /* costsize.c */
+  double cpu_tuple_cost = 0.01;                /* costsize.c */
+  double cpu_index_tuple_cost = 0.005;         /* costsize.c */
+  double cpu_operator_cost = 0.0025;           /* costsize.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

@@ -2074,7 +2074,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
       gettext_noop("Sets the planner's estimate of the cost of a "
                    "sequentially fetched disk page."),
       NULL, GUC_EXPLAIN},
-     &seq_page_cost,
+     &tcb->guc.seq_page_cost,
      DEFAULT_SEQ_PAGE_COST,
      0,
      DBL_MAX,
@@ -2085,7 +2085,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
       gettext_noop("Sets the planner's estimate of the cost of a "
                    "nonsequentially fetched disk page."),
       NULL, GUC_EXPLAIN},
-     &random_page_cost,
+     &tcb->guc.random_page_cost,
      DEFAULT_RANDOM_PAGE_COST,
      0,
      DBL_MAX,
@@ -2096,7 +2096,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
       gettext_noop("Sets the planner's estimate of the cost of "
                    "processing each tuple (row)."),
       NULL, GUC_EXPLAIN},
-     &cpu_tuple_cost,
+     &tcb->guc.cpu_tuple_cost,
      DEFAULT_CPU_TUPLE_COST,
      0,
      DBL_MAX,
@@ -2107,7 +2107,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
       gettext_noop("Sets the planner's estimate of the cost of "
                    "processing each index entry during an index scan."),
       NULL, GUC_EXPLAIN},
-     &cpu_index_tuple_cost,
+     &tcb->guc.cpu_index_tuple_cost,
      DEFAULT_CPU_INDEX_TUPLE_COST,
      0,
      DBL_MAX,
@@ -2118,7 +2118,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
       gettext_noop("Sets the planner's estimate of the cost of "
                    "processing each operator or function call."),
       NULL, GUC_EXPLAIN},
-     &cpu_operator_cost,
+     &tcb->guc.cpu_operator_cost,
      DEFAULT_CPU_OPERATOR_COST,
      0,
      DBL_MAX,

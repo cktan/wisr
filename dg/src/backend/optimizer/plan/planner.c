@@ -5492,7 +5492,7 @@ static PathTarget *make_sort_input_target(PlannerInfo *root,
          * cpu_operator_cost".  Note this will take in any PL function
          * with default cost.
          */
-        if (cost.per_tuple > 10 * cpu_operator_cost) {
+        if (cost.per_tuple > 10 * tcb->guc.cpu_operator_cost) {
           postpone_col[i] = true;
           have_expensive = true;
         }
