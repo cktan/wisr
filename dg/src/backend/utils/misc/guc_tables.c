@@ -430,6 +430,11 @@ static thread_local /*LOCAL*/ bool send_abort_for_crash = false;
 static thread_local /*LOCAL*/ bool send_abort_for_kill = false;
 static thread_local /*LOCAL*/ char *ssl_cert_file;
 static thread_local /*LOCAL*/ char *ssl_key_file;
+static thread_local /*LOCAL*/ char *ssl_ca_file;
+static thread_local /*LOCAL*/ char *ssl_crl_file;
+static thread_local /*LOCAL*/ char *ssl_crl_dir;
+static thread_local /*LOCAL*/ char *ssl_dh_params_file;
+static thread_local /*LOCAL*/ char *SSLECDHCurve;
 
 /* A string setting as a std::string, "" if it has no value. */
 static std::string setting_string(const char *value) {
@@ -449,6 +454,11 @@ static void publish_postmaster_reload_settings(void) {
   b->send_abort_for_kill = send_abort_for_kill;
   b->ssl_cert_file = setting_string(ssl_cert_file);
   b->ssl_key_file = setting_string(ssl_key_file);
+  b->ssl_ca_file = setting_string(ssl_ca_file);
+  b->ssl_crl_file = setting_string(ssl_crl_file);
+  b->ssl_crl_dir = setting_string(ssl_crl_dir);
+  b->ssl_dh_params_file = setting_string(ssl_dh_params_file);
+  b->SSLECDHCurve = setting_string(SSLECDHCurve);
 }
 
 /*

@@ -65,7 +65,7 @@ static int port_bio_write(BIO *h, const char *buf, int size);
 static BIO_METHOD *port_bio_method(void);
 static int ssl_set_port_bio(Port *port);
 
-static DH *load_dh_file(char *filename, bool isServerStart);
+static DH *load_dh_file(const char *filename, bool isServerStart);
 static DH *load_dh_buffer(const char *buffer, size_t len);
 static int ssl_external_passwd_cb(char *buf, int size, int rwflag,
                                   void *userdata);
@@ -330,15 +330,18 @@ int be_tls_init(bool isServerStart) {
   /*
    * Load CA store, so we can verify client certificates if needed.
    */
-  if (ssl_ca_file[0]) {
+  if (!pcb->ssl_ca_file.empty()) {
     STACK_OF(X509_NAME) * root_cert_list;
 
-    if (SSL_CTX_load_verify_locations(context, ssl_ca_file, NULL) != 1 ||
-        (root_cert_list = SSL_load_client_CA_file(ssl_ca_file)) == NULL) {
-      ereport(isServerStart ? FATAL : LOG,
-              (errcode(ERRCODE_CONFIG_FILE_ERROR),
-               errmsg("could not load root certificate file \"%s\": %s",
-                      ssl_ca_file, SSLerrmessage(ERR_get_error()))));
+    if (SSL_CTX_load_verify_locations(context, pcb->ssl_ca_file.c_str(),
+                                      NULL) != 1 ||
+        (root_cert_list = SSL_load_client_CA_file(pcb->ssl_ca_file.c_str())) ==
+            NULL) {
+      ereport(
+          isServerStart ? FATAL : LOG,
+          (errcode(ERRCODE_CONFIG_FILE_ERROR),
+           errmsg("could not load root certificate file \"%s\": %s",
+                  pcb->ssl_ca_file.c_str(), SSLerrmessage(ERR_get_error()))));
       goto error;
     }
 
@@ -365,36 +368,40 @@ int be_tls_init(bool isServerStart) {
    * http://searchsecurity.techtarget.com/sDefinition/0,,sid14_gci803160,00.html
    *----------
    */
-  if (ssl_crl_file[0] || ssl_crl_dir[0]) {
+  if (!pcb->ssl_crl_file.empty() || !pcb->ssl_crl_dir.empty()) {
     X509_STORE *cvstore = SSL_CTX_get_cert_store(context);
 
     if (cvstore) {
       /* Set the flags to check against the complete CRL chain */
-      if (X509_STORE_load_locations(cvstore,
-                                    ssl_crl_file[0] ? ssl_crl_file : NULL,
-                                    ssl_crl_dir[0] ? ssl_crl_dir : NULL) == 1) {
+      if (X509_STORE_load_locations(
+              cvstore,
+              !pcb->ssl_crl_file.empty() ? pcb->ssl_crl_file.c_str() : NULL,
+              !pcb->ssl_crl_dir.empty() ? pcb->ssl_crl_dir.c_str() : NULL) ==
+          1) {
         X509_STORE_set_flags(cvstore,
                              X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL);
-      } else if (ssl_crl_dir[0] == 0) {
+      } else if (pcb->ssl_crl_dir.empty()) {
         ereport(isServerStart ? FATAL : LOG,
                 (errcode(ERRCODE_CONFIG_FILE_ERROR),
                  errmsg("could not load SSL certificate revocation list file "
                         "\"%s\": %s",
-                        ssl_crl_file, SSLerrmessage(ERR_get_error()))));
+                        pcb->ssl_crl_file.c_str(),
+                        SSLerrmessage(ERR_get_error()))));
         goto error;
-      } else if (ssl_crl_file[0] == 0) {
-        ereport(isServerStart ? FATAL : LOG,
-                (errcode(ERRCODE_CONFIG_FILE_ERROR),
-                 errmsg("could not load SSL certificate revocation list "
-                        "directory \"%s\": %s",
-                        ssl_crl_dir, SSLerrmessage(ERR_get_error()))));
+      } else if (pcb->ssl_crl_file.empty()) {
+        ereport(
+            isServerStart ? FATAL : LOG,
+            (errcode(ERRCODE_CONFIG_FILE_ERROR),
+             errmsg("could not load SSL certificate revocation list "
+                    "directory \"%s\": %s",
+                    pcb->ssl_crl_dir.c_str(), SSLerrmessage(ERR_get_error()))));
         goto error;
       } else {
         ereport(isServerStart ? FATAL : LOG,
                 (errcode(ERRCODE_CONFIG_FILE_ERROR),
                  errmsg("could not load SSL certificate revocation list file "
                         "\"%s\" or directory \"%s\": %s",
-                        ssl_crl_file, ssl_crl_dir,
+                        pcb->ssl_crl_file.c_str(), pcb->ssl_crl_dir.c_str(),
                         SSLerrmessage(ERR_get_error()))));
         goto error;
       }
@@ -419,7 +426,7 @@ int be_tls_init(bool isServerStart) {
     old = shmem->tls->context;
     shmem->tls->context = context;
     /* Whether the CA store has been loaded into the context. */
-    shmem->tls->loaded_verify_locations = ssl_ca_file[0] != '\0';
+    shmem->tls->loaded_verify_locations = !pcb->ssl_ca_file.empty();
     if (old)
       SSL_CTX_free(old);
   }
@@ -1011,7 +1018,7 @@ static int ssl_set_port_bio(Port *port) {
  *	to verify that the DBA-generated DH parameters file contains
  *	what we expect it to contain.
  */
-static DH *load_dh_file(char *filename, bool isServerStart) {
+static DH *load_dh_file(const char *filename, bool isServerStart) {
   FILE *fp;
   DH *dh = NULL;
   int codes;
@@ -1328,8 +1335,8 @@ static bool initialize_dh(SSL_CTX *context, bool isServerStart) {
 
   SSL_CTX_set_options(context, SSL_OP_SINGLE_DH_USE);
 
-  if (ssl_dh_params_file[0])
-    dh = load_dh_file(ssl_dh_params_file, isServerStart);
+  if (!pcb->ssl_dh_params_file.empty())
+    dh = load_dh_file(pcb->ssl_dh_params_file.c_str(), isServerStart);
   if (!dh)
     dh = load_dh_buffer(FILE_DH2048, sizeof(FILE_DH2048));
   if (!dh) {
@@ -1359,7 +1366,7 @@ static bool initialize_dh(SSL_CTX *context, bool isServerStart) {
  */
 static bool initialize_ecdh(SSL_CTX *context, bool isServerStart) {
 #ifndef OPENSSL_NO_ECDH
-  if (SSL_CTX_set1_groups_list(context, SSLECDHCurve) != 1) {
+  if (SSL_CTX_set1_groups_list(context, pcb->SSLECDHCurve.c_str()) != 1) {
     /*
      * OpenSSL 3.3.0 introduced proper error messages for group parsing
      * errors, earlier versions returns "no SSL error reported" which is
