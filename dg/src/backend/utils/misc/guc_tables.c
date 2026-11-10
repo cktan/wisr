@@ -2164,7 +2164,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
     {{"geqo_selection_bias", PGC_USERSET, QUERY_TUNING_GEQO,
       gettext_noop("GEQO: selective pressure within the population."), NULL,
       GUC_EXPLAIN},
-     &Geqo_selection_bias,
+     &tcb->guc.Geqo_selection_bias,
      DEFAULT_GEQO_SELECTION_BIAS,
      MIN_GEQO_SELECTION_BIAS,
      MAX_GEQO_SELECTION_BIAS,

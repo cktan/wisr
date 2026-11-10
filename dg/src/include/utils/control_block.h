@@ -486,6 +486,7 @@ typedef struct tcb_guc_t {
   int from_collapse_limit;                     /* initsplan.c */
   int join_collapse_limit;                     /* initsplan.c */
   int geqo_threshold;                          /* allpaths.c */
+  double Geqo_selection_bias;                  /* geqo_main.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

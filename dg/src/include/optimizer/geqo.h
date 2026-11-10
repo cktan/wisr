@@ -64,8 +64,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int
 extern thread_local /*LOCAL*/ PGDLLIMPORT int
     Geqo_generations; /* 1 .. inf, or 0 to use default */
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT double Geqo_selection_bias;
-
 #define DEFAULT_GEQO_SELECTION_BIAS 2.0
 #define MIN_GEQO_SELECTION_BIAS 1.5
 #define MAX_GEQO_SELECTION_BIAS 2.0

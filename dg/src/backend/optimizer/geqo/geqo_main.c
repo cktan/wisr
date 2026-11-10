@@ -39,6 +39,7 @@
 #include "optimizer/geqo_random.h"
 #include "optimizer/geqo_recombination.h"
 #include "optimizer/geqo_selection.h"
+#include "utils/control_block.h"
 
 /*
  * Configuration options
@@ -46,7 +47,6 @@
 thread_local /*LOCAL*/ int Geqo_effort;
 thread_local /*LOCAL*/ int Geqo_pool_size;
 thread_local /*LOCAL*/ int Geqo_generations;
-thread_local /*LOCAL*/ double Geqo_selection_bias;
 thread_local /*LOCAL*/ double Geqo_seed;
 
 static int gimme_pool_size(int nr_rel);
@@ -172,7 +172,7 @@ RelOptInfo *geqo(PlannerInfo *root, int number_of_rels, List *initial_rels) {
 
   for (generation = 0; generation < number_generations; generation++) {
     /* SELECTION: using linear bias function */
-    geqo_selection(root, momma, daddy, pool, Geqo_selection_bias);
+    geqo_selection(root, momma, daddy, pool, tcb->guc.Geqo_selection_bias);
 
 #if defined(ERX)
     /* EDGE RECOMBINATION CROSSOVER */
