@@ -13150,3 +13150,30 @@ refuses or that fail, and options that do nothing.
   line, `-P` and `-f t` in `PGOPTIONS`; `-f s` taken there.
   sm's and sq's tests cannot express it: they have no command
   line of digres.
+
+## Step 432: no initdb, only digres --init
+
+The server answered to the name `initdb` too: the build made
+`build/initdb`, a link to `build/digres`, and `main()` ran
+`initdb_main()` for that name or for `--init`.
+
+- **`--init` alone makes a data directory.** The build makes no
+  link, and `main()` looks at `--init` only. A program named
+  `initdb` is the server.
+- **`--init` names itself `digres --init`**: in its help, its
+  errors (`digres --init: error: ...`), the hint after a bad
+  option and `--version`.
+- **The hints say so too**: a data directory with no
+  `pg_global` (`pg_global.c`), a bad `PG_VERSION`
+  (`miscinit.c`) and a missing configuration directory
+  (`guc.c`) now say to run `digres --init`.
+- **The tests** run `build/digres --init`: `run.sh`,
+  `isolation.sh`, `regress.sh`, `slt.sh` (its `INITDB`),
+  `server.sh`, `tls.sh`, `duck/duck.sh` and `initdb.sh`, which
+  keeps its name and its "initdb: PASSED" line.
+- **Test** (`test/initdb.sh`): `--init`'s help names
+  `digres --init` and no `initdb`; an unsupported encoding's
+  error begins `digres --init: error:`; an option it does not
+  know gives the hint `Try "digres --init --help"`; and the
+  hint for a directory with no `pg_global` names
+  `digres --init`.

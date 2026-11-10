@@ -61,9 +61,9 @@ layer. [`PERF.md`](PERF.md) measures how fast DG runs against PG.
   rather than OS signals.
 - **No single-user or bootstrap mode.** PG's `postgres --single`
   runs one backend on standard input, and `--boot` builds the
-  catalogs for `initdb`. DG refuses both. `digres --init` makes a
-  data directory through sm, and a server under a debugger serves
-  every session in one process.
+  catalogs for `initdb`. DG refuses both, and has no `initdb`:
+  `digres --init` makes a data directory through sm, and a
+  server under a debugger serves every session in one process.
 - **Standalone parser (`sq/`).** The SQL grammar and scanner live
   in `sq/` with no dependency on the backend. DG links `libsq.a`
   and translates parse nodes directly into its memory contexts.

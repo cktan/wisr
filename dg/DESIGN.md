@@ -400,9 +400,9 @@ What making each session a thread left:
 
 Other gaps:
 
-- **`initdb` cleans up on an error, not on a signal.** An
-  interrupted `initdb` leaves its data directory behind
+- **`digres --init` cleans up on an error, not on a signal.**
+  An interrupted `--init` leaves its data directory behind
   (`main/initdb.c`, `cleanup()`).
 - **A reload with no configuration file logs a complaint**,
-  because `initdb` leaves a data directory with none. This was
-  not checked again after the move to threads.
+  because `digres --init` leaves a data directory with none.
+  This was not checked again after the move to threads.

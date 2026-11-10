@@ -47,7 +47,7 @@ die() {
   exit 2
 }
 [ -x "$pg18/bin/postgres" ] || die "no PostgreSQL 18 in $pg18; set PG18"
-[ -x build/digres ] && [ -x build/initdb ] ||
+[ -x build/digres ] ||
   die "no build/digres; run DEBUG=1 make -C sm -j4 && DEBUG=1 make -C dg -j4"
 
 # The runner, built as dg/Makefile builds build/slt, less -lcrypto.
@@ -98,7 +98,7 @@ pg_port=$(free_port)
 dg_port=$(free_port)
 "$pg18/bin/initdb" -D "$dk/pg" -A trust > "$dk/pg.initdb" 2>&1 ||
   die "PostgreSQL 18's initdb; see $dk/pg.initdb"
-build/initdb "$dk/dg" > "$dk/dg.initdb" 2>&1 ||
+build/digres --init "$dk/dg" > "$dk/dg.initdb" 2>&1 ||
   die "digres's initdb; see $dk/dg.initdb"
 
 # Start server NAME (pg or dg), and wait until its log says it is

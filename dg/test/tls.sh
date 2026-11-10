@@ -66,7 +66,7 @@ done
 # 3. A server with ssl on.
 tport=$(python3 -c 'import socket; s = socket.socket()
 s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
-build/initdb --pwfile="$work/pw" "$tw/data" > "$tw/initdb.out" 2>&1 ||
+build/digres --init --pwfile="$work/pw" "$tw/data" > "$tw/initdb.out" 2>&1 ||
   fail "tls: initdb"
 # In postgresql.conf, not on the command line, which ALTER SYSTEM cannot
 # override, so that a reload can change them (8 below).

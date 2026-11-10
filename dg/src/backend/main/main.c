@@ -134,12 +134,8 @@ int main(int argc, char *argv[]) {
     exit(0);
   }
 
-  /*
-   * Nor is "initdb", which is this program under another name, or
-   * "digres --init": it makes a data directory.
-   */
-  if (strcmp(pcb->progname, "initdb") == 0 ||
-      (argc > 1 && strcmp(argv[1], "--init") == 0))
+  /* Nor is "digres --init": it makes a data directory. */
+  if (argc > 1 && strcmp(argv[1], "--init") == 0)
     exit(initdb_main(argc, argv));
 
   /*
@@ -417,10 +413,9 @@ static void help(const char *progname) {
   printf(_("  --build            show how this program was built, then exit\n"));
 
   printf(_("\nMaking a data directory:\n"));
-  printf(_("  --init             make a data directory, as initdb does (must "
-           "be first\n"
-           "                     argument); \"%s --init --help\" lists its "
-           "options\n"),
+  printf(_("  --init             make a data directory (must be first "
+           "argument);\n"
+           "                     \"%s --init --help\" lists its options\n"),
          progname);
 
   printf(_("\nDeveloper options:\n"));

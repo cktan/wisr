@@ -6,8 +6,8 @@ A fork of PostgreSQL that runs on the storage stack in `../sm`.
 calls.
 
 **It starts, `psql` connects to it, and its tables are sm's.**
-`build/initdb DIR` makes a data directory, `build/digres -D
-DIR` serves it, and PostgreSQL's own `psql` runs statements on
+`build/digres --init DIR` makes a data directory, `build/digres
+-D DIR` serves it, and PostgreSQL's own `psql` runs statements on
 it. What runs so far, each a step of
 [`WORKNOTE.md`](WORKNOTE.md):
 
@@ -142,15 +142,14 @@ stops it, and says which. `make test` runs the statements in
 
 ## The data directory
 
-`build/initdb DIR`, or `build/digres --init DIR`, makes a data
-directory: an sm home directory holding the database
-`postgres`, the database `pg_global`, which holds the roles
-and which no client connects to
-([`../aa/ROLE.md`](../aa/ROLE.md)), and a
-`PG_VERSION` file. Its one role at first is the superuser,
-with the SCRAM secret of its password if one is given.
-`initdb` is the server under another name, and `--help` lists
-its options, which are few: the encoding is UTF8, the default
+`build/digres --init DIR` makes a data directory: an sm home
+directory holding the database `postgres`, the database
+`pg_global`, which holds the roles and which no client connects
+to ([`../aa/ROLE.md`](../aa/ROLE.md)), and a `PG_VERSION` file.
+Its one role at first is the superuser, with the SCRAM secret of
+its password if one is given. There is no `initdb`: `--init` is
+an option of the server, and `digres --init --help` lists its
+options, which are few: the encoding is UTF8, the default
 collation is C, and authentication is not configured: on the
 local socket, peer if the OS user is the role's name, else the
 role's password; over TCP, the role's password, by

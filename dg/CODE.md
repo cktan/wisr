@@ -287,7 +287,7 @@ digres is one process; each session is a thread of it.
   with `sm_closedb`.
 - **A database's oid is `FirstNormalObjectId` plus its sm
   `dbid`** (`sm_dbid`).
-- **Only `initdb` calls `sm_init`.**
+- **Only `digres --init` calls `sm_init`.**
 
 ## 6. Logging
 

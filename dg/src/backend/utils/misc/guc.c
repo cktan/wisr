@@ -1590,8 +1590,7 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
     write_stderr("%s: could not access directory \"%s\": %m\n", progname,
                  configdir);
     if (errno == ENOENT)
-      write_stderr("Run initdb or pg_basebackup to initialize a PostgreSQL "
-                   "data directory.\n");
+      write_stderr("Run \"digres --init\" to make a data directory.\n");
     return false;
   }
 

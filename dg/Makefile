@@ -4,7 +4,8 @@
 # dg -- build digres.
 #
 #   make -j4           generate what is generated, compile, and link
-#                      the server, build/digres, which is initdb too
+#                      the server, build/digres; "digres --init" makes
+#                      a data directory
 #   make -k -j4        the same, going on past a file that fails
 #   make gen           only generate
 #   make test          check the parser, with sq's tests given this
@@ -93,8 +94,6 @@ SERVER := build/digres
 # the ones checked; the others are of the same sources, and the
 # sanitizer's have static initialisers of its own.
 CHECK_GLOBALS := python3 -B src/tools/cxx_thread_local.py --check $(OBJDIR)
-# The server is initdb too, under the name initdb looks for.
-SERVER_LINKS := ln -sf digres build/initdb
 else ifeq ($(FLAVOR),tsan)
 OPT := -O1 -g -fsanitize=thread
 SERVER := build/digres-tsan
@@ -204,7 +203,6 @@ $(SERVER): $(OBJS) $(LIBSQ) $(LINK_SM) $(LINK_AA)
 	    -o $(OBJDIR)/rocksdb_build.o src/backend/main/rocksdb_build.cc
 	$(CXX) $(OPT) -o $@ $(OBJDIR)/rocksdb_build.o $(OBJS) \
 	    $(LIBSQ) $(LINK_AA) $(LINK_SM) $(LDLIBS)
-	$(SERVER_LINKS)
 
 $(OBJDIR)/%.o: src/%.c
 	@mkdir -p $(dir $@)

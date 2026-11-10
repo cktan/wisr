@@ -41,7 +41,7 @@ mkdir -p "$work"
 
 # Start the server on a data directory initdb makes, and wait until it
 # says it is ready, ten seconds at most.
-build/initdb "$work/data" > "$work/initdb.out" 2>&1 || {
+build/digres --init "$work/data" > "$work/initdb.out" 2>&1 || {
   echo "isolation: FAILED (initdb; see $work)"
   exit 1
 }

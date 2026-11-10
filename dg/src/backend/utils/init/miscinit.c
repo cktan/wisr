@@ -1301,7 +1301,7 @@ void ValidatePgVersion(const char *path) {
             (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
              errmsg("\"%s\" is not a valid data directory", path),
              errdetail("File \"%s\" does not contain valid data.", full_path),
-             errhint("You might need to initdb.")));
+             errhint("You might need to run \"digres --init\".")));
 
   FreeFile(file);
 

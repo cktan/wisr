@@ -159,7 +159,7 @@ wait_state() {
 # 2. Start the server on it.
 # 3. Wait until it says it is ready, ten seconds at most.
 echo "sesame" > "$work/pw"
-build/initdb --pwfile="$work/pw" "$work/data" > "$work/initdb.out" 2>&1 ||
+build/digres --init --pwfile="$work/pw" "$work/data" > "$work/initdb.out" 2>&1 ||
   fail "initdb"
 # A temporary file a prior run left, for startup to remove (checked below).
 mkdir -p "$work/data/base/pgsql_tmp"
