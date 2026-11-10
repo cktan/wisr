@@ -319,9 +319,6 @@ static thread_local /*LOCAL*/ char *external_pid_file;
 
 thread_local /*LOCAL*/ char *application_name;
 
-thread_local /*LOCAL*/ int tcp_keepalives_idle;
-thread_local /*LOCAL*/ int tcp_keepalives_interval;
-thread_local /*LOCAL*/ int tcp_keepalives_count;
 thread_local /*LOCAL*/ int tcp_user_timeout;
 
 /*
@@ -330,7 +327,6 @@ thread_local /*LOCAL*/ int tcp_user_timeout;
  * This avoids breaking compatibility with clients that have never supported
  * renegotiation and therefore always try to zero it.
  */
-static thread_local /*LOCAL*/ int ssl_renegotiation_limit;
 
 /*
  * These variables are all dummies that don't do anything, except in some
@@ -1907,7 +1903,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"tcp_keepalives_idle", PGC_USERSET, CONN_AUTH_TCP,
       gettext_noop("Time between issuing TCP keepalives."),
       gettext_noop("0 means use the system default."), GUC_UNIT_S},
-     &tcp_keepalives_idle,
+     &tcb->guc.tcp_keepalives_idle,
      0,
      0,
      INT_MAX,
@@ -1918,7 +1914,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"tcp_keepalives_interval", PGC_USERSET, CONN_AUTH_TCP,
       gettext_noop("Time between TCP keepalive retransmits."),
       gettext_noop("0 means use the system default."), GUC_UNIT_S},
-     &tcp_keepalives_interval,
+     &tcb->guc.tcp_keepalives_interval,
      0,
      0,
      INT_MAX,
@@ -1935,7 +1931,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
          NULL,
          GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE,
      },
-     &ssl_renegotiation_limit,
+     &tcb->guc.ssl_renegotiation_limit,
      0,
      0,
      0,
@@ -1952,7 +1948,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
                       "lost before a connection is considered dead. "
                       "0 means use the system default."),
      },
-     &tcp_keepalives_count,
+     &tcb->guc.tcp_keepalives_count,
      0,
      0,
      INT_MAX,

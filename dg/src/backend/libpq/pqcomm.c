@@ -260,9 +260,9 @@ Port *pq_init(ClientSocket *client_sock) {
      * variables to 0 in such a case, but it's not necessary because the
      * show hooks for these variables report the truth anyway.)
      */
-    (void)pq_setkeepalivesidle(tcp_keepalives_idle, port);
-    (void)pq_setkeepalivesinterval(tcp_keepalives_interval, port);
-    (void)pq_setkeepalivescount(tcp_keepalives_count, port);
+    (void)pq_setkeepalivesidle(tcb->guc.tcp_keepalives_idle, port);
+    (void)pq_setkeepalivesinterval(tcb->guc.tcp_keepalives_interval, port);
+    (void)pq_setkeepalivescount(tcb->guc.tcp_keepalives_count, port);
     (void)pq_settcpusertimeout(tcp_user_timeout, port);
   }
 

@@ -502,6 +502,10 @@ typedef struct tcb_guc_t {
   int log_min_duration_statement = -1;         /* guc_tables.c */
   int log_parameter_max_length = -1;           /* guc_tables.c */
   int log_parameter_max_length_on_error = 0;   /* guc_tables.c */
+  int tcp_keepalives_idle;                     /* guc_tables.c */
+  int tcp_keepalives_interval;                 /* guc_tables.c */
+  int tcp_keepalives_count;                    /* guc_tables.c */
+  int ssl_renegotiation_limit;                 /* guc_tables.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 
