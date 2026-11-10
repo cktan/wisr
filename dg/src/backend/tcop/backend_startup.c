@@ -44,7 +44,6 @@
 
 /* GUCs */
 thread_local /*LOCAL*/ uint32 log_connections = 0;
-thread_local /*LOCAL*/ char *log_connections_string = NULL;
 
 /* Other globals */
 

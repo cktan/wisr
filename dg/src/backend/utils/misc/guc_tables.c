@@ -307,7 +307,6 @@ thread_local /*LOCAL*/ bool current_role_is_superuser;
 thread_local /*LOCAL*/ int log_min_error_statement = ERROR;
 thread_local /*LOCAL*/ int log_min_messages = WARNING;
 thread_local /*LOCAL*/ int client_min_messages = NOTICE;
-thread_local /*LOCAL*/ char *backtrace_functions;
 
 thread_local /*LOCAL*/ int num_temp_buffers = 1024;
 
@@ -2718,7 +2717,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
     {{"backtrace_functions", PGC_SUSET, DEVELOPER_OPTIONS,
       gettext_noop("Log backtrace for errors in these functions."), NULL,
       GUC_NOT_IN_SAMPLE},
-     &backtrace_functions,
+     &tcb->guc.backtrace_functions,
      "",
      check_backtrace_functions,
      assign_backtrace_functions,
@@ -2748,7 +2747,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       gettext_noop(
           "Logs specified aspects of connection establishment and setup."),
       NULL, GUC_LIST_INPUT},
-     &log_connections_string,
+     &tcb->guc.log_connections_string,
      "",
      check_log_connections,
      assign_log_connections,
@@ -2796,7 +2795,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
 
     {{"compute_query_id", PGC_SUSET, STATS_MONITORING,
       gettext_noop("Enables in-core computation of query identifiers."), NULL},
-     &compute_query_id,
+     &tcb->guc.compute_query_id,
      COMPUTE_QUERY_ID_AUTO,
      compute_query_id_options,
      NULL,

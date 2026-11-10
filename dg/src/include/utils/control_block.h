@@ -539,6 +539,9 @@ typedef struct tcb_guc_t {
   char *session_authorization_string;          /* guc_tables.c */
   char *timezone_string;                       /* guc_tables.c */
   char *timezone_abbreviations_string;         /* guc_tables.c */
+  char *backtrace_functions;                   /* guc_tables.c */
+  char *log_connections_string = NULL;         /* backend_startup.c */
+  int compute_query_id;                        /* queryjumblefuncs.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

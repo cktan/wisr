@@ -451,7 +451,7 @@ void errfinish(const char *filename, int lineno, const char *funcname) {
   oldcontext = MemoryContextSwitchTo(ErrorContext);
 
   /* Collect backtrace, if enabled and we didn't already */
-  if (!edata->backtrace && edata->funcname && backtrace_functions &&
+  if (!edata->backtrace && edata->funcname && tcb->guc.backtrace_functions &&
       matches_backtrace_functions(edata->funcname))
     set_backtrace(edata, 2);
 

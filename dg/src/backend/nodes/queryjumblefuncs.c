@@ -51,7 +51,6 @@
 #define JUMBLE_SIZE				1024 /* query serialization buffer size */
 
 /* GUC parameters */
-thread_local /*LOCAL*/ int compute_query_id = COMPUTE_QUERY_ID_AUTO;
 
 /*
  * True when compute_query_id is ON or AUTO, and a module requests them.
@@ -158,7 +157,7 @@ JumbleState *JumbleQuery(Query *query) {
  * a query identifier to be computed.
  */
 void EnableQueryId(void) {
-  if (compute_query_id != COMPUTE_QUERY_ID_OFF)
+  if (tcb->guc.compute_query_id != COMPUTE_QUERY_ID_OFF)
     query_id_enabled = true;
 }
 
@@ -536,6 +535,7 @@ static void _jumbleNode(JumbleState *jstate, Node *node) {
 
   switch (nodeTag(expr)) {
 #include "queryjumblefuncs.switch.c"
+#include "utils/control_block.h"
 
   case T_List:
   case T_IntList:
