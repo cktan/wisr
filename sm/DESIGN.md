@@ -1,9 +1,8 @@
 # DESIGN — wisr
 
 How the stack in [`OBJECTIVE.md`](OBJECTIVE.md) fits together:
-the levels,
-the build, and the decisions that cross level boundaries.
-Each level's own mechanics — sm1's MVCC, sm2's tuple
+the levels, the build, and the decisions that cross level
+boundaries. Each level's own mechanics — sm1's MVCC, sm2's tuple
 format, sm3's catalog — are argued in that level's own
 `SMn_DESIGN.md`; this document does not repeat them.
 
@@ -46,58 +45,54 @@ format, sm3's catalog — are argued in that level's own
 ```
 
 sm1's unit of storage is the **store**: an ordered map of byte
-keys to byte values, named by a `uint64_t` storeid. **A store
-is exactly one RocksDB column family**, `CF:store.<storeid>`
-for a versioned store and `CF:chain.<storeid>` for a chained
-one ([`DBMGR.md`](DBMGR.md#62-key-classes) §6.2,
+keys to byte values, named by a `uint64_t` storeid. **A store is
+exactly one RocksDB column family**, `CF:store.<storeid>` for a
+versioned store and `CF:chain.<storeid>` for a chained one
+([`DBMGR.md`](DBMGR.md#62-key-classes) §6.2,
 [`ROWSTORE.md`](ROWSTORE.md#35-a-chained-key) §3.5):
-`sm1::mkstore`
-creates it and `sm1::rmstore` drops it. sm3 chains every
-table's store: a row's newest version is kept under its plain
-key and the older ones in a chain behind it, while its index
-entries and TOAST stay versioned. Whatever RocksDB offers per
-column family is therefore offered per store — an O(1) drop,
-and temporariness (§5) — and no level above sees a column
-family by that name.
+`sm1::mkstore` creates it and `sm1::rmstore` drops it. sm3 chains
+every table's store: a row's newest version is kept under its
+plain key and the older ones in a chain behind it, while its
+index entries and TOAST stay versioned. Whatever RocksDB offers
+per column family is therefore offered per store — an O(1) drop,
+and temporariness (§5) — and no level above sees a column family
+by that name.
 
-sm2 is a client of sm1, nothing more: it holds no RocksDB
-handle of its own and reaches storage only through sm1's
-interface. sm3 is built on sm2 — it never encodes a key or
-decodes a tuple itself — and may also call sm1's interface
-directly, for whatever sm2 has nothing to add to: above all
-`sm1::lock_oid`, which sm3's DDL and index-build protocols are
-built on ([`CATALOG.md`](CATALOG.md#1-design) §1). That boundary
-is why each
-level's [`OBJECTIVE.md`](OBJECTIVE.md) can promise it is "useful
-and
-testable on its own" — the whole lower stack is one
+sm2 is a client of sm1, nothing more: it holds no RocksDB handle
+of its own and reaches storage only through sm1's interface. sm3
+is built on sm2 — it never encodes a key or decodes a tuple
+itself — and may also call sm1's interface directly, for whatever
+sm2 has nothing to add to: above all `sm1::lock_oid`, which sm3's
+DDL and index-build protocols are built on
+([`CATALOG.md`](CATALOG.md#1-design) §1). That boundary is why
+each level's [`OBJECTIVE.md`](OBJECTIVE.md) can promise it is
+"useful and testable on its own" — the whole lower stack is one
 dependency.
 
 The top level is not a level: it adds no notion of its own, only
 a C signature over the levels' C++ interfaces, and it is the one
 place an exception is caught and a PostgreSQL error path is safe
 to take ([`OBJECTIVE.md`](OBJECTIVE.md)). Like sm3, it may skip a
-level. A C
-session is an sm3 session over an sm1 one, and each database's
-sm3 catalog is loaded by its first session: sessions,
+level. A C session is an sm3 session over an sm1 one, and each
+database's sm3 catalog is loaded by its first session: sessions,
 transactions, savepoints and prepare go through sm3, which keeps
-its overlay of DDL in step with them, and the rest of 2PC,
-stores and sequences go to sm1 directly. A caller finds a
-table through sm3's catalog (`sm_cat_*`), then opens it by its
-oid and the lock it asks for (`sm_tbl_open`), and reads and
-writes its rows through the open table (`sm_tbl_*`), which sm3
-serves, maintaining its indexes with each write (§3). sm2
-calls only sm1, and nothing calls upward.
+its overlay of DDL in step with them, and the rest of 2PC, stores
+and sequences go to sm1 directly. A caller finds a table through
+sm3's catalog (`sm_cat_*`), then opens it by its oid and the lock
+it asks for (`sm_tbl_open`), and reads and writes its rows
+through the open table (`sm_tbl_*`), which sm3 serves,
+maintaining its indexes with each write (§3). sm2 calls only sm1,
+and nothing calls upward.
 
-Under every level sits sm0, level 0, outside the diagram's
-chain of calls because every level uses it: the calling
-thread's error state, the log hook, and the general-purpose
-helpers that are about no storage — formatting into a fixed
-buffer, defer blocks, big-endian integers — and the system
-services, `sm_sys.h`, which dg includes directly too. It includes
-nothing of the levels and links no RocksDB. sm1 brings the error and
-log calls into namespace sm1, so the stack and its callers
-name them `sm1::errnum()`, `sm1::set_log()` and the rest
+Under every level sits sm0, level 0, outside the diagram's chain
+of calls because every level uses it: the calling thread's error
+state, the log hook, and the general-purpose helpers that are
+about no storage — formatting into a fixed buffer, defer blocks,
+big-endian integers — and the system services, `sm_sys.h`, which
+dg includes directly too. It includes nothing of the levels and
+links no RocksDB. sm1 brings the error and log calls into
+namespace sm1, so the stack and its callers name them
+`sm1::errnum()`, `sm1::set_log()` and the rest
 ([`sm0/README.md`](sm0/README.md)).
 
 The root's `include/` also holds headers that belong to no
@@ -245,9 +240,8 @@ design:
   under a comment naming it, with no reserved numeric ranges — a
   number matters once PostgreSQL sees it through the C wrapper,
   and this is the rule [`sm2/TYPE.md`](sm2/TYPE.md) already
-  applies to type
-  codes. An upper level records an error with `int
-  sm1::seterr(sm1::errnum_t code, std::string_view msg)`,
+  applies to type codes. An upper level records an error with
+  `int sm1::seterr(sm1::errnum_t code, std::string_view msg)`,
   exported by sm1: it copies the message into the fixed
   thread-local buffer, cut short if it does not fit, and returns
   -1, so a failing path is `return sm1::seterr(...);`. The caller
@@ -279,8 +273,7 @@ design:
   code. Under an `int` and a thread-local, reading it costs
   nothing, so there is no performance reason to split outcomes
   from errors; it also keeps [`sm1/API.md`](sm1/API.md), the
-  tests and the
-  scenario transcripts' error names as they are.
+  tests and the scenario transcripts' error names as they are.
 - **Out-parameters take one shape at every level.** A required
   output is a reference (`uint64_t& storeid`). An optional output
   stays a pointer, `nullptr` meaning "not wanted" — the old image
@@ -289,47 +282,43 @@ design:
   that point into engine memory are a `std::string_view&`, valid
   until the next call on the session, as today.
 - **The top-level API is C++ in a C style.** `include/sm.h` is
-  compiled as C++ by everything that includes it: the fork's
-  glue is a C++ file, as `rel` is. It stays C in shape: free
-  functions named `sm_*`, opaque handles, an `int` result with
-  the thread-local error, callbacks that return a code and
-  never throw. The two callbacks, the log hook and the index
-  evaluator, run where an error has nowhere to go, and are
-  `noexcept` in their types: one that throws ends the
-  process. Four C++ types may cross it and no others
+  compiled as C++ by everything that includes it: the fork's glue
+  is a C++ file, as `rel` is. It stays C in shape: free functions
+  named `sm_*`, opaque handles, an `int` result with the
+  thread-local error, callbacks that return a code and never
+  throw. The two callbacks, the log hook and the index evaluator,
+  run where an error has nowhere to go, and are `noexcept` in
+  their types: one that throws ends the process. Four C++ types
+  may cross it and no others
   ([`CODE.md`](CODE.md#2-the-interface-to-sms-users) §2).
-  `std::string` and `std::vector`, of plain C
-  types, of
-  `sm_datum_t` or of strings, carry owned data only: a
-  result the caller keeps, or a list passed in, as an
-  out-parameter or a const reference, filled inside the
-  wrapper's catch-all. `std::string_view` is bytes that are
-  not the receiver's: read during the call, or pointing into
-  session memory for as long as the call says. A wait the
-  host may want to end is ended by an interrupt to its
-  thread ([`sm0/INTERRUPT.md`](sm0/INTERRUPT.md)), not by a flag
-  or a
-  callback into the host. No call takes a
-  `std::string_view` yet: a row or an index entry on a scan
-  is still a pointer and a length into session memory.
-  `std::shared_ptr` is for an object whose life the stack and
-  the host share, and points to a `const` one: a table's
-  statistics, as sm3 keeps them (`sm_tbl_stats`). No
-  `optional` or `function`, and no class of the stack's own:
-  that line
-  is what keeps the header from growing abstractions. A plain
-  struct may hold the first two types, and a vector may hold
-  such structs: a table's definition is one, of its columns and
-  its indexes. What it replaced is what the header did to stay C:
-  lists as one malloc'd block freed by hand, owned results
-  that lived "until the next call", and a C mirror of each
-  table definition, seven parallel arrays built and kept by
-  the wrapper. The costs are that
-  no plain C program and no foreign-function binding can
-  include the header, and that both sides must be built with
-  one C++ runtime, as they are while the stack is linked from
-  source into one archive. It is still called the C wrapper
-  and the C API below and elsewhere.
+  `std::string` and `std::vector`, of plain C types, of
+  `sm_datum_t` or of strings, carry owned data only: a result the
+  caller keeps, or a list passed in, as an out-parameter or a
+  const reference, filled inside the wrapper's catch-all.
+  `std::string_view` is bytes that are not the receiver's: read
+  during the call, or pointing into session memory for as long as
+  the call says. A wait the host may want to end is ended by an
+  interrupt to its thread
+  ([`sm0/INTERRUPT.md`](sm0/INTERRUPT.md)), not by a flag or a
+  callback into the host. No call takes a `std::string_view` yet:
+  a row or an index entry on a scan is still a pointer and a
+  length into session memory. `std::shared_ptr` is for an object
+  whose life the stack and the host share, and points to a
+  `const` one: a table's statistics, as sm3 keeps them
+  (`sm_tbl_stats`). No `optional` or `function`, and no class of
+  the stack's own: that line is what keeps the header from
+  growing abstractions. A plain struct may hold the first two
+  types, and a vector may hold such structs: a table's definition
+  is one, of its columns and its indexes. What it replaced is
+  what the header did to stay C: lists as one malloc'd block
+  freed by hand, owned results that lived "until the next call",
+  and a C mirror of each table definition, seven parallel arrays
+  built and kept by the wrapper. The costs are that no plain C
+  program and no foreign-function binding can include the header,
+  and that both sides must be built with one C++ runtime, as they
+  are while the stack is linked from source into one archive. It
+  is still called the C wrapper and the C API below and
+  elsewhere.
 - **The C wrapper keeps the convention; the fork's glue
   calls `ereport`.** The wrapper's `sm_*` calls return 0 or
   -1 and leave the code and message in the same thread-local
@@ -386,74 +375,69 @@ design:
   process, and none can tell such a `bad_alloc` from a harmless
   one: an exception from inside RocksDB looks the same as one
   from sm1's own code, or from inside RocksDB before it touched
-  anything. So every `bad_alloc` is treated as fatal, and only
-  a fresh open's WAL replay recovers — reliably, and
-  with every committed transaction.
-  `sm1::attach` installs a new-handler, unless the host process
-  already has one, that runs when an allocation fails, before
-  anything is thrown: it reports `*** FATAL ***` on stderr and
-  through the log hook, then aborts where the allocation failed,
-  before any frame unwinds, so the core holds the failing
-  allocation's own stack. It does so whatever code allocated —
-  sm1, sm2, sm3, the wrapper or the host's own. Telling them
-  apart took a guard on every sm1 entry point, and bought only
-  a `NOMEM` from the levels above that is almost never seen.
-  RocksDB's own background threads run under the same handler.
-  All of it should be very rare: on a default Linux system an
-  allocation seldom fails, since the kernel's OOM killer ends
-  the process first; it takes a hard memory limit to get here.
-  A host with its own handler keeps it, but one that throws is
-  unsupported: sm does not recover from a `bad_alloc` inside it,
-  which can leave RocksDB unreliable and sm1's own state
-  half-changed.
-- **sm never throws; an exception may pass through it, and
-  only the top level catches.** No code in sm throws an
-  exception of its own: a failure is -1 and an error code, and
-  there is no `throw` in sm's sources. An exception may still
-  arise inside sm — from the C++ library, such as a
-  `std::system_error` when a thread cannot be started, or a
-  `std::bad_alloc` before any `sm1::attach` installs the
-  handler (above), or from a callback sm invokes whose
-  contract allows one. It passes through sm1, sm2 and sm3
-  unchanged: their entry points catch nothing, and what a
-  frame must release on the way is held by an RAII guard,
-  such as sm0's `scope_guard_t`, never by a catch and
-  rethrow. The C wrapper is the one catch-all, since it is the
-  only place a C caller can be reached. It catches everything:
+  anything. So every `bad_alloc` is treated as fatal, and only a
+  fresh open's WAL replay recovers — reliably, and with every
+  committed transaction. `sm1::attach` installs a new-handler,
+  unless the host process already has one, that runs when an
+  allocation fails, before anything is thrown: it reports `***
+  FATAL ***` on stderr and through the log hook, then aborts
+  where the allocation failed, before any frame unwinds, so the
+  core holds the failing allocation's own stack. It does so
+  whatever code allocated — sm1, sm2, sm3, the wrapper or the
+  host's own. Telling them apart took a guard on every sm1 entry
+  point, and bought only a `NOMEM` from the levels above that is
+  almost never seen. RocksDB's own background threads run under
+  the same handler. All of it should be very rare: on a default
+  Linux system an allocation seldom fails, since the kernel's OOM
+  killer ends the process first; it takes a hard memory limit to
+  get here. A host with its own handler keeps it, but one that
+  throws is unsupported: sm does not recover from a `bad_alloc`
+  inside it, which can leave RocksDB unreliable and sm1's own
+  state half-changed.
+- **sm never throws; an exception may pass through it, and only
+  the top level catches.** No code in sm throws an exception of
+  its own: a failure is -1 and an error code, and there is no
+  `throw` in sm's sources. An exception may still arise inside sm
+  — from the C++ library, such as a `std::system_error` when a
+  thread cannot be started, or a `std::bad_alloc` before any
+  `sm1::attach` installs the handler (above), or from a callback
+  sm invokes whose contract allows one. It passes through sm1,
+  sm2 and sm3 unchanged: their entry points catch nothing, and
+  what a frame must release on the way is held by an RAII guard,
+  such as sm0's `scope_guard_t`, never by a catch and rethrow.
+  The C wrapper is the one catch-all, since it is the only place
+  a C caller can be reached. It catches everything:
   `std::bad_alloc` becomes `NOMEM` — possible there only before
-  the handler is installed, or under a host's own — anything
-  else `SM_ERR_EXCEPTION`,
-  which means a bug, with `what()` as its message, and if the
-  call involves a session the wrapper aborts that session's
-  transaction before returning -1 — unless the transaction is
-  prepared, which `sm1::in_doubt` tells it: that one is the
-  coordinator's to resolve, and aborting it would break the
-  promise `sm1::prepare` made. A `NOMEM` returned
-  from below is handled the same way: the wrapper aborts the
-  session's transaction, since a data operation that ran out of
-  memory midway may have written part of its change. Aborting
-  is the right recovery because sm1's abort works only in memory
-  — it leaves the active table, which kills the transaction's
-  versions without writing a status record, and releases its
-  cursors, SSI node, created stores and locks — so it scarcely
-  allocates, and it returns whatever a half-done call touched to
-  a known state; every sm1 mutex is held by an RAII guard, so
-  unwinding releases it. Four conditions come with it. Nothing
-  may throw after a commit or prepare point: once the status or
-  `PREPARED` record is written, an abort would kill in memory
-  versions the WAL says are committed. Nothing does: that tail
-  is `noexcept`, running out of memory in it aborts the process
-  as anywhere, and a failed status record write or sync
-  aborts the process.
-  sm2 and sm3 must stay consistent when unwound mid-call, so
-  the abort undoes what a
-  half-done call changed — above all in sm3's in-memory catalog.
-  After `NOMEM`, as after a retryable code, the engine has
-  already aborted, so the glue does not continue the transaction;
-  `NOMEM` is not retryable. And an exception on the GC thread or
-  inside a RocksDB callback never reaches the wrapper, so those
-  boundaries keep catch-alls of their own (next). Exceptions stay
-  enabled in every build (§2).
+  the handler is installed, or under a host's own — anything else
+  `SM_ERR_EXCEPTION`, which means a bug, with `what()` as its
+  message, and if the call involves a session the wrapper aborts
+  that session's transaction before returning -1 — unless the
+  transaction is prepared, which `sm1::in_doubt` tells it: that
+  one is the coordinator's to resolve, and aborting it would
+  break the promise `sm1::prepare` made. A `NOMEM` returned from
+  below is handled the same way: the wrapper aborts the session's
+  transaction, since a data operation that ran out of memory
+  midway may have written part of its change. Aborting is the
+  right recovery because sm1's abort works only in memory — it
+  leaves the active table, which kills the transaction's versions
+  without writing a status record, and releases its cursors, SSI
+  node, created stores and locks — so it scarcely allocates, and
+  it returns whatever a half-done call touched to a known state;
+  every sm1 mutex is held by an RAII guard, so unwinding releases
+  it. Four conditions come with it. Nothing may throw after a
+  commit or prepare point: once the status or `PREPARED` record
+  is written, an abort would kill in memory versions the WAL says
+  are committed. Nothing does: that tail is `noexcept`, running
+  out of memory in it aborts the process as anywhere, and a
+  failed status record write or sync aborts the process. sm2 and
+  sm3 must stay consistent when unwound mid-call, so the abort
+  undoes what a half-done call changed — above all in sm3's
+  in-memory catalog. After `NOMEM`, as after a retryable code,
+  the engine has already aborted, so the glue does not continue
+  the transaction; `NOMEM` is not retryable. And an exception on
+  the GC thread or inside a RocksDB callback never reaches the
+  wrapper, so those boundaries keep catch-alls of their own
+  (next). Exceptions stay enabled in every build (§2).
 - **The foreign boundaries report errors; they catch no
   exception.** The RocksDB callbacks — the compaction filter,
   the comparator, the prefix extractor — and the GC thread
@@ -471,56 +455,51 @@ design:
 
 - **One encoder, one tuple format, two callers.** The key
   encoding and the tuple layout are sm2's alone
-  ([`LSMINDEX.md`](LSMINDEX.md)
-  §2,
+  ([`LSMINDEX.md`](LSMINDEX.md) §2,
   [`sm2/TUPLE.md`](sm2/TUPLE.md#10-why-the-codec-is-an-api-of-its-own)
-  §10), and sm3 builds its index entries —
-  `encode(sk)`, ending with the row's key — by calling sm2's
-  encoder with the same per-column arguments. Two encoders that
-  have to agree bytewise is a corruption bug waiting to be
-  written, so there is only one.
+  §10), and sm3 builds its index entries — `encode(sk)`, ending
+  with the row's key — by calling sm2's encoder with the same
+  per-column arguments. Two encoders that have to agree bytewise
+  is a corruption bug waiting to be written, so there is only
+  one.
 - **sm3 may call sm1 as well as sm2.** sm3 is built on sm2's
   tuple relation and never encodes a key or decodes a tuple
-  itself, but it may call sm1's interface directly for
-  anything sm2 has nothing to add to — `sm1::lock_oid` above all,
-  which sm3's DDL and index-build protocols rest on
+  itself, but it may call sm1's interface directly for anything
+  sm2 has nothing to add to — `sm1::lock_oid` above all, which
+  sm3's DDL and index-build protocols rest on
   ([`CATALOG.md`](CATALOG.md#1-design) §1). sm2 still calls only
-  sm1, and
-  nothing calls upward.
+  sm1, and nothing calls upward.
 - **A table is keyed by its primary key, or by `_id` without
   one** ([`CLUSTER.md`](CLUSTER.md),
-  [`ROWSTORE.md`](ROWSTORE.md)). A row's key is its
-  primary key's encoding; a table without a primary key is
-  keyed by `_id`, an unsigned 64-bit number from a per-table
-  sm1 sequence, never reused and unchanged by `UPDATE`, which
-  SQL reads as the system column `_id`. A table with a primary
-  key has no `_id` and no `_id` index
-  ([`ROWSTORE.md`](ROWSTORE.md#8-the-tuple-relation) §8).
-  Every other index is sm3's, and its entry names its row by
+  [`ROWSTORE.md`](ROWSTORE.md)). A row's key is its primary key's
+  encoding; a table without a primary key is keyed by `_id`, an
+  unsigned 64-bit number from a per-table sm1 sequence, never
+  reused and unchanged by `UPDATE`, which SQL reads as the system
+  column `_id`. A table with a primary key has no `_id` and no
+  `_id` index ([`ROWSTORE.md`](ROWSTORE.md#8-the-tuple-relation)
+  §8). Every other index is sm3's, and its entry names its row by
   the row's key ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol)
-  §2). There is no `ctid`:
-  digres names a row by its key's column values wherever
-  PostgreSQL's executor carried a TID
-  ([`ROWSTORE.md`](ROWSTORE.md#10-digres) §10). A read
-  by the primary key is one read; a primary key change is a
-  delete at the old key, which leaves a moved tombstone, and an
-  insert at the new one, and rewrites the row's index entries
+  §2). There is no `ctid`: digres names a row by its key's column
+  values wherever PostgreSQL's executor carried a TID
+  ([`ROWSTORE.md`](ROWSTORE.md#10-digres) §10). A read by the
+  primary key is one read; a primary key change is a delete at
+  the old key, which leaves a moved tombstone, and an insert at
+  the new one, and rewrites the row's index entries
   ([`ROWSTORE.md`](ROWSTORE.md#25-a-key-change) §2.5).
-- **One sm1 store per table.** A table's rows, all its
-  indexes and its TOAST data are rels in one sm1 store, told
-  apart by a 2-byte relid whose values
-  [`CATALOG.md`](CATALOG.md#2-object-mapping) §2
-  fixes. sm3 chooses an index's relid; sm2 prepends and strips
-  it and never interprets it
+- **One sm1 store per table.** A table's rows, all its indexes
+  and its TOAST data are rels in one sm1 store, told apart by a
+  2-byte relid whose values
+  [`CATALOG.md`](CATALOG.md#2-object-mapping) §2 fixes. sm3
+  chooses an index's relid; sm2 prepends and strips it and never
+  interprets it
   ([`ROWSTORE.md`](ROWSTORE.md#8-the-tuple-relation) §8), so sm2
   never learns what a table is. `DROP TABLE` is one
   `sm1::rmstore`, sm1's O(1) column family drop; `DROP INDEX`
-  erases the entries under the index's relid one by one, as
-  sm1 has no range delete ([`CATALOG.md`](CATALOG.md#8-ddl) §8),
-  and
-  index relids are never reused. The cost is
-  that tables, partitions included, are bounded by the
-  hundreds to low thousands of stores sm1 handles
+  erases the entries under the index's relid one by one, as sm1
+  has no range delete ([`CATALOG.md`](CATALOG.md#8-ddl) §8), and
+  index relids are never reused. The cost is that tables,
+  partitions included, are bounded by the hundreds to low
+  thousands of stores sm1 handles
   ([`XCTMGR.md`](XCTMGR.md#114-trade-offs) §11.4); accepted for
   v1 ([`CATALOG.md`](CATALOG.md#2-object-mapping) §2).
 - **A temporary table is a temporary store.** Temporariness
@@ -534,30 +513,27 @@ design:
   nor cares ([`DBMGR.md`](DBMGR.md#78-temporary-stores) §7.8).
 - **The key budget is shared.** `sm1::max_keylen` (4096) bounds
   relid, index columns and the row's key together, a primary
-  key's held to 1024 bytes. sm2's encoder
-  enforces it: an over-long key in a unique index, the primary
-  key's among them, refuses the row, and an over-long key in a
-  non-unique index is truncated, flagged and rechecked against
-  the tuple, never hashed
-  ([`LSMINDEX.md`](LSMINDEX.md#24-cut-keys) §2.4). sm3 owns
-  the recheck that follows from a cut key
+  key's held to 1024 bytes. sm2's encoder enforces it: an
+  over-long key in a unique index, the primary key's among them,
+  refuses the row, and an over-long key in a non-unique index is
+  truncated, flagged and rechecked against the tuple, never
+  hashed ([`LSMINDEX.md`](LSMINDEX.md#24-cut-keys) §2.4). sm3
+  owns the recheck that follows from a cut key
   ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2).
 - **Uniqueness is sm1's `SM_ERR_DUPKEY`, and NULLs are
-  distinct.** Two NULLs encode to the same bytes, so the
-  encoding cannot say they differ; an entry with a NULL key
-  column carries its row's key and is never a duplicate,
-  as SQL requires by default. No level makes a uniqueness
-  check of its own. `NULLS NOT DISTINCT` is refused at
-  `CREATE INDEX` in v1; adding it
+  distinct.** Two NULLs encode to the same bytes, so the encoding
+  cannot say they differ; an entry with a NULL key column carries
+  its row's key and is never a duplicate, as SQL requires by
+  default. No level makes a uniqueness check of its own. `NULLS
+  NOT DISTINCT` is refused at `CREATE INDEX` in v1; adding it
   later is a catalog flag and changes no bytes on disk
   ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2).
 - **Collation versions are pinned, recorded and enforced across
   the stack.** A specific ICU is linked into the server; sm3
   records each collation's version with the schema
   ([`CATALOG.md`](CATALOG.md#1-design) §1); sm2 refuses to read
-  or write an index
-  built under another version, the primary key's included, until
-  an explicit online rebuild
+  or write an index built under another version, the primary
+  key's included, until an explicit online rebuild
   ([`LSMINDEX.md`](LSMINDEX.md#23-text-and-collations) §2.3).
   Non-deterministic ICU collations are accepted, and a string
   equal under one is equal at every level
@@ -579,40 +555,35 @@ design:
   triggers its executor runs: it looks the parent row up and
   locks it, and on a change to the parent looks for children.
   Those are queries, and the stack runs none. Its share is the
-  lock: a row locked without being written, in a mode a
-  reader of the key can share and a writer cannot, held to
-  the end of the transaction. sm1 has it, `sm1::lock_row`; sm2
-  has it on a table's row, `rel_lock`; sm3 hands it out on an
-  open table, `tbl_lock`, and the C API as `sm_tbl_lock`. It
-  is what `SELECT … FOR SHARE` and `FOR UPDATE` take too. It
-  waits as a write does; `NOWAIT` and `SKIP LOCKED` take it
-  without waiting (`sm_tbl_trylock`,
-  [`NEXT.md`](NEXT.md#2-loose-ends) §2). The lock
-  is coarser than PostgreSQL's:
-  sm1 has no mode that admits an update of the parent's other
-  columns while a child holds its key, as `FOR KEY SHARE`
-  does against `FOR NO KEY UPDATE`, so such an update waits
-  for the child's transaction.
-- **The API is tuple at a time, at every level**, but for
-  rows read by key, many in one call
-  ([`ROWSTORE.md`](ROWSTORE.md)). Sets of
-  rows in and out was forced by an IPC boundary between a
+  lock: a row locked without being written, in a mode a reader of
+  the key can share and a writer cannot, held to the end of the
+  transaction. sm1 has it, `sm1::lock_row`; sm2 has it on a
+  table's row, `rel_lock`; sm3 hands it out on an open table,
+  `tbl_lock`, and the C API as `sm_tbl_lock`. It is what `SELECT
+  … FOR SHARE` and `FOR UPDATE` take too. It waits as a write
+  does; `NOWAIT` and `SKIP LOCKED` take it without waiting
+  (`sm_tbl_trylock`, [`NEXT.md`](NEXT.md#2-loose-ends) §2). The
+  lock is coarser than PostgreSQL's: sm1 has no mode that admits
+  an update of the parent's other columns while a child holds its
+  key, as `FOR KEY SHARE` does against `FOR NO KEY UPDATE`, so
+  such an update waits for the child's transaction.
+- **The API is tuple at a time, at every level**, but for rows
+  read by key, many in one call ([`ROWSTORE.md`](ROWSTORE.md)).
+  Sets of rows in and out was forced by an IPC boundary between a
   PostgreSQL backend process and sm1; the fork has moved
   PostgreSQL to threads
   ([`PART4.md`](PART4.md#2-the-blocker-the-process-model) §2), so
-  the boundary is
-  a function call and the shape is no longer forced. Its other
-  reason was filter pushdown, and sm3 filters nothing (above).
-  Fewer calls per scan is what is left of the case for
-  batches; the keyed read is the one a profile asked for
+  the boundary is a function call and the shape is no longer
+  forced. Its other reason was filter pushdown, and sm3 filters
+  nothing (above). Fewer calls per scan is what is left of the
+  case for batches; the keyed read is the one a profile asked for
   ([`ROWSTORE.md`](ROWSTORE.md)), and the rest wait for one
   ([`LSMINDEX.md`](LSMINDEX.md#5-scans) §5).
 - **READ COMMITTED writes wait, then proceed.** PostgreSQL's
   default level does not fail a concurrent update of the same
   row, so sm1's first-committer-wins rule is relaxed there
   ([`XCTMGR.md`](XCTMGR.md#5-statements) §5). It needs a new
-  version ordering in
-  sm1 and a row re-check in the executor.
+  version ordering in sm1 and a row re-check in the executor.
 - **One commit point.** The catalog lives in sm3, in memory
   and written through to sm2, so a DDL statement and the data
   it changes commit in one sm1 transaction, and recovery is
@@ -625,17 +596,15 @@ design:
   (`sm_table_def_t::version`): sm3's count of the catalog's
   publishes at which the definition or the table's statistics
   were last published, or an index of it made valid, and
-  `SM_VERSION_OWN` while the reader's own transaction has
-  changed it ([`CATALOG.md`](CATALOG.md#4-in-memory) §4). A host
-  caching what it
-  learns of a table uses it only under the table-oid lock and
-  compares the version there: read under IS or IX, it changes
-  only by an analyze or an index made valid, since DDL takes X.
-  A namespace, looked up by name with no lock, has an epoch in
-  its place (`sm_cat_namespace_epoch`). The counts are in
-  memory, at 0 after a restart, when no host's cache survives
-  either. digres's use of them replaces PostgreSQL's shared
-  invalidation
+  `SM_VERSION_OWN` while the reader's own transaction has changed
+  it ([`CATALOG.md`](CATALOG.md#4-in-memory) §4). A host caching
+  what it learns of a table uses it only under the table-oid lock
+  and compares the version there: read under IS or IX, it changes
+  only by an analyze or an index made valid, since DDL takes X. A
+  namespace, looked up by name with no lock, has an epoch in its
+  place (`sm_cat_namespace_epoch`). The counts are in memory, at
+  0 after a restart, when no host's cache survives either.
+  digres's use of them replaces PostgreSQL's shared invalidation
   ([`../dg/SHMEM.md`](../dg/SHMEM.md#51-invalidation-by-version-not-by-message)
   §5.1).
 - **READ COMMITTED writes are resolved above the stack, and
@@ -649,15 +618,14 @@ design:
   hands back ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol)
   §2).
 - **sm3 drives index maintenance.** PostgreSQL's kept executor
-  could maintain indexes itself through its index access
-  method (`ExecInsertIndexTuples`). It does not: it writes a
-  row through one table-level call that sm3 owns, `sm_tbl_*`,
-  and the C wrapper's heap-level and index-level calls are
-  gone ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2). The
-  rules of a unique index's
-  key, the index build and the index-row invariant must
-  stay below the executor, and the invariant holds only if one
-  layer writes both a row and its entries.
+  could maintain indexes itself through its index access method
+  (`ExecInsertIndexTuples`). It does not: it writes a row through
+  one table-level call that sm3 owns, `sm_tbl_*`, and the C
+  wrapper's heap-level and index-level calls are gone
+  ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2). The rules
+  of a unique index's key, the index build and the index-row
+  invariant must stay below the executor, and the invariant holds
+  only if one layer writes both a row and its entries.
 - **Evaluation is the host's, by callback.** No level of the
   stack evaluates a predicate or an expression. Where sm3
   needs one evaluated, to maintain or build a partial or an
@@ -685,13 +653,12 @@ design:
   write, the first step
   ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2).
 - **An index is built in the background.** An index made on a
-  table that has rows is recorded as pending, maintained by
-  every writer from then on, and filled by the process's
-  builder, which the C wrapper attaches a database's catalog
-  to when it opens the database.
-  A reader may not scan it until it is valid, nor if its
-  snapshot is older than the build; `sm_cat_index_wait` is for
-  a caller that wants it at once. A failed build keeps its
+  table that has rows is recorded as pending, maintained by every
+  writer from then on, and filled by the process's builder, which
+  the C wrapper attaches a database's catalog to when it opens
+  the database. A reader may not scan it until it is valid, nor
+  if its snapshot is older than the build; `sm_cat_index_wait` is
+  for a caller that wants it at once. A failed build keeps its
   reason in the index's record
   ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2).
 - **The host can time storage lock waits.**
@@ -702,12 +669,10 @@ design:
 
 - **No backward scans, at any level, ever.** Settled in
   [`sm1/SM1_OBJECTIVE.md`](sm1/SM1_OBJECTIVE.md), built into
-  sm2's encoding and
-  inherited by every index sm3 builds. The fork's planner is
-  changed never to ask for a backward scan
+  sm2's encoding and inherited by every index sm3 builds. The
+  fork's planner is changed never to ask for a backward scan
   ([`PART4.md`](PART4.md#5-the-one-conflict-with-a-decision-already-made)
-  §5);
-  descending order comes from inverted key bytes, scanned
+  §5); descending order comes from inverted key bytes, scanned
   forward.
 
 ---
@@ -718,8 +683,7 @@ It is not a substitute for
 [`sm1/SM1_DESIGN.md`](sm1/SM1_DESIGN.md),
 [`sm2/SM2_DESIGN.md`](sm2/SM2_DESIGN.md) or
 [`sm3/SM3_DESIGN.md`](sm3/SM3_DESIGN.md) — read those for how a
-level works. It is
-not a restatement of [`PART4.md`](PART4.md) — read that for the
-PostgreSQL target in full. It exists so a reader can see the
-whole stack, and the handful of decisions that bind it
-together, without first reading either level end to end.
+level works. It is not a restatement of [`PART4.md`](PART4.md) —
+read that for the PostgreSQL target in full. It exists so a
+reader can see the whole stack, and the handful of decisions that
+bind it together, without first reading either level end to end.

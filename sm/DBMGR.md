@@ -240,8 +240,8 @@ changes nothing about what closing means: a prepared transaction
 stays in doubt, because it is durable and owned by its
 coordinator, and not by the process that prepared it. Force does
 not preempt other threads: none may be inside a call on those
-sessions. Detach then stops the db reaper, closes the databases left
-idle, and closes the temporary instance and the root db.
+sessions. Detach then stops the db reaper, closes the databases
+left idle, and closes the temporary instance and the root db.
 
 ### 4.4 One process per home directory
 
@@ -322,13 +322,14 @@ state of every other module.
 3. Drop the temporary stores the session still holds.
 4. Unregister the session.
 5. If it was the last session, close the database at once when
-   `idle_close_ms` is 0. Else note the time and wake the db reaper.
+   `idle_close_ms` is 0. Else note the time and wake the db
+   reaper.
 
-The db reaper is one thread an environment. It closes each database
-that has had no session for `idle_close_ms`, 60 seconds by
-default, and sleeps until the next is due. A session that comes
-in meanwhile finds the database as it was: caches warm, and no
-reopen to pay. The db reaper runs until `sm1::detach`.
+The db reaper is one thread an environment. It closes each
+database that has had no session for `idle_close_ms`, 60 seconds
+by default, and sleeps until the next is due. A session that
+comes in meanwhile finds the database as it was: caches warm, and
+no reopen to pay. The db reaper runs until `sm1::detach`.
 
 `db_t::~db_t` closes a database in this order:
 
@@ -906,9 +907,8 @@ the commit queue, and one commit, the leader, writes the records
 of every commit queued, in `commit_ts` order, and syncs once for
 all, as `XLogFlush()` does
 ([`XCTMGR.md`](XCTMGR.md#82-the-procedure) §8.2, §8.5). The
-commit
-queue is `commit_head`, under `commit_mu`. `lead_batch()` does
-these steps:
+commit queue is `commit_head`, under `commit_mu`. `lead_batch()`
+does these steps:
 
 1. Under `commit_mu`, take the whole queue: the batch.
 2. Write the batch's COMMITTED records in one `WriteBatch`,
@@ -949,11 +949,10 @@ Rules of this design:
   queue.
 - **The wait is not cut short by an interrupt,** unlike every
   other wait in sm ([`CODE.md`](CODE.md)). The record may be
-  written, so an
-  interrupted commit has an unknown outcome, and only an abort
-  could settle it. The wait is bounded by two batches: the one
-  being written, and the next. Each finishes or aborts the
-  process.
+  written, so an interrupted commit has an unknown outcome, and
+  only an abort could settle it. The wait is bounded by two
+  batches: the one being written, and the next. Each finishes or
+  aborts the process.
 - **A leader does not wait for followers.** The waiters behind a
   sync make the next group. So `group_commit_us` is accepted and
   unused.
@@ -962,8 +961,7 @@ Rules of this design:
 
 **Warning: a failed status record write, or a failed WAL sync,
 aborts the process (`sm0::fatal()`, [`CODE.md`](CODE.md)).** The
-engine
-keeps no failed state.
+engine keeps no failed state.
 
 - A failed write or sync leaves the outcome unknown. The record
   may or may not have reached the WAL: a sync can fail after the
@@ -1227,8 +1225,8 @@ old WAL files alive. sm1 does not set it. A host sets it in
 
 wisr writes no log of its own. A host installs a process-wide
 hook with `sm1::set_log` ([`sm1/API.md`](sm1/API.md)). The engine
-reports
-through it only what no caller can learn from a return value:
+reports through it only what no caller can learn from a return
+value:
 
 - failures on the GC thread;
 - a fatal failure (§8.3);
@@ -1370,9 +1368,8 @@ it. No work here should start before that number exists.
 Remote compaction distributes a stateless computation over
 immutable inputs. That is a different problem from letting
 several processes use one database, which
-[`sm1/SM1_OBJECTIVE.md`](sm1/SM1_OBJECTIVE.md)
-rules out and [`PART4.md`](PART4.md) shows to be the hard blocker
-for
+[`sm1/SM1_OBJECTIVE.md`](sm1/SM1_OBJECTIVE.md) rules out and
+[`PART4.md`](PART4.md) shows to be the hard blocker for
 PostgreSQL. It needs no part of that decision reopened.
 
 ---
@@ -1439,15 +1436,15 @@ parts are the Database Manager's:
 
 A `commit_entry_t` lives on a queued commit's stack: its xid,
 `commit_ts` and record, the `lead` flag, the next entry, and a
-binary semaphore. The
-hooks `test_before_commit`, `test_before_sync`,
-`test_before_prepare` and `test_before_abort_prepared` stand in
-for a failed write, and are empty outside tests.
+binary semaphore. The hooks `test_before_commit`,
+`test_before_sync`, `test_before_prepare` and
+`test_before_abort_prepared` stand in for a failed write, and are
+empty outside tests.
 
 `env_t` (`sm1/src/env.h`) holds the home's path, the block cache,
 the buffer pool, `wal_env`, the root db, the temporary instance,
-the registry, the session set and the db reaper. `env_t::mu` guards
-the root db, the registry and the session set.
+the registry, the session set and the db reaper. `env_t::mu`
+guards the root db, the registry and the session set.
 
 ### 13.3 `db_open()`
 
@@ -1594,8 +1591,7 @@ GC.md gives the trade-off of reclaiming space by compaction.
 ## 17. Tests
 
 Run on the debug build ([`CLAUDE.md`](../CLAUDE.md)). Paths are
-relative to
-`sm1/`.
+relative to `sm1/`.
 
 ### 17.1 The Database Manager
 
@@ -1667,10 +1663,10 @@ relative to
 ### 17.2 The rest of sm1
 
 [`sm1/mvcc/MVCC.md`](sm1/mvcc/MVCC.md) states the isolation rules
-as a table of
-scenarios, with the outcome at REPEATABLE READ, at a mixed pair
-of levels, and at SERIALIZABLE. One file a scenario runs it in
-all those pairings. The unit tests in `sm1/test` cover the rest:
+as a table of scenarios, with the outcome at REPEATABLE READ, at
+a mixed pair of levels, and at SERIALIZABLE. One file a scenario
+runs it in all those pairings. The unit tests in `sm1/test` cover
+the rest:
 
 | Area | What the tests prove |
 | --- | --- |

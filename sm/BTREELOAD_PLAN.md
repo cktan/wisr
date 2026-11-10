@@ -2,16 +2,13 @@
 
 **Status:** built, steps 1 to 5 below
 ([`BTREEINDEX.md`](BTREEINDEX.md#67-a-bulk-load-builds-the-tree-whole)
-§6.7).
-§6 has the measures.
+§6.7). §6 has the measures.
 
 This plan is for [`NEXT.md`](NEXT.md#1-next) §1 item 10. A load
-into an empty
-table sorts each tree's entries with the Sort
-([`SORT.md`](SORT.md)), packs
-them into leaves, builds the inner levels from the leaves, and
-ingests the pages with the load's files. It writes no page twice
-and holds no latch.
+into an empty table sorts each tree's entries with the Sort
+([`SORT.md`](SORT.md)), packs them into leaves, builds the inner
+levels from the leaves, and ingests the pages with the load's
+files. It writes no page twice and holds no latch.
 
 **Warning.**
 
@@ -26,9 +23,8 @@ and holds no latch.
 
 A load into an empty table
 ([`BULKLOAD.md`](BULKLOAD.md#51-two-cases-an-empty-table-and-one-with-rows)
-§5.1) sends the rows
-and each LSM Index's entries to files. A tree's entries do not
-go to files:
+§5.1) sends the rows and each LSM Index's entries to files. A
+tree's entries do not go to files:
 
 - **A non-unique tree** inserts each entry by `idx_insert()`, as
   a writer does: one latch, one 4 KB page put and one queue
@@ -65,8 +61,9 @@ COPY t FROM 'rows.csv';     -- 10 million rows
 6. Each page goes to a page stream of the load, in page id
    order. The load ingests the pages with the heap's files.
 7. Then page 0 is written as the top level, by `page_write()`.
-8. Each leaf goes on the btree reaper's queue. The btree reaper reads each
-   row once, clears the bits, and sets the leaves all visible.
+8. Each leaf goes on the btree reaper's queue. The btree reaper
+   reads each row once, clears the bits, and sets the leaves all
+   visible.
 
 ---
 
@@ -81,11 +78,10 @@ COPY t FROM 'rows.csv';     -- 10 million rows
 
 Both remove the write per entry, which is most of the cost.
 Option A is about 15 lines more in sm1 (`stream_key()` and
-`stream_value()` take a raw stream as given). The loader writes
-a small load as one batch
+`stream_value()` take a raw stream as given). The loader writes a
+small load as one batch
 ([`BULKLOAD.md`](BULKLOAD.md#57-a-small-load) §5.7), so a small
-load's
-pages go in that batch, in both options.
+load's pages go in that batch, in both options.
 
 **Page ids ascend.** A file takes its keys in order, and a page's
 key is `0x04 | relid | pageid`. The builder draws ids from
@@ -116,12 +112,12 @@ bit, and a leaf set all visible, would be wrong in two cases:
 btree reaper has read them once. PostgreSQL's `COPY` has the same
 cost: its visibility map is clear until `VACUUM`.
 
-**Recommended: queue each built leaf for the btree reaper.** `VACUUM`
-reaps only the queue ([`BTREEINDEX.md`](BTREEINDEX.md#92-vacuum)
-§9.2), so a leaf no one
-queues stays in doubt after a `VACUUM`. The queue holds 262,144
-pages, about 1 GB of tree. Leaves past that are dropped, and
-their next reader queues them.
+**Recommended: queue each built leaf for the btree reaper.**
+`VACUUM` reaps only the queue
+([`BTREEINDEX.md`](BTREEINDEX.md#92-vacuum) §9.2), so a leaf no
+one queues stays in doubt after a `VACUUM`. The queue holds
+262,144 pages, about 1 GB of tree. Leaves past that are dropped,
+and their next reader queues them.
 
 **Not in this plan:** a store made by this transaction (`CREATE
 TABLE AS`, `TRUNCATE` then `COPY`) could have clear bits, if no
@@ -219,9 +215,8 @@ unique tree to row-by-row inserts.
 ## 5. Steps
 
 1. **Measure today.** Add a btree option to `bench/sortload.sh`:
-   one unique and one non-unique tree.
-   → Check: digres's and PostgreSQL's instructions a row and
-   time, recorded here.
+   one unique and one non-unique tree. → Check: digres's and
+   PostgreSQL's instructions a row and time, recorded here.
 2. **sm1: a raw stream and `load_drain()`.** A stream declared
    raw puts its keys and values as given. A drained stream gives
    its records back in order and writes nothing.
@@ -240,9 +235,9 @@ unique tree to row-by-row inserts.
    trees: scans, a duplicate, a NULL key, abort before and after
    the close, the switch to inserts; dg's `COPY` tests; the
    isolation scenarios pass unchanged.
-5. **Measure again.**
-   → Check: a load into a table with trees costs about what one
-   with LSM Indexes costs, and less than PostgreSQL's.
+5. **Measure again.** → Check: a load into a table with trees
+   costs about what one with LSM Indexes costs, and less than
+   PostgreSQL's.
 
 ---
 

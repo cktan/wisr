@@ -33,8 +33,8 @@ place of its `xid`.
 The filter is a RocksDB compaction filter. Compaction already
 visits every key, so collection adds no pass of its own. There is
 no vacuum thread for versions. The dead entries of a B-tree Index
-are not this module's: BTREEINDEX.md's btree reaper removes them (§13
-has it beside the row reaper).
+are not this module's: BTREEINDEX.md's btree reaper removes them
+(§13 has it beside the row reaper).
 
 ### 1.2 Why a version carries a stamp
 
@@ -98,8 +98,8 @@ say
 
 The worker then writes a SingleDelete of each version from the
 tombstone's key to `k | FF×12`. That removes the tombstone, and
-every older version in a file the compaction never saw. The status records of
-T1, T2 and T3 stay in `CF:txn` until a sweep.
+every older version in a file the compaction never saw. The
+status records of T1, T2 and T3 stay in `CF:txn` until a sweep.
 
 ---
 
@@ -370,13 +370,13 @@ them.
   it: a pin's or a cursor's iterator keeps what it sees.
 
 **Every deletion of a version key is a SingleDelete**
-([`PURGE_PLAN.md`](PURGE_PLAN.md)). A version key is written once:
-its `wts` is a new timestamp for each write. So a SingleDelete and
-its Put go together at the first compaction that meets both, at
-any level, where a Delete must reach the bottom level. RocksDB's
-contract forbids a Delete and a SingleDelete of one key, and
-enforces it (`enforce_single_del_contracts`): a compaction that
-meets both fails. So:
+([`PURGE_PLAN.md`](PURGE_PLAN.md)). A version key is written
+once: its `wts` is a new timestamp for each write. So a
+SingleDelete and its Put go together at the first compaction that
+meets both, at any level, where a Delete must reach the bottom
+level. RocksDB's contract forbids a Delete and a SingleDelete of
+one key, and enforces it (`enforce_single_del_contracts`): a
+compaction that meets both fails. So:
 
 - The filter removes a version key with `Decision::kPurge`,
   which RocksDB turns into a SingleDelete (`FilterV2()`). A
@@ -814,8 +814,9 @@ and has no queue of its own.
 1. A reader or a writer that finds a leaf not all visible queues
    it (BTREEINDEX.md §9.5). It sets a bit of the queue's filter
    first, so a leaf is queued once.
-2. The btree reaper thread takes a leaf from the queue (BTREEINDEX.md
-   §9.6). It clears the leaf's filter bit as it takes it.
+2. The btree reaper thread takes a leaf from the queue
+   (BTREEINDEX.md §9.6). It clears the leaf's filter bit as it
+   takes it.
 3. It reads the rows of the entries with the in-doubt bit set,
    with no latch held on the leaf.
 4. It pins the leaf exclusively, and judges those entries again.
@@ -827,8 +828,8 @@ and has no queue of its own.
 The queue is a hint. The in-doubt bit is in the page, so a leaf
 lost from the queue stays marked, and its next reader or writer
 queues it again (BTREEINDEX.md §9.4). `VACUUM` reaps the leaves
-on the queue (BTREEINDEX.md §9.2). The btree reaper does not judge an
-entry itself: the entry's row decides, and
+on the queue (BTREEINDEX.md §9.2). The btree reaper does not
+judge an entry itself: the entry's row decides, and
 `sm2::rel_read_settled` says whether the row is settled.
 
 ### 13.2 Why OLD needs a reaper
@@ -985,8 +986,8 @@ A row pass, `sm1::row_reap_pass()`:
    is 0 or an id is missing.
 5. Write one `WriteBatch`: a `Delete` of each id, and CURR again
    with `prev` set to 0, stamped with its writer's `commit_ts`.
-   Then let go of the latch. Unstamped, the copy could outlive its
-   writer's status record: a `CF:txn` sweep that stamped the
+   Then let go of the latch. Unstamped, the copy could outlive
+   its writer's status record: a `CF:txn` sweep that stamped the
    stored CURR deletes the record (§1), as for any copy a write
    makes (`stamp_copy()`).
 6. A pool's detach ends a pass after the key it is on.
@@ -1016,9 +1017,9 @@ replaces CURR anyway.
   measure, and the user's approval, as the writer's reap did.
 - **The reader's push.** The reader loads the cached W (§13.5),
   one relaxed atomic load, on each read of a key with a `prev`.
-  It hashes the key and loads a word of the queue's filter only for
-  a settled key. Its cost on a point read (`q0`), where parity
-  with PostgreSQL is the target, is measured before it is
+  It hashes the key and loads a word of the queue's filter only
+  for a settled key. Its cost on a point read (`q0`), where
+  parity with PostgreSQL is the target, is measured before it is
   merged.
 - **Whether the threads' reap is needed.** The threads earn their
   row copies only if a large store holds much OLD garbage under
@@ -1038,13 +1039,13 @@ Built:
   chain until it ends; a key with no chain, a reader's own write
   and a temporary store are not queued; a writer that aborts
   after a reap puts the reaped version back; `stop` ends a pass;
-  the CURR written again is stamped with its commit_ts; a `CF:txn`
-  sweep run inside a reap, by the debug build's `g_reap_hook`, then
-  an empty commit cache, leaves the row readable. Writers, readers,
-  a repeatable read reader and a reaper thread on the same keys:
-  every read is a committed value, a held snapshot's reads stay,
-  and a last pass leaves no OLD entry. `make tsan` runs it under
-  the thread sanitizer.
+  the CURR written again is stamped with its commit_ts; a
+  `CF:txn` sweep run inside a reap, by the debug build's
+  `g_reap_hook`, then an empty commit cache, leaves the row
+  readable. Writers, readers, a repeatable read reader and a
+  reaper thread on the same keys: every read is a committed
+  value, a held snapshot's reads stay, and a last pass leaves no
+  OLD entry. `make tsan` runs it under the thread sanitizer.
 - **mvcc**: `g03`, by the driver's verb `reap`: a pass spares a
   chain a snapshot needs, and cuts it once the snapshot ends.
 - **sm3** (`test_tree.cc`): the pool's thread runs the row pass,

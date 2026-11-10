@@ -1,11 +1,10 @@
 # COMMITORDER_PLAN — commit records in commit_ts order
 
 Status: built ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step
-406). §9 lists what the
-user decided.
+406). §9 lists what the user decided.
 [`XCTMGR.md`](XCTMGR.md#32-visible_ts-and-the-commit-queue) §3.2,
-§8.2 and §8.5 and [`DBMGR.md`](DBMGR.md#82-group-sync) §8.2
-are the design of record.
+§8.2 and §8.5 and [`DBMGR.md`](DBMGR.md#82-group-sync) §8.2 are
+the design of record.
 
 ---
 
@@ -13,11 +12,10 @@ are the design of record.
 
 A commit that has made its record durable still waits when an
 older commit's record missed the same sync
-([`XCTMGR.md`](XCTMGR.md#85-records-in-commit_ts-order) §8.5).
-At 16 clients two commits in three wait, about 220 µs each, 0.4
-of a sync of 600 µs ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md)
-step 405). PostgreSQL
-has no such wait.
+([`XCTMGR.md`](XCTMGR.md#85-records-in-commit_ts-order) §8.5). At
+16 clients two commits in three wait, about 220 µs each, 0.4 of a
+sync of 600 µs ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step
+405). PostgreSQL has no such wait.
 
 The cause is the order of the commit path today:
 
@@ -45,8 +43,7 @@ step 6 never waits for a sync.
 
 The case of
 [`XCTMGR.md`](XCTMGR.md#85-records-in-commit_ts-order) §8.5: A
-claims 100, B claims 101, a WAL
-sync takes 600 µs.
+claims 100, B claims 101, a WAL sync takes 600 µs.
 
 Today:
 
@@ -222,8 +219,7 @@ step 376).
 4. **Measure again**, as step 1, both systems alternated.
 5. **Update the documents**:
    [`XCTMGR.md`](XCTMGR.md#32-visible_ts-and-the-commit-queue)
-   §3.2, §8 and §8.5,
-   [`DBMGR.md`](DBMGR.md#82-group-sync) §8.2,
+   §3.2, §8 and §8.5, [`DBMGR.md`](DBMGR.md#82-group-sync) §8.2,
    [`../dg/WORKNOTE.md`](../dg/WORKNOTE.md).
 
 ## 9. Decided

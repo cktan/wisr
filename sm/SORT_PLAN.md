@@ -404,8 +404,7 @@ instructions, on `digres-release`.
    and dg suites pass unchanged; `COPY` into a table with indexes
    is no slower than today, by a new `bench/` script.
 4. **Then [`NEXT.md`](NEXT.md#1-next) §1 item 10**, the bottom-up
-   tree, is a user
-   of this. It is work of its own.
+   tree, is a user of this. It is work of its own.
 
 Test layers: sm0 unit tests for the sort; `rel` and `dg/test`
 reach it through `COPY` and `load`. The isolation scenarios

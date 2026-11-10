@@ -60,10 +60,8 @@ To try digres, from a build to a query:
   without SQL.
 
 Start with [`sm/README.md`](sm/README.md). Before changing code,
-read
-[`CLAUDE.md`](CLAUDE.md), then [`sm/CODE.md`](sm/CODE.md) for
-`sm/` and `aa/`, or
-[`dg/CODE.md`](dg/CODE.md) for `dg/`.
+read [`CLAUDE.md`](CLAUDE.md), then [`sm/CODE.md`](sm/CODE.md)
+for `sm/` and `aa/`, or [`dg/CODE.md`](dg/CODE.md) for `dg/`.
 
 ## Prerequisites
 
@@ -162,10 +160,10 @@ Ubuntu 26.10's `librocksdb-dev` is 9.11, and its GCC 15 cannot
 compile RocksDB 8.9.1 as it is. The debug build uses 9.11 with
 no change. The release and TSan builds need two things:
 
-- **Build RocksDB first**, each kind once, as `dg/test/rocksdb.sh`
-  does nothing once its library is there. GCC 15 needs
-  `<cstdint>` given to it (remove `rocksdb/release` or
-  `rocksdb/tsan` first, if a build of it has failed):
+- **Build RocksDB first**, each kind once, as
+  `dg/test/rocksdb.sh` does nothing once its library is there.
+  GCC 15 needs `<cstdint>` given to it (remove `rocksdb/release`
+  or `rocksdb/tsan` first, if a build of it has failed):
 
   ```
   CXX="g++ -include cstdint" dg/test/rocksdb.sh release
@@ -312,7 +310,8 @@ to a file and read that.
 beside it, `BINARY.active` (`sm/sm2/build/test_sm2.active`, for
 one), holds the test case it is in, its name, then its file and
 line. It goes when the run ends; a run that crashed or hangs
-leaves it naming its test (`sm/sm0/include/sm0_doctest_active.h`).
+leaves it naming its test
+(`sm/sm0/include/sm0_doctest_active.h`).
 
 ```
 cat sm/*/build/*.active aa/build/*.active sq/build/*.active 2>/dev/null
@@ -330,13 +329,12 @@ What each is:
   PostgreSQL's regression SQL.
 - **aa**: its unit tests.
 - **dg**: the `.sql` files of `dg/test`, alone and in eight
-  sessions; `initdb`; `server.sh`, a server driven by `psql`;
-  the sqllogictest files of `dg/test/slt`, whose results are
+  sessions; `initdb`; `server.sh`, a server driven by `psql`; the
+  sqllogictest files of `dg/test/slt`, whose results are
   PostgreSQL 18's
   ([`dg/test/slt/README.md`](dg/test/slt/README.md)); and
-  pgregress,
-  PostgreSQL 18's regression files with what digres does not
-  run commented out, against PostgreSQL's output
+  pgregress, PostgreSQL 18's regression files with what digres
+  does not run commented out, against PostgreSQL's output
   ([`dg/test/pgregress/README.md`](dg/test/pgregress/README.md)).
 
 **Keep test data off `/tmp`.** Set `TMPDIR` to a directory on a
@@ -366,10 +364,10 @@ committed ([`CLAUDE.md`](CLAUDE.md#5-test-structure) §5).
 
 `bench/` measures digres against PostgreSQL 18, on optimized
 builds only ([`bench.old/CODE.md`](bench.old/CODE.md)): a debug
-build's number measures
-the build. `perf` must be allowed to count, which a system with
-`kernel.perf_event_paranoid` above 1 refuses: `sudo sysctl
-kernel.perf_event_paranoid=1`, until the next reboot. To keep it:
+build's number measures the build. `perf` must be allowed to
+count, which a system with `kernel.perf_event_paranoid` above 1
+refuses: `sudo sysctl kernel.perf_event_paranoid=1`, until the
+next reboot. To keep it:
 
 ```
 echo 'kernel.perf_event_paranoid = 1' |
@@ -395,15 +393,14 @@ DG_PORT=5432 PG_PORT=5433 make -j4 bench  # both servers up
 - `make bench` builds `dg/build/digres-release`, then runs
   `bench/run.sh`. Start that build's server before the run.
 - `run.sh` makes the database `bench` again on each server
-  (`bench/load.sql`: `usertable`, 10,000 rows), then times q0
-  to q4 (`bench/q0-pkget.sql`, `q1-sk10.sql`,
-  `q2-sk180.sql`, `q3-skfetchrow.sql` and
-  `q4-seqscan.sql`). q0 and q4 run once.
+  (`bench/load.sql`: `usertable`, 10,000 rows), then times q0 to
+  q4 (`bench/q0-pkget.sql`, `q1-sk10.sql`, `q2-sk180.sql`,
+  `q3-skfetchrow.sql` and `q4-seqscan.sql`). q0 and q4 run once.
   q1 to q3 run on regular (lsm) indexes, then on btree ones
   (`mkregidx.sql`, `mkbtidx.sql`). Each query is pgbench,
   prepared, one client, for `Q_SECONDS` (10). It prints tps,
-  latency, and digres's latency over PostgreSQL's; the logs
-  go to `bench/build/run`.
+  latency, and digres's latency over PostgreSQL's; the logs go to
+  `bench/build/run`.
 - It refuses a debug build of either side: a server whose
   `debug_assertions` is on, or a digres whose `--build` is not
   a release's.
@@ -414,8 +411,7 @@ DG_PORT=5432 PG_PORT=5433 make -j4 bench  # both servers up
   - q3: 8 rows, found by the `lastname` index.
   - q4: every row, a sum, no index.
 - [`PERF.md`](PERF.md) has the throughput of digres, PostgreSQL
-  18,
-  MyRocks and InnoDB on q0 to q4.
+  18, MyRocks and InnoDB on q0 to q4.
 - The old benchmark is `bench.old/run.sh`. Its queries, Q1 to
   Q11, are in [`bench.old/DESIGN.md`](bench.old/DESIGN.md).
 - Judge digres against PostgreSQL, never against an older

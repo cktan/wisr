@@ -16,12 +16,11 @@ a view's options (step 240), and temporary views (§12, step
 245). Not yet: the rest of §9 ([`NEXT.md`](NEXT.md#2-loose-ends)
 §2).
 
-Before this, `CREATE VIEW` failed in digres: `DefineView()`
-made a PostgreSQL relation, which digres has no catalog for.
-It was what digres alone failed of SQLite's corpus: 48,608
-records in the whole of it, 24,408 in the sample `make
-slt-corpus` runs ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step
-164), every one a
+Before this, `CREATE VIEW` failed in digres: `DefineView()` made
+a PostgreSQL relation, which digres has no catalog for. It was
+what digres alone failed of SQLite's corpus: 48,608 records in
+the whole of it, 24,408 in the sample `make slt-corpus` runs
+([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 164), every one a
 `CREATE VIEW` refused or a query of the view it did not make.
 `information_schema` and the views of `system_views.sql`,
 `pg_stats` among them, still wait
@@ -70,14 +69,13 @@ calls in `sm.h`, and what digres builds on them.
 - **Columns by attnum, relations by oid.** A query tree names
   a table by its oid and a column by its place, so renaming
   either changes no view, in PostgreSQL and here.
-- **The oids in the query are the database's or compiled
-  in**: its tables', views' and collations', which a copied
-  `base/X` keeps, and the functions', operators' and types',
-  the same in every instance of one version
+- **The oids in the query are the database's or compiled in**:
+  its tables', views' and collations', which a copied `base/X`
+  keeps, and the functions', operators' and types', the same in
+  every instance of one version
   ([`../dg/CODE.md`](../dg/CODE.md)). A view's blob therefore
-  moves with its
-  database, as an index's `eval` and a column's default do,
-  and like them is tied to the version's node format.
+  moves with its database, as an index's `eval` and a column's
+  default do, and like them is tied to the version's node format.
 
 ## 3. The entry
 
@@ -210,12 +208,12 @@ struct sm_view_def_t {
 
 ## 7. Locks
 
-- **A view has an oid lock**, sm1's `LOCKTYPE_OID` on its oid,
-  as a table has ([`CATALOG.md`](CATALOG.md#1-design) §1). A
-  query takes it IS,
-  DDL on the view X: a `DROP VIEW` or `CREATE OR REPLACE`
-  waits for the transactions reading it, and they for it, as
-  PostgreSQL's `AccessShareLock` and `AccessExclusiveLock` do.
+- **A view has an oid lock**, sm1's `LOCKTYPE_OID` on its oid, as
+  a table has ([`CATALOG.md`](CATALOG.md#1-design) §1). A query
+  takes it IS, DDL on the view X: a `DROP VIEW` or `CREATE OR
+  REPLACE` waits for the transactions reading it, and they for
+  it, as PostgreSQL's `AccessShareLock` and `AccessExclusiveLock`
+  do.
 - **A view's DDL takes what it reads IS**, as a reader does,
   so a writer of those tables is not kept out, and a
   `DROP TABLE` (X) waits for the view's transaction to end,
@@ -301,12 +299,11 @@ struct sm_view_def_t {
 - **`INSTEAD OF` triggers and user rules** (`CREATE RULE`):
   sm keeps no triggers; a view that is not automatically
   updatable refuses DML, as PostgreSQL does with neither.
-- **Dependencies on what is not a relation**: a sequence a
-  view's `nextval('s')` names, a user's collation. They wait
-  for a dependency index ([`CATALOG.md`](CATALOG.md#11-not-built)
-  §11), as the
-  same checks for tables do ([`NEXT.md`](NEXT.md#3-not-blocking)
-  §3).
+- **Dependencies on what is not a relation**: a sequence a view's
+  `nextval('s')` names, a user's collation. They wait for a
+  dependency index ([`CATALOG.md`](CATALOG.md#11-not-built) §11),
+  as the same checks for tables do
+  ([`NEXT.md`](NEXT.md#3-not-blocking) §3).
 - **A view's row type**: a view's whole-row value is a
   record, as a table's in sm is, not a named composite type.
 - **`ALTER VIEW ... ALTER COLUMN SET DEFAULT` and `SET
@@ -478,23 +475,21 @@ another session's temporary view reads `pt`, the first is
 proposed:
 
 - **Drop it, as PostgreSQL does.** The drop records, in its
-  transaction's overlay, that the other session's view goes.
-  At its commit the register loses the view's entries, and
-  the other session's list of views dropped by others gains
-  it, under the mutex. That session takes the list at its
-  next `begin`, and drops each view from its temporary
-  catalog, with every temporary view of its own that reads
-  one, directly or through others: one made on a doomed view
-  while the drop was under way, which the drop could not
-  see, as its make took no lock. Until then it sees none of
-  them, in a transaction or out of one, as PostgreSQL's
-  session sees no relation another has dropped: a view kept
-  to its next `begin` would read a relation that is gone.
-  A query on the view
-  meanwhile takes `pt` IS: the drop waited out any that held
-  it, and one that comes later waits for the drop's X, then
-  finds `pt` gone, as it would in PostgreSQL. A drop rolled
-  back records nothing.
+  transaction's overlay, that the other session's view goes. At
+  its commit the register loses the view's entries, and the other
+  session's list of views dropped by others gains it, under the
+  mutex. That session takes the list at its next `begin`, and
+  drops each view from its temporary catalog, with every
+  temporary view of its own that reads one, directly or through
+  others: one made on a doomed view while the drop was under way,
+  which the drop could not see, as its make took no lock. Until
+  then it sees none of them, in a transaction or out of one, as
+  PostgreSQL's session sees no relation another has dropped: a
+  view kept to its next `begin` would read a relation that is
+  gone. A query on the view meanwhile takes `pt` IS: the drop
+  waited out any that held it, and one that comes later waits for
+  the drop's X, then finds `pt` gone, as it would in PostgreSQL.
+  A drop rolled back records nothing.
 - **It takes no lock** on the other session's view, which
   has none: that session alone uses it, and drops it itself
   at its next `begin`.
@@ -544,9 +539,9 @@ proposed:
 ### 12.7 Order of work
 
 1. **sm3: the temporary view**, §12.2: namespace 0 in
-   `create_view`, the temporary catalog's views, their
-   names and no lock, with tests in
-   `sm3/test/test_view.cc` → verify: `make test` in `sm/`.
+   `create_view`, the temporary catalog's views, their names and
+   no lock, with tests in `sm3/test/test_view.cc` → verify: `make
+   test` in `sm/`.
 2. **sm3: the register**, §12.3, and its tests: a temporary
    view's create racing another session's drop both ways, a
    close taking its entries out → verify: the same.

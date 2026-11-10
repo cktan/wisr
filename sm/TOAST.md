@@ -84,8 +84,7 @@ the relid `0xFFFF`.** This gives three things:
 
 A chunk is a versioned key in every store, a chained store too.
 [`ROWSTORE.md`](ROWSTORE.md) chains a table's rows. TOAST writes
-with
-`sm1::insert` and `sm1::erase`, not with the `chain_` calls.
+with `sm1::insert` and `sm1::erase`, not with the `chain_` calls.
 
 ### 2.3 A datum has an id, and never changes
 
@@ -185,18 +184,19 @@ sees them, and no later statement does.
 
 ### 2.10 The btree reaper reads with no transaction
 
-The btree reaper takes no lock. A writer can erase a chunk between the
-btree reaper's read of the row and its read of the chunk. The chunk is
-then gone or not settled, and `toast_read_settled` returns
-`SM_ERR_NOTFOUND`. The btree reaper drops the page quietly, and its next
-reader or writer queues it again.
+The btree reaper takes no lock. A writer can erase a chunk
+between the btree reaper's read of the row and its read of the
+chunk. The chunk is then gone or not settled, and
+`toast_read_settled` returns `SM_ERR_NOTFOUND`. The btree reaper
+drops the page quietly, and its next reader or writer queues it
+again.
 
 The btree reaper judges an entry by its row
 ([`BTREEINDEX.md`](BTREEINDEX.md)). A key column of the row can
-be out of line, so
-the btree reaper must read the value. `toast_read` needs a cursor, and
-a cursor needs a transaction. The btree reaper has none, and holds no
-snapshot, so that it never holds back the watermark.
+be out of line, so the btree reaper must read the value.
+`toast_read` needs a cursor, and a cursor needs a transaction.
+The btree reaper has none, and holds no snapshot, so that it
+never holds back the watermark.
 
 **Decision: the btree reaper reads each chunk by its key, with a
 settled read.** A settled read gives a key's newest version, if
@@ -221,9 +221,8 @@ The read is `sm1::read_settled_versioned`, not
 ### 2.12 Not built
 
 - **Compression.** [`sm2/VARLENA.md`](sm2/VARLENA.md) specifies
-  the compressed
-  form, and the codec refuses it. Whether sm2 ever compresses a
-  datum is open.
+  the compressed form, and the codec refuses it. Whether sm2 ever
+  compresses a datum is open.
 - **A fetch of part of a datum.** digres reads the whole value
   and then cuts the slice.
 - **A key column stays in line.** A key is held to `max_pk_len`,

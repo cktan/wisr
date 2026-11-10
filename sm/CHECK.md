@@ -150,10 +150,9 @@ CONSTRAINT value = constraint | check
   another transaction committed since; the check must see it.
 - **`ALTER TABLE ... ADD COLUMN ... CHECK`** adds the column,
   then adds the check as above: the rows already there are
-  checked with the new column's value.
-  `IF NOT EXISTS` skips the column's checks when the column
-  exists. A skipped serial or identity column creates no
-  sequence.
+  checked with the new column's value. `IF NOT EXISTS` skips the
+  column's checks when the column exists. A skipped serial or
+  identity column creates no sequence.
 - **`VALIDATE CONSTRAINT`** of a check reads the rows, and sets
   it valid.
 - **`DROP CONSTRAINT`** and **`RENAME CONSTRAINT`** of a check.

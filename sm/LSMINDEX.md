@@ -86,11 +86,11 @@ the row. The second scan answers from the entry alone, since
 ## 2. Key encoding
 
 The per-type encodings are in
-[`sm2/TYPE.md`](sm2/TYPE.md#3-the-types) §3, and the byte
-rules for every key in
+[`sm2/TYPE.md`](sm2/TYPE.md#3-the-types) §3, and the byte rules
+for every key in
 [`sm2/TYPE.md`](sm2/TYPE.md#2-rules-that-apply-to-every-key) §2.
-This section holds the
-rules they satisfy and why. A row key uses the same encoder.
+This section holds the rules they satisfy and why. A row key uses
+the same encoder.
 
 ### 2.1 The rules
 
@@ -128,8 +128,8 @@ rules they satisfy and why. A row key uses the same encoder.
   cannot merge two datums. This order refines PostgreSQL's: it
   agrees wherever PostgreSQL is decisive, and breaks its ties
   ([`sm2/TYPE.md`](sm2/TYPE.md#310-interval) §3.10). The
-  microseconds are not stored, because
-  the span, months and days give them back.
+  microseconds are not stored, because the span, months and days
+  give them back.
 - **One encoder, several callers.** sm2's `encode_key` makes row
   keys and entry keys alike, with the same per-column arguments.
   There are no two encoders to keep in agreement.
@@ -845,13 +845,12 @@ a pointer.
 ### 7.9 Bulk load, rewrite, truncate and drop
 
 - **Bulk load** ([`BULKLOAD.md`](BULKLOAD.md)). `tbl_load_add`
-  puts a row and
-  its entries into sm1's loader, one stream for each index, in
-  the rows' order. An entry goes in as `idx_insert` would write
-  it, through `idx_load`. A row a load does not take ends the
-  load, and that row and those after it go by `tbl_insert`. In an
-  empty table, a duplicate in a unique index is found when the
-  load closes.
+  puts a row and its entries into sm1's loader, one stream for
+  each index, in the rows' order. An entry goes in as
+  `idx_insert` would write it, through `idx_load`. A row a load
+  does not take ends the load, and that row and those after it go
+  by `tbl_insert`. In an empty table, a duplicate in a unique
+  index is found when the load closes.
 - **Rewrite.** Adding or dropping a primary key, and changing a
   column's type, rewrite a table with rows under the table-oid
   lock X (`rewrite_table`). `copy_rows` reads the old store in
@@ -976,11 +975,10 @@ refuses a row key past `max_pk_len`.
 - `open_rels` opens the rel on the definition's layouts.
   `use_index` opens an index at its first use, so a read by the
   primary key opens no other index.
-- `tbl_park` and `tbl_reopen` keep a handle for its session's next
-  transaction ([`SM_API.md`](SM_API.md), `sm_tbl_close`). A
-  reopen takes the
-  lock and reads the definition, and makes the rel and indexes
-  again only if the definition has changed.
+- `tbl_park` and `tbl_reopen` keep a handle for its session's
+  next transaction ([`SM_API.md`](SM_API.md), `sm_tbl_close`). A
+  reopen takes the lock and reads the definition, and makes the
+  rel and indexes again only if the definition has changed.
 - `make_entry` gives an index's entry for one image: `entry_t`
   holds `belongs`, the key datums and the evaluator's values,
   which the key points into. It keeps its arrays when made again.

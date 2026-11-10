@@ -315,9 +315,9 @@ alone: 8 × 8,400 = 67,200 instructions for digres, 8 × 950 =
 InnoDB confirms the cause. Its secondary indexes also hold the
 primary key, and each row is a walk of its clustered btree, the
 structure of digres. On q3 it runs 0.71 of PostgreSQL's
-throughput, and digres 0.57
-([Result 3](#result-3-mariadb-engines)): the same structure, with
-a cheaper search for the key.
+throughput, and digres 0.57 ([Result
+3](#result-3-mariadb-engines)): the same structure, with a
+cheaper search for the key.
 
 ### 5. What parity requires
 

@@ -123,17 +123,16 @@ layer. [`PERF.md`](PERF.md) measures how fast DG runs against PG.
 - **Roles and authentication rules.** `pg_hba.conf` and
   `pg_ident.conf` are removed. Local Unix socket connections
   authenticate via OS peer match or password; TCP connections
-  require SCRAM-SHA-256. Column and
-  function privileges, `ALTER ROLE ... SET`, and `ALTER DEFAULT
-  PRIVILEGES` fail; role DDL is refused in a transaction block.
-- **No TLS or GSSAPI.** Their build options are off. A
-  connection over TCP is not encrypted. Logins use SCRAM, which
-  sends no password; a password set by SQL over TCP must come
-  hashed, as psql's `\password` sends it, and a logged statement
-  never shows a password
+  require SCRAM-SHA-256. Column and function privileges, `ALTER
+  ROLE ... SET`, and `ALTER DEFAULT PRIVILEGES` fail; role DDL is
+  refused in a transaction block.
+- **No TLS or GSSAPI.** Their build options are off. A connection
+  over TCP is not encrypted. Logins use SCRAM, which sends no
+  password; a password set by SQL over TCP must come hashed, as
+  psql's `\password` sends it, and a logged statement never shows
+  a password
   ([`aa/ROLE.md`](aa/ROLE.md#51-a-password-set-in-cleartext)
-  §5.1). An MD5 password is
-  refused on every connection.
+  §5.1). An MD5 password is refused on every connection.
 - **Fixed encoding and locale.** Every DG database uses `UTF8`
   encoding and collation `C`. A column's `COLLATE`, `CREATE
   COLLATION`, and an index key collation other than the
@@ -211,14 +210,14 @@ layer. [`PERF.md`](PERF.md) measures how fast DG runs against PG.
   `int4`, `int8`, `float4`, `float8`, `numeric`, `text`,
   `varchar`, `char(n)`, `name`, `bytea`, `date`, `time`,
   `timestamp`, `timestamptz`, `interval`, and `uuid`.
-- **Constrained, fixed-size `numeric`.** PG stores `numeric` as
-  a variable-length (`varlena`) array of base-10000 digits. DG
+- **Constrained, fixed-size `numeric`.** PG stores `numeric` as a
+  variable-length (`varlena`) array of base-10000 digits. DG
   replaces it with two fixed-size binary decimal types matching
   `sm` bit for bit ([`dg/DECIMAL.md`](dg/DECIMAL.md)): 8-byte
-  pass-by-value
-  `decimal64` (1 to 17 digits) and 16-byte `decimal128` (18 to
-  36 digits), with no `varlena` header, `NaN`, or `Infinity`
-  (unconstrained `numeric` columns default to `numeric(17,3)`).
+  pass-by-value `decimal64` (1 to 17 digits) and 16-byte
+  `decimal128` (18 to 36 digits), with no `varlena` header,
+  `NaN`, or `Infinity` (unconstrained `numeric` columns default
+  to `numeric(17,3)`).
 - **Unsupported column types.** Arrays, JSON/JSONB, XML, ranges,
   geometric types, network types (`inet`, `cidr`, `macaddr`),
   bit strings, full-text search (`tsvector`, `tsquery`), `oid`,
@@ -264,5 +263,5 @@ layer. [`PERF.md`](PERF.md) measures how fast DG runs against PG.
 - **Added in DG: `DEFAULT ... ON UPDATE`.** Because DG has no
   triggers, it extends column definitions with `DEFAULT expr ON
   UPDATE` ([`dg/ONUPDATE.md`](dg/ONUPDATE.md)), which writes
-  `expr` whenever an
-  `UPDATE` does not explicitly assign that column.
+  `expr` whenever an `UPDATE` does not explicitly assign that
+  column.

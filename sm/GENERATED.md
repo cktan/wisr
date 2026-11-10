@@ -1,12 +1,12 @@
 # GENERATED — generated columns
 
 Status: built for CREATE TABLE
-([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 415); ADD COLUMN of
-one is refused (§6). §6 lists the choices taken while the user
-was away
-([`../QUESTION.md`](../QUESTION.md)).
+([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 415); ADD COLUMN
+of one is refused (§6). §6 lists the choices taken while the user
+was away ([`../QUESTION.md`](../QUESTION.md)).
 [`CHECK.md`](CHECK.md) is the pattern this follows: sm3 keeps the
-expression and the columns it reads, the host computes the values.
+expression and the columns it reads, the host computes the
+values.
 
 ---
 
@@ -38,8 +38,8 @@ insert into item (total) values (1);
 - **sm3 keeps the kind, the expression and the columns it reads**
   with the column. The expression is the host's bytes, in the
   column's default, as PostgreSQL keeps it in `pg_attrdef`.
-- **sm3 never evaluates the expression.** A virtual column's value
-  in a row is null; a stored one's is what the host wrote.
+- **sm3 never evaluates the expression.** A virtual column's
+  value in a row is null; a stored one's is what the host wrote.
 - **The host computes the values**, with PostgreSQL's own code:
   `ExecComputeStoredGenerated()` in the executor for a stored
   column, on every INSERT, UPDATE and COPY; the rewriter's
