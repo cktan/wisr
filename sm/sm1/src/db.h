@@ -514,6 +514,16 @@ struct db_t {
   std::multiset<uint64_t> snapshots;
 
   /*
+   * A copy of the watermark, stored under snap_mu each time a
+   * snapshot is taken, registered or released, and read with no
+   * mutex. It may be stale but never above the watermark, as the
+   * watermark never moves backwards: a version committed at or
+   * below it is settled (../GC.md §13.3). The reader's push to the
+   * row reaper uses it (../GC.md §13.5).
+   */
+  std::atomic<uint64_t> watermark_cache{0};
+
+  /*
    * When each registered snapshot was taken, and those already
    * warned about, for the warning about a snapshot holding back
    * GC for over stuck_warn_secs. Guarded by snap_mu.

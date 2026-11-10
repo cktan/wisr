@@ -667,6 +667,7 @@ State in `db_t`:
 | --- | --- | --- |
 | `snapshots`, `snap_since`, `snap_warned` | `snap_mu` | §3 |
 | `gc_ready` | atomic | §4.4 |
+| `watermark_cache` | atomic; stored under `snap_mu` | §13.5 |
 | `gc_thread`, `gc_stopping`, `gc_cv` | `gc_mu` | §7 |
 | `purges`, `repairs` | their own mutex | `hint_queue_t` (§4.6) |
 | `drops` | `gc_mu` | a multimap from `commit_ts` to storeid |
@@ -952,13 +953,18 @@ db reaper (DBMGR.md §5.2) from closing a database left idle.
 
 To queue a key:
 
-1. A reader that sees a key's CURR version, committed and not its
-   own, with a `prev` other than 0, queues the key: a point read,
-   a batch read and a cursor alike. A tombstone counts. A
-   temporary store queues nothing.
-2. The reader does not judge whether CURR is settled. That needs
-   W, read under `snap_mu`, a mutex on the read path. The pass
-   judges it, with W read once.
+1. A reader that sees a key's CURR version, with a `prev` other
+   than 0, finds when CURR committed: from its stamp, or from the
+   status of its writer, which the visibility test has read
+   already. A version the reader wrote has no such time. A
+   tombstone counts. A temporary store queues nothing.
+2. If CURR committed after `watermark_cache`, the reader stops.
+   The cache is a copy of W in a `std::atomic<uint64_t>`.
+   `db_take_snapshot()`, `db_register_snapshot()` and
+   `db_release_snapshot()` store it under `snap_mu`. The reader
+   loads it with no mutex. It may be stale, and is never above
+   W, as W never moves backwards. So a stale cache can miss a key
+   that just settled, and never queues one that is not settled.
 3. The key goes to a `hint_queue_t` of its own, `reaps` (§4.6).
    A key already queued stops the push, and a full queue drops
    it. Either way the next read queues it again.
@@ -966,6 +972,7 @@ To queue a key:
 A key that is written and never read again is not queued: the
 compaction filter removes its OLD entries.
 
+The pass judges again, as a key may be rewritten after the push.
 A row pass, `sm1::row_reap_pass()`:
 
 1. Take the queue (`hint_queue_t::take()`).
@@ -1007,11 +1014,12 @@ replaces CURR anyway.
   a key that nobody reads again, for a push on every update and
   no read. It touches the path of an update, so it needs a
   measure, and the user's approval, as the writer's reap did.
-- **The reader's push.** The reader reads no W (§13.5), but
-  hashes the key and loads a word of the queue's filter on each
-  read of a key with a `prev`. Its cost on a point read (`q0`),
-  where parity with PostgreSQL is the target, is measured before
-  it is merged.
+- **The reader's push.** The reader loads the cached W (§13.5),
+  one relaxed atomic load, on each read of a key with a `prev`.
+  It hashes the key and loads a word of the queue's filter only for
+  a settled key. Its cost on a point read (`q0`), where parity
+  with PostgreSQL is the target, is measured before it is
+  merged.
 - **Whether the threads' reap is needed.** The threads earn their
   row copies only if a large store holds much OLD garbage under
   RocksDB's own compactions. Measure that first (§13.2).

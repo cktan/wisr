@@ -591,6 +591,8 @@ uint64_t db_take_snapshot(db_t *db) {
   db->snapshots.insert(ts);
   // Note when, for the stuck-snapshot warning.
   db->snap_since.emplace(ts, std::chrono::steady_clock::now());
+  // Publish the watermark for readers that take no mutex.
+  db->watermark_cache.store(*db->snapshots.begin(), std::memory_order_relaxed);
   return ts;
 }
 
@@ -602,6 +604,8 @@ void db_register_snapshot(db_t *db, uint64_t snapshot_ts) {
   db->snapshots.insert(snapshot_ts);
   // Note when, for the stuck-snapshot warning.
   db->snap_since.emplace(snapshot_ts, std::chrono::steady_clock::now());
+  // Publish the watermark for readers that take no mutex.
+  db->watermark_cache.store(*db->snapshots.begin(), std::memory_order_relaxed);
 }
 
 /* Remove one registration of snapshot_ts. */
@@ -623,6 +627,10 @@ void db_release_snapshot(db_t *db, uint64_t snapshot_ts) {
   if (!db->snapshots.count(snapshot_ts)) {
     db->snap_warned.erase(snapshot_ts);
   }
+  // Publish the watermark for readers that take no mutex.
+  db->watermark_cache.store(db->snapshots.empty() ? db->visible_ts.load()
+                                                  : *db->snapshots.begin(),
+                            std::memory_order_relaxed);
 }
 
 /* The oldest registered snapshot, or visible_ts. */

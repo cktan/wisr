@@ -1656,9 +1656,10 @@ TEST_CASE("the row reaper cuts the chain behind a settled CURR a reader saw") {
 TEST_CASE("the row reaper leaves a chain a snapshot still needs") {
   // Verify that a CURR not settled is skipped, and reaped once it is.
   // 1. A repeatable read reader t reads k = v1, holding W back.
-  // 2. Update k twice, then read it in another transaction: queued.
+  // 2. Update k twice, then read it in another transaction: not queued,
+  //    as CURR committed above W (../GC.md §13.5).
   // 3. A pass reaps nothing, and t still reads v1 through the chain.
-  // 4. t ends. Read k again, and a pass reaps it: t's snapshot is gone.
+  // 4. t ends. Read k again: queued, and a pass reaps it.
   chain_fixture_t f;
   uint64_t c = mkchain(f.s);
   chain_put(f.s, c, "k", "v1", true);
@@ -1668,14 +1669,49 @@ TEST_CASE("the row reaper leaves a chain a snapshot still needs") {
   chain_put(f.s, c, "k", "v2", false);
   chain_put(f.s, c, "k", "v3", false);
   CHECK(read_one(f.s, c, "k") == "v3");
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
   CHECK(sm1::row_reap_pass(f.s) == 0);
   CHECK(chain_get(t, c, "k") == "v1");
   commit_xct(t);
 
   CHECK(read_one(f.s, c, "k") == "v3");
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 1);
   CHECK(sm1::row_reap_pass(f.s) == 1);
   std::vector<std::string> payloads;
   CHECK(old_entries(f.s, c, &payloads).empty());
+}
+
+TEST_CASE("a reader queues a key only once its CURR is settled") {
+  // Verify the reader's push tests CURR against the cached watermark, in
+  // a point read and in a cursor alike (../GC.md §13.5).
+  // 1. A repeatable read reader t reads k, holding W back.
+  // 2. Update k twice. A point read and a cursor of another session see
+  //    CURR, which committed above W: nothing is queued.
+  // 3. t ends, and W moves up.
+  // 4. A cursor of another session sees CURR, now settled: k is queued.
+  // 5. A pass reaps k.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  sm1::session_t *t = f.open();
+  begin_xct(t, sm1::xctlevel_t::repeatable_read);
+  CHECK(chain_get(t, c, "k") == "v1");
+  chain_put(f.s, c, "k", "v2", false);
+  chain_put(f.s, c, "k", "v3", false);
+  CHECK(read_one(f.s, c, "k") == "v3");
+  begin_xct(f.s);
+  CHECK(chain_rows(f.s, c, nullptr, 0, nullptr, 0) ==
+        std::vector<std::string>{"k=v3"});
+  commit_xct(f.s);
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
+  commit_xct(t);
+
+  begin_xct(f.s);
+  CHECK(chain_rows(f.s, c, nullptr, 0, nullptr, 0) ==
+        std::vector<std::string>{"k=v3"});
+  commit_xct(f.s);
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 1);
+  CHECK(sm1::row_reap_pass(f.s) == 1);
 }
 
 TEST_CASE("a key with no chain, a reader's own write and a temporary store "
@@ -1821,7 +1857,9 @@ TEST_CASE("the row reaper reaps beside writers and readers of the same keys") {
   // 3. A repeatable read reader reads every key, waits, and reads them
   //    again: the same values, as a pass spares a chain it needs.
   // 4. A reaper thread runs passes on a session of its own, as the pool
-  //    does, until the others end; it reaps some keys meanwhile.
+  //    does, until the others end. Readers queue only a settled CURR, and
+  //    none settles while the writers run, so the readers and the reaper
+  //    go on for 100 ms after the writers end: it reaps some keys then.
   // 5. After all end, every key is read and a last pass runs: no OLD
   //    entry is left, and each key reads its writer's last value.
   chain_fixture_t f;
@@ -1927,6 +1965,8 @@ TEST_CASE("the row reaper reaps beside writers and readers of the same keys") {
   });
   threads[0].join();
   threads[1].join();
+  // The writers' CURR versions settle once the older snapshots end.
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
   writing = false;
   for (size_t i = 2; i < threads.size(); i++) {
     threads[i].join();
