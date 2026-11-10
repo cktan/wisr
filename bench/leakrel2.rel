@@ -1,0 +1,96 @@
+# leakrel2.rel -- the school of the soak, update-only, through sm.h
+# alone: does memory return to a floor, as in leakrel.rel, when the
+# table has two tree indexes and the sessions come and go?
+#
+# 1. Make class (2500 rows, tree index on prof_id) and enrollment
+#    (100000 rows, key (student_id, class_id), tree index on
+#    (class_id, student_id)), each class with 40 students.
+# 2. Open 4 sessions that stay (p1..p4) and use them in turn.
+# 3. Each transaction picks a class at random, reads its roster by
+#    the index, and sets the grade of one row. A fifth of the
+#    transactions run in a session opened and closed for just that
+#    transaction, as pgbench -C does.
+# 4. After each round of PER transactions print the PSS in kB.
+#
+# Environment: ROUNDS (60), PER (20000), RECONNECT (1: 0 keeps all
+# sessions open), PAD (0: the length of a text column "note" that each
+# enrollment row carries, to fill the write buffers sooner), REL_TMP
+# (the directory of the home, build/relleak).
+
+(def dir (string (or (os/getenv "REL_TMP") "build/relleak") "/home2"))
+(def rounds (scan-number (or (os/getenv "ROUNDS") "60")))
+(def per (scan-number (or (os/getenv "PER") "20000")))
+(def reconnect (not= (os/getenv "RECONNECT") "0"))
+(def pad (scan-number (or (os/getenv "PAD") "0")))
+(def note (string/repeat "x" pad))
+
+(defn pss []
+  # the Pss line of /proc/self/smaps_rollup, in kB
+  (def s (slurp "/proc/self/smaps_rollup"))
+  (def i (string/find "Pss:" s))
+  (scan-number (string/trim (string/slice s (+ i 4) (string/find "kB" s i)))))
+
+(rm-rf dir)
+(env-init dir)
+(env-attach dir :cache-bytes (* 256 1024 1024))
+(db-create "school")
+(db-open "school")
+
+(begin :rc)
+(table-create class
+  (columns (id :int8 :not-null) (prof_id :int8 :not-null) (capacity :int4 :not-null))
+  (primary-key id))
+(index-create class_prof (table class) (key (prof_id :asc)) :tree true)
+(if (> pad 0)
+  (table-create enrollment
+    (columns (student_id :int8 :not-null) (class_id :int8 :not-null) (grade :int4)
+             (note :text))
+    (primary-key student_id class_id))
+  (table-create enrollment
+    (columns (student_id :int8 :not-null) (class_id :int8 :not-null) (grade :int4))
+    (primary-key student_id class_id)))
+(index-create enrollment_class (table enrollment)
+  (key (class_id :asc) (student_id :asc)) :tree true)
+(def classes @[])
+(for c 1 2501 (array/push classes [c (+ 1 (% c 1000)) (+ 40 (% c 21))]))
+(load class classes)
+(def rows @[])
+(for c 1 2501
+  (for j 0 40
+    (array/push rows [(+ 1 (% (+ (* c 37) (* j 499)) 20000)) c 0 ;(if (> pad 0) [note] [])])))
+(load enrollment rows)
+(commit)
+
+(def persistent ["p1" "p2" "p3" "p4"])
+(each s persistent (_session-open s "school"))
+
+# One transaction in the active session: roster of a class, then a grade.
+(defn set-grade [n]
+  (def c (+ 1 (% (* n 7919) 2500)))
+  (begin :rc)
+  (def hits (idx-scan enrollment_class :ge [c] :le [c]))
+  (def h (hits (% n (length hits))))
+  (def key (h 0))
+  (update enrollment key [(key 0) (key 1) (% n 100) ;(if (> pad 0) [note] [])])
+  (commit))
+
+(var last (pss))
+(print "round pss_kb gained_kb")
+(for r 0 rounds
+  (for k 0 per
+    (def n (+ (* r per) k))
+    (if (and reconnect (= 0 (% n 5)))
+      (do
+        (_session-open "r" "school")
+        (_session-use "r")
+        (set-grade n)
+        (_session-use "default")
+        (_session-close "r"))
+      (do
+        (_session-use (persistent (% n 4)))
+        (set-grade n))))
+  (def p (pss))
+  (printf "%5d %d %d" r p (- p last))
+  (flush)
+  (set last p))
+(env-detach :force true)

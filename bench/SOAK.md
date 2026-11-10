@@ -159,7 +159,9 @@ The release run says how much memory is lost. It does not say
 where. The repository has a thread-sanitizer build only
 (`dg/build/digres-tsan`), and no ASan or LSan build.
 
-When RSS drifts, choose one of these:
+When RSS drifts, first try the method of [`LEAK.md`](LEAK.md):
+reduce the SQL to a `rel` script and run it under valgrind.
+If that is not enough, choose one of these:
 
 1. Add a `make` target for an ASan build with LSan. Run the same
    workload for 1 hour. Stop the server with SIGINT: LSan prints

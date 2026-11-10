@@ -11,6 +11,8 @@
 #   DURATION  seconds of the run, warm-up included (14400)
 #   WARMUP    seconds at the start that the report does not score (900)
 #   SHARED_BUFFERS  the server's shared_buffers (2GB)
+#   MIX       full (default); readonly: no insert, update or delete;
+#             updateonly: only the grade update
 #   SRV_CPUS  CPUs of the server (0-1)
 #   CLI_CPUS  CPUs of the clients (2-3)
 #
@@ -94,7 +96,7 @@ server_pids() {
 sampler() {
   echo "t,pss_kb,rss_kb,threads,fds,procs,data_kb,files,alive" \
     > "$work/samples.csv"
-  local t0=$SECONDS p pss rss thr fds procs data files alive
+  local t0=$SECONDS p pss rss thr fds procs data files alive n=0
   while [ ! -e "$work/stop" ]; do
     pss=0 rss=0 thr=0 fds=0 procs=0 alive=1
     kill -0 "$server" 2> /dev/null || alive=0
@@ -110,6 +112,15 @@ sampler() {
     files=$(find "$work/data" -type f | wc -l)
     echo "$((SECONDS - t0)),$pss,$rss,$thr,$fds,$procs,$data,$files,$alive" \
       >> "$work/samples.csv"
+    # Every 5 minutes, the 5 mappings of the server with the most PSS:
+    # which region grows, when memory does.
+    if [ $((n % 5)) = 0 ] && [ -r "/proc/$server/smaps" ]; then
+      echo "t=$((SECONDS - t0))" >> "$work/maps.log"
+      awk '/^[0-9a-f]+-[0-9a-f]+ /{r=$1; nm=($6 == "" ? "[anon]" : $6)}
+           /^Pss:/{print $2, r, nm}' "/proc/$server/smaps" |
+        sort -rn | head -5 >> "$work/maps.log"
+    fi
+    n=$((n + 1))
     sleep 60
   done
 }
@@ -200,13 +211,26 @@ sampler_pid=$!
 #    5 delete and 5 insert: report.py prints the real one.
 student="student_sched@40 student_grades@15 add_class@5 drop_class@5"
 prof="prof_sched@12 roster@13 set_grade@10"
+# MIX=readonly: the four read scripts alone, to see if reads leak.
+if [ "${MIX:-full}" = readonly ]; then
+  student="student_sched@40 student_grades@15"
+  prof="prof_sched@12 roster@13"
+fi
+# MIX=updateonly: every client updates a grade, as the prof role, the one
+# that may. The students' groups too, so the connections stay as many.
+student_role=student_app
+if [ "${MIX:-full}" = updateonly ]; then
+  student_role=prof_app
+  student="set_grade@1"
+  prof="set_grade@1"
+fi
 echo "soak: $sys: $duration seconds from $(date)"
 clients=()
-client rs student_app "$student" 3 -C &
+client rs "$student_role" "$student" 3 -C &
 clients+=($!)
 client rp prof_app "$prof" 2 -C &
 clients+=($!)
-client ps student_app "$student" 3 "" &
+client ps "$student_role" "$student" 3 "" &
 clients+=($!)
 client pp prof_app "$prof" 1 "" &
 clients+=($!)

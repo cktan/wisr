@@ -1,0 +1,41 @@
+# leakrel.rel -- does a loop of single-row updates, through sm.h alone,
+# grow the process's memory? The soak grows on updates in digres; this
+# takes digres out of it.
+#
+# 1. Make a table of 1000 rows in a fresh home, with a 256 MB cache.
+# 2. Run rounds of 20000 update transactions, one row each, at random.
+# 3. After each round print the round, the PSS in kB, and the kB gained.
+
+(def dir (string (or (os/getenv "REL_TMP") "build/relleak") "/home"))
+(def rounds (scan-number (or (os/getenv "ROUNDS") "30")))
+(def per (scan-number (or (os/getenv "PER") "20000")))
+(def fixed (= (os/getenv "FIXED") "1"))
+
+(defn pss []
+  # the Pss line of /proc/self/smaps_rollup, in kB
+  (def s (slurp "/proc/self/smaps_rollup"))
+  (def i (string/find "Pss:" s))
+  (scan-number (string/trim (string/slice s (+ i 4) (string/find "kB" s i)))))
+
+(rm-rf dir)
+(env-init dir)
+(env-attach dir :cache-bytes (* 256 1024 1024))
+(db-create "leak")
+(db-open "leak")
+(begin :rc)
+(table-create t (columns (id :int8 :not-null) (v :int8 :not-null)) (primary-key id))
+(for i 1 1001 (insert t [i 0]))
+(commit)
+
+(var last (pss))
+(print "round pss_kb gained_kb")
+(for r 0 rounds
+  (for k 0 per
+    (def id (if fixed 1 (+ 1 (% (* (+ (* r per) k) 7919) 1000))))
+    (begin :rc)
+    (update t id [id (+ r 1)])
+    (commit))
+  (def p (pss))
+  (printf "%5d %d %d" r p (- p last))
+  (set last p))
+(env-detach)
