@@ -1052,7 +1052,7 @@ a log for a commit sync no one had measured to need it. Off WSL a
 home keeps 0, with nothing timed.
 
 On WSL, sm decides once for the home, at its first attach, which
-is digres's `initdb`. There is no option and no setting, because
+is `digres --init`. There is no option and no setting, because
 what a sync of a growing file costs is the file system's
 business:
 

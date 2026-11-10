@@ -32,12 +32,10 @@
 #include <sys/param.h>
 #endif
 
-#include "common/username.h"
 #include "miscadmin.h"
 #include "parser/parse_tool.h"
 #include "postmaster/initdb.h"
 #include "postmaster/postmaster.h"
-#include "tcop/tcopprot.h"
 #include "utils/control_block.h"
 #include "utils/help_config.h"
 #include "utils/memutils.h"
@@ -136,12 +134,8 @@ int main(int argc, char *argv[]) {
     exit(0);
   }
 
-  /*
-   * Nor is "initdb", which is this program under another name, or
-   * "digres --init": it makes a data directory.
-   */
-  if (strcmp(pcb->progname, "initdb") == 0 ||
-      (argc > 1 && strcmp(argv[1], "--init") == 0))
+  /* Nor is "digres --init": it makes a data directory. */
+  if (argc > 1 && strcmp(argv[1], "--init") == 0)
     exit(initdb_main(argc, argv));
 
   /*
@@ -227,12 +221,12 @@ int main(int argc, char *argv[]) {
     write_stderr("%s: there is no bootstrap mode\n", pcb->progname);
     exit(1);
     break;
+  case DISPATCH_SINGLE:
+    write_stderr("%s: there is no single-user mode\n", pcb->progname);
+    exit(1);
+    break;
   case DISPATCH_DESCRIBE_CONFIG:
     GucInfoMain();
-    break;
-  case DISPATCH_SINGLE:
-    PostgresSingleUserMain(argc, argv,
-                           strdup(get_user_name_or_exit(pcb->progname)));
     break;
   case DISPATCH_POSTMASTER:
     PostmasterMain(argc, argv);
@@ -357,8 +351,8 @@ static void init_locale(const char *categoryname, int category,
 }
 
 /*
- * Help display should match the options accepted by PostmasterMain()
- * and PostgresMain().
+ * Help display should match the options accepted by PostmasterMain(),
+ * and by process_postgres_switches() for a client's startup options.
  *
  * XXX On Windows, non-ASCII localizations of these messages only display
  * correctly if the console output code page covers the necessary characters.
@@ -387,8 +381,11 @@ static void print_build(void) {
 }
 
 static void help(const char *progname) {
-  printf(_("%s is the PostgreSQL server.\n\n"), progname);
-  printf(_("Usage:\n  %s [OPTION]...\n\n"), progname);
+  printf(_("%s is a fork of PostgreSQL 18 backed by RocksDB.\n\n"), progname);
+  printf(_("Usage:\n  %s [OPTION]...\n"), progname);
+  printf(_("  %s --init [OPTION]... [DATADIR]\n"), progname);
+  printf(_("  %s --parse [--type-name|--locations|--analyze|--plan]\n\n"),
+         progname);
   printf(_("Options:\n"));
   printf(_("  -B NBUFFERS        number of shared buffers\n"));
   printf(_("  -c NAME=VALUE      set run-time parameter\n"));
@@ -397,6 +394,7 @@ static void help(const char *progname) {
   printf(_("  -d 1-5             debugging level\n"));
   printf(_("  -D DATADIR         database directory\n"));
   printf(_("  -e                 use European date input format (DMY)\n"));
+  printf(_("  -E                 log every statement\n"));
   printf(_("  -h HOSTNAME        host name or IP address to listen on\n"));
   printf(_("  -i                 enable TCP/IP connections (deprecated)\n"));
   printf(_("  -k DIRECTORY       Unix-domain socket location\n"));
@@ -414,42 +412,30 @@ static void help(const char *progname) {
   printf(_("  -?, --help         show this help, then exit\n"));
   printf(_("  --build            show how this program was built, then exit\n"));
 
+  printf(_("\nMaking a data directory:\n"));
+  printf(_("  --init             make a data directory (must be first "
+           "argument);\n"
+           "                     \"%s --init --help\" lists its options\n"),
+         progname);
+
   printf(_("\nDeveloper options:\n"));
-  printf(_("  -f s|i|o|b|t|n|m|h forbid use of some plan types\n"));
+  printf(_("  -f s|i|o|n|m|h     forbid use of some plan types\n"));
   printf(_("  -O                 allow system table structure changes\n"));
-  printf(_("  -P                 disable system indexes\n"));
   printf(_("  -t pa|pl|ex        show timings after each query\n"));
-  printf(_("  -T                 send SIGABRT to all backend processes if one "
-           "dies\n"));
   printf(_("  -W NUM             wait NUM seconds to allow attach from a "
            "debugger\n"));
-
-  printf(_("\nOptions for single-user mode:\n"));
-  printf(_("  --single           selects single-user mode (must be first "
-           "argument)\n"));
-  printf(_("  DBNAME             database name (defaults to user name)\n"));
-  printf(_("  -d 0-5             override debugging level\n"));
-  printf(_("  -E                 echo statement before execution\n"));
-  printf(_("  -j                 do not use newline as interactive query "
-           "delimiter\n"));
-  printf(_("  -r FILENAME        send stdout and stderr to given file\n"));
-
-  printf(_("\nOptions for bootstrapping mode:\n"));
-  printf(_("  --boot             selects bootstrapping mode (must be first "
-           "argument)\n"));
-  printf(
-      _("  --check            selects check mode (must be first argument)\n"));
-  printf(_("  DBNAME             database name (mandatory argument in "
-           "bootstrapping mode)\n"));
-  printf(_("  -r FILENAME        send stdout and stderr to given file\n"));
+  printf(_("  --parse            parse standard input and print the trees, "
+           "then exit\n"
+           "                     (must be first argument); with --type-name, "
+           "--locations,\n"
+           "                     --analyze or --plan as the second\n"));
 
   printf(
       _("\nPlease read the documentation for the complete list of run-time\n"
         "configuration settings and how to set them on the command line or in\n"
         "the configuration file.\n\n"
-        "Report bugs to <%s>.\n"),
-      PACKAGE_BUGREPORT);
-  printf(_("%s home page: <%s>\n"), PACKAGE_NAME, PACKAGE_URL);
+        "Report bugs at <https://github.com/cktan/wisr/issues>.\n"
+        "Home page: <https://github.com/cktan/wisr>\n"));
 }
 
 static void check_root(const char *progname) {

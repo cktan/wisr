@@ -57,7 +57,7 @@ admin_psql() {
 # there, and wait until it says it is ready, ten seconds at most.
 start_server() {
   if [ ! -d "$work/data" ]; then
-    build/initdb "$work/data" >> "$work/initdb.out" 2>&1 || return 1
+    build/digres --init "$work/data" >> "$work/initdb.out" 2>&1 || return 1
   fi
   local from
   from=$(stat -c %s "$work/log" 2> /dev/null || echo 0)

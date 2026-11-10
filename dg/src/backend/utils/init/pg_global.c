@@ -78,13 +78,15 @@ static void aa_failed(int elevel) {
                      errmsg("%s", aa_errmsg())));
     break;
   case AA_ERR_NODB:
-    ereport(elevel, (errmsg("%s", aa_errmsg()),
-                     errdetail("It was made before digres kept roles there."),
-                     errhint("Run initdb to make a new data directory.")));
+    ereport(elevel,
+            (errmsg("%s", aa_errmsg()),
+             errdetail("It was made before digres kept roles there."),
+             errhint("Run \"digres --init\" to make a new data directory.")));
     break;
   case AA_ERR_NOTABLE:
-    ereport(elevel, (errmsg("%s", aa_errmsg()),
-                     errhint("Run initdb to make a new data directory.")));
+    ereport(elevel,
+            (errmsg("%s", aa_errmsg()),
+             errhint("Run \"digres --init\" to make a new data directory.")));
     break;
   default:
     ereport(elevel, (errmsg("%s", aa_errmsg())));

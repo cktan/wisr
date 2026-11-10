@@ -450,6 +450,28 @@ Owed, and blocking nothing above:
   startup against what it saves in compaction and in reads that
   follow a chain; and when it runs, before the first session or
   in the background.
+- **Investigate one queue for both reapers.** The btree reaper
+  and the row reaper each keep a queue of hints, and one pool of
+  threads in sm3 drains both ([`GC.md`](GC.md#13-the-reapers)
+  §13). The btree reaper's is a `reap_queue_t` of leaves, in
+  sm3 (`sm3/src/btree_reaper/btree_reaper.h`): 262,144 slots of
+  32 bytes and a 1-bit filter. The row reaper's is `reaps`, a
+  `hint_queue_t` of keys, in sm1 (`sm1/src/db.h`): a buffer of
+  32 MB and a filter of 1 MB (§4.6). Massif shows that buffer
+  as 34 MB of the server's heap
+  ([`../bench/LEAK.md`](../bench/LEAK.md) §5). To find out:
+  - whether one record holds both: a leaf is a fixed id, a row
+    is a store and a key of any length;
+  - which level owns the queue: sm1 knows no leaf, so a merged
+    queue in sm1 holds a leaf as bytes it does not read;
+  - whether a shared filter drops more hints, as both kinds
+    then set bits in one array;
+  - how the passes share it: the btree pass takes leaves to a
+    budget of 100 pages a second, the row pass takes the whole
+    queue (`hint_queue_t::take()`), and only the pool's first
+    thread runs it;
+  - what it saves: the memory of one queue, and a second check
+    each second of whether keys wait.
 - **Edges from digres in sm1's wait-for graph.** digres keeps
   PostgreSQL's advisory locks (`pg_advisory_lock()`,
   `pg_advisory_xact_lock()` and the rest) in a table of its own,

@@ -1850,6 +1850,37 @@ TEST_CASE(
   evict_commit_cache(f.s->db);
   CHECK(read_one(f.s, c, "k") == "v5");
 }
+
+namespace {
+
+/* The store a reap hook drops; set by the test that uses it. */
+std::atomic<uint64_t> g_hook_drop_store{0};
+
+/* A reap hook that drops the store where a race would drop it. */
+void drop_in_reap(db_t *db) { db_drop_store_cf(db, g_hook_drop_store.load()); }
+
+} // namespace
+
+TEST_CASE("a store dropped during a reap is no error") {
+  // Verify the race the row reaper met in server.sh and pgregress: a store
+  // dropped after the pass copied its handle, so the write is refused by
+  // RocksDB with "Invalid column family specified in write batch".
+  // 1. Insert k and update it, so CURR has a chain, and read k to queue it.
+  // 2. Reap, with the hook dropping the store between the read and the
+  //    write.
+  // 3. Confirm the pass returns 0, not -1: nothing was reaped, no error.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  chain_put(f.s, c, "k", "v2", false);
+  CHECK(read_one(f.s, c, "k") == "v2");
+
+  g_hook_drop_store = c;
+  g_reap_hook = drop_in_reap;
+  int64_t reaped = sm1::row_reap_pass(f.s);
+  g_reap_hook = nullptr;
+  CHECK(reaped == 0);
+}
 #endif
 
 TEST_CASE("the row reaper reaps beside writers and readers of the same keys") {

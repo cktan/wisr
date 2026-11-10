@@ -13,10 +13,11 @@
 # PostgreSQL 18 is the one installed in $PG18, ~/pg18 if that is not
 # set: its results are the ones digres must give. On digres, "skipif" and
 # "onlyif" match both "digres" and "postgresql"; on PostgreSQL 18,
-# "postgresql" alone. The server runs on a data directory its initdb
-# makes in build/test/slt, at port DG_TEST_PORT, or if that is not set
-# one the kernel finds free, as run.sh's does. DIGRES names the server to
-# run, build/digres if it is not set, and INITDB its initdb, build/initdb.
+# "postgresql" alone. The server runs on a data directory made in
+# build/test/slt, at port DG_TEST_PORT, or if that is not set one the
+# kernel finds free, as run.sh's does. DIGRES names the server to run,
+# build/digres if it is not set, and INITDB what makes its data
+# directory, "build/digres --init" if it is not set.
 cd "$(dirname "$0")/.." || exit 1
 # Where the server, its log and what failed are kept: SLT_WORK, or
 # build/test/slt.
@@ -24,7 +25,7 @@ work=${SLT_WORK:-$PWD/build/test/slt}
 port=${DG_TEST_PORT:-$(python3 -c 'import socket; s = socket.socket()
 s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')}
 digres=${DIGRES:-build/digres}
-initdb=${INITDB:-build/initdb}
+initdb=${INITDB:-build/digres --init}
 pg18=${PG18:-$HOME/pg18}
 target=digres
 args=()

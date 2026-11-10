@@ -142,12 +142,6 @@ static thread_local /*LOCAL*/ bool ignore_till_sync = false;
  */
 static thread_local /*LOCAL*/ CachedPlanSource *unnamed_stmt_psrc = NULL;
 
-/* assorted command-line switches */
-static thread_local /*LOCAL*/ const char *userDoption = NULL; /* -D switch */
-static thread_local /*LOCAL*/ bool EchoQuery = false;         /* -E switch */
-static thread_local /*LOCAL*/ bool UseSemiNewlineNewline =
-    false; /* -j switch */
-
 /* reused buffer to pass to SendRowDescriptionMessage() */
 static thread_local /*LOCAL*/ MemoryContext row_description_context = NULL;
 static thread_local /*LOCAL*/ StringInfoData row_description_buf;
@@ -156,8 +150,6 @@ static thread_local /*LOCAL*/ StringInfoData row_description_buf;
  *		decls for routines only used in this file
  * ----------------------------------------------------------------
  */
-static int InteractiveBackend(StringInfo inBuf);
-static int interactive_getc(void);
 static int SocketBackend(StringInfo inBuf);
 static int ReadCommand(StringInfo inBuf);
 static bool check_log_statement(List *stmt_list);
@@ -205,109 +197,6 @@ static void valgrind_report_error_query(const char *query) {
  *		routines to obtain user input
  * ----------------------------------------------------------------
  */
-
-/* ----------------
- *	InteractiveBackend() is called for user interactive connections
- *
- *	the string entered by the user is placed in its parameter inBuf,
- *	and we act like a Q message was received.
- *
- *	EOF is returned if end-of-file input is seen; time to shut down.
- * ----------------
- */
-
-static int InteractiveBackend(StringInfo inBuf) {
-  int c; /* character read from getc() */
-
-  /*
-   * display a prompt and obtain input from the user
-   */
-  printf("backend> ");
-  fflush(stdout);
-
-  resetStringInfo(inBuf);
-
-  /*
-   * Read characters until EOF or the appropriate delimiter is seen.
-   */
-  while ((c = interactive_getc()) != EOF) {
-    if (c == '\n') {
-      if (UseSemiNewlineNewline) {
-        /*
-         * In -j mode, semicolon followed by two newlines ends the
-         * command; otherwise treat newline as regular character.
-         */
-        if (inBuf->len > 1 && inBuf->data[inBuf->len - 1] == '\n' &&
-            inBuf->data[inBuf->len - 2] == ';') {
-          /* might as well drop the second newline */
-          break;
-        }
-      } else {
-        /*
-         * In plain mode, newline ends the command unless preceded by
-         * backslash.
-         */
-        if (inBuf->len > 0 && inBuf->data[inBuf->len - 1] == '\\') {
-          /* discard backslash from inBuf */
-          inBuf->data[--inBuf->len] = '\0';
-          /* discard newline too */
-          continue;
-        } else {
-          /* keep the newline character, but end the command */
-          appendStringInfoChar(inBuf, '\n');
-          break;
-        }
-      }
-    }
-
-    /* Not newline, or newline treated as regular character */
-    appendStringInfoChar(inBuf, (char)c);
-  }
-
-  /* No input before EOF signal means time to quit. */
-  if (c == EOF && inBuf->len == 0)
-    return EOF;
-
-  /*
-   * otherwise we have a user query so process it.
-   */
-
-  /* Add '\0' to make it look the same as message case. */
-  appendStringInfoChar(inBuf, (char)'\0');
-
-  /*
-   * if the query echo flag was given, print the query..
-   */
-  if (EchoQuery)
-    printf("statement: %s\n", inBuf->data);
-  fflush(stdout);
-
-  return PqMsg_Query;
-}
-
-/*
- * interactive_getc -- collect one character from stdin
- *
- * Even though we are not reading from a "client" process, we still want to
- * respond to signals, particularly SIGTERM/SIGQUIT.
- */
-static int interactive_getc(void) {
-  int c;
-
-  /*
-   * This will not process catchup interrupts or notifications while
-   * reading. But those can't really be relevant for a standalone backend
-   * anyway. To properly handle SIGTERM there's a hack in die() that
-   * directly processes interrupts at this stage...
-   */
-  CHECK_FOR_INTERRUPTS();
-
-  c = getc(stdin);
-
-  ProcessClientReadInterrupt(false);
-
-  return c;
-}
 
 /* ----------------
  *	SocketBackend()		Is called for frontend-backend connections
@@ -433,20 +322,16 @@ static int SocketBackend(StringInfo inBuf) {
 }
 
 /* ----------------
- *		ReadCommand reads a command from either the frontend or
- *		standard input, places it in inBuf, and returns the
- *		message type code (first byte of the message).
- *		EOF is returned if end of file.
+ *		ReadCommand reads a command from the frontend, places it in
+ *		inBuf, and returns the message type code (first byte of the
+ *		message).  EOF is returned if end of file, or if there is no
+ *		frontend to read from: digres has no standalone backend.
  * ----------------
  */
 static int ReadCommand(StringInfo inBuf) {
-  int result;
-
-  if (whereToSendOutput == DestRemote)
-    result = SocketBackend(inBuf);
-  else
-    result = InteractiveBackend(inBuf);
-  return result;
+  if (whereToSendOutput != DestRemote)
+    return EOF;
+  return SocketBackend(inBuf);
 }
 
 /*
@@ -3047,12 +2932,6 @@ bool set_plan_disabling_options(const char *arg, GucContext context,
   case 'o': /* indexonlyscan */
     tmp = "enable_indexonlyscan";
     break;
-  case 'b': /* bitmapscan */
-    tmp = "enable_bitmapscan";
-    break;
-  case 't': /* tidscan */
-    tmp = "enable_tidscan";
-    break;
   case 'n': /* nestloop */
     tmp = "enable_nestloop";
     break;
@@ -3089,28 +2968,21 @@ const char *get_stats_option_name(const char *arg) {
 
 /* ----------------------------------------------------------------
  * process_postgres_switches
- *	   Parse command line arguments for backends
+ *	   Parse the options of a client's startup packet
  *
- * This is called twice, once for the "secure" options coming from the
- * postmaster or command line, and once for the "insecure" options coming
- * from the client's startup packet.  The latter have the same syntax but
- * may be restricted in what they can do.
+ * They have the syntax of the server's command line, and may be
+ * restricted in what they can do.  digres has no standalone backend, so
+ * no command line comes here: the postmaster parses its own.
  *
- * argv[0] is ignored in either case (it's assumed to be the program name).
+ * argv[0] is ignored (it's assumed to be the program name).
  *
- * ctx is PGC_POSTMASTER for secure options, PGC_BACKEND for insecure options
- * coming from the client, or PGC_SU_BACKEND for insecure options coming from
- * a superuser client.
- *
- * If a database name is present in the command line arguments, it's
- * returned into *dbname (this is allowed only if *dbname is initially NULL).
+ * ctx is PGC_BACKEND for the options of a client, or PGC_SU_BACKEND for
+ * those of a superuser client.
  * ----------------------------------------------------------------
  */
-void process_postgres_switches(int argc, char *argv[], GucContext ctx,
-                               const char **dbname) {
-  bool secure = (ctx == PGC_POSTMASTER);
+void process_postgres_switches(int argc, char *argv[], GucContext ctx) {
   int errs = 0;
-  GucSource gucsource;
+  GucSource gucsource = PGC_S_CLIENT; /* switches came from client */
   int flag;
   /*
    * The parse's own state: libc's getopt() keeps it in globals, one for
@@ -3118,31 +2990,15 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
    */
   pg_getopt_ctx optctx;
 
-  if (secure) {
-    gucsource = PGC_S_ARGV; /* switches came from command line */
-
-    /* Ignore the initial --single argument, if present */
-    if (argc > 1 && strcmp(argv[1], "--single") == 0) {
-      argv++;
-      argc--;
-    }
-  } else {
-    gucsource = PGC_S_CLIENT; /* switches came from client */
-  }
-
   /*
-   * Parse command-line options.  CAUTION: keep this in sync with
+   * Parse the options.  CAUTION: keep this in sync with
    * postmaster/postmaster.c (the option sets should not conflict) and with
    * the common help() function in main/main.c.
    */
   pg_getopt_start(&optctx, argc, argv,
-                  "B:bC:c:D:d:Eef:h:ijk:lN:nOPp:r:S:sTt:v:W:-:");
+                  "B:bC:c:D:d:Eef:h:ijk:lN:nOp:r:S:st:v:W:-:");
 
-  /*
-   * Turn this off because it's either printed to stderr and not the log
-   * where we'd want it, or argv[0] is now "--single", which would make for
-   * a weird error message.  We print our own error message below.
-   */
+  /* We print our own error message below, to the log, not to stderr. */
   optctx.opterr = 0;
 
   while ((flag = pg_getopt_next(&optctx)) != -1) {
@@ -3152,13 +3008,14 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
       break;
 
     case 'b':
-      /* Undocumented flag used for binary upgrades */
-      if (secure)
-        pcb_main()->IsBinaryUpgrade = true;
-      break;
-
     case 'C':
-      /* ignored for consistency with the postmaster */
+    case 'D':
+    case 'E':
+    case 'j':
+    case 'n':
+    case 'r':
+    case 'v':
+      /* what only PostgreSQL's command line may set: a client's is ignored */
       break;
 
     case '-':
@@ -3192,18 +3049,8 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
       break;
     }
 
-    case 'D':
-      if (secure)
-        userDoption = strdup(optctx.optarg);
-      break;
-
     case 'd':
       set_debug_options(atoi(optctx.optarg), ctx, gucsource);
-      break;
-
-    case 'E':
-      if (secure)
-        EchoQuery = true;
       break;
 
     case 'e':
@@ -3223,11 +3070,6 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
       SetConfigOption("listen_addresses", "*", ctx, gucsource);
       break;
 
-    case 'j':
-      if (secure)
-        UseSemiNewlineNewline = true;
-      break;
-
     case 'k':
       SetConfigOption("unix_socket_directories", optctx.optarg, ctx, gucsource);
       break;
@@ -3240,26 +3082,12 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
       SetConfigOption("max_connections", optctx.optarg, ctx, gucsource);
       break;
 
-    case 'n':
-      /* ignored for consistency with postmaster */
-      break;
-
     case 'O':
       SetConfigOption("allow_system_table_mods", "true", ctx, gucsource);
       break;
 
-    case 'P':
-      SetConfigOption("ignore_system_indexes", "true", ctx, gucsource);
-      break;
-
     case 'p':
       SetConfigOption("port", optctx.optarg, ctx, gucsource);
-      break;
-
-    case 'r':
-      /* send output (stdout and stderr) to the given file */
-      if (secure)
-        strlcpy(pcb_main()->OutputFileName, optctx.optarg, MAXPGPATH);
       break;
 
     case 'S':
@@ -3268,10 +3096,6 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
 
     case 's':
       SetConfigOption("log_statement_stats", "true", ctx, gucsource);
-      break;
-
-    case 'T':
-      /* ignored for consistency with the postmaster */
       break;
 
     case 't': {
@@ -3283,19 +3107,6 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
         errs++;
       break;
     }
-
-    case 'v':
-
-      /*
-       * -v is no longer used in normal operation, since
-       * FrontendProtocol is already set before we get here. We keep
-       * the switch only for possible use in standalone operation,
-       * in case we ever support using normal FE/BE protocol with a
-       * standalone backend.
-       */
-      if (secure)
-        FrontendProtocol = (ProtocolVersion)atoi(optctx.optarg);
-      break;
 
     case 'W':
       SetConfigOption("post_auth_delay", optctx.optarg, ctx, gucsource);
@@ -3310,134 +3121,15 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
       break;
   }
 
-  /*
-   * Optional database name should be there only if *dbname is NULL.
-   */
-  if (!errs && dbname && *dbname == NULL && argc - optctx.optind >= 1)
-    *dbname = strdup(argv[optctx.optind++]);
-
   if (errs || argc != optctx.optind) {
     if (errs)
       optctx.optind--; /* complain about the previous argument */
 
-    /* spell the error message a bit differently depending on context */
-    if (IsUnderPostmaster)
-      ereport(
-          FATAL, errcode(ERRCODE_SYNTAX_ERROR),
-          errmsg("invalid command-line argument for server process: %s",
-                 argv[optctx.optind]),
-          errhint("Try \"%s --help\" for more information.", pcb->progname));
-    else
-      ereport(
-          FATAL, errcode(ERRCODE_SYNTAX_ERROR),
-          errmsg("%s: invalid command-line argument: %s", pcb->progname,
-                 argv[optctx.optind]),
-          errhint("Try \"%s --help\" for more information.", pcb->progname));
+    ereport(FATAL, errcode(ERRCODE_SYNTAX_ERROR),
+            errmsg("invalid command-line argument for server process: %s",
+                   argv[optctx.optind]),
+            errhint("Try \"%s --help\" for more information.", pcb->progname));
   }
-}
-
-/*
- * PostgresSingleUserMain
- *     Entry point for single user mode. argc/argv are the command line
- *     arguments to be used.
- *
- * Performs single user specific setup then calls PostgresMain() to actually
- * process queries. Single user mode specific setup should go here, rather
- * than PostgresMain() or InitPostgres() when reasonably possible.
- */
-void PostgresSingleUserMain(int argc, char *argv[], const char *username) {
-  const char *dbname = NULL;
-
-  Assert(!IsUnderPostmaster);
-
-  /* Initialize startup process environment. */
-  InitStandaloneProcess(argv[0]);
-
-  /*
-   * Set default values for command-line options.
-   */
-  InitializeGUCOptions();
-
-  /*
-   * Parse command-line options.
-   */
-  process_postgres_switches(argc, argv, PGC_POSTMASTER, &dbname);
-
-  /* Must have gotten a database name, or have a default (the username) */
-  if (dbname == NULL) {
-    dbname = username;
-    if (dbname == NULL)
-      ereport(FATAL, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                      errmsg("%s: no database nor user name specified",
-                             pcb->progname)));
-  }
-
-  /* Acquire configuration parameters */
-  if (!SelectConfigFiles(userDoption, pcb->progname))
-    proc_exit(1);
-
-  /* The standalone backend also reads process settings from pcb. */
-  publish_postmaster_settings();
-  publish_shared_settings();
-
-  /*
-   * Validate we have been given a reasonable-looking DataDir and change
-   * into it.
-   */
-  checkDataDir();
-  ChangeToDataDir();
-
-  /*
-   * Create lockfile for data directory.
-   */
-  CreateDataDirLockFile(false);
-
-  /* Make the nonce for mock authentication */
-  scram_init_mock_nonce();
-
-  /*
-   * process any libraries that should be preloaded at postmaster start
-   */
-  process_shared_preload_libraries();
-
-  /* Initialize MaxBackends */
-  InitializeMaxBackends();
-
-  /*
-   * We don't need postmaster child slots in single-user mode, but
-   * initialize them anyway to avoid having special handling.
-   */
-  InitPostmasterChildSlots();
-
-  /*
-   * Create shared memory etc.  (Nothing's really "shared" in single-user
-   * mode, but we must have these data structures anyway.)
-   */
-  CreateSharedMemoryAndSemaphores();
-
-  /*
-   * Estimate number of openable files.  This must happen after setting up
-   * semaphores, because on some platforms semaphores count as open files.
-   */
-  set_max_safe_fds();
-
-  /*
-   * Remember stand-alone backend startup time,roughly at the same point
-   * during startup that postmaster does so.
-   */
-  pcb_main()->PgStartTime = GetCurrentTimestamp();
-
-  /*
-   * Give this session its number, before it can access any shared
-   * structure.
-   */
-  InitProcess();
-
-  /*
-   * Now that sufficient infrastructure has been initialized, PostgresMain()
-   * can do the rest.
-   */
-  PostgresMain(dbname, username);
 }
 
 /* ----------------------------------------------------------------
@@ -3447,9 +3139,6 @@ void PostgresSingleUserMain(int argc, char *argv[], const char *username) {
  *
  * dbname is the name of the database to connect to, username is the
  * PostgreSQL user name to be used for the session.
- *
- * NB: Single user mode specific setup should go to PostgresSingleUserMain()
- * if reasonably possible.
  * ----------------------------------------------------------------
  */
 void PostgresMain(const char *dbname, const char *username) {
@@ -3476,17 +3165,10 @@ void PostgresMain(const char *dbname, const char *username) {
     SetInterruptHandler(INTERRUPT_DIE, die); /* cancel query and exit */
 
     /*
-     * In a postmaster child backend, replace SignalHandlerForCrashExit
-     * with quickdie, so we can tell the client we're dying.
-     *
-     * In a standalone backend, SIGQUIT can be generated from the keyboard
-     * easily, while SIGTERM cannot, so we make both signals do die()
-     * rather than quickdie().
+     * Replace SignalHandlerForCrashExit with quickdie, so we can tell the
+     * client we're dying.
      */
-    if (IsUnderPostmaster)
-      SetInterruptHandler(INTERRUPT_QUIT, quickdie); /* hard crash time */
-    else
-      SetInterruptHandler(INTERRUPT_QUIT, die); /* cancel query and exit */
+    SetInterruptHandler(INTERRUPT_QUIT, quickdie); /* hard crash time */
     InitializeTimeouts(); /* establishes INTERRUPT_ALARM's handler */
 
     /*
@@ -3580,10 +3262,6 @@ void PostgresMain(const char *dbname, const char *username) {
     pq_endmessage(&buf);
     /* Need not flush since ReadyForQuery will do it. */
   }
-
-  /* Welcome banner for standalone case */
-  if (whereToSendOutput == DestDebug)
-    printf("\nPostgreSQL stand-alone backend %s\n", PG_VERSION);
 
   /*
    * Create the memory context we will use in the main loop.

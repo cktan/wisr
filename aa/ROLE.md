@@ -130,8 +130,8 @@ no transaction spans
 two.
 
 **Decision: a database for what is shared, `pg_global`.**
-initdb makes it beside `postgres`; no client connects to it,
-and `pg_database` does not list it.
+`digres --init` makes it beside `postgres`; no client connects
+to it, and `pg_database` does not list it.
 
 **Invariant: all role data is in `pg_global`, and only
 there** (decided, §8 question 6). Nothing in a database's
@@ -415,10 +415,10 @@ of its own for them.
 
 **digres**:
 
-- initdb makes `pg_global` and the superuser's role in it;
-  the `superuser` file goes. A data directory made before,
+- `digres --init` makes `pg_global` and the superuser's role in
+  it; the `superuser` file goes. A data directory made before,
   with no `pg_global`, is refused at start with a message to
-  run initdb again (§8 question 5). Built, step 1.
+  run `digres --init` again (§8 question 5). Built, step 1.
 - The roles' cache: one snapshot of `pg_global`'s committed
   roles, which the postmaster reads at start and every session
   shares (`shmem->pg_global`), replaced whole by role DDL
@@ -485,8 +485,8 @@ it ([`../CLAUDE.md`](../CLAUDE.md), "Test at every layer"):
    when on, every TCP client must use it; the local socket
    never does.
 5. **A data directory made before roles**: decided
-   (2026-10-27), refused, with a message to run initdb again;
-   no upgrade in place.
+   (2026-10-27), refused, with a message to run `digres --init`
+   again; no upgrade in place.
 6. **All role data is in `pg_global`, and only there**:
    decided (2026-10-27), an invariant (§3). A database is
    replicated or copied without its roles, and its new server

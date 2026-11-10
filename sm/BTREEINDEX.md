@@ -17,7 +17,7 @@ page-level WAL and no checkpoint.
 
 **Nothing keeps compatibility before production.** A database
 made before a change of a page's format is made again with
-initdb.
+`digres --init`.
 
 ---
 

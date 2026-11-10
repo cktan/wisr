@@ -561,7 +561,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT char *Log_destination_string;
 /* Other exported functions */
 extern void log_status_format(StringInfo buf, const char *format,
                               ErrorData *edata);
-extern void DebugFileOpen(void);
 extern char *unpack_sql_state(int sql_state);
 extern bool in_error_recursion_trouble(void);
 

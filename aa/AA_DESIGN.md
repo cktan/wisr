@@ -99,9 +99,9 @@ Details:
   owner has every privilege. For a database, PUBLIC may also
   CONNECT and create temporary tables.
 - **An object with no entry at all** is treated as owned by its
-  database's owner. Objects that initdb creates have no entry. A
-  crash at the wrong moment can also leave a new object without
-  one (§5). In both cases, the result is safe.
+  database's owner. Objects that `digres --init` creates have
+  no entry. A crash at the wrong moment can also leave a new
+  object without one (§5). In both cases, the result is safe.
 
 ---
 
@@ -394,8 +394,8 @@ finds nothing returns `false`. aa never throws exceptions.
 | Code | Meaning | What the host should do |
 | --- | --- | --- |
 | `AA_ERR_SM` | sm reported an error | report sm's message |
-| `AA_ERR_NODB` | the data directory has no `pg_global` | refuse to start; run initdb |
-| `AA_ERR_NOTABLE` | `pg_global` lacks a table | refuse to start; run initdb |
+| `AA_ERR_NODB` | the data directory has no `pg_global` | refuse to start; run `digres --init` |
+| `AA_ERR_NOTABLE` | `pg_global` lacks a table | refuse to start; run `digres --init` |
 | `AA_ERR_CONFLICT` | another session changed the same role, membership or object entry first (§5) | fail the transaction as a serialization failure; it may be retried |
 | `AA_ERR_LIMIT` | no oid is left | report it |
 
@@ -406,7 +406,7 @@ finds nothing returns `false`. aa never throws exceptions.
 aa's tests (`test/`) run without a server, on a temporary sm
 data directory (`test/home.h`). They cover:
 
-- the roles initdb creates, and a data directory without
+- the roles `digres --init` creates, and a data directory without
   `pg_global`;
 - role changes: commit, restart, conflicting sessions, deletes;
 - owners and ACLs: commit, savepoints, a crash between the two

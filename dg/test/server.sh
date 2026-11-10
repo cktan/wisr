@@ -159,7 +159,7 @@ wait_state() {
 # 2. Start the server on it.
 # 3. Wait until it says it is ready, ten seconds at most.
 echo "sesame" > "$work/pw"
-build/initdb --pwfile="$work/pw" "$work/data" > "$work/initdb.out" 2>&1 ||
+build/digres --init --pwfile="$work/pw" "$work/data" > "$work/initdb.out" 2>&1 ||
   fail "initdb"
 # A temporary file a prior run left, for startup to remove (checked below).
 mkdir -p "$work/data/base/pgsql_tmp"
@@ -5658,6 +5658,40 @@ grep -q 'invalid command-line argument for server process: -Q' \
   "$work/progname.out" || fail "a bad startup option's error"
 grep -q 'Try "digres[^"]* --help"' "$work/progname.out" ||
   fail "a session's hint names the program"
+
+# Verify that the help lists what digres runs, and that what it does not
+# run is refused: single-user mode, -P, -T, and -f's b and t.
+# 1. --help says what digres is, and lists --init and --parse.
+# 2. --help lists no single-user, bootstrap, -P or -T option.
+# 3. --single is refused, and says why.
+# 4. -P, -T and -f b are refused on the command line.
+# 5. -P and -f t are refused in PGOPTIONS; -f s is taken.
+$digres --help > "$work/help.out" 2>&1
+head -1 "$work/help.out" |
+  grep -qx 'digres[^ ]* is a fork of PostgreSQL 18 backed by RocksDB.' ||
+  fail "help: the first line"
+grep -q -- '--init ' "$work/help.out" && grep -q -- '--parse ' \
+  "$work/help.out" || fail "help: --init and --parse"
+grep -Eq -- '--single|--boot|--check| -P | -T |-r FILENAME' \
+  "$work/help.out" && fail "help: an option digres does not run"
+$digres --single > "$work/single.out" 2>&1 && fail "--single is refused"
+grep -q 'there is no single-user mode' "$work/single.out" ||
+  fail "--single says why"
+for opt in -P -T '-f b'; do
+  # shellcheck disable=SC2086
+  $digres $opt -D "$work/data" > "$work/opt.out" 2>&1 &&
+    fail "$opt is refused"
+  grep -q 'Try "digres[^"]* --help"\|invalid argument for option -f' \
+    "$work/opt.out" || fail "$opt says why"
+done
+for opt in -P '-f t'; do
+  PGOPTIONS="$opt" local_psql -c 'select 1' > "$work/opt.out" 2>&1 &&
+    fail "PGOPTIONS $opt is refused"
+  grep -q 'invalid command-line argument for server process' \
+    "$work/opt.out" || fail "PGOPTIONS $opt says why"
+done
+[ "$(PGOPTIONS='-f s' local_psql -c 'show enable_seqscan')" = off ] ||
+  fail "PGOPTIONS -f s is taken"
 
 # Verify that a session's commit is visible to its next statement, however
 # the commits of other sessions interleave: sm1's commit returns only once

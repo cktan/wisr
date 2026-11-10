@@ -233,7 +233,8 @@ changes to threads, latches, locks or shared state.
 dg/build/digres --init /path/to/data
 ```
 
-`digres --init` is digres's `initdb` (`--init --help` lists
+`digres --init` makes a data directory, as PostgreSQL's
+`initdb` does; digres has no `initdb` (`--init --help` lists
 its options). It makes the database `postgres`, and
 `pg_global`, which holds the roles and which no client
 connects to, with one superuser:

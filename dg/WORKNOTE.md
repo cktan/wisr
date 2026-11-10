@@ -13114,7 +13114,71 @@ single-threaded tests ([`../sm/GC.md`](../sm/GC.md#138-tests)
   fails, every run, with OLD entries left; without the hint queue's
   mutex the thread sanitizer reports the race with `take()`.
 
-## Step 431: GUC settings move into the control blocks
+## Step 431: the options digres runs, and no single-user mode
+
+`digres --help` was PostgreSQL's. It listed modes that digres
+refuses or that fail, and options that do nothing.
+
+- **The help**: its first line says what digres is, "a fork of
+  PostgreSQL 18 backed by RocksDB". It lists `--init` and
+  `--parse`, and sends bug reports to the repository's issues.
+- **Single-user mode is gone.** `--single` failed at startup,
+  writing `pg_authid` (step 318 left it so). `digres --single`
+  now says "there is no single-user mode", as `--boot` says
+  there is no bootstrap mode. Deleted with it:
+  `PostgresSingleUserMain()`, `InteractiveBackend()`,
+  `InitStandaloneProcess()`, `DebugFileOpen()` and
+  `pcb->OutputFileName`, and the switches only it took, `-j`
+  and `-r`.
+- **`process_postgres_switches()` parses a client's startup
+  options alone**: no command line reaches it now. A client's
+  `-b`, `-D`, `-E`, `-j`, `-r` and `-v` are ignored, as before.
+  `ReadCommand()` gives EOF when there is no client, as no
+  backend reads standard input.
+- **`-P` is gone**: a catalog relation has no index
+  (`systable_beginscan()`), so `ignore_system_indexes` changes
+  nothing.
+- **`-T` is gone**: it set `send_abort_for_crash`, and a session
+  thread drops SIGABRT (`InterruptsOfSignal()`). After a crash,
+  the other sessions were sent nothing, not a quit.
+- **`-f` takes no `b` or `t`**: there is no bitmap scan, and a
+  TID scan only for `CURRENT OF`, which ignores
+  `enable_tidscan`.
+- **Test** (`test/server.sh`): the help's first line, `--init`
+  and `--parse` in it, and none of the removed options;
+  `--single`, `-P`, `-T` and `-f b` refused on the command
+  line, `-P` and `-f t` in `PGOPTIONS`; `-f s` taken there.
+  sm's and sq's tests cannot express it: they have no command
+  line of digres.
+
+## Step 432: no initdb, only digres --init
+
+The server answered to the name `initdb` too: the build made
+`build/initdb`, a link to `build/digres`, and `main()` ran
+`initdb_main()` for that name or for `--init`.
+
+- **`--init` alone makes a data directory.** The build makes no
+  link, and `main()` looks at `--init` only. A program named
+  `initdb` is the server.
+- **`--init` names itself `digres --init`**: in its help, its
+  errors (`digres --init: error: ...`), the hint after a bad
+  option and `--version`.
+- **The hints say so too**: a data directory with no
+  `pg_global` (`pg_global.c`), a bad `PG_VERSION`
+  (`miscinit.c`) and a missing configuration directory
+  (`guc.c`) now say to run `digres --init`.
+- **The tests** run `build/digres --init`: `run.sh`,
+  `isolation.sh`, `regress.sh`, `slt.sh` (its `INITDB`),
+  `server.sh`, `tls.sh`, `duck/duck.sh` and `initdb.sh`, which
+  keeps its name and its "initdb: PASSED" line.
+- **Test** (`test/initdb.sh`): `--init`'s help names
+  `digres --init` and no `initdb`; an unsupported encoding's
+  error begins `digres --init: error:`; an option it does not
+  know gives the hint `Try "digres --init --help"`; and the
+  hint for a directory with no `pg_global` names
+  `digres --init`.
+
+## Step 433: GUC settings move into the control blocks
 
 GUCPLAN.md ([`GUCPLAN.md`](GUCPLAN.md)), five settings at a time,
 each move tested and committed alone.

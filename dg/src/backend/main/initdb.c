@@ -6,13 +6,13 @@
 /*-------------------------------------------------------------------------
  *
  * initdb.c
- *	  "initdb", or "digres --init": make a data directory.
+ *	  "digres --init": make a data directory.
  *
  * PostgreSQL's initdb is a program of its own, which runs the server
  * in bootstrap mode to load the catalog and then copies it into three
  * databases. digres has its built-in catalog compiled in and its
  * storage made by sm, so what is left is small and lives in the
- * server, which answers to the name "initdb" as well.
+ * server, as its option --init.
  *
  * A data directory is an sm home directory (sm/sm1/SM1_DESIGN.md
  * section 3.5) holding two databases, with one file of digres's beside
@@ -50,6 +50,7 @@
 #include "libpq/scram.h"
 #include "mb/pg_wchar.h"
 #include "postmaster/initdb.h"
+#include "utils/control_block.h"
 #include "utils/datadir.h"
 #include "utils/pg_global.h"
 
@@ -58,14 +59,15 @@ static thread_local /*LOCAL*/ const char *datadir = NULL;
 static thread_local /*LOCAL*/ bool made_datadir = false;
 static thread_local /*LOCAL*/ bool filled_datadir = false;
 
-/* Remove what was made so far: a failed initdb leaves nothing behind. */
+/* Remove what was made so far: a failed --init leaves nothing behind. */
 static void cleanup(void) {
   if (made_datadir) {
-    fprintf(stderr, "initdb: removing data directory \"%s\"\n", datadir);
+    fprintf(stderr, "%s --init: removing data directory \"%s\"\n",
+            pcb->progname, datadir);
     rmtree(datadir, true);
   } else if (filled_datadir) {
-    fprintf(stderr, "initdb: removing contents of data directory \"%s\"\n",
-            datadir);
+    fprintf(stderr, "%s --init: removing contents of data directory \"%s\"\n",
+            pcb->progname, datadir);
     rmtree(datadir, false);
   }
 }
@@ -74,7 +76,7 @@ static void cleanup(void) {
 static void pg_attribute_printf(1, 2) fatal(const char *fmt, ...) {
   va_list ap;
 
-  fprintf(stderr, "initdb: error: ");
+  fprintf(stderr, "%s --init: error: ", pcb->progname);
   va_start(ap, fmt);
   vfprintf(stderr, fmt, ap);
   va_end(ap);
@@ -85,10 +87,9 @@ static void pg_attribute_printf(1, 2) fatal(const char *fmt, ...) {
 
 /* Print the usage. */
 static void usage(void) {
-  printf("initdb initializes a digres data directory.\n\n");
+  printf("%s --init makes a digres data directory.\n\n", pcb->progname);
   printf("Usage:\n");
-  printf("  initdb [OPTION]... [DATADIR]\n");
-  printf("  digres --init [OPTION]... [DATADIR]\n");
+  printf("  %s --init [OPTION]... [DATADIR]\n", pcb->progname);
   printf("\nOptions:\n");
   printf(" [-D, --pgdata=]DATADIR     location for this data directory\n");
   printf("                            (default: environment variable "
@@ -262,7 +263,7 @@ static char *build_secret(const char *password) {
   return secret;
 }
 
-/* Run initdb: argv is initdb's own, or the server's with --init first. */
+/* Run "digres --init": argv is the server's, with --init first. */
 int initdb_main(int argc, char **argv) {
   static thread_local /*LOCAL*/ struct option long_options[] = {
       {"pgdata", required_argument, NULL, 'D'},
@@ -283,12 +284,11 @@ int initdb_main(int argc, char **argv) {
   bool instructions = true;
   int c;
 
-  /* "digres --init ..." reads as "initdb ...". */
-  if (argc > 1 && strcmp(argv[1], "--init") == 0) {
-    argv[1] = pstrdup("initdb");
-    argc--;
-    argv++;
-  }
+  /* Parse what follows --init, with "digres --init" as getopt's name. */
+  Assert(argc > 1 && strcmp(argv[1], "--init") == 0);
+  argv[1] = psprintf("%s --init", pcb->progname);
+  argc--;
+  argv++;
 
   /* getopt answers "-?" for an option it does not know, too. */
   if (argc > 1 &&
@@ -326,11 +326,12 @@ int initdb_main(int argc, char **argv) {
       instructions = false;
       break;
     case 'V':
-      printf("initdb (digres) " PG_VERSION "\n");
+      printf("%s --init (digres) " PG_VERSION "\n", pcb->progname);
       return 0;
     default:
       /* getopt has said which option it did not accept. */
-      fprintf(stderr, "Try \"initdb --help\" for more information.\n");
+      fprintf(stderr, "Try \"%s --init --help\" for more information.\n",
+              pcb->progname);
       return 1;
     }
   }
@@ -350,7 +351,7 @@ int initdb_main(int argc, char **argv) {
   /* The server refuses to run as root, so a directory root made is no use. */
   if (geteuid() == 0)
     fatal("cannot be run as root");
-  owner = get_user_name_or_exit("initdb");
+  owner = get_user_name_or_exit(argv[0]);
   if (username == NULL)
     username = owner;
   if (username[0] == '\0' || strlen(username) >= NAMEDATALEN ||

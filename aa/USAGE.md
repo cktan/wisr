@@ -90,7 +90,7 @@ never throws exceptions.
 ```cpp
 #include "aa.h"
 
-// At initdb: create pg_global, with the superuser "admin" and the
+// At "digres --init": create pg_global, with the superuser "admin" and the
 // SCRAM secret of its password (or NULL for no password).
 if (aa_create(sm_env, "admin", scram_secret) != 0)
   fatal("%s", aa_errmsg());
@@ -99,7 +99,7 @@ if (aa_create(sm_env, "admin", scram_secret) != 0)
 aa_env_t *env;
 if (aa_load(sm_env, &env) != 0)
   fatal("%s", aa_errmsg());   // AA_ERR_NODB: the data directory
-                              // has no pg_global; run initdb
+                              // has no pg_global; run digres --init
 
 // When a client connects.
 aa_session_t *s = aa_session_new(env);

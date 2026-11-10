@@ -2,7 +2,7 @@
 # Copyright (c) 2026 CK Tan
 # SPDX-License-Identifier: MIT
 
-# initdb.sh -- check that initdb makes a data directory, and refuses
+# initdb.sh -- check that "digres --init" makes a data directory, and refuses
 # what digres does not support before making anything.
 #
 #   test/initdb.sh
@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.." || exit 1
 work=build/test/initdb
 rm -rf "$work"
 mkdir -p "$work"
-initdb=build/initdb
+initdb="build/digres --init"
 failed=0
 
 # Report the check NAME as failed.
@@ -21,8 +21,8 @@ fail() {
   failed=1
 }
 
-# Verify that initdb makes a data directory the server can use.
-# 1. Run initdb on a directory that does not exist.
+# Verify that --init makes a data directory the server can use.
+# 1. Run --init on a directory that does not exist.
 # 2. Confirm the version file and the storage, and that no superuser file
 #    is written: the roles are in the database pg_global.
 # 3. Confirm no one but the owner can enter the directory.
@@ -43,7 +43,7 @@ build/digres --init "$work/empty" > "$work/empty.out" 2>&1 || fail "--init"
 # Verify that -U names the superuser and --pwfile gives it a password,
 # both kept in pg_global, which the server reads at its start.
 # 1. Write a password file.
-# 2. Run initdb with both options, and the encoding and locale allowed.
+# 2. Run --init with both options, and the encoding and locale allowed.
 # 3. Start the server on it, and connect over TCP as alice, by password.
 # 4. Confirm pg_authid has alice as oid 10, the superuser, with a SCRAM
 #    secret, not the password, kept.
@@ -87,7 +87,7 @@ s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')}
 fi
 
 # Verify that a data directory made before digres kept roles, with no
-# pg_global, is refused at the server's start, and told to run initdb.
+# pg_global, is refused at the server's start, and told to run --init.
 # 1. Make a data directory, and drop its pg_global with sm's driver.
 # 2. Start the server on it, and confirm it exits with that message, at
 #    its start, before it listens.
@@ -98,16 +98,16 @@ printf '(env-attach "%s")\n(db-drop "pg_global")\n' "$PWD/$work/old" \
   fail "drop pg_global"
 build/digres -D "$work/old" -k "$PWD/$work" -p 1 > "$work/old.log" 2>&1
 grep -q 'data directory has no database "pg_global"' "$work/old.log" &&
-  grep -q 'Run initdb to make a new data directory' "$work/old.log" ||
+  grep -q 'Run "digres --init" to make a new data directory' "$work/old.log" ||
   fail "no pg_global message"
 
 # Verify that a directory holding anything is left alone.
-# 1. Run initdb on the directory made above.
+# 1. Run --init on the directory made above.
 # 2. Confirm it fails.
 $initdb -D "$work/plain" > "$work/again.out" 2>&1 && fail "non-empty"
 
 # Verify that what digres does not support is refused, and nothing made.
-# 1. Run initdb with each such option on a directory that does not exist.
+# 1. Run --init with each such option on a directory that does not exist.
 # 2. Confirm each run fails.
 # 3. Confirm the directory was not made.
 n=0
@@ -119,6 +119,18 @@ for opts in "-E LATIN1" "--locale=en_US.UTF-8" "--auth=trust" "-A trust" \
     fail "accepted $opts"
   [ -e "$work/refused" ] && fail "made a directory for $opts"
 done
+
+# Verify that --init names itself "digres --init", as no initdb exists.
+# 1. --help says what it makes, and how it is run.
+# 2. An error says it is --init's, and so does the hint after a bad option.
+$initdb --help > "$work/help.out" 2>&1
+head -1 "$work/help.out" | grep -qx 'digres --init makes a digres data directory.' &&
+  grep -qx '  digres --init \[OPTION\]... \[DATADIR\]' "$work/help.out" &&
+  ! grep -q '^  initdb ' "$work/help.out" || fail "--init's help"
+grep -q '^digres --init: error: ' "$work/refused1.out" ||
+  fail "--init's error prefix"
+grep -q 'Try "digres --init --help"' "$work/refused3.out" ||
+  fail "--init's hint after a bad option"
 
 [ $failed = 0 ] && echo "initdb: PASSED"
 exit $failed

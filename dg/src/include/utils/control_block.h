@@ -188,7 +188,6 @@ typedef struct pcb_t {
   char *DataDir = NULL;
   char my_exec_path[MAXPGPATH] = "";   /* full path to my executable */
   char pkglib_path[MAXPGPATH] = "";    /* full path to lib directory */
-  char OutputFileName[MAXPGPATH] = ""; /* debugging output file */
   pid_t PostmasterPid = 0;
   TimestampTz PgStartTime = 0; /* timestamp.c: when the server started */
   pg_tz *log_timezone = nullptr; /* pgtz.c: timezone for log timestamps */
