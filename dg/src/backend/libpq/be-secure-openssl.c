@@ -300,7 +300,7 @@ int be_tls_init(bool isServerStart) {
     goto error;
 
   /* set up the allowed cipher list for TLSv1.2 and below */
-  if (SSL_CTX_set_cipher_list(context, SSLCipherList) != 1) {
+  if (SSL_CTX_set_cipher_list(context, pcb->SSLCipherList.c_str()) != 1) {
     ereport(isServerStart ? FATAL : LOG,
             (errcode(ERRCODE_CONFIG_FILE_ERROR),
              errmsg("could not set the TLSv1.2 cipher list (no valid ciphers "
@@ -312,9 +312,9 @@ int be_tls_init(bool isServerStart) {
    * Set up the allowed cipher suites for TLSv1.3. If the GUC is an empty
    * string we leave the allowed suites to be the OpenSSL default value.
    */
-  if (SSLCipherSuites[0]) {
+  if (!pcb->SSLCipherSuites.empty()) {
     /* set up the allowed cipher suites */
-    if (SSL_CTX_set_ciphersuites(context, SSLCipherSuites) != 1) {
+    if (SSL_CTX_set_ciphersuites(context, pcb->SSLCipherSuites.c_str()) != 1) {
       ereport(isServerStart ? FATAL : LOG,
               (errcode(ERRCODE_CONFIG_FILE_ERROR),
                errmsg("could not set the TLSv1.3 cipher suites (no valid "
@@ -324,7 +324,7 @@ int be_tls_init(bool isServerStart) {
   }
 
   /* Let server choose order */
-  if (SSLPreferServerCiphers)
+  if (pcb->SSLPreferServerCiphers)
     SSL_CTX_set_options(context, SSL_OP_CIPHER_SERVER_PREFERENCE);
 
   /*
@@ -1676,10 +1676,11 @@ static const char *ssl_protocol_version_to_string(int v) {
 
 static void default_openssl_tls_init(SSL_CTX *context, bool isServerStart) {
   if (isServerStart) {
-    if (ssl_passphrase_command[0])
+    if (!pcb->ssl_passphrase_command.empty())
       SSL_CTX_set_default_passwd_cb(context, ssl_external_passwd_cb);
   } else {
-    if (ssl_passphrase_command[0] && ssl_passphrase_command_supports_reload)
+    if (!pcb->ssl_passphrase_command.empty() &&
+        pcb->ssl_passphrase_command_supports_reload)
       SSL_CTX_set_default_passwd_cb(context, ssl_external_passwd_cb);
     else
 

@@ -435,6 +435,11 @@ static thread_local /*LOCAL*/ char *ssl_crl_file;
 static thread_local /*LOCAL*/ char *ssl_crl_dir;
 static thread_local /*LOCAL*/ char *ssl_dh_params_file;
 static thread_local /*LOCAL*/ char *SSLECDHCurve;
+static thread_local /*LOCAL*/ char *ssl_passphrase_command;
+static thread_local /*LOCAL*/ bool ssl_passphrase_command_supports_reload;
+static thread_local /*LOCAL*/ char *SSLCipherList;
+static thread_local /*LOCAL*/ char *SSLCipherSuites;
+static thread_local /*LOCAL*/ bool SSLPreferServerCiphers;
 
 /* A string setting as a std::string, "" if it has no value. */
 static std::string setting_string(const char *value) {
@@ -459,6 +464,12 @@ static void publish_postmaster_reload_settings(void) {
   b->ssl_crl_dir = setting_string(ssl_crl_dir);
   b->ssl_dh_params_file = setting_string(ssl_dh_params_file);
   b->SSLECDHCurve = setting_string(SSLECDHCurve);
+  b->ssl_passphrase_command = setting_string(ssl_passphrase_command);
+  b->ssl_passphrase_command_supports_reload =
+      ssl_passphrase_command_supports_reload;
+  b->SSLCipherList = setting_string(SSLCipherList);
+  b->SSLCipherSuites = setting_string(SSLCipherSuites);
+  b->SSLPreferServerCiphers = SSLPreferServerCiphers;
 }
 
 /*

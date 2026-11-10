@@ -28,6 +28,7 @@
 #include "common/string.h"
 #include "libpq/libpq.h"
 #include "storage/fd.h"
+#include "utils/control_block.h"
 
 /*
  * Run ssl_passphrase_command
@@ -50,7 +51,7 @@ int run_ssl_passphrase_command(const char *prompt, bool is_server_start,
   Assert(size > 0);
   buf[0] = '\0';
 
-  command = replace_percent_placeholders(ssl_passphrase_command,
+  command = replace_percent_placeholders(pcb->ssl_passphrase_command.c_str(),
                                          "ssl_passphrase_command", "p", prompt);
 
   fh = OpenPipeStream(command, "r");

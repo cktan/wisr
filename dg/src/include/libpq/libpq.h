@@ -102,12 +102,6 @@ extern ssize_t secure_raw_write(Port *port, const void *ptr, size_t len);
  */
 extern thread_local /*LOCAL*/ PGDLLIMPORT int ssl_min_protocol_version;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int ssl_max_protocol_version;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *ssl_passphrase_command;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool
-    ssl_passphrase_command_supports_reload;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *SSLCipherSuites;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *SSLCipherList;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool SSLPreferServerCiphers;
 #ifdef USE_SSL
 #endif
 

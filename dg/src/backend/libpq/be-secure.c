@@ -35,17 +35,11 @@
 #include "utils/injection_point.h"
 #include "utils/wait_event.h"
 
-thread_local /*LOCAL*/ char *ssl_passphrase_command;
-thread_local /*LOCAL*/ bool ssl_passphrase_command_supports_reload;
-
 /* GUC variable controlling SSL cipher list */
-thread_local /*LOCAL*/ char *SSLCipherSuites = NULL;
-thread_local /*LOCAL*/ char *SSLCipherList = NULL;
 
 /* GUC variable for default ECHD curve. */
 
 /* GUC variable: if false, prefer client ciphers */
-thread_local /*LOCAL*/ bool SSLPreferServerCiphers;
 
 thread_local /*LOCAL*/ int ssl_min_protocol_version = PG_TLS1_2_VERSION;
 thread_local /*LOCAL*/ int ssl_max_protocol_version = PG_TLS_ANY;

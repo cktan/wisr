@@ -261,6 +261,11 @@ typedef struct pcb_t {
   bool send_abort_for_kill = false;  /* postmaster.c */
   std::string ssl_cert_file;         /* be-secure.c */
   std::string ssl_key_file;          /* be-secure.c */
+  bool SSLPreferServerCiphers = false;                 /* be-secure.c */
+  std::string SSLCipherSuites;                         /* be-secure.c */
+  std::string SSLCipherList;                           /* be-secure.c */
+  bool ssl_passphrase_command_supports_reload = false; /* be-secure.c */
+  std::string ssl_passphrase_command;                  /* be-secure.c */
   std::string SSLECDHCurve;          /* be-secure.c */
   std::string ssl_dh_params_file;    /* be-secure.c */
   std::string ssl_crl_dir;           /* be-secure.c */
