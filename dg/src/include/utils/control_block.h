@@ -14,13 +14,16 @@
  *
  * - pcb_t: what the main thread owns and other threads read, through a
  *   const pointer.  The main thread alone writes it; a field it writes
- *   after the first thread starts is an atomic, or guarded by a mutex.
+ *   after the first thread starts is an atomic, or guarded by a mutex,
+ *   unless only the main thread reads it (the postmaster's reloadable
+ *   settings).
  * - shmem_t: what the threads share and write.  Each field is an atomic, a
  *   mutex, whose comment names what it guards, or an object that guards
  *   itself.
  * - tcb_t: what one thread has, alone, its own: one for each thread, made
  *   as it starts and freed as it ends.  What a thread inherits from the one
- *   that started it is copied in at the start, and is its own after.  What
+ *   that started it is copied in at the start, and is its own after, as
+ *   are the settings a session can SET (tcb->guc).  What
  *   the main thread owns and no other thread reads is in the main thread's
  *   postmaster_tcb_t.  It may point into shmem_t; nothing of it is reached
  *   from another thread.

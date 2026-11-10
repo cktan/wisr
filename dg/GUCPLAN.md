@@ -205,8 +205,41 @@ or not. This keeps one variable's move small.
 | done | `log_line_prefix` | `elog.c` |
 | 1, done | `log_hostname`, `authentication_timeout`, `allow_alter_system` | `backend_startup.c`, `postinit.c`, `be-secure-openssl.c`, ALTER SYSTEM |
 | 2, done | `syslog_facility`, `syslog_ident`, `syslog_sequence_numbers`, `syslog_split_messages` (one snapshot) | `elog.c` |
-| 3 | `ssl`, `oauth_validator_libraries` | `postmaster.c`, `auth-oauth.c` |
+| 3, done | `ssl`, `oauth_validator_libraries` (into `pcb`: only the postmaster reads them) | `postmaster.c`, `auth-oauth.c` |
 | 4 | Stop the session reloads; update the documents | `postgres.c`, `postmaster.c` |
 
 - Move a setting early if a change touches it first. Keep the
   table current: mark a setting done when it is committed.
+
+## 9. Status
+
+- **Group 1 and 2 are done**, but for the three Kerberos and
+  GSSAPI settings. Those are read in code that is compiled out;
+  they stay as they are.
+  - In `pcb`: `ssl`, `send_abort_for_crash`,
+    `send_abort_for_kill`, `oauth_validator_libraries` and the
+    `ssl_*` settings of the postmaster. `ssl_ciphers`,
+    `ssl_tls13_ciphers`, `ssl_prefer_server_ciphers` and
+    `ssl_passphrase_command*` were not "no reader": the TLS
+    context reads them.
+  - In `shmem` as atomics: `pre_auth_delay`,
+    `ssl_min_protocol_version` and `ssl_max_protocol_version`.
+    A session reads these three, so they are not group 1.
+- **The gate for stopping the session reloads is met.** Step 4
+  of section 6 is not done: it changes behavior and waits for
+  the owner.
+- **Group 3 is mostly done.** About 130 settings read
+  `tcb->guc.name`. The table binds them as the thread builds it
+  (the table's `&tcb->guc.name`, as `tcb_init()` runs first).
+  A `tcb->guc` field starts at its literal default, or zero.
+  `check_GUC_init()` accepts zero for an enum, as for the other
+  types.
+- **Left as a plain `thread_local`:**
+  - `escape_string_warning`, `standard_conforming_strings`,
+    `backslash_quote`, `bytea_output`, `constraint_exclusion`,
+    `xmloption` and `IntervalStyle`: `sq/` or `sm/` reads the
+    variable, and they cannot see `tcb`.
+  - `client_min_messages`, `log_min_messages`,
+    `log_min_error_statement` and `trace_sort`: `errstart()` or
+    a per-tuple loop reads them. Ask before moving them
+    ([`CLAUDE.md`](../CLAUDE.md)).

@@ -13113,3 +13113,21 @@ single-threaded tests ([`../sm/GC.md`](../sm/GC.md#138-tests)
 - **Checked**: without the key's latch in `reap_one()` the test
   fails, every run, with OLD entries left; without the hint queue's
   mutex the thread sanitizer reports the race with `take()`.
+
+## Step 431: GUC settings move into the control blocks
+
+GUCPLAN.md ([`GUCPLAN.md`](GUCPLAN.md)), five settings at a time,
+each move tested and committed alone.
+
+- **`pcb`**: the postmaster's reloadable settings, in one
+  section; `publish_postmaster_reload_settings()` copies them at
+  start and on each reload. Only the main thread reads them.
+- **`shmem`**: `pre_auth_delay`, `ssl_min_protocol_version` and
+  `ssl_max_protocol_version`, atomics. A session reads them.
+- **`tcb->guc`**: the settings a session can `SET`. The GUC table
+  points at the fields; the code reads `tcb->guc.name`.
+- **`optimize_bounded_sort`** was a plain global, written by
+  every thread's GUC table: a race that `tcb->guc` removes.
+- **Not moved**: the settings `sq/` or `sm/` reads, the elog and
+  per-tuple ones, and the Kerberos and GSSAPI ones (compiled out).
+- **Not done**: the session reloads still run.
