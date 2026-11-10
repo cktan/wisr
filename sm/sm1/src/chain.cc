@@ -1435,6 +1435,12 @@ int reap_one(db_t *db, const store_t &st, uint64_t storeid, rocksdb::Slice key,
   batch.Put(st.cf, curr_key(key), chain_value(head, false));
   rocksdb::Status status = st.rdb->Write(store_write_options(st), &batch);
   if (!status.ok()) {
+    // The store may have been dropped after the caller copied st: the
+    // copy still holds the CF's handle, and RocksDB refuses a write to a
+    // dropped CF. Nothing is left to reap then, and it is no error.
+    if (db_store(db, storeid).cf != st.cf) {
+      return 0;
+    }
     return set_status_error(status, "reap a chain");
   }
   return 1;

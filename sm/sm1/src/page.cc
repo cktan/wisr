@@ -249,6 +249,14 @@ int sm1::page_write(sm1::session_t *session, uint64_t storeid,
   wo.disableWAL = st->rdb == session->db->tmp;
   rocksdb::Status rs = st->rdb->Write(wo, &batch);
   if (!rs.ok()) {
+    // The store may have been dropped after enter_pages() found it, by
+    // the GC worker: RocksDB refuses a write to a dropped CF. Say what
+    // enter_pages() would now, so a caller that expects a dropped store
+    // (the btree reaper) treats this as one.
+    if (db_store(session->db, storeid).cf != st->cf) {
+      return set_error(sm1::SM_ERR_NOTFOUND, "store {} does not exist",
+                       storeid);
+    }
     return set_status_error(rs, "write pages");
   }
   // RocksDB has them: nothing past here can fail, so a frame is never

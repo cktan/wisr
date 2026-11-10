@@ -181,7 +181,9 @@ namespace {
  * 4. Reap the leaf. A page left with an entry in doubt waits for the
  *    watermark to move. A failure drops the page: the queue is a hint,
  *    and the page's bits are still there. A store dropped meanwhile
- *    fails so, and is no error to report.
+ *    fails so, whatever the error, and is no error to report: after a
+ *    failure, find the table by the store again, and say nothing if it
+ *    is gone.
  * 5. With rows, run the row reaper's pass on the same session. A
  *    failure is logged: its keys are a hint, queued again by a read.
  * 6. Close the session, so the db reaper can close an idle database.
@@ -220,7 +222,8 @@ int run_pass(btree_reaper_t *c, size_t budget, bool rows) {
     int rc = tbl_reap_leaf(ws, def, publishes, page.relid, page.pageid, doubt);
     if (0 == rc && doubt) {
       c->queue.wait(page, watermark);
-    } else if (rc < 0 && sm1::SM_ERR_NOTFOUND != sm1::errnum()) {
+    } else if (rc < 0 && sm1::SM_ERR_NOTFOUND != sm1::errnum() &&
+               cat_get_table_by_store(c->cat, page.storeid)) {
       sm0::log_msg(sm1::loglevel_t::warn,
                    "btree reaper: store {} tree {} page {}: {}", page.storeid,
                    page.relid, page.pageid, sm1::errmsg());
