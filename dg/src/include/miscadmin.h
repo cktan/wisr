@@ -260,7 +260,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int IntervalStyle;
 
 #define MAXTZLEN		10 /* max TZ name len, not counting tr. null */
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool allowSystemTableMods;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int work_mem;
 extern thread_local /*LOCAL*/ PGDLLIMPORT double hash_mem_multiplier;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int maintenance_work_mem;
@@ -430,7 +429,6 @@ extern void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
 extern void BaseInit(void);
 
 /* in utils/init/miscinit.c */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool IgnoreSystemIndexes;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char
     *session_preload_libraries_string;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *local_preload_libraries_string;

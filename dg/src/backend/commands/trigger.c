@@ -61,6 +61,7 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/tuplestore.h"
+#include "utils/control_block.h"
 
 /* GUC variables */
 thread_local /*LOCAL*/ int SessionReplicationRole =
@@ -297,7 +298,7 @@ ObjectAddress CreateTriggerFiringOn(CreateTrigStmt *stmt,
                            RelationGetRelationName(rel)),
                     errdetail_relkind_not_supported(rel->rd_rel->relkind)));
 
-  if (!allowSystemTableMods && IsSystemRelation(rel))
+  if (!tcb->guc.allowSystemTableMods && IsSystemRelation(rel))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            RelationGetRelationName(rel))));
@@ -1210,7 +1211,7 @@ void RemoveTriggerById(Oid trigOid) {
                            RelationGetRelationName(rel)),
                     errdetail_relkind_not_supported(rel->rd_rel->relkind)));
 
-  if (!allowSystemTableMods && IsSystemRelation(rel))
+  if (!tcb->guc.allowSystemTableMods && IsSystemRelation(rel))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            RelationGetRelationName(rel))));
@@ -1306,7 +1307,7 @@ static void RangeVarCallbackForRenameTrigger(const RangeVar *rv, Oid relid,
   if (!object_ownercheck(RelationRelationId, relid, GetUserId()))
     aclcheck_error(ACLCHECK_NOT_OWNER,
                    get_relkind_objtype(get_rel_relkind(relid)), rv->relname);
-  if (!allowSystemTableMods && IsSystemClass(relid, form))
+  if (!tcb->guc.allowSystemTableMods && IsSystemClass(relid, form))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            rv->relname)));

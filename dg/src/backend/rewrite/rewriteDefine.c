@@ -38,6 +38,7 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#include "utils/control_block.h"
 
 static void checkRuleResultList(List *targetList, TupleDesc resultDesc,
                                 bool isSelect, bool requireColumnNameMatch);
@@ -234,7 +235,7 @@ ObjectAddress DefineQueryRewrite(const char *rulename, Oid event_relid,
                     RelationGetRelationName(event_relation)),
              errdetail_relkind_not_supported(event_relation->rd_rel->relkind)));
 
-  if (!allowSystemTableMods && IsSystemRelation(event_relation))
+  if (!tcb->guc.allowSystemTableMods && IsSystemRelation(event_relation))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            RelationGetRelationName(event_relation))));
@@ -693,7 +694,7 @@ static void RangeVarCallbackForRenameRule(const RangeVar *rv, Oid relid,
                     errmsg("relation \"%s\" cannot have rules", rv->relname),
                     errdetail_relkind_not_supported(form->relkind)));
 
-  if (!allowSystemTableMods && IsSystemClass(relid, form))
+  if (!tcb->guc.allowSystemTableMods && IsSystemClass(relid, form))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            rv->relname)));

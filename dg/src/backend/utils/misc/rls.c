@@ -29,6 +29,7 @@
 #include "utils/rls.h"
 #include "utils/syscache.h"
 #include "utils/varlena.h"
+#include "utils/control_block.h"
 
 /*
  * check_enable_rls
@@ -119,7 +120,7 @@ int check_enable_rls(Oid relid, Oid checkAsUser, bool noError) {
    * We should apply RLS.  However, the user may turn off the row_security
    * GUC to get a forced error instead.
    */
-  if (!row_security && !noError)
+  if (!tcb->guc.row_security && !noError)
     ereport(ERROR,
             (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
              errmsg("query would be affected by row-level security policy for "

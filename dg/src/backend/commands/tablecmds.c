@@ -1049,7 +1049,7 @@ ObjectAddress DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
       ownerId, accessMethodId, descriptor,
       list_concat(cookedDefaults, old_constraints), relkind,
       stmt->relation->relpersistence, false, false, stmt->oncommit, reloptions,
-      true, allowSystemTableMods, false, InvalidOid, typaddress);
+      true, tcb->guc.allowSystemTableMods, false, InvalidOid, typaddress);
 
   /*
    * We must bump the command counter to make the newly-created relation
@@ -1720,7 +1720,7 @@ static void RangeVarCallbackForDropRelation(const RangeVar *rel, Oid relOid,
   }
 
   /* In the case of an invalid index, it is fine to bypass this check */
-  if (!invalid_system_index && !allowSystemTableMods &&
+  if (!invalid_system_index && !tcb->guc.allowSystemTableMods &&
       IsSystemClass(relOid, classform))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
@@ -2235,7 +2235,7 @@ static void truncate_check_rel(Oid relid, Form_pg_class reltuple) {
    * to change its relfilenode to match the old cluster, and allowing a
    * TRUNCATE command to be executed is the easiest way of doing that.
    */
-  if (!allowSystemTableMods && IsSystemClass(relid, reltuple) &&
+  if (!tcb->guc.allowSystemTableMods && IsSystemClass(relid, reltuple) &&
       (!pcb->IsBinaryUpgrade || relid != LargeObjectRelationId))
     ereport(ERROR,
             (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -3571,7 +3571,7 @@ static void renameatt_check(Oid myrelid, Form_pg_class classform,
     aclcheck_error(ACLCHECK_NOT_OWNER,
                    get_relkind_objtype(get_rel_relkind(myrelid)),
                    NameStr(classform->relname));
-  if (!allowSystemTableMods && IsSystemClass(myrelid, classform))
+  if (!tcb->guc.allowSystemTableMods && IsSystemClass(myrelid, classform))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            NameStr(classform->relname))));
@@ -6250,7 +6250,7 @@ static void ATSimplePermissions(AlterTableType cmdtype, Relation rel,
                    get_relkind_objtype(rel->rd_rel->relkind),
                    RelationGetRelationName(rel));
 
-  if (!allowSystemTableMods && IsSystemRelation(rel))
+  if (!tcb->guc.allowSystemTableMods && IsSystemRelation(rel))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            RelationGetRelationName(rel))));
@@ -8973,7 +8973,7 @@ static ObjectAddress ATExecAddIndexConstraint(AlteredTableInfo *tab,
 
   address = index_constraint_create(
       rel, index_oid, InvalidOid, indexInfo, constraintName, constraintType,
-      flags, allowSystemTableMods, false); /* is_internal */
+      flags, tcb->guc.allowSystemTableMods, false); /* is_internal */
 
   index_close(indexRel, NoLock);
 
@@ -9286,7 +9286,7 @@ ATAddForeignKeyConstraint(List **wqueue, AlteredTableInfo *tab, Relation rel,
                     errmsg("referenced relation \"%s\" is not a table",
                            RelationGetRelationName(pkrel))));
 
-  if (!allowSystemTableMods && IsSystemRelation(pkrel))
+  if (!tcb->guc.allowSystemTableMods && IsSystemRelation(pkrel))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            RelationGetRelationName(pkrel))));
@@ -17467,7 +17467,7 @@ void RangeVarCallbackOwnsRelation(const RangeVar *relation, Oid relId,
                    get_relkind_objtype(get_rel_relkind(relId)),
                    relation->relname);
 
-  if (!allowSystemTableMods && IsSystemClass(relId, &form))
+  if (!tcb->guc.allowSystemTableMods && IsSystemClass(relId, &form))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            relation->relname)));
@@ -17498,7 +17498,7 @@ static void RangeVarCallbackForAlterRelation(const RangeVar *rv, Oid relid,
                    get_relkind_objtype(get_rel_relkind(relid)), rv->relname);
 
   /* No system table modifications unless explicitly allowed. */
-  if (!allowSystemTableMods && IsSystemClass(relid, classform))
+  if (!tcb->guc.allowSystemTableMods && IsSystemClass(relid, classform))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            rv->relname)));

@@ -56,8 +56,6 @@
 thread_local /*LOCAL*/ int DefaultXactIsoLevel = XACT_READ_COMMITTED;
 thread_local /*LOCAL*/ int XactIsoLevel = XACT_READ_COMMITTED;
 
-thread_local /*LOCAL*/ bool XactDeferrable;
-
 /*
  * Miscellaneous flag bits to record events which occur on the top level
  * transaction. These flags are only persisted in MyXactFlags and are intended
@@ -718,7 +716,7 @@ static void StartTransaction(void) {
    * Make sure we've reset xact state variables
    */
   tcb->guc.XactReadOnly = tcb->guc.DefaultXactReadOnly;
-  XactDeferrable = tcb->guc.DefaultXactDeferrable;
+  tcb->guc.XactDeferrable = tcb->guc.DefaultXactDeferrable;
   XactIsoLevel = DefaultXactIsoLevel;
   MyXactFlags = 0;
 
@@ -1161,14 +1159,14 @@ void StartTransactionCommand(void) {
 void SaveTransactionCharacteristics(SavedTransactionCharacteristics *s) {
   s->save_XactIsoLevel = XactIsoLevel;
   s->save_XactReadOnly = tcb->guc.XactReadOnly;
-  s->save_XactDeferrable = XactDeferrable;
+  s->save_XactDeferrable = tcb->guc.XactDeferrable;
 }
 
 void RestoreTransactionCharacteristics(
     const SavedTransactionCharacteristics *s) {
   XactIsoLevel = s->save_XactIsoLevel;
   tcb->guc.XactReadOnly = s->save_XactReadOnly;
-  XactDeferrable = s->save_XactDeferrable;
+  tcb->guc.XactDeferrable = s->save_XactDeferrable;
 }
 
 /*

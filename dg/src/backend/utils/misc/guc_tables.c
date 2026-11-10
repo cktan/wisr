@@ -297,13 +297,10 @@ thread_local /*LOCAL*/ bool log_statement_stats =
             * above together */
 static thread_local /*LOCAL*/ char *event_source;
 
-thread_local /*LOCAL*/ bool row_security;
-
 /*
  * This GUC exists solely for backward compatibility, check its definition for
  * details.
  */
-static thread_local /*LOCAL*/ bool default_with_oids = false;
 
 thread_local /*LOCAL*/ bool current_role_is_superuser;
 
@@ -1210,7 +1207,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       NULL,
       GUC_NO_RESET | GUC_NO_RESET_ALL | GUC_NOT_IN_SAMPLE |
           GUC_DISALLOW_IN_FILE},
-     &XactDeferrable,
+     &tcb->guc.XactDeferrable,
      false,
      check_transaction_deferrable,
      NULL,
@@ -1218,7 +1215,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"row_security", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Enables row security."),
       gettext_noop("When enabled, row security will be applied to all users.")},
-     &row_security,
+     &tcb->guc.row_security,
      true,
      NULL,
      NULL,
@@ -1251,7 +1248,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"default_with_oids", PGC_USERSET, COMPAT_OPTIONS_PREVIOUS,
       gettext_noop("WITH OIDS is no longer supported; this can only be false."),
       NULL, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE},
-     &default_with_oids,
+     &tcb->guc.default_with_oids,
      false,
      check_default_with_oids,
      NULL,
@@ -1345,7 +1342,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"allow_system_table_mods", PGC_SUSET, DEVELOPER_OPTIONS,
       gettext_noop("Allows modifications of the structure of system tables."),
       NULL, GUC_NOT_IN_SAMPLE},
-     &allowSystemTableMods,
+     &tcb->guc.allowSystemTableMods,
      false,
      NULL,
      NULL,
@@ -1356,7 +1353,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       gettext_noop("It does not prevent updating the indexes, so it is safe "
                    "to use.  The worst consequence is slowness."),
       GUC_NOT_IN_SAMPLE},
-     &IgnoreSystemIndexes,
+     &tcb->guc.IgnoreSystemIndexes,
      false,
      NULL,
      NULL,

@@ -40,6 +40,7 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
+#include "utils/control_block.h"
 
 static char *ChooseExtendedStatisticName(const char *name1, const char *name2,
                                          const char *label, Oid namespaceid);
@@ -139,7 +140,7 @@ ObjectAddress CreateStatistics(List *relids, CreateStatsStmt *stmt,
                      RelationGetRelationName(rel));
 
     /* Creating statistics on system catalogs is not allowed */
-    if (!allowSystemTableMods && IsSystemRelation(rel))
+    if (!tcb->guc.allowSystemTableMods && IsSystemRelation(rel))
       ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       errmsg("permission denied: \"%s\" is a system catalog",
                              RelationGetRelationName(rel))));

@@ -79,6 +79,7 @@
 #include "utils/rls.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
+#include "utils/control_block.h"
 
 /*
  * This is the head of the backend's list of "saved" CachedPlanSources (i.e.,
@@ -437,7 +438,7 @@ void CompleteCachedPlan(CachedPlanSource *plansource, List *querytree_list,
 
     /* Update RLS info as well. */
     plansource->rewriteRoleId = GetUserId();
-    plansource->rewriteRowSecurity = row_security;
+    plansource->rewriteRowSecurity = tcb->guc.row_security;
 
     /*
      * Also save the current search_path in the query_context.  (This
@@ -679,7 +680,7 @@ static List *RevalidateCachedQuery(CachedPlanSource *plansource,
    */
   if (plansource->is_valid && plansource->dependsOnRLS &&
       (plansource->rewriteRoleId != GetUserId() ||
-       plansource->rewriteRowSecurity != row_security))
+       plansource->rewriteRowSecurity != tcb->guc.row_security))
     plansource->is_valid = false;
 
   /*
@@ -837,7 +838,7 @@ static List *RevalidateCachedQuery(CachedPlanSource *plansource,
 
   /* Update RLS info as well. */
   plansource->rewriteRoleId = GetUserId();
-  plansource->rewriteRowSecurity = row_security;
+  plansource->rewriteRowSecurity = tcb->guc.row_security;
 
   /*
    * Also save the current search_path in the query_context.  (This should

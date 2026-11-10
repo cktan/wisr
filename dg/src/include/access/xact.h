@@ -45,7 +45,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool xact_is_sampled;
  * Xact is deferrable -- only meaningful (currently) for read only
  * SERIALIZABLE transactions
  */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool XactDeferrable;
 
 /*
  * Miscellaneous flag bits to record events which occur on the top level

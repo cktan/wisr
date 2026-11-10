@@ -38,6 +38,7 @@
 #include "utils/rls.h"
 #include "utils/ruleutils.h"
 #include "utils/snapmgr.h"
+#include "utils/control_block.h"
 
 /* ----------------------------------------------------------------
  *		general access method routines
@@ -300,7 +301,7 @@ SysScanDesc systable_beginscan(Relation heapRelation, Oid indexId, bool indexOK,
    * A catalog relation has no index: its access method makes the rows its
    * keys pass (SYSCATALOG.md).
    */
-  if (indexOK && !IgnoreSystemIndexes &&
+  if (indexOK && !tcb->guc.IgnoreSystemIndexes &&
       catrel_routine() != heapRelation->rd_tableam)
     irel = index_open(indexId, AccessShareLock);
   else
@@ -494,7 +495,7 @@ SysScanDesc systable_beginscan_ordered(Relation heapRelation,
   ScanKey idxkey;
 
   /* ... but we only throw a warning about violating IgnoreSystemIndexes */
-  if (IgnoreSystemIndexes)
+  if (tcb->guc.IgnoreSystemIndexes)
     elog(WARNING, "using index \"%s\" despite IgnoreSystemIndexes",
          RelationGetRelationName(indexRelation));
 

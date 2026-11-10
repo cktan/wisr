@@ -477,6 +477,11 @@ typedef struct tcb_guc_t {
   bool DefaultXactReadOnly = false;            /* xact.c */
   bool XactReadOnly;                           /* xact.c */
   bool DefaultXactDeferrable = false;          /* xact.c */
+  bool XactDeferrable;                         /* xact.c */
+  bool row_security;                           /* guc_tables.c */
+  bool default_with_oids = false;              /* guc_tables.c */
+  bool allowSystemTableMods = false;           /* globals.c */
+  bool IgnoreSystemIndexes = false;            /* miscinit.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

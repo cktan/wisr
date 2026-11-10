@@ -1857,7 +1857,7 @@ static const char *column_update_default(ColumnDef *col, Node *raw_default,
  * as heap_create_with_catalog() finds it before heap_create() refuses.
  */
 static void check_system_namespace(const char *relname, Oid nspoid) {
-  if (allowSystemTableMods ||
+  if (tcb->guc.allowSystemTableMods ||
       !(IsCatalogNamespace(nspoid) || IsToastNamespace(nspoid)))
     return;
   if (OidIsValid(get_relname_relid(relname, nspoid)))

@@ -78,8 +78,6 @@ static thread_local /*LOCAL*/ Latch LocalLatchData;
  * ----------------------------------------------------------------
  */
 
-thread_local /*LOCAL*/ bool IgnoreSystemIndexes = false;
-
 /* ----------------------------------------------------------------
  *	common process startup code
  * ----------------------------------------------------------------
