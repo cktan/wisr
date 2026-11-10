@@ -555,6 +555,11 @@ typedef struct tcb_guc_t {
   bool enable_geqo = false;                      /* allpaths.c */
   bool log_statement_stats = false;              /* guc_tables.c */
   int Geqo_effort;                               /* geqo_main.c */
+  int Geqo_pool_size;                            /* geqo_main.c */
+  int Geqo_generations;                          /* geqo_main.c */
+  double Geqo_seed;                              /* geqo_main.c */
+  int default_statistics_target = 100;           /* analyze.c */
+  char *session_preload_libraries_string = NULL; /* miscinit.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

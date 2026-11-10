@@ -44,9 +44,6 @@
 /*
  * Configuration options
  */
-thread_local /*LOCAL*/ int Geqo_pool_size;
-thread_local /*LOCAL*/ int Geqo_generations;
-thread_local /*LOCAL*/ double Geqo_seed;
 
 static int gimme_pool_size(int nr_rel);
 static int gimme_number_generations(int pool_size);
@@ -95,7 +92,7 @@ RelOptInfo *geqo(PlannerInfo *root, int number_of_rels, List *initial_rels) {
   private_.initial_rels = initial_rels;
 
   /* initialize private number generator */
-  geqo_set_seed(root, Geqo_seed);
+  geqo_set_seed(root, tcb->guc.Geqo_seed);
 
   /* set GA parameters */
   pool_size = gimme_pool_size(number_of_rels);
@@ -309,8 +306,8 @@ static int gimme_pool_size(int nr_rel) {
   int maxsize;
 
   /* Legal pool size *must* be at least 2, so ignore attempt to select 1 */
-  if (Geqo_pool_size >= 2)
-    return Geqo_pool_size;
+  if (tcb->guc.Geqo_pool_size >= 2)
+    return tcb->guc.Geqo_pool_size;
 
   size = pow(2.0, nr_rel + 1.0);
 
@@ -333,8 +330,8 @@ static int gimme_pool_size(int nr_rel) {
  * population before the run finishes.
  */
 static int gimme_number_generations(int pool_size) {
-  if (Geqo_generations > 0)
-    return Geqo_generations;
+  if (tcb->guc.Geqo_generations > 0)
+    return tcb->guc.Geqo_generations;
 
   return pool_size;
 }

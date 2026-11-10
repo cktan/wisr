@@ -6797,8 +6797,9 @@ static void analyze_table(Oid oid, const char *name, bool verbose,
   }
   /* An analyze in sm samples, and may be interrupted: so through waiting(). */
   rc = waiting([&] {
-    return skip_locked ? sm_tbl_tryanalyze(tbl, default_statistics_target)
-                       : sm_tbl_analyze(tbl, default_statistics_target);
+    return skip_locked
+               ? sm_tbl_tryanalyze(tbl, tcb->guc.default_statistics_target)
+               : sm_tbl_analyze(tbl, tcb->guc.default_statistics_target);
   });
   if (rc == 1) {
     relation_close(rel, NoLock);

@@ -34,6 +34,7 @@
 #include "utils/multirangetypes.h"
 #include "utils/rangetypes.h"
 #include "varatt.h"
+#include "utils/control_block.h"
 
 static int float8_qsort_cmp(const void *a1, const void *a2, void *arg);
 static int range_bound_qsort_cmp(const void *a1, const void *a2, void *arg);
@@ -52,7 +53,7 @@ Datum range_typanalyze(PG_FUNCTION_ARGS) {
   typcache = range_get_typcache(fcinfo, getBaseType(stats->attrtypid));
 
   if (stats->attstattarget < 0)
-    stats->attstattarget = default_statistics_target;
+    stats->attstattarget = tcb->guc.default_statistics_target;
 
   stats->compute_stats = compute_range_stats;
   stats->extra_data = typcache;
@@ -76,7 +77,7 @@ Datum multirange_typanalyze(PG_FUNCTION_ARGS) {
   typcache = multirange_get_typcache(fcinfo, getBaseType(stats->attrtypid));
 
   if (stats->attstattarget < 0)
-    stats->attstattarget = default_statistics_target;
+    stats->attstattarget = tcb->guc.default_statistics_target;
 
   stats->compute_stats = compute_range_stats;
   stats->extra_data = typcache;

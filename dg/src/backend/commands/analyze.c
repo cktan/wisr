@@ -52,12 +52,11 @@
 #include "utils/sortsupport.h"
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
+#include "utils/control_block.h"
 
 /* Per-index data for ANALYZE */
 
 /* Default statistics target (GUC parameter) */
-thread_local /*LOCAL*/ int default_statistics_target = 100;
-
 
 /*==========================================================================
  *
@@ -120,7 +119,7 @@ bool std_typanalyze(VacAttrStats *stats) {
 
   /* If the attstattarget column is negative, use the default value */
   if (stats->attstattarget < 0)
-    stats->attstattarget = default_statistics_target;
+    stats->attstattarget = tcb->guc.default_statistics_target;
 
   /* Look for default "<" and "=" operators for column's type */
   get_sort_group_operators(stats->attrtypid, false, false, false, &ltopr,

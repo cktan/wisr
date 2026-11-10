@@ -1367,7 +1367,6 @@ void ValidatePgVersion(const char *path) {
  * GUC variables: lists of library names to be preloaded at postmaster
  * start and at backend start
  */
-thread_local /*LOCAL*/ char *session_preload_libraries_string = NULL;
 
 /*
  * Whether shared_preload_libraries are being loaded, and are loaded:
@@ -1438,8 +1437,8 @@ void process_shared_preload_libraries(void) {
  * process any libraries that should be preloaded at backend start
  */
 void process_session_preload_libraries(void) {
-  load_libraries(session_preload_libraries_string, "session_preload_libraries",
-                 false);
+  load_libraries(tcb->guc.session_preload_libraries_string,
+                 "session_preload_libraries", false);
   load_libraries(tcb->guc.local_preload_libraries_string,
                  "local_preload_libraries", true);
 }
