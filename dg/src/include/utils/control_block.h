@@ -199,29 +199,30 @@ typedef struct pcb_t {
    * publish_postmaster_settings() once the main thread has read its
    * settings, before any session thread starts; ConfigFileName by
    * SelectConfigFiles().  Read these, never the GUC variables, which each
-   * thread has a copy of.  A string is malloc'd, never freed, or NULL.
+   * thread has a copy of.  A string is a literal or malloc'd, never freed, or
+   * NULL.
    */
   bool enable_bonjour = false;
   bool Trace_connection_negotiation = false;
   bool Logging_collector = false;
-  int MaxConnections = 0;
-  int SuperuserReservedConnections = 0;
+  int MaxConnections = 100;
+  int SuperuserReservedConnections = 3;
   int ReservedConnections = 0;
-  int NBuffers = 0;
-  int PostPortNumber = 0;
-  int Unix_socket_permissions = 0;
-  int max_files_per_process = 0;
+  int NBuffers = 16384;
+  int PostPortNumber = DEF_PGPORT;
+  int Unix_socket_permissions = 0777;
+  int max_files_per_process = 1000;
   /* elog.c: the bitmask of LOG_DESTINATION_*, parsed from the string below */
   int Log_destination = 1; /* LOG_DESTINATION_STDERR */
-  char *bonjour_name = nullptr;
-  char *shared_preload_libraries_string = nullptr;
-  char *event_source = nullptr;
-  char *Unix_socket_group = nullptr;
-  char *Unix_socket_directories = nullptr;
-  char *ListenAddresses = nullptr;
+  char *bonjour_name = "";
+  char *shared_preload_libraries_string = "";
+  char *event_source = DEFAULT_EVENT_SOURCE;
+  char *Unix_socket_group = "";
+  char *Unix_socket_directories = DEFAULT_PGSOCKET_DIR;
+  char *ListenAddresses = "localhost";
   char *external_pid_file = nullptr;
-  char *cluster_name = nullptr;
-  char *Log_destination_string = nullptr;
+  char *cluster_name = "";
+  char *Log_destination_string = "stderr";
   char *ConfigFileName = nullptr;
 
   /*
@@ -230,13 +231,21 @@ typedef struct pcb_t {
    * the GUC variables with the settings above; the file in each comment is
    * where the variable was defined.
    */
-  bool assert_enabled = false;    /* guc_tables.c */
-  bool integer_datetimes = false; /* guc_tables.c */
-  int max_function_args = 0;      /* guc_tables.c */
-  int max_index_keys = 0;         /* guc_tables.c */
-  int max_identifier_length = 0;  /* guc_tables.c */
-  int block_size = 0;             /* guc_tables.c */
-  char *ssl_library = nullptr;    /* be-secure.c */
+#ifdef USE_ASSERT_CHECKING
+  bool assert_enabled = true; /* guc_tables.c */
+#else
+  bool assert_enabled = false; /* guc_tables.c */
+#endif
+  bool integer_datetimes = true;               /* guc_tables.c */
+  int max_function_args = FUNC_MAX_ARGS;       /* guc_tables.c */
+  int max_index_keys = INDEX_MAX_KEYS;         /* guc_tables.c */
+  int max_identifier_length = NAMEDATALEN - 1; /* guc_tables.c */
+  int block_size = BLCKSZ;                     /* guc_tables.c */
+#ifdef USE_SSL
+  char *ssl_library = "OpenSSL"; /* be-secure.c */
+#else
+  char *ssl_library = ""; /* be-secure.c */
+#endif
 
   /*
    * -- the file logger's settings (PGC_SIGHUP) --
@@ -245,11 +254,12 @@ typedef struct pcb_t {
    * (publish_log_file_settings(), guc_tables.c), and logfile.c reads them
    * with it held. The file in each comment is where the variable was defined.
    */
-  std::string Log_directory;             /* logfile.c */
-  std::string Log_filename;              /* logfile.c, a strftime() pattern */
+  std::string Log_directory = "log"; /* logfile.c */
+  std::string Log_filename =
+      "postgresql-%Y-%m-%d_%H%M%S.log";  /* logfile.c, a strftime() pattern */
   int Log_file_mode = 0600;              /* logfile.c */
-  int Log_RotationAge = 0;               /* logfile.c, minutes */
-  int Log_RotationSize = 0;              /* logfile.c, kB */
+  int Log_RotationAge = 24 * 60;         /* logfile.c, minutes */
+  int Log_RotationSize = 10 * 1024;      /* logfile.c, kB */
   bool Log_truncate_on_rotation = false; /* logfile.c */
 
   /*
@@ -262,15 +272,23 @@ typedef struct pcb_t {
   bool EnableSSL = false;            /* postmaster.c, GUC "ssl" */
   bool send_abort_for_crash = false; /* postmaster.c */
   bool send_abort_for_kill = false;  /* postmaster.c */
-  std::string ssl_cert_file;         /* be-secure.c */
-  std::string ssl_key_file;          /* be-secure.c */
+  std::string ssl_cert_file = "server.crt";            /* be-secure.c */
+  std::string ssl_key_file = "server.key";             /* be-secure.c */
   std::string oauth_validator_libraries_string;        /* auth-oauth.c */
-  bool SSLPreferServerCiphers = false;                 /* be-secure.c */
+  bool SSLPreferServerCiphers = true;                  /* be-secure.c */
   std::string SSLCipherSuites;                         /* be-secure.c */
-  std::string SSLCipherList;                           /* be-secure.c */
+#ifdef USE_OPENSSL
+  std::string SSLCipherList = "HIGH:MEDIUM:+3DES:!aNULL"; /* be-secure.c */
+#else
+  std::string SSLCipherList = "none"; /* be-secure.c */
+#endif
   bool ssl_passphrase_command_supports_reload = false; /* be-secure.c */
   std::string ssl_passphrase_command;                  /* be-secure.c */
-  std::string SSLECDHCurve;          /* be-secure.c */
+#ifdef USE_SSL
+  std::string SSLECDHCurve = "X25519:prime256v1"; /* be-secure.c */
+#else
+  std::string SSLECDHCurve = "none"; /* be-secure.c */
+#endif
   std::string ssl_dh_params_file;    /* be-secure.c */
   std::string ssl_crl_dir;           /* be-secure.c */
   std::string ssl_crl_file;          /* be-secure.c */
@@ -403,7 +421,7 @@ typedef struct shmem_t {
   std::atomic<int> pre_auth_delay{0};
   /* be-secure-openssl.c: the protocol versions, in a hint about a failed
    * handshake */
-  std::atomic<int> ssl_min_protocol_version{0};
+  std::atomic<int> ssl_min_protocol_version{3}; /* PG_TLS1_2_VERSION */
   std::atomic<int> ssl_max_protocol_version{0};
   struct {
     /*
@@ -462,13 +480,13 @@ typedef struct tcb_guc_t {
   bool enable_partition_pruning = true;        /* costsize.c */
   bool enable_presorted_aggregate = true;      /* costsize.c */
   bool enable_async_append = true;             /* costsize.c */
-  bool enable_self_join_elimination;           /* analyzejoins.c */
+  bool enable_self_join_elimination = true;    /* analyzejoins.c */
   bool enable_group_by_reordering = true;      /* pathkeys.c */
   bool enable_distinct_reordering = true;      /* planner.c */
   bool Log_disconnections = false;             /* postgres.c */
   bool ExitOnAnyError = false;                 /* globals.c */
   bool log_duration = false;                   /* guc_tables.c */
-  bool Debug_copy_parse_plan_trees;            /* guc_tables.c */
+  bool Debug_copy_parse_plan_trees = false;    /* guc_tables.c */
   bool Debug_print_parse = false;              /* guc_tables.c */
   bool Debug_print_rewritten = false;          /* guc_tables.c */
   bool Debug_print_plan = false;               /* guc_tables.c */
@@ -478,18 +496,18 @@ typedef struct tcb_guc_t {
   bool track_io_timing = false;                /* buffile.c */
   bool update_process_title = true;            /* ps_status.c */
   bool DefaultXactReadOnly = false;            /* xact.c */
-  bool XactReadOnly;                           /* xact.c */
+  bool XactReadOnly = false;                   /* xact.c */
   bool DefaultXactDeferrable = false;          /* xact.c */
-  bool XactDeferrable;                         /* xact.c */
-  bool row_security;                           /* guc_tables.c */
+  bool XactDeferrable = false;                 /* xact.c */
+  bool row_security = true;                    /* guc_tables.c */
   bool default_with_oids = false;              /* guc_tables.c */
   bool allowSystemTableMods = false;           /* globals.c */
   bool IgnoreSystemIndexes = false;            /* miscinit.c */
   int PostAuthDelay = 0;                       /* postgres.c */
-  int from_collapse_limit;                     /* initsplan.c */
-  int join_collapse_limit;                     /* initsplan.c */
-  int geqo_threshold;                          /* allpaths.c */
-  double Geqo_selection_bias;                  /* geqo_main.c */
+  int from_collapse_limit = 8;                 /* initsplan.c */
+  int join_collapse_limit = 8;                 /* initsplan.c */
+  int geqo_threshold = 12;                     /* allpaths.c */
+  double Geqo_selection_bias = 2.0;            /* geqo_main.c */
   int work_mem = 4096;                         /* globals.c */
   int maintenance_work_mem = 65536;            /* globals.c */
   int max_stack_depth = 100;                   /* stack_depth.c */
@@ -505,10 +523,10 @@ typedef struct tcb_guc_t {
   int log_min_duration_statement = -1;         /* guc_tables.c */
   int log_parameter_max_length = -1;           /* guc_tables.c */
   int log_parameter_max_length_on_error = 0;   /* guc_tables.c */
-  int tcp_keepalives_idle;                     /* guc_tables.c */
-  int tcp_keepalives_interval;                 /* guc_tables.c */
-  int tcp_keepalives_count;                    /* guc_tables.c */
-  int ssl_renegotiation_limit;                 /* guc_tables.c */
+  int tcp_keepalives_idle = 0;                 /* guc_tables.c */
+  int tcp_keepalives_interval = 0;             /* guc_tables.c */
+  int tcp_keepalives_count = 0;                /* guc_tables.c */
+  int ssl_renegotiation_limit = 0;             /* guc_tables.c */
   int effective_cache_size = 524288;           /* costsize.c */
   int log_temp_files = -1;                     /* guc_tables.c */
   int debug_discard_caches = 0;                /* inval.c */
@@ -525,49 +543,49 @@ typedef struct tcb_guc_t {
   double VacuumCostDelay = 0;                  /* globals.c */
   double log_statement_sample_rate = 1.0;      /* guc_tables.c */
   double log_xact_sample_rate = 0;             /* guc_tables.c */
-  double phony_random_seed;                    /* guc_tables.c */
-  char *client_encoding_string;                /* guc_tables.c */
-  char *datestyle_string;                      /* guc_tables.c */
-  char *default_table_access_method;           /* tableam.c */
+  double phony_random_seed = 0.0;              /* guc_tables.c */
+  char *client_encoding_string = "SQL_ASCII";  /* guc_tables.c */
+  char *datestyle_string = "ISO, MDY";         /* guc_tables.c */
+  char *default_table_access_method = "heap";  /* tableam.c */
   char *createrole_self_grant = "";            /* user.c */
-  char *Dynamic_library_path;                  /* dfmgr.c */
-  char *Extension_control_path;                /* extension.c */
-  char *locale_messages;                       /* pg_locale.c */
-  char *locale_monetary;                       /* pg_locale.c */
-  char *locale_numeric;                        /* pg_locale.c */
-  char *locale_time;                           /* pg_locale.c */
-  char *local_preload_libraries_string = NULL; /* miscinit.c */
-  char *namespace_search_path = NULL;          /* namespace.c */
-  char *role_string;                           /* guc_tables.c */
-  char *session_authorization_string;          /* guc_tables.c */
-  char *timezone_string;                       /* guc_tables.c */
-  char *timezone_abbreviations_string;         /* guc_tables.c */
-  char *backtrace_functions;                   /* guc_tables.c */
-  char *log_connections_string = NULL;         /* backend_startup.c */
-  int compute_query_id;                        /* queryjumblefuncs.c */
-  int default_toast_compression;               /* toast_compression.c */
+  char *Dynamic_library_path = "$libdir";      /* dfmgr.c */
+  char *Extension_control_path = "$system";    /* extension.c */
+  char *locale_messages = "";                  /* pg_locale.c */
+  char *locale_monetary = "C";                 /* pg_locale.c */
+  char *locale_numeric = "C";                  /* pg_locale.c */
+  char *locale_time = "C";                     /* pg_locale.c */
+  char *local_preload_libraries_string = "";   /* miscinit.c */
+  char *namespace_search_path = "\"$user\", public"; /* namespace.c */
+  char *role_string = "none";                        /* guc_tables.c */
+  char *session_authorization_string = NULL;         /* guc_tables.c */
+  char *timezone_string = "GMT";                     /* guc_tables.c */
+  char *timezone_abbreviations_string = NULL;        /* guc_tables.c */
+  char *backtrace_functions = "";                    /* guc_tables.c */
+  char *log_connections_string = "";                 /* backend_startup.c */
+  int compute_query_id = 2;                          /* queryjumblefuncs.c */
+  int default_toast_compression = 'p';               /* toast_compression.c */
   int DefaultXactIsoLevel = 1;                 /* xact.c */
   int XactIsoLevel = 1;                        /* xact.c */
   int icu_validation_level = 19;               /* pg_locale.c */
-  int Log_error_verbosity;                     /* elog.c */
-  int log_statement;                           /* postgres.c */
-  int plan_cache_mode;                         /* plancache.c */
-  char *restrict_nonsystem_relation_kind_string; /* guc_tables.c */
-  bool Debug_write_read_parse_plan_trees;        /* guc_tables.c */
-  bool Debug_raw_expression_coverage_test;       /* guc_tables.c */
-  bool enable_geqo = false;                      /* allpaths.c */
+  int Log_error_verbosity = 1;                 /* elog.c */
+  int log_statement = 0;                       /* postgres.c */
+  int plan_cache_mode = 0;                     /* plancache.c */
+  char *restrict_nonsystem_relation_kind_string = ""; /* guc_tables.c */
+  bool Debug_write_read_parse_plan_trees = false;     /* guc_tables.c */
+  bool Debug_raw_expression_coverage_test = false;    /* guc_tables.c */
+  bool enable_geqo = true;                            /* allpaths.c */
   bool log_statement_stats = false;              /* guc_tables.c */
-  int Geqo_effort;                               /* geqo_main.c */
-  int Geqo_pool_size;                            /* geqo_main.c */
-  int Geqo_generations;                          /* geqo_main.c */
-  double Geqo_seed;                              /* geqo_main.c */
+  int Geqo_effort = 5;                           /* geqo_main.c */
+  int Geqo_pool_size = 0;                        /* geqo_main.c */
+  int Geqo_generations = 0;                      /* geqo_main.c */
+  double Geqo_seed = 0.0;                        /* geqo_main.c */
   int default_statistics_target = 100;           /* analyze.c */
-  char *session_preload_libraries_string = NULL; /* miscinit.c */
-  int xmlbinary;                                 /* xml.c */
-  int Password_encryption;                       /* user.c */
+  char *session_preload_libraries_string = "";   /* miscinit.c */
+  int xmlbinary = 0;                             /* xml.c */
+  int Password_encryption = 2;                   /* user.c */
   bool optimize_bounded_sort = true;             /* tuplesort.c */
-  char *application_name;                        /* guc_tables.c */
-  int tcp_user_timeout;                          /* guc_tables.c */
+  char *application_name = "";                   /* guc_tables.c */
+  int tcp_user_timeout = 0;                      /* guc_tables.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

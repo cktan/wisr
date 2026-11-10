@@ -254,11 +254,12 @@ or not. This keeps one variable's move small.
 - **Group 3 is mostly done.** About 130 settings read
   `tcb->guc.name`. The table binds them as the thread builds it
   (the table's `&tcb->guc.name`, as `tcb_init()` runs first).
-  **This part must be redone.** Many fields start at zero and
-  `check_GUC_init()` was relaxed to accept zero for an enum.
-  Both are wrong. Each field must start with the initializer of
-  the old variable (step 1 of section 5), and the relaxed
-  enum check in `guc.c` must be reverted.
+  Each field starts with its boot value, as step 1 of section 5
+  says, in `tcb_guc_t`, `pcb_t` and `shmem_t`. The enum check
+  in `check_GUC_init()` is as it is on `main`. That check
+  accepts zero for a bool, int, real and string, so it does not
+  find a field that starts at zero by mistake. Compare each new
+  field with its boot value in the table.
 - **Left as a plain `thread_local`:**
   - `escape_string_warning`, `standard_conforming_strings`,
     `backslash_quote`, `bytea_output`, `constraint_exclusion`,

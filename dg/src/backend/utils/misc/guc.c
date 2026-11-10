@@ -1316,8 +1316,7 @@ static bool check_GUC_init(struct config_generic *gconf) {
   case PGC_ENUM: {
     struct config_enum *conf = (struct config_enum *)gconf;
 
-    /* As for the others, zero is a variable not yet set, in tcb->guc. */
-    if (*conf->variable != 0 && *conf->variable != conf->boot_val) {
+    if (*conf->variable != conf->boot_val) {
       elog(LOG, "GUC (PGC_ENUM) %s, boot_val=%d, C-var=%d", conf->gen.name,
            conf->boot_val, *conf->variable);
       return false;
