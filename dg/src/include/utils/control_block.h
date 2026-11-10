@@ -261,6 +261,7 @@ typedef struct pcb_t {
   bool send_abort_for_kill = false;  /* postmaster.c */
   std::string ssl_cert_file;         /* be-secure.c */
   std::string ssl_key_file;          /* be-secure.c */
+  std::string oauth_validator_libraries_string;        /* auth-oauth.c */
   bool SSLPreferServerCiphers = false;                 /* be-secure.c */
   std::string SSLCipherSuites;                         /* be-secure.c */
   std::string SSLCipherList;                           /* be-secure.c */
@@ -395,6 +396,12 @@ typedef struct shmem_t {
   std::atomic<int> authentication_timeout{60};
   /* guc.c: ALTER SYSTEM */
   std::atomic<bool> allow_alter_system{true};
+  /* backend_startup.c: seconds a new session sleeps before authentication */
+  std::atomic<int> pre_auth_delay{0};
+  /* be-secure-openssl.c: the protocol versions, in a hint about a failed
+   * handshake */
+  std::atomic<int> ssl_min_protocol_version{0};
+  std::atomic<int> ssl_max_protocol_version{0};
   struct {
     /*
      * guc_tables.c: log_line_prefix (PGC_SIGHUP), which elog.c reads in

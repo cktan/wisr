@@ -41,9 +41,6 @@
 
 /* GUC variable: if false, prefer client ciphers */
 
-thread_local /*LOCAL*/ int ssl_min_protocol_version = PG_TLS1_2_VERSION;
-thread_local /*LOCAL*/ int ssl_max_protocol_version = PG_TLS_ANY;
-
 /* ------------------------------------------------------------ */
 /*			 Procedures common to all secure sessions
  */

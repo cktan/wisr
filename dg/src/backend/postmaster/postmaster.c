@@ -197,8 +197,6 @@ static inline bool btmask_contains(BackendTypeMask mask, BackendType t) {
 
 /* still more option variables */
 
-thread_local /*LOCAL*/ int PreAuthDelay = 0;
-
 /*
  * When terminating child processes after fatal errors, like a crash of a
  * child process, we normally send SIGQUIT -- and most other comments in this

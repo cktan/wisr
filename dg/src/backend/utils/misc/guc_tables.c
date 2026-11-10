@@ -429,6 +429,10 @@ static thread_local /*LOCAL*/ bool EnableSSL = false;
 static thread_local /*LOCAL*/ bool send_abort_for_crash = false;
 static thread_local /*LOCAL*/ bool send_abort_for_kill = false;
 static thread_local /*LOCAL*/ char *ssl_cert_file;
+/* postmaster.c, be-secure.c: sessions read shmem, not these variables */
+static thread_local /*LOCAL*/ int PreAuthDelay = 0;
+static thread_local /*LOCAL*/ int ssl_min_protocol_version = PG_TLS1_2_VERSION;
+static thread_local /*LOCAL*/ int ssl_max_protocol_version = PG_TLS_ANY;
 static thread_local /*LOCAL*/ char *ssl_key_file;
 static thread_local /*LOCAL*/ char *ssl_ca_file;
 static thread_local /*LOCAL*/ char *ssl_crl_file;
@@ -440,6 +444,7 @@ static thread_local /*LOCAL*/ bool ssl_passphrase_command_supports_reload;
 static thread_local /*LOCAL*/ char *SSLCipherList;
 static thread_local /*LOCAL*/ char *SSLCipherSuites;
 static thread_local /*LOCAL*/ bool SSLPreferServerCiphers;
+static thread_local /*LOCAL*/ char *oauth_validator_libraries_string;
 
 /* A string setting as a std::string, "" if it has no value. */
 static std::string setting_string(const char *value) {
@@ -470,6 +475,8 @@ static void publish_postmaster_reload_settings(void) {
   b->SSLCipherList = setting_string(SSLCipherList);
   b->SSLCipherSuites = setting_string(SSLCipherSuites);
   b->SSLPreferServerCiphers = SSLPreferServerCiphers;
+  b->oauth_validator_libraries_string =
+      setting_string(oauth_validator_libraries_string);
 }
 
 /*
@@ -487,6 +494,11 @@ void publish_shared_settings(void) {
                                       std::memory_order_relaxed);
   shmem->allow_alter_system.store(AllowAlterSystem,
                                   std::memory_order_relaxed);
+  shmem->pre_auth_delay.store(PreAuthDelay, std::memory_order_relaxed);
+  shmem->ssl_min_protocol_version.store(ssl_min_protocol_version,
+                                        std::memory_order_relaxed);
+  shmem->ssl_max_protocol_version.store(ssl_max_protocol_version,
+                                        std::memory_order_relaxed);
 
   /* Allocate before the lock: the lock is held only to swap the pointer. */
   std::shared_ptr<const std::string> prefix =

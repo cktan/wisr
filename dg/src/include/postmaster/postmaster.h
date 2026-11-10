@@ -45,7 +45,6 @@ typedef struct {
 
 /* GUC options */
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool ClientAuthInProgress;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int PreAuthDelay;
 
 pg_noreturn extern void PostmasterMain(int argc, char *argv[]);
 extern void InitProcessGlobals(void);

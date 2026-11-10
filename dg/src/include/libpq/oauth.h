@@ -18,9 +18,6 @@
 #include "libpq/libpq-be.h"
 #include "libpq/sasl.h"
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT char
-    *oauth_validator_libraries_string;
-
 typedef struct ValidatorModuleState {
   /* Holds the server's PG_VERSION_NUM. Reserved for future extensibility. */
   int sversion;

@@ -66,6 +66,16 @@ static BIO_METHOD *port_bio_method(void);
 static int ssl_set_port_bio(Port *port);
 
 static DH *load_dh_file(const char *filename, bool isServerStart);
+
+/* The ssl_min_protocol_version setting, as the postmaster last published. */
+static int tls_min_protocol_version(void) {
+  return shmem->ssl_min_protocol_version.load(std::memory_order_relaxed);
+}
+
+/* The ssl_max_protocol_version setting, as the postmaster last published. */
+static int tls_max_protocol_version(void) {
+  return shmem->ssl_max_protocol_version.load(std::memory_order_relaxed);
+}
 static DH *load_dh_buffer(const char *buffer, size_t len);
 static int ssl_external_passwd_cb(char *buf, int size, int rwflag,
                                   void *userdata);
@@ -199,8 +209,8 @@ int be_tls_init(bool isServerStart) {
     goto error;
   }
 
-  if (ssl_min_protocol_version) {
-    ssl_ver_min = ssl_protocol_version_to_openssl(ssl_min_protocol_version);
+  if (tls_min_protocol_version()) {
+    ssl_ver_min = ssl_protocol_version_to_openssl(tls_min_protocol_version());
 
     if (ssl_ver_min == -1) {
       ereport(
@@ -220,8 +230,8 @@ int be_tls_init(bool isServerStart) {
     }
   }
 
-  if (ssl_max_protocol_version) {
-    ssl_ver_max = ssl_protocol_version_to_openssl(ssl_max_protocol_version);
+  if (tls_max_protocol_version()) {
+    ssl_ver_max = ssl_protocol_version_to_openssl(tls_max_protocol_version());
 
     if (ssl_ver_max == -1) {
       ereport(
@@ -242,7 +252,7 @@ int be_tls_init(bool isServerStart) {
   }
 
   /* Check compatibility of min/max protocols */
-  if (ssl_min_protocol_version && ssl_max_protocol_version) {
+  if (tls_min_protocol_version() && tls_max_protocol_version()) {
     /*
      * No need to check for invalid values (-1) for each protocol number
      * as the code above would have already generated an error.
@@ -605,12 +615,14 @@ aloop:
                ? errhint(
                      "This may indicate that the client does not support any "
                      "SSL protocol version between %s and %s.",
-                     ssl_min_protocol_version ? ssl_protocol_version_to_string(
-                                                    ssl_min_protocol_version)
-                                              : MIN_OPENSSL_TLS_VERSION,
-                     ssl_max_protocol_version ? ssl_protocol_version_to_string(
-                                                    ssl_max_protocol_version)
-                                              : MAX_OPENSSL_TLS_VERSION)
+                     tls_min_protocol_version()
+                         ? ssl_protocol_version_to_string(
+                               tls_min_protocol_version())
+                         : MIN_OPENSSL_TLS_VERSION,
+                     tls_max_protocol_version()
+                         ? ssl_protocol_version_to_string(
+                               tls_max_protocol_version())
+                         : MAX_OPENSSL_TLS_VERSION)
                : 0));
       cert_errdetail = NULL;
       break;
