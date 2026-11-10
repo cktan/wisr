@@ -1110,7 +1110,7 @@ static Plan *create_append_plan(PlannerInfo *root, AppendPath *best_path,
   }
 
   /* If appropriate, consider async append */
-  consider_async = (enable_async_append && pathkeys == NIL &&
+  consider_async = (tcb->guc.enable_async_append && pathkeys == NIL &&
                     list_length(best_path->subpaths) > 1);
 
   /* Build the plan for each child */
@@ -1186,7 +1186,7 @@ static Plan *create_append_plan(PlannerInfo *root, AppendPath *best_path,
    * pruning during execution.  Gather information needed by the executor to
    * do partition pruning.
    */
-  if (enable_partition_pruning) {
+  if (tcb->guc.enable_partition_pruning) {
     List *prunequal;
 
     prunequal = extract_actual_clauses(rel->baserestrictinfo, false);
@@ -1326,7 +1326,7 @@ static Plan *create_merge_append_plan(PlannerInfo *root,
    * pruning during execution.  Gather information needed by the executor to
    * do partition pruning.
    */
-  if (enable_partition_pruning) {
+  if (tcb->guc.enable_partition_pruning) {
     List *prunequal;
 
     prunequal = extract_actual_clauses(rel->baserestrictinfo, false);

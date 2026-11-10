@@ -456,6 +456,11 @@ typedef struct tcb_guc_t {
   bool enable_hashjoin = true;         /* costsize.c */
   bool enable_partitionwise_join = false;      /* costsize.c */
   bool enable_partitionwise_aggregate = false; /* costsize.c */
+  bool enable_partition_pruning = true;        /* costsize.c */
+  bool enable_presorted_aggregate = true;      /* costsize.c */
+  bool enable_async_append = true;             /* costsize.c */
+  bool enable_self_join_elimination;           /* analyzejoins.c */
+  bool enable_group_by_reordering = true;      /* pathkeys.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

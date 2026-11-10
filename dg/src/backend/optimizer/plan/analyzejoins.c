@@ -41,6 +41,7 @@
 #include "parser/parse_relation.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/lsyscache.h"
+#include "utils/control_block.h"
 
 /*
  * One element of the list passed to query_is_distinct_for_with_collations().
@@ -72,8 +73,6 @@ typedef struct {
   Oid reloid;
   Oid useroid;
 } SelfJoinCandidate;
-
-thread_local /*LOCAL*/ bool enable_self_join_elimination;
 
 /* local functions */
 static bool join_is_removable(PlannerInfo *root, SpecialJoinInfo *sjinfo);
@@ -1979,7 +1978,7 @@ static int self_join_candidates_cmp(const void *a, const void *b) {
  */
 bool remove_useless_self_joins(PlannerInfo *root, List *joinlist) {
   /* Skip if SJE is disabled, or if the joinlist has less than 2 members. */
-  if (!enable_self_join_elimination || joinlist == NIL ||
+  if (!tcb->guc.enable_self_join_elimination || joinlist == NIL ||
       (list_length(joinlist) == 1 && !IsA(linitial(joinlist), List)))
     return false;
 

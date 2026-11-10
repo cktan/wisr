@@ -2883,7 +2883,7 @@ static void adjust_group_pathkeys_for_groupagg(PlannerInfo *root) {
   Assert(root->numOrderedAggs > 0);
 
   /* Do nothing if disabled */
-  if (!enable_presorted_aggregate)
+  if (!tcb->guc.enable_presorted_aggregate)
     return;
 
   /*

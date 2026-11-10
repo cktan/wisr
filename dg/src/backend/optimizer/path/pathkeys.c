@@ -32,7 +32,6 @@
 #include "utils/control_block.h"
 
 /* Consider reordering of GROUP BY keys? */
-thread_local /*LOCAL*/ bool enable_group_by_reordering = true;
 
 static bool pathkey_is_redundant(PathKey *new_pathkey, List *pathkeys);
 static bool matches_boolean_partition_clause(RestrictInfo *rinfo,
@@ -433,7 +432,7 @@ List *get_useful_group_keys_orderings(PlannerInfo *root, Path *path) {
    * not, we produce only the order specified in the query, i.e. the
    * optimization is effectively disabled.
    */
-  if (!enable_group_by_reordering)
+  if (!tcb->guc.enable_group_by_reordering)
     return infos;
 
   /*

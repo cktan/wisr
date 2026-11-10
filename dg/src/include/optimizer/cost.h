@@ -45,9 +45,6 @@ typedef enum {
 
 /* parameter variables and flags (see also optimizer.h) */
 extern thread_local /*LOCAL*/ PGDLLIMPORT Cost disable_cost;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_partition_pruning;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_presorted_aggregate;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_async_append;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int constraint_exclusion;
 
 extern double index_pages_fetched(double tuples_fetched, BlockNumber pages,

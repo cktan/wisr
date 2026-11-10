@@ -139,10 +139,6 @@ thread_local /*LOCAL*/ int effective_cache_size = DEFAULT_EFFECTIVE_CACHE_SIZE;
 
 thread_local /*LOCAL*/ Cost disable_cost = 1.0e10;
 
-thread_local /*LOCAL*/ bool enable_partition_pruning = true;
-thread_local /*LOCAL*/ bool enable_presorted_aggregate = true;
-thread_local /*LOCAL*/ bool enable_async_append = true;
-
 typedef struct {
   PlannerInfo *root;
   QualCost total;

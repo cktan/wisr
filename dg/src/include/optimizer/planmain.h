@@ -22,7 +22,6 @@
 /* GUC parameters */
 #define DEFAULT_CURSOR_TUPLE_FRACTION 0.1
 extern thread_local /*LOCAL*/ PGDLLIMPORT double cursor_tuple_fraction;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_self_join_elimination;
 
 /* query_planner callback to compute query_pathkeys */
 typedef void (*query_pathkeys_callback)(PlannerInfo *root, void *extra);
