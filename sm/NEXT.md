@@ -276,7 +276,28 @@ Low priority:
    Nothing is moved out of it just so the file goes
    ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) steps 232 to 236).
    It is 2,893 lines.
-3. **GUC** replace it with something simpler.
+3. **GUC** replace it with something simpler. One part of it: the
+   table of settings by name, `guc_hashtab` in
+   `../dg/src/backend/utils/misc/guc.c`, is a dynahash `HTAB`
+   that each thread builds; it could be a `std::unordered_map`.
+   Not worth doing alone. When it is done:
+   - **No static initialiser**: a `thread_local` map fails
+     `cxx_thread_local.py --check`. Keep the map in `tcb_t` as a
+     `std::unique_ptr` ([`../dg/CODE.md`](../dg/CODE.md) §3).
+   - **`std::bad_alloc` is not `pg_error_t`**: a session thread
+     catches only `proc_exit_t`, so a failed insert would end
+     the process. An insert catches it and reports "out of
+     memory", as `add_guc_variable()` does now. A placeholder
+     (`SET ext.x = ...`) inserts at a client's request.
+   - **Remove during a scan**: `MarkGUCPrefixReserved()` removes
+     placeholders as it walks the table; it uses
+     `it = map.erase(it)`.
+   - **Names ignore case**: the hash and the comparison are
+     those of `guc_name_hash()` and `guc_name_match()`.
+   - **A key is `gucvar->name`**: erase a placeholder before its
+     name is freed.
+   - The map's nodes are not in `GUCMemoryContext`, so
+     `pg_backend_memory_contexts` does not show them.
 
 ### Feature gaps against PostgreSQL
 
