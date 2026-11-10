@@ -80,12 +80,13 @@ regression files are taken out for it (`test/pgregress`,
   functions answer a table's or an index's bytes in sm
   (steps 120, 121).
 - **Tables are clustered on their primary key** — differs. A
-  SELECT with no ORDER BY reads in key order; a primary key is
-  capped at 1024 encoded bytes; `CLUSTER` does nothing, every
-  table being clustered ([`../sm/CLUSTER.md`](../sm/CLUSTER.md)).
-  A primary key
-  index takes no bytes of its own, its entries being the rows:
-  its size is 0 (step 298).
+  sequential scan reads rows in key order, but a query's result
+  has no order without ORDER BY: the plan can use an index, a
+  join or another operator. A primary key is capped at 1024
+  encoded bytes; `CLUSTER` does nothing, every table being
+  clustered ([`../sm/CLUSTER.md`](../sm/CLUSTER.md)). A primary
+  key index takes no bytes of its own, its entries being the
+  rows: its size is 0 (step 298).
 - **VACUUM, CLUSTER, REINDEX, CHECKPOINT** — differs. VACUUM
   compacts each table's store (step 284); CLUSTER and REINDEX
   warn and do nothing (step 64); CHECKPOINT does nothing
