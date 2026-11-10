@@ -3,7 +3,7 @@
 Status: built for CREATE TABLE
 ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 415); ADD COLUMN
 of one is refused (§6). §6 lists the choices taken while the user
-was away ([`../QUESTION.md`](../QUESTION.md)).
+was away.
 [`CHECK.md`](CHECK.md) is the pattern this follows: sm3 keeps the
 expression and the columns it reads, the host computes the
 values.

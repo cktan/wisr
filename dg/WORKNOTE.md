@@ -12549,8 +12549,6 @@ by sm3 and checked by PostgreSQL's executor.
 
 ## Step 412: ALTER COLUMN SET/DROP NOT NULL and SET/DROP DEFAULT
 
-The decisions are in [`../QUESTION.md`](../QUESTION.md).
-
 - **sm3** (`drop_not_null()`, `set_default()` in
   `../sm/sm3/src/ddl/ddl.cc`): each changes the column's record
   alone, under the table's lock X. DROP NOT NULL of a primary

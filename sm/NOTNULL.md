@@ -1,8 +1,7 @@
 # NOTNULL — NOT NULL constraints by name
 
 Status: built ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step
-410). §6 lists the choices taken while the user was away
-([`../QUESTION.md`](../QUESTION.md)).
+410). §6 lists the choices taken while the user was away.
 
 ---
 
