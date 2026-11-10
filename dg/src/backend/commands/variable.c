@@ -851,7 +851,7 @@ const char *show_role(void) {
     return "none";
 
   /* Otherwise we can just use the GUC string */
-  return role_string ? role_string : "none";
+  return tcb->guc.role_string ? tcb->guc.role_string : "none";
 }
 
 /*

@@ -343,9 +343,7 @@ static thread_local /*LOCAL*/ char *restrict_nonsystem_relation_kind_string;
 #endif
 static thread_local /*LOCAL*/ int syslog_facility = DEFAULT_SYSLOG_FACILITY;
 
-static thread_local /*LOCAL*/ char *timezone_string;
 static thread_local /*LOCAL*/ char *log_timezone_string;
-static thread_local /*LOCAL*/ char *timezone_abbreviations_string;
 static thread_local /*LOCAL*/ char *data_directory;
 static thread_local /*LOCAL*/ char *ConfigFileName;
 static thread_local /*LOCAL*/ bool enable_bonjour = false;
@@ -363,7 +361,6 @@ static thread_local /*LOCAL*/ char *shared_preload_libraries_string = NULL;
 static thread_local /*LOCAL*/ char *Unix_socket_group;
 static thread_local /*LOCAL*/ char *Unix_socket_directories;
 static thread_local /*LOCAL*/ char *ListenAddresses;
-static thread_local /*LOCAL*/ char *session_authorization_string;
 #ifdef USE_ASSERT_CHECKING
 #define DEFAULT_ASSERT_ENABLED true
 #else
@@ -564,7 +561,6 @@ void publish_postmaster_settings(void) {
 }
 
 /* should be static, but commands/variable.c needs to get at this */
-thread_local /*LOCAL*/ char *role_string;
 
 /*
  * Displayable names for context types (enum GucContext)
@@ -2438,7 +2434,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       NULL,
       GUC_IS_NAME | GUC_NO_SHOW_ALL | GUC_NO_RESET_ALL | GUC_NOT_IN_SAMPLE |
           GUC_DISALLOW_IN_FILE | GUC_NOT_WHILE_SEC_REST},
-     &role_string,
+     &tcb->guc.role_string,
      "none",
      check_role,
      assign_role,
@@ -2449,7 +2445,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       gettext_noop("Sets the session user name."), NULL,
       GUC_IS_NAME | GUC_REPORT | GUC_NO_SHOW_ALL | GUC_NO_RESET_ALL |
           GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE | GUC_NOT_WHILE_SEC_REST},
-     &session_authorization_string,
+     &tcb->guc.session_authorization_string,
      NULL,
      check_session_authorization,
      assign_session_authorization,
@@ -2510,14 +2506,14 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       gettext_noop(
           "Sets the time zone for displaying and interpreting time stamps."),
       NULL, GUC_REPORT},
-     &timezone_string,
+     &tcb->guc.timezone_string,
      "GMT",
      check_timezone,
      assign_timezone,
      show_timezone},
     {{"timezone_abbreviations", PGC_USERSET, CLIENT_CONN_LOCALE,
       gettext_noop("Selects a file of time zone abbreviations."), NULL},
-     &timezone_abbreviations_string,
+     &tcb->guc.timezone_abbreviations_string,
      NULL,
      check_timezone_abbreviations,
      assign_timezone_abbreviations,

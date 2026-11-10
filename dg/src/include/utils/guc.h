@@ -261,7 +261,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT char *application_name;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT int tcp_user_timeout;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *role_string;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool trace_sort;
 
 #ifdef DEBUG_BOUNDED_SORT

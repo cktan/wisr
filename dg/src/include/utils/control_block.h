@@ -535,6 +535,10 @@ typedef struct tcb_guc_t {
   char *locale_time;                           /* pg_locale.c */
   char *local_preload_libraries_string = NULL; /* miscinit.c */
   char *namespace_search_path = NULL;          /* namespace.c */
+  char *role_string;                           /* guc_tables.c */
+  char *session_authorization_string;          /* guc_tables.c */
+  char *timezone_string;                       /* guc_tables.c */
+  char *timezone_abbreviations_string;         /* guc_tables.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 
