@@ -393,4 +393,3 @@ Much of the work is removing what digres does not need.
 - **Commit messages**: a short subject in the style
   `dg: the syslogger is gone`, then bullets.
 - **Commit only when asked**, and push only when asked.
-- **Never run `sprite-env checkpoints`.**

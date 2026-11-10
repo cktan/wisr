@@ -59,8 +59,8 @@ PostgreSQL 18.
   [`sm/sm2/SM2_DESIGN.md`](sm/sm2/SM2_DESIGN.md),
   [`sm/sm3/SM3_DESIGN.md`](sm/sm3/SM3_DESIGN.md), and
   [`sm/sm0/README.md`](sm/sm0/README.md).
-- **`sm/rel/`** drives `sm.h` from scripts, the stack's tests
-  without SQL.
+- **`sm/rel/`** is a Lisp-like scripting language, Janet, that
+  drives `sm.h`. It tests the stack without SQL.
 
 Start with [`sm/README.md`](sm/README.md). Before changing code,
 read [`CLAUDE.md`](CLAUDE.md), then [`sm/CODE.md`](sm/CODE.md)
