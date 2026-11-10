@@ -50,9 +50,6 @@
  *
  * If you change these, update backend/utils/misc/postgresql.conf.sample
  */
-extern thread_local /*LOCAL*/ PGDLLIMPORT int
-    Geqo_effort; /* 1 .. 10, knob for adjustment
-                  * of defaults */
 
 #define DEFAULT_GEQO_EFFORT 5
 #define MIN_GEQO_EFFORT 1

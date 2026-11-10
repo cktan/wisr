@@ -242,13 +242,7 @@ typedef enum {
 /* GUC vars that are actually defined in guc_tables.c, rather than elsewhere */
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool
-    Debug_write_read_parse_plan_trees;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool
-    Debug_raw_expression_coverage_test;
 #endif
-
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_statement_stats;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool current_role_is_superuser;
 

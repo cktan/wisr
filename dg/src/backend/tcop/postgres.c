@@ -571,7 +571,7 @@ List *pg_parse_query(const char *query_string) {
    * Optional debugging check: pass raw parsetrees through
    * outfuncs/readfuncs
    */
-  if (Debug_write_read_parse_plan_trees) {
+  if (tcb->guc.Debug_write_read_parse_plan_trees) {
     char *str = nodeToStringWithLocations(raw_parsetree_list);
     List *new_list = (List *)stringToNodeWithLocations(str);
 
@@ -759,7 +759,7 @@ List *pg_rewrite_query(Query *query) {
   }
 
   /* Optional debugging check: pass querytree through outfuncs/readfuncs */
-  if (Debug_write_read_parse_plan_trees) {
+  if (tcb->guc.Debug_write_read_parse_plan_trees) {
     List *new_list = NIL;
     ListCell *lc;
 
@@ -842,7 +842,7 @@ PlannedStmt *pg_plan_query(Query *querytree, const char *query_string,
   }
 
   /* Optional debugging check: pass plan tree through outfuncs/readfuncs */
-  if (Debug_write_read_parse_plan_trees) {
+  if (tcb->guc.Debug_write_read_parse_plan_trees) {
     char *str;
     PlannedStmt *new_plan;
 
@@ -922,7 +922,7 @@ static void exec_simple_query(const char *query_string) {
   MemoryContext oldcontext;
   List *parsetree_list;
   ListCell *parsetree_item;
-  bool save_log_statement_stats = log_statement_stats;
+  bool save_log_statement_stats = tcb->guc.log_statement_stats;
   bool was_logged = false;
   bool use_implicit_block;
   char msec_str[32];
@@ -1271,7 +1271,7 @@ exec_parse_message(const char *query_string, /* string to execute */
   List *querytree_list;
   CachedPlanSource *psrc;
   bool is_named;
-  bool save_log_statement_stats = log_statement_stats;
+  bool save_log_statement_stats = tcb->guc.log_statement_stats;
   char msec_str[32];
 
   /*
@@ -1479,7 +1479,7 @@ static void exec_bind_message(StringInfo input_message) {
   char *saved_stmt_name;
   ParamListInfo params;
   MemoryContext oldContext;
-  bool save_log_statement_stats = log_statement_stats;
+  bool save_log_statement_stats = tcb->guc.log_statement_stats;
   bool snapshot_set = false;
   char msec_str[32];
   ParamsErrorCbData params_data;
@@ -1908,7 +1908,7 @@ static void exec_execute_message(const char *portal_name, long max_rows) {
   const char *sourceText;
   const char *prepStmtName;
   ParamListInfo portalParams;
-  bool save_log_statement_stats = log_statement_stats;
+  bool save_log_statement_stats = tcb->guc.log_statement_stats;
   bool is_xact_command;
   bool execute_is_fetch;
   bool was_logged = false;
@@ -2911,7 +2911,7 @@ bool check_client_connection_check_interval(int *newval, void **extra,
  * we tolerate that.
  */
 bool check_stage_log_stats(bool *newval, void **extra, GucSource source) {
-  if (*newval && log_statement_stats) {
+  if (*newval && tcb->guc.log_statement_stats) {
     GUC_check_errdetail(
         "Cannot enable parameter when \"log_statement_stats\" is true.");
     return false;

@@ -288,13 +288,8 @@ static const struct config_enum_entry default_toast_compression_options[] = {
 static thread_local /*LOCAL*/ bool AllowAlterSystem = true;
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
-thread_local /*LOCAL*/ bool Debug_write_read_parse_plan_trees;
-thread_local /*LOCAL*/ bool Debug_raw_expression_coverage_test;
 #endif
 
-thread_local /*LOCAL*/ bool log_statement_stats =
-    false; /* this is sort of all three
-            * above together */
 static thread_local /*LOCAL*/ char *event_source;
 
 /*
@@ -874,7 +869,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       gettext_noop("This algorithm attempts to do planning without "
                    "exhaustive searching."),
       GUC_EXPLAIN},
-     &enable_geqo,
+     &tcb->guc.enable_geqo,
      true,
      NULL,
      NULL,
@@ -1019,7 +1014,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
           "in "
           "those modules."),
       NULL, GUC_NOT_IN_SAMPLE},
-     &Debug_write_read_parse_plan_trees,
+     &tcb->guc.Debug_write_read_parse_plan_trees,
 /* support for legacy compile-time setting */
 #ifdef WRITE_READ_PARSE_PLAN_TREES
      true,
@@ -1036,7 +1031,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
           "by raw_expression_tree_walker(), to facilitate catching errors and "
           "omissions in that function."),
       NULL, GUC_NOT_IN_SAMPLE},
-     &Debug_raw_expression_coverage_test,
+     &tcb->guc.Debug_raw_expression_coverage_test,
 /* support for legacy compile-time setting */
 #ifdef RAW_EXPRESSION_COVERAGE_TEST
      true,
@@ -1103,7 +1098,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       gettext_noop(
           "Writes cumulative performance statistics to the server log."),
       NULL},
-     &log_statement_stats,
+     &tcb->guc.log_statement_stats,
      false,
      check_log_stats,
      NULL,
@@ -1459,7 +1454,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop(
           "GEQO: effort is used to set the default for other GEQO parameters."),
       NULL, GUC_EXPLAIN},
-     &Geqo_effort,
+     &tcb->guc.Geqo_effort,
      DEFAULT_GEQO_EFFORT,
      MIN_GEQO_EFFORT,
      MAX_GEQO_EFFORT,

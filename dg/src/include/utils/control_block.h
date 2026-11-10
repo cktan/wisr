@@ -550,6 +550,11 @@ typedef struct tcb_guc_t {
   int log_statement;                           /* postgres.c */
   int plan_cache_mode;                         /* plancache.c */
   char *restrict_nonsystem_relation_kind_string; /* guc_tables.c */
+  bool Debug_write_read_parse_plan_trees;        /* guc_tables.c */
+  bool Debug_raw_expression_coverage_test;       /* guc_tables.c */
+  bool enable_geqo = false;                      /* allpaths.c */
+  bool log_statement_stats = false;              /* guc_tables.c */
+  int Geqo_effort;                               /* geqo_main.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

@@ -44,7 +44,6 @@
 /*
  * Configuration options
  */
-thread_local /*LOCAL*/ int Geqo_effort;
 thread_local /*LOCAL*/ int Geqo_pool_size;
 thread_local /*LOCAL*/ int Geqo_generations;
 thread_local /*LOCAL*/ double Geqo_seed;
@@ -315,11 +314,11 @@ static int gimme_pool_size(int nr_rel) {
 
   size = pow(2.0, nr_rel + 1.0);
 
-  maxsize = 50 * Geqo_effort; /* 50 to 500 individuals */
+  maxsize = 50 * tcb->guc.Geqo_effort; /* 50 to 500 individuals */
   if (size > maxsize)
     return maxsize;
 
-  minsize = 10 * Geqo_effort; /* 10 to 100 individuals */
+  minsize = 10 * tcb->guc.Geqo_effort; /* 10 to 100 individuals */
   if (size < minsize)
     return minsize;
 
