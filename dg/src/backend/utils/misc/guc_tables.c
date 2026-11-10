@@ -1674,7 +1674,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop(
           "Sets the time to wait on a lock before checking for deadlock."),
       NULL, GUC_UNIT_MS},
-     &DeadlockTimeout,
+     &tcb->guc.DeadlockTimeout,
      50,
      1,
      INT_MAX,
@@ -1685,7 +1685,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"lock_timeout", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Sets the maximum allowed duration of any wait for a lock."),
       gettext_noop("0 disables the timeout."), GUC_UNIT_MS},
-     &LockTimeout,
+     &tcb->guc.LockTimeout,
      0,
      0,
      INT_MAX,
@@ -1697,7 +1697,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop("Sets the maximum allowed idle time between queries, when "
                    "in a transaction."),
       gettext_noop("0 disables the timeout."), GUC_UNIT_MS},
-     &IdleInTransactionSessionTimeout,
+     &tcb->guc.IdleInTransactionSessionTimeout,
      0,
      0,
      INT_MAX,
@@ -1709,7 +1709,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop("Sets the maximum allowed duration of any transaction "
                    "within a session (not a prepared transaction)."),
       gettext_noop("0 disables the timeout."), GUC_UNIT_MS},
-     &TransactionTimeout,
+     &tcb->guc.TransactionTimeout,
      0,
      0,
      INT_MAX,
@@ -1721,7 +1721,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop("Sets the maximum allowed idle time between queries, when "
                    "not in a transaction."),
       gettext_noop("0 disables the timeout."), GUC_UNIT_MS},
-     &IdleSessionTimeout,
+     &tcb->guc.IdleSessionTimeout,
      0,
      0,
      INT_MAX,

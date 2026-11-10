@@ -770,8 +770,8 @@ static void StartTransaction(void) {
   s->state = TRANS_INPROGRESS;
 
   /* Schedule transaction timeout */
-  if (TransactionTimeout > 0)
-    enable_timeout_after(TRANSACTION_TIMEOUT, TransactionTimeout);
+  if (tcb->guc.TransactionTimeout > 0)
+    enable_timeout_after(TRANSACTION_TIMEOUT, tcb->guc.TransactionTimeout);
 
   ShowTransactionState("StartTransaction");
 }
@@ -858,7 +858,7 @@ static void CommitTransaction(void) {
   s->state = TRANS_COMMIT;
 
   /* Disable transaction timeout */
-  if (TransactionTimeout > 0)
+  if (tcb->guc.TransactionTimeout > 0)
     disable_timeout(TRANSACTION_TIMEOUT, false);
 
   TRACE_POSTGRESQL_TRANSACTION_COMMIT(tcb->lxid);
@@ -952,7 +952,7 @@ static void AbortTransaction(void) {
   HOLD_INTERRUPTS();
 
   /* Disable transaction timeout */
-  if (TransactionTimeout > 0)
+  if (tcb->guc.TransactionTimeout > 0)
     disable_timeout(TRANSACTION_TIMEOUT, false);
 
   /* Make sure we have a valid memory context and resource owner */

@@ -492,6 +492,11 @@ typedef struct tcb_guc_t {
   int max_stack_depth = 100;                   /* stack_depth.c */
   int temp_file_limit = -1;                    /* guc_tables.c */
   int StatementTimeout = 0;                    /* proc.c */
+  int DeadlockTimeout = 50;                    /* proc.c */
+  int LockTimeout = 0;                         /* proc.c */
+  int IdleInTransactionSessionTimeout = 0;     /* proc.c */
+  int TransactionTimeout = 0;                  /* proc.c */
+  int IdleSessionTimeout = 0;                  /* proc.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

@@ -2852,7 +2852,7 @@ void ProcessInterrupts(void) {
      * otherwise we could loop in interrupts checking.
      */
     IdleInTransactionSessionTimeoutPending = false;
-    if (IdleInTransactionSessionTimeout > 0) {
+    if (tcb->guc.IdleInTransactionSessionTimeout > 0) {
       INJECTION_POINT("idle-in-transaction-session-timeout", NULL);
       ereport(
           FATAL,
@@ -2865,7 +2865,7 @@ void ProcessInterrupts(void) {
   if (TransactionTimeoutPending) {
     /* As above, ignore the signal if the GUC has been reset to zero. */
     TransactionTimeoutPending = false;
-    if (TransactionTimeout > 0) {
+    if (tcb->guc.TransactionTimeout > 0) {
       INJECTION_POINT("transaction-timeout", NULL);
       ereport(FATAL,
               (errcode(ERRCODE_TRANSACTION_TIMEOUT),
@@ -2876,7 +2876,7 @@ void ProcessInterrupts(void) {
   if (IdleSessionTimeoutPending) {
     /* As above, ignore the signal if the GUC has been reset to zero. */
     IdleSessionTimeoutPending = false;
-    if (IdleSessionTimeout > 0) {
+    if (tcb->guc.IdleSessionTimeout > 0) {
       INJECTION_POINT("idle-session-timeout", NULL);
       ereport(FATAL,
               (errcode(ERRCODE_IDLE_SESSION_TIMEOUT),
@@ -3782,31 +3782,34 @@ void PostgresMain(const char *dbname, const char *username) {
         set_ps_display("idle in transaction (aborted)");
 
         /* Start the idle-in-transaction timer */
-        if (IdleInTransactionSessionTimeout > 0 &&
-            (IdleInTransactionSessionTimeout < TransactionTimeout ||
-             TransactionTimeout == 0)) {
+        if (tcb->guc.IdleInTransactionSessionTimeout > 0 &&
+            (tcb->guc.IdleInTransactionSessionTimeout <
+                 tcb->guc.TransactionTimeout ||
+             tcb->guc.TransactionTimeout == 0)) {
           idle_in_transaction_timeout_enabled = true;
           enable_timeout_after(IDLE_IN_TRANSACTION_SESSION_TIMEOUT,
-                               IdleInTransactionSessionTimeout);
+                               tcb->guc.IdleInTransactionSessionTimeout);
         }
       } else if (IsTransactionOrTransactionBlock()) {
         set_ps_display("idle in transaction");
 
         /* Start the idle-in-transaction timer */
-        if (IdleInTransactionSessionTimeout > 0 &&
-            (IdleInTransactionSessionTimeout < TransactionTimeout ||
-             TransactionTimeout == 0)) {
+        if (tcb->guc.IdleInTransactionSessionTimeout > 0 &&
+            (tcb->guc.IdleInTransactionSessionTimeout <
+                 tcb->guc.TransactionTimeout ||
+             tcb->guc.TransactionTimeout == 0)) {
           idle_in_transaction_timeout_enabled = true;
           enable_timeout_after(IDLE_IN_TRANSACTION_SESSION_TIMEOUT,
-                               IdleInTransactionSessionTimeout);
+                               tcb->guc.IdleInTransactionSessionTimeout);
         }
       } else {
         set_ps_display("idle");
 
         /* Start the idle-session timer */
-        if (IdleSessionTimeout > 0) {
+        if (tcb->guc.IdleSessionTimeout > 0) {
           idle_session_timeout_enabled = true;
-          enable_timeout_after(IDLE_SESSION_TIMEOUT, IdleSessionTimeout);
+          enable_timeout_after(IDLE_SESSION_TIMEOUT,
+                               tcb->guc.IdleSessionTimeout);
         }
       }
 
@@ -4270,8 +4273,8 @@ static void enable_statement_timeout(void) {
   Assert(xact_started);
 
   if (tcb->guc.StatementTimeout > 0 &&
-      (tcb->guc.StatementTimeout < TransactionTimeout ||
-       TransactionTimeout == 0)) {
+      (tcb->guc.StatementTimeout < tcb->guc.TransactionTimeout ||
+       tcb->guc.TransactionTimeout == 0)) {
     if (!get_timeout_active(STATEMENT_TIMEOUT))
       enable_timeout_after(STATEMENT_TIMEOUT, tcb->guc.StatementTimeout);
   } else {

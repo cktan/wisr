@@ -136,7 +136,7 @@ bool InterruptsStopWork(void) {
 
   return ProcDiePending || ClientConnectionLost ||
          0 != (pending & (INTERRUPT_DIE | INTERRUPT_QUIT)) ||
-         (TransactionTimeoutPending && TransactionTimeout > 0) ||
+         (TransactionTimeoutPending && tcb->guc.TransactionTimeout > 0) ||
          (cancel && QueryCancelHoldoffCount == 0);
 }
 

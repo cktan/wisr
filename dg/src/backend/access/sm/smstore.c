@@ -425,7 +425,7 @@ static void sm_error(const char *what) {
  *    until interrupts are allowed, has been taken, so the call waits again.
  */
 template <class F> static int waiting(F f, bool lock_wait = true) {
-  const bool timed = lock_wait && LockTimeout > 0;
+  const bool timed = lock_wait && tcb->guc.LockTimeout > 0;
 
   /*
    * lock_timeout ends a wait for a lock that lasts longer, by a cancel the
@@ -434,7 +434,7 @@ template <class F> static int waiting(F f, bool lock_wait = true) {
    * ends in time disarms it, and a cancel it raised meanwhile is not taken.
    */
   if (timed)
-    enable_timeout_after(LOCK_TIMEOUT, LockTimeout);
+    enable_timeout_after(LOCK_TIMEOUT, tcb->guc.LockTimeout);
   for (;;) {
     int rc = f();
 
@@ -3116,10 +3116,10 @@ static void load_error(Relation rel, TupleTableSlot *slot, const char *what) {
  */
 bool smstore_lock_wait(void *arg, bool start) noexcept {
   if (start) {
-    if (LockTimeout <= 0 || get_timeout_active(LOCK_TIMEOUT))
+    if (tcb->guc.LockTimeout <= 0 || get_timeout_active(LOCK_TIMEOUT))
       return false;
     /* Count the blocked interval, not the load's sort or file writes. */
-    enable_timeout_after(LOCK_TIMEOUT, LockTimeout);
+    enable_timeout_after(LOCK_TIMEOUT, tcb->guc.LockTimeout);
     return true;
   }
   if (get_timeout_active(LOCK_TIMEOUT) &&

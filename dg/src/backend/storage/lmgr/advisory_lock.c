@@ -219,8 +219,9 @@ bool advisory_lock(const advisory_key_t &key, bool exclusive, bool session,
   advisory_table_t *t = shmem->advisory.get();
   const session_record_t *me = tcb->session.get();
   int mode = exclusive ? EXCLUSIVE : SHARE;
-  int64 deadline =
-      LockTimeout > 0 ? sm_now_us() + (int64)LockTimeout * 1000 : SM_FOREVER;
+  int64 deadline = tcb->guc.LockTimeout > 0
+                       ? sm_now_us() + (int64)tcb->guc.LockTimeout * 1000
+                       : SM_FOREVER;
   advisory_wait_arg_t arg = {t, me, &key, mode};
 
   Assert(me != nullptr);
