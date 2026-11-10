@@ -560,6 +560,11 @@ typedef struct tcb_guc_t {
   double Geqo_seed;                              /* geqo_main.c */
   int default_statistics_target = 100;           /* analyze.c */
   char *session_preload_libraries_string = NULL; /* miscinit.c */
+  int xmlbinary;                                 /* xml.c */
+  int Password_encryption;                       /* user.c */
+  bool optimize_bounded_sort = true;             /* tuplesort.c */
+  char *application_name;                        /* guc_tables.c */
+  int tcp_user_timeout;                          /* guc_tables.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

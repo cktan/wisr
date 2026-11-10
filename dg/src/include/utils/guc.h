@@ -250,14 +250,9 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int log_min_error_statement;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int log_min_messages;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int client_min_messages;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *application_name;
-
-extern thread_local /*LOCAL*/ PGDLLIMPORT int tcp_user_timeout;
-
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool trace_sort;
 
 #ifdef DEBUG_BOUNDED_SORT
-extern PGDLLIMPORT bool optimize_bounded_sort;
 #endif
 
 /*

@@ -117,7 +117,6 @@
 thread_local /*LOCAL*/ bool trace_sort = false;
 
 #ifdef DEBUG_BOUNDED_SORT
-bool optimize_bounded_sort = true;
 #endif
 
 /*
@@ -541,6 +540,7 @@ qsort_tuple_int32_compare(SortTuple *a, SortTuple *b, Tuplesortstate *state) {
 #define ST_SCOPE static
 #define ST_DEFINE
 #include "lib/sort_template.h"
+#include "utils/control_block.h"
 
 /*
  *		tuplesort_begin_xxx
@@ -724,7 +724,7 @@ void tuplesort_set_bound(Tuplesortstate *state, int64 bound) {
 
 #ifdef DEBUG_BOUNDED_SORT
   /* Honor GUC setting that disables the feature (for easy testing) */
-  if (!optimize_bounded_sort)
+  if (!tcb->guc.optimize_bounded_sort)
     return;
 #endif
 

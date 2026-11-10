@@ -90,7 +90,6 @@ typedef struct {
 #define GRANT_ROLE_SPECIFIED_SET			0x0004
 
 /* GUC parameters */
-thread_local /*LOCAL*/ int Password_encryption = PASSWORD_TYPE_SCRAM_SHA_256;
 static thread_local /*LOCAL*/ bool createrole_self_grant_enabled = false;
 static thread_local /*LOCAL*/ GrantRoleOptions createrole_self_grant_options;
 
@@ -428,7 +427,7 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
       new_record_nulls[Anum_pg_authid_rolpassword - 1] = true;
     } else {
       /* Encrypt the password to the requested format. */
-      shadow_pass = encrypt_password((PasswordType)Password_encryption,
+      shadow_pass = encrypt_password((PasswordType)tcb->guc.Password_encryption,
                                      stmt->role, password);
       new_record[Anum_pg_authid_rolpassword - 1] =
           CStringGetTextDatum(shadow_pass);
@@ -848,7 +847,7 @@ Oid AlterRole(ParseState *pstate, AlterRoleStmt *stmt) {
       new_record_nulls[Anum_pg_authid_rolpassword - 1] = true;
     } else {
       /* Encrypt the password to the requested format. */
-      shadow_pass = encrypt_password((PasswordType)Password_encryption,
+      shadow_pass = encrypt_password((PasswordType)tcb->guc.Password_encryption,
                                      rolename, password);
       new_record[Anum_pg_authid_rolpassword - 1] =
           CStringGetTextDatum(shadow_pass);

@@ -263,7 +263,7 @@ Port *pq_init(ClientSocket *client_sock) {
     (void)pq_setkeepalivesidle(tcb->guc.tcp_keepalives_idle, port);
     (void)pq_setkeepalivesinterval(tcb->guc.tcp_keepalives_interval, port);
     (void)pq_setkeepalivescount(tcb->guc.tcp_keepalives_count, port);
-    (void)pq_settcpusertimeout(tcp_user_timeout, port);
+    (void)pq_settcpusertimeout(tcb->guc.tcp_user_timeout, port);
   }
 
   /* initialize state variables */

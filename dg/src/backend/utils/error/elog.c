@@ -2594,7 +2594,7 @@ void log_status_format(StringInfo buf, const char *format, ErrorData *edata) {
     switch (*p) {
     case 'a':
       if (MyProcPort) {
-        const char *appname = application_name;
+        const char *appname = tcb->guc.application_name;
 
         if (appname == NULL || *appname == '\0')
           appname = _("[unknown]");

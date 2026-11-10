@@ -308,10 +308,6 @@ thread_local /*LOCAL*/ int num_temp_buffers = 1024;
 static thread_local /*LOCAL*/ char *cluster_name = "";
 static thread_local /*LOCAL*/ char *external_pid_file;
 
-thread_local /*LOCAL*/ char *application_name;
-
-thread_local /*LOCAL*/ int tcp_user_timeout;
-
 /*
  * SSL renegotiation was been removed in PostgreSQL 9.5, but we tolerate it
  * being set to zero (meaning never renegotiate) for backward compatibility.
@@ -1258,7 +1254,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"optimize_bounded_sort", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables bounded sorting using heap sort."), NULL,
       GUC_NOT_IN_SAMPLE | GUC_EXPLAIN},
-     &optimize_bounded_sort,
+     &tcb->guc.optimize_bounded_sort,
      true,
      NULL,
      NULL,
@@ -1988,7 +1984,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"tcp_user_timeout", PGC_USERSET, CONN_AUTH_TCP,
       gettext_noop("TCP user timeout."),
       gettext_noop("0 means use the system default."), GUC_UNIT_MS},
-     &tcp_user_timeout,
+     &tcb->guc.tcp_user_timeout,
      0,
      0,
      INT_MAX,
@@ -2692,7 +2688,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       gettext_noop(
           "Sets the application name to be reported in statistics and logs."),
       NULL, GUC_IS_NAME | GUC_REPORT | GUC_NOT_IN_SAMPLE},
-     &application_name,
+     &tcb->guc.application_name,
      "",
      check_application_name,
      assign_application_name,
@@ -2918,7 +2914,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
 
     {{"xmlbinary", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Sets how binary values are to be encoded in XML."), NULL},
-     &xmlbinary,
+     &tcb->guc.xmlbinary,
      XMLBINARY_BASE64,
      xmlbinary_options,
      NULL,
@@ -2939,7 +2935,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
 
     {{"password_encryption", PGC_USERSET, CONN_AUTH_AUTH,
       gettext_noop("Chooses the algorithm for encrypting passwords."), NULL},
-     &Password_encryption,
+     &tcb->guc.Password_encryption,
      PASSWORD_TYPE_SCRAM_SHA_256,
      password_encryption_options,
      NULL,
