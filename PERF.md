@@ -136,6 +136,18 @@ one run on a regular and one on a btree database:
   about 50,000 a second, 1.33 times PostgreSQL's latency.
 - `bench/run.sh` now runs q0 and q4 once, not once for each index
   kind.
+- **q4 is a sequential scan, and an LSM store is known to be
+  slower than a heap file of pages at a sequential scan.**
+  PostgreSQL's heap scan reads 8 KB pages in order, and steps
+  from one tuple to the next inside a page. An LSM scan merges
+  several sorted runs, the memtable and the files of each level,
+  and compares keys to find the next one. It also decodes each
+  key from its block. Result 3 shows the same order: MyRocks,
+  also an LSM row store, is 0.27 of PostgreSQL's throughput on
+  q4, and digres is 0.37. InnoDB, a clustered B-tree, is 0.51.
+  Parity on q4 is not a target: an OLTP workload runs few
+  sequential scans
+  ([`sm/NEXT.md`](sm/NEXT.md#1-next) §1, item 3).
 
 ## Result 2: effect of the work on the btree index
 
