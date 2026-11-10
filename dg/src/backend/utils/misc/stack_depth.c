@@ -22,9 +22,9 @@
 
 #include "miscadmin.h"
 #include "utils/guc_hooks.h"
+#include "utils/control_block.h"
 
 /* GUC variable for maximum stack depth (measured in kilobytes) */
-thread_local /*LOCAL*/ int max_stack_depth = 100;
 
 /* max_stack_depth converted to bytes for speed of checking */
 static thread_local /*LOCAL*/ ssize_t max_stack_depth_bytes =
@@ -95,7 +95,7 @@ void check_stack_depth(void) {
          errhint("Increase the configuration parameter \"max_stack_depth\" "
                  "(currently %dkB), "
                  "after ensuring the platform's stack depth limit is adequate.",
-                 max_stack_depth)));
+                 tcb->guc.max_stack_depth)));
   }
 }
 

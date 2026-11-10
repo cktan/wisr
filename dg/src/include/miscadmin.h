@@ -260,9 +260,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int IntervalStyle;
 
 #define MAXTZLEN		10 /* max TZ name len, not counting tr. null */
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT int work_mem;
 extern thread_local /*LOCAL*/ PGDLLIMPORT double hash_mem_multiplier;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int maintenance_work_mem;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT double VacuumCostDelay;
 
@@ -270,8 +268,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int VacuumCostBalance;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool VacuumCostActive;
 
 /* in utils/misc/stack_depth.c */
-
-extern thread_local /*LOCAL*/ PGDLLIMPORT int max_stack_depth;
 
 /* Required daylight between max_stack_depth and the kernel limit, in bytes */
 #define STACK_DEPTH_SLOP (512 * 1024)

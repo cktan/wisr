@@ -5865,7 +5865,7 @@ bool plan_cluster_use_sort(Oid tableOid, Oid indexOid) {
   seqScanPath = create_seqscan_path(root, rel, NULL);
   cost_sort(&seqScanAndSortPath, root, NIL, seqScanPath->disabled_nodes,
             seqScanPath->total_cost, rel->tuples, rel->reltarget->width,
-            comparisonCost, maintenance_work_mem, -1.0);
+            comparisonCost, tcb->guc.maintenance_work_mem, -1.0);
 
   /* Estimate the cost of index scan */
   indexScanPath = create_index_path(root, indexInfo, NIL, NIL, NIL, NIL,

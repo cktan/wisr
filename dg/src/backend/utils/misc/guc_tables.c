@@ -316,8 +316,6 @@ thread_local /*LOCAL*/ double log_statement_sample_rate = 1.0;
 thread_local /*LOCAL*/ double log_xact_sample_rate = 0;
 thread_local /*LOCAL*/ char *backtrace_functions;
 
-thread_local /*LOCAL*/ int temp_file_limit = -1;
-
 thread_local /*LOCAL*/ int num_temp_buffers = 1024;
 
 static thread_local /*LOCAL*/ char *cluster_name = "";
@@ -1592,7 +1590,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
                    "sort operation and hash table before switching to "
                    "temporary disk files."),
       GUC_UNIT_KB | GUC_EXPLAIN},
-     &work_mem,
+     &tcb->guc.work_mem,
      4096,
      64,
      MAX_KILOBYTES,
@@ -1610,7 +1608,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
           "Sets the maximum memory to be used for maintenance operations."),
       gettext_noop("This includes operations such as VACUUM and CREATE INDEX."),
       GUC_UNIT_KB},
-     &maintenance_work_mem,
+     &tcb->guc.maintenance_work_mem,
      65536,
      64,
      MAX_KILOBYTES,
@@ -1621,7 +1619,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"max_stack_depth", PGC_SUSET, RESOURCES_MEM,
       gettext_noop("Sets the maximum stack depth, in kilobytes."), NULL,
       GUC_UNIT_KB},
-     &max_stack_depth,
+     &tcb->guc.max_stack_depth,
      100,
      100,
      MAX_KILOBYTES,
@@ -1633,7 +1631,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop(
           "Limits the total size of all temporary files used by each process."),
       gettext_noop("-1 means no limit."), GUC_UNIT_KB},
-     &temp_file_limit,
+     &tcb->guc.temp_file_limit,
      -1,
      -1,
      INT_MAX,
@@ -1660,7 +1658,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"statement_timeout", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Sets the maximum allowed duration of any statement."),
       gettext_noop("0 disables the timeout."), GUC_UNIT_MS},
-     &StatementTimeout,
+     &tcb->guc.StatementTimeout,
      0,
      0,
      INT_MAX,

@@ -1780,8 +1780,8 @@ void cost_append(AppendPath *apath) {
          */
         cost_sort(&sort_path, NULL, /* doesn't currently need root */
                   pathkeys, subpath->disabled_nodes, subpath->total_cost,
-                  subpath->rows, subpath->pathtarget->width, 0.0, work_mem,
-                  apath->limit_tuples);
+                  subpath->rows, subpath->pathtarget->width, 0.0,
+                  tcb->guc.work_mem, apath->limit_tuples);
         subpath = &sort_path;
       }
 
@@ -1879,7 +1879,7 @@ void cost_material(Path *path, int input_disabled_nodes,
   Cost startup_cost = input_startup_cost;
   Cost run_cost = input_total_cost - input_startup_cost;
   double nbytes = relation_byte_size(tuples, width);
-  double work_mem_bytes = work_mem * (Size)1024;
+  double work_mem_bytes = tcb->guc.work_mem * (Size)1024;
 
   path->rows = tuples;
 
@@ -2977,11 +2977,11 @@ void initial_cost_mergejoin(PlannerInfo *root, JoinCostWorkspace *workspace,
                             outer_presorted_keys, outer_path->disabled_nodes,
                             outer_path->startup_cost, outer_path->total_cost,
                             outer_path_rows, outer_path->pathtarget->width, 0.0,
-                            work_mem, -1.0);
+                            tcb->guc.work_mem, -1.0);
     } else {
       cost_sort(&sort_path, root, outersortkeys, outer_path->disabled_nodes,
                 outer_path->total_cost, outer_path_rows,
-                outer_path->pathtarget->width, 0.0, work_mem, -1.0);
+                outer_path->pathtarget->width, 0.0, tcb->guc.work_mem, -1.0);
     }
 
     disabled_nodes += sort_path.disabled_nodes;
@@ -3015,7 +3015,7 @@ void initial_cost_mergejoin(PlannerInfo *root, JoinCostWorkspace *workspace,
 
     cost_sort(&sort_path, root, innersortkeys, inner_path->disabled_nodes,
               inner_path->total_cost, inner_path_rows,
-              inner_path->pathtarget->width, 0.0, work_mem, -1.0);
+              inner_path->pathtarget->width, 0.0, tcb->guc.work_mem, -1.0);
     disabled_nodes += sort_path.disabled_nodes;
     startup_cost += sort_path.startup_cost;
     startup_cost +=
@@ -3258,7 +3258,7 @@ void final_cost_mergejoin(PlannerInfo *root, MergePath *path,
    */
   else if (tcb->guc.enable_material && innersortkeys != NIL &&
            relation_byte_size(inner_path_rows, inner_path->pathtarget->width) >
-               work_mem * (Size)1024)
+               tcb->guc.work_mem * (Size)1024)
     path->materialize_inner = true;
   else
     path->materialize_inner = false;
@@ -3830,7 +3830,7 @@ static void cost_rescan(PlannerInfo *root, Path *path,
      */
     Cost run_cost = cpu_tuple_cost * path->rows;
     double nbytes = relation_byte_size(path->rows, path->pathtarget->width);
-    double work_mem_bytes = work_mem * (Size)1024;
+    double work_mem_bytes = tcb->guc.work_mem * (Size)1024;
 
     if (nbytes > work_mem_bytes) {
       /* It will spill, so account for re-read cost */
@@ -3853,7 +3853,7 @@ static void cost_rescan(PlannerInfo *root, Path *path,
      */
     Cost run_cost = cpu_operator_cost * path->rows;
     double nbytes = relation_byte_size(path->rows, path->pathtarget->width);
-    double work_mem_bytes = work_mem * (Size)1024;
+    double work_mem_bytes = tcb->guc.work_mem * (Size)1024;
 
     if (nbytes > work_mem_bytes) {
       /* It will spill, so account for re-read cost */
@@ -5452,7 +5452,7 @@ double compute_bitmap_pages(PlannerInfo *root, RelOptInfo *baserel,
    * the bitmap at one time.)
    */
   heap_pages = Min(pages_fetched, baserel->pages);
-  maxentries = tbm_calculate_entries(work_mem * (Size)1024);
+  maxentries = tbm_calculate_entries(tcb->guc.work_mem * (Size)1024);
 
   if (loop_count > 1) {
     /*

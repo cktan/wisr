@@ -24,6 +24,7 @@
 #include "executor/nodeRecursiveunion.h"
 #include "miscadmin.h"
 #include "utils/memutils.h"
+#include "utils/control_block.h"
 
 /*
  * Initialize the hash table to empty.
@@ -181,8 +182,10 @@ RecursiveUnionState *ExecInitRecursiveUnion(RecursiveUnion *node,
   /* initialize processing state */
   rustate->recursing = false;
   rustate->intermediate_empty = true;
-  rustate->working_table = tuplestore_begin_heap(false, false, work_mem);
-  rustate->intermediate_table = tuplestore_begin_heap(false, false, work_mem);
+  rustate->working_table =
+      tuplestore_begin_heap(false, false, tcb->guc.work_mem);
+  rustate->intermediate_table =
+      tuplestore_begin_heap(false, false, tcb->guc.work_mem);
 
   /*
    * If hashing, we need a per-tuple memory context for comparisons, and a

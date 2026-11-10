@@ -21,6 +21,7 @@
 #include "executor/nodeSort.h"
 #include "miscadmin.h"
 #include "utils/tuplesort.h"
+#include "utils/control_block.h"
 
 /* ----------------------------------------------------------------
  *		ExecSort
@@ -100,13 +101,13 @@ static TupleTableSlot *ExecSort(PlanState *pstate) {
     if (node->datumSort)
       tuplesortstate = tuplesort_begin_datum(
           TupleDescAttr(tupDesc, 0)->atttypid, plannode->sortOperators[0],
-          plannode->collations[0], plannode->nullsFirst[0], work_mem,
+          plannode->collations[0], plannode->nullsFirst[0], tcb->guc.work_mem,
           tuplesortopts);
     else
-      tuplesortstate =
-          tuplesort_begin_heap(tupDesc, plannode->numCols, plannode->sortColIdx,
-                               plannode->sortOperators, plannode->collations,
-                               plannode->nullsFirst, work_mem, tuplesortopts);
+      tuplesortstate = tuplesort_begin_heap(
+          tupDesc, plannode->numCols, plannode->sortColIdx,
+          plannode->sortOperators, plannode->collations, plannode->nullsFirst,
+          tcb->guc.work_mem, tuplesortopts);
     if (node->bounded)
       tuplesort_set_bound(tuplesortstate, node->bound);
     node->tuplesortstate = tuplesortstate;

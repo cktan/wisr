@@ -264,8 +264,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT double log_statement_sample_rate;
 extern thread_local /*LOCAL*/ PGDLLIMPORT double log_xact_sample_rate;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *backtrace_functions;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT int temp_file_limit;
-
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *application_name;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT int tcp_keepalives_idle;

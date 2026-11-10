@@ -26,6 +26,7 @@
 #include "executor/executor.h"
 #include "executor/nodeMaterial.h"
 #include "miscadmin.h"
+#include "utils/control_block.h"
 
 /* ----------------------------------------------------------------
  *		ExecMaterial
@@ -62,7 +63,7 @@ ExecMaterial(PlanState *pstate) {
    * If first time through, and we need a tuplestore, initialize it.
    */
   if (tuplestorestate == NULL && node->eflags != 0) {
-    tuplestorestate = tuplestore_begin_heap(true, false, work_mem);
+    tuplestorestate = tuplestore_begin_heap(true, false, tcb->guc.work_mem);
     tuplestore_set_eflags(tuplestorestate, node->eflags);
     if (node->eflags & EXEC_FLAG_MARK) {
       /*

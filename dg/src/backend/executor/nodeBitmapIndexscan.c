@@ -28,6 +28,7 @@
 #include "executor/nodeBitmapIndexscan.h"
 #include "executor/nodeIndexscan.h"
 #include "miscadmin.h"
+#include "utils/control_block.h"
 
 /* ----------------------------------------------------------------
  *		ExecBitmapIndexScan
@@ -84,7 +85,7 @@ Node *MultiExecBitmapIndexScan(BitmapIndexScanState *node) {
     node->biss_result = NULL; /* reset for next time */
   } else {
     /* XXX should we use less than work_mem for this? */
-    tbm = tbm_create(work_mem * (Size)1024);
+    tbm = tbm_create(tcb->guc.work_mem * (Size)1024);
   }
 
   /*

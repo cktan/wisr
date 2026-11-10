@@ -487,6 +487,11 @@ typedef struct tcb_guc_t {
   int join_collapse_limit;                     /* initsplan.c */
   int geqo_threshold;                          /* allpaths.c */
   double Geqo_selection_bias;                  /* geqo_main.c */
+  int work_mem = 4096;                         /* globals.c */
+  int maintenance_work_mem = 65536;            /* globals.c */
+  int max_stack_depth = 100;                   /* stack_depth.c */
+  int temp_file_limit = -1;                    /* guc_tables.c */
+  int StatementTimeout = 0;                    /* proc.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

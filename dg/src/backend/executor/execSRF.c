@@ -33,6 +33,7 @@
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/typcache.h"
+#include "utils/control_block.h"
 
 /* static function decls */
 static void init_sexpr(Oid foid, Oid input_collation, Expr *node,
@@ -241,7 +242,8 @@ Tuplestorestate *ExecMakeTableFunctionResult(SetExprState *setexpr,
         MemoryContext oldcontext =
             MemoryContextSwitchTo(econtext->ecxt_per_query_memory);
 
-        tupstore = tuplestore_begin_heap(randomAccess, false, work_mem);
+        tupstore =
+            tuplestore_begin_heap(randomAccess, false, tcb->guc.work_mem);
         rsinfo.setResult = tupstore;
         if (!returnsTuple) {
           tupdesc = CreateTemplateTupleDesc(1);
@@ -357,7 +359,7 @@ no_function_result:
     MemoryContext oldcontext =
         MemoryContextSwitchTo(econtext->ecxt_per_query_memory);
 
-    tupstore = tuplestore_begin_heap(randomAccess, false, work_mem);
+    tupstore = tuplestore_begin_heap(randomAccess, false, tcb->guc.work_mem);
     rsinfo.setResult = tupstore;
     MemoryContextSwitchTo(oldcontext);
 

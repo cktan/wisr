@@ -29,6 +29,7 @@
 #include "utils/memutils.h"
 #include "utils/tuplesort.h"
 #include "utils/typcache.h"
+#include "utils/control_block.h"
 
 /*
  * SerialIOData
@@ -1730,8 +1731,9 @@ static ArrayType *array_sort_internal(ArrayType *array, bool descending,
                    format_type_be(elmtyp)));
 
   /* Put the things to be sorted (elements or sub-arrays) into a tuplesort */
-  tuplesortstate = tuplesort_begin_datum(sort_typ, sort_opr, collation,
-                                         nulls_first, work_mem, TUPLESORT_NONE);
+  tuplesortstate =
+      tuplesort_begin_datum(sort_typ, sort_opr, collation, nulls_first,
+                            tcb->guc.work_mem, TUPLESORT_NONE);
 
   array_iterator =
       array_create_iterator(array, ndim - 1, &cache_info->array_meta);

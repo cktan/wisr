@@ -85,6 +85,7 @@
 #include "miscadmin.h"
 #include "utils/lsyscache.h"
 #include "utils/tuplesort.h"
+#include "utils/control_block.h"
 
 /*
  * We need to store the instrumentation information in either local node's sort
@@ -283,7 +284,7 @@ static void switchToPresortedPrefixMode(PlanState *pstate) {
         &(plannode->sort.sortColIdx[nPresortedCols]),
         &(plannode->sort.sortOperators[nPresortedCols]),
         &(plannode->sort.collations[nPresortedCols]),
-        &(plannode->sort.nullsFirst[nPresortedCols]), work_mem,
+        &(plannode->sort.nullsFirst[nPresortedCols]), tcb->guc.work_mem,
         node->bounded ? TUPLESORT_ALLOWBOUNDED : TUPLESORT_NONE);
     node->prefixsort_state = prefixsort_state;
   } else {
@@ -568,7 +569,7 @@ static TupleTableSlot *ExecIncrementalSort(PlanState *pstate) {
       fullsort_state = tuplesort_begin_heap(
           tupDesc, plannode->sort.numCols, plannode->sort.sortColIdx,
           plannode->sort.sortOperators, plannode->sort.collations,
-          plannode->sort.nullsFirst, work_mem,
+          plannode->sort.nullsFirst, tcb->guc.work_mem,
           node->bounded ? TUPLESORT_ALLOWBOUNDED : TUPLESORT_NONE);
       node->fullsort_state = fullsort_state;
     } else {

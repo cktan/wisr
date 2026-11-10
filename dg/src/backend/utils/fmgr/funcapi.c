@@ -33,6 +33,7 @@
 #include "utils/syscache.h"
 #include "utils/tuplestore.h"
 #include "utils/typcache.h"
+#include "utils/control_block.h"
 
 typedef struct polymorphic_actuals {
   Oid anyelement_type;    /* anyelement mapping, if known */
@@ -112,7 +113,7 @@ void InitMaterializedSRF(FunctionCallInfo fcinfo, bits32 flags) {
 
   random_access = (rsinfo->allowedModes & SFRM_Materialize_Random) != 0;
 
-  tupstore = tuplestore_begin_heap(random_access, false, work_mem);
+  tupstore = tuplestore_begin_heap(random_access, false, tcb->guc.work_mem);
   rsinfo->returnMode = SFRM_Materialize;
   rsinfo->setResult = tupstore;
   rsinfo->setDesc = stored_tupdesc;

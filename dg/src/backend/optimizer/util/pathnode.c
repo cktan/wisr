@@ -1034,7 +1034,7 @@ MergeAppendPath *create_merge_append_path(PlannerInfo *root, RelOptInfo *rel,
 
       cost_sort(&sort_path, root, pathkeys, subpath->disabled_nodes,
                 subpath->total_cost, subpath->rows, subpath->pathtarget->width,
-                0.0, work_mem, pathnode->limit_tuples);
+                0.0, tcb->guc.work_mem, pathnode->limit_tuples);
       input_disabled_nodes += sort_path.disabled_nodes;
       input_startup_cost += sort_path.startup_cost;
       input_total_cost += sort_path.total_cost;
@@ -1435,7 +1435,7 @@ UniquePath *create_unique_path(PlannerInfo *root, RelOptInfo *rel,
      */
     cost_sort(&sort_path, root, NIL, subpath->disabled_nodes,
               subpath->total_cost, rel->rows, subpath->pathtarget->width, 0.0,
-              work_mem, -1.0);
+              tcb->guc.work_mem, -1.0);
 
     /*
      * Charge one cpu_operator_cost per comparison per input tuple. We
@@ -2287,7 +2287,7 @@ IncrementalSortPath *create_incremental_sort_path(PlannerInfo *root,
       &pathnode->path, root, pathkeys, presorted_keys, subpath->disabled_nodes,
       subpath->startup_cost, subpath->total_cost, subpath->rows,
       subpath->pathtarget->width, 0.0, /* XXX comparison_cost shouldn't be 0? */
-      work_mem, limit_tuples);
+      tcb->guc.work_mem, limit_tuples);
 
   sort->nPresortedCols = presorted_keys;
 
@@ -2321,7 +2321,7 @@ SortPath *create_sort_path(PlannerInfo *root, RelOptInfo *rel, Path *subpath,
   cost_sort(&pathnode->path, root, pathkeys, subpath->disabled_nodes,
             subpath->total_cost, subpath->rows, subpath->pathtarget->width,
             0.0, /* XXX comparison_cost shouldn't be 0? */
-            work_mem, limit_tuples);
+            tcb->guc.work_mem, limit_tuples);
 
   return pathnode;
 }
@@ -2584,7 +2584,7 @@ GroupingSetsPath *create_groupingsets_path(PlannerInfo *root, RelOptInfo *rel,
       } else {
         /* Account for cost of sort, but don't charge input cost again */
         cost_sort(&sort_path, root, NIL, 0, 0.0, subpath->rows,
-                  subpath->pathtarget->width, 0.0, work_mem, -1.0);
+                  subpath->pathtarget->width, 0.0, tcb->guc.work_mem, -1.0);
 
         /* Account for cost of aggregation */
 

@@ -20,6 +20,7 @@
 #include "executor/executor.h"
 #include "executor/nodeCtescan.h"
 #include "miscadmin.h"
+#include "utils/control_block.h"
 
 static TupleTableSlot *CteScanNext(CteScanState *node);
 
@@ -218,7 +219,8 @@ CteScanState *ExecInitCteScan(CteScan *node, EState *estate, int eflags) {
     /* I am the leader */
     prmdata->value = PointerGetDatum(scanstate);
     scanstate->leader = scanstate;
-    scanstate->cte_table = tuplestore_begin_heap(true, false, work_mem);
+    scanstate->cte_table =
+        tuplestore_begin_heap(true, false, tcb->guc.work_mem);
     tuplestore_set_eflags(scanstate->cte_table, scanstate->eflags);
     scanstate->readptr = 0;
   } else {

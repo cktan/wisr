@@ -4269,10 +4269,11 @@ static void enable_statement_timeout(void) {
   /* must be within an xact */
   Assert(xact_started);
 
-  if (StatementTimeout > 0 &&
-      (StatementTimeout < TransactionTimeout || TransactionTimeout == 0)) {
+  if (tcb->guc.StatementTimeout > 0 &&
+      (tcb->guc.StatementTimeout < TransactionTimeout ||
+       TransactionTimeout == 0)) {
     if (!get_timeout_active(STATEMENT_TIMEOUT))
-      enable_timeout_after(STATEMENT_TIMEOUT, StatementTimeout);
+      enable_timeout_after(STATEMENT_TIMEOUT, tcb->guc.StatementTimeout);
   } else {
     if (get_timeout_active(STATEMENT_TIMEOUT))
       disable_timeout(STATEMENT_TIMEOUT, false);

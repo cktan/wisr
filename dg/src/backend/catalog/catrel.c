@@ -81,6 +81,7 @@
 #include "utils/snapmgr.h"
 #include "utils/timestamp.h"
 #include "utils/tuplestore.h"
+#include "utils/control_block.h"
 
 /* A callback of the access method that a catalog relation never takes. */
 template <typename R, typename... A> static R refuse(A...) {
@@ -1222,7 +1223,7 @@ static TableScanDesc catrel_scan_begin(Relation rel, Snapshot snapshot,
   scan->base.rs_snapshot = snapshot;
   scan->base.rs_flags = flags;
   /* Held in memory: a catalog's rows are few. */
-  scan->rows = tuplestore_begin_heap(true, false, work_mem);
+  scan->rows = tuplestore_begin_heap(true, false, tcb->guc.work_mem);
   generate(rel, scan->rows, nkeys, key);
   scan->nkeys = nkeys;
   scan->keys = (ScanKey)palloc(Max(nkeys, 1) * sizeof(ScanKeyData));

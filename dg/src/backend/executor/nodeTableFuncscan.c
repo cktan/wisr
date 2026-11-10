@@ -35,6 +35,7 @@
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/xml.h"
+#include "utils/control_block.h"
 
 static TupleTableSlot *TableFuncNext(TableFuncScanState *node);
 static bool TableFuncRecheck(TableFuncScanState *node, TupleTableSlot *slot);
@@ -254,7 +255,7 @@ static void tfuncFetchRows(TableFuncScanState *tstate, ExprContext *econtext) {
 
   /* build tuplestore for the result */
   oldcxt = MemoryContextSwitchTo(econtext->ecxt_per_query_memory);
-  tstate->tupstore = tuplestore_begin_heap(false, false, work_mem);
+  tstate->tupstore = tuplestore_begin_heap(false, false, tcb->guc.work_mem);
 
   /*
    * Each call to fetch a new set of rows - of which there may be very many

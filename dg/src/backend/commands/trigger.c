@@ -3389,7 +3389,7 @@ static Tuplestorestate *GetCurrentFDWTuplestore(void) {
     saveResourceOwner = CurrentResourceOwner;
     CurrentResourceOwner = CurTransactionResourceOwner;
 
-    ret = tuplestore_begin_heap(false, false, work_mem);
+    ret = tuplestore_begin_heap(false, false, tcb->guc.work_mem);
 
     CurrentResourceOwner = saveResourceOwner;
     MemoryContextSwitchTo(oldcxt);
@@ -4258,13 +4258,17 @@ TransitionCaptureState *MakeTransitionCaptureState(TriggerDesc *trigdesc,
   CurrentResourceOwner = CurTransactionResourceOwner;
 
   if (need_old_upd && upd_table->old_tuplestore == NULL)
-    upd_table->old_tuplestore = tuplestore_begin_heap(false, false, work_mem);
+    upd_table->old_tuplestore =
+        tuplestore_begin_heap(false, false, tcb->guc.work_mem);
   if (need_new_upd && upd_table->new_tuplestore == NULL)
-    upd_table->new_tuplestore = tuplestore_begin_heap(false, false, work_mem);
+    upd_table->new_tuplestore =
+        tuplestore_begin_heap(false, false, tcb->guc.work_mem);
   if (need_old_del && del_table->old_tuplestore == NULL)
-    del_table->old_tuplestore = tuplestore_begin_heap(false, false, work_mem);
+    del_table->old_tuplestore =
+        tuplestore_begin_heap(false, false, tcb->guc.work_mem);
   if (need_new_ins && ins_table->new_tuplestore == NULL)
-    ins_table->new_tuplestore = tuplestore_begin_heap(false, false, work_mem);
+    ins_table->new_tuplestore =
+        tuplestore_begin_heap(false, false, tcb->guc.work_mem);
 
   CurrentResourceOwner = saveResourceOwner;
   MemoryContextSwitchTo(oldcxt);

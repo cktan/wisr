@@ -40,6 +40,7 @@
 #include "utils/memutils.h"
 #include "utils/syscache.h"
 #include "utils/wait_event.h"
+#include "utils/control_block.h"
 
 static void ExecHashIncreaseNumBatches(HashJoinTable hashtable);
 static void ExecHashIncreaseNumBuckets(HashJoinTable hashtable);
@@ -1688,7 +1689,7 @@ size_t get_hash_memory_limit(void) {
   double mem_limit;
 
   /* Do initial calculation in double arithmetic */
-  mem_limit = (double)work_mem * hash_mem_multiplier * 1024.0;
+  mem_limit = (double)tcb->guc.work_mem * hash_mem_multiplier * 1024.0;
 
   /* Clamp in case it doesn't fit in size_t */
   mem_limit = Min(mem_limit, (double)SIZE_MAX);
