@@ -15,6 +15,9 @@ tables live in Wisr. The repository holds both, in four parts:
 To try digres, from a build to a query:
 [`QUICKSTART.md`](QUICKSTART.md).
 
+See [`PERF.md`](PERF.md) for the performance of digres vs
+PostgreSQL 18.
+
 ## How the parts fit
 
 ```
@@ -56,8 +59,8 @@ To try digres, from a build to a query:
   [`sm/sm2/SM2_DESIGN.md`](sm/sm2/SM2_DESIGN.md),
   [`sm/sm3/SM3_DESIGN.md`](sm/sm3/SM3_DESIGN.md), and
   [`sm/sm0/README.md`](sm/sm0/README.md).
-- **`sm/rel/`** drives `sm.h` from scripts, the stack's tests
-  without SQL.
+- **`sm/rel/`** is a Lisp-like scripting language, Janet, that
+  drives `sm.h`. It tests the stack without SQL.
 
 Start with [`sm/README.md`](sm/README.md). Before changing code,
 read [`CLAUDE.md`](CLAUDE.md), then [`sm/CODE.md`](sm/CODE.md)

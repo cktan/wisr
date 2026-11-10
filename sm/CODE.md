@@ -232,4 +232,3 @@ two differ, [`CLAUDE.md`](../CLAUDE.md) wins.
 - **Commit messages**: a short subject naming the level, in
   the style `sm1: attach recovers every database` or
   `sm: never throw`, then bullets.
-- **Never run `sprite-env checkpoints`.**

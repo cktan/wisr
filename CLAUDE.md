@@ -86,8 +86,6 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
 
 ### 1. General guidelines
 
-- **Sprite checkpoints**: Never run `sprite-env checkpoints` automatically.
-
 - **Markdown formatting** When writing or editing any `.md` file, wrap
   prose paragraphs so that no line exceeds 65 characters. This applies
   to body text only.
