@@ -2870,7 +2870,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
 
     {{"log_error_verbosity", PGC_SUSET, LOGGING_WHAT,
       gettext_noop("Sets the verbosity of logged messages."), NULL},
-     &Log_error_verbosity,
+     &tcb->guc.Log_error_verbosity,
      PGERROR_DEFAULT,
      log_error_verbosity_options,
      NULL,
@@ -2904,7 +2904,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
 
     {{"log_statement", PGC_SUSET, LOGGING_WHAT,
       gettext_noop("Sets the type of statements logged."), NULL},
-     &log_statement,
+     &tcb->guc.log_statement,
      LOGSTMT_NONE,
      log_statement_options,
      NULL,

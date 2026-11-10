@@ -546,6 +546,8 @@ typedef struct tcb_guc_t {
   int DefaultXactIsoLevel = 1;                 /* xact.c */
   int XactIsoLevel = 1;                        /* xact.c */
   int icu_validation_level = 19;               /* pg_locale.c */
+  int Log_error_verbosity;                     /* elog.c */
+  int log_statement;                           /* postgres.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

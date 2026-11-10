@@ -35,6 +35,7 @@
 #include "utils/lsyscache.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
+#include "utils/control_block.h"
 
 /*
  * Formerly, this code attempted to cache the function and type info
@@ -209,7 +210,7 @@ void HandleFunctionRequest(StringInfo msgBuf) {
   fetch_fp_info(fid, fip);
 
   /* Log as soon as we have the function OID and name */
-  if (log_statement == LOGSTMT_ALL) {
+  if (tcb->guc.log_statement == LOGSTMT_ALL) {
     ereport(LOG, (errmsg("fastpath function call: \"%s\" (OID %u)", fip->fname,
                          fid)));
     was_logged = true;

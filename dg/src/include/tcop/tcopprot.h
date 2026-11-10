@@ -34,8 +34,6 @@ typedef enum {
   LOGSTMT_ALL,  /* log all statements */
 } LogStmtLevel;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT int log_statement;
-
 /* Flags for restrict_nonsystem_relation_kind value */
 #define RESTRICT_RELKIND_VIEW			0x01
 #define RESTRICT_RELKIND_FOREIGN_TABLE	0x02

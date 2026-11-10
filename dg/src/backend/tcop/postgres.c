@@ -91,8 +91,6 @@ thread_local /*LOCAL*/ CommandDest whereToSendOutput = DestDebug;
 
 /* flag for logging end of session */
 
-thread_local /*LOCAL*/ int log_statement = LOGSTMT_NONE;
-
 /* wait N seconds to allow attach from a debugger */
 
 /* Time between checks that the client is still connected. */
@@ -2143,16 +2141,16 @@ static void exec_execute_message(const char *portal_name, long max_rows) {
 static bool check_log_statement(List *stmt_list) {
   ListCell *stmt_item;
 
-  if (log_statement == LOGSTMT_NONE)
+  if (tcb->guc.log_statement == LOGSTMT_NONE)
     return false;
-  if (log_statement == LOGSTMT_ALL)
+  if (tcb->guc.log_statement == LOGSTMT_ALL)
     return true;
 
   /* Else we have to inspect the statement(s) to see whether to log */
   foreach (stmt_item, stmt_list) {
     Node *stmt = (Node *)lfirst(stmt_item);
 
-    if (GetCommandLogLevel(stmt) <= log_statement)
+    if (GetCommandLogLevel(stmt) <= tcb->guc.log_statement)
       return true;
   }
 
