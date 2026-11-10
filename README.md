@@ -15,6 +15,9 @@ tables live in Wisr. The repository holds both, in four parts:
 To try digres, from a build to a query:
 [`QUICKSTART.md`](QUICKSTART.md).
 
+See [`PERF.md`](PERF.md) for the performance of digres vs
+PostgreSQL 18.
+
 ## How the parts fit
 
 ```
