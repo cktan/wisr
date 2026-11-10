@@ -506,6 +506,11 @@ typedef struct tcb_guc_t {
   int tcp_keepalives_interval;                 /* guc_tables.c */
   int tcp_keepalives_count;                    /* guc_tables.c */
   int ssl_renegotiation_limit;                 /* guc_tables.c */
+  int effective_cache_size = 524288;           /* costsize.c */
+  int log_temp_files = -1;                     /* guc_tables.c */
+  int debug_discard_caches = 0;                /* inval.c */
+  int client_connection_check_interval = 0;    /* postgres.c */
+  int scram_sha_256_iterations = 4096;         /* auth-scram.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

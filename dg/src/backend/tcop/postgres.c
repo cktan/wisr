@@ -96,7 +96,6 @@ thread_local /*LOCAL*/ int log_statement = LOGSTMT_NONE;
 /* wait N seconds to allow attach from a debugger */
 
 /* Time between checks that the client is still connected. */
-thread_local /*LOCAL*/ int client_connection_check_interval = 0;
 
 /* flags for non-system relation kinds to restrict use */
 thread_local /*LOCAL*/ int restrict_nonsystem_relation_kind;
@@ -2473,10 +2472,10 @@ static void start_xact_command(void) {
   enable_statement_timeout();
 
   /* Start timeout for checking if the client has gone away if necessary. */
-  if (client_connection_check_interval > 0 && IsUnderPostmaster && MyProcPort &&
-      !get_timeout_active(CLIENT_CONNECTION_CHECK_TIMEOUT))
+  if (tcb->guc.client_connection_check_interval > 0 && IsUnderPostmaster &&
+      MyProcPort && !get_timeout_active(CLIENT_CONNECTION_CHECK_TIMEOUT))
     enable_timeout_after(CLIENT_CONNECTION_CHECK_TIMEOUT,
-                         client_connection_check_interval);
+                         tcb->guc.client_connection_check_interval);
 }
 
 static void finish_xact_command(void) {
@@ -2770,12 +2769,12 @@ void ProcessInterrupts(void) {
      * wake up idle sessions, and they already know how to detect lost
      * connections.
      */
-    if (!DoingCommandRead && client_connection_check_interval > 0) {
+    if (!DoingCommandRead && tcb->guc.client_connection_check_interval > 0) {
       if (!pq_check_connection())
         ClientConnectionLost = true;
       else
         enable_timeout_after(CLIENT_CONNECTION_CHECK_TIMEOUT,
-                             client_connection_check_interval);
+                             tcb->guc.client_connection_check_interval);
     }
   }
 

@@ -78,7 +78,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT double cpu_tuple_cost;
 extern thread_local /*LOCAL*/ PGDLLIMPORT double cpu_index_tuple_cost;
 extern thread_local /*LOCAL*/ PGDLLIMPORT double cpu_operator_cost;
 extern thread_local /*LOCAL*/ PGDLLIMPORT double recursive_worktable_factor;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int effective_cache_size;
 
 extern double clamp_row_est(double nrows);
 extern int32 clamp_width_est(int64 tuple_width);

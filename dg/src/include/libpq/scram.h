@@ -21,7 +21,6 @@
 #include "libpq/sasl.h"
 
 /* Number of iterations when generating new secrets */
-extern thread_local /*LOCAL*/ PGDLLIMPORT int scram_sha_256_iterations;
 
 /* SASL implementation callbacks */
 extern PGDLLIMPORT const pg_be_sasl_mech pg_be_scram_mech;

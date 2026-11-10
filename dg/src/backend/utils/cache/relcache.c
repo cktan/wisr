@@ -89,6 +89,7 @@
 #include "utils/resowner.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
+#include "utils/control_block.h"
 
 /*
  * Whether to bother checking if relation cache memory needs to be freed
@@ -998,7 +999,7 @@ static Relation RelationBuildDesc(Oid targetRelId, bool insertIt) {
   MemoryContext tmpcxt = NULL;
   MemoryContext oldcxt = NULL;
 
-  if (RECOVER_RELATION_BUILD_MEMORY || debug_discard_caches > 0) {
+  if (RECOVER_RELATION_BUILD_MEMORY || tcb->guc.debug_discard_caches > 0) {
     tmpcxt = AllocSetContextCreate(CurrentMemoryContext,
                                    "RelationBuildDesc workspace",
                                    ALLOCSET_DEFAULT_SIZES);
@@ -2269,7 +2270,7 @@ static OpClassCacheEnt *LookupOpclassInfo(Oid operatorClassOid,
    * expense, we enable it only for high values of debug_discard_caches.
    */
 #ifdef DISCARD_CACHES_ENABLED
-  if (debug_discard_caches > 2)
+  if (tcb->guc.debug_discard_caches > 2)
     opcentry->valid = false;
 #endif
 

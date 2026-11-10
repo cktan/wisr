@@ -911,8 +911,8 @@ static void FreeVfd(File file) {
  */
 static void ReportTemporaryFileUsage(const char *path, off_t size) {
 
-  if (log_temp_files >= 0) {
-    if ((size / 1024) >= log_temp_files)
+  if (tcb->guc.log_temp_files >= 0) {
+    if ((size / 1024) >= tcb->guc.log_temp_files)
       ereport(LOG, (errmsg("temporary file: path \"%s\", size %lu", path,
                            (unsigned long)size)));
   }

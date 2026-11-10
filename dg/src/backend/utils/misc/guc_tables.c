@@ -307,7 +307,6 @@ thread_local /*LOCAL*/ bool current_role_is_superuser;
 thread_local /*LOCAL*/ int log_min_error_statement = ERROR;
 thread_local /*LOCAL*/ int log_min_messages = WARNING;
 thread_local /*LOCAL*/ int client_min_messages = NOTICE;
-thread_local /*LOCAL*/ int log_temp_files = -1;
 thread_local /*LOCAL*/ double log_statement_sample_rate = 1.0;
 thread_local /*LOCAL*/ double log_xact_sample_rate = 0;
 thread_local /*LOCAL*/ char *backtrace_functions;
@@ -1968,7 +1967,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
              "This is measured in disk pages, which are normally 8 kB each."),
          GUC_UNIT_BLOCKS | GUC_EXPLAIN,
      },
-     &effective_cache_size,
+     &tcb->guc.effective_cache_size,
      DEFAULT_EFFECTIVE_CACHE_SIZE,
      1,
      INT_MAX,
@@ -1994,7 +1993,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop("-1 disables logging temporary files. 0 means log all "
                    "temporary files."),
       GUC_UNIT_KB},
-     &log_temp_files,
+     &tcb->guc.log_temp_files,
      -1,
      -1,
      INT_MAX,
@@ -2016,7 +2015,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"debug_discard_caches", PGC_SUSET, DEVELOPER_OPTIONS,
       gettext_noop("Aggressively flush system caches for debugging purposes."),
       gettext_noop("0 means use normal caching behavior."), GUC_NOT_IN_SAMPLE},
-     &debug_discard_caches,
+     &tcb->guc.debug_discard_caches,
 #ifdef DISCARD_CACHES_ENABLED
 /* Set default based on older compile-time-only cache clobber macros */
 #if defined(CLOBBER_CACHE_RECURSIVELY)
@@ -2041,7 +2040,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop("Sets the time interval between checks for disconnection "
                    "while running queries."),
       gettext_noop("0 disables connection checks."), GUC_UNIT_MS},
-     &client_connection_check_interval,
+     &tcb->guc.client_connection_check_interval,
      0,
      0,
      INT_MAX,
@@ -2052,7 +2051,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"scram_iterations", PGC_USERSET, CONN_AUTH_AUTH,
       gettext_noop("Sets the iteration count for SCRAM secret generation."),
       NULL, GUC_REPORT},
-     &scram_sha_256_iterations,
+     &tcb->guc.scram_sha_256_iterations,
      SCRAM_SHA_256_DEFAULT_ITERATIONS,
      1,
      INT_MAX,

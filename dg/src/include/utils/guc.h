@@ -255,7 +255,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool current_role_is_superuser;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int log_min_error_statement;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int log_min_messages;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int client_min_messages;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int log_temp_files;
 extern thread_local /*LOCAL*/ PGDLLIMPORT double log_statement_sample_rate;
 extern thread_local /*LOCAL*/ PGDLLIMPORT double log_xact_sample_rate;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *backtrace_functions;

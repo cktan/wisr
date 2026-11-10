@@ -135,8 +135,6 @@ thread_local /*LOCAL*/ double cpu_operator_cost = DEFAULT_CPU_OPERATOR_COST;
 thread_local /*LOCAL*/ double recursive_worktable_factor =
     DEFAULT_RECURSIVE_WORKTABLE_FACTOR;
 
-thread_local /*LOCAL*/ int effective_cache_size = DEFAULT_EFFECTIVE_CACHE_SIZE;
-
 thread_local /*LOCAL*/ Cost disable_cost = 1.0e10;
 
 typedef struct {
@@ -669,7 +667,7 @@ double index_pages_fetched(double tuples_fetched, BlockNumber pages,
   Assert(T <= total_pages);
 
   /* b is pro-rated share of effective_cache_size */
-  b = (double)effective_cache_size * T / total_pages;
+  b = (double)tcb->guc.effective_cache_size * T / total_pages;
 
   /* force it positive and integral */
   if (b <= 1.0)
