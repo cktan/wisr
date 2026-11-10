@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm0_blist.h -- a list of fixed blocks, appended to and cut back
  * to a mark.
  *

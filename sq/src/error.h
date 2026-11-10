@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * error.h -- setting the calling thread's error state, and raising.
  *
  * set_error records an error for sq_errnum(), sq_errmsg(),

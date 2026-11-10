@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_tree.cc -- a B+tree over sm1's pages (../BTREEINDEX.md §11.3 step 5):
  * inserts against a sorted map, cursors over the whole and ranges,
  * a split's post cut short and finished later, and writers on many

@@ -8,6 +8,8 @@
  * src/backend/utils/misc/ps_status.c
  *
  * Copyright (c) 2000-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  * various details abducted from various places
  *--------------------------------------------------------------------
  */

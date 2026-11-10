@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # wisr -- a stack of storage levels over RocksDB.
 #
 # Level 0 is sm0/, the error state, the log hook, the helpers

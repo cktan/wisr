@@ -1,10 +1,9 @@
 # Parity with PostgreSQL on q1, q2 and q3 (btree indexes)
 
 Goal: digres runs `bench/q1-sk10.sql`, `q2-sk180.sql` and
-`q3-skfetchrow.sql` on btree
-indexes as fast as PostgreSQL 18. This document gives the
-profile, what was changed, and what is left. Written 2026-11-07
-by a profile of `main` at 20f43e31.
+`q3-skfetchrow.sql` on btree indexes as fast as PostgreSQL 18.
+This document gives the profile, what was changed, and what is
+left. Written 2026-11-07 by a profile of `main` at 20f43e31.
 
 ## 1. Method
 
@@ -28,8 +27,8 @@ by a profile of `main` at 20f43e31.
 restart moved q2 by up to 47% in one run (374k, then 550k) when
 the server was started in a different way. Compare two builds on
 the same data directory, with the same restart, as
-[`ISSUE.md`](ISSUE.md)
-§2.3 says. The A/B numbers below were taken that way.
+[`ISSUE.md`](ISSUE.md) §2.3 says. The A/B numbers below were
+taken that way.
 
 ## 2. Where the instructions go
 
@@ -76,8 +75,7 @@ section 6.
 key and rechecked the equality on it. Now:
 
 1. The planner sets `IndexOnlyScan.nocols` when nothing above
-   reads a column and the scan checks none
-   (`createplan.c`).
+   reads a column and the scan checks none (`createplan.c`).
 2. `sm_rel_scan_plain` tells, with no decoding, that a tree
    entry's key is whole: not cut, and it gives its columns back.
 3. `smstore_index_getentry` returns such an entry at once if
@@ -189,8 +187,9 @@ earlier run is `main` before any change, the same day.
   the q1 and q3 changes are. The q2 change, 27% more tps, is
   far above it, and the instruction counts agree with it.
 - The instruction ratio of q2 is 1.63, but the latency ratio is
-  1.33. digres runs q2's instructions at a higher IPC (3.3, as
-  PostgreSQL's 3.4), because they are a tight loop.
+  1.33. The measured IPCs, 3.3 for digres and 3.4 for
+  PostgreSQL, do not explain this difference. This run did not
+  find its cause.
 - q1 is 1.05 in user instructions and 1.12 in cycles, user and
   kernel together: digres 50,500 cycles, PostgreSQL 45,200.
   digres runs q1 at an IPC of 1.9, PostgreSQL's at 2.0, and

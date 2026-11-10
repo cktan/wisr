@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * version.h -- the row-version codec and the store column
  * families' comparator and prefix extractor (../DBMGR.md §6.2).
  *

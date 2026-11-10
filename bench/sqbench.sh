@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # sqbench.sh -- time digres parsing a large SELECT whose WHERE clause
 # ends with AND false, so the planner folds the qualification to a
 # one-time false filter and neither sm nor a table scan runs.

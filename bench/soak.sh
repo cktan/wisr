@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # soak.sh -- run the school workload of SOAK.md against one server
 # for hours, sample its memory, and check the data at the end.
 #

@@ -6,6 +6,8 @@
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  * src/include/utils/elog.h
  *
@@ -369,7 +371,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT ErrorContextCallback
  * helpful in such cases.
  *
  * Note: digres raises ereport(ERROR) as a C++ exception, pg_error_t, where
- * PostgreSQL jumps with siglongjmp (sm/PART4.md section 2).  These macros
+ * PostgreSQL jumps with siglongjmp (sm/PGFORK.md section 2).  These macros
  * are a try and a catch of it.  So a local variable modified in the PG_TRY
  * section and used in the PG_CATCH section need not be "volatile", as
  * PostgreSQL requires, and the destructors of whatever is between the
@@ -549,11 +551,8 @@ typedef enum {
 } PGErrorVerbosity;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_error_verbosity;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *Log_line_prefix;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_destination;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *Log_destination_string;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool syslog_sequence_numbers;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool syslog_split_messages;
 
 /* Log destination bitmap */
 #define LOG_DESTINATION_STDERR	 1

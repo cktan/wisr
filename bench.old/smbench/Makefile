@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # Build smbench against the release sm and RocksDB the bench's digres
 # links (make -C ../../dg release).
 SM = ../../sm

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * recover.cc -- what opening a database does beyond RocksDB's
  * own WAL replay (../DBMGR.md §9.1 steps 4-6): restore prepared
  * transactions in doubt, and drop orphaned store CFs.

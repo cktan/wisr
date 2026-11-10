@@ -1,7 +1,7 @@
 # digres
 
 A fork of PostgreSQL that runs on the storage stack in `../sm`.
-[`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+[`../sm/PGFORK.md`](../sm/PGFORK.md#10-digres-how-the-fork-is-to-be-made)
 §10 says how it is to be made, and §9 what it
 calls.
 
@@ -52,7 +52,7 @@ A statement over constants also runs with no server: `echo
 strict C++ with no `-fpermissive`, and links `build/digres`
 with `../sq` and `../sm`. The server has no catalog tables:
 its catalog is being replaced, not created
-([`../sm/PART4.md`](../sm/PART4.md)
+([`../sm/PGFORK.md`](../sm/PGFORK.md)
 §10).
 
 - [`WORKNOTE.md`](WORKNOTE.md): the decisions taken along the
@@ -127,7 +127,7 @@ tests hold what it prints to what PostgreSQL's parser printed.
 ## The catalog
 
 PostgreSQL's catalog is being replaced, a lookup at a time
-([`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+([`../sm/PGFORK.md`](../sm/PGFORK.md#10-digres-how-the-fork-is-to-be-made)
 §10, [`WORKNOTE.md`](WORKNOTE.md) step 6). What is built in —
 types, functions, operators — is compiled in:
 `src/backend/catalog/gen_cat.py` writes `cat_builtin.c` from the

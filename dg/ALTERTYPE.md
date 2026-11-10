@@ -156,7 +156,7 @@ same type code, or `text` and `varchar`.
    built.
 5. pgregress trimmed again;
    [`UNSUPPORTED.md`](UNSUPPORTED.md#3-ddl) §3,
-   [`NEXT.md`](../sm/NEXT.md#1-next) §1
+   [`NEXT.md`](../sm/NEXT.md#4-done-and-dropped) §4
    item 1, [`WORKNOTE.md`](WORKNOTE.md).
 
 ## 8. Decided

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * locktab.cc -- the lock table and Gray's modes (locktab.h,
  * ../LOCKMGR.md §3.2).
  */

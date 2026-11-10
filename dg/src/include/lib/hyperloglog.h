@@ -4,6 +4,8 @@
  * A simple HyperLogLog cardinality estimator implementation
  *
  * Portions Copyright (c) 2014-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  * Based on Hideaki Ohno's C++ implementation.  The copyright terms of Ohno's
  * original version (the MIT license) follow.

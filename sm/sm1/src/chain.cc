@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * chain.cc -- a chained store's keys (../ROWSTORE.md): the codec, the
  * chain_ calls, the rollback to a savepoint, and GC's repair.
  *
@@ -30,18 +35,21 @@ namespace wisr {
 
 /*
  * Queue storeid's chained key for the row reaper, if v, its CURR
- * version that a reader sees, has a prev and is not own_xid's
- * uncommitted write (../GC.md §13.5). Inline: the read path
- * pays one test for a key with no prev.
+ * version that a reader sees, has a prev and is settled: committed at
+ * commit_ts, at or below the cached watermark (../GC.md §13.5). A
+ * commit_ts of 0 is a version the reader wrote or could not resolve.
+ * Inline: the read path pays one test for a key with no prev, and one
+ * atomic load for a key with one.
  */
 static inline void chain_note_reap(db_t *db, uint64_t storeid,
                                    rocksdb::Slice key, const chain_version_t &v,
-                                   uint64_t own_xid) {
+                                   uint64_t commit_ts) {
   if (0 == v.prev) {
     return;
   }
-  // The reader's own uncommitted version is no one's to reap.
-  if (!(v.flags & version_stamped) && 0 != own_xid && v.xid == own_xid) {
+  // Not settled, or the reader's own write: the cache is never above W.
+  if (0 == commit_ts ||
+      commit_ts > db->watermark_cache.load(std::memory_order_relaxed)) {
     return;
   }
   // A full queue or a key already queued drops this one: a hint.
@@ -837,8 +845,9 @@ int chain_resolve(sm1::session_t *s, const store_t &st, uint64_t storeid,
       return r;
     }
     bool dead = false;
-    int seen =
-        access_visible(s->db, v.as_version(), view, newest ? &dead : nullptr);
+    uint64_t commit_ts = 0;
+    int seen = access_visible(s->db, v.as_version(), view,
+                              newest ? &dead : nullptr, &commit_ts);
     if (seen < 0) {
       return -1;
     }
@@ -849,7 +858,7 @@ int chain_resolve(sm1::session_t *s, const store_t &st, uint64_t storeid,
     // A CURR seen, with a chain behind it, for the row reaper to cut
     // once it is settled (../GC.md §13.5).
     if (newest && seen == 1 && nullptr == st.owner) {
-      chain_note_reap(s->db, storeid, key, v, s->xid);
+      chain_note_reap(s->db, storeid, key, v, commit_ts);
     }
     newest = false;
     if (seen == 1) {
@@ -1191,14 +1200,15 @@ sm1::scan_t *scan_chained(sm1::session_t *s, uint64_t storeid,
 /*
  * Whether view sees v, as access_visible: a stamped version here,
  * the common case, by its stamps alone (../XCTMGR.md §3.3, access.cc
- * visible()). *dead is set as access_visible sets it.
+ * visible()). *dead and *commit_ts are set as access_visible sets them.
  */
 int chain_visible(wisr::db_t *db, const wisr::chain_version_t &v,
-                  const wisr::view_t &view, bool *dead) {
+                  const wisr::view_t &view, bool *dead, uint64_t *commit_ts) {
   if (v.flags & version_stamped) {
+    *commit_ts = v.commit_ts;
     return v.wts <= view.snapshot_ts && v.commit_ts <= view.snapshot_ts;
   }
-  return wisr::access_visible(db, v.as_version(), view, dead);
+  return wisr::access_visible(db, v.as_version(), view, dead, commit_ts);
 }
 
 } // namespace
@@ -1487,7 +1497,8 @@ int chain_scan_next(sm1::scan_t *c, std::string_view &key,
     bool newest = true;
     for (;;) {
       bool dead = false;
-      int r = chain_visible(db, v, view, newest ? &dead : nullptr);
+      uint64_t commit_ts = 0;
+      int r = chain_visible(db, v, view, newest ? &dead : nullptr, &commit_ts);
       if (r < 0) {
         c->state = -1;
         return -1;
@@ -1501,7 +1512,7 @@ int chain_scan_next(sm1::scan_t *c, std::string_view &key,
       // (../GC.md §13.5).
       if (newest && 1 == r && c->report_dead) {
         chain_note_reap(db, c->chain_storeid, rocksdb::Slice(c->last_examined),
-                        v, c->session->xid);
+                        v, commit_ts);
       }
       newest = false;
       if (1 == r) {

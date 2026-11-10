@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_type.cc -- the type descriptors (TYPE.md §5.3) and
  * the types built so far: bool, int2, int4 and int8 (TYPE.md
  * §3.1, §3.2).

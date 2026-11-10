@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * gen.h -- generators for sm2's property tests (TYPE.md §9,
  * "Testing"). Every property runs from one seed: a fixed default
  * that the environment variable WISR_SEED overrides, which a

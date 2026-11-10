@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # sm0 -- level 0 of the stack: the error state, the log hook,
 # the general-purpose helpers every level above uses, and the
 # system services sm and dg build on (sm_sys.h).

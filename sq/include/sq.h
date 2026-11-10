@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sq.h -- sq's API: PostgreSQL 18's SQL in, a tree of nodes out.
  * It is C in style and compiled as C++: std::string, std::vector
  * and std::string_view may cross it, and no other C++ type does.

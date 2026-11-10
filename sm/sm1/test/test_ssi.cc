@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_ssi.cc -- SSI's abort rule with the refinements of Ports
  * and Grittner (../XCTMGR.md §7.4): a dangerous structure
  * T1 -> T2 -> T3 fails a transaction only if T3 committed first,

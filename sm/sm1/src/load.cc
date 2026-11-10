@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * load.cc -- a bulk load into an empty store (BULKLOAD.md §5, file
  * mode). A load's keys are versions of its transaction like any
  * other, under one write timestamp and one seq, but they reach

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_limits.cc -- keys of sm1::max_keylen bytes and values of
  * sm1::max_datalen bytes: accepted by every call, stored, and read
  * back intact, while one byte more is rejected.

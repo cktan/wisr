@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # btree.py N -- write q9.sql and q10.sql, N executions each of btree.sh's
 # prepared Q9 and Q10: Q9 a range of 100 c2 values from a uniform start,
 # Q10 100 c2 values each Zipfian (1.1) over 3 to 1000002, as

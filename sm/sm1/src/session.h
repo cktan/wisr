@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * session.h -- a session, its transaction, and its cursors,
  * plus the internal calls between xct.cc, catalog.cc, and
  * access.cc.
@@ -799,9 +804,12 @@ int access_write(sm1::session_t *session, uint64_t storeid, write_op_t op,
 /*
  * 1 if v is visible at view, 0 if not, -1 on error (../XCTMGR.md §3.3).
  * *dead is set, if given, when v is invisible because its writer is dead.
+ * *commit_ts is set, if given, to v's commit_ts once it is known; it is
+ * left alone for the view's own write and for a version written after the
+ * snapshot.
  */
 int access_visible(db_t *db, const version_t &v, const view_t &view,
-                   bool *dead = nullptr);
+                   bool *dead = nullptr, uint64_t *commit_ts = nullptr);
 
 /* Step past v, invisible at view: under SSI, owe its writer an edge. */
 int access_skip(sm1::session_t *session, const version_t &v,

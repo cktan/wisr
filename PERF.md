@@ -2,7 +2,7 @@
 
 Written 2026-11-07. Results 1 to 3 report throughput and latency.
 [Why q3 is slow](#why-q3-is-slow-a-row-found-by-its-key) profiles
-the query furthest from PostgreSQL; other profiles are in
+q3's instruction cost; other profiles are in
 [`PARITY.md`](PARITY.md).
 
 ## Aim
@@ -12,8 +12,8 @@ and what the gap is made of. Each query isolates one cost:
 
 - q0, `bench/q0-pkget.sql`: the cost of one row read by the
   primary key.
-- q1, `bench/q1-sk10.sql`: the cost of a short index range (8
-  entries).
+- q1, `bench/q1-sk10.sql`: the cost of a short index range (10
+  entries on average).
 - q2, `bench/q2-sk180.sql`: the cost of a long index range (183
   entries).
 - q3, `bench/q3-skfetchrow.sql`: the cost of reading a table row
@@ -49,7 +49,8 @@ select count(*) from usertable
 ```
 
 - Plan: an index-only scan of the `lastname` index, then a count.
-  About 8 entries match. No table row is read.
+  There are 10 matching entries on average, ranging from 2 to
+  24 across the 1,000 last names. No table row is read.
 
 **q2, `q2-sk180.sql`.**
 
@@ -67,9 +68,9 @@ select phone from usertable
  where lastname = 'Last' || n;
 ```
 
-- Plan: `phone` is in no index, so each of the 8 matching rows is
-  read from the table. digres uses an index scan. PostgreSQL uses
-  a bitmap heap scan.
+- Plan: `phone` is in no index, so each matching row is read
+  from the table: 10 rows on average. digres uses an index
+  scan. PostgreSQL uses a bitmap heap scan.
 
 **q4, `q4-seqscan.sql`.**
 
@@ -81,7 +82,7 @@ select sum(zip::int) from usertable;
   index is used. `zip` is text of digits, so the cast makes it a
   number. PostgreSQL does not use parallel workers.
 - MariaDB runs `sum(cast(zip as signed))`. All four systems
-  return the same sum.
+  reportedly return the same sum. The dataset gives 501,892,887.
 
 ## Method
 
@@ -92,23 +93,31 @@ select sum(zip::int) from usertable;
   its last run, `bench/build/mainrun/run5.out`.
 - MariaDB 11.8.9: `sysbench`, because `pgbench` cannot connect.
   Its numbers are indicative only.
-- Each cell is one run. Noise is about 5% for one run, and up to
-  9% between two runs of the same code (see q0 below).
+- Each cell is one run, except the q0 and q4 means below. The
+  two q0 runs differ by about 9% of their mean. This does not
+  establish a noise bound for these queries.
 - digres is tested with two index kinds: regular (an LSM index,
   its default) and btree (a tree). The aim of the work was the
   btree. q0 uses only the primary key (an LSM index) and q4 uses
   no index, so for them the index kind does not matter.
 
+The cited throughput log and raw profiles were not available
+locally for the 2026-11-09 review. Arithmetic and the dataset
+were checked; the measurements were not reproduced.
+
 ## Result 1: digres against PostgreSQL
 
 Latency of digres divided by latency of PostgreSQL. A value of
-1.00 is parity. Smaller is better.
+1.00 is parity. Smaller is better. For one client, the ratios
+below use PostgreSQL tps divided by digres tps. This avoids
+dividing latencies rounded to 0.001 ms by `pgbench`. For q0 and
+q4, these are ratios of mean throughput, not mean latency.
 
 | query | regular index | btree index |
 | --- | --: | --: |
-| q1 | 1.41 | 1.19 |
-| q2 | 2.96 | 1.29 |
-| q3 | 2.40 | 1.74 |
+| q1 | 1.47 | 1.17 |
+| q2 | 2.93 | 1.28 |
+| q3 | 2.38 | 1.74 |
 
 Transactions a second:
 
@@ -130,30 +139,43 @@ one run on a regular and one on a btree database:
 | q0 | 49,983 | 66,502 | 1.33 |
 | q4 | 529 | 1,419 | 2.68 |
 
-- The two runs of q0 differ by 9% (52,206 and 47,759 digres, one
-  run each). Read 9% as the noise of a single run.
-- A primary key lookup is the cheapest query: digres reaches
-  about 50,000 a second, 1.33 times PostgreSQL's latency.
+- The two q0 runs give 52,206 and 47,759 digres tps. Their
+  difference is 8.9% of their mean, 49,982.5 tps.
+- digres reaches about 50,000 primary key lookups a second,
+  at 1.33 times PostgreSQL's latency.
 - `bench/run.sh` now runs q0 and q4 once, not once for each index
   kind.
+- **q4 is slower on digres in these measurements.**
+  PostgreSQL's heap scan reads 8 KB pages in order, and steps
+  from one tuple to the next inside a page. An LSM scan merges
+  several sorted runs, the memtable and the files of each level,
+  and compares keys to find the next one. It also decodes keys
+  from blocks. These costs are plausible causes, but q4 needs
+  a profile to establish their shares. Result 3 shows MyRocks,
+  also an LSM row store, is 0.27 of PostgreSQL's throughput on
+  q4, and digres is 0.37. InnoDB, a clustered B-tree, is 0.51.
+  Parity on q4 is not a target: an OLTP workload runs few
+  sequential scans
+  ([`sm/NEXT.md`](sm/NEXT.md#1-next) §1, item 3).
 
 ## Result 2: effect of the work on the btree index
 
 Compared with `main` at 20f43e31, the start of the session.
 q0 and q4 were not measured then.
 
-| query | tps before | tps now | latency ratio before | latency ratio now |
+| query | tps before | tps now | throughput gain | latency ratio now |
 | --- | --: | --: | --: | --: |
-| q1 | 47,924 | 52,130 | 1.24 | 1.19 |
-| q2 | 24,267 | 32,207 | 1.78 | 1.29 |
-| q3 | 24,347 | 24,856 | 1.95 | 1.74 |
+| q1 | 47,924 | 52,130 | 8.8% | 1.17 |
+| q2 | 24,267 | 32,207 | 32.7% | 1.28 |
+| q3 | 24,347 | 24,856 | 2.1% | 1.74 |
 
-- q2 is 33% faster, and its ratio fell from 1.78 to 1.29. The
-  change is above the noise.
-- q1 is 9% faster, but PostgreSQL also moved by 6% between the
-  runs. The ratio change, 1.24 to 1.19, is within the noise.
-- q3 did not change in tps. Its ratio moved because PostgreSQL
-  moved by up to 10% between runs.
+- q2 shows the largest throughput gain. The instruction counts
+  in `PARITY.md` also show a reduction in its cost.
+- q1 and q3 need repeated runs to distinguish an improvement
+  from variation between runs.
+- The earlier latency ratios were 1.24, 1.78 and 1.95. They
+  used rounded latencies. The earlier PostgreSQL tps are not
+  recorded here, so those ratios cannot be corrected here.
 - Parked table handles, done earlier, made the fixed cost of a
   statement equal to PostgreSQL's. A query that reads no row, on
   an index that matches nothing, is at parity.
@@ -162,7 +184,9 @@ q0 and q4 were not measured then.
 
 Transactions a second, with the btree index of digres and
 PostgreSQL from Result 1. MariaDB ran at another time and with
-another client, so compare the ratios, not single numbers.
+another client. Both the absolute numbers and the ratios are
+indicative: dividing by PostgreSQL tps does not remove client
+or run differences.
 
 | system | q0 | q1 | q2 | q3 | q4 |
 | --- | --: | --: | --: | --: | --: |
@@ -179,7 +203,8 @@ Throughput of each system relative to PostgreSQL:
 | InnoDB | 0.79 | 0.58 | 0.52 | 0.71 | 0.51 |
 | MyRocks | 0.57 | 0.32 | 0.13 | 0.43 | 0.27 |
 
-- digres is faster than both MariaDB engines on q1 and q2.
+- In these runs, digres is faster than both MariaDB engines on
+  q1 and q2.
 - InnoDB is faster than digres on q0, q3 and q4. Its rows sit in
   the leaves of a clustered B-tree.
 - MyRocks is the slowest on every query. It is also an LSM row
@@ -187,20 +212,20 @@ Throughput of each system relative to PostgreSQL:
 
 ## Why q3 is slow: a row found by its key
 
-q3 reads 8 rows through the `lastname` index, and it is the query
-furthest from PostgreSQL: 2.00 times its instructions a
-statement. This section asks where that cost is. It counts
-instructions, not time, as a count does not move with the
-machine's clock:
+The reported q3 instruction ratio is 178,000 / 89,100, or
+2.00. Instruction counts and latency ratios measure different
+costs; they need not agree.
 
 - **Instructions a statement**: `perf stat` on the server, the
   slope between pgbench runs of 5,000 and 25,000 prepared
-  statements, server and client pinned. The connection and the
-  first plan cancel.
-- **Instructions a function**: callgrind on the same servers,
-  counts dumped after 300 statements and after 1,300 more, self
-  costs per function, the difference over 1,000. The totals
-  match `perf stat`'s within 5%.
+  statements, server and client pinned. This method aims to
+  cancel connection and initial plan costs.
+- **Instructions a function**: callgrind self costs. The
+  original account says dumps followed 300 statements and
+  "1,300 more," but divides their difference by 1,000. That
+  divisor requires cumulative counts of 300 and 1,300. Raw
+  dumps are needed to resolve this ambiguity and verify the
+  reported agreement with `perf stat` within 5%.
 
 digres is `digres-release` at `81aaf873`, PostgreSQL is 18.6,
 both on the data of `bench/load.sql` with btree indexes, on
@@ -208,26 +233,34 @@ aarch64 under WSL2, 2026-11-07.
 
 ### 1. Getting the keys, or reading the rows?
 
-q3 does what q1 does, then more. q1 finds the 8 entries of one
-last name and counts them; q3 finds the same 8 entries, reads the
-row each names, and returns its `phone`. So q3 less q1 is the
-cost of the 8 rows:
+q1 counts matching index entries; q3 returns their rows' phone
+values. The reported instruction counts are:
 
 | | digres | PostgreSQL |
 | --- | --: | --: |
-| q1: find the 8 entries, count them | 66,100 | 62,100 |
-| q3: find the 8 entries, read and return their rows | 178,000 | 89,100 |
-| q3 less q1: the 8 rows | 111,900 | 27,000 |
-| one row | 14,000 | 3,400 |
+| q1: count matching entries | 66,100 | 62,100 |
+| q3: read and return matching rows | 178,000 | 89,100 |
+| q3 less q1 | 111,900 | 27,000 |
 
-Finding the entries is near parity, 1.06 times. Reading a row
-costs digres about 4 times what it costs PostgreSQL. The gap is
-in the rows.
+q1 is near parity in instructions, at 1.06 times PostgreSQL.
+The q3 increment is 4.14 times PostgreSQL's. It includes row
+reads, but also changes in aggregation, output and scan plans.
+It is not an isolated measurement of row fetching.
+
+The original profile assumed eight matching rows. The supplied
+random queries instead match ten rows on average. If profiling
+used those queries, the increments per expected row are 11,190
+and 2,700 instructions. A fixed key could match eight rows, but
+no such key is documented. Actual row counts are needed before
+using these estimates as measured costs per row.
 
 ### 2. A row read, part by part
 
-What one of q3's rows costs digres, from callgrind, q3 less q1
-over 8:
+The following historical breakdown divides callgrind's q3 less
+q1 counts by eight. It is retained for traceability, not as a
+verified cost per row. If the profile averaged ten rows, each
+instruction count would be 20% lower; the shares would stay
+the same.
 
 | Part | Instructions | Share |
 | --- | --: | --: |
@@ -242,12 +275,14 @@ over 8:
 | the row sent to the client | 340 | 2% |
 | PostgreSQL's executor | 240 | 2% |
 
-Six tenths of a row is the search for its key in RocksDB.
+The entries sum to 14,130 instructions. Rounded shares sum to
+101%. RocksDB and the comparator total 8,420, or 59.6% of this
+breakdown. The total is about 1% above 111,900 / 8; these are
+separate reported measurements, not an exact reconciliation.
 
 ### 3. One row by its key: q0
 
-q0 reads one row by its primary key. Here PostgreSQL does more
-work than digres:
+q0 reads one row by its primary key. The lookup paths differ:
 
 1. PostgreSQL walks its primary key's btree to the leaf entry,
    and takes the entry's TID: the row's address, a heap page and
@@ -273,8 +308,7 @@ on aarch64 make approximate:
 
 q0 still ends near parity, 42,700 against 40,800 instructions a
 statement, because the read is under a quarter of either system's
-statement. The rest is the executor around it, which is
-PostgreSQL's in both.
+statement. Other statement costs dominate both totals.
 
 A search of RocksDB, for one key that is in the cache, does these
 steps:
@@ -284,10 +318,11 @@ steps:
    mutex of the cache's shard.
 3. Search the index block for the data block: a binary search
    over restart points, then a walk.
-4. Look the data block up in the block cache, as in step 2.
-5. Search the data block for the key, as in step 3.
+4. Look the data block up in the block cache, as in the
+   index block lookup.
+5. Search the data block for the key, using restart points.
 
-Every comparison in steps 3 and 5 calls sm1's comparator, a
+Key comparisons in the block searches call sm1's comparator, a
 virtual call that decodes a versioned key, not a `memcmp`.
 RocksDB's settings for this are already chosen for reads: blocks
 of 16 KB, a restart interval of 4, a hash index inside each data
@@ -296,66 +331,59 @@ block, and a prefix bloom filter
 
 ### 4. Why q3 multiplies the difference
 
-In q0 both systems pay one full read by key. In q3 they do not:
+In q0 both systems locate a row by its primary key. In q3:
 
-- **A PostgreSQL index entry holds a TID.** Each of q3's rows is
-  a dereference alone, about 950 instructions. PostgreSQL never
-  walks its primary key's btree in q3.
-- **A digres index entry holds the row's primary key**, as a row
-  in sm has no address: it is found by its key
-  ([`sm/CLUSTER.md`](sm/CLUSTER.md#6-digres) §6). Each of q3's
-  rows is a full search of RocksDB, about 8,400 instructions
-  under `MultiGet` with the comparator.
+- **A PostgreSQL index entry holds a TID**, the heap address.
+  The bitmap heap scan collects TIDs and visits heap pages.
+  It does not search the primary key index for each row.
+- **A digres index entry holds the row's primary key**. The
+  row is found by that key in RocksDB
+  ([`sm/CLUSTER.md`](sm/CLUSTER.md#6-digres) §6).
 
-So q3 pays digres's most expensive operation 8 times, where
-PostgreSQL pays its cheapest. A worked count of the 8 rows' reads
-alone: 8 × 8,400 = 67,200 instructions for digres, 8 × 950 =
-7,600 for PostgreSQL.
+This difference is a plausible source of the gap. However,
+q0's 950-instruction `index_fetch_heap` cost is not a measured
+cost for q3's bitmap heap scan. Multiplying it by q3's row
+count does not establish PostgreSQL's q3 fetch cost.
 
-InnoDB confirms the cause. Its secondary indexes also hold the
-primary key, and each row is a walk of its clustered btree, the
-structure of digres. On q3 it runs 0.71 of PostgreSQL's
-throughput, and digres 0.57
-([Result 3](#result-3-mariadb-engines)): the same structure, with
-a cheaper search for the key.
+InnoDB's secondary indexes also hold primary keys. Its q3
+throughput is 0.71 of PostgreSQL's, against digres's 0.57.
+These results are consistent with a cost for row lookup, but
+they do not isolate that cost or confirm the cause of the gap.
 
 ### 5. What parity requires
 
-For q3 to cost what PostgreSQL's does, a row read from an index
-entry must cost about what PostgreSQL's dereference costs: about
-1,000 instructions. digres's search for a key costs about 8,400
-under `MultiGet`, and 9,000 with sm's work around it. So the read
-must become about 9 times cheaper than digres's search today, and
-about 7 times cheaper than PostgreSQL's own read by key in q0.
+The reported q3 totals differ by 88,900 instructions. Reaching
+1.5 times PostgreSQL's instruction count would require saving
+44,350 instructions from digres's 178,000.
 
-The rest of a row's cost does not close the gap alone. Outside
-RocksDB, a row costs digres about 5,700 instructions, and
-PostgreSQL about 2,450: its row's 3,400 less its dereference. Cut
-to PostgreSQL's, digres's rows would save about 26,000
-instructions, and q3 would be about 1.7 times PostgreSQL: still
-over the goal of 1.5. The search for the key is the gap.
+The historical breakdown assigns 8 × 8,420 = 67,360 instructions
+per statement to RocksDB and the comparator. Even removing
+that cost entirely leaves 110,640 instructions, or 1.24 times
+PostgreSQL. Search improvements alone therefore cannot reach
+instruction parity under this model. A reduction of about 66%
+in that search cost would reach 1.5 times, with other costs
+unchanged. These are arithmetic scenarios, not measured gains.
 
-A faster search does not reach it either. RocksDB's steps of §3
-are what any search of a sorted, compressed store does, and its
-settings are tuned. What PostgreSQL has, and digres does not, is
-an index entry that leads to its row with no search at all.
+The 9,000-instruction whole read belongs to q0, not q3. q3's
+historical breakdown totals 14,130 per assumed row. Neither
+supports a claim that a ninefold search improvement is required
+or sufficient for parity. The profiles also do not prove that
+faster searches are impossible. Confirm the profile interval,
+row counts and bitmap heap scan costs before choosing a design.
 
 ## Conclusion
 
-- On index-only queries with a btree index, digres is 19% (q1)
-  and 29% (q2) above PostgreSQL's latency. These queries were
-  the target of the work.
-- A single row by primary key (q0) is 1.33 times PostgreSQL's
-  latency. Reading 8 rows through an index (q3) is 1.74. Reading
-  all rows (q4) is 2.7. The cost of a row is the main gap, and it
-  grows with the number of rows read.
-- q3's gap is the read of each row. A digres index entry holds
-  the row's primary key, so each row is a full search of RocksDB,
-  about 8,400 instructions; a PostgreSQL entry holds the row's
-  address, and each row is a dereference, about 950
-  ([Why q3 is slow](#why-q3-is-slow-a-row-found-by-its-key)).
-- Regular (LSM) indexes are 1.4 to 2.9 times PostgreSQL's
-  latency, and the work did not touch them.
-- The ratios in Result 1 come from one run each. Repeat each
-  cell 3 to 5 times and take the median before a decision that
-  depends on a difference under 5%.
+- On index-only queries with a btree index, digres is about
+  17% (q1) and 28% (q2) above PostgreSQL's latency, using the
+  throughput ratios. These queries were the target of the work.
+- A primary key lookup (q0) has a ratio of 1.33. A secondary
+  index lookup returning ten rows on average (q3) has a ratio
+  of 1.74. A scan of all rows (q4) has a ratio of 2.68.
+- q3's profile suggests a substantial cost for finding rows by
+  key in RocksDB. Exact costs per row and comparisons with
+  PostgreSQL's bitmap heap scan remain unverified.
+- Regular (LSM) indexes have latency ratios of 1.47 to 2.93.
+  The work did not change them.
+- Repeat each measurement at least 3 to 5 times and report the
+  median and spread before relying on small differences. The
+  current runs do not establish a statistical noise bound.

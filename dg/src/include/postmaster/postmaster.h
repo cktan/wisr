@@ -5,6 +5,8 @@
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  * src/include/postmaster/postmaster.h
  *
@@ -45,8 +47,6 @@ typedef struct {
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool EnableSSL;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool ClientAuthInProgress;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int PreAuthDelay;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int AuthenticationTimeout;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_hostname;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_crash;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_kill;
 

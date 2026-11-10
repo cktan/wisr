@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * rel.h -- internal definitions and structures for the rel test driver.
  */
 #ifndef REL_H

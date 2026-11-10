@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_read_latest.cc -- sm1::read_latest and SM_ERR_UPDATED: the
  * argument rules and the engine state a scenario script cannot
  * see (../LOCKMGR.md §1.9). The timelines themselves are the f

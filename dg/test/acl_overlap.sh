@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # Verify that overlapping GRANT and REVOKE on one table never restore a
 # right a committed transaction revoked.
 # 1. Make a table that grants a role SELECT, and two more roles.

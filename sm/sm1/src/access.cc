@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * access.cc -- sm1::insert, sm1::update, sm1::erase, sm1::read, and
  * the sm1::scan cursor (../XCTMGR.md §3.3, ../ROWSTORE.md §4, §5).
  *
@@ -26,7 +31,7 @@ namespace {
  * When v is not visible because its writer is dead, *dead is set, if given.
  */
 int visible(db_t *db, const version_t &v, const view_t &view,
-            bool *dead = nullptr) {
+            bool *dead = nullptr, uint64_t *commit_out = nullptr) {
   // Our own write: visible unless a rollback undid it.
   if (view.xid != 0 && v.xid == view.xid) {
     return v.seq <= view.seq_hwm; // own write, savepoint-aware
@@ -57,6 +62,10 @@ int visible(db_t *db, const version_t &v, const view_t &view,
       // In flight: not visible.
       return 0;
     }
+  }
+  // Tell the caller when it committed, if it asked.
+  if (nullptr != commit_out) {
+    *commit_out = commit_ts;
   }
   // Visible if it committed at or before our snapshot.
   return commit_ts <= view.snapshot_ts;
@@ -1146,9 +1155,9 @@ void access_undo_add(sm1::session_t *s, sm1::session_t::undo_t undo) {
 }
 
 /* The visibility test of ../XCTMGR.md §3.3, for chain.cc. */
-int access_visible(db_t *db, const version_t &v, const view_t &view,
-                   bool *dead) {
-  return visible(db, v, view, dead);
+int access_visible(db_t *db, const version_t &v, const view_t &view, bool *dead,
+                   uint64_t *commit_ts) {
+  return visible(db, v, view, dead, commit_ts);
 }
 
 /* Step past an invisible version, as a read does, for chain.cc. */

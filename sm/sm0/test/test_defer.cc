@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_defer.cc -- defer blocks and scope_guard_t (include/sm0_defer.h).
  */
 

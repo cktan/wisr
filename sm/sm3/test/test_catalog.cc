@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_catalog.cc -- init, load and table creation (../CATALOG.md
  * ../CATALOG.md §6).
  */

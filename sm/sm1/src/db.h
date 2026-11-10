@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * db.h -- the layout of one database directory: its column
  * families, their options, and CF:meta's keys (../DBMGR.md §6).
  */
@@ -512,6 +517,16 @@ struct db_t {
    */
   std::mutex snap_mu;
   std::multiset<uint64_t> snapshots;
+
+  /*
+   * A copy of the watermark, stored under snap_mu each time a
+   * snapshot is taken, registered or released, and read with no
+   * mutex. It may be stale but never above the watermark, as the
+   * watermark never moves backwards: a version committed at or
+   * below it is settled (../GC.md §13.3). The reader's push to the
+   * row reaper uses it (../GC.md §13.5).
+   */
+  std::atomic<uint64_t> watermark_cache{0};
 
   /*
    * When each registered snapshot was taken, and those already

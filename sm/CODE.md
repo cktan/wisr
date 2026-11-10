@@ -2,23 +2,20 @@
 
 The rules and practices for changing `sm/`, written for coding
 agents. [`README.md`](README.md) lays out the levels,
-[`DESIGN.md`](DESIGN.md) holds the
-decisions that cross them, and each level's `SMn_DESIGN.md` is
-its design of record (sm0's is [`sm0/README.md`](sm0/README.md)).
-The
-repository's [`CLAUDE.md`](../CLAUDE.md) holds the rules for the
-whole
-repository; this file adds what is particular to `sm/`. Where
-the two differ, [`CLAUDE.md`](../CLAUDE.md) wins.
+[`DESIGN.md`](DESIGN.md) holds the decisions that cross them, and
+each level's `SMn_DESIGN.md` is its design of record (sm0's is
+[`sm0/README.md`](sm0/README.md)). The repository's
+[`CLAUDE.md`](../CLAUDE.md) holds the rules for the whole
+repository; this file adds what is particular to `sm/`. Where the
+two differ, [`CLAUDE.md`](../CLAUDE.md) wins.
 
 ## 1. Levels
 
-- **A level calls only the levels below it**: sm1 calls sm0;
-  sm2 calls sm1 and sm0; sm3 calls sm2, and sm1 directly where
-  sm2 has nothing to add
+- **A level calls only the levels below it**: sm1 calls sm0; sm2
+  calls sm1 and sm0; sm3 calls sm2, and sm1 directly where sm2
+  has nothing to add
   ([`DESIGN.md`](DESIGN.md#5-cross-level-decisions) §5). Nothing
-  calls
-  upward, and the C wrapper (`include/sm.h`, `src/sm.cc`)
+  calls upward, and the C wrapper (`include/sm.h`, `src/sm.cc`)
   belongs to no level.
 - **sm0 depends on nothing in the repository** but the root's
   `include/sm_error.h`: only the C++ standard library and
@@ -58,14 +55,13 @@ the two differ, [`CLAUDE.md`](../CLAUDE.md) wins.
   (`make -C sm1 -j4`), never plain `make`. `make -j4` in `sm/`
   builds every level, then `build/libsm.a`, the one archive
   of every level's objects and the wrapper's that dg links.
-- **`DEBUG=1 make -j4 test` in `sm/`** runs every level's
-  tests in order, then the `rel` suite, on the debug build
-  (`-O0 -g`, with `assert()`), as [`CLAUDE.md`](../CLAUDE.md)
-  requires. It
+- **`DEBUG=1 make -j4 test` in `sm/`** runs every level's tests
+  in order, then the `rel` suite, on the debug build (`-O0 -g`,
+  with `assert()`), as [`CLAUDE.md`](../CLAUDE.md) requires. It
   passes when every doctest line reads `0 failed`, sm1's line
-  reads `scenarios: 122 scripts match, versioned and chained`
-  (or however many there are), and the last line is
-  `All rel tests passed.`
+  reads `scenarios: 122 scripts match, versioned and chained` (or
+  however many there are), and the last line is `All rel tests
+  passed.`
 - **Run the full suite before every commit** that touches
   source, and dg's (`DEBUG=1 make -C ../dg -j4 test`) when the
   change reaches what dg calls: `include/sm.h`, `sm_sys.h`, or
@@ -181,12 +177,11 @@ the two differ, [`CLAUDE.md`](../CLAUDE.md) wins.
 ## 8. Style
 
 - **Follow [`CLAUDE.md`](../CLAUDE.md)**: `snake_case` names,
-  types ending in
-  `_t`, `m_` before a class's private members, a doc comment
-  of a line or two on every function, a short comment saying
-  why on every significant call (a lock, a thread, an
-  attach), and `memcpy()` with a written terminator instead
-  of `strncpy()`.
+  types ending in `_t`, `m_` before a class's private members, a
+  doc comment of a line or two on every function, a short comment
+  saying why on every significant call (a lock, a thread, an
+  attach), and `memcpy()` with a written terminator instead of
+  `strncpy()`.
 - **Match the code around you**, and touch only what the
   change needs. Remove what your change leaves unused; leave
   unused code you did not orphan, and mention it.
@@ -221,9 +216,9 @@ the two differ, [`CLAUDE.md`](../CLAUDE.md) wins.
 ## 10. Documents
 
 - **A decision that crosses levels goes in
-  [`DESIGN.md`](DESIGN.md)**, one
-  inside a level in that level's design document, and what is
-  to be built next in [`NEXT.md`](NEXT.md).
+  [`DESIGN.md`](DESIGN.md)**, one inside a level in that level's
+  design document, and what is to be built next in
+  [`NEXT.md`](NEXT.md).
 - **Paths in `sm/`'s documents are relative to `sm/`**, and in
   a level's documents relative to that level.
 - **Wrap prose at 65 columns** in every `.md` file; code

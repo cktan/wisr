@@ -5,6 +5,8 @@
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  *
  * IDENTIFICATION
@@ -3378,6 +3380,7 @@ void PostgresSingleUserMain(int argc, char *argv[], const char *username) {
 
   /* The standalone backend also reads process settings from pcb. */
   publish_postmaster_settings();
+  publish_shared_settings();
 
   /*
    * Validate we have been given a reasonable-looking DataDir and change

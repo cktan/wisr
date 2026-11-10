@@ -4,6 +4,8 @@
  *	  HyperLogLog cardinality estimator
  *
  * Portions Copyright (c) 2014-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  * Based on Hideaki Ohno's C++ implementation.  This is probably not ideally
  * suited to estimating the cardinality of very large sets;  in particular, we

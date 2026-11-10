@@ -1,7 +1,8 @@
 # PURGE_PLAN — the tombstone purge by SingleDelete
 
 Status: built ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step
-411), as the user decided (§8). It fixes
+419, "the tombstone purge erases by SingleDelete"), as the user
+decided (§8). It fixes
 [`../ISSUE.md`](../ISSUE.md#3-digres-known-issues) dg issue 22:
 the purge of a mass delete stalls every writer.
 

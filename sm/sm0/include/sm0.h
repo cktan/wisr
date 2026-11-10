@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm0.h -- level 0 of the stack: what every level above needs
  * and that is about no storage. The calling thread's error
  * state and the process-wide log hook, in namespace sm0.

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm_lock.h -- the lock modes of the whole wisr stack, in C.
  *
  * One set of modes serves every level, as sm_error.h's codes do

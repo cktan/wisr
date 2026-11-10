@@ -48,8 +48,7 @@ taken the `"S"` row and the Catalog keys with it.
 - **The definition is transactional.** A Sequence is a catalog
   row, so `sm1::mkseq` and `sm1::rmseq` commit and roll back like
   `sm1::mkstore` ([`DBMGR.md`](DBMGR.md)), down to the wait that
-  makes two
-  concurrent creates of one name conflict.
+  makes two concurrent creates of one name conflict.
 - **The values are not transactional**, like a PostgreSQL
   sequence. `sm1::nextseq` needs no transaction, takes no lock,
   never waits on another transaction, and an abort gives nothing
@@ -160,8 +159,7 @@ The view means a Sequence the transaction made is usable before
 it commits. At a statement's mark, a Sequence the statement
 itself made is found only after `sm1::stmt_advance`, as any row
 is ([`XCTMGR.md`](XCTMGR.md)). Under SERIALIZABLE the lookup is a
-read, and
-takes a SIREAD entry on the `"S"` row. It never waits.
+read, and takes a SIREAD entry on the `"S"` row. It never waits.
 
 `db_next_seq(db, seqid, start, increment,
 out)`, under `seq_mu`:
@@ -269,9 +267,8 @@ A temporary table counts its `_id`s with one, and its TOAST ids.
 A Sequence is a `SEQUENCE` key by oid, with one `sequence` part:
 namespace, name, start, increment, owner table and owner column
 ([`CATALOG.md`](CATALOG.md)). Its counter is the sm1 Sequence
-`sm3.seq.<oid>`
-(`sequence_counter`), made and dropped with the key in the same
-transaction.
+`sm3.seq.<oid>` (`sequence_counter`), made and dropped with the
+key in the same transaction.
 
 Memory keeps only its Namespace and name: `sequence_by_oid` and
 `sequence_names`, filled at `cat_open` from the `NAME` keys, and

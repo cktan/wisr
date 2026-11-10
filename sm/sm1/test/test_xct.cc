@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_xct.cc -- the commit sequencer, the active-transaction
  * table and commit cache, and the abort on a failed commit record
  * (../DBMGR.md §6.6, ../XCTMGR.md §3.2, §8.2).

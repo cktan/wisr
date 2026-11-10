@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * tree.h -- a B+tree of an index's own pages (../BTREEINDEX.md), a
  * Lehman and Yao B-link tree: each page has a high key and a right
  * link, so a reader pins one page at a time, and a split that moves a

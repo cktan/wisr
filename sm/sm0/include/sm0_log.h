@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm0_log.h -- reporting through the caller's log hook
  * (sm0::set_log).
  */

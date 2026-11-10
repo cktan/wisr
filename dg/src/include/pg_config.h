@@ -730,7 +730,7 @@
 /* Define to 1 to use software CRC-32C implementation (slicing-by-8). */
 /* Plain C, so the build does not depend on the host's instruction
    set. digres replaces WAL and the control file, which is what the
-   CRC was fast for (../sm/PART4.md section 10). */
+   CRC was fast for (../sm/PGFORK.md section 10). */
 #define USE_SLICING_BY_8_CRC32C 1
 
 /* Define to 1 use Intel SSE 4.2 CRC instructions. */

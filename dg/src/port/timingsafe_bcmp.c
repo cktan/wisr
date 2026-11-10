@@ -1,4 +1,9 @@
 /*
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
+ */
+
+/*
  * src/port/timingsafe_bcmp.c
  *
  *	$OpenBSD: timingsafe_bcmp.c,v 1.3 2015/08/31 02:53:57 guenther Exp $

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * btree_reaper.h -- the queue of btree leaves that need reaping
  * (../BTREEINDEX.md §9). A hint: a leaf's in-doubt bits are in the
  * page, so a page lost here is queued again by its next reader or

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * index.cc -- the index rel (../ROWSTORE.md §8, ../CLUSTER.md §3):
  * a table's index entries in its sm1 store, under the index's
  * relid, keyed by their encoded key columns and naming their row by

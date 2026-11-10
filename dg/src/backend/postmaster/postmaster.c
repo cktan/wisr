@@ -33,6 +33,8 @@
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  *
  * IDENTIFICATION
@@ -197,9 +199,6 @@ static inline bool btmask_contains(BackendTypeMask mask, BackendType t) {
 thread_local /*LOCAL*/ bool EnableSSL = false;
 
 thread_local /*LOCAL*/ int PreAuthDelay = 0;
-thread_local /*LOCAL*/ int AuthenticationTimeout = 60;
-
-thread_local /*LOCAL*/ bool log_hostname; /* for ps display and logging */
 
 /*
  * When terminating child processes after fatal errors, like a crash of a
@@ -639,6 +638,8 @@ void PostmasterMain(int argc, char *argv[]) {
    * pcb, which every thread reads, before any thread starts.
    */
   publish_postmaster_settings();
+  /* The settings that change on a reload: a first copy in shmem. */
+  publish_shared_settings();
 
   if (output_config_variable != NULL) {
     /*

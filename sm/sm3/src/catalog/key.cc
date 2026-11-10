@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * key.cc -- the catalog's keys (../CATALOG.md §3.3): a kind, then the
  * kind's own columns, encoded ascending by sm2's encode_key, so a
  * kind's keys are contiguous and every key of one kind orders by

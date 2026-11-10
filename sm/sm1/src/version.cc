@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * version.cc -- the row-version codec, the wisr.store.v2
  * comparator, and the userkey prefix extractor (../DBMGR.md §6.2).
  */

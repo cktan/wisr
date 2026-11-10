@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * parse.cc -- turning a script into items (DRIVER.md §2).
  *
  * The grammar is one line long: a line is blank, a comment, a

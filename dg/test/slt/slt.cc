@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
 // slt -- run sqllogictest files on a PostgreSQL server, over libpq.
 //
 //   slt [--engine NAME]... [--rewrite] [--times FILE] CONNINFO FILE...

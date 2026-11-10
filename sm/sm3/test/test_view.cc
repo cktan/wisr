@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_view.cc -- views in the catalog (VIEW.md at the top level):
  * kept and loaded back, their names a relation's, what they read
  * checked and held against a drop, and their locks.

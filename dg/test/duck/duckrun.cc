@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
 // duckrun -- run DuckDB's sqllogictest files on PostgreSQL 18 and on
 // digres side by side, over libpq, and report where digres differs
 // (README.md here, ../../DUCKPLAN.md).

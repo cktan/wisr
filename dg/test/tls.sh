@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # Verify TLS as ../aa/ROLE.md section 8 sets it: with ssl on, a client over
 # TCP uses TLS and the local socket never does; the certificate served is
 # the one configured, taken again on a reload; and many sessions, each a

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * chain.h -- a chained key's layout (../ROWSTORE.md §3.5), in its store's
  * one column family: the newest version under a current key, the
  * older ones under old keys, each pointing to the one before it.

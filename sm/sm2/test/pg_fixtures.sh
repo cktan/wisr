@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 #
 # pg_fixtures.sh -- regenerate test/pg_fixtures.h from PostgreSQL
 # (TYPE.md §9).

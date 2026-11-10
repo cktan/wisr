@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * rocksdb_build.cc -- what "digres --build" says of the RocksDB the server
  * links: its version, from the headers it was built against, and
  * DG_ROCKSDB_BUILD, which the Makefile's link step gives: the system's

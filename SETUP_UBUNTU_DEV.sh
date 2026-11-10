@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # SETUP_UBUNTU_DEV.sh -- make a minimal Ubuntu machine ready to build,
 # test and benchmark wisr: README.md's "Prerequisites", as a script.
 #

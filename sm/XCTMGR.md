@@ -645,8 +645,8 @@ admits the undone versions.
   address of one closed before the mark.
 - **Closed, not freed.** Each `sm1::scannxt` and `sm1::scan_seek`
   on a closed cursor fails with `SM_ERR_SCANCLOSED`, until
-  `sm1::scanend` or the session's next begin frees it. A caller may
-  not know that a rollback reached its cursor. A SQL cursor
+  `sm1::scanend` or the session's next begin frees it. A caller
+  may not know that a rollback reached its cursor. A SQL cursor
   declared before a savepoint may begin a scan again inside it.
   Freeing that scan would leave the next `FETCH` a dangling
   pointer.
@@ -1165,13 +1165,13 @@ t=605   S1 ends: both durable, none older missing
 ```
 
 **Measured** ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) steps 405
-and 406): 16 clients,
-each insert its own transaction (`../bench.old/rowlocks.sh`,
-`ins` and `fk`), on aarch64 under WSL2. With records out of
-order, a sync covered about 6.7 commits, PostgreSQL's 7.5, and
-two commits in three waited about 220 µs for an older commit's
-sync. With the commit queue, a sync covers 7.6 to 7.9 commits,
-PostgreSQL's 7.3 to 7.8 in the same runs.
+and 406): 16 clients, each insert its own transaction
+(`../bench.old/rowlocks.sh`, `ins` and `fk`), on aarch64 under
+WSL2. With records out of order, a sync covered about 6.7
+commits, PostgreSQL's 7.5, and two commits in three waited about
+220 µs for an older commit's sync. With the commit queue, a sync
+covers 7.6 to 7.9 commits, PostgreSQL's 7.3 to 7.8 in the same
+runs.
 
 ---
 
@@ -1361,22 +1361,22 @@ doubt until a coordinator resolves it.
 
 **Every step that can fail comes before `ssi_precommit`.** The
 check marks the node committed, and nothing can undo that: a
-committed node whose transaction then aborts has no `end_ts`,
-and `ssi_cleanup` never frees it. So all allocation is done
-first, and the move after the check cannot fail. A failure
-before the check leaves the transaction with its session to
-abort. After the write nothing may fail, and registering finds the reserved entry and allocates
-nothing. Until then the entry is null, so no resolver finds a
-transaction whose record is not durable.
+committed node whose transaction then aborts has no `end_ts`, and
+`ssi_cleanup` never frees it. So all allocation is done first,
+and the move after the check cannot fail. A failure before the
+check leaves the transaction with its session to abort. After the
+write nothing may fail, and registering finds the reserved entry
+and allocates nothing. Until then the entry is null, so no
+resolver finds a transaction whose record is not durable.
 
 **A read-only transaction needs a durable record too**, as
 [`sm1/API.md`](sm1/API.md) promises that a prepared transaction
-survives a
-crash. It gets an `xid` so its record has a unique key. With
-`xid` 0, every read-only prepare would overwrite one record.
-Locks from `sm1::lock_row` and `sm1::lock_oid` go in the record:
-what makes it read-only is the empty set of versions, not an
-empty lock set. One that only read holds nothing after a restart.
+survives a crash. It gets an `xid` so its record has a unique
+key. With `xid` 0, every read-only prepare would overwrite one
+record. Locks from `sm1::lock_row` and `sm1::lock_oid` go in the
+record: what makes it read-only is the empty set of versions, not
+an empty lock set. One that only read holds nothing after a
+restart.
 
 **After a failed prepare write**, WAL replay decides. If the
 record survived, `sm1::list_prepared` lists the transaction. If

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * log.cc -- the process-wide log hook (sm0::set_log) and the
  * helper the stack reports through.
  *

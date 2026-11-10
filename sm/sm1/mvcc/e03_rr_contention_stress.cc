@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * e03 -- contention at RR costs conflicts, never serialization
  * failures.
  *

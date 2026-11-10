@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_blist.cc -- the block list, blist_t (include/sm0_blist.h).
  */
 

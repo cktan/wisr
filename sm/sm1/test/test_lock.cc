@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_lock.cc -- locks and waits, first-committer-wins, retryable
  * errors, and deadlock detection (../LOCKMGR.md §1.7, ../XCTMGR.md §5,
  * ../DBMGR.md §11).

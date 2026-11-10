@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_objects.cc -- objects' owners and ACLs in pg_global: written after
  * the database's commit, undone by a subtransaction's abort, and, when
  * the commit is to grant less, granting less in between.

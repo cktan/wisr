@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * print.h -- the pieces a node is printed with.
  *
  * The text is PostgreSQL's nodeToString(): its names, its escapes,

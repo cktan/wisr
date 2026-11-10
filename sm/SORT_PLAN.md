@@ -38,7 +38,7 @@ The last merge writes nothing. Its output goes to the caller.
 
 ### 1.1 Who uses it
 
-| User | Today | With this |
+| User | Before this sort | With this |
 | --- | --- | --- |
 | A bulk load's unsorted streams ([`BULKLOAD.md`](BULKLOAD.md#53-sorting-an-index) §5.3) | `sm1/src/load.cc`: `std::sort` of `std::string` pairs | this sort |
 | A B-tree index built bottom up ([`NEXT.md`](NEXT.md#1-next) §1 item 10) | not built; [`NEXT.md`](NEXT.md) asks whether to use RocksDB or `tuplesort` | this sort, which settles that question |
@@ -139,9 +139,10 @@ length, its key, then its value. Only the sort reads inside a
 record. A run's file sees an array of bytes (§5.1). So a spill
 copies each record as it is, with no encoding step.
 
-Records are cut from an `sm0::arena_t`. `load.cc` today makes two
-`std::string`s a record, so two allocations and 64 bytes of
-overhead. Here the overhead is 16 bytes and the lengths.
+Records are cut from an `sm0::arena_t`. Before step 3 of §8,
+`load.cc` made two `std::string`s a record, so two allocations
+and 64 bytes of overhead. Here the overhead is 16 bytes and the
+lengths.
 
 Memory is the budget: the arena's bytes and the array's. The
 array doubles while it is under half the budget. Then it grows
@@ -404,8 +405,7 @@ instructions, on `digres-release`.
    and dg suites pass unchanged; `COPY` into a table with indexes
    is no slower than today, by a new `bench/` script.
 4. **Then [`NEXT.md`](NEXT.md#1-next) §1 item 10**, the bottom-up
-   tree, is a user
-   of this. It is work of its own.
+   tree, is a user of this. It is work of its own.
 
 Test layers: sm0 unit tests for the sort; `rel` and `dg/test`
 reach it through `COPY` and `load`. The isolation scenarios
@@ -413,20 +413,21 @@ cannot express it: a sort has no versions and no transaction.
 
 ### 8.1 Measured
 
-`load.cc`'s way and this sort, on 4 million records of 8-byte
-values at a budget of 32 MB, spill and merge included,
-instructions a record, key generation taken out. `load.cc`'s way
-is a copy of its technique in a test program, not `load.cc`
-itself.
+Measured on 2026-11-07, before step 3 of §8. `load.cc`'s way
+and this sort, on 4 million records of 8-byte values at a
+budget of 32 MB, spill and merge included, instructions a
+record, key generation taken out. `load.cc`'s way is a copy of
+its technique in a test program, not `load.cc` itself.
 
 | Keys | `load.cc`'s way | This sort |
 | --- | --- | --- |
 | random `int8` | 3,518 | 764 |
 | email-like text | 3,467 | 769 |
 
-These are from before the sort's own loop (§4.4). A sort of
-memory now takes 484 a record without unique, on 2 million random
-keys, against 2,277 for `load.cc`'s way. About 35 of that is the
+These are from before the sort's own loop (§4.4). With that
+loop, on the same day, a sort of memory took 484 a record
+without unique, on 2 million random keys, against 2,277 for
+`load.cc`'s way. About 35 of that is the
 budget's accounting in `sort_put`.
 
 ---

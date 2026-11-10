@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * xct.cc -- sm1::begin, sm1::commit, sm1::abort, and the commit
  * status table CF:txn (../DBMGR.md §6.5, §6.6, ../XCTMGR.md §4, §8.2).
  *

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * rel_ops.cc -- Janet C function bindings for sm.h and relational simulation.
  */
 

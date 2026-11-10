@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * aa_acl.cc -- ACLs as pg_global keeps them: their text, their items,
  * what two of them grant alike, and the one an object keeps none of.
  */

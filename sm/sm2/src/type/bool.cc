@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * bool.cc -- the bool type (TYPE.md §3.1): one byte, 0 or 1;
  * PostgreSQL prints it "t" or "f".
  */

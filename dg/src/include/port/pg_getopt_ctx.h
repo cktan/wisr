@@ -2,6 +2,8 @@
  * Re-entrant version of the standard getopt(3) function.
  *
  * Portions Copyright (c) 2026, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  * src/include/port/pg_getopt_ctx.h
  */

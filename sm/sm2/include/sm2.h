@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm2.h -- the wisr type and tuple level's public C++ API, in
  * namespace sm2 (SM2_DESIGN.md): the four steps of SM2_DESIGN.md
  * TYPE.md §9, the types, their keys, the tuple codec and the rels.

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_layout.cc -- the catalog's keys and blobs (../CATALOG.md §3.3,
  * ../CATALOG.md §3.5).
  */

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * session.cc -- a session and its overlay (../CATALOG.md §4): the
  * DDL a transaction makes is kept here, tagged with the savepoint
  * depth it was made at, seen by its own lookups first, undone by

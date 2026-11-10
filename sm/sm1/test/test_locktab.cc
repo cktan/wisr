@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_locktab.cc -- the lock table alone (src/locktab.h): ids,
  * Gray's modes and opaque owners, with no session, wait or
  * database. test_lock.cc tests the lock manager on top of it

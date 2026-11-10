@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * aa_error.cc -- the thread's error state: the last failure's code and
  * message (aa.h).
  */

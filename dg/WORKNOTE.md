@@ -33,7 +33,7 @@ reversed. Newest step last.
 It prints its version and nothing more useful: there is no
 bootstrap, so no catalog and no database to start. That is the
 state
-[`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+[`../sm/PGFORK.md`](../sm/PGFORK.md#10-digres-how-the-fork-is-to-be-made)
 §10 expects before the lookup layer.
 
 How it was done: the headers of each subsystem that was left out
@@ -222,7 +222,7 @@ of its own for SQL. This supersedes what step 3 says of sq.
 ## Step 6: `SELECT 1 + 1` runs
 
 The second thing
-[`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+[`../sm/PGFORK.md`](../sm/PGFORK.md#10-digres-how-the-fork-is-to-be-made)
 §10 says must run does:
 `echo 'select 1 + 1;' | build/digres --parse --run` prints 2,
 with no server started and no catalog table read. The operator,
@@ -282,7 +282,7 @@ its function and the type are found compiled in.
 ## Step 7: an error is an exception
 
 The first step toward threads
-([`../sm/PART4.md`](../sm/PART4.md#2-the-blocker-the-process-model)
+([`../sm/PGFORK.md`](../sm/PGFORK.md#2-the-blocker-the-process-model)
 §2): digres no
 longer leaves an error by `longjmp`. `ereport(ERROR)` throws a
 C++ exception, `pg_error_t`, and what catches it is a `catch`.
@@ -407,7 +407,7 @@ still a postmaster that forks a process a connection.
   postmaster. Attaching sm leaves RocksDB's threads in the
   process that did it, and a postmaster that forks must have
   none. A backend cannot ask sm either
-  ([`../sm/PART4.md`](../sm/PART4.md#2-the-blocker-the-process-model)
+  ([`../sm/PGFORK.md`](../sm/PGFORK.md#2-the-blocker-the-process-model)
   §2):
   until connections are threads, the databases are the ones
   there were at start.
@@ -501,7 +501,7 @@ before sm's own scans exist.
 
 ## Step 11: VACUUM is gone
 
-sm collects its own garbage ([`../sm/PART4.md`](../sm/PART4.md)),
+sm collects its own garbage ([`../sm/PGFORK.md`](../sm/PGFORK.md)),
 so VACUUM,
 autovacuum, freezing and the wraparound defences built around
 them are removed. 5 files went, and about 11,000 lines.
@@ -1284,7 +1284,7 @@ sets the latch of the thread it runs in, in a thread with none.
 ## Step 37: CREATE TABLE makes a table in sm
 
 The first of
-[`../sm/PART4.md`](../sm/PART4.md#95-the-first-target-insert-and-scan-integers-only)
+[`../sm/PGFORK.md`](../sm/PGFORK.md#95-the-first-target-insert-and-scan-integers-only)
 §9.5's three statements. A table
 of `int2`, `int4` and `int8` columns, some NOT NULL, is created
 in sm3's catalog, in the session's transaction, and seen by
@@ -1335,7 +1335,7 @@ every session once it commits.
 ## Step 38: INSERT and a sequential scan go to sm
 
 The other two of
-[`../sm/PART4.md`](../sm/PART4.md#95-the-first-target-insert-and-scan-integers-only)
+[`../sm/PGFORK.md`](../sm/PGFORK.md#95-the-first-target-insert-and-scan-integers-only)
 §9.5's statements: rows go
 into a table in sm, and a scan reads them back, under the
 transaction's isolation level.
@@ -1436,7 +1436,7 @@ with `SM_ERR_INTERRUPTED` when a bit in it is raised.
   UPDATE and DELETE are. The path is untested end to end.
 - **Two lock managers lock the same table**, PostgreSQL's and
   sm's
-  ([`../sm/PART4.md`](../sm/PART4.md#3-why-the-table-access-method-path-does-not-work-here)
+  ([`../sm/PGFORK.md`](../sm/PGFORK.md#3-why-the-table-access-method-path-does-not-work-here)
   §3 warns of it): a deadlock across
   them is one neither detector sees. Not resolved here.
 - `server.sh` holds a table's lock in one session, and confirms
@@ -5932,7 +5932,7 @@ them.
 ## Step 200: a row is named by its rowno; ctid and xmin are gone
 
 Decided 2026-10-16,
-[`../sm/PART4.md`](../sm/PART4.md#3-why-the-table-access-method-path-does-not-work-here)
+[`../sm/PGFORK.md`](../sm/PGFORK.md#3-why-the-table-access-method-path-does-not-work-here)
 §3: digres is a digression
 from PostgreSQL, and says what it has not. sm keeps no
 transaction ids in a row, and names a row by its `rowno`, not a
@@ -5965,7 +5965,7 @@ row was read, and `ctid` was the rowno packed into a tid,
   server stopped on `select rowno from pg_namespace`, whose
   rows have no tid.
 -
-  [`../sm/PART4.md`](../sm/PART4.md#3-why-the-table-access-method-path-does-not-work-here)
+  [`../sm/PGFORK.md`](../sm/PGFORK.md#3-why-the-table-access-method-path-does-not-work-here)
   §3 and §6,
   [`../sm/sm2/SM2_OBJECTIVE.md`](../sm/sm2/SM2_OBJECTIVE.md) and
   [`../sm/sm2/SM2_DESIGN.md`](../sm/sm2/SM2_DESIGN.md#5-cross-level-decisions)
@@ -7259,7 +7259,7 @@ latches, and `pg_cancel_backend()` and its kin
 (`signalfuncs.c`).
 
 - **Wait sets are epoll's alone**: digres runs on Linux alone
-  ([`../sm/PART4.md`](../sm/PART4.md) section 10).
+  ([`../sm/PGFORK.md`](../sm/PGFORK.md) section 10).
   `waiteventset.c`, 1,600 lines,
   is 590: PostgreSQL's poll(), kqueue() and Windows
   implementations and the self-pipe are gone, none of which
@@ -12549,8 +12549,6 @@ by sm3 and checked by PostgreSQL's executor.
 
 ## Step 412: ALTER COLUMN SET/DROP NOT NULL and SET/DROP DEFAULT
 
-The decisions are in [`../QUESTION.md`](../QUESTION.md).
-
 - **sm3** (`drop_not_null()`, `set_default()` in
   `../sm/sm3/src/ddl/ddl.cc`): each changes the column's record
   alone, under the table's lock X. DROP NOT NULL of a primary
@@ -13097,3 +13095,21 @@ the table; PostgreSQL's took under 1 ms.
   NOT NULL` and a null array find theirs. Without the fix the
   null-key scans show 1. sm's tests cannot express it: sm is never
   asked for the scan.
+
+## Step 430: the row reaper under the thread sanitizer
+
+The row reaper's pass ran beside writers and readers only in
+single-threaded tests ([`../sm/GC.md`](../sm/GC.md#138-tests)
+§13.8).
+
+- **Test** (`sm1/test/test_chain.cc`): two writers, two readers at
+  read committed, a repeatable read reader and a reaper thread on
+  the same 8 keys. Every read is a value its key's writer
+  committed, and never an older one; a held snapshot's reads stay;
+  after all end, a last pass leaves no OLD entry.
+- **`make tsan` in sm1**: the test under the thread sanitizer, on
+  RocksDB built with it, as sm3's are; `ROCKSDB` names the library
+  to link. sm3's `make tsan` runs the pool's row pass test too.
+- **Checked**: without the key's latch in `reap_one()` the test
+  fails, every run, with OLD entries left; without the hint queue's
+  mutex the thread sanitizer reports the race with `take()`.

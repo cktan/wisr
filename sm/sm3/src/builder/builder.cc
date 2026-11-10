@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * builder.cc -- the builder (../INDEXBUILD.md §2): one queue of
  * pending indexes for the process, the workers that fill them a
  * batch at a time, and the wait for a build to end. It does not

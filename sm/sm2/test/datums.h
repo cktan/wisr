@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * datums.h -- datums of every type, generated for property tests
  * (gen.h's seed), shared by the key and tuple tests.
  */

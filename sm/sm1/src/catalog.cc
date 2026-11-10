@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * catalog.cc -- stores: lookup, sm1::mkstore, sm1::rmstore,
  * sm1::lsstore (../DBMGR.md §7).
  *

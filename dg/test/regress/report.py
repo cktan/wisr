@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # report.py -- read what test/regress.sh left in WORK for each FILE, and
 # write WORK/summary, WORK/causes, WORK/crashes and WORK/setup.
 #

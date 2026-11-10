@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_temp.cc -- temporary stores: sm1::mkstore with its
  * temporary flag (TEMPTABLE.md §3).
  */

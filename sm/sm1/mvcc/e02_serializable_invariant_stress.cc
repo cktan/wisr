@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * e02 -- the invariant holds under contention at S+S.
  *
  * Four rows are "doctors", each on call ("1"). Four threads,

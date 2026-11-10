@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
 /*-------------------------------------------------------------------------
  *
  * datadir.c
@@ -10,7 +15,7 @@
  *
  * The postmaster attaches sm's home directory once, and reads the roles
  * once: sm keeps its state in the memory of the process that attached it
- * (sm/PART4.md section 2), and every session is a thread of that process,
+ * (sm/PGFORK.md section 2), and every session is a thread of that process,
  * given both (SHARED). A session asks sm for its database, and opens an sm
  * session on it for as long as it lasts.  pg_global is no database a
  * client sees: it is not listed, connected to or dropped.

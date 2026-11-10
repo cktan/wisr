@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # triage.py -- sort the --dg-differs statements that "pgregress.py differs"
 # dumped, by what their outputs on PostgreSQL 18 and digres show
 # (TRIAGE.md).

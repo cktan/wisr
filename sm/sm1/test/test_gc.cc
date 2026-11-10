@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_gc.cc -- garbage collection: the watermark, the
  * compaction filter, tombstone purge, and dropped stores
  * (../GC.md §1, ../DBMGR.md §17.2 "GC").

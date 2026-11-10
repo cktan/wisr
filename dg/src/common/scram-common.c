@@ -7,6 +7,8 @@
  * Mechanism (SCRAM), per IETF's RFC 5802.
  *
  * Portions Copyright (c) 2017-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  * IDENTIFICATION
  *	  src/common/scram-common.c

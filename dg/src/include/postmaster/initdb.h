@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * initdb.h
  *	  "initdb", or "digres --init": make a data directory.
  *

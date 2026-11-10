@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sq_parse.cc -- parse SQL with sq, and print the parse tree.
  *
  *   sq_parse < file.sql          one tree a statement, or the error

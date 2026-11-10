@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * text.cc -- text, varchar and bytea (TYPE.md §3.5, §3.6): the
  * payload bytes alone, with no varlena header; and name, the
  * 64 bytes PostgreSQL's NameData is.

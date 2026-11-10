@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # sm3 -- build the schema and index maintenance library and its
 # tests.
 #
@@ -96,15 +99,15 @@ $(BUILD)/test/%.o: test/%.cc $(FLAGS_FILE)
 test: all
 	$(RUN) $(TEST_BIN) $(TEST_ARGS)
 
-# The btree reaper's tests under the thread sanitizer, on a RocksDB built
-# with it, as sm2's tree tests are.
+# The reapers' tests under the thread sanitizer, the btree reaper's and the
+# pool's row pass, on a RocksDB built with it, as sm2's tree tests are.
 TSAN_ROCKSDB := $(abspath ../../rocksdb/tsan/librocksdb.a) \
     -lsnappy -llz4 -lzstd -lz -lbz2
 tsan:
 	../../dg/test/rocksdb.sh tsan
 	$(MAKE) BUILD=$(BUILD)/tsan OPTFLAGS="-O1 -g -fsanitize=thread" \
 	    ROCKSDB="$(TSAN_ROCKSDB)" RUN="setarch $$(uname -m) -R" \
-	    TEST_ARGS='-tc="btree reaper*,tree: scans agree with the rows while*,tree: the btree reaper*"' test
+	    TEST_ARGS='-tc="btree reaper*,tree: scans agree with the rows while*,tree: the btree reaper*,tree: the reapers*"' test
 
 format:
 	clang-format -i $(FORMAT_FILES)

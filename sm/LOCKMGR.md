@@ -187,8 +187,7 @@ session's own (§3.4).
    store and legal key at the view.
 2. In a temporary store, return 0: there is no one to lock
    against ([`TEMPTABLE.md`](TEMPTABLE.md)). With `as_read`, a
-   row changed since
-   the statement began is refused first.
+   row changed since the statement began is refused first.
 3. Take the key's latch.
 4. Read the newest version of the key.
 5. With `as_read`, fail with `SM_ERR_SELFMODIFIED` if this
@@ -250,15 +249,15 @@ version can come between that read and the check:
 
 - The lock is taken only with no other version in flight.
 - Every writer calls `lock_write_check` under the latch
-  (`sm1::insert`'s steps, in §1.7). With the lock held, the writer
-  waits.
+  (`sm1::insert`'s steps, in §1.7). With the lock held, the
+  writer waits.
 
 ### 1.7 A write
 
 The write path is [`ROWSTORE.md`](ROWSTORE.md)'s. This section
-gives its
-protocol with the Lock Manager. `sm1::insert`, `sm1::update` and
-`sm1::erase`, and their `chain_` forms, do these steps:
+gives its protocol with the Lock Manager. `sm1::insert`,
+`sm1::update` and `sm1::erase`, and their `chain_` forms, do
+these steps:
 
 1. Take the latch of `(storeid, key)`.
 2. Unless the store is temporary, call `lock_write_check` in
@@ -394,8 +393,7 @@ SERIALIZABLE, SSI and 2PC are as they were. The garbage collector
 is too: a READ COMMITTED transaction already holds its begin
 snapshot, and the newest committed version is never collected
 ([`GC.md`](GC.md)). Version order needs no help: the write that
-goes ahead
-takes a `wts` after the lock, so it sorts first.
+goes ahead takes a `wts` after the lock, so it sorts first.
 
 ### 1.10 Lifetime
 
@@ -429,17 +427,16 @@ A session waits on a lock, or on a transaction.
 
 **Every wait can be cut short.** sm1 waits through `sm_wait()`
 ([`sm0/INTERRUPT.md`](sm0/INTERRUPT.md)). A bit in the thread's
-wait mask ends the
-wait with `SM_ERR_INTERRUPTED`: not an abort, with the
-transaction left active, as after `SM_ERR_BLOCKED`. The interrupt
-goes to a thread, because it is the thread that blocks. sm1 takes
-no bit, so the bit stays pending until the host takes it and
-every later wait fails at once too. An interrupt is then never
-lost to a wait that began a moment late. A host builds query
-cancel, statement timeout and lock timeout from this. Two waits
-of a commit past its record cannot be cut short
-([`XCTMGR.md`](XCTMGR.md)). A
-pin's wait is the Buffer Manager's ([`BUFMGR.md`](BUFMGR.md)).
+wait mask ends the wait with `SM_ERR_INTERRUPTED`: not an abort,
+with the transaction left active, as after `SM_ERR_BLOCKED`. The
+interrupt goes to a thread, because it is the thread that blocks.
+sm1 takes no bit, so the bit stays pending until the host takes
+it and every later wait fails at once too. An interrupt is then
+never lost to a wait that began a moment late. A host builds
+query cancel, statement timeout and lock timeout from this. Two
+waits of a commit past its record cannot be cut short
+([`XCTMGR.md`](XCTMGR.md)). A pin's wait is the Buffer Manager's
+([`BUFMGR.md`](BUFMGR.md)).
 
 **`sm1::set_qa_nowait`, for QA only.** It turns a wait into a
 failure: a write, an `sm1::lock_row` or an `sm1::lock_oid` that
@@ -448,10 +445,9 @@ and not retryable. The transaction holds exactly what it held,
 and the caller polls by repeating the call. This lets one thread
 play several sessions, and a script say "this step blocks" with
 no thread and no sleep ([`rel/REL.md`](rel/REL.md)). The price is
-deadlock
-detection: a polling session records no edges and is never a
-victim, so sessions polling each other poll for ever. That cycle
-is the caller's to break.
+deadlock detection: a polling session records no edges and is
+never a victim, so sessions polling each other poll for ever.
+That cycle is the caller's to break.
 
 ### 1.12 Deadlocks
 
@@ -892,8 +888,7 @@ A prepared transaction's uncommitted versions are its write
 locks. After a restart, recovery puts it back in the active
 table, in doubt, so a writer waits for it as before
 ([`XCTMGR.md`](XCTMGR.md)). The `PREPARED` record therefore lists
-explicit
-locks alone.
+explicit locks alone.
 
 An entry of the record is `lock_record_size`, 20 bytes: the type,
 the id's two words big-endian, the mode, and the kind.
@@ -1071,9 +1066,9 @@ a row while a writer changes it. The entry key is the obvious
 thing to lock, and the wrong one. The build locks the **row**
 shared and reads it with `sm2::rel_read_latest`, to the end of
 the batch ([`INDEXBUILD.md`](INDEXBUILD.md)). Its explicit lock
-waits for a
-writer's uncommitted version (§1.5), and a writer waits for its
-lock (§1.7). So the two never work on one row at once.
+waits for a writer's uncommitted version (§1.5), and a writer
+waits for its lock (§1.7). So the two never work on one row at
+once.
 
 **A foreign key check** locks the parent row shared. A writer of
 the parent waits for it, and it waits for an uncommitted write of

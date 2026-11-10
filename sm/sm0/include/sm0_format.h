@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm0_format.h -- std::format into a fixed buffer, allocating
  * nothing: what an error or a log message needs when memory may
  * have run out.

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * parse_tool.h
  *	  "digres --parse": the parser run by hand.
  *

@@ -1,4 +1,9 @@
 /*
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
+ */
+
+/*
  * cash.c
  * Written by D'Arcy J.M. Cain
  * darcy@druid.net

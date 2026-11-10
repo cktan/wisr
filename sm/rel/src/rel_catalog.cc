@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * rel_catalog.cc -- rel's sessions, and the tables a statement opens
  * from sm3's catalog.
  */

@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
 /*-------------------------------------------------------------------------
  *
  * session_thread.c

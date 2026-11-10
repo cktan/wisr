@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_table.cc -- a table's writes and its indexes (SM3_DESIGN.md
  * ../INDEXBUILD.md §2): every write keeps each index in step with the heap, an
  * update leaves an unchanged index alone, and at READ COMMITTED

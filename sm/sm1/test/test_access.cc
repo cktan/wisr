@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_access.cc -- stores and rows: sm1::mkstore, sm1::rmstore,
  * sm1::lsstore, sm1::insert, sm1::update, sm1::erase, sm1::read, and sm1::scan.
  */

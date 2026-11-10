@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * load.cc -- cat_open: the catalog read into memory with one scan
  * of each kind (../CATALOG.md §4, §6). Every definition is built
  * whole, its sm2 schema and layout with it, so a reader never lays

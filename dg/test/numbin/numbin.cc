@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
 // numbin -- bind numerics as a driver does, in binary and typed 1700, and
 // fetch them in binary (DECIMAL.md section 2.1), over libpq.
 //

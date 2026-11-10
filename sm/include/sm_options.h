@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm_options.h -- sm1's database options, in C.
  *
  * sm1.h builds sm1::options_t on this struct, and sm.h takes it

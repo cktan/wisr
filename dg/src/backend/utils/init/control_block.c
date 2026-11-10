@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
 /*-------------------------------------------------------------------------
  *
  * control_block.c
@@ -41,7 +46,7 @@ void pcb_init(void) {
   block->auth_scram = auth_scram_state_new();
   pcb = block;
   shmem = new shmem_t();
-  shmem->logfile.reset(logfile_state_new());
+  shmem->log.file.reset(logfile_state_new());
   shmem->tls.reset(tls_state_new());
 }
 

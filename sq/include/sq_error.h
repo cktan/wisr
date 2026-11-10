@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sq_error.h -- sq's error codes, in C.
  *
  * A code says what kind of thing went wrong, and there are few.

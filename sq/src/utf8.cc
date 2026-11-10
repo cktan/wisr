@@ -1,5 +1,9 @@
 /*
  * utf8.cc -- PostgreSQL's UTF-8 functions, as the scanner uses them.
+ *
+ * Portions Copyright (c) 1998-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for sq,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  */
 
 #include "utf8.h"

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * walfs.cc -- a file system for RocksDB that zero-fills a new
  * write-ahead log to its size before RocksDB writes it; see walfs.h.
  *

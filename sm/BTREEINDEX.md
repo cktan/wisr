@@ -28,9 +28,8 @@ costs PostgreSQL. Reads by the primary key meet this, through
 RocksDB. Reads by an LSM Index do not. Instructions a statement
 on the old bench's queries
 ([`../bench.old/DESIGN.md`](../bench.old/DESIGN.md#5-the-queries)
-§5), both
-servers pinned ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) steps
-333 to 336):
+§5), both servers pinned
+([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) steps 333 to 336):
 
 | Query | digres | PostgreSQL | Ratio |
 | --- | --- | --- | --- |
@@ -158,13 +157,13 @@ UPDATE t SET status = 'done' WHERE id = 7;
    bit set, and queues page 57.
 5. The `UPDATE` commits, and the GC watermark passes its commit.
 6. The btree reaper takes the queue.
-7. The btree reaper reaps page 42. It reads row 7 alone: only that
-   entry has its in-doubt bit set. The row is settled, and its
-   key is `'done'`, so the btree reaper removes the entry. No in-doubt
-   bit is left, so it sets the leaf all visible.
-8. The btree reaper reaps page 57. Row 7 is settled and has the key,
-   so the btree reaper clears that entry's in-doubt bit. The other 159
-   rows of each leaf are not read.
+7. The btree reaper reaps page 42. It reads row 7 alone: only
+   that entry has its in-doubt bit set. The row is settled, and
+   its key is `'done'`, so the btree reaper removes the entry. No
+   in-doubt bit is left, so it sets the leaf all visible.
+8. The btree reaper reaps page 57. Row 7 is settled and has the
+   key, so the btree reaper clears that entry's in-doubt bit. The
+   other 159 rows of each leaf are not read.
 
 ---
 
@@ -360,9 +359,8 @@ The key columns' budget keeps room for the longest row key:
 1,024 bytes, or `sm2::id_len`, 8 bytes, whatever the row's key
 really takes. A longer key is cut and flagged
 ([`LSMINDEX.md`](LSMINDEX.md#24-cut-keys) §2.4). A unique index's
-key is never cut,
-and is refused with `SM_ERR_KEYTOOLONG`, where an LSM Index takes
-4,096 bytes (`sm1::max_keylen`).
+key is never cut, and is refused with `SM_ERR_KEYTOOLONG`, where
+an LSM Index takes 4,096 bytes (`sm1::max_keylen`).
 
 **An open and a check.** Every read opens a page, by
 `page_view_t::open()`, checking its header and slots alone. A
@@ -491,10 +489,9 @@ hands the row out only if the row still gives this entry's key:
    (`sm2::idx_scan_held`).
 2. It reads their rows in one call (`sm2::rel_read_batch`,
    [`ROWSTORE.md`](ROWSTORE.md#21-a-rows-name) §2.1). A single
-   row is read into the cursor's
-   pin. Rows of sorted, close keys are read by one cursor.
-   `tree_scattered()` says, from `ANALYZE`'s correlation, whether
-   to skip that cursor.
+   row is read into the cursor's pin. Rows of sorted, close keys
+   are read by one cursor. `tree_scattered()` says, from
+   `ANALYZE`'s correlation, whether to skip that cursor.
 3. `tree_next()` skips an entry whose row the snapshot does not
    show.
 4. `still_has()` makes the row's entry as a write would, the
@@ -647,9 +644,8 @@ there or not.
 **Nothing is removed by an update or a delete.** The old entry
 stays, and its row, at the old key no longer, makes it dead until
 a reap. A primary key's change moves the row
-([`CLUSTER.md`](CLUSTER.md)
-§4): its new entries name the new key, and the old ones name a
-key that holds no row.
+([`CLUSTER.md`](CLUSTER.md) §4): its new entries name the new
+key, and the old ones name a key that holds no row.
 
 - **A delete, or an update that changes the entry**, calls
   `idx_delete()` for the old entry after the row's write.
@@ -770,9 +766,8 @@ The cost of writing a page whole is in §10.1.
 
 A load into an empty table
 ([`BULKLOAD.md`](BULKLOAD.md#51-two-cases-an-empty-table-and-one-with-rows)
-§5.1) does not insert
-its entries. It builds each tree from the bottom up, with no
-latch and one write a page
+§5.1) does not insert its entries. It builds each tree from the
+bottom up, with no latch and one write a page
 ([`BTREELOAD_PLAN.md`](BTREELOAD_PLAN.md)):
 
 1. `idx_load_tree()` makes the tree empty, and declares two
@@ -1011,20 +1006,20 @@ A scan needs no latch, for the reason in §5.4.
 
 ## 9. Reaping: vacuum and the btree reaper
 
-A reap removes dead entries, clears the in-doubt bit of
-settled and live entries, and sets a leaf all visible. `VACUUM`
-reaps the leaves on the queue (§9.2). A btree reaper thread reaps
-the leaves that readers and writers queue: all of them when the
+A reap removes dead entries, clears the in-doubt bit of settled
+and live entries, and sets a leaf all visible. `VACUUM` reaps the
+leaves on the queue (§9.2). A btree reaper thread reaps the
+leaves that readers and writers queue: all of them when the
 system is not busy, and about 100 pages a second when it is
 (§9.9). digres has no autovacuum
-([`../dg/UNSUPPORTED.md`](../dg/UNSUPPORTED.md)), so the
-btree reaper is what keeps a tree clean between `VACUUM`s. §8 defines
+([`../dg/UNSUPPORTED.md`](../dg/UNSUPPORTED.md)), so the btree
+reaper is what keeps a tree clean between `VACUUM`s. §8 defines
 the bit and the flag that a reap works from.
 
 ### 9.1 Reaping a leaf
 
-`VACUUM` and the btree reaper use the same procedure, `reap_page()`
-and `reap_leaf()` in `tree.cc`:
+`VACUUM` and the btree reaper use the same procedure,
+`reap_page()` and `reap_leaf()` in `tree.cc`:
 
 1. Pin the leaf SH, copy it, and unpin it.
 2. Skip a leaf set all visible.
@@ -1059,8 +1054,8 @@ entries in doubt until the next reap.
 ### 9.2 `VACUUM`
 
 `VACUUM` reaches `tbl_compact()`: it compacts the store, then
-reaps each tree from the btree reaper's queue alone. It does not walk
-the leaves.
+reaps each tree from the btree reaper's queue alone. It does not
+walk the leaves.
 
 1. Take every page of the tree off the queue
    (`reap_queue_t::extract()`), the waiting ones too. Each
@@ -1102,7 +1097,8 @@ leaves for the cost of the queue.
 **The exception.** A temporary table's leaves are never queued
 (§9.5). `VACUUM` walks every leaf of its trees, left to right
 from the leftmost, as PostgreSQL's `btbulkdelete()` does
-(`tree_prune()`). A database opened with no btree reaper does the same.
+(`tree_prune()`). A database opened with no btree reaper does the
+same.
 
 The GC filter does not touch class `0x04`, so GC never removes an
 entry.
@@ -1156,12 +1152,12 @@ queues it again. A catalog (one database) has one queue,
 - **A false positive** leaves a page off the queue. Its next
   reader or writer tries again. With the queue full, about 3% of
   pages collide.
-- **A btree reaper clears a page's filter bit as it takes the page**,
-  before it reads the page. So a change after that queues the
-  page again. Two pages can share a bit, so this may queue a page
-  twice, which costs one more look. One hash function is what
-  makes this safe: with two or more, clearing a bit could hide
-  other pages.
+- **A btree reaper clears a page's filter bit as it takes the
+  page**, before it reads the page. So a change after that queues
+  the page again. Two pages can share a bit, so this may queue a
+  page twice, which costs one more look. One hash function is
+  what makes this safe: with two or more, clearing a bit could
+  hide other pages.
 
 ### 9.5 Queueing a page
 
@@ -1186,8 +1182,8 @@ the right one. A split of page 0 queues its two new pages. A
 split made by a post to a parent queues no page, as an inner page
 is no leaf.
 
-A temporary table's pages are not queued: the btree reaper cannot read
-that session's instance. They keep their in-doubt bits for
+A temporary table's pages are not queued: the btree reaper cannot
+read that session's instance. They keep their in-doubt bits for
 `VACUUM`. `use_index()` gives a tree its `leaf_note_fn` only for
 a table that is not temporary.
 
@@ -1226,15 +1222,15 @@ page id is safe to latch.
 ### 9.7 A page that waits
 
 A page that waits is not read again until the watermark moves, so
-a long transaction does not make the btree reaper read the same rows
-again and again. A page that waits costs a move from head to tail
-under the mutex, and no read. The queue counts the slots that
-wait.
+a long transaction does not make the btree reaper read the same
+rows again and again. A page that waits costs a move from head to
+tail under the mutex, and no read. The queue counts the slots
+that wait.
 
 ### 9.8 No transaction
 
-The btree reaper starts no sm transaction, opens no table and takes no
-lock on one. It does not need them:
+The btree reaper starts no sm transaction, opens no table and
+takes no lock on one. It does not need them:
 
 - Judging an entry reads a row's newest version and compares it
   with the GC watermark. It needs no snapshot.
@@ -1244,8 +1240,8 @@ lock on one. It does not need them:
 - So the btree reaper holds no snapshot, and never holds back the
   watermark.
 
-What a transaction and a table lock give a reader, the btree reaper
-gets another way:
+What a transaction and a table lock give a reader, the btree
+reaper gets another way:
 
 | Need | How the btree reaper meets it |
 | --- | --- |
@@ -1301,18 +1297,18 @@ that cannot start at an overflow has no caller to tell.
 opened: `rel` sets 0, and runs both passes by `(reaper-pass)`,
 as its scripts count a tree's entries.
 
-No worker keeps a session between passes, so the db reaper can still
-close an idle database. A catalog's detach stops the workers and
-joins them, as `builder_detach()` does. A detach ends a pass
-after the leaf it is on.
+No worker keeps a session between passes, so the db reaper can
+still close an idle database. A catalog's detach stops the
+workers and joins them, as `builder_detach()` does. A detach ends
+a pass after the leaf it is on.
 
 ### 9.10 Busy
 
 Busy is the count of `sm3::begin()` calls on the catalog since
 the first worker's last look: every transaction begins there. A
 look comes a second after the last pass ends. The system is busy
-if that count is above `btree_reaper_busy_limit`, 100. The catalog
-keeps the count in an atomic counter, `begins`.
+if that count is above `btree_reaper_busy_limit`, 100. The
+catalog keeps the count in an atomic counter, `begins`.
 
 The budget also bounds a cycle on a hot leaf: an insert clears
 the flag, a reader queues the page, a reap writes 4 KB, and
@@ -1348,9 +1344,8 @@ of about 40 bytes. Measured, a million rows loaded into
 | a tree of 4 KB pages, the entry spliced into the bytes, none decoded | 27.7 |
 
 The old bench's Q9 and Q10 stay within 2% of each other at all
-three page sizes.
-Logging the entry and writing the page later is what would close
-the rest (§12.2).
+three page sizes. Logging the entry and writing the page later is
+what would close the rest (§12.2).
 
 ### 10.2 Against PostgreSQL
 
@@ -1415,9 +1410,9 @@ cleanings:
 - A reap's row reads are scattered, and can each be a disk
   read. So 10 µs of sequential log traffic buys up to 7 random
   reads fewer in this example.
-- The writer pays in the foreground, and the btree reaper saves in the
-  background. Only a bench against PostgreSQL shows whether that
-  matters.
+- The writer pays in the foreground, and the btree reaper saves
+  in the background. Only a bench against PostgreSQL shows
+  whether that matters.
 - A reader of a leaf not all visible takes one hash and one load.
   A new page adds one `fetch_or`, one mutex and an append.
 - A delete, or a key's change, latches its old key's leaf, and
@@ -1521,9 +1516,9 @@ and its time is not measured again.
 ### 12.1 Open
 
 1. **The limit and the rate.** `btree_reaper_busy_limit`, 100
-   transactions a second, and `btree_reaper_busy_pages`, 100 pages a
-   second, are guesses. A rate that keeps up with a given write
-   load needs a bench.
+   transactions a second, and `btree_reaper_busy_pages`, 100
+   pages a second, are guesses. A rate that keeps up with a given
+   write load needs a bench.
 2. **An index-only scan by entry.** A scan could skip the row of
    any entry with its in-doubt bit clear and not cut, not only on
    a set leaf. One changed entry would then cost one row read,
@@ -1643,11 +1638,11 @@ is built.
   it, `VACUUM` could find the old entries' leaves after a
   restart or a full queue, where the queue misses them (§9.2).
   It is not built:
-  - **Not every entry in doubt has an OLD version.** An
-    insert's entry is in doubt until its row is settled, and
-    the insert writes CURR alone ([`ROWSTORE.md`](ROWSTORE.md#42-the-put) §4.2). Every
-    dead entry has one, as only an update or a delete leaves
-    one.
+  - **Not every entry in doubt has an OLD version.** An insert's
+    entry is in doubt until its row is settled, and the insert
+    writes CURR alone ([`ROWSTORE.md`](ROWSTORE.md#42-the-put)
+    §4.2). Every dead entry has one, as only an update or a
+    delete leaves one.
   - **The GC removes OLD versions first.** The compaction
     filter drops a version no snapshot reaches, and
     `tbl_compact()` compacts the store before it reaps a tree.
@@ -1663,8 +1658,8 @@ is built.
 - **Judging a whole leaf under its latch.** A leaf that cannot be
   set would keep its readers and writers waiting on its rows. A
   first judging with no latch filters it.
-- **A btree reaper that runs in a transaction.** Its snapshot would
-  hold back the watermark, and it needs none (§9.8).
+- **A btree reaper that runs in a transaction.** Its snapshot
+  would hold back the watermark, and it needs none (§9.8).
 - **Two or more hash functions in the filter.** Clearing a bit
   could hide other pages.
 - **Stopping reaping on a busy system.** With no autovacuum, a
@@ -1707,16 +1702,16 @@ is built.
   split's post cut short, and writers with cursors running.
   `test_index.cc` and `test_tree_index.cc`, for an index over a
   tree.
-- **sm3**: `test_btree_reaper.cc`, for the queue and the rule for a
-  pass. `test_tree.cc` and `test_toast.cc`, for queueing, a pass,
-  a page that waits, a tree gone, and a key out of line, through
-  `btree_reaper_run_once()`. `make tsan` in sm3, for a pass beside
-  readers and writers.
+- **sm3**: `test_btree_reaper.cc`, for the queue and the rule for
+  a pass. `test_tree.cc` and `test_toast.cc`, for queueing, a
+  pass, a page that waits, a tree gone, and a key out of line,
+  through `btree_reaper_run_once()`. `make tsan` in sm3, for a
+  pass beside readers and writers.
 - **rel**: `test_tree.rel`, through `sm.h`, by `(reaper-pass)`,
   and `test_tree_split.rel`.
 - **aa, sq**: not reached.
-- **dg**: `dg/test/slt/btree_tree*.test`. `server.sh`, the
-  btree reaper running: index scans agree with a sequential scan, an
+- **dg**: `dg/test/slt/btree_tree*.test`. `server.sh`, the btree
+  reaper running: index scans agree with a sequential scan, an
   expression and a partial index among them. SQL cannot count a
   tree's dead entries, so `test_tree.rel` proves they go.
 - **Not tested**: the three workers that run on a full queue, as

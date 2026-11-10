@@ -521,7 +521,7 @@ same widths, the same epochs, the same units and the same struct
 layouts, not a format of our own that holds the same information.
 
 The executor works in tuple slots
-([`../PART4.md`](../PART4.md#6-what-this-forces-on-sm2-and-sm3-now)
+([`../PGFORK.md`](../PGFORK.md#6-what-this-forces-on-sm2-and-sm3-now)
 §6). A bespoke
 encoding of each datum pays a translation on every column of
 every row, in both directions. With PostgreSQL's representation

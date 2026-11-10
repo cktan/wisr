@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * driver.h -- the scenario language, as the driver sees it.
  *
  * A script is a list of items in file order: comments, blank

@@ -7,6 +7,8 @@
  * Derived from PostgreSQL's postmaster/syslogger.h.
  *
  * Copyright (c) 2004-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  * src/include/utils/logfile.h
  *

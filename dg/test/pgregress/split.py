@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # split.py -- split a regression file into the units psql runs: an SQL
 # statement up to its semicolon or the \g-style command that sends it, a
 # backslash command on a line of its own, and a COPY FROM stdin with its

@@ -1,23 +1,31 @@
 # DESIGN — sm1, the MVCC storage manager
 
-sm1 is level 1 of the stack: a multi-version (MVCC) storage
-manager for OLTP over RocksDB. RocksDB is an ordered, durable,
-crash-atomic key-value store and nothing more. Every notion of
-row version, transaction, isolation and visibility is sm1's. This
-document is an overview. Each module document holds its own
-design. [`SM1_OBJECTIVE.md`](SM1_OBJECTIVE.md) says what the
-level is for.
+sm1 is level 1 of the stack. It is a multi-version (MVCC)
+storage manager for OLTP, built on RocksDB.
+
+RocksDB is used only as an ordered, durable, crash-atomic
+key-value store. sm1 owns everything else: row versions,
+transactions, isolation and visibility.
+
+This document is an overview. Each module has its own design
+document (§3). [`SM1_OBJECTIVE.md`](SM1_OBJECTIVE.md) says what
+the level is for.
 
 ## 1. What the level provides
 
-- **Stores:** ordered maps from byte-string key to byte-string
-  value, one RocksDB column family each. A store is versioned, or
-  chained: a row's newest version under its plain key, and the
-  older ones behind it.
-- **Transactions:** MVCC reads and forward scans at READ
-  COMMITTED, REPEATABLE READ and SERIALIZABLE, nested savepoints,
-  and two-phase commit. Snapshot isolation runs everywhere, and
-  SSI makes SERIALIZABLE.
+- **Stores:** ordered maps from a byte-string key to a
+  byte-string value. Each store is one RocksDB column family. A
+  store holds two kinds of key
+  ([`../ROWSTORE.md`](../ROWSTORE.md#31-two-kinds-of-key-in-one-store)
+  §3.1):
+  - a *versioned* key keeps each version as a key of its own;
+  - a *chained* key keeps a row's newest version under its plain
+    key, and the older versions in a chain behind it.
+- **Transactions:** MVCC reads and forward scans, nested
+  savepoints, and two-phase commit (2PC). The isolation levels
+  are READ COMMITTED, REPEATABLE READ and SERIALIZABLE. Every
+  level uses snapshot isolation. SERIALIZABLE adds SSI
+  (serializable snapshot isolation).
 - **Locks:** row locks and object locks in Gray's five modes,
   with deadlock detection.
 - **Pages:** a buffer pool of 4 KB frames, for the B-tree Indexes
@@ -28,11 +36,11 @@ level is for.
   sequences, and the sizes and probes statistics need.
 
 The API is `include/sm1.h`, in `namespace sm1`.
-[`API.md`](API.md)
-documents it call by call. sm1 keeps no types and no schema:
-values are opaque, and sm1 has no secondary index
-([`../DBMGR.md`](../DBMGR.md)
-§1.1).
+[`API.md`](API.md) documents it call by call.
+
+sm1 keeps no types and no schema. A value is opaque bytes to
+sm1, and sm1 has no secondary index
+([`../DBMGR.md`](../DBMGR.md) §1.1).
 
 ## 2. What the level depends on
 
@@ -42,8 +50,8 @@ values are opaque, and sm1 has no secondary index
 | `../sm0` | the error state and the log hook, which `sm1.h` brings into `namespace sm1`; the codec, defer blocks and `format_into`; the vendored doctest; the system services of `sm_sys.h` |
 | `../include` | the stack's shared headers: `sm_error.h`, `sm_lock.h`, `sm_options.h` |
 
-sm1 includes nothing of the levels above it, and is usable alone:
-an MVCC key-value store is a complete product.
+sm1 includes nothing from the levels above it. It is usable
+alone, because an MVCC key-value store is a complete product.
 
 ## 3. Modules
 
@@ -57,21 +65,22 @@ an MVCC key-value store is a complete product.
 | Garbage Collector | [`../GC.md`](../GC.md) | reclaims dead versions, tombstones, dropped stores and status records, on RocksDB compaction | `gc.cc` |
 | Sequence | [`../SEQUENCE.md`](../SEQUENCE.md) | sm1's named counters, the way any level gets unique ids | `seq.cc` |
 
-Three designs span levels and start here:
-[`../TEMPTABLE.md`](../TEMPTABLE.md), the
-temporary instance and its stores;
-[`../BULKLOAD.md`](../BULKLOAD.md),
-`src/load.cc`; and [`../STATISTICS.md`](../STATISTICS.md),
-`src/stats.cc` and
-`src/memcount.cc`.
+Three designs span levels, and start in sm1:
 
-[`mvcc/MVCC.md`](mvcc/MVCC.md) is the specification of isolation,
-as a table of
-scenarios. [`mvcc/POSTGRES.md`](mvcc/POSTGRES.md) sets it against
-PostgreSQL's
-isolation suite. [`mvcc/DRIVER.md`](mvcc/DRIVER.md) is the
-scenario driver and its
-language.
+| Design | What it covers | Code in `src/` |
+| --- | --- | --- |
+| [`../TEMPTABLE.md`](../TEMPTABLE.md) | the temporary instance and its stores | |
+| [`../BULKLOAD.md`](../BULKLOAD.md) | bulk load | `load.cc` |
+| [`../STATISTICS.md`](../STATISTICS.md) | statistics | `stats.cc`, `memcount.cc` |
+
+Three documents in `mvcc/` cover isolation:
+
+- [`mvcc/MVCC.md`](mvcc/MVCC.md) is the specification of
+  isolation, as a table of scenarios.
+- [`mvcc/POSTGRES.md`](mvcc/POSTGRES.md) compares it with
+  PostgreSQL's isolation suite.
+- [`mvcc/DRIVER.md`](mvcc/DRIVER.md) describes the scenario
+  driver and its language.
 
 ## 4. Structure
 
@@ -88,8 +97,8 @@ example/         small programs against the public API
 ```
 
 [`../DBMGR.md`](../DBMGR.md#131-source-layout-of-sm1) §13.1 lists
-`src/` file by file. A utility not
-about the engine belongs in `../sm0`.
+`src/` file by file. A utility that is not about the engine
+belongs in `../sm0`.
 
 ### 4.2 Build
 
@@ -99,16 +108,16 @@ DEBUG=1 make -j4      the same, -O0 -g, with assert()
 make format           clang-format src/, test/, example/, bench/
 ```
 
-`make -j4` builds `-O3 -DNDEBUG`. `build/flags` records the
-flags, so a change of `DEBUG` rebuilds everything. `sm0` is built
-first.
+`make -j4` builds with `-O3 -DNDEBUG`. `build/flags` records
+the flags, so a change of `DEBUG` rebuilds everything. The build
+makes `sm0` first.
 
 ### 4.3 Tests
 
-**Warning: the scenarios in `mvcc/` are the specification.** A
-change to sm1 that makes one fail is presumed wrong, not the
-scenario. Do not run `make accept` to take a new transcript
-without the user's approval
+**Warning: the scenarios in `mvcc/` are the specification.** If
+a change to sm1 makes a scenario fail, the change is presumed
+wrong, not the scenario. Do not run `make accept`, which takes
+the new transcripts as expected, without the user's approval
 ([`../../CLAUDE.md`](../../CLAUDE.md)).
 
 ```
@@ -117,39 +126,41 @@ DEBUG=1 make -j4 test    unit tests, scenarios, examples
 
 `make test` runs:
 
-1. Each scenario script of `mvcc/in`, twice, on versioned and on
-   chained stores, against one expected transcript in
-   `mvcc/good`.
+1. Each scenario script of `mvcc/in`, twice: once on versioned
+   stores and once on chained stores. Both runs must match the
+   one expected transcript in `mvcc/good`.
 2. The unit tests in `test/`.
 3. The stress programs, `mvcc/e*.cc`.
 4. The examples.
 
 [`../DBMGR.md`](../DBMGR.md#17-tests) §17 says what the unit
-tests prove, and each module
-document lists its own.
+tests prove, and each module document lists its own tests.
 [`../DESIGN.md`](../DESIGN.md#4-testing-across-levels) §4 gives
-the two-layer
-scheme every level follows. Set `TMPDIR` to a directory under
-`bench/build` at the root, as test homes do not go in `/tmp`.
+the two-layer test scheme that every level follows.
+
+Set `TMPDIR` to a directory under `bench/build` at the root of
+the repository. Test homes do not go in `/tmp`.
 
 ## 5. Cross-level decisions
 
-No decision that crosses levels is owned here alone.
+sm1 owns no cross-level decision alone.
 [`../DESIGN.md`](../DESIGN.md#5-cross-level-decisions) §5 holds
-them: sm1's interface is the only channel
-into sm1, and every level reports failure the way sm1 does. These
-two are sm1's, and bind the levels above:
+them. Two of them concern sm1:
 
-- **Backward scans are out of scope, forever**
-  ([`../DBMGR.md`](../DBMGR.md)
-  §1.2). Descending order is built into the key, by level 2.
-- **One process, many threads, one shared RocksDB instance a
-  database**
+- sm1's interface is the only way into sm1.
+- Every level reports failure the way sm1 does.
+
+Two decisions are sm1's own, and bind the levels above it:
+
+- **Backward scans are out of scope, permanently**
+  ([`../DBMGR.md`](../DBMGR.md) §1.2). Level 2 builds descending
+  order into the key instead.
+- **One process, many threads, and one shared RocksDB instance
+  for each database**
   ([`../DBMGR.md`](../DBMGR.md#11-the-decisions-of-level-1)
-  §1.1). Other access means a server
-  front end, not a change to this design.
+  §1.1). Access from another process needs a server front end,
+  not a change to this design.
 
-Trade-offs have module owners:
+The modules own their trade-offs:
 [`../DBMGR.md`](../DBMGR.md#14-trade-offs) §14,
-[`../XCTMGR.md`](../XCTMGR.md)
-and [`../GC.md`](../GC.md).
+[`../XCTMGR.md`](../XCTMGR.md) and [`../GC.md`](../GC.md).

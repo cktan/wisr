@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * stats.cc -- what a store's LSM looks like now: sm1::approxsize
  * and sm1::probes (../STATISTICS.md §9.2, §9.3 at the stack's
  * root); and sm1::compact, which merges it into one level.

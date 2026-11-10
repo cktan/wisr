@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_hintq.cc -- hint_queue_t (../src/hintq.h), the bounded queue the
  * compaction filter and readers fill and the GC worker empties.
  */

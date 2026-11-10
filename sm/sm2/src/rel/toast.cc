@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * toast.cc -- a datum out of line (../TOAST.md §2). A datum is
  * cut into chunks of toast_chunk bytes, each an sm1 row of the
  * table's own store, keyed by the TOAST relid, the datum's id and

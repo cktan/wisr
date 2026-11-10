@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # Verify what ALTER COLUMN does that test/alter_column.sql cannot show in
 # 8 sessions at once: SET NOT NULL at REPEATABLE READ checks a row
 # committed after the transaction's snapshot (sm3::set_not_null reads at

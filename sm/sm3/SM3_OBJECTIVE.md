@@ -24,7 +24,7 @@ document is what it is for.
   §3.1).
   It also replaces PostgreSQL's heap catalogs and sequences,
   which the fork can no longer keep on heap
-  ([`PART4.md`](../PART4.md#4-the-fork-and-what-it-costs) §4).
+  ([`PGFORK.md`](../PGFORK.md#4-the-fork-and-what-it-costs) §4).
 - **Secondary indexes.** Unique and non-unique, maintained
   transactionally with the base row, built online on a
   populated relation.
@@ -60,13 +60,13 @@ document is what it is for.
 - Replication, point-in-time recovery, and logical decoding.
   They read PostgreSQL's WAL, which does not carry data held
   in RocksDB
-  ([`PART4.md`](../PART4.md#4-the-fork-and-what-it-costs) §4);
+  ([`PGFORK.md`](../PGFORK.md#4-the-fork-and-what-it-costs) §4);
   rebuilding them is a subsystem
   of its own, at the storage tier.
 - A PostgreSQL dependency. sm3 must be useful and testable on
   its own, and buildable without a PostgreSQL source tree. The
   PG target shapes sm3's *decisions* (see
-  [`PART4.md`](../PART4.md) at the
+  [`PGFORK.md`](../PGFORK.md) at the
   top level), never its *build*.
 
 ## Decisions
@@ -90,7 +90,7 @@ These are settled and drive [`SM3_DESIGN.md`](SM3_DESIGN.md).
   ([`sm2/SM2_OBJECTIVE.md`](../sm2/SM2_OBJECTIVE.md)).
 - **The catalog is held in memory** and written through to sm2
   for persistence. It replaces PostgreSQL's heap catalogs
-  ([`PART4.md`](../PART4.md#4-the-fork-and-what-it-costs) §4), so
+  ([`PGFORK.md`](../PGFORK.md#4-the-fork-and-what-it-costs) §4), so
   sm1's status record is the one commit
   point, and DDL is transactional for free.
 - **Schema changes are lock-based, as in PostgreSQL.** The
@@ -110,7 +110,7 @@ These are settled and drive [`SM3_DESIGN.md`](SM3_DESIGN.md).
 - **The eventual consumer is a forked PostgreSQL**, keeping
   its parser, planner and executor and replacing its storage
   and transaction layers. The fork is **threaded**
-  ([`PART4.md`](../PART4.md#2-the-blocker-the-process-model) §2),
+  ([`PGFORK.md`](../PGFORK.md#2-the-blocker-the-process-model) §2),
   so sm1, sm2 and sm3 are linked into the one
   server process, every backend thread shares sm1's
   transaction table, lock manager and SSI graph, and one
@@ -122,7 +122,7 @@ These are settled and drive [`SM3_DESIGN.md`](SM3_DESIGN.md).
   without resolving it, so sm3 reads the newest image with
   `rel_read_latest`, re-checks the statement's filter, and
   only then repeats the write
-  ([`PART4.md`](../PART4.md#5a-the-second-conflict-read-committed-writes)
+  ([`PGFORK.md`](../PGFORK.md#5a-the-second-conflict-read-committed-writes)
   §5a,
   [`../LOCKMGR.md`](../LOCKMGR.md#19-read-committed-write-re-read-write)
   §1.9). Index entries are computed from that
@@ -136,7 +136,7 @@ These are settled and drive [`SM3_DESIGN.md`](SM3_DESIGN.md).
   unsalvageable. The fork is now threaded, so the boundary
   between the executor and sm3 is a function call and the
   shape is no longer forced
-  ([`PART4.md`](../PART4.md#2-the-blocker-the-process-model) §2).
+  ([`PGFORK.md`](../PGFORK.md#2-the-blocker-the-process-model) §2).
   Settled in
   [`../LSMINDEX.md`](../LSMINDEX.md#5-scans) §5: tuple at a time.
   Filter pushdown, the

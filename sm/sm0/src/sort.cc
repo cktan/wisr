@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sort.cc -- a sort of records by key (../../SORT.md).
  *
  * A record is one array of bytes, the same in memory as in a run:

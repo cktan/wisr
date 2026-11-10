@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * hintq.h -- a bounded queue of keys for the GC worker (../GC.md §4.2
  * and §5).
  *

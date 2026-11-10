@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * error.cc -- the per-thread error state behind sm0::errnum(),
  * sm0::errmsg(), sm0::retryable(), sm0::seterr(),
  * sm0::reseterr(), sm0::errdup(), sm0::setdup() and

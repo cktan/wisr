@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm0_defer.h -- run a block when the enclosing scope exits.
  *
  *   defer { closedir(dir); };

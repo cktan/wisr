@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_check.cc -- check constraints in the catalog (CHECK.md at the
  * top level): kept with the columns they read and the host's bytes,
  * loaded back, and kept true by the DDL on those columns.

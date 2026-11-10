@@ -385,7 +385,7 @@ it.
   per tuple, not per datum: the framing is rebuilt, and the
   column bytes are copied. The threaded fork removed the IPC
   boundary, not this
-  ([`../PART4.md`](../PART4.md#2-the-blocker-the-process-model)
+  ([`../PGFORK.md`](../PGFORK.md#2-the-blocker-the-process-model)
   §2).
 - **A null column costs arithmetic.** Reading a column is one
   step for each null before it, where an entry kept for a null

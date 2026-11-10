@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_env.cc -- sm1::init, sm1::attach, sm1::detach, and the error
  * state they report through.
  */

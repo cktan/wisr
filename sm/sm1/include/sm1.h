@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm1.h -- the wisr storage manager's public C++ API, in
  * namespace sm1 (DESIGN.md section 5 at the top level). Names,
  * keys and values travel as std::string_view, lists as
@@ -1330,7 +1335,7 @@ void unpin(rawpin_t* pin);
  * a backward scan (see SM1_OBJECTIVE.md). A caller that needs
  * descending order builds it into the key -- inverted key bytes,
  * scanned forward -- rather than keeping a mirror store for the
- * other direction (PART4.md §5).
+ * other direction (PGFORK.md §5).
  *
  * Both bounds are taken, rather than a start key alone,
  * because under SERIALIZABLE the range is the predicate
