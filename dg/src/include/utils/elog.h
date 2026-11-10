@@ -551,8 +551,6 @@ typedef enum {
 extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_error_verbosity;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_destination;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *Log_destination_string;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool syslog_sequence_numbers;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool syslog_split_messages;
 
 /* Log destination bitmap */
 #define LOG_DESTINATION_STDERR	 1

@@ -204,8 +204,8 @@ or not. This keeps one variable's move small.
 |---|---|---|
 | done | `log_line_prefix` | `elog.c` |
 | 1, done | `log_hostname`, `authentication_timeout`, `allow_alter_system` | `backend_startup.c`, `postinit.c`, `be-secure-openssl.c`, ALTER SYSTEM |
-| 2 | `syslog_facility`, `syslog_ident`, `syslog_sequence_numbers` | `elog.c` |
-| 3 | `syslog_split_messages`, `ssl`, `oauth_validator_libraries` | `elog.c`, `postmaster.c`, `auth-oauth.c` |
+| 2, done | `syslog_facility`, `syslog_ident`, `syslog_sequence_numbers`, `syslog_split_messages` (one snapshot) | `elog.c` |
+| 3 | `ssl`, `oauth_validator_libraries` | `postmaster.c`, `auth-oauth.c` |
 | 4 | Stop the session reloads; update the documents | `postgres.c`, `postmaster.c` |
 
 - Move a setting early if a change touches it first. Keep the

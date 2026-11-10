@@ -289,6 +289,17 @@ typedef struct pcb_t {
 } pcb_t;
 
 /*
+ * elog.c: the syslog settings (all PGC_SIGHUP), as the main thread last
+ * published them. Never changed once made: a reload makes a new one.
+ */
+typedef struct syslog_conf_t {
+  std::string ident;     /* syslog_ident */
+  int facility;          /* syslog_facility */
+  bool sequence_numbers; /* syslog_sequence_numbers */
+  bool split_messages;   /* syslog_split_messages */
+} syslog_conf_t;
+
+/*
  * The shared block: what the threads share and write, one for the process.
  * What the process keeps for its whole life may be malloc'd, its pointer
  * here, and never freed: the block itself never is.
@@ -366,6 +377,20 @@ typedef struct shmem_t {
     /* The string is never changed: a reload swaps in a new one. */
     std::shared_ptr<const std::string> value;
   } log_line_prefix;
+  struct {
+    /*
+     * guc_tables.c: the syslog settings, which elog.c reads in every thread
+     * that writes to syslog. Also a leaf mutex.
+     */
+    std::mutex mutex;
+    std::shared_ptr<const syslog_conf_t> conf;
+    /*
+     * elog.c: the settings the process's one syslog connection was opened
+     * with. openlog() keeps a pointer to the ident, so this keeps the string
+     * alive until the connection is opened again; guarded by mutex.
+     */
+    std::shared_ptr<const syslog_conf_t> opened;
+  } syslog;
 } shmem_t;
 
 /* The thread control block: one for each thread that runs digres code. */

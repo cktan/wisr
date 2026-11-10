@@ -107,8 +107,6 @@ thread_local /*LOCAL*/ int Log_error_verbosity = PGERROR_DEFAULT;
 /* log_destination's variables: read pcb->Log_destination, not this one */
 thread_local /*LOCAL*/ int Log_destination = LOG_DESTINATION_STDERR;
 thread_local /*LOCAL*/ char *Log_destination_string = NULL;
-thread_local /*LOCAL*/ bool syslog_sequence_numbers = true;
-thread_local /*LOCAL*/ bool syslog_split_messages = true;
 
 /* Processed form of backtrace_functions GUC */
 static thread_local /*LOCAL*/ char *backtrace_function_list;
@@ -125,10 +123,6 @@ static thread_local /*LOCAL*/ char *backtrace_function_list;
 #ifndef PG_SYSLOG_LIMIT
 #define PG_SYSLOG_LIMIT 900
 #endif
-
-static thread_local /*LOCAL*/ bool openlog_done = false;
-static thread_local /*LOCAL*/ char *syslog_ident = NULL;
-static thread_local /*LOCAL*/ int syslog_facility = LOG_LOCAL0;
 
 static void write_syslog(int level, const char *line);
 #endif
@@ -2109,54 +2103,33 @@ void assign_log_destination(const char *newval, void *extra) {
   Log_destination = *((int *)extra);
 }
 
-/*
- * GUC assign_hook for syslog_ident
- */
-void assign_syslog_ident(const char *newval, void *extra) {
 #ifdef HAVE_SYSLOG
-  /*
-   * guc.c is likely to call us repeatedly with same parameters, so don't
-   * thrash the syslog connection unnecessarily.  Also, we do not re-open
-   * the connection until needed, since this routine will get called whether
-   * or not Log_destination actually mentions syslog.
-   *
-   * Note that we make our own copy of the ident string rather than relying
-   * on guc.c's.  This may be overly paranoid, but it ensures that we cannot
-   * accidentally free a string that syslog is still using.
-   */
-  if (syslog_ident == NULL || strcmp(syslog_ident, newval) != 0) {
-    if (openlog_done) {
-      closelog();
-      openlog_done = false;
-    }
-    free(syslog_ident);
-    syslog_ident = strdup(newval);
-    /* if the strdup fails, we will cope in write_syslog() */
-  }
-#endif
-  /* Without syslog support, just ignore it */
-}
 
 /*
- * GUC assign_hook for syslog_facility
+ * Return the syslog settings as last published, and open the process's one
+ * syslog connection for them when it is not open or was opened for another
+ * ident or facility.  Return NULL before the first publish.
+ * 1. Copy the settings pointer under the lock.
+ * 2. If the connection is not open, or its ident or facility differ, close
+ *    it, and open it with these.
+ * 3. Keep the settings it was opened with in shmem: openlog() keeps a
+ *    pointer to the ident, so the string must outlive the connection.
  */
-void assign_syslog_facility(int newval, void *extra) {
-#ifdef HAVE_SYSLOG
-  /*
-   * As above, don't thrash the syslog connection unnecessarily.
-   */
-  if (syslog_facility != newval) {
-    if (openlog_done) {
-      closelog();
-      openlog_done = false;
-    }
-    syslog_facility = newval;
-  }
-#endif
-  /* Without syslog support, just ignore it */
-}
+static std::shared_ptr<const syslog_conf_t> syslog_conf_open(void) {
+  std::lock_guard<std::mutex> guard(shmem->syslog.mutex);
+  std::shared_ptr<const syslog_conf_t> conf = shmem->syslog.conf;
+  std::shared_ptr<const syslog_conf_t> &opened = shmem->syslog.opened;
 
-#ifdef HAVE_SYSLOG
+  if (conf && (!opened || opened->ident != conf->ident ||
+               opened->facility != conf->facility)) {
+    if (opened)
+      closelog();
+    openlog(conf->ident.c_str(), LOG_PID | LOG_NDELAY | LOG_NOWAIT,
+            conf->facility);
+    opened = conf;
+  }
+  return conf;
+}
 
 /*
  * Write a message line to syslog
@@ -2167,12 +2140,10 @@ static void write_syslog(int level, const char *line) {
   int len;
   const char *nlpos;
 
-  /* Open syslog connection if not done yet */
-  if (!openlog_done) {
-    openlog(syslog_ident ? syslog_ident : "postgres",
-            LOG_PID | LOG_NDELAY | LOG_NOWAIT, syslog_facility);
-    openlog_done = true;
-  }
+  /* The settings, with the syslog connection open for them. */
+  std::shared_ptr<const syslog_conf_t> conf = syslog_conf_open();
+  const bool syslog_sequence_numbers = conf ? conf->sequence_numbers : true;
+  const bool syslog_split_messages = conf ? conf->split_messages : true;
 
   /*
    * We add a sequence number to each log message to suppress "same"

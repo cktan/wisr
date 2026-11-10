@@ -6010,6 +6010,7 @@ lfdir=$work/data/log
 echo "log_filename = 'lf-%Y%m%d_%H%M%S.log'" > "$work/data/postgresql.conf"
 $digres -D "$work/data" -k "$work" -p "$port" -c logging_collector=on \
   -c log_rotation_size=64 -c log_timezone=Etc/GMT-9 \
+  -c log_destination=stderr,syslog \
   > "$work/logfile.err" 2>&1 &
 server=$!
 for _ in $(seq 300); do
@@ -6034,7 +6035,7 @@ grep -Eq '^[-0-9: .]+ \+09 \[[0-9]+\] LOG:  starting ' "$work/logfile.all" ||
 [ "$(local_psql -c 'show log_timezone')" = Etc/GMT-9 ] ||
   fail "log_timezone: SHOW"
 # log_destination changes only with a restart: no session may set it.
-[ "$(local_psql -c 'show log_destination')" = stderr ] ||
+[ "$(local_psql -c 'show log_destination')" = stderr,syslog ] ||
   fail "log_destination: SHOW"
 local_psql -c "set log_destination = 'syslog'" 2>&1 |
   grep -q 'cannot be changed without restarting' || fail "log_destination: SET is refused"
@@ -6072,7 +6073,10 @@ ls "$lfdir"/moved-*.log > /dev/null 2>&1 ||
 # 4. The postmaster logs the second reload with the new prefix.
 # 5. The held session logs a statement with the new prefix.
 # 6. The held session refuses ALTER SYSTEM.
-# 7. Undo the first ALTER SYSTEM, which wrote postgresql.auto.conf.
+# 7. The server sends every message to syslog too. A reload of the four
+#    syslog settings makes the held session open the connection again, and
+#    it still runs; a new session shows the new ident.
+# 8. Undo the first ALTER SYSTEM, which wrote postgresql.auto.conf.
 held_start reloadheld
 held_send reloadheld "select 'rh up';"
 held_wait reloadheld "rh up" || fail "reload: the held session starts"
@@ -6082,6 +6086,10 @@ held_wait reloadheld "rh alter ok" || fail "reload: the held session runs"
 grep -q 'ALTER SYSTEM is not allowed' "$work/reloadheld.out" &&
   fail "allow_alter_system: on by default"
 printf "log_line_prefix = 'PFX %%p '\nallow_alter_system = off\n" \
+  >> "$work/data/postgresql.conf"
+printf "syslog_ident = 'dgtest'\nsyslog_facility = local1\n" \
+  >> "$work/data/postgresql.conf"
+printf "syslog_sequence_numbers = off\nsyslog_split_messages = off\n" \
   >> "$work/data/postgresql.conf"
 local_psql -c 'select pg_reload_conf()' > /dev/null
 sleep 1
@@ -6103,6 +6111,11 @@ grep -Eq '^PFX [0-9]+ LOG:  statement: select .pfx_probe' \
   fail "log_line_prefix: a held session's line after a reload"
 grep -q 'ALTER SYSTEM is not allowed' "$work/reloadheld.out" ||
   fail "allow_alter_system: a held session refuses ALTER SYSTEM"
+[ "$(local_psql -c 'show syslog_ident')" = dgtest ] ||
+  fail "syslog_ident: a new session shows the reloaded value"
+held_send reloadheld "select 'rh syslog';"
+held_wait reloadheld "rh syslog" || fail "syslog: the held session after a reload"
+kill -0 $server 2> /dev/null || fail "syslog: the server runs after a reload"
 held_end reloadheld
 rm -f "$work/data/postgresql.auto.conf"
 kill $server
