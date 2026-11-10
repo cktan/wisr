@@ -314,11 +314,6 @@ void BaseInit(void) {
   Assert(MyProcNumber != INVALID_PROC_NUMBER);
 
   /*
-   * Initialize our input/output/debugging file descriptors.
-   */
-  DebugFileOpen();
-
-  /*
    * Initialize file access. Done early so other subsystems can access
    * files.
    */
@@ -740,7 +735,7 @@ static void process_startup_options(Port *port, bool am_superuser) {
 
     Assert(ac < maxac);
 
-    (void)process_postgres_switches(ac, av, gucctx, NULL);
+    process_postgres_switches(ac, av, gucctx);
   }
 
   /*

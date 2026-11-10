@@ -461,7 +461,7 @@ void PostmasterMain(int argc, char *argv[]) {
    * common help() function in main/main.c.
    */
   while ((opt = getopt(argc, argv,
-                       "B:bC:c:D:d:Eef:h:ijk:lN:OPp:r:S:sTt:W:-:")) != -1) {
+                       "B:bC:c:D:d:Eef:h:ik:lN:Op:S:st:W:-:")) != -1) {
     switch (opt) {
     case 'B':
       SetConfigOption("shared_buffers", optarg, PGC_POSTMASTER, PGC_S_ARGV);
@@ -540,10 +540,6 @@ void PostmasterMain(int argc, char *argv[]) {
       SetConfigOption("listen_addresses", "*", PGC_POSTMASTER, PGC_S_ARGV);
       break;
 
-    case 'j':
-      /* only used by interactive backend */
-      break;
-
     case 'k':
       SetConfigOption("unix_socket_directories", optarg, PGC_POSTMASTER,
                       PGC_S_ARGV);
@@ -562,17 +558,8 @@ void PostmasterMain(int argc, char *argv[]) {
                       PGC_S_ARGV);
       break;
 
-    case 'P':
-      SetConfigOption("ignore_system_indexes", "true", PGC_POSTMASTER,
-                      PGC_S_ARGV);
-      break;
-
     case 'p':
       SetConfigOption("port", optarg, PGC_POSTMASTER, PGC_S_ARGV);
-      break;
-
-    case 'r':
-      /* only used by single-user backend */
       break;
 
     case 'S':
@@ -581,16 +568,6 @@ void PostmasterMain(int argc, char *argv[]) {
 
     case 's':
       SetConfigOption("log_statement_stats", "true", PGC_POSTMASTER,
-                      PGC_S_ARGV);
-      break;
-
-    case 'T':
-
-      /*
-       * This option used to be defined as sending SIGSTOP after a
-       * backend crash, but sending SIGABRT seems more useful.
-       */
-      SetConfigOption("send_abort_for_crash", "true", PGC_POSTMASTER,
                       PGC_S_ARGV);
       break;
 

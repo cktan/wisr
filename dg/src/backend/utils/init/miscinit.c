@@ -154,51 +154,6 @@ void InitPostmasterChild(void) {
   SetInterruptHandler(INTERRUPT_QUIT, SignalHandlerForCrashExit);
 }
 
-/*
- * Initialize the basic environment for a standalone process.
- *
- * argv0 has to be suitable to find the program's executable.
- */
-void InitStandaloneProcess(const char *argv0) {
-  Assert(!pcb->IsPostmasterEnvironment);
-
-  MyBackendType = B_STANDALONE_BACKEND;
-
-  /*
-   * Start our win32 signal implementation
-   */
-#ifdef WIN32
-  pgwin32_signal_initialize();
-#endif
-
-  InitProcessGlobals();
-
-  /* Initialize process-local latch support */
-  InitializeWaitEventSupport();
-  InitProcessLocalLatch();
-  InitializeLatchWaitSet();
-
-  /* CHECK_FOR_INTERRUPTS() reads this thread's interrupts from here on. */
-  MyInterrupts = sm_pending_word();
-  /*
-   * What ends a wait in sm for another transaction (sm_sys.h): what cancels or
-   * ends the statement, and a timeout, which may.
-   */
-  sm_set_wait_mask(INTERRUPT_CANCEL | INTERRUPT_DIE | INTERRUPT_QUIT |
-                    INTERRUPT_ALARM);
-  /* Which pending interrupt ends work in sm that cannot be retried. */
-  sm_set_stop_fn(InterruptsStopWork);
-
-  /* Compute paths, no postmaster to inherit from */
-  if (pcb->my_exec_path[0] == '\0') {
-    if (find_my_exec(argv0, pcb_main()->my_exec_path) < 0)
-      elog(FATAL, "%s: could not locate my own executable path", argv0);
-  }
-
-  if (pcb->pkglib_path[0] == '\0')
-    get_pkglib_path(pcb->my_exec_path, pcb_main()->pkglib_path);
-}
-
 void InitProcessLocalLatch(void) {
   MyLatch = &LocalLatchData;
   InitLatch(MyLatch);

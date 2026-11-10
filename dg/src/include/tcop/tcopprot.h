@@ -73,10 +73,7 @@ pg_noreturn extern void FloatExceptionHandler(SIGNAL_ARGS);
 extern void ProcessClientReadInterrupt(bool blocked);
 extern void ProcessClientWriteInterrupt(bool blocked);
 
-extern void process_postgres_switches(int argc, char *argv[], GucContext ctx,
-                                      const char **dbname);
-pg_noreturn extern void PostgresSingleUserMain(int argc, char *argv[],
-                                               const char *username);
+extern void process_postgres_switches(int argc, char *argv[], GucContext ctx);
 pg_noreturn extern void PostgresMain(const char *dbname, const char *username);
 extern void ResetUsage(void);
 extern void ShowUsage(const char *title);
