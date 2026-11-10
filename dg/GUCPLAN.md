@@ -203,7 +203,7 @@ or not. This keeps one variable's move small.
 | Day | Settings | Reader |
 |---|---|---|
 | done | `log_line_prefix` | `elog.c` |
-| 1 | `log_hostname`, `authentication_timeout`, `allow_alter_system` | `backend_startup.c`, `postinit.c`, `be-secure-openssl.c`, ALTER SYSTEM |
+| 1, done | `log_hostname`, `authentication_timeout`, `allow_alter_system` | `backend_startup.c`, `postinit.c`, `be-secure-openssl.c`, ALTER SYSTEM |
 | 2 | `syslog_facility`, `syslog_ident`, `syslog_sequence_numbers` | `elog.c` |
 | 3 | `syslog_split_messages`, `ssl`, `oauth_validator_libraries` | `elog.c`, `postmaster.c`, `auth-oauth.c` |
 | 4 | Stop the session reloads; update the documents | `postgres.c`, `postmaster.c` |

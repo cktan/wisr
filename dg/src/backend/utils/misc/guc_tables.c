@@ -282,7 +282,8 @@ static const struct config_enum_entry default_toast_compression_options[] = {
 /*
  * GUC option variables that are exported from this module
  */
-thread_local /*LOCAL*/ bool AllowAlterSystem = true;
+/* Sessions read shmem->allow_alter_system, not this */
+static thread_local /*LOCAL*/ bool AllowAlterSystem = true;
 thread_local /*LOCAL*/ bool log_duration = false;
 thread_local /*LOCAL*/ bool Debug_print_plan = false;
 thread_local /*LOCAL*/ bool Debug_print_parse = false;
@@ -412,6 +413,9 @@ static thread_local /*LOCAL*/ bool Log_truncate_on_rotation = false;
 static thread_local /*LOCAL*/ int Log_file_mode = S_IRUSR | S_IWUSR;
 /* elog.c: log_line_prefix; threads read shmem->log_line_prefix, not this */
 static thread_local /*LOCAL*/ char *Log_line_prefix = NULL;
+/* postmaster.c: log_hostname and authentication_timeout; sessions read shmem */
+static thread_local /*LOCAL*/ bool log_hostname = false;
+static thread_local /*LOCAL*/ int AuthenticationTimeout = 60;
 
 /*
  * Copy the settings that change on a reload and that every thread reads into
@@ -419,6 +423,13 @@ static thread_local /*LOCAL*/ char *Log_line_prefix = NULL;
  * and after each reload; the other threads read the copy, never the variable.
  */
 void publish_shared_settings(void) {
+  /* Each is independent of the others, so no order is needed between them. */
+  shmem->log_hostname.store(log_hostname, std::memory_order_relaxed);
+  shmem->authentication_timeout.store(AuthenticationTimeout,
+                                      std::memory_order_relaxed);
+  shmem->allow_alter_system.store(AllowAlterSystem,
+                                  std::memory_order_relaxed);
+
   /* Allocate before the lock: the lock is held only to swap the pointer. */
   std::shared_ptr<const std::string> prefix =
       std::make_shared<const std::string>(Log_line_prefix ? Log_line_prefix

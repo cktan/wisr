@@ -197,9 +197,6 @@ static inline bool btmask_contains(BackendTypeMask mask, BackendType t) {
 thread_local /*LOCAL*/ bool EnableSSL = false;
 
 thread_local /*LOCAL*/ int PreAuthDelay = 0;
-thread_local /*LOCAL*/ int AuthenticationTimeout = 60;
-
-thread_local /*LOCAL*/ bool log_hostname; /* for ps display and logging */
 
 /*
  * When terminating child processes after fatal errors, like a crash of a

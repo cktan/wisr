@@ -345,6 +345,17 @@ typedef struct shmem_t {
    * -- values the postmaster may change while other threads read --
    * Guard each member with a mutex, or make it atomic.
    */
+  /*
+   * guc_tables.c: PGC_SIGHUP settings that a session reads, one atomic each.
+   * The main thread stores them at start and on each config load
+   * (publish_shared_settings()); a session reads them where it needs them.
+   */
+  /* backend_startup.c */
+  std::atomic<bool> log_hostname{false};
+  /* backend_startup.c, postinit.c */
+  std::atomic<int> authentication_timeout{60};
+  /* guc.c: ALTER SYSTEM */
+  std::atomic<bool> allow_alter_system{true};
   struct {
     /*
      * guc_tables.c: log_line_prefix (PGC_SIGHUP), which elog.c reads in

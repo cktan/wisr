@@ -3920,7 +3920,7 @@ void AlterSystemSetConfigFile(AlterSystemStmt *altersysstmt) {
    */
   name = altersysstmt->setstmt->name;
 
-  if (!AllowAlterSystem)
+  if (!shmem->allow_alter_system.load(std::memory_order_relaxed))
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("ALTER SYSTEM is not allowed in this environment")));
 

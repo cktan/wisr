@@ -173,7 +173,10 @@ static void BackendInitialize(ClientSocket *client_sock, CAC_state cac) {
   if ((ret = pg_getnameinfo_all(
            &port->raddr.addr, port->raddr.salen, remote_host,
            sizeof(remote_host), remote_port, sizeof(remote_port),
-           (log_hostname ? 0 : NI_NUMERICHOST) | NI_NUMERICSERV)) != 0)
+           (shmem->log_hostname.load(std::memory_order_relaxed)
+                ? 0
+                : NI_NUMERICHOST) |
+               NI_NUMERICSERV)) != 0)
     ereport(WARNING, (errmsg_internal("pg_getnameinfo_all() failed: %s",
                                       gai_strerror(ret))));
 
@@ -218,7 +221,7 @@ static void BackendInitialize(ClientSocket *client_sock, CAC_state cac) {
    * sometimes classify a hostname as numeric, but an error in that
    * direction is safe; it only results in a possible extra lookup.)
    */
-  if (log_hostname && ret == 0 &&
+  if (shmem->log_hostname.load(std::memory_order_relaxed) && ret == 0 &&
       strspn(remote_host, "0123456789.") < strlen(remote_host) &&
       strspn(remote_host, "0123456789ABCDEFabcdef:") < strlen(remote_host)) {
     port->remote_hostname = MemoryContextStrdup(TopMemoryContext, remote_host);
@@ -240,7 +243,9 @@ static void BackendInitialize(ClientSocket *client_sock, CAC_state cac) {
    * since we never use it again after this function.
    */
   RegisterTimeout(STARTUP_PACKET_TIMEOUT, StartupPacketTimeoutHandler);
-  enable_timeout_after(STARTUP_PACKET_TIMEOUT, AuthenticationTimeout * 1000);
+  enable_timeout_after(
+      STARTUP_PACKET_TIMEOUT,
+      shmem->authentication_timeout.load(std::memory_order_relaxed) * 1000);
 
   /* Handle direct SSL handshake */
   status = ProcessSSLStartup(port);

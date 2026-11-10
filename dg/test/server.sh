@@ -6082,6 +6082,25 @@ grep -Eq '^PFX [0-9]+ LOG:  received SIGHUP' "$work/prefix.all" ||
   fail "log_line_prefix: the postmaster's line after a reload"
 grep -Eq '^PFX [0-9]+ LOG:  statement: select .pfx_probe' \
   "$work/prefix.all" || fail "log_line_prefix: a session's line after a reload"
+# Verify that a reload of allow_alter_system reaches a session, which reads
+# shmem's copy.
+# 1. ALTER SYSTEM is allowed: the setting is on by default.
+# 2. Set allow_alter_system = off in postgresql.conf, and reload.
+# 3. A session refuses ALTER SYSTEM.
+# 4. Undo the first ALTER SYSTEM, which wrote postgresql.auto.conf.
+local_psql -c "alter system set work_mem = '5MB'" > /dev/null 2>&1 ||
+  fail "allow_alter_system: on by default"
+echo "allow_alter_system = off" >> "$work/data/postgresql.conf"
+local_psql -c 'select pg_reload_conf()' > /dev/null
+for _ in $(seq 100); do
+  local_psql -c "alter system reset work_mem" 2>&1 |
+    grep -q 'ALTER SYSTEM is not allowed' && break
+  sleep 0.1
+done
+local_psql -c "alter system reset work_mem" 2>&1 |
+  grep -q 'ALTER SYSTEM is not allowed' ||
+  fail "allow_alter_system: a session refuses ALTER SYSTEM after a reload"
+rm -f "$work/data/postgresql.auto.conf"
 kill $server
 for _ in $(seq 100); do
   kill -0 $server 2> /dev/null || break

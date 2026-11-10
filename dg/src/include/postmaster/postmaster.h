@@ -45,8 +45,6 @@ typedef struct {
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool EnableSSL;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool ClientAuthInProgress;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int PreAuthDelay;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int AuthenticationTimeout;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_hostname;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_crash;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_kill;
 
