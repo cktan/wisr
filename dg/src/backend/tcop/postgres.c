@@ -90,7 +90,6 @@ thread_local /*LOCAL*/ const char
 thread_local /*LOCAL*/ CommandDest whereToSendOutput = DestDebug;
 
 /* flag for logging end of session */
-thread_local /*LOCAL*/ bool Log_disconnections = false;
 
 thread_local /*LOCAL*/ int log_statement = LOGSTMT_NONE;
 
@@ -2180,7 +2179,7 @@ static bool check_log_statement(List *stmt_list) {
  * essentially prevents 2 from being returned).
  */
 int check_log_duration(char *msec_str, bool was_logged) {
-  if (log_duration || log_min_duration_sample >= 0 ||
+  if (tcb->guc.log_duration || log_min_duration_sample >= 0 ||
       log_min_duration_statement >= 0 || xact_is_sampled) {
     long secs;
     int usecs;
@@ -2220,7 +2219,8 @@ int check_log_duration(char *msec_str, bool was_logged) {
           (log_statement_sample_rate == 1 ||
            pg_prng_double(&pg_global_prng_state) <= log_statement_sample_rate);
 
-    if (exceeded_duration || in_sample || log_duration || xact_is_sampled) {
+    if (exceeded_duration || in_sample || tcb->guc.log_duration ||
+        xact_is_sampled) {
       snprintf(msec_str, 32, "%ld.%03d", secs * 1000 + msecs, usecs % 1000);
       if ((exceeded_duration || in_sample || xact_is_sampled) && !was_logged)
         return 2;
@@ -3565,7 +3565,7 @@ void PostgresMain(const char *dbname, const char *username) {
    * Also set up handler to log session end; we have to wait till now to be
    * sure Log_disconnections has its final value.
    */
-  if (IsUnderPostmaster && Log_disconnections)
+  if (IsUnderPostmaster && tcb->guc.Log_disconnections)
     on_proc_exit(log_disconnections, 0);
 
   /*

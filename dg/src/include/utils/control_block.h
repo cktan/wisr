@@ -461,6 +461,10 @@ typedef struct tcb_guc_t {
   bool enable_async_append = true;             /* costsize.c */
   bool enable_self_join_elimination;           /* analyzejoins.c */
   bool enable_group_by_reordering = true;      /* pathkeys.c */
+  bool enable_distinct_reordering = true;      /* planner.c */
+  bool Log_disconnections = false;             /* postgres.c */
+  bool ExitOnAnyError = false;                 /* globals.c */
+  bool log_duration = false;                   /* guc_tables.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

@@ -190,8 +190,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool IsUnderPostmaster;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool IsSessionThread;
 extern int CurrentProcPid(void);
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool ExitOnAnyError;
-
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MyProcPid;
 extern thread_local /*LOCAL*/ PGDLLIMPORT pg_time_t MyStartTime;
 extern thread_local /*LOCAL*/ PGDLLIMPORT TimestampTz MyStartTimestamp;

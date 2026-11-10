@@ -259,7 +259,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_statement_stats;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool current_role_is_superuser;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_duration;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int log_parameter_max_length;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int log_parameter_max_length_on_error;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int log_min_error_statement;

@@ -286,7 +286,6 @@ static const struct config_enum_entry default_toast_compression_options[] = {
  */
 /* Sessions read shmem->allow_alter_system, not this */
 static thread_local /*LOCAL*/ bool AllowAlterSystem = true;
-thread_local /*LOCAL*/ bool log_duration = false;
 thread_local /*LOCAL*/ bool Debug_print_plan = false;
 thread_local /*LOCAL*/ bool Debug_print_parse = false;
 thread_local /*LOCAL*/ bool Debug_print_rewritten = false;
@@ -897,7 +896,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      NULL},
     {{"enable_distinct_reordering", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables reordering of DISTINCT keys."), NULL, GUC_EXPLAIN},
-     &enable_distinct_reordering,
+     &tcb->guc.enable_distinct_reordering,
      true,
      NULL,
      NULL,
@@ -981,7 +980,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      NULL},
     {{"log_disconnections", PGC_SU_BACKEND, LOGGING_WHAT,
       gettext_noop("Logs end of a session, including duration."), NULL},
-     &Log_disconnections,
+     &tcb->guc.Log_disconnections,
      false,
      NULL,
      NULL,
@@ -998,7 +997,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
 
     {{"exit_on_error", PGC_USERSET, ERROR_HANDLING_OPTIONS,
       gettext_noop("Terminate session on any error."), NULL},
-     &ExitOnAnyError,
+     &tcb->guc.ExitOnAnyError,
      false,
      NULL,
      NULL,
@@ -1023,7 +1022,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
 
     {{"log_duration", PGC_SUSET, LOGGING_WHAT,
       gettext_noop("Logs the duration of each completed SQL statement."), NULL},
-     &log_duration,
+     &tcb->guc.log_duration,
      false,
      NULL,
      NULL,

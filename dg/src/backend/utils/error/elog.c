@@ -337,7 +337,8 @@ bool errstart(int elevel, const char *domain) {
      * infinite recursion!)
      */
     if (elevel == ERROR) {
-      if (!PG_exception_handled || ExitOnAnyError || proc_exit_inprogress)
+      if (!PG_exception_handled || tcb->guc.ExitOnAnyError ||
+          proc_exit_inprogress)
         elevel = FATAL;
     }
 

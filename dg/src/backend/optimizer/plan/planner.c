@@ -68,7 +68,6 @@
 /* GUC parameters */
 thread_local /*LOCAL*/ double cursor_tuple_fraction =
     DEFAULT_CURSOR_TUPLE_FRACTION;
-thread_local /*LOCAL*/ bool enable_distinct_reordering = true;
 
 /* Hook for plugins to get control in planner() */
 
@@ -4392,7 +4391,7 @@ static List *get_useful_pathkeys_for_distinct(PlannerInfo *root,
   /* always include the given 'needed_pathkeys' */
   useful_pathkeys_list = lappend(useful_pathkeys_list, needed_pathkeys);
 
-  if (!enable_distinct_reordering)
+  if (!tcb->guc.enable_distinct_reordering)
     return useful_pathkeys_list;
 
   /*

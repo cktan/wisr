@@ -95,8 +95,6 @@ thread_local /*LOCAL*/ char *DatabasePath = NULL;
  */
 thread_local /*LOCAL*/ bool IsUnderPostmaster = false;
 
-thread_local /*LOCAL*/ bool ExitOnAnyError = false;
-
 thread_local /*LOCAL*/ int DateStyle = USE_ISO_DATES;
 thread_local /*LOCAL*/ int DateOrder = DATEORDER_MDY;
 thread_local /*LOCAL*/ int IntervalStyle = INTSTYLE_POSTGRES;

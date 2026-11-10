@@ -92,7 +92,6 @@ extern bool is_pseudo_constant_for_index(PlannerInfo *root, Node *expr,
 /* in plan/planner.c: */
 
 /* GUC parameters */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_distinct_reordering;
 
 extern struct PlannedStmt *planner(Query *parse, const char *query_string,
                                    int cursorOptions,
