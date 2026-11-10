@@ -217,7 +217,7 @@ digres is one process; each session is a thread of it.
     a `pcb_t` field the postmaster rewrites on each reload,
     guarded by a mutex the field's comment names. The file
     logger's are: `publish_log_file_settings()` writes them
-    with `shmem->stderr_mutex` held, and `logfile.c` reads
+    with `shmem->log.mutex` held, and `logfile.c` reads
     them with it held.
   - **A LOCAL global moves into `tcb_t`** when a change
     touches it. Put new state in a block from the start.
@@ -293,7 +293,7 @@ digres is one process; each session is a thread of it.
 
 - **Every message goes to the log**, through `write_console()`
   in `elog.c` and `logfile_write()` in `logfile.c`: one
-  `write()` under `shmem->stderr_mutex`, to stderr, or, with
+  `write()` under `shmem->log.mutex`, to stderr, or, with
   `logging_collector` on, to the log file. There is no log
   collector process, no pipe, no csvlog and no jsonlog.
 - **`logfile.c` rotates in the writer's thread**, on size, on

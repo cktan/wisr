@@ -413,7 +413,7 @@ static thread_local /*LOCAL*/ int Log_file_mode = S_IRUSR | S_IWUSR;
 
 /*
  * Copy the file logger's settings into the process control block. The
- * postmaster calls this, with shmem->stderr_mutex held, at start and on each
+ * postmaster calls this, with shmem->log.mutex held, at start and on each
  * reload; logfile.c reads the copy under the same mutex.
  */
 void publish_log_file_settings(void) {

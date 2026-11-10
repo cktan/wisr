@@ -21,22 +21,26 @@ all of them in one operation.
 - The `POSTMASTER` and `INTERNAL` settings are in `pcb_t`
   already (`publish_postmaster_settings()` in `guc_tables.c`).
 - The six file-logger settings are in `pcb_t` too, guarded by
-  `shmem->stderr_mutex` (`publish_log_file_settings()`).
+  `shmem->log.mutex` (`publish_log_file_settings()`).
 
 ## 2. The three groups
 
 | Group | Block | Who writes | Who reads |
 |---|---|---|---|
 | 1 | `pcb` | the postmaster | the postmaster; any thread, for a constant |
-| 2 | `pcb->shared` | the postmaster, on a reload | the postmaster and the other threads |
+| 2 | `shmem` | the postmaster, on a reload | the postmaster and the other threads |
 | 3 | `tcb`, in `tcb->guc` | each thread | that thread alone |
 
 - **Group 1** is what the postmaster reads and writes. A
   constant, fixed after startup, may be read by other threads.
-- **Group 2** changes after the first thread starts. Guard
-  each member with an atomic, or with an immutable snapshot
-  struct that the postmaster swaps under a mutex. A reader
-  takes a coherent copy of the snapshot.
+- **Group 2** changes after the first thread starts. It lives
+  in `shmem_t`, which already holds such state (the TLS
+  context, the roles). Guard each member with an atomic, or
+  with an immutable snapshot, a `std::shared_ptr<const T>`,
+  that the postmaster swaps under a mutex. A reader copies the
+  pointer under the mutex and cannot change what it points to.
+  Only the function that publishes the settings swaps the
+  pointer, so the types keep the postmaster the only writer.
 - **Group 3** is every setting a session can `SET`. It lives
   in a `tcb->guc` struct, one field for each variable.
 - **Classify by reader, not by context.** A `SIGHUP` setting
@@ -48,7 +52,7 @@ all of them in one operation.
 | Group | Settings |
 |---|---|
 | 1 | The 23 `POSTMASTER` and 11 `INTERNAL` settings (done). The `SIGHUP` settings only the postmaster reads: `ssl_ca_file`, `ssl_cert_file`, `ssl_crl_dir`, `ssl_crl_file`, `ssl_dh_params_file`, `ssl_key_file`, `ssl_groups`, `ssl_min_protocol_version`, `ssl_max_protocol_version`, `ssl_passphrase_command`, `ssl_passphrase_command_supports_reload`, `send_abort_for_crash`, `send_abort_for_kill`. |
-| 2 | `log_line_prefix`, `syslog_facility`, `syslog_ident`, `syslog_sequence_numbers`, `syslog_split_messages` (`elog.c` reads them in every thread). The six file-logger settings (now in `pcb`). `ssl`, `log_hostname`, `authentication_timeout`, `allow_alter_system`, `oauth_validator_libraries`. |
+| 2 | `log_line_prefix`, `syslog_facility`, `syslog_ident`, `syslog_sequence_numbers`, `syslog_split_messages` (`elog.c` reads them in every thread). The six file-logger settings (now in `pcb`: they move to `shmem`, next to `log.mutex`, when a change touches them). `ssl`, `log_hostname`, `authentication_timeout`, `allow_alter_system`, `oauth_validator_libraries`. |
 | 3 | The 105 `USERSET`, 31 `SUSET`, 2 `BACKEND` and 2 `SU_BACKEND` settings. `log_connections`, `log_disconnections`, `post_auth_delay` and `ignore_system_indexes` are here because the session reads them at connect or disconnect. |
 | No reader found | `ssl_ciphers`, `ssl_prefer_server_ciphers`, `ssl_tls13_ciphers`, `krb_server_keyfile`, `krb_caseins_users`, `gss_accept_delegation`, `pre_auth_delay`. They are compiled out, not removed ([`CODE.md`](CODE.md) §7): keep them, in group 1. |
 

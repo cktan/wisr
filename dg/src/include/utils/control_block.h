@@ -233,7 +233,7 @@ typedef struct pcb_t {
   /*
    * -- the file logger's settings (PGC_SIGHUP) --
    * They change on a reload, after threads have started, so they are
-   * guarded: the postmaster writes them with shmem->stderr_mutex held
+   * guarded: the postmaster writes them with shmem->log.mutex held
    * (publish_log_file_settings(), guc_tables.c), and logfile.c reads them
    * with it held. The file in each comment is where the variable was defined.
    */
@@ -294,10 +294,12 @@ typedef struct pcb_t {
  * here, and never freed: the block itself never is.
  */
 typedef struct shmem_t {
-  /* logfile.c: one message at a time to the log, and its state, below */
-  std::mutex stderr_mutex;
-  /* logfile.c: the log file now written; guarded by stderr_mutex */
-  std::unique_ptr<logfile_state_t, logfile_free_t> logfile;
+  struct {
+    /* logfile.c: one message at a time to the log, and its state, below */
+    std::mutex mutex;
+    /* logfile.c: the log file now written; guarded by mutex */
+    std::unique_ptr<logfile_state_t, logfile_free_t> file;
+  } log;
 
   /*
    * be-secure-openssl.c: the TLS context every connection is made from,
@@ -338,6 +340,11 @@ typedef struct shmem_t {
    * directory, before the first session; guarded by its own mutex
    */
   std::unique_ptr<aa_env_t, pg_global_free_t> pg_global;
+
+  /*
+   * -- values the postmaster may change while other threads read --
+   * Guard each member with a mutex, or make it atomic.
+   */
 } shmem_t;
 
 /* The thread control block: one for each thread that runs digres code. */
