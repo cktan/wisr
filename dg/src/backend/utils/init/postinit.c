@@ -674,8 +674,8 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
   /* No pg_db_role_setting options: there is no such catalog table. */
 
   /* Apply PostAuthDelay as soon as we've read all options */
-  if (PostAuthDelay > 0)
-    pg_usleep(PostAuthDelay * 1000000L);
+  if (tcb->guc.PostAuthDelay > 0)
+    pg_usleep(tcb->guc.PostAuthDelay * 1000000L);
 
   /*
    * Initialize various default states that can't be set up until we've

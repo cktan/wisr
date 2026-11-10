@@ -94,7 +94,6 @@ thread_local /*LOCAL*/ CommandDest whereToSendOutput = DestDebug;
 thread_local /*LOCAL*/ int log_statement = LOGSTMT_NONE;
 
 /* wait N seconds to allow attach from a debugger */
-thread_local /*LOCAL*/ int PostAuthDelay = 0;
 
 /* Time between checks that the client is still connected. */
 thread_local /*LOCAL*/ int client_connection_check_interval = 0;

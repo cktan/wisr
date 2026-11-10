@@ -482,6 +482,10 @@ typedef struct tcb_guc_t {
   bool default_with_oids = false;              /* guc_tables.c */
   bool allowSystemTableMods = false;           /* globals.c */
   bool IgnoreSystemIndexes = false;            /* miscinit.c */
+  int PostAuthDelay = 0;                       /* postgres.c */
+  int from_collapse_limit;                     /* initsplan.c */
+  int join_collapse_limit;                     /* initsplan.c */
+  int geqo_threshold;                          /* allpaths.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

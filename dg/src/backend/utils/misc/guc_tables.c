@@ -1419,7 +1419,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
                    "authentication on connection startup."),
       gettext_noop("This allows attaching a debugger to the process."),
       GUC_NOT_IN_SAMPLE | GUC_UNIT_S},
-     &PostAuthDelay,
+     &tcb->guc.PostAuthDelay,
      0,
      0,
      INT_MAX / 1000000,
@@ -1445,7 +1445,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
                    "queries if the resulting FROM list would have no more than "
                    "this many items."),
       GUC_EXPLAIN},
-     &from_collapse_limit,
+     &tcb->guc.from_collapse_limit,
      8,
      1,
      INT_MAX,
@@ -1459,7 +1459,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
                    "constructs into lists of FROM items whenever a "
                    "list of no more than this many items would result."),
       GUC_EXPLAIN},
-     &join_collapse_limit,
+     &tcb->guc.join_collapse_limit,
      8,
      1,
      INT_MAX,
@@ -1470,7 +1470,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop(
           "Sets the threshold of FROM items beyond which GEQO is used."),
       NULL, GUC_EXPLAIN},
-     &geqo_threshold,
+     &tcb->guc.geqo_threshold,
      12,
      2,
      INT_MAX,

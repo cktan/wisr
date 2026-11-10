@@ -66,8 +66,6 @@ extern Limit *make_limit(Plan *lefttree, Node *limitOffset, Node *limitCount,
 /*
  * prototypes for plan/initsplan.c
  */
-extern thread_local /*LOCAL*/ PGDLLIMPORT int from_collapse_limit;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int join_collapse_limit;
 
 extern void add_base_rels_to_query(PlannerInfo *root, Node *jtnode);
 extern void add_other_rels_to_query(PlannerInfo *root);

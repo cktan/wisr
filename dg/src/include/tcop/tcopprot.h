@@ -24,7 +24,6 @@
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT CommandDest whereToSendOutput;
 extern thread_local /*LOCAL*/ PGDLLIMPORT const char *debug_query_string;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int PostAuthDelay;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int client_connection_check_interval;
 
 /* GUC-configurable parameters */

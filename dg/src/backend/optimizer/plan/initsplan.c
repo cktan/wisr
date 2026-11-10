@@ -38,8 +38,6 @@
 #include "utils/control_block.h"
 
 /* These parameters are set by GUC */
-thread_local /*LOCAL*/ int from_collapse_limit;
-thread_local /*LOCAL*/ int join_collapse_limit;
 
 /*
  * deconstruct_jointree requires multiple passes over the join tree, because we
@@ -1155,7 +1153,7 @@ static List *deconstruct_recurse(PlannerInfo *root, Node *jtnode,
       sub_members = list_length(sub_joinlist);
       remaining--;
       if (sub_members <= 1 || list_length(joinlist) + sub_members + remaining <=
-                                  from_collapse_limit)
+                                  tcb->guc.from_collapse_limit)
         joinlist = list_concat(joinlist, sub_joinlist);
       else
         joinlist = lappend(joinlist, sub_joinlist);
@@ -1304,7 +1302,7 @@ static List *deconstruct_recurse(PlannerInfo *root, Node *jtnode,
       /* force the join order exactly at this node */
       joinlist = list_make1(list_make2(leftjoinlist, rightjoinlist));
     } else if (list_length(leftjoinlist) + list_length(rightjoinlist) <=
-               join_collapse_limit) {
+               tcb->guc.join_collapse_limit) {
       /* OK to combine subproblems */
       joinlist = list_concat(leftjoinlist, rightjoinlist);
     } else {

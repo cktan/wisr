@@ -79,7 +79,6 @@ typedef enum pushdown_safe_type {
 /* These parameters are set by GUC */
 thread_local /*LOCAL*/ bool enable_geqo =
     false; /* just in case GUC doesn't set it */
-thread_local /*LOCAL*/ int geqo_threshold;
 
 /* Hook for plugins to get control in set_rel_pathlist() */
 
@@ -2397,7 +2396,7 @@ static RelOptInfo *make_rel_from_joinlist(PlannerInfo *root, List *joinlist) {
 
     if (tcb->hooks->join_search_hook)
       return (*tcb->hooks->join_search_hook)(root, levels_needed, initial_rels);
-    else if (enable_geqo && levels_needed >= geqo_threshold)
+    else if (enable_geqo && levels_needed >= tcb->guc.geqo_threshold)
       return geqo(root, levels_needed, initial_rels);
     else
       return standard_join_search(root, levels_needed, initial_rels);
