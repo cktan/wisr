@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * page.h -- a B+tree page of a secondary index (../BTREEINDEX.md §4): its
  * bytes as RocksDB and the buffer pool hold them, read where they lie,
  * and a page decoded to be changed, an entry inserted or the page

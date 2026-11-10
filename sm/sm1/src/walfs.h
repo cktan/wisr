@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * walfs.h -- the Env a database's RocksDB instance writes through
  * when its new write-ahead logs are zero-filled first, so a commit's
  * sync never grows a file (../DBMGR.md).

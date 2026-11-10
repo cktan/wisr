@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * aa_internal.h -- what aa's own files share, and no user of aa sees.
  */
 #ifndef AA_INTERNAL_H

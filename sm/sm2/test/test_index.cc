@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_index.cc -- the index rel over sm1 (../ROWSTORE.md §8):
  * entries in key order, scans between bounds, uniqueness, keys
  * cut to fit, and keys decoded back.

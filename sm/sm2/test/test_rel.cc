@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_rel.cc -- the heap rel over sm1 (../ROWSTORE.md §8, TYPE.md §9 step
  * 4): rows in, rows out, under every isolation level, with sm1's
  * behaviour showing through untranslated.

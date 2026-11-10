@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # Verify a session's next transaction, which reuses the table handle of
 # its last, sees every change made to the table since.
 # 1. A held session reads and writes a table, in transactions of its own.

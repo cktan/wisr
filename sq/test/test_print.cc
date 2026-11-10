@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_print.cc -- sq_to_string: trees built by hand print as
  * PostgreSQL's nodeToString() prints the same statement. The
  * expected text in each test is what PostgreSQL's parser printed for

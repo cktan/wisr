@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_page.cc -- a B+tree page (../BTREEINDEX.md §4, §11.3 step 1): its
  * bytes laid out and read where they lie, an entry's insert, a
  * split's halves, and a page that is not one refused.

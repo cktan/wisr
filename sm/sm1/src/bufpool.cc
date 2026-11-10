@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * bufpool.cc -- the buffer pool of a tree's pages (bufpool.h,
  * ../BUFMGR.md §1).
  *
@@ -302,9 +307,7 @@ void bufpool_t::wake(frame_t *f) {
   f->state.fetch_and(~state_wait, std::memory_order_relaxed);
   waitq_t &q = waitq_of(f);
   // Step 2: no sleeper between its try and its wait.
-  {
-    std::lock_guard<std::mutex> guard(q.mu);
-  }
+  { std::lock_guard<std::mutex> guard(q.mu); }
   q.cv.notify_all();
 }
 

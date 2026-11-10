@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # sqlbench.sh -- smbench's rows through SQL, in digres and in
 # PostgreSQL: t (key int8 primary key, x int8, pad text) of ROWS rows,
 # x = 3 key and PAD bytes of pad, loaded and vacuumed. Then, each on a

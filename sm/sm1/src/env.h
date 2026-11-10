@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * env.h -- the environment: one process's handle on a home
  * directory (../DBMGR.md §4).
  */

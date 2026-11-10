@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_tree.cc -- a tree owns what is made for it (sq.h, src/tree.h).
  * The test binary is linked with a leak checker, so a node or a
  * string that a tree failed to free fails the run.

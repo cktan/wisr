@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_toast.cc -- TOAST through a table (../INDEXBUILD.md §2,
  * ../TOAST.md §2): a row's long datums out of line once
  * the host reads pointers, and every index still made of values.

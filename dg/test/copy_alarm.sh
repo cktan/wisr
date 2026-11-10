@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # Verify that a stale timer does not end a bulk load: a timeout disabled
 # leaves no ALARM armed, which in a COPY's final sort would fail the load
 # (timeout.c's cancel_alarm(), ../ISSUE.md).

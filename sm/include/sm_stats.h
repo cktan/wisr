@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm_stats.h -- a table's statistics, as sm3 records and keeps them.
  *
  * sm3.h names these types stats_t, stats_index_t and stat_t, and

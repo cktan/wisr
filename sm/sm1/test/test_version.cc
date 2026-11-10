@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_version.cc -- the version codec, the wisr.store.v2
  * comparator and its prefix extractor (../DBMGR.md §6.2,
  * ../ROWSTORE.md §3.2).

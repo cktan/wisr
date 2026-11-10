@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * chain.cc -- a chained store's keys (../ROWSTORE.md): the codec, the
  * chain_ calls, the rollback to a savepoint, and GC's repair.
  *

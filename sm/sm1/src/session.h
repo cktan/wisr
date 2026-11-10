@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * session.h -- a session, its transaction, and its cursors,
  * plus the internal calls between xct.cc, catalog.cc, and
  * access.cc.

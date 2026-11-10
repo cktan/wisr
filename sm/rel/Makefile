@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # rel/Makefile -- build the rel test driver.
 
 CXX      ?= g++

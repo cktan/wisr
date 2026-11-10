@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * catalog.h -- sm3's catalog as it is kept (../CATALOG.md §3.3,
  * ../CATALOG.md §3.5): the keys of its entries, and the blobs they hold. Each
  * entry lives in sm2's catalog key-value store; this is the

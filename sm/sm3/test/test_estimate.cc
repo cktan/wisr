@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_estimate.cc -- the estimators an analyze runs over its sample
  * (../STATISTICS.md §9.5), on values whose truth is known: uniform,
  * skewed, clustered and mostly null, and text under a collation that

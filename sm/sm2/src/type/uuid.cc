@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * uuid.cc -- uuid (TYPE.md §3.11): the 16 bytes as they are,
  * ordered by memcmp, as PostgreSQL orders them. The text is
  * PostgreSQL's: lower-case hex in groups of 8, 4, 4, 4 and 12,

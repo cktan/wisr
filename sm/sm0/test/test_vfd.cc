@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_vfd.cc -- sm_vfd.h's virtual file descriptors and the
  * process's ceiling (VFD.md).
  */

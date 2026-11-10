@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * run.cc -- running a parsed script (DRIVER.md §2.4, §4).
  *
  * Each session gets a thread, because a step may block on

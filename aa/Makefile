@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # aa -- roles, authentication and authorization: what every database
 # of a server shares about who may do what, kept in sm's database
 # pg_global, which digres links as it links sm (README.md).

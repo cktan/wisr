@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * main.cc -- the driver: run one scenario script and print its
  * transcript (mvcc/DRIVER.md).
  *

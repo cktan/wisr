@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * analyze.cc -- tbl_analyze (../STATISTICS.md §9.4 to ../STATISTICS.md §9.7):
  * the sample, each column's estimates over it, each partial or expression
  * index's from the host's evaluator, and the sizes, recorded as the table's

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # wisr -- four parts, each with a Makefile of its own (README.md): sm/,
 # the storage stack; sq/, the SQL parser; aa/, roles and privileges; and
 # dg/, digres, which links the other three. This file builds and tests

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 """gen_cat.py -- write digres's built-in catalog rows as C tables.
 
     gen_cat.py POSTGRES_BKI header > src/include/catalog/cat_builtin.h

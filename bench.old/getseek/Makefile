@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # Build getseek against the static release RocksDB the bench's
 # digres links (../../rocksdb/release), and sm1's own
 # version codec, so "seek" is sm1's read as it is.

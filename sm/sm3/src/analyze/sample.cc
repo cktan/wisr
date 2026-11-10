@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sample.cc -- the sample an analyze estimates from
  * (../STATISTICS.md §9.4): a pilot of single _ids, then runs of
  * _ids whose slots Floyd's algorithm draws, read through forward

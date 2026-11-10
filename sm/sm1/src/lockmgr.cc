@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * lockmgr.cc -- the lock table: locks in Gray's modes, the write
  * latches, and deadlock detection (../LOCKMGR.md §3.2).
  *

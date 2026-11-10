@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm1.h -- the wisr storage manager's public C++ API, in
  * namespace sm1 (DESIGN.md section 5 at the top level). Names,
  * keys and values travel as std::string_view, lists as

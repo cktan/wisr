@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_btree_reaper.cc -- the btree reaper (../BTREEINDEX.md §9): its queue
  * of pages and their filter.
  */

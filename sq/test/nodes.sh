@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # nodes.sh -- verify that include/sq_nodes.h is what the generator
 # writes from spec/ today.
 # 1. Generate the header again.

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * aa_auth.cc -- how a client gets in (ROLE.md section 5): what it must
  * prove, the secret it proves it by, and whether its role may log in.
  * The socket, the exchange and the messages to the client are digres's;

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * e07 -- table locks under load: the fast path never grants two
  * incompatible modes at once.
  *

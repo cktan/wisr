@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * locktab_bench.cc -- the lock table alone (src/locktab.h), as
  * threads lock and release through it, with no session, wait or
  * database (../NEXT.md §1 item 4).

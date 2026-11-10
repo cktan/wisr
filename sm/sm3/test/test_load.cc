@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_load.cc -- a bulk load into a table (BULKLOAD.md §5, §13):
  * tbl_load_open, tbl_load_add and tbl_load_close, into an empty
  * table from files and into any other row by row.

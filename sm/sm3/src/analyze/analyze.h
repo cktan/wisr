@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * analyze.h -- what tbl_analyze is built from (../STATISTICS.md §9.4,
  * ../STATISTICS.md §9.5): the sample of a table's rows, and the estimators run
  * over it. Internal to sm3.

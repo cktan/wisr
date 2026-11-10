@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # idxopen.sh -- what a table's secondary indexes cost a statement that
 # uses none of them, in instructions, on digres and PostgreSQL 18.
 #

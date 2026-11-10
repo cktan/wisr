@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_cluster.cc -- a table keyed by its primary key (../CLUSTER.md):
  * its rows found by _id and scanned by key, moved when their key
  * changes, followed by a writer at READ COMMITTED, and rewritten

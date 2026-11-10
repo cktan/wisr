@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * pin.cc -- the session's pool of pins (../ROWSTORE.md §6.4), moved
  * from sm1 with its rules: a pin ref names a pin and the generation
  * it was taken at; releasing the pin increases its generation, so

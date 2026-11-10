@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * keywords.cc -- the keyword table and its lookup.
  *
  * A keyword is found as PostgreSQL finds it: a generated perfect hash

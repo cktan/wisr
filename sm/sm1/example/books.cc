@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * books.cc -- a small tour of the wisr API: create a table
  * book(id, title, author), insert a few rows and commit, then
  * read one row back and scan them all.

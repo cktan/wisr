@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # sm3 -- build the schema and index maintenance library and its
 # tests.
 #

@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # duck.sh -- run DuckDB's SQL tests on PostgreSQL 18 and on digres, side
 # by side, and report each place where digres differs (README.md here).
 #

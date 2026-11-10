@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_savepoint.cc -- sm1::savepoint and sm1::rollback (SM1_DESIGN.md
  * ../XCTMGR.md §6, ../DBMGR.md §17.2 "Own writes").
  *

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_stats.cc -- what a store's LSM looks like now: the sizes
  * sm1::approxsize estimates and the runs sm1::probes counts.
  */

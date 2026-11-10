@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # dg -- build digres.
 #
 #   make -j4           generate what is generated, compile, and link

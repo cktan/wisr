@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_ddl.cc -- the DDL beyond create_table (../CATALOG.md §6):
  * each change written, then read back after a restart.
  */

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_authz.cc -- who holds which privilege: membership closures by
  * INHERIT, SET and ADMIN, an ACL's mask, the grantor of a GRANT, CONNECT,
  * and the session's caches of them going stale when they should.

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_auth.cc -- how a client gets in (ROLE.md section 5): the method it
  * must prove itself by, the secret, and the checks after the exchange.
  */

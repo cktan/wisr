@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_parse.cc -- sq_parse as a caller sees it. That each statement
  * parses to PostgreSQL's tree is test/run.sh's to show, against what
  * PostgreSQL printed; here are the call's own promises (sq.h).

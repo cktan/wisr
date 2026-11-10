@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * ddl.cc -- DDL (../CATALOG.md §1, §6): what a CREATE,
  * a DROP or an ALTER does. Each call makes or drops what its
  * object needs outside the catalog -- a store, a sequence, an

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * main.cc -- the entry point of the mvcc scenario binary. Each
  * scenario file holds one TEST_CASE; this file provides the
  * doctest main they all link against.

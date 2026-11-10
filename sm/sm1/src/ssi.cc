@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * ssi.cc -- serializable snapshot isolation (../XCTMGR.md §7),
  * after Cahill, Röhm and Fekete, "Serializable Isolation for
  * Snapshot Databases" (SIGMOD 2008), with the refinements of

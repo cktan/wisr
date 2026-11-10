@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 """nodespec.py -- read PostgreSQL's node headers into structs and enums.
 
 The headers in spec/ are PostgreSQL's own, unedited. This reads them

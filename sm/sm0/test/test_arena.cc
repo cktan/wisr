@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_arena.cc -- the memory area, arena_t (include/sm0_arena.h).
  */
 

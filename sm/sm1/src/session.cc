@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * session.cc -- sm1::opendb and sm1::closedb, and the environment's
  * registry of open databases (../DBMGR.md §1).
  */

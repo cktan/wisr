@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * access.cc -- sm1::insert, sm1::update, sm1::erase, sm1::read, and
  * the sm1::scan cursor (../XCTMGR.md §3.3, ../ROWSTORE.md §4, §5).
  *

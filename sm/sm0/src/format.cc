@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * format.cc -- sm0::format_into: std::format into a fixed buffer
  * through a bounded output iterator, so nothing is allocated.
  */

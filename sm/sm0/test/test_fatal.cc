@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_fatal.cc -- sm0::fatal reports on stderr and to the log
  * hook, then aborts the process, even when the hook re-enters it
  * or does not return.

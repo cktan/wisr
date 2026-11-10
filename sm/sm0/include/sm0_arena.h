@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm0_arena.h -- a memory area: bytes cut into pieces, freed at once.
  *
  *   sm0::arena_t a;

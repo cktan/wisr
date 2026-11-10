@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * db.h -- the layout of one database directory: its column
  * families, their options, and CF:meta's keys (../DBMGR.md §6).
  */

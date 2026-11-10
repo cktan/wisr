@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * internal.h -- the catalog in memory (../CATALOG.md §4, §11): the
  * shared catalog, a session's overlay on it, and what load.cc,
  * ddl.cc and session.cc share. Internal to sm3.

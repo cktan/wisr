@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm3.h -- level 3: schema and index maintenance (SM3_DESIGN.md).
  *
  * So far, the catalog (../CATALOG.md): made in a database with

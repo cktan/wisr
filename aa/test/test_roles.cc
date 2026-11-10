@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_roles.cc -- pg_global's roles: as initdb makes them, as role DDL
  * changes them, and as two sessions changing one conflict.
  */

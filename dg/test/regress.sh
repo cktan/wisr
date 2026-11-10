@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # regress.sh -- run PostgreSQL 18's regression suite on digres, and report
 # which missing features cost the most files. It only measures: it exits 0
 # whatever it finds.

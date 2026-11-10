@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_page.cc -- pages (../BTREEINDEX.md §2): keys of class 0x04, written
  * outside every transaction and read through the buffer pool, apart
  * from every version of the store.

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * interrupt.cc -- interrupting a thread, interruptible waits, and
  * timers that interrupt (INTERRUPT.md, include/sm_sys.h).
  */

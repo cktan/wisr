@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_fkey.cc -- foreign keys in the catalog (FOREIGNKEY.md at the
  * top level): kept, loaded back with their parents' referenced_by
  * derived, and kept true by the DDL on the tables they join.

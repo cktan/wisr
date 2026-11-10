@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_chain.cc -- chained stores (../ROWSTORE.md): their column
  * family, and the chain_ calls on them.
  */

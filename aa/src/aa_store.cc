@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * aa_store.cc -- pg_global's tables: pg_authid, a role a row,
  * pg_auth_members, a membership a row, each keyed by its oid, which the
  * sequence role_oid hands out, and pg_object, an object's owner and ACL

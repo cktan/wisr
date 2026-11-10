@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_acl.cc -- ACLs as pg_global keeps them: their text, the
  * default one, and what two grant alike.
  */

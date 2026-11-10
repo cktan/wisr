@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * tree.cc -- a B-link tree over sm1's pages (../BTREEINDEX.md §5, §6).
  *
  * A pin is a latch (../BUFMGR.md). A reader descends from page

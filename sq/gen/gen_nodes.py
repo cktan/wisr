@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 """gen_nodes.py -- write sq's node header and printer from PostgreSQL's.
 
     gen/gen_nodes.py header > include/sq_nodes.h

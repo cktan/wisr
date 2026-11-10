@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # Verify a database owner change cannot restore a concurrent ACL revoke.
 # 1. Make a database with an explicit CONNECT grant and two roles.
 # 2. Hold an owner change in one session.

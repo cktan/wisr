@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # run.sh -- time q0 to q4 on digres and PostgreSQL, with regular
 # indexes and then btree ones, and print a table of the results.
 #

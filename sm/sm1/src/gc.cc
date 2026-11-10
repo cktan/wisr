@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * gc.cc -- garbage collection of dead versions (../GC.md §1):
  * gc_watermark, the compaction filter, tombstone purge, and the
  * removal of dropped stores' column families.

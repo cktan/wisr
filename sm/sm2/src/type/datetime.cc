@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * datetime.cc -- date, time, timestamp and timestamptz (TYPE.md
  * §3.7, §3.9), PostgreSQL's integer representations counted from
  * its 2000-01-01 epoch, with PostgreSQL's ranges and reserved

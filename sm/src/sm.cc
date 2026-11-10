@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm.cc -- wisr's C API over sm1, sm2 and sm3 (include/sm.h).
  *
  * Each entry point converts its arguments, calls the level below

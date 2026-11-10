@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * pin.h -- the session's pool of pins (../ROWSTORE.md §6.4): what a
  * pin and a cursor hold, and the calls table.cc takes, holds and
  * releases them with.

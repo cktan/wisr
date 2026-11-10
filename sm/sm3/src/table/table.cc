@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * table.cc -- an open table and its writes (../INDEXBUILD.md §2): the
  * row's write, then each index the write changes, with the old
  * entries computed from the image the row's write hands back. A

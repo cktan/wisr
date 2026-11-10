@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # run.sh -- run each test/NAME.sql in a session of a server, with psql,
 # and compare what it prints with test/expected/NAME.out. Each is run
 # again in 8 sessions at once, and each must print the same.

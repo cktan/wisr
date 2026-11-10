@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * rel.h -- a rel's state and a cursor over its rows (rel.cc), which
  * the index over a rel's primary key (index.cc) reads and scans its
  * rows by.

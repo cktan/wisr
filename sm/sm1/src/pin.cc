@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * pin.cc -- raw pins (../ROWSTORE.md §6.3): a raw pin keeps the iterator
  * that found a row, so the row is handed out without a copy, until
  * the pin is emptied. The caller owns each one; sm1 keeps no list

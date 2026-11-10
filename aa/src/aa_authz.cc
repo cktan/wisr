@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * aa_authz.cc -- who holds which privilege: the closures over the
  * membership graph that INHERIT, SET and ADMIN make, an ACL's mask for a
  * role, the grantor a GRANT is made as, and CONNECT at a connect, as

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * hintq.cc -- hint_queue_t (hintq.h).
  */
 #include "hintq.h"

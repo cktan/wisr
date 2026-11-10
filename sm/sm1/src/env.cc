@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * env.cc -- sm1::init, sm1::attach, sm1::detach: the home directory,
  * its root db, and the sweep of unnamed database directories
  * (../DBMGR.md §4).

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_tree.cc -- a table's index made a tree (../BTREEINDEX.md §11.3 step
  * 7): writes maintain it as any index, and its scan of rows hands out
  * each row, as the snapshot shows it, only while the row still has

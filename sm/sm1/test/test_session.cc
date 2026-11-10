@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_session.cc -- sm1::opendb, sm1::closedb, the open-database
  * registry, and the transaction state machine.
  */

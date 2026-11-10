@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # server.sh -- check that the server starts on a data directory initdb
 # made, and that PostgreSQL's psql can connect to it and run a statement.
 #

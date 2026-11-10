@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_altertype.cc -- a column's type changed (alter_column_type,
  * ../dg/ALTERTYPE.md at the top level): its rows converted into a
  * new store by the host's converter, a key column's rows keyed

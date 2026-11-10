@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * native.h -- reading and writing a datum's native bytes, and
  * the errors every type reports.
  *

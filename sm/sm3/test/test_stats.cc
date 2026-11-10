@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_stats.cc -- a table's statistics in the catalog
  * (../STATISTICS.md §9.6, §9.7): recorded in a transaction, published
  * at its commit, loaded on first use, and what DDL does to them.

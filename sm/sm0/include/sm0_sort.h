@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm0_sort.h -- a sort of records by key (../../SORT.md).
  *
  *   sm0::sort_options_t opt;

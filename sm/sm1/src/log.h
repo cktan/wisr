@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * log.h -- reporting through the caller's log hook
  * (sm1::set_log): sm0's helpers (sm0_log.h), brought into
  * namespace wisr.

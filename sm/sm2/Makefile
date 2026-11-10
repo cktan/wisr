@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # sm2 -- build the type and tuple library and its tests.
 #
 #   make -j4          libsm2.a and the test binary

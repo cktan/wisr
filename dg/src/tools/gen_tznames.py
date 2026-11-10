@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 """gen_tznames.py -- the time zone abbreviation sets, compiled in.
 
   gen_tznames.py DIR > tznames_builtin.c

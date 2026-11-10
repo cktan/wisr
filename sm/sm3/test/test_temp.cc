@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_temp.cc -- temporary tables (TEMPTABLE.md §4): tables in the
  * temporary namespace, defined in their session's memory alone.
  */

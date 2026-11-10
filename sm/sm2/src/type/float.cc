@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * float.cc -- float4 and float8 (TYPE.md §3.3): IEEE-754 binary32
  * and binary64, little-endian. The text is PostgreSQL's, printed
  * by its own Ryu code in src/ryu/: nearly always the shortest

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_args.cc -- negative tests: every public call rejects bad
  * arguments with its documented error, and a rejected call
  * changes nothing.

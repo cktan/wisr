@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 """report.py -- the tables of a soak run, as markdown.
 
     soak/report.py build/soak/dg [warmup_seconds]

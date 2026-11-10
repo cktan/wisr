@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * interval.cc -- interval (TYPE.md §3.10): PostgreSQL's three
  * components, { time int64 µs, day int32, month int32 },
  * little-endian, 16 bytes. All three at their maximum is

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_toast.cc -- TOAST (../TOAST.md §2): a row's long datums
  * out of line, in the table's own store, under the row's
  * transaction.

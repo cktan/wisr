@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_sort.cc -- the sort of records by key (include/sm0_sort.h).
  */
 

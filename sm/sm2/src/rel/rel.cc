@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * rel.cc -- the rel (../CLUSTER.md §2, ../ROWSTORE.md §2.2): a table's
  * rows in one sm1 store, keyed by relid and their primary key, or
  * in a rel without one by their _id, each holding its tuple alone.

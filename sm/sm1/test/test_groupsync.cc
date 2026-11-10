@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_groupsync.cc -- a commit's WAL sync, made by sm1 outside
  * RocksDB's write queue, one commit syncing for all that wait
  * (../DBMGR.md, ../XCTMGR.md §8.2).

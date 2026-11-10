@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # privcheck.sh -- what a privilege check costs a role that is not a
 # superuser, in instructions, on digres and PostgreSQL 18.
 #

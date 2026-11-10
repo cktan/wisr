@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_crash.cc -- kill a committing process with SIGKILL and
  * check that recovery leaves exactly a prefix of its commits,
  * including every commit it acknowledged (../DBMGR.md §9, §17.2).

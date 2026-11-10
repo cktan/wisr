@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # slt_corpus.sh -- run SQLite's whole sqllogictest corpus, or part of it,
 # on PostgreSQL 18 and on digres, and report the records digres fails that
 # PostgreSQL 18 passes (test/slt/README.md).
