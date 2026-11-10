@@ -410,6 +410,24 @@ static thread_local /*LOCAL*/ char *Log_directory = NULL;
 static thread_local /*LOCAL*/ char *Log_filename = NULL;
 static thread_local /*LOCAL*/ bool Log_truncate_on_rotation = false;
 static thread_local /*LOCAL*/ int Log_file_mode = S_IRUSR | S_IWUSR;
+/* elog.c: log_line_prefix; threads read shmem->log_line_prefix, not this */
+static thread_local /*LOCAL*/ char *Log_line_prefix = NULL;
+
+/*
+ * Copy the settings that change on a reload and that every thread reads into
+ * the shared block. The main thread calls this after it reads its settings
+ * and after each reload; the other threads read the copy, never the variable.
+ */
+void publish_shared_settings(void) {
+  /* Allocate before the lock: the lock is held only to swap the pointer. */
+  std::shared_ptr<const std::string> prefix =
+      std::make_shared<const std::string>(Log_line_prefix ? Log_line_prefix
+                                                          : "");
+
+  /* A reader copies the pointer under this lock, so it sees one string. */
+  std::lock_guard<std::mutex> guard(shmem->log_line_prefix.mutex);
+  shmem->log_line_prefix.value = std::move(prefix);
+}
 
 /*
  * Copy the file logger's settings into the process control block. The

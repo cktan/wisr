@@ -345,6 +345,16 @@ typedef struct shmem_t {
    * -- values the postmaster may change while other threads read --
    * Guard each member with a mutex, or make it atomic.
    */
+  struct {
+    /*
+     * guc_tables.c: log_line_prefix (PGC_SIGHUP), which elog.c reads in
+     * every thread. The mutex is a leaf: hold it only to copy or swap the
+     * pointer, never across a call that may log, which would take it again.
+     */
+    std::mutex mutex;
+    /* The string is never changed: a reload swaps in a new one. */
+    std::shared_ptr<const std::string> value;
+  } log_line_prefix;
 } shmem_t;
 
 /* The thread control block: one for each thread that runs digres code. */

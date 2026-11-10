@@ -639,6 +639,8 @@ void PostmasterMain(int argc, char *argv[]) {
    * pcb, which every thread reads, before any thread starts.
    */
   publish_postmaster_settings();
+  /* The settings that change on a reload: a first copy in shmem. */
+  publish_shared_settings();
 
   if (output_config_variable != NULL) {
     /*

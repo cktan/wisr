@@ -552,9 +552,12 @@ ConfigVariable *ProcessConfigFileInternal(GucContext context,
    * Remember when we last successfully loaded the config file: the main
    * thread's load, which each session's follows.
    */
-  if (applySettings && !IsSessionThread)
+  if (applySettings && !IsSessionThread) {
     pcb_main()->PgReloadTime.store(GetCurrentTimestamp(),
                                    std::memory_order_relaxed);
+    /* Threads read the settings they share from shmem, not their own copy. */
+    publish_shared_settings();
+  }
 
 bail_out:
   if (error && applySettings) {

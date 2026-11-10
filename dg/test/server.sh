@@ -6062,6 +6062,26 @@ for _ in $(seq 100); do
 done
 ls "$lfdir"/moved-*.log > /dev/null 2>&1 ||
   fail "logging_collector: a new log_filename on reload"
+# Verify that a reload of log_line_prefix reaches the log lines of the
+# postmaster and of a session, which read shmem's copy, not their own.
+# 1. Set log_line_prefix in postgresql.conf, and reload.
+# 2. Reload again: the postmaster logs it with the new prefix.
+# 3. A session logs a statement: its line has the new prefix too.
+echo "log_line_prefix = 'PFX %p '" >> "$work/data/postgresql.conf"
+local_psql -c 'select pg_reload_conf()' > /dev/null
+sleep 1
+local_psql -c 'select pg_reload_conf()' > /dev/null
+echo "set log_statement = 'all'; select 'pfx_probe';" | local_psql > /dev/null
+for _ in $(seq 100); do
+  cat "$lfdir"/moved-*.log 2> /dev/null > "$work/prefix.all"
+  grep -Eq '^PFX [0-9]+ LOG:  statement: select .pfx_probe' \
+    "$work/prefix.all" && break
+  sleep 0.1
+done
+grep -Eq '^PFX [0-9]+ LOG:  received SIGHUP' "$work/prefix.all" ||
+  fail "log_line_prefix: the postmaster's line after a reload"
+grep -Eq '^PFX [0-9]+ LOG:  statement: select .pfx_probe' \
+  "$work/prefix.all" || fail "log_line_prefix: a session's line after a reload"
 kill $server
 for _ in $(seq 100); do
   kill -0 $server 2> /dev/null || break

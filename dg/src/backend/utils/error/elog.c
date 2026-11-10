@@ -104,7 +104,6 @@ thread_local /*LOCAL*/ bool PG_exception_handled = false;
 
 /* GUC parameters */
 thread_local /*LOCAL*/ int Log_error_verbosity = PGERROR_DEFAULT;
-thread_local /*LOCAL*/ char *Log_line_prefix = NULL; /* format for extra log line info */
 /* log_destination's variables: read pcb->Log_destination, not this one */
 thread_local /*LOCAL*/ int Log_destination = LOG_DESTINATION_STDERR;
 thread_local /*LOCAL*/ char *Log_destination_string = NULL;
@@ -2540,10 +2539,18 @@ static const char *process_log_prefix_padding(const char *p, int *ppadding) {
 }
 
 /*
- * Format log status information using Log_line_prefix.
+ * Format log status information using log_line_prefix, as the main thread
+ * last published it (publish_shared_settings()); NULL before the first.
  */
 static void log_line_prefix(StringInfo buf, ErrorData *edata) {
-  log_status_format(buf, Log_line_prefix, edata);
+  std::shared_ptr<const std::string> prefix;
+
+  /* Copy the pointer under the lock, so a reload cannot free the string. */
+  {
+    std::lock_guard<std::mutex> guard(shmem->log_line_prefix.mutex);
+    prefix = shmem->log_line_prefix.value;
+  }
+  log_status_format(buf, prefix ? prefix->c_str() : NULL, edata);
 }
 
 /*

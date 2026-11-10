@@ -549,7 +549,6 @@ typedef enum {
 } PGErrorVerbosity;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_error_verbosity;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *Log_line_prefix;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_destination;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *Log_destination_string;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool syslog_sequence_numbers;

@@ -3378,6 +3378,7 @@ void PostgresSingleUserMain(int argc, char *argv[], const char *username) {
 
   /* The standalone backend also reads process settings from pcb. */
   publish_postmaster_settings();
+  publish_shared_settings();
 
   /*
    * Validate we have been given a reasonable-looking DataDir and change
