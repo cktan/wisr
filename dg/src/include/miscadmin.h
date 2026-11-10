@@ -260,10 +260,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int IntervalStyle;
 
 #define MAXTZLEN		10 /* max TZ name len, not counting tr. null */
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT double hash_mem_multiplier;
-
-extern thread_local /*LOCAL*/ PGDLLIMPORT double VacuumCostDelay;
-
 extern thread_local /*LOCAL*/ PGDLLIMPORT int VacuumCostBalance;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool VacuumCostActive;
 

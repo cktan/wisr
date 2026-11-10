@@ -99,8 +99,6 @@ thread_local /*LOCAL*/ int DateStyle = USE_ISO_DATES;
 thread_local /*LOCAL*/ int DateOrder = DATEORDER_MDY;
 thread_local /*LOCAL*/ int IntervalStyle = INTSTYLE_POSTGRES;
 
-thread_local /*LOCAL*/ double hash_mem_multiplier = 2.0;
-
 /*
  * Primary determinants of sizes of shared-memory structures.
  *
@@ -110,8 +108,6 @@ thread_local /*LOCAL*/ double hash_mem_multiplier = 2.0;
  */
 
 /* GUC parameters for vacuum */
-
-thread_local /*LOCAL*/ double VacuumCostDelay = 0;
 
 thread_local /*LOCAL*/ int VacuumCostBalance = 0; /* working state for vacuum */
 thread_local /*LOCAL*/ bool VacuumCostActive = false;

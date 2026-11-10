@@ -72,7 +72,6 @@ extern Selectivity clauselist_selectivity_ext(PlannerInfo *root, List *clauses,
 /* in path/costsize.c: */
 
 /* widely used cost parameters */
-extern thread_local /*LOCAL*/ PGDLLIMPORT double recursive_worktable_factor;
 
 extern double clamp_row_est(double nrows);
 extern int32 clamp_width_est(int64 tuple_width);

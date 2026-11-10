@@ -126,9 +126,6 @@
  */
 #define MAXIMUM_ROWCOUNT 1e100
 
-thread_local /*LOCAL*/ double recursive_worktable_factor =
-    DEFAULT_RECURSIVE_WORKTABLE_FACTOR;
-
 thread_local /*LOCAL*/ Cost disable_cost = 1.0e10;
 
 typedef struct {
@@ -5054,7 +5051,7 @@ void set_cte_size_estimates(PlannerInfo *root, RelOptInfo *rel,
      * multiple of the nonrecursive term's size.  The best multiplier will
      * vary depending on query "fan-out", so make its value adjustable.
      */
-    rel->tuples = clamp_row_est(recursive_worktable_factor * cte_rows);
+    rel->tuples = clamp_row_est(tcb->guc.recursive_worktable_factor * cte_rows);
   } else {
     /* Otherwise just believe the CTE's rowcount estimate */
     rel->tuples = cte_rows;

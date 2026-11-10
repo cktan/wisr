@@ -516,6 +516,11 @@ typedef struct tcb_guc_t {
   double cpu_tuple_cost = 0.01;                /* costsize.c */
   double cpu_index_tuple_cost = 0.005;         /* costsize.c */
   double cpu_operator_cost = 0.0025;           /* costsize.c */
+  double cursor_tuple_fraction = 0.1;          /* planner.c */
+  double recursive_worktable_factor = 10.0;    /* costsize.c */
+  double hash_mem_multiplier = 2.0;            /* globals.c */
+  double VacuumCostDelay = 0;                  /* globals.c */
+  double log_statement_sample_rate = 1.0;      /* guc_tables.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

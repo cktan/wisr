@@ -2213,10 +2213,10 @@ int check_log_duration(char *msec_str, bool was_logged) {
      * log_statement_sample_rate = 1.
      */
     if (exceeded_sample_duration)
-      in_sample =
-          log_statement_sample_rate != 0 &&
-          (log_statement_sample_rate == 1 ||
-           pg_prng_double(&pg_global_prng_state) <= log_statement_sample_rate);
+      in_sample = tcb->guc.log_statement_sample_rate != 0 &&
+                  (tcb->guc.log_statement_sample_rate == 1 ||
+                   pg_prng_double(&pg_global_prng_state) <=
+                       tcb->guc.log_statement_sample_rate);
 
     if (exceeded_duration || in_sample || tcb->guc.log_duration ||
         xact_is_sampled) {

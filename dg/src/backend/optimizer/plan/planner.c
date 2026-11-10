@@ -66,8 +66,6 @@
 #include "utils/control_block.h"
 
 /* GUC parameters */
-thread_local /*LOCAL*/ double cursor_tuple_fraction =
-    DEFAULT_CURSOR_TUPLE_FRACTION;
 
 /* Hook for plugins to get control in planner() */
 
@@ -327,7 +325,7 @@ PlannedStmt *standard_planner(Query *parse, const char *query_string,
      * process some of the tuples sooner.  Use a GUC parameter to decide
      * what fraction to optimize for.
      */
-    tuple_fraction = cursor_tuple_fraction;
+    tuple_fraction = tcb->guc.cursor_tuple_fraction;
 
     /*
      * We document cursor_tuple_fraction as simply being a fraction, which

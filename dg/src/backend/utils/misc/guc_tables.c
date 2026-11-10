@@ -307,7 +307,6 @@ thread_local /*LOCAL*/ bool current_role_is_superuser;
 thread_local /*LOCAL*/ int log_min_error_statement = ERROR;
 thread_local /*LOCAL*/ int log_min_messages = WARNING;
 thread_local /*LOCAL*/ int client_min_messages = NOTICE;
-thread_local /*LOCAL*/ double log_statement_sample_rate = 1.0;
 thread_local /*LOCAL*/ double log_xact_sample_rate = 0;
 thread_local /*LOCAL*/ char *backtrace_functions;
 
@@ -2130,7 +2129,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
       gettext_noop("Sets the planner's estimate of the fraction of "
                    "a cursor's rows that will be retrieved."),
       NULL, GUC_EXPLAIN},
-     &cursor_tuple_fraction,
+     &tcb->guc.cursor_tuple_fraction,
      DEFAULT_CURSOR_TUPLE_FRACTION,
      0.0,
      1.0,
@@ -2142,7 +2141,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
       gettext_noop("Sets the planner's estimate of the average size "
                    "of a recursive query's working table."),
       NULL, GUC_EXPLAIN},
-     &recursive_worktable_factor,
+     &tcb->guc.recursive_worktable_factor,
      DEFAULT_RECURSIVE_WORKTABLE_FACTOR,
      0.001,
      1000000.0,
@@ -2173,7 +2172,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
     {{"hash_mem_multiplier", PGC_USERSET, RESOURCES_MEM,
       gettext_noop("Multiple of \"work_mem\" to use for hash tables."), NULL,
       GUC_EXPLAIN},
-     &hash_mem_multiplier,
+     &tcb->guc.hash_mem_multiplier,
      2.0,
      1.0,
      1000.0,
@@ -2195,7 +2194,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
 
     {{"vacuum_cost_delay", PGC_USERSET, VACUUM_COST_DELAY,
       gettext_noop("Vacuum cost delay in milliseconds."), NULL, GUC_UNIT_MS},
-     &VacuumCostDelay,
+     &tcb->guc.VacuumCostDelay,
      0,
      0,
      100,
@@ -2208,7 +2207,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
                    "\"log_min_duration_sample\" to be logged."),
       gettext_noop(
           "Use a value between 0.0 (never log) and 1.0 (always log).")},
-     &log_statement_sample_rate,
+     &tcb->guc.log_statement_sample_rate,
      1.0,
      0.0,
      1.0,
