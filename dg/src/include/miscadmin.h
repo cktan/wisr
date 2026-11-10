@@ -423,7 +423,6 @@ extern void BaseInit(void);
 /* in utils/init/miscinit.c */
 extern thread_local /*LOCAL*/ PGDLLIMPORT char
     *session_preload_libraries_string;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *local_preload_libraries_string;
 
 extern void CreateDataDirLockFile(bool amPostmaster);
 extern void CreateSocketLockFile(const char *socketfile, bool amPostmaster,

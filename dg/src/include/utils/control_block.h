@@ -531,6 +531,10 @@ typedef struct tcb_guc_t {
   char *Extension_control_path;                /* extension.c */
   char *locale_messages;                       /* pg_locale.c */
   char *locale_monetary;                       /* pg_locale.c */
+  char *locale_numeric;                        /* pg_locale.c */
+  char *locale_time;                           /* pg_locale.c */
+  char *local_preload_libraries_string = NULL; /* miscinit.c */
+  char *namespace_search_path = NULL;          /* namespace.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 
