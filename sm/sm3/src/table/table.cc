@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * table.cc -- an open table and its writes (../INDEXBUILD.md §2): the
  * row's write, then each index the write changes, with the old
  * entries computed from the image the row's write hands back. A
@@ -11,6 +16,7 @@
 #include "../catalog/internal.h"
 #include "pin.h"
 #include "sm0_defer.h"
+#include "sm_sys.h"
 
 #include <algorithm>
 #include <cassert>
@@ -48,7 +54,7 @@ struct sm3::table_t {
   bool writable;                          /* the lock covers intent_exclusive */
   bool exclusive;                         /* the lock is exclusive */
   bool fresh;                             /* made by this transaction */
-  bool settled = false; /* the cleaner's: no transaction, no lock */
+  bool settled = false; /* the btree reaper's: no transaction, no lock */
   sm2::rel_t *rel = nullptr;
   /* One per def->indexes, in order: nullptr until use_index opens it. */
   std::vector<sm2::index_t *> indexes;
@@ -520,6 +526,9 @@ int open_rels(table_t *table) {
                          toast_seq, table->rel) != 0) {
     return -1;
   }
+  // So that an update judges, under the row's latch, whether it kept
+  // the key a KS lock guards (../LOCKMGR.md §1.13).
+  sm2::rel_set_key_columns(table->rel, def.key_columns);
   table->indexes.assign(def.indexes.size(), nullptr);
   return 0;
 }
@@ -585,11 +594,11 @@ static int use_index(table_t *table, size_t i) {
                                         x.tree)) != 0) {
     return -1;
   }
-  // A leaf that needs cleaning is queued by whoever finds it. A
-  // temporary table's cannot be: the cleaner cannot read its rows.
-  cleaner_t *cleaner = table->session->cat->cleaner.get();
-  if (nullptr != cleaner && x.tree && nsp_temp != def.nspoid) {
-    sm2::idx_set_leaf_note(ix, cleaner_note, cleaner);
+  // A leaf that needs reaping is queued by whoever finds it. A
+  // temporary table's cannot be: the btree reaper cannot read its rows.
+  btree_reaper_t *btree_reaper = table->session->cat->btree_reaper.get();
+  if (nullptr != btree_reaper && x.tree && nsp_temp != def.nspoid) {
+    sm2::idx_set_leaf_note(ix, btree_reaper_note, btree_reaper);
   }
   table->indexes[i] = ix;
   return 0;
@@ -1313,6 +1322,12 @@ int tbl_load_add(loader_t *l, std::span<const sm2::datum_t> values,
   if (l->load == nullptr) {
     return tbl_insert(table, values, isnull, id);
   }
+  // Once, before the row goes in: its streams stop for no interrupt
+  // (sm1::load_stream), so a failure leaves nothing to undo, and the
+  // caller may hand the row again.
+  if (sm_should_stop()) {
+    return sm1::seterr(sm1::SM_ERR_INTERRUPTED, "load: interrupted");
+  }
   if (need_not_null(table, isnull) != 0) {
     return -1;
   }
@@ -1501,6 +1516,11 @@ int tbl_read_latest(table_t *table, uint64_t id, pin_ref_t &ref,
   });
 }
 
+/* Whether mode is a shared row mode, S or KS, writing nothing. */
+static bool shared_row_mode(sm1::lockmode_t mode) {
+  return mode == sm1::SM_LOCKMODE_SH || mode == sm1::SM_LOCKMODE_KS;
+}
+
 /*
  * Lock a keyless table's row with _id id, waiting or not; see sm3.h.
  * A row there is none of has nothing to lock, and a read of it then
@@ -1508,8 +1528,8 @@ int tbl_read_latest(table_t *table, uint64_t id, pin_ref_t &ref,
  */
 static int lock_row(table_t *table, uint64_t id, sm1::lockmode_t mode,
                     bool nowait) {
-  // Only a shared lock sits under a table opened to read.
-  if (mode != sm1::SM_LOCKMODE_SH && need_writable(table) != 0) {
+  // Only a shared lock, S or KS, sits under a table opened to read.
+  if (!shared_row_mode(mode) && need_writable(table) != 0) {
     return -1;
   }
   std::string key;
@@ -1640,8 +1660,8 @@ int tbl_read_latest(table_t *table, const row_key_t &key, pin_ref_t &ref,
  */
 static int lock_key(table_t *table, const row_key_t &key, sm1::lockmode_t mode,
                     bool nowait) {
-  // Only a shared lock sits under a table opened to read.
-  if (sm1::SM_LOCKMODE_SH != mode && 0 != need_writable(table)) {
+  // Only a shared lock, S or KS, sits under a table opened to read.
+  if (!shared_row_mode(mode) && 0 != need_writable(table)) {
     return -1;
   }
   std::string k;
@@ -2459,18 +2479,18 @@ static int judge_entry(table_t *table, size_t i, sm1::rawpin_t *pin,
 }
 
 /*
- * Clean a leaf with no transaction and no lock; see sm3.h.
+ * Reap a leaf with no transaction and no lock; see sm3.h.
  * 1. Make the table's rel and indexes from def, which reads nothing.
- * 2. Find the index by its relid. Gone, there is nothing to clean.
- * 3. Clean the leaf. After each row is read, compare the catalog's
+ * 2. Find the index by its relid. Gone, there is nothing to reap.
+ * 3. Reap the leaf. After each row is read, compare the catalog's
  *    publishes with those noted before def was fetched. If they moved,
  *    def may be stale for that row, so leave its entry in doubt. A
  *    commit publishes before any later commit, so a row written under
  *    a newer definition is read only after the count moved.
  */
-int tbl_clean_leaf(session_t *session, std::shared_ptr<const table_def_t> def,
-                   uint64_t publishes, uint16_t relid, uint64_t pageid,
-                   bool &doubt) {
+int tbl_reap_leaf(session_t *session, std::shared_ptr<const table_def_t> def,
+                  uint64_t publishes, uint16_t relid, uint64_t pageid,
+                  bool &doubt) {
   std::unique_ptr<table_t, void (*)(table_t *)> t(new table_t, tbl_close);
   t->session = session;
   t->def = std::move(def);
@@ -2497,7 +2517,7 @@ int tbl_clean_leaf(session_t *session, std::shared_ptr<const table_def_t> def,
   pin_t *p = pin_take(session);
   defer { pin_put(p); };
   size_t removed = 0;
-  return sm2::idx_clean_leaf(
+  return sm2::idx_reap_leaf(
       t->indexes[i], pageid,
       [&](std::string_view row, std::string_view key) {
         int r = judge_entry(t.get(), i, p->raw, row, key);
@@ -2508,13 +2528,13 @@ int tbl_clean_leaf(session_t *session, std::shared_ptr<const table_def_t> def,
 }
 
 /*
- * Compact the table's store into one sorted run, then clean its trees
+ * Compact the table's store into one sorted run, then reap its trees
  * (../BTREEINDEX.md §9.2).
  * 1. Compact the store.
  * 2. For a temporary table's tree, whose leaves are never queued, walk
  *    every leaf.
- * 3. For any other tree, take its pages off the cleaner's queue and
- *    clean each. A leaf not on the queue is not read.
+ * 3. For any other tree, take its pages off the btree reaper's queue and
+ *    reap each. A leaf not on the queue is not read.
  * 4. Put a page left with an entry in doubt back, to wait.
  */
 int tbl_compact(table_t *table) {
@@ -2527,7 +2547,7 @@ int tbl_compact(table_t *table) {
   // doubt is read, and a leaf with none left is set all visible
   // (../BTREEINDEX.md §9).
   const table_def_t &def = *table->def;
-  cleaner_t *cleaner = table->session->cat->cleaner.get();
+  btree_reaper_t *btree_reaper = table->session->cat->btree_reaper.get();
   for (size_t i = 0; i < def.indexes.size(); i++) {
     if (!def.indexes[i].tree) {
       continue;
@@ -2544,7 +2564,7 @@ int tbl_compact(table_t *table) {
       return judge_entry(table, i, p->raw, row, key);
     };
     size_t removed = 0;
-    if (nullptr == cleaner || nsp_temp == def.nspoid) {
+    if (nullptr == btree_reaper || nsp_temp == def.nspoid) {
       if (sm2::idx_vacuum(table->indexes[i], dead, removed) != 0) {
         return -1;
       }
@@ -2552,24 +2572,24 @@ int tbl_compact(table_t *table) {
     }
     // The pages are off the queue and their filter bits clear before
     // they are read, so a change after queues a page again.
-    std::vector<clean_page_t> pages;
-    cleaner->queue.extract(def.storeid, def.indexes[i].relid, pages);
+    std::vector<reap_page_t> pages;
+    btree_reaper->queue.extract(def.storeid, def.indexes[i].relid, pages);
     uint64_t watermark = sm1::gc_watermark(table->session->sm1) + 1;
     for (size_t k = 0; k < pages.size(); k++) {
       bool doubt = false;
       size_t n = 0;
-      // 1 is a page that is no leaf now: page 0 split. Nothing to clean.
-      if (sm2::idx_clean_leaf(table->indexes[i], pages[k].pageid, dead, n,
-                              doubt) < 0) {
+      // 1 is a page that is no leaf now: page 0 split. Nothing to reap.
+      if (sm2::idx_reap_leaf(table->indexes[i], pages[k].pageid, dead, n,
+                             doubt) < 0) {
         // The pages not yet read go back: the queue is a hint, but
         // these were found.
         for (size_t j = k; j < pages.size(); j++) {
-          cleaner->queue.wait(pages[j], 0);
+          btree_reaper->queue.wait(pages[j], 0);
         }
         return -1;
       }
       if (doubt) {
-        cleaner->queue.wait(pages[k], watermark);
+        btree_reaper->queue.wait(pages[k], watermark);
       }
     }
   }

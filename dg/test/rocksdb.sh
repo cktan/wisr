@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # rocksdb.sh -- build RocksDB for "make tsan" or "make release".
 #
 #   test/rocksdb.sh tsan       ../rocksdb/tsan/librocksdb.a

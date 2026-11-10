@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_2pc.cc -- two-phase commit and recovery: sm1::prepare,
  * resolution by gid, in-doubt transactions across a restart, the
  * restored-transaction SSI rule, and the orphan CF sweep

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * key.cc -- keys of several columns (TYPE.md §2): per column, a
  * null marker and the type's key, inverted for a descending
  * column, joined end to end with nothing between them.

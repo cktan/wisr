@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
 /*-------------------------------------------------------------------------
  *
  * control_block.h
@@ -74,6 +79,12 @@ struct sequence_state_free_t {
 };
 extern sequence_state_t *sequence_state_new(void);
 
+/* be-secure-openssl.c: the TLS context connections are made from. */
+struct tls_state_t;
+struct tls_state_free_t {
+  void operator()(tls_state_t *state) const;
+};
+extern tls_state_t *tls_state_new(void);
 /* logfile.c: the log file written, the process's. */
 struct logfile_state_t;
 struct logfile_free_t {
@@ -182,8 +193,8 @@ typedef struct pcb_t {
   /*
    * -- settings that change only with a restart (PGC_POSTMASTER) --
    * guc_tables.c: copied from the GUC variables by
-   * publish_postmaster_settings() once the postmaster has read its
-   * settings, before the first thread starts; ConfigFileName by
+   * publish_postmaster_settings() once the main thread has read its
+   * settings, before any session thread starts; ConfigFileName by
    * SelectConfigFiles().  Read these, never the GUC variables, which each
    * thread has a copy of.  A string is malloc'd, never freed, or NULL.
    */
@@ -227,7 +238,7 @@ typedef struct pcb_t {
   /*
    * -- the file logger's settings (PGC_SIGHUP) --
    * They change on a reload, after threads have started, so they are
-   * guarded: the postmaster writes them with shmem->stderr_mutex held
+   * guarded: the postmaster writes them with shmem->log.mutex held
    * (publish_log_file_settings(), guc_tables.c), and logfile.c reads them
    * with it held. The file in each comment is where the variable was defined.
    */
@@ -283,15 +294,36 @@ typedef struct pcb_t {
 } pcb_t;
 
 /*
+ * elog.c: the syslog settings (all PGC_SIGHUP), as the main thread last
+ * published them. Never changed once made: a reload makes a new one.
+ */
+typedef struct syslog_conf_t {
+  std::string ident;     /* syslog_ident */
+  int facility;          /* syslog_facility */
+  bool sequence_numbers; /* syslog_sequence_numbers */
+  bool split_messages;   /* syslog_split_messages */
+} syslog_conf_t;
+
+/*
  * The shared block: what the threads share and write, one for the process.
  * What the process keeps for its whole life may be malloc'd, its pointer
  * here, and never freed: the block itself never is.
  */
 typedef struct shmem_t {
-  /* logfile.c: one message at a time to the log, and its state, below */
-  std::mutex stderr_mutex;
-  /* logfile.c: the log file now written; guarded by stderr_mutex */
-  std::unique_ptr<logfile_state_t, logfile_free_t> logfile;
+  struct {
+    /* logfile.c: one message at a time to the log, and its state, below */
+    std::mutex mutex;
+    /* logfile.c: the log file now written; guarded by mutex */
+    std::unique_ptr<logfile_state_t, logfile_free_t> file;
+  } log;
+
+  /*
+   * be-secure-openssl.c: the TLS context every connection is made from,
+   * which the main thread makes and replaces on a reload; guarded by
+   * tls_mutex
+   */
+  std::mutex tls_mutex;
+  std::unique_ptr<tls_state_t, tls_state_free_t> tls;
 
   /* injection_point.c: one attach or detach at a time */
   std::mutex injection_point_mutex;
@@ -324,6 +356,46 @@ typedef struct shmem_t {
    * directory, before the first session; guarded by its own mutex
    */
   std::unique_ptr<aa_env_t, pg_global_free_t> pg_global;
+
+  /*
+   * -- values the postmaster may change while other threads read --
+   * Guard each member with a mutex, or make it atomic.
+   */
+  /*
+   * guc_tables.c: PGC_SIGHUP settings that a session reads, one atomic each.
+   * The main thread stores them at start and on each config load
+   * (publish_shared_settings()); a session reads them where it needs them.
+   */
+  /* backend_startup.c */
+  std::atomic<bool> log_hostname{false};
+  /* backend_startup.c, postinit.c */
+  std::atomic<int> authentication_timeout{60};
+  /* guc.c: ALTER SYSTEM */
+  std::atomic<bool> allow_alter_system{true};
+  struct {
+    /*
+     * guc_tables.c: log_line_prefix (PGC_SIGHUP), which elog.c reads in
+     * every thread. The mutex is a leaf: hold it only to copy or swap the
+     * pointer, never across a call that may log, which would take it again.
+     */
+    std::mutex mutex;
+    /* The string is never changed: a reload swaps in a new one. */
+    std::shared_ptr<const std::string> value;
+  } log_line_prefix;
+  struct {
+    /*
+     * guc_tables.c: the syslog settings, which elog.c reads in every thread
+     * that writes to syslog. Also a leaf mutex.
+     */
+    std::mutex mutex;
+    std::shared_ptr<const syslog_conf_t> conf;
+    /*
+     * elog.c: the settings the process's one syslog connection was opened
+     * with. openlog() keeps a pointer to the ident, so this keeps the string
+     * alive until the connection is opened again; guarded by mutex.
+     */
+    std::shared_ptr<const syslog_conf_t> opened;
+  } syslog;
 } shmem_t;
 
 /* The thread control block: one for each thread that runs digres code. */
@@ -358,13 +430,13 @@ typedef struct tcb_t {
   /*
    * utils/hooks.h: the hooks loaded libraries set, all NULL at first; a
    * session starts with its parent's (session_thread_start()).  A
-   * library's own statics are not the session's (dg/ISSUE.md issue 1).
+   * library's own statics are not the session's (ISSUE.md dg issue 1).
    */
   std::unique_ptr<hooks_t, hooks_free_t> hooks;
   /*
    * dfmgr.c, explain_state.c: the libraries loaded and the EXPLAIN
    * extensions registered; a session starts with its parent's, and loads
-   * none of its own (dg/ISSUE.md issue 1)
+   * none of its own (ISSUE.md dg issue 1)
    */
   std::unique_ptr<dfmgr_state_t, dfmgr_state_free_t> dfmgr;
   std::unique_ptr<explain_registry_t, explain_registry_free_t> explain;

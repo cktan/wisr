@@ -5,6 +5,11 @@
  * The functions are PostgreSQL 18.6's, from its makefuncs.c, value.c,
  * namespace.c, define.c and nodeFuncs.c, with sq's names and sq's
  * nodes. What each does is what PostgreSQL's does.
+ *
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for sq,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  */
 
 #include "nodefuncs.h"

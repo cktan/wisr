@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_pg_fixtures.cc -- sm2's datums against the bytes
  * PostgreSQL itself stored (test/pg_fixtures.h, TYPE.md §9
  * "Testing").

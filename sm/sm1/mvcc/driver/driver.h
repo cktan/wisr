@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * driver.h -- the scenario language, as the driver sees it.
  *
  * A script is a list of items in file order: comments, blank
@@ -96,6 +101,7 @@ struct permutation_t {
 struct script_t {
   std::string path;
   std::string pairings = "all";
+  bool chained_only = false; /* stores chained: run on chained stores */
   std::vector<session_decl_t> sessions;
   std::vector<std::pair<std::string, std::string>> seeds; /* row, value */
   std::vector<item_t> items;

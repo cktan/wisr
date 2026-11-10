@@ -145,7 +145,7 @@ The files are in `build/dk/report/`:
    [`../../../DG-vs-PG.md`](../../../DG-vs-PG.md) list what
    differs on purpose.
 3. A bug: reduce it to its smallest SQL, and add it to
-   [`../../ISSUE.md`](../../ISSUE.md).
+   [`../../../ISSUE.md`](../../../ISSUE.md).
 4. A difference on purpose: add `FILE:LINE reason` to
    `known.txt`.
 
@@ -157,8 +157,8 @@ fails most.
 ## What it found
 
 The first runs, on 2026-11-05, found 13 bugs, in
-[`../../ISSUE.md`](../../ISSUE.md)
-issues 14 to 26. All but one are fixed,
+[`../../../ISSUE.md`](../../../ISSUE.md#3-digres-known-issues)
+dg issues 14 to 26. All but one are fixed,
 [`../../WORKNOTE.md`](../../WORKNOTE.md) steps
 384 to 394; issue 22, the purge of a mass delete stalling every
 writer, is open. What is left is in `known.txt`: refusals

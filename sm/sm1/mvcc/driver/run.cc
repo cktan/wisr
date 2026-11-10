@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * run.cc -- running a parsed script (DRIVER.md §2.4, §4).
  *
  * Each session gets a thread, because a step may block on
@@ -80,10 +85,19 @@ int row_read_latest(sm1::session_t *s, uint64_t store, std::string_view key,
                    : sm1::read_latest(s, store, key, data);
 }
 
-/* sm1::update, or sm1::chain_update in chained mode. */
+/* A key_kept_fn that says every update keeps its key. */
+bool always_kept(void *, std::string_view, std::string_view) noexcept {
+  return true;
+}
+
+/*
+ * sm1::update, or sm1::chain_update in chained mode; kept, an update
+ * that keeps its key, written in NKU (../../LOCKMGR.md §1.13).
+ */
 int row_update(sm1::session_t *s, uint64_t store, std::string_view key,
-               std::string_view data) {
-  return g_chained ? sm1::chain_update(s, store, key, data)
+               std::string_view data, bool kept = false) {
+  return g_chained ? sm1::chain_update(s, store, key, data,
+                                       kept ? always_kept : nullptr, nullptr)
                    : sm1::update(s, store, key, data);
 }
 
@@ -217,9 +231,17 @@ std::string execute(worker_t *w, const item_t &it) {
     return rc == 1 ? "-" : std::string(data);
   }
   if (it.verb == "write" || it.verb == "insert") {
-    int rc = it.verb == "write" ? row_update(w->sess, w->store, a[0], a[1])
-                                : row_insert(w->sess, w->store, a[0], a[1]);
+    // write <row> <value> keykept: an update that keeps the row's key.
+    int rc = it.verb == "write"
+                 ? row_update(w->sess, w->store, a[0], a[1], a.size() == 3)
+                 : row_insert(w->sess, w->store, a[0], a[1]);
     return rc == 0 ? "ok" : error_name();
+  }
+  if (it.verb == "reap") {
+    // reap: one row reaper pass (../../GC.md §13.5), printing the
+    // keys it reaped; on a versioned store none is ever queued.
+    int64_t n = sm1::row_reap_pass(w->sess);
+    return n < 0 ? error_name() : std::to_string(n);
   }
   if (it.verb == "delete") {
     return row_erase(w->sess, w->store, a[0]) == 0 ? "ok" : error_name();
@@ -342,14 +364,19 @@ std::string execute(worker_t *w, const item_t &it) {
                                                            : error_name();
   }
   if (it.verb == "lock" || it.verb == "lockread" || it.verb == "lockoid") {
-    // lock <row> <is|ix|shared|six|exclusive>: take the row
-    // lock in one of Gray's modes without writing the row;
+    // lock <row> <is|ix|shared|six|exclusive|keyshare|nokeyupdate>:
+    // take the row lock in one of Gray's modes, or a row mode
+    // (../../LOCKMGR.md §1.13), without writing the row;
     // lockread, as a row the statement read (sm1::lock_row's as_read);
     // lockoid <n>, the OID lock on n, as sm3 locks a table.
     static const std::pair<const char *, sm1::lockmode_t> modes[] = {
-        {"is", sm1::SM_LOCKMODE_IS},        {"ix", sm1::SM_LOCKMODE_IX},
-        {"shared", sm1::SM_LOCKMODE_SH},    {"six", sm1::SM_LOCKMODE_SIX},
+        {"is", sm1::SM_LOCKMODE_IS},
+        {"ix", sm1::SM_LOCKMODE_IX},
+        {"shared", sm1::SM_LOCKMODE_SH},
+        {"six", sm1::SM_LOCKMODE_SIX},
         {"exclusive", sm1::SM_LOCKMODE_EX},
+        {"keyshare", sm1::SM_LOCKMODE_KS},
+        {"nokeyupdate", sm1::SM_LOCKMODE_NKU},
     };
     for (const auto &[name, mode] : modes) {
       if (a[1] != name) {
@@ -363,7 +390,8 @@ std::string execute(worker_t *w, const item_t &it) {
                  ? "ok"
                  : error_name();
     }
-    return "ERROR: lock mode must be is, ix, shared, six or exclusive, not " +
+    return "ERROR: lock mode must be is, ix, shared, six, exclusive, "
+           "keyshare or nokeyupdate, not " +
            a[1];
   }
   if (it.verb == "lookup") {
@@ -1019,7 +1047,8 @@ private:
 /* Run script once per selected pairing (DRIVER.md §2.1). */
 int script_run(const script_t &script, int block_ms, bool chained,
                std::string *out) {
-  g_chained = chained;
+  // A script that needs chained stores runs on them in both modes.
+  g_chained = chained || script.chained_only;
   std::ostringstream text;
   int failures = 0;
   // The comments a script opens with describe the scenario, so

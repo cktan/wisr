@@ -6,6 +6,8 @@
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  * src/include/storage/procsignal.h
  *
@@ -61,6 +63,7 @@ extern void SetInterruptHandler(uint32 bit, interrupt_handler_t handler);
 extern void InterruptSelf(uint32 bits);
 extern void InterruptSelfLater(uint32 bits);
 extern void DeliverInterrupts(void);
+extern bool InterruptsStopWork(void);
 extern uint32 InterruptsOfSignal(int sig);
 
 #endif /* PROCSIGNAL_H */

@@ -18,6 +18,7 @@ The count is the number of entries.
 
 | Section | Covers | Entries |
 |---|---|---|
+| [How a host uses sm.h](#how-a-host-uses-smh) | The order of calls, and a first program | 0 |
 | [Conventions](#conventions) | Rules for every entry: return values, error state, handles, memory, threads | 0 |
 | [Build](#build) | The flags the library was built with | 1 |
 | [Errors](#errors) | Read, keep and set the thread's error state | 7 |
@@ -30,15 +31,123 @@ The count is the number of entries.
 | [Cursors over rows and index entries](#cursors-over-rows-and-index-entries) | Scan a table or an index; encode a tuple | 15 |
 | [The catalog](#the-catalog) | Look up and create namespaces, relations, sequences | 22 |
 | [Views](#views) | Create, read and drop a view | 9 |
-| [Index builds, TOAST and the btree cleaner](#index-builds-toast-and-the-btree-cleaner) | Build an index; TOAST; clean a B-tree | 6 |
+| [Index builds, TOAST and the btree reaper](#index-builds-toast-and-the-btree-reaper) | Build an index; TOAST; clean a B-tree | 6 |
 | [Tables](#tables) | Open a table; read and write rows | 36 |
 | [Statistics](#statistics) | Sizes, counters and planner statistics | 9 |
-| [Table and index DDL](#table-and-index-ddl) | Create, alter and drop a table or an index | 19 |
+| [Table and index DDL](#table-and-index-ddl) | Create, alter and drop a table, a column, an index or a constraint | 27 |
+
+## How a host uses sm.h
+
+A host does these things in this order. Each step names the
+section that has the calls.
+
+1. **Set up a home directory, once.** `sm_init` makes a directory
+   a wisr home. ([Home
+   directories](#home-directories-and-databases))
+2. **Attach it, once for each process.** `sm_attach` gives an
+   environment, `sm_env_t`. `sm_mkdb` makes a database in it.
+3. **Open a session.** `sm_opendb` gives a session,
+   `sm_session_t`, on one database. A session runs one
+   transaction at a time, on one thread at a time.
+4. **Begin a transaction.** `sm_begin`. Do the work, then
+   `sm_commit` or `sm_abort`. ([Transactions](#transactions))
+5. **Make the schema.** Create a table with
+   `sm_cat_create_table`. ([The catalog](#the-catalog),
+   [Table and index DDL](#table-and-index-ddl))
+6. **Open a table to use it.** `sm_tbl_open` gives a table
+   handle. It writes rows with `sm_tbl_insert`, `sm_tbl_update`
+   and `sm_tbl_delete`, and reads them with `sm_tbl_read` or a
+   cursor. ([Tables](#tables),
+   [Cursors](#cursors-over-rows-and-index-entries))
+7. **Close in the opposite order.** Close the cursors and the
+   tables, end the transaction, then `sm_closedb` and
+   `sm_detach`.
+
+### A first program
+
+This program makes a database with one table of one `int8`
+column, inserts a row, and reads it back. It leaves out the error
+handling after the first call, to keep the steps clear: each call
+returns -1 on error, as [Conventions](#return-values) says.
+
+```cpp
+#include "sm.h"
+
+// 1. Make a home directory, attach it, and make a database.
+sm_init("/data/home");                        // once in the home's life
+sm_env_t* env;
+sm_attach("/data/home", &env);                // once in each process
+sm_mkdb(env, "mydb", nullptr);                // nullptr: default options
+
+// 2. Open a session on the database.
+sm_session_t* sess;
+if (sm_opendb(env, "mydb", nullptr, &sess) != 0) {
+    fprintf(stderr, "%s: %s\n", sm_errname(), sm_errmsg());
+    return 1;
+}
+
+// 3. In one transaction, make the table. Type code 4 is int8.
+sm_begin(sess, SM_XCT_READ_COMMITTED, 0);
+std::vector<sm_column_spec_t> cols = {{"a", 4, -1, false}};
+uint64_t oid;
+sm_cat_create_table(sess, SM_NSP_PUBLIC, "t", cols, &oid);
+sm_commit(sess);
+
+// 4. In the next transaction, insert a row.
+sm_begin(sess, SM_XCT_READ_COMMITTED, 0);
+sm_tbl_t* tbl;
+sm_tbl_open(sess, oid, SM_LOCKMODE_IX, &tbl);  // IX: we will write
+sm_datum_t v = SM_DATUM_FROM_INT64(42);
+bool isnull = false;
+uint64_t id;                                   // the new row's _id
+sm_tbl_insert(tbl, &v, &isnull, 1, &id);
+sm_tbl_close(tbl);                             // the lock stays until commit
+sm_commit(sess);
+
+// 5. In a third transaction, scan the table and print each row.
+sm_begin(sess, SM_XCT_READ_COMMITTED, 1);      // 1: read only
+sm_tbl_open(sess, oid, SM_LOCKMODE_IS, &tbl);  // IS: we will read
+sm_rel_scan_t* scan;
+sm_tbl_scan(tbl, 0, UINT64_MAX, &scan);        // every _id
+const void* tuple;
+size_t len;
+while (sm_rel_scannxt(scan, &id, &tuple, &len) == 0) {
+    sm_datum_t d;
+    bool isnull;
+    sm_tbl_deform(tbl, tuple, len, &d, &isnull, 1);
+    printf("%lld\n", (long long)SM_DATUM_TO_INT64(d));
+}
+sm_rel_scanend(scan);                          // end the cursor first
+sm_tbl_close(tbl);
+sm_commit(sess);
+
+// 6. Close the session, then detach.
+sm_closedb(sess);
+sm_detach(env, 0);
+```
+
+The sections below give each call. A pointer a call hands out,
+such as `tuple` above, is good only until the next call on its
+cursor ([Memory](#memory)).
 
 ## Conventions
 
 These rules hold for every entry. An entry states only what
 differs.
+
+**In short:**
+
+- A call returns 0 on success and -1 on error. 1 is not an
+  error: it means "none" or "the end".
+- The error state is per thread. Read it with `sm_errnum` and
+  `sm_errmsg` right after a call that returned -1.
+- Some errors abort the transaction, and some leave it active.
+  The table in [The error state](#the-error-state) says which.
+- Close every handle you open. End a cursor before the next
+  `sm_begin`.
+- A pointer to a row points into engine memory. Copy what you
+  keep.
+- Use a session from one thread at a time.
 
 ### Words
 
@@ -130,9 +239,8 @@ calls are the cursor calls (`sm_rel_*`, `sm_idx_*`),
 `sm_pin_deform`, `sm_pin_decode`, `sm_pin_tuple`,
 `sm_tbl_deform`, `sm_tbl_decode`, `sm_tbl_idx_deform`,
 `sm_session_tag`, `sm_set_deadlock_ms`, `sm_set_lock_wait_hook`,
-`sm_cat_index_wait`, and
-every call on an environment. A call that returns no `int` has no
-catch-all, but `sm_tbl_def`.
+`sm_cat_index_wait`, and every call on an environment. A call
+that returns no `int` has no catch-all, but `sm_tbl_def`.
 
 `sm_attach` installs a new-handler unless the process has one.
 After it, a failed allocation ends the process.
@@ -204,8 +312,7 @@ may run on the stack's own threads.
   `std::vector` and `std::shared_ptr`. `std::shared_ptr` appears
   in `sm_tbl_stats` alone.
   [`sm/CODE.md`](CODE.md#2-the-interface-to-sms-users) §2 also
-  allows
-  `std::string_view`, which no call in `sm.h` takes.
+  allows `std::string_view`, which no call in `sm.h` takes.
 - `std::string` and `std::vector` carry owned data.
 - A callback the host gives is `noexcept`: `sm_log_fn`,
   `sm_index_eval_fn`, `sm_column_conv_fn`. The compiler refuses
@@ -227,6 +334,13 @@ string if sm0, sm1, sm2, sm3 and the wrapper agree, such as `-O3
 ...; wrapper -O1 -g`. The string is static.
 
 ## Errors
+
+**In short.** After a call returns -1, ask which error it was,
+and whether the work can be tried again. `sm_errnum` gives the
+code, `sm_errmsg` the text, and `sm_retryable` says if a new
+transaction may succeed. `sm_errdup` says which index a
+`SM_ERR_DUPKEY` met. `sm_seterr` lets the host record an error of
+its own.
 
 The error state is level 0's, thread-local
 ([`sm0/README.md`](sm0/README.md),
@@ -341,13 +455,18 @@ replaces.
 
 ## Home directories and databases
 
+**In short.** Use these calls at the start and end of a
+process. `sm_init` runs once for a home directory. `sm_attach`
+and `sm_detach` bracket the process. `sm_mkdb` and `sm_rmdb`
+make and delete a database. `sm_opendb` and `sm_closedb` bracket
+each session.
+
 A home directory holds the global system database, every user
 database, the text log and the temporary files. Each database is
 its own RocksDB instance.
 
 The Database Manager holds the design ([`DBMGR.md`](DBMGR.md)).
-The first
-session on a database also loads its catalog
+The first session on a database also loads its catalog
 ([`CATALOG.md`](CATALOG.md)).
 
 ### `sm_init`
@@ -404,7 +523,7 @@ Detaches `env`. With `force` 0 and a session open, it fails with
 
 1. Abort the active transaction of each open session. A prepared
    transaction stays in doubt.
-2. Stop each catalog's Index Builder and btree cleaner.
+2. Stop each catalog's Index Builder and btree reaper.
 3. Detach sm1, which closes the sessions and the databases.
 4. Free the sessions, the catalogs and `env`.
 
@@ -507,7 +626,7 @@ The first session on a database does more:
    setting.
 4. Start the Index Builder, and queue the indexes a restart left
    pending.
-5. Start the btree cleaner.
+5. Start the btree reaper.
 
 Errors: `SM_ERR_NOTFOUND`.
 
@@ -524,10 +643,17 @@ active transaction. A prepared transaction stays in doubt.
 
 ## Transactions
 
+**In short.** A session runs one transaction at a time:
+`sm_begin`, the work, then `sm_commit` or `sm_abort`. A
+transaction holds statements (`sm_stmt_*`), which decide what its
+reads see, and savepoints (`sm_savepoint`, `sm_rollback`,
+`sm_forget`), which undo part of its writes. A row read into a
+pin (`sm_unpin`) stays valid until the pin is released. The last
+calls show who waits for whom (`sm_waits_for`, `sm_lock_status`).
+
 The Transaction Manager holds the design
-([`XCTMGR.md`](XCTMGR.md)), and the
-Lock Manager the locks ([`LOCKMGR.md`](LOCKMGR.md)). Pins are the
-Row Store's
+([`XCTMGR.md`](XCTMGR.md)), and the Lock Manager the locks
+([`LOCKMGR.md`](LOCKMGR.md)). Pins are the Row Store's
 ([`ROWSTORE.md`](ROWSTORE.md#64-the-pin-and-its-ref) §6.4).
 
 ### `sm_begin`
@@ -650,10 +776,10 @@ The caller holds table locks that prevent concurrent writes to
 all tables it reads, or knows that no write can break what it
 decides: a foreign key check holds only IS, and the key, not
 valid, is enforced on every write. Writes retain their normal
-conflict checks.
-If `previous` is non-NULL, the call stores the old setting there.
-Restore that setting after the check, including on error. The
-transaction's end turns current reads off.
+conflict checks. If `previous` is non-NULL, the call stores the
+old setting there. Restore that setting after the check,
+including on error. The transaction's end turns current reads
+off.
 
 ### `sm_stmt_begin_inner`
 
@@ -883,6 +1009,11 @@ Errors: `SM_ERR_NOSAVEPOINT`.
 
 ## Two-phase commit
 
+**In short.** `sm_prepare` makes a transaction durable but
+undecided, under a global id. Any session can then end it with
+`sm_commit_prepared` or `sm_abort_prepared`, also after a
+restart. `sm_list_prepared` shows the ones still open.
+
 The Transaction Manager holds the design
 ([`XCTMGR.md`](XCTMGR.md#10-two-phase-commit) §10).
 
@@ -945,12 +1076,16 @@ Errors: `SM_ERR_NOTFOUND`.
 
 ## Sequences, below the catalog
 
+**In short.** A sequence is a named counter. `sm_mkseq` makes
+one, `sm_nextseq` draws the next value, and `sm_rmseq` removes
+it. Use the catalog calls ([The catalog](#the-catalog)) for a
+SQL sequence.
+
 Sequence holds the design ([`SEQUENCE.md`](SEQUENCE.md)). These
-are counters of
-the caller's own, with a name and no namespace. SQL's CREATE
-SEQUENCE is `sm_cat_create_sequence`. A name is 1 to 63 bytes.
-Names that begin `sm3.` are sm3's own, and each call here refuses
-one with `SM_ERR_INVALID`.
+are counters of the caller's own, with a name and no namespace.
+SQL's CREATE SEQUENCE is `sm_cat_create_sequence`. A name is 1 to
+63 bytes. Names that begin `sm3.` are sm3's own, and each call
+here refuses one with `SM_ERR_INVALID`.
 
 ### `sm_mkseq`
 
@@ -988,6 +1123,12 @@ Errors: `SM_ERR_NOTFOUND`, `SM_ERR_INVALID` (`out` is NULL, or
 the sequence is past `UINT64_MAX`).
 
 ## Types and collations
+
+**In short.** A value is an `sm_datum_t`. These calls find a
+type by its code (`sm_type`), turn text into a datum and back
+(`sm_type_in`, `sm_type_out`), and convert numbers
+(`sm_datum_from_*`, `sm_datum_to_*`). A collation orders text
+(`sm_collation_open`).
 
 These are sm2's ([`sm2/TYPE.md`](sm2/TYPE.md), and
 [`LSMINDEX.md`](LSMINDEX.md#23-text-and-collations) §2.3 for
@@ -1128,6 +1269,12 @@ canonical text into `text`, as the type's typoutput does.
 
 ## Cursors over rows and index entries
 
+**In short.** To read many rows, open a cursor with a call from
+[Tables](#tables), then call `sm_rel_scannxt` (rows) or
+`sm_idx_scannxt` (index entries) until it returns 1. Seek to move
+the cursor, and end it with `sm_rel_scanend` or `sm_idx_scanend`
+before the next `sm_begin`. `sm_tup_encode` builds a tuple.
+
 The Row Store and the index modules hold the design
 ([`ROWSTORE.md`](ROWSTORE.md), [`LSMINDEX.md`](LSMINDEX.md),
 [`BTREEINDEX.md`](BTREEINDEX.md),
@@ -1214,8 +1361,8 @@ int sm_rel_scan_plain(const sm_rel_scan_t* scan);
 
 Tells whether the entry of a tree's rows that `sm_rel_scannxt`
 last gave is whole. Returns 1 if its key is not cut and gives its
-columns back, so that `sm_rel_scan_cols` would return 0. Returns 0
-otherwise, and if the cursor has no entry. It decodes nothing.
+columns back, so that `sm_rel_scan_cols` would return 0. Returns
+0 otherwise, and if the cursor has no entry. It decodes nothing.
 
 A host whose scan bounds already hold a key of every whole entry,
 and whose plan reads no column, calls this in place of
@@ -1314,16 +1461,14 @@ int sm_idx_scannxt(sm_idx_scan_t* scan, uint64_t* id, bool* cut,
 Moves to the next entry. Returns 0 with it, 1 at the end, or -1.
 `*id` is its row's `_id`. `*cut` is true if the key was cut to
 fit ([`LSMINDEX.md`](LSMINDEX.md#24-cut-keys) §2.4), so that only
-the row holds the whole
-value. `*value` and `*len`, set only on 0, are the entry's value,
-for `sm_tbl_idx_deform`.
+the row holds the whole value. `*value` and `*len`, set only on
+0, are the entry's value, for `sm_tbl_idx_deform`.
 
 An LSM index's cursor returns entries the transaction sees. A
 tree's entries carry no version, so its cursor returns each entry
 in range, and the row decides what the transaction sees
 ([`BTREEINDEX.md`](BTREEINDEX.md#2-decisions) §2). A host reads a
-tree through
-`sm_tbl_idx_scan_rows`.
+tree through `sm_tbl_idx_scan_rows`.
 
 ### `sm_idx_scan_seek`
 
@@ -1371,11 +1516,17 @@ Closes a cursor.
 
 ## The catalog
 
+**In short.** The catalog holds the names: namespaces (SQL's
+schemas), tables, indexes and sequences. Create, drop and look up
+by name here, and get an oid. Then pass the oid to `sm_tbl_open`
+to use a table. A change shows to the session's own transaction
+at once, and to others at commit. The `epoch` and `publishes`
+calls tell a cache when the catalog changed.
+
 The Catalog holds the design ([`CATALOG.md`](CATALOG.md)), with
-Namespace
-([`NAMESPACE.md`](NAMESPACE.md)) and Sequence
-([`SEQUENCE.md`](SEQUENCE.md)). These calls are
-sm3's. A lookup takes no lock unless its entry says so.
+Namespace ([`NAMESPACE.md`](NAMESPACE.md)) and Sequence
+([`SEQUENCE.md`](SEQUENCE.md)). These calls are sm3's. A lookup
+takes no lock unless its entry says so.
 
 ```cpp
 #define SM_NSP_PG_CATALOG 11
@@ -1397,10 +1548,9 @@ uint64_t sm_cat_namespace_epoch(sm_session_t* session);
 Returns the count of the catalog's publish that last made or
 dropped a namespace
 ([`NAMESPACE.md`](NAMESPACE.md#5-the-namespaces-epoch) §5). A
-namespace's lookup by
-name takes no lock, so a host that caches namespaces, or a search
-path over them, drops them when the epoch moves. It returns 0 for
-a NULL session.
+namespace's lookup by name takes no lock, so a host that caches
+namespaces, or a search path over them, drops them when the epoch
+moves. It returns 0 for a NULL session.
 
 ### `sm_cat_epoch`
 
@@ -1533,6 +1683,7 @@ struct sm_table_def_t {
     uint64_t                     version = 0;
     std::vector<sm_fkey_def_t>   fkeys;         /* its own */
     std::vector<sm_fkey_ref_t>   referenced_by; /* those that reference it */
+    std::vector<sm_check_def_t>  checks;        /* its check constraints */
 };
 
 struct sm_column_def_t {
@@ -1547,6 +1698,10 @@ struct sm_column_def_t {
     uint64_t    identity_seq;   /* an identity column's sequence */
     bool        has_on_update;
     std::string on_update_expr; /* the host's update default; "" if none */
+    uint64_t    not_null_oid;   /* its NOT NULL constraint; 0 if none */
+    std::string not_null_name;  /* its name (NOTNULL.md) */
+    char        generated = 0;  /* 's', 'v' or 0 (GENERATED.md) */
+    std::vector<int32_t> generated_reads; /* the columns it reads */
 };
 
 enum sm_index_state_t {
@@ -1589,7 +1744,8 @@ struct sm_fkey_ref_t {
 ```
 
 `schema` holds the columns' attributes, as sm2 lays a row out by
-them. `sm_fkey_def_t` is under `sm_cat_create_fkey`.
+them. `sm_fkey_def_t` is under `sm_cat_create_fkey`, and
+`sm_check_def_t` is under `sm_cat_create_check`.
 
 `version` tells a host when what it caches of the table is stale.
 It is the count of the catalog's publish that last changed the
@@ -1745,9 +1901,12 @@ transaction sees it), `SM_ERR_INVALID` (past `UINT64_MAX`).
 
 ## Views
 
+**In short.** sm stores a view's name and the host's query, and
+keeps the view true to the relations it reads. Create, replace,
+rename and drop a view here, and look it up by name or oid.
+
 View holds the design ([`VIEW.md`](VIEW.md)). A view is a name in
-a
-namespace, a relation's, with the host's query behind it. sm
+a namespace, a relation's, with the host's query behind it. sm
 keeps the query, never reads it, and keeps the view true to the
 relations it reads. A view has a table's oid lock: a query takes
 it `SM_LOCKMODE_IS`, and DDL on the view `SM_LOCKMODE_EX`, so
@@ -1783,8 +1942,8 @@ transaction. It must be a table, with a live column where one is
 named, or a view, with none named.
 
 `SM_NSP_TEMP` makes a temporary view, the session's
-([`VIEW.md`](VIEW.md)
-§12). A temporary view alone may read a temporary table or view.
+([`VIEW.md`](VIEW.md) §12). A temporary view alone may read a
+temporary table or view.
 
 Errors: `SM_ERR_NOTFOUND` (a relation read is not there),
 `SM_ERR_INVALID` (a read that is not allowed, or no name),
@@ -1832,8 +1991,7 @@ Another session's temporary view, a reader `sm_cat_view_readers`
 gives as `other`, takes no lock. Once this transaction commits,
 its session no longer sees it, nor its own temporary views that
 read it, and drops them at its next transaction
-([`VIEW.md`](VIEW.md)
-§12.4).
+([`VIEW.md`](VIEW.md) §12.4).
 
 Errors: `SM_ERR_INUSE` (another view reads it).
 
@@ -1898,17 +2056,22 @@ the session's transaction sees them. It adds other sessions'
 temporary views that read it, with `other` set, which
 `sm_cat_view_def` does not find
 ([`VIEW.md`](VIEW.md#123-the-hazard-another-sessions-drop)
-§12.3). It leaves out
-those the transaction has dropped.
+§12.3). It leaves out those the transaction has dropped.
 
-## Index builds, TOAST and the btree cleaner
+## Index builds, TOAST and the btree reaper
+
+**In short.** These calls set up background work, mostly
+before the first `sm_opendb`. `sm_set_index_evaluator` tells sm
+how to compute an index expression. `sm_set_toast` says the host
+reads long values stored out of line. `sm_set_reaper_workers` and
+`sm_reaper_run` control the cleaning of B-tree indexes.
+`sm_cat_index_wait` waits for an index build to end.
 
 The Index Builder ([`INDEXBUILD.md`](INDEXBUILD.md)), TOAST
-([`TOAST.md`](TOAST.md#2-design) §2) and
-the B-tree Index
-([`BTREEINDEX.md`](BTREEINDEX.md#9-cleaning-vacuum-and-the-cleaner)
-§9) hold the designs. The calls
-that set the environment run once, before the first `sm_opendb`.
+([`TOAST.md`](TOAST.md#2-design) §2) and the B-tree Index
+([`BTREEINDEX.md`](BTREEINDEX.md#9-reaping-vacuum-and-the-btree-reaper)
+§9) hold the designs. The calls that set the environment run
+once, before the first `sm_opendb`.
 
 TOAST stores a row's long values out of line. With TOAST off, the
 default, each value is in its row's tuple, and a row is at most
@@ -1965,9 +2128,9 @@ int sm_set_index_evaluator(sm_env_t* env, sm_index_eval_fn fn, void* ctx);
 `sm_index_eval_fn` is the host's evaluator of partial and
 expression indexes
 ([`INDEXBUILD.md`](INDEXBUILD.md#2-the-protocol) §2). The stack
-evaluates
-nothing itself. Where it must know whether a row belongs in such
-an index, and what its expression key columns are, it calls this.
+evaluates nothing itself. Where it must know whether a row
+belongs in such an index, and what its expression key columns
+are, it calls this.
 
 - It receives `ctx`, the table's and the index's oids, the
   index's `eval` as `sm_cat_create_index` took it, and a row as
@@ -2003,29 +2166,31 @@ Do not turn it off over tables written with it on.
 
 Errors: `SM_ERR_INVALID` (a database has been opened).
 
-### `sm_set_cleaner_workers`
+### `sm_set_reaper_workers`
 
 ```cpp
-int sm_set_cleaner_workers(sm_env_t* env, int workers);
+int sm_set_reaper_workers(sm_env_t* env, int workers);
 ```
 
-Sets the btree cleaner's threads a database gets, 4 by default,
-before any database is opened
-([`BTREEINDEX.md`](BTREEINDEX.md#9-cleaning-vacuum-and-the-cleaner)
-§9). 0 runs none,
-for a test that runs a pass itself with `sm_cleaner_run`. The
-call does not check for a negative `workers`.
+Sets the reaper threads a database gets, 4 by default, before any
+database is opened. They run the btree reaper's passes
+([`BTREEINDEX.md`](BTREEINDEX.md#9-reaping-vacuum-and-the-btree-reaper)
+§9) and the row reaper's
+([`GC.md`](GC.md#135-reaping-by-the-reapers-threads) §13.5). 0
+runs none, for a test that runs a pass itself with
+`sm_reaper_run`. The call does not check for a negative
+`workers`.
 
 Errors: `SM_ERR_INVALID` (a database has been opened).
 
-### `sm_cleaner_run`
+### `sm_reaper_run`
 
 ```cpp
-int sm_cleaner_run(sm_env_t* env, const char* dbname);
+int sm_reaper_run(sm_env_t* env, const char* dbname);
 ```
 
-Runs one pass of `dbname`'s btree cleaner on this thread, for
-tests.
+Runs one pass of `dbname`'s reapers on this thread, for tests:
+the btree reaper's pass, then the row reaper's.
 
 Errors: `SM_ERR_NOTFOUND` (no session has opened the database).
 
@@ -2039,6 +2204,15 @@ Returns whether `val`, a non-null variable-width value, is a
 TOAST pointer.
 
 ## Tables
+
+**In short.** Open a table with `sm_tbl_open`, in a mode that
+says read (`SM_LOCKMODE_IS`) or write (`SM_LOCKMODE_IX`).
+Write with `sm_tbl_insert`, `sm_tbl_update` and
+`sm_tbl_delete`, or load many rows with `sm_tbl_load_*`. Read one
+row with `sm_tbl_read`, or many with a cursor (`sm_tbl_scan`,
+`sm_tbl_idx_scan`). Unpack a row with `sm_tbl_deform`. Close the
+table with `sm_tbl_close`; its lock stays until the transaction
+ends.
 
 An open table `sm_tbl_t` is a table's definition under the
 table-oid lock, its heap and its indexes. A write through it
@@ -2114,13 +2288,13 @@ The session keeps what the handle built, so that its next
 takes the lock and reads the definition, so it sees every change
 to the table. The caller must not use a closed handle.
 
-A kept handle holds no lock, pin or snapshot of a transaction. Its
-age starts at 128, and halves at the end of each transaction that
-opened a table. At 0 it is freed: a handle unused by seven such
-transactions after the one that closed it goes at the end of the
-seventh. A session keeps at most 1,024, and frees a handle closed
-past that. A table the transaction made, a temporary table, and a
-handle with a bulk load are freed at once.
+A kept handle holds no lock, pin or snapshot of a transaction.
+Its age starts at 128, and halves at the end of each transaction
+that opened a table. At 0 it is freed: a handle unused by seven
+such transactions after the one that closed it goes at the end of
+the seventh. A session keeps at most 1,024, and frees a handle
+closed past that. A table the transaction made, a temporary
+table, and a handle with a bulk load are freed at once.
 
 ### `sm_tbl_parked`
 
@@ -2376,10 +2550,10 @@ int sm_tbl_read_keys(sm_tbl_t* tbl, const void* const* keys,
 Reads the rows at `n` row keys in one call, each into a pin as
 `sm_tbl_read_key` does
 ([`ROWSTORE.md`](ROWSTORE.md#26-reading-many-rows) §2.6). For key
-`i`, the row
-is in `refs[i]`, `tuples[i]` and `tuple_lens[i]` with `rc[i]` 0.
-If there is none, `rc[i]` is 1, `refs[i]` is zero and `tuples[i]`
-is NULL. On -1, each ref is zero and each tuple NULL.
+`i`, the row is in `refs[i]`, `tuples[i]` and `tuple_lens[i]`
+with `rc[i]` 0. If there is none, `rc[i]` is 1, `refs[i]` is zero
+and `tuples[i]` is NULL. On -1, each ref is zero and each tuple
+NULL.
 
 ### `sm_tbl_read_key`
 
@@ -2604,9 +2778,9 @@ Opens a cursor over the rows of `index`, between `lo` and `hi` as
   sorted run ([`CLUSTER.md`](CLUSTER.md#5-reading) §5). It seeks
   no `_id`.
 - On a tree ([`BTREEINDEX.md`](BTREEINDEX.md#5-reads) §5), it
-  gives each entry's row as
-  the transaction sees it, while the row still has the entry's
-  key, in the tree's order. A tree's cursor seeks nothing.
+  gives each entry's row as the transaction sees it, while the
+  row still has the entry's key, in the tree's order. A tree's
+  cursor seeks nothing.
 
 Errors: `SM_ERR_NOTFOUND` (no such index), `SM_ERR_INVALID`
 (neither of the two, or `sm_tbl_index_usable` is false).
@@ -2629,9 +2803,9 @@ bool sm_tbl_index_tree(const sm_tbl_t* tbl, uint64_t index);
 ```
 
 Returns whether the table's index is a tree
-([`BTREEINDEX.md`](BTREEINDEX.md)),
-whose rows a scan reads through `sm_tbl_idx_scan_rows`. It
-returns false for no such index.
+([`BTREEINDEX.md`](BTREEINDEX.md)), whose rows a scan reads
+through `sm_tbl_idx_scan_rows`. It returns false for no such
+index.
 
 ### `sm_tbl_idx_ncols`
 
@@ -2643,8 +2817,7 @@ Returns the number of attributes in an entry's value in that
 index, or 0 for no such index. The attributes are the cut flag,
 the INCLUDE columns, then the row key
 ([`ROWSTORE.md`](ROWSTORE.md#22-the-row-and-its-index-entries)
-§2.2). A
-tree's entry gives each INCLUDE column as null.
+§2.2). A tree's entry gives each INCLUDE column as null.
 
 ### `sm_tbl_idx_deform`
 
@@ -2662,12 +2835,18 @@ is past the attribute count).
 
 ## Statistics
 
+**In short.** These calls give the size of a table or an index
+(`sm_tbl_size`, `sm_tbl_idx_size`), the cost of a lookup
+(`sm_tbl_probes`) and the planner's statistics (`sm_tbl_stats`).
+`sm_tbl_analyze` refreshes the statistics, and `sm_tbl_compact`
+compacts the table, as SQL's VACUUM does.
+
 Statistics holds the design
 ([`STATISTICS.md`](STATISTICS.md#9-the-design) §9). The size
-calls
-read the table's LSM live, and nothing stores the answer. Each
-size is apart: bytes in sorted files (`disk`) and in memtables
-(`mem`), never summed. `include/sm_stats.h` holds the types.
+calls read the table's LSM live, and nothing stores the answer.
+Each size is apart: bytes in sorted files (`disk`) and in
+memtables (`mem`), never summed. `include/sm_stats.h` holds the
+types.
 
 ### `sm_tbl_size`
 
@@ -2740,7 +2919,7 @@ Compacts the table's store, SQL's VACUUM:
    no reader needs go.
 2. Remove each tree's dead entries, and set a leaf with no entry
    in doubt all visible
-   ([`BTREEINDEX.md`](BTREEINDEX.md#9-cleaning-vacuum-and-the-cleaner)
+   ([`BTREEINDEX.md`](BTREEINDEX.md#9-reaping-vacuum-and-the-btree-reaper)
    §9).
 
 The call waits for the compaction, seconds for a table of
@@ -2812,15 +2991,22 @@ keeps the ones it was given, whatever is analyzed since.
 
 ## Table and index DDL
 
+**In short.** Create, alter and drop tables, columns, indexes,
+foreign keys and check constraints here. Each call works in the
+session's transaction and shows to others at commit. Most take
+the table's lock in X mode until the end of the transaction, so
+they wait for readers and writers of the table.
+
 The Catalog holds the design ([`CATALOG.md`](CATALOG.md#8-ddl)
-§8), with Temporary
-Table ([`TEMPTABLE.md`](TEMPTABLE.md)), Index Builder
-([`INDEXBUILD.md`](INDEXBUILD.md)) and
-Foreign Key ([`FOREIGNKEY.md`](FOREIGNKEY.md)). Each call works
-in the session's
-transaction. A call on an existing table takes its table-oid lock
-X to the end of the transaction, unless the table is temporary or
-the entry says otherwise. A table not there is `SM_ERR_NOTFOUND`.
+§8), with Temporary Table ([`TEMPTABLE.md`](TEMPTABLE.md)), Index
+Builder ([`INDEXBUILD.md`](INDEXBUILD.md)) and Foreign Key
+([`FOREIGNKEY.md`](FOREIGNKEY.md)), Check
+([`CHECK.md`](CHECK.md)), NOT NULL ([`NOTNULL.md`](NOTNULL.md))
+and Generated Column ([`GENERATED.md`](GENERATED.md)). Each call
+works in the session's transaction. A call on an existing table
+takes its table-oid lock X to the end of the transaction, unless
+the table is temporary or the entry says otherwise. A table not
+there is `SM_ERR_NOTFOUND`.
 
 ### `sm_cat_create_table`
 
@@ -2834,6 +3020,9 @@ struct sm_column_spec_t {
     char        identity = 0;     /* 'a', 'd' or 0 */
     uint64_t    identity_seq = 0; /* an identity column's sequence */
     const char* on_update_expr = nullptr; /* the host's update default */
+    const char* not_null_name = nullptr;  /* nullptr: sm3 names it */
+    char        generated = 0;            /* 's', 'v' or 0 */
+    std::vector<int32_t> generated_reads = {}; /* columns it reads */
 };
 
 int sm_cat_create_table(sm_session_t* session, uint64_t nspoid,
@@ -2847,6 +3036,15 @@ store, its `_id` sequence and its definition. The session's
 transaction sees it at once, and others at commit. An identity
 column owns its sequence from then on.
 
+A NOT NULL column gets a NOT NULL constraint. `not_null_name` is
+its name. With `nullptr`, sm3 makes the name
+`<table>_<column>_not_null`.
+
+A generated column has `generated` `'s'` (stored) or `'v'`
+(virtual). Its `default_expr` is its expression.
+`generated_reads` holds the 0-based places of the columns that
+the expression reads.
+
 Errors:
 
 - `SM_ERR_DUPKEY` (the name is taken)
@@ -2855,7 +3053,10 @@ Errors:
   one; a type code sm2 lacks, or a typmod its type refuses; an
   identity column that is not a NOT NULL smallint, integer or
   bigint with a sequence of this namespace, owned by none, and no
-  default
+  default; a generated column with a kind other than `'s'` or
+  `'v'`, no expression, an update default, or an identity; a
+  virtual column that is NOT NULL; a generated column that reads
+  itself, a generated column, or a column that is not there
 
 ### `sm_cat_create_temp_table`
 
@@ -2867,13 +3068,13 @@ int sm_cat_create_temp_table(sm_session_t* session, const char* name,
 
 Creates the temporary table `name` with these columns
 ([`TEMPTABLE.md`](TEMPTABLE.md)). It is the session's alone, seen
-by no other,
-and gone when the session closes. It is in no namespace, and is
-found by name with `SM_NSP_TEMP`. Its rows are never logged and
-take no locks, but follow the session's transactions as any
-table's do. The other calls take its oid as they take any
-table's. `sm_tbl_analyze` fails with `SM_ERR_INVALID`, and so
-does preparing a transaction that made, changed or wrote one.
+by no other, and gone when the session closes. It is in no
+namespace, and is found by name with `SM_NSP_TEMP`. Its rows are
+never logged and take no locks, but follow the session's
+transactions as any table's do. The other calls take its oid as
+they take any table's. `sm_tbl_analyze` fails with
+`SM_ERR_INVALID`, and so does preparing a transaction that made,
+changed or wrote one.
 
 Errors: `SM_ERR_DUPKEY` (another of the session's temporary
 tables or their indexes has the name), `SM_ERR_INVALID` (as
@@ -2911,15 +3112,15 @@ int sm_cat_add_column(sm_session_t* session, uint64_t oid,
 
 Appends `col` to the table `oid`. A row written before it reads
 it as the datum `*missing` of `col`'s type, or as null when
-`missing` is NULL. A NOT NULL column with no `missing` needs an
-empty table.
+`missing` is NULL. A NOT NULL column with no `missing` needs a
+table with no live row, among the latest committed rows.
 
 Errors:
 
 - `SM_ERR_BLOCKED` (NOT NULL with no `missing`, and the table is
   in use: the call does not wait)
 - `SM_ERR_NOTNULL` (NOT NULL with no `missing`, and the table has
-  rows)
+  a live row)
 - `SM_ERR_DUPKEY` (a live column has the name)
 - `SM_ERR_INVALID` (as a column of `sm_cat_create_table`, a
   `missing` that is not a datum of the type, or an identity
@@ -2929,15 +3130,87 @@ Errors:
 
 ```cpp
 int sm_cat_set_not_null(sm_session_t* session, uint64_t oid,
-                        const char* name);
+                        const char* name, const char* constraint = nullptr);
 ```
 
-Makes the column `name` of the table `oid` NOT NULL. The call
-scans the table, and a row older than the column counts by its
-missing value. A column already NOT NULL returns 0 with no scan.
+Makes the column `name` of the table `oid` NOT NULL. Its NOT NULL
+constraint gets the name `constraint`. With `nullptr`, sm3 makes
+the name, as `sm_cat_create_table` does. A column already NOT
+NULL returns 0 with no scan.
+
+The call scans the latest committed rows of the table, under the
+table-oid lock X. It also reads a row that committed after the
+transaction's snapshot. A row older than the column counts by
+its missing value.
 
 Errors: `SM_ERR_NOTNULL` (a row holds a null in it),
-`SM_ERR_NOTFOUND` (no such column).
+`SM_ERR_NOTFOUND` (no such column), `SM_ERR_DUPKEY` (another
+constraint of the table has the name `constraint`),
+`SM_ERR_INVALID` (a virtual generated column).
+
+### `sm_cat_rename_not_null`
+
+```cpp
+int sm_cat_rename_not_null(sm_session_t* session, uint64_t oid,
+                           const char* name, const char* to);
+```
+
+Renames the NOT NULL constraint of the column `name` of the table
+`oid` to `to`.
+
+Errors: `SM_ERR_NOTFOUND` (no such column, or the column is not
+NOT NULL), `SM_ERR_DUPKEY` (`to` is empty, or another constraint
+of the table has the name).
+
+### `sm_cat_drop_not_null`
+
+```cpp
+int sm_cat_drop_not_null(sm_session_t* session, uint64_t oid,
+                         const char* name);
+```
+
+Lets the column `name` of the table `oid` hold a null, and drops
+its NOT NULL constraint. A column that is not NOT NULL returns 0.
+
+Errors: `SM_ERR_NOTFOUND` (no such column), `SM_ERR_INUSE` (a
+column of the primary key), `SM_ERR_INVALID` (an identity
+column).
+
+### `sm_cat_set_default`
+
+```cpp
+int sm_cat_set_default(sm_session_t* session, uint64_t oid, const char* name,
+                       const char* expr);
+```
+
+Sets the default of the column `name` of the table `oid` to the
+host's `expr`. With `expr` `nullptr`, it drops the default. The
+update default does not change.
+
+Errors: `SM_ERR_NOTFOUND` (no such column), `SM_ERR_INVALID` (an
+identity column, or a generated column).
+
+### `sm_cat_set_generated`
+
+```cpp
+int sm_cat_set_generated(sm_session_t* session, uint64_t oid,
+                         const char* name, char kind, const char* expr,
+                         const std::vector<int32_t>& reads);
+```
+
+Makes the column `name` of the table `oid` a generated column of
+`kind`, `'s'` or `'v'` ([`GENERATED.md`](GENERATED.md)). Its
+expression is the host's `expr`, and `reads` holds the 0-based
+places of the columns that the expression reads.
+
+Errors:
+
+- `SM_ERR_NOTFOUND` (no such column)
+- `SM_ERR_INVALID`: a kind other than `'s'` or `'v'`; a column
+  that is generated, an identity column, or has a default or an
+  update default; a virtual kind for a NOT NULL column; a column
+  in `reads` that is not there, is generated, or is the column
+  itself
 
 ### `sm_cat_alter_column_type`
 
@@ -3173,12 +3446,12 @@ int sm_cat_create_fkey(sm_session_t* session, uint64_t table,
 
 `sm_fkey_def_t` is a foreign key of a table, its child
 ([`FOREIGNKEY.md`](FOREIGNKEY.md)): the parent `ref_table`, its
-unique index
-`ref_index` on `ref_columns`, and the column pairs by 0-based
-place. The actions are `'a'` no action, `'r'` restrict, `'c'`
-cascade, `'n'` set null and `'d'` set default. The match types
-are `'s'` simple and `'f'` full. These, `deferrable`, `deferred`
-and `host` are the host's to act on: sm only keeps them.
+unique index `ref_index` on `ref_columns`, and the column pairs
+by 0-based place. The actions are `'a'` no action, `'r'`
+restrict, `'c'` cascade, `'n'` set null and `'d'` set default.
+The match types are `'s'` simple and `'f'` full. These,
+`deferrable`, `deferred` and `host` are the host's to act on: sm
+only keeps them.
 
 `sm_cat_create_fkey` adds `def` to `table`
 ([`FOREIGNKEY.md`](FOREIGNKEY.md#5-what-ddl-does) §5),
@@ -3243,3 +3516,66 @@ int sm_cat_fkey(sm_session_t* session, uint64_t fkey, uint64_t* table,
 Gives the foreign key with the oid `fkey` and its table, the
 child, as the session's transaction sees them. Returns 0, or 1 if
 there is none. It takes no lock: the host holds the child's.
+
+### `sm_cat_create_check`
+
+```cpp
+struct sm_check_def_t {
+    uint64_t             oid = 0;
+    std::string          name;
+    std::vector<int32_t> columns;   /* the columns it reads */
+    bool                 validated = true;
+    std::string          host;      /* the host's bytes */
+};
+
+int sm_cat_create_check(sm_session_t* session, uint64_t table,
+                        const sm_check_def_t& def, uint64_t* oid);
+```
+
+Adds the check constraint `def` to `table`
+([`CHECK.md`](CHECK.md#51-sm3) §5.1), and sets its oid in
+`oid`. sm ignores `def.oid`. `columns` holds the 0-based places
+of the columns that the expression reads. `host` holds the
+expression and its flags, which sm never reads.
+
+sm reads no row. The host checks the rows, and `validated` is
+its statement that it checked them. After the call, a drop or a
+type change of a column in `columns` is `SM_ERR_INUSE`.
+
+Errors: `SM_ERR_INVALID` (no name, or a column in `columns` that
+is not there), `SM_ERR_DUPKEY` (another constraint of the table
+has the name).
+
+### `sm_cat_drop_check`
+
+```cpp
+int sm_cat_drop_check(sm_session_t* session, uint64_t table, uint64_t check);
+```
+
+Drops the check constraint `check` of `table`.
+
+Errors: `SM_ERR_NOTFOUND`.
+
+### `sm_cat_validate_check`
+
+```cpp
+int sm_cat_validate_check(sm_session_t* session, uint64_t table,
+                          uint64_t check);
+```
+
+Marks the check constraint `check` of `table` validated. The host
+checks the rows first.
+
+Errors: `SM_ERR_NOTFOUND`.
+
+### `sm_cat_rename_check`
+
+```cpp
+int sm_cat_rename_check(sm_session_t* session, uint64_t table, uint64_t check,
+                        const char* name);
+```
+
+Renames the check constraint `check` of `table` to `name`.
+
+Errors: `SM_ERR_NOTFOUND`, `SM_ERR_DUPKEY` (another constraint of
+the table has the name), `SM_ERR_INVALID` (no name).

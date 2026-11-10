@@ -2,6 +2,11 @@
  * scansup.h -- what the scanner does to an identifier and to a
  * number, apart from finding them: PostgreSQL's scansup.c, and the
  * part of its numutils.c the scanner calls.
+ *
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for sq,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  */
 #ifndef SQ_SRC_SCANSUP_H
 #define SQ_SRC_SCANSUP_H

@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # rowlocks.sh -- what a row lock costs digres (../sm/NEXT.md section 1,
 # item 4): rows locked FOR UPDATE, one, ten and a hundred a statement,
 # each against the same rows read without a lock, so the difference is

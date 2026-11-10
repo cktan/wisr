@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sq_tokens.cc -- scan SQL with sq's scanner, and print the tokens.
  *
  *   sq_tokens < file.sql     one token a line, or the error

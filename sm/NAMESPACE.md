@@ -12,8 +12,8 @@ for a lock on a lookup by name. The code is in
 (`create_namespace`, `drop_namespace`). `sm3/include/sm3.h`
 declares the calls, and `include/sm.h` gives them to the host. A
 Namespace is one object of the Catalog:
-[`CATALOG.md`](CATALOG.md) has the
-keys, the overlay and publishing.
+[`CATALOG.md`](CATALOG.md) has the keys, the overlay and
+publishing.
 
 ---
 
@@ -137,9 +137,8 @@ The creators refuse 0. `create_table` and `use_nspace` fail with
 `SM_ERR_NOTFOUND`: "namespace 0 does not exist".
 `create_temp_table` and `create_view` with `nsp_temp` are the two
 ways in ([`TEMPTABLE.md`](TEMPTABLE.md), [`VIEW.md`](VIEW.md)). A
-temporary name and the
-same name in a Namespace do not meet, and two sessions may each
-have a temporary table of one name.
+temporary name and the same name in a Namespace do not meet, and
+two sessions may each have a temporary table of one name.
 
 ---
 
@@ -211,10 +210,9 @@ sees every committed name, whatever its snapshot.
 - **Listing is the same.** `cat_list_tables`, `cat_list_views`
   and `cat_list_sequences` give the names a lookup would find,
   sorted, so a list never names what a lookup does not find.
-- **`cat_get_namespace(cat, ...)`**,
-  **`cat_get_table(cat, ...)`** and their lists take a catalog
-  and no session, and see only what is committed.
-  `enqueue_pending_indexes` walks them.
+- **`cat_get_namespace(cat, ...)`**, **`cat_get_table(cat,
+  ...)`** and their lists take a catalog and no session, and see
+  only what is committed. `enqueue_pending_indexes` walks them.
 
 ---
 
@@ -253,8 +251,8 @@ digres uses it so:
 
 `cat_epoch` is the wider number, which moves at every publish
 ([`CATALOG.md`](CATALOG.md)). `cat_namespace_epoch` lets a host
-keep its search
-path across the DDL that does not touch a Namespace.
+keep its search path across the DDL that does not touch a
+Namespace.
 
 ---
 

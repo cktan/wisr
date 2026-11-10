@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # Verify that a check added or validated at REPEATABLE READ checks a row
 # committed after the transaction's snapshot (../sm/CHECK.md §5.2).
 # 1. Make a table with a row that holds the check to come.

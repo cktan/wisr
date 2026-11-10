@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * page.cc -- pages (../BTREEINDEX.md §2, ../BUFMGR.md): keys of
  * class 0x04 in a store, whose values the level above lays out as
  * B+tree pages. They are not versioned: a page is written outside
@@ -46,7 +51,7 @@ std::string page_key(std::string_view key) {
  * error set.
  */
 int enter_pages(sm1::session_t *s, uint64_t storeid, const store_t *&st) {
-  if (xct_check_cleaner(s) != 0) {
+  if (xct_check_btree_reaper(s) != 0) {
     return -1;
   }
   if (storeid == 0) {

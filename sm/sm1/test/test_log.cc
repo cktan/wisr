@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_log.cc -- the process-wide log hook (sm1::set_log) and the
  * events wisr reports through it: what no caller would
  * otherwise learn.

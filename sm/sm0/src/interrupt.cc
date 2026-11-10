@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * interrupt.cc -- interrupting a thread, interruptible waits, and
  * timers that interrupt (INTERRUPT.md, include/sm_sys.h).
  */
@@ -258,6 +263,26 @@ void sm_set_wait_mask(uint32_t bits) { self_block()->wait_mask = bits; }
 
 /* The calling thread's wait mask. */
 uint32_t sm_wait_mask(void) { return self_block()->wait_mask; }
+
+namespace {
+
+/* The host's stop function, for every thread; none by default. */
+std::atomic<sm_stop_fn> stop_fn{nullptr};
+
+} // namespace
+
+/* Set the host's stop function; see sm_sys.h. */
+void sm_set_stop_fn(sm_stop_fn fn) { stop_fn.store(fn); }
+
+/* Whether the calling thread is to stop work that cannot be retried. */
+bool sm_should_stop(void) {
+  sm_thread_t *t = self_block();
+  if (0 == (t->pending.load(std::memory_order_relaxed) & t->wait_mask)) {
+    return false;
+  }
+  sm_stop_fn fn = stop_fn.load();
+  return nullptr == fn || fn();
+}
 
 /* Now, in microseconds on the monotonic clock. */
 int64_t sm_now_us(void) {

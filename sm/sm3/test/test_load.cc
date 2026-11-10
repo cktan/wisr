@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_load.cc -- a bulk load into a table (BULKLOAD.md §5, §13):
  * tbl_load_open, tbl_load_add and tbl_load_close, into an empty
  * table from files and into any other row by row.
@@ -7,6 +12,7 @@
 #include "db.h"
 #include "doctest.h"
 #include "sm3.h"
+#include "sm_sys.h"
 
 #include <optional>
 #include <string>
@@ -232,6 +238,39 @@ TEST_CASE("a load into an empty table fills its heap and its indexes") {
     sm3::tbl_close(t);
     REQUIRE(sm3::commit(f.b) == 0);
   }
+}
+
+TEST_CASE(
+    "an interrupted row of a load leaves nothing, and goes in once again") {
+  // Verify tbl_load_add's SM_ERR_INTERRUPTED comes before the row goes in,
+  // so the caller may hand the same row again (sm.h's sm_tbl_load_add).
+  // 1. Open a load into items, and hand over rows 1 to 100.
+  // 2. With a bit of the wait mask pending, row 101 fails with
+  //    SM_ERR_INTERRUPTED; the bit stays pending.
+  // 3. With the bit taken, row 101 goes in, and rows 102 to 300 after it.
+  // 4. Close: 300 rows, row 101 found once by its id, thirty under a name.
+  constexpr uint32_t bit = 1u << 7;
+  items_t f;
+  start(f.a);
+  sm3::table_t *t = f.open_items(f.a);
+  sm3::loader_t *l = open_load(t);
+  add_rows(l, 1, 100);
+  uint32_t mask = sm_wait_mask();
+  sm_set_wait_mask(bit);
+  sm_interrupt_self(bit);
+  row_t r(101, "name-1", "note-101");
+  uint64_t rowno = 0;
+  CHECK(sm3::tbl_load_add(l, r.d(), r.null(), rowno) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INTERRUPTED);
+  CHECK(sm_take(bit) == bit);
+  sm_set_wait_mask(mask);
+  add_rows(l, 101, 300);
+  REQUIRE_MESSAGE(sm3::tbl_load_close(l) == 0, sm1::errmsg());
+  CHECK(count(t) == 300);
+  CHECK(by_id(t, f.items_id, 101).size() == 1);
+  CHECK(by_name(t, f.items_name, "name-1") == 30);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
 }
 
 TEST_CASE("a load checks each row as an insert does, and unique keys at its "

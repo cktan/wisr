@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * parse.cc -- turning a script into items (DRIVER.md §2).
  *
  * The grammar is one line long: a line is blank, a comment, a
@@ -76,14 +81,14 @@ struct verb_t {
 
 const verb_t STEP_VERBS[] = {
     {"begin", 0, 0},      {"commit", 0, 0},       {"commit?", 0, 0},
-    {"abort", 0, 0},      {"read", 1, 1},         {"write", 2, 2},
+    {"abort", 0, 0},      {"read", 1, 1},         {"write", 2, 3},
     {"insert", 2, 2},     {"delete", 1, 1},       {"scan", 2, 4},
     {"open", 3, 3},       {"next", 1, 1},         {"close", 1, 1},
     {"mkstore", 0, 0},    {"lsstore", 0, 0},      {"savepoint", 0, 0},
     {"rollback", 1, 1},   {"lock", 2, 2},         {"seek", 2, 2},
     {"stmt", 0, 0},       {"lookup", 1, 1},       {"rmstore", 0, 0},
     {"readlatest", 1, 1}, {"update-where", 4, 4}, {"move", 1, 1},
-    {"lockread", 2, 2},   {"lockoid", 2, 2},
+    {"lockread", 2, 2},   {"lockoid", 2, 2},      {"reap", 0, 0},
 };
 
 const verb_t CHECK_VERBS[] = {
@@ -113,6 +118,10 @@ std::string check_verb(const item_t &it, const verb_t *table, size_t n,
              std::to_string(table[i].min_args) + " to " +
              std::to_string(table[i].max_args) + " arguments, given " +
              std::to_string(it.arg.size());
+    }
+    // write takes its row and value, and optionally "keykept".
+    if (it.verb == "write" && it.arg.size() == 3 && it.arg[2] != "keykept") {
+      return "write takes <row> <value> or <row> <value> keykept";
     }
     // scan takes its bounds, and optionally "limit <n>".
     if (it.verb == "scan" && it.arg.size() != 2 &&
@@ -297,6 +306,16 @@ bool script_parse(const std::string &path, script_t *out, std::string *err) {
         return false;
       }
       out->pairings = w[1];
+      continue;
+    }
+    // stores chained: the script needs chained stores, and runs
+    // on them in both modes (DRIVER.md §7).
+    if (w[0] == "stores") {
+      if (w.size() != 2 || w[1] != "chained") {
+        *err = where(path, lineno, "stores takes chained");
+        return false;
+      }
+      out->chained_only = true;
       continue;
     }
     if (w[0] == "session") {

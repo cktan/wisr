@@ -82,6 +82,8 @@
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  * src/backend/libpq/auth-scram.c
  *
@@ -1289,13 +1291,13 @@ static void read_client_final_message(scram_state *state, const char *input) {
 
     cbind_header_len = strlen("p=tls-server-end-point,,"); /* p=type,, */
     cbind_input_len = cbind_header_len + cbind_data_len;
-    cbind_input = palloc(cbind_input_len);
+    cbind_input = (char *)palloc(cbind_input_len);
     snprintf(cbind_input, cbind_input_len, "p=tls-server-end-point,,");
     memcpy(cbind_input + cbind_header_len, cbind_data, cbind_data_len);
 
     b64_message_len = pg_b64_enc_len(cbind_input_len);
     /* don't forget the zero-terminator */
-    b64_message = palloc(b64_message_len + 1);
+    b64_message = (char *)palloc(b64_message_len + 1);
     b64_message_len = pg_b64_encode((uint8 *)cbind_input, cbind_input_len,
                                     b64_message, b64_message_len);
     if (b64_message_len < 0)

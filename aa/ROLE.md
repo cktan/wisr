@@ -111,8 +111,7 @@ alone, or a predefined role's too as initdb grants them
 PostgreSQL's
 predefined roles imply, which exist, all 16
 ([`AA_DESIGN.md`](AA_DESIGN.md#2-where-the-data-lives-the-pg_global-database)
-§2); TLS, after roles, by one setting (§8
-question 4).
+§2).
 
 **Not at all**: `pg_hba.conf`, `pg_ident.conf`, and the
 methods only they choose — trust, ident, md5, password in the
@@ -351,7 +350,7 @@ which check, and why.
 | `peer` with an `ident` map | peer by the same name, or a password |
 | `md5`, `password` | SCRAM alone |
 | from which addresses | `listen_addresses`, and the host's firewall |
-| `hostssl`, `hostnossl` | when TLS comes, one setting: every TCP client must use it, or not (§8 question 4) |
+| `hostssl`, `hostnossl` | one setting, `ssl`: when on, every TCP client must use TLS, and the local socket never does (§8 question 4, [`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step 422) |
 | ldap, radius, pam, gss, sspi, cert | not at all, for now |
 
 **Locked out** (§8 question 3). On the local socket, a client
@@ -380,7 +379,7 @@ crosses the network in the clear
   and libpq's `PQchangePassword()` make on the client and send
   in place of the password; an empty password, which clears
   it; and any password over the local socket, which crosses no
-  network. Over TLS, when it comes, too.
+  network. Over TLS too.
 - **An md5 hash is refused on every connection**: `an MD5
   password is not supported`. A login is by SCRAM alone (§5),
   so no login would accept it. `password_encryption` takes only

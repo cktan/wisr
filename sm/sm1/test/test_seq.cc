@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_seq.cc -- named sequences: sm1::mkseq and sm1::rmseq are
  * transactional, while the values sm1::nextseq hands out are
  * persistent, strictly increasing, and not.

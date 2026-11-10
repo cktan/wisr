@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * load.cc -- a bulk load into an empty store (BULKLOAD.md §5, file
  * mode). A load's keys are versions of its transaction like any
  * other, under one write timestamp and one seq, but they reach
@@ -481,6 +486,9 @@ int sm1::load_stream(sm1::loader_t *l, bool ascending, size_t &stream,
   opt.budget = l->s->db->load_sort_bytes;
   opt.unique = true;
   opt.manual_spill = true;
+  // A row goes into several streams: one stopped part way through them
+  // could not be added again. The caller checks between rows.
+  opt.interruptible_input = false;
   sm0::sort_t *sort = nullptr;
   if (0 != sm0::sort_open(opt, sort)) {
     return -1;

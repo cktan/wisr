@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # roles.sh -- what checking privileges costs a role that is not a
 # superuser (../sm/NEXT.md section 1, item 2): statements that read no
 # row, so what is timed is the statement's checks, not its data, run by

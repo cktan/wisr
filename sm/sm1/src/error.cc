@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * error.cc -- set_status_error: a failed RocksDB status as the
  * calling thread's error. The error state itself is sm0's.
  */

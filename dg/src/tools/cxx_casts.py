@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 """
 cxx_casts.py -- write the casts C leaves out and C++ requires.
 

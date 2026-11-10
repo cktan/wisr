@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm1.h -- the wisr storage manager's public C++ API, in
  * namespace sm1 (DESIGN.md section 5 at the top level). Names,
  * keys and values travel as std::string_view, lists as
@@ -50,6 +55,7 @@
 #include "sm_options.h"
 
 #include <cstddef>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -1329,7 +1335,7 @@ void unpin(rawpin_t* pin);
  * a backward scan (see SM1_OBJECTIVE.md). A caller that needs
  * descending order builds it into the key -- inverted key bytes,
  * scanned forward -- rather than keeping a mirror store for the
- * other direction (PART4.md §5).
+ * other direction (PGFORK.md §5).
  *
  * Both bounds are taken, rather than a start key alone,
  * because under SERIALIZABLE the range is the predicate
@@ -1467,12 +1473,29 @@ int chain_insert(session_t* session, uint64_t storeid,
 /* sm1::insert_new, of a chained key. */
 int chain_insert_new(session_t* session, uint64_t storeid,
                      std::string_view key, std::string_view data);
-/* sm1::update, of a chained key; with pin, keeping the row replaced. */
-int chain_update(session_t* session, uint64_t storeid,
-                 std::string_view key, std::string_view data);
+/*
+ * Whether an update keeps its row's key (../LOCKMGR.md §1.13): given
+ * ctx, the tuple the update replaces and the new one, true if no key
+ * column of the row changes. It runs under the key's latch, so it
+ * may not call sm1; it is noexcept, and a doubt is false.
+ */
+typedef bool (*key_kept_fn)(void* ctx, std::string_view old_tuple,
+                            std::string_view new_tuple) noexcept;
+
+/*
+ * sm1::update, of a chained key; with pin, keeping the row replaced.
+ * With kept, an update that keeps its key, as kept says against the
+ * version it replaces, is written in NKU: it does not wait for a KS
+ * lock, and its version is flagged so that KS passes over it
+ * (../LOCKMGR.md §1.13). Without, every update is X.
+ */
 int chain_update(session_t* session, uint64_t storeid,
                  std::string_view key, std::string_view data,
-                 rawpin_t* pin, std::string_view& old);
+                 key_kept_fn kept = nullptr, void* ctx = nullptr);
+int chain_update(session_t* session, uint64_t storeid,
+                 std::string_view key, std::string_view data,
+                 rawpin_t* pin, std::string_view& old,
+                 key_kept_fn kept = nullptr, void* ctx = nullptr);
 /* sm1::erase, of a chained key; with pin, keeping the row erased. */
 int chain_erase(session_t* session, uint64_t storeid,
                 std::string_view key);
@@ -1729,7 +1752,7 @@ int read_settled_versioned(session_t* session, uint64_t storeid,
  * Let session call sm1::read_settled, sm1::read_settled_versioned,
  * sm1::pin_page, sm1::page_enter
  * and sm1::page_write with no transaction, for good: a background
- * cleaner's session (../BTREEINDEX.md §9), which judges a row by its
+ * btree reaper's session (../BTREEINDEX.md §9), which judges a row by its
  * newest version, and so needs no snapshot and holds no watermark
  * back. A store is looked up at the newest state. Every other call
  * still needs a transaction. A store's handle stays with the session
@@ -1743,6 +1766,24 @@ void set_no_transaction(session_t* session);
  * or below it is seen by every snapshot.
  */
 uint64_t gc_watermark(session_t* session);
+
+/*
+ * One pass of the row reaper over session's database (../GC.md §13.5):
+ * take the keys readers queued, and cut the chain behind each CURR
+ * version now settled, deleting its OLD entries and writing CURR again
+ * with no prev. A key not settled, or changed, is skipped: a later
+ * read queues it again. stop, if given and set, ends the pass after
+ * the key it is on. Needs no transaction. Returns the keys reaped, or
+ * -1 on an error, which drops the rest of the batch.
+ */
+int64_t row_reap_pass(session_t* session,
+                      const std::atomic<bool>* stop = nullptr);
+
+/*
+ * The keys queued for the row reaper of database dbname in env, with
+ * no session: 0 if the database is not open (../GC.md §13.5).
+ */
+size_t row_reaps_pending(env_t* env, std::string_view dbname);
 
 /*
  * The newest version of key in storeid, past the snapshot, as a

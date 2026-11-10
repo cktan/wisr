@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * access.cc -- sm1::insert, sm1::update, sm1::erase, sm1::read, and
  * the sm1::scan cursor (../XCTMGR.md §3.3, ../ROWSTORE.md §4, §5).
  *
@@ -21,9 +26,12 @@ using namespace wisr;
 
 namespace {
 
-/* 1 if version v is visible at view, 0 if not, -1 on error (../XCTMGR.md §3.3).
+/*
+ * 1 if version v is visible at view, 0 if not, -1 on error (../XCTMGR.md §3.3).
+ * When v is not visible because its writer is dead, *dead is set, if given.
  */
-int visible(db_t *db, const version_t &v, const view_t &view) {
+int visible(db_t *db, const version_t &v, const view_t &view,
+            bool *dead = nullptr, uint64_t *commit_out = nullptr) {
   // Our own write: visible unless a rollback undid it.
   if (view.xid != 0 && v.xid == view.xid) {
     return v.seq <= view.seq_hwm; // own write, savepoint-aware
@@ -39,11 +47,25 @@ int visible(db_t *db, const version_t &v, const view_t &view) {
     commit_ts = v.commit_ts;
   } else {
     // Otherwise resolve the writer through CF:txn.
-    int r = xct_resolve(db, v.xid, &commit_ts);
-    // Not committed, or an error: not visible.
-    if (r <= 0) {
-      return r;
+    switch (xct_status(db, v.xid, &commit_ts)) {
+    case XCT_COMMITTED:
+      break;
+    case XCT_DEAD:
+      // Not visible; the caller may queue the dead version for repair.
+      if (dead) {
+        *dead = true;
+      }
+      return 0;
+    case XCT_ERROR:
+      return -1;
+    default:
+      // In flight: not visible.
+      return 0;
     }
+  }
+  // Tell the caller when it committed, if it asked.
+  if (nullptr != commit_out) {
+    *commit_out = commit_ts;
   }
   // Visible if it committed at or before our snapshot.
   return commit_ts <= view.snapshot_ts;
@@ -345,14 +367,18 @@ int write_row(sm1::session_t *s, write_op_t op, uint64_t storeid,
   return 0;
 }
 
-/* -1 unless s may take a lock in mode: an active transaction. */
-int lock_check(sm1::session_t *s, sm1::lockmode_t mode) {
+/*
+ * -1 unless s may take a lock in mode: an active transaction, and one of
+ * Gray's five, or with row one of a row's modes too, KS and NKU
+ * (../LOCKMGR.md §1.13).
+ */
+int lock_check(sm1::session_t *s, sm1::lockmode_t mode, bool row = false) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
   }
-  // Reject a mode that is not one of Gray's five.
-  if (static_cast<int>(mode) < 0 || static_cast<int>(mode) > 4) {
+  int last = row ? sm1::SM_LOCKMODE_NKU : sm1::SM_LOCKMODE_SIX;
+  if (static_cast<int>(mode) < 0 || static_cast<int>(mode) > last) {
     return set_error(sm1::SM_ERR_INVALID, "unknown lock mode {}", (int)mode);
   }
   return 0;
@@ -373,7 +399,7 @@ int lock_object(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode,
 int lock_versioned(sm1::session_t *s, uint64_t storeid, const char *key,
                    size_t klen, sm1::lockmode_t mode, bool nowait, bool as_read,
                    uint16_t kind) {
-  if (lock_check(s, mode) != 0) {
+  if (lock_check(s, mode, true) != 0) {
     return -1;
   }
   // Validate the storeid and key at the current view.
@@ -565,8 +591,9 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
                      "sm1_read_latest requires a lock held on the key, or "
                      "a write of it by this transaction");
   }
-  // An exclusive holder may now write.
-  if (held && mode == sm1::SM_LOCKMODE_EX) {
+  // A holder no other writer passes, X or NKU, may now write: an
+  // NKU holder's write that changes the key converts to X first.
+  if (held && (mode == sm1::SM_LOCKMODE_EX || mode == sm1::SM_LOCKMODE_NKU)) {
     lock_set_latest(s, storeid, k);
   }
   // Moved to another key: the caller's row lives on there.
@@ -1128,8 +1155,9 @@ void access_undo_add(sm1::session_t *s, sm1::session_t::undo_t undo) {
 }
 
 /* The visibility test of ../XCTMGR.md §3.3, for chain.cc. */
-int access_visible(db_t *db, const version_t &v, const view_t &view) {
-  return visible(db, v, view);
+int access_visible(db_t *db, const version_t &v, const view_t &view, bool *dead,
+                   uint64_t *commit_ts) {
+  return visible(db, v, view, dead, commit_ts);
 }
 
 /* Step past an invisible version, as a read does, for chain.cc. */
@@ -1313,7 +1341,7 @@ static int versioned_settled(sm1::session_t *s, const store_t &st,
 /* The store of a settled read of key, nullptr with the error set. */
 static const store_t *enter_settled(sm1::session_t *s, uint64_t storeid,
                                     std::string_view key) {
-  if (xct_check_cleaner(s) != 0 ||
+  if (xct_check_btree_reaper(s) != 0 ||
       enter(s, xct_view(s), storeid, key.data(), key.size()) != 0) {
     return nullptr;
   }

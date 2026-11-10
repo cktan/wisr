@@ -18,6 +18,8 @@
  * so lookups are guaranteed to run in O(lg n) time.
  *
  * Copyright (c) 2009-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  * IDENTIFICATION
  *	  src/backend/lib/rbtree.c

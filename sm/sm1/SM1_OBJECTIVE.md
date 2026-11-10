@@ -29,7 +29,7 @@ full MVCC, for OLTP workloads.
   above does that per index column, and keeps no mirror copy
   of an index to serve the other direction; an order an index
   does not have is a sort
-  ([`../PART4.md`](../PART4.md#5-the-one-conflict-with-a-decision-already-made)
+  ([`../PGFORK.md`](../PGFORK.md#5-the-one-conflict-with-a-decision-already-made)
   §5).
 
 ## Goals

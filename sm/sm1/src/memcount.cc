@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * memcount.cc -- the bytes a store's writes put in its memtables, by
  * key prefix; see memcount.h.
  */

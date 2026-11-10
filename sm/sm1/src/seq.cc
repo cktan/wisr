@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * seq.cc -- named sequences: sm1::mkseq, sm1::rmseq, sm1::nextseq,
  * sm1::lastseq (../DBMGR.md §7).
  *

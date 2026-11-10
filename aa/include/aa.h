@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * aa.h -- roles, authentication and authorization: the interface
  * (README.md).
  *

@@ -63,14 +63,14 @@ test/sql/index/art/constraints/test_art_tx_upserts_rollback.test:8 arrays cannot
 test/sql/index/art/create_drop/test_art_create_concurrently.test:42 DROP INDEX CONCURRENTLY is refused (UNSUPPORTED.md §2)
 test/sql/index/art/create_drop/test_art_create_index_delete.test:30 CREATE INDEX takes the table-oid lock X, which waits for a reader (../sm/INDEXBUILD.md §2)
 test/sql/index/art/create_drop/test_art_invalid_create_index.test:13 a collation other than the default is refused, checked first (UNSUPPORTED.md §2)
-test/sql/index/art/insert_update_delete/test_art_random_deletion.test_slow:16 a page wait timed out in a full --tree run, likely behind an earlier file's purge (ISSUE.md issue 22); clean when run alone
+test/sql/index/art/insert_update_delete/test_art_random_deletion.test_slow:16 a page wait timed out in a full --tree run, likely behind an earlier file's purge (ISSUE.md dg issue 22); clean when run alone
 test/sql/index/art/insert_update_delete/test_art_update_multiple_varchar_indexes.test_slow:18 the debug build takes longer than statement_timeout, 10 s, over hundreds of thousands of rows
 test/sql/index/art/insert_update_delete/test_art_update_scans.test_slow:67 the debug build takes longer than statement_timeout, 10 s, over hundreds of thousands of rows
 test/sql/index/art/issues/test_art_issue_6799.test:8 random() picks the rows: the counts differ on any two runs
 test/sql/index/art/memory/test_art_linear.test_slow:16 the debug build takes longer than statement_timeout, 10 s, over hundreds of thousands of rows
 test/sql/index/art/nodes/test_art_sparse_row_ids.test_slow:23 the debug build takes longer than statement_timeout, 10 s, over hundreds of thousands of rows
 test/sql/index/art/storage/test_art_reclaim_storage.test_slow:102 the debug build takes longer than statement_timeout, 10 s, over hundreds of thousands of rows (with --tree)
-test/sql/index/art/storage/test_art_reclaim_storage.test_slow:76 CREATE INDEX after DROP INDEX of 1,000,000 entries waits on the purge (ISSUE.md issue 22)
+test/sql/index/art/storage/test_art_reclaim_storage.test_slow:76 CREATE INDEX after DROP INDEX of 1,000,000 entries waits on the purge (ISSUE.md dg issue 22)
 test/sql/index/art/types/test_art_bigint.test_slow:193 ORDER BY random() LIMIT 1 picks the row: the counts differ on any two runs
 test/sql/index/art/types/test_art_integer.test_slow:193 ORDER BY random() LIMIT 1 picks the row: the counts differ on any two runs
 test/sql/index/art/types/test_art_smallint.test_slow:193 ORDER BY random() LIMIT 1 picks the row: the counts differ on any two runs

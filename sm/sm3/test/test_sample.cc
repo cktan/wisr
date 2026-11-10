@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_sample.cc -- the sample an analyze estimates from
  * (../STATISTICS.md §9.4): Floyd's draws, the runs, the row count
  * against a full count, and the budget that bounds every read.

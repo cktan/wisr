@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # pgregress.py -- PostgreSQL 18's regression files, ported to digres
 # (README.md): each runs on digres as on PostgreSQL 18 once the statements
 # digres does not run as PostgreSQL does are commented out, and its

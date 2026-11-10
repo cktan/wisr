@@ -5,6 +5,8 @@
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  *
  * IDENTIFICATION
@@ -103,7 +105,9 @@ static void PerformAuthentication(Port *port) {
    * during authentication.  Since we're inside a transaction and might do
    * database access, we have to use the statement_timeout infrastructure.
    */
-  enable_timeout_after(STATEMENT_TIMEOUT, AuthenticationTimeout * 1000);
+  enable_timeout_after(
+      STATEMENT_TIMEOUT,
+      shmem->authentication_timeout.load(std::memory_order_relaxed) * 1000);
 
   /*
    * Now perform authentication exchange.

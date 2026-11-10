@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
 /*-------------------------------------------------------------------------
  *
  * hooks.h
@@ -7,7 +12,7 @@
  * postmaster, before any session starts, and every session starts with
  * them: session_thread_start() copies the parent's into the new thread
  * (utils/control_block.h).  A library a session LOADs sets that session's
- * alone, but a session may not load one (dg/ISSUE.md issue 1).
+ * alone, but a session may not load one (ISSUE.md dg issue 1).
  *
  * src/include/utils/hooks.h
  *

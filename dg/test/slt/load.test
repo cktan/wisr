@@ -1,5 +1,5 @@
 # Verify digres loads no library, until loading is redesigned
-# (ISSUE.md issue 1): LOAD is refused with an error, and the session
+# (ISSUE.md dg issue 1): LOAD is refused with an error, and the session
 # goes on.
 # 1. LOAD of a name and of a path are refused, each naming its
 #    library.

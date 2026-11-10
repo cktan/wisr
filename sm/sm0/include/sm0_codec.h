@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm0_codec.h -- fixed-width big-endian integers, the byte order
  * every persisted number uses so that memcmp orders them
  * numerically.

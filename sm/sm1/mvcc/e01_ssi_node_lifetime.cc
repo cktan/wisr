@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * e01 -- SSI state does not accumulate.
  *
  * Five SERIALIZABLE transactions read, scan, write, and

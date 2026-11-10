@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_table.cc -- a table's writes and its indexes (SM3_DESIGN.md
  * ../INDEXBUILD.md §2): every write keeps each index in step with the heap, an
  * update leaves an unchanged index alone, and at READ COMMITTED
@@ -3150,6 +3155,66 @@ TEST_CASE("a row is locked without being written") {
   sm3::tbl_close(tb);
   REQUIRE(sm3::commit(f.a) == 0);
   REQUIRE(sm3::commit(f.b) == 0);
+}
+
+TEST_CASE("an update that keeps the key passes a key-share lock") {
+  // Verify the key columns of ../LOCKMGR.md §1.13: jobs_id is unique
+  // on (id), not the primary key, so id is jobs' one key column.
+  // 1. The definition names id, and only id, as a key column.
+  // 2. A holds row 1 in KS, on a table opened to read, as a foreign
+  //    key check of a child does. B, set qa_nowait, updates the row's
+  //    state and owner, keeping id: it does not wait.
+  // 3. B's update of id is X, which A's KS refuses: SM_ERR_BLOCKED.
+  // 4. Both commit; the row is B's kept update.
+  // 5. B changes id, then updates state, keeping the id it made: A's
+  //    KS lock is SM_ERR_BLOCKED, as the key change is still B's.
+  jobs_t f;
+  std::shared_ptr<const sm3::table_def_t> def =
+      sm3::cat_get_table(f.cat, f.jobs);
+  REQUIRE(def);
+  CHECK(def->key_columns == std::vector<int32_t>{0});
+  start(f.a);
+  sm3::table_t *ta = f.write(f.a);
+  uint64_t r1 = put(ta, 1, "free", "a");
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.b), true) == 0);
+
+  start(f.a);
+  start(f.b);
+  ta = f.write(f.a, sm1::SM_LOCKMODE_IS);
+  sm3::table_t *tb = f.write(f.b);
+  REQUIRE_MESSAGE(sm3::tbl_lock(ta, r1, sm1::SM_LOCKMODE_KS) == 0,
+                  sm1::errmsg());
+  CHECK(sm3::tbl_lock(ta, r1, sm1::SM_LOCKMODE_NKU) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE_MESSAGE(set(tb, r1, 1, "taken", "b") == 0, sm1::errmsg());
+  CHECK(set(tb, r1, 2, "taken", "b") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  CHECK(get(ta, r1) == "1|free|a");
+  sm3::tbl_close(ta);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::commit(f.b) == 0);
+  start(f.a);
+  ta = f.write(f.a, sm1::SM_LOCKMODE_IS);
+  CHECK(get(ta, r1) == "1|taken|b");
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.a), true) == 0);
+  start(f.a);
+  start(f.b);
+  tb = f.write(f.b);
+  REQUIRE_MESSAGE(set(tb, r1, 2, "taken", "b") == 0, sm1::errmsg());
+  REQUIRE_MESSAGE(set(tb, r1, 2, "done", "b") == 0, sm1::errmsg());
+  ta = f.write(f.a, sm1::SM_LOCKMODE_IS);
+  CHECK(sm3::tbl_lock(ta, r1, sm1::SM_LOCKMODE_KS) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  sm3::tbl_close(ta);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+  REQUIRE(sm3::abort(f.a) == 0);
 }
 
 TEST_CASE("a truncate empties the table and its indexes, with its "

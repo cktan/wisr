@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_load.cc -- a bulk load into an empty store (BULKLOAD.md §5):
  * sm1::load_open, load_stream, load_put and load_close.
  */

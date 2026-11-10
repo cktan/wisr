@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # run.sh -- time q6.rel: the bench's q6 as the calls it makes through
 # sm to RocksDB, run by rel. rel is built optimized, against the sm
 # and the RocksDB the bench's digres links (../CODE.md): sm in

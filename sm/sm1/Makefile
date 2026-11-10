@@ -1,9 +1,13 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # wisr -- build the storage manager library and its tests.
 #
 #   make -j4          libsm1.a, the test binaries, the examples, and
 #                     the lock table's benchmark
 #   make test         build, then run every test, script, and example
 #   make accept       take the scenario transcripts as expected
+#   make tsan         the tests of threads together, under the thread sanitizer
 #   make format       clang-format src/, test/, example/ and bench/ in place
 #   make clean        remove build/
 #
@@ -36,7 +40,8 @@ SM0_LIB  := $(SM0)/$(BUILD)/libsm0.a
 
 CXXFLAGS += -std=c++20 -fno-rtti -Wall -Wextra -Iinclude -I../include \
             -I$(SM0)/include -Isrc -MMD -MP
-LDLIBS   += $(SM0_LIB) -lrocksdb -lpthread
+ROCKSDB  ?= -lrocksdb
+LDLIBS   += $(SM0_LIB) $(ROCKSDB) -lpthread
 
 # The compiler and flags every object is built with. Rewriting
 # the file when they change makes it newer than the objects, so
@@ -80,7 +85,7 @@ FORMAT_FILES := $(wildcard src/*.cc src/*.h test/*.cc test/*.h mvcc/*.cc \
                           mvcc/*.h mvcc/driver/*.cc mvcc/driver/*.h \
                           example/*.cc bench/*.cc include/sm1_*.h)
 
-.PHONY: all test scenarios accept format clean $(SM0_LIB)
+.PHONY: all test tsan scenarios accept format clean $(SM0_LIB)
 
 # Keep the example objects: make deletes chained intermediates.
 .SECONDARY: $(EX_OBJS)
@@ -195,3 +200,15 @@ clean:
 
 -include $(LIB_OBJS:.o=.d) $(TEST_OBJS:.o=.d) $(MVCC_OBJS:.o=.d) \
         $(DRV_OBJS:.o=.d) $(EX_OBJS:.o=.d) $(BENCH_OBJ:.o=.d)
+
+# The tests that run sm1's threads together, under the thread sanitizer,
+# on a RocksDB built with it, as sm3's are. The sanitizer cannot run with
+# the address space randomised.
+TSAN_ROCKSDB := $(abspath ../../rocksdb/tsan/librocksdb.a) \
+    -lsnappy -llz4 -lzstd -lz -lbz2
+TSAN_TESTS := the row reaper reaps beside writers*
+tsan:
+	../../dg/test/rocksdb.sh tsan
+	$(MAKE) BUILD=$(BUILD)/tsan OPTFLAGS="-O1 -g -fsanitize=thread" \
+	    ROCKSDB="$(TSAN_ROCKSDB)" $(BUILD)/tsan/test_sm1
+	setarch $$(uname -m) -R $(BUILD)/tsan/test_sm1 -tc="$(TSAN_TESTS)"

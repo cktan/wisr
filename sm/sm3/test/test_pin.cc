@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_pin.cc -- sm3's pins (../ROWSTORE.md §6.4): the pool and its refs,
  * which a release makes stale; when the session releases them; a
  * cursor's pin, which each row moves on; and a row deformed through

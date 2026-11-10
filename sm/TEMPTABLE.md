@@ -9,11 +9,10 @@ skips, and what it keeps. The code is in `sm1/src/env.cc` and
 stores), `sm3/src/catalog/session.cc` (the temporary catalog)
 and `sm3/src/ddl/ddl.cc`.
 
-It is built, at every level and in digres: §11 has the steps,
-and §9 what was left for later. It replaced the mechanism
-first proposed in [`DBMGR.md`](DBMGR.md#78-temporary-stores)
-§7.8, which put a
-temporary store's column family in the database's own
+It is built, at every level and in digres: §11 has the steps, and
+§9 what was left for later. It replaced the mechanism first
+proposed in [`DBMGR.md`](DBMGR.md#78-temporary-stores) §7.8,
+which put a temporary store's column family in the database's own
 RocksDB. §10 is the list drawn up before the work, of what to
 check first, kept as it was written.
 
@@ -30,8 +29,8 @@ check first, kept as it was written.
   it finds there and makes X empty.
 - **A temporary table is a temporary store**, as decided
   ([`DESIGN.md`](DESIGN.md#5-cross-level-decisions) §5): one
-  column family of X for its rows, its
-  indexes and its TOAST data, its rows chained as any table's
+  column family of X for its rows, its indexes and its TOAST
+  data, its rows chained as any table's
   ([`ROWSTORE.md`](ROWSTORE.md)).
 - **Its definition is in the session's memory**, in a
   temporary catalog of its own, never in store 0
@@ -63,17 +62,16 @@ check first, kept as it was written.
 ## 1. Why not in the database's RocksDB
 
 [`DBMGR.md`](DBMGR.md#78-temporary-stores) §7.8 proposed a column
-family in the
-database's own RocksDB, written with `disableWAL`. Two things
-decided against it.
+family in the database's own RocksDB, written with `disableWAL`.
+Two things decided against it.
 
 - **A database is its directory**
-  ([`../dg/CODE.md`](../dg/CODE.md), the
-  overriding objective): `base/{dbid}` is copied to another
-  machine and imported whole. What makes that package is what
-  is transactionally consistent, a database's data and its
-  WAL. Temporary rows are no part of it, so they are not to
-  sit in its files, its MANIFEST or its column families.
+  ([`../dg/CODE.md`](../dg/CODE.md), the overriding objective):
+  `base/{dbid}` is copied to another machine and imported whole.
+  What makes that package is what is transactionally consistent,
+  a database's data and its WAL. Temporary rows are no part of
+  it, so they are not to sit in its files, its MANIFEST or its
+  column families.
 - **RocksDB has no unlogged column family.** `disableWAL` is
   an option of one write, covering the whole batch. In a
   database's own RocksDB, unlogged would be a discipline of
@@ -168,8 +166,7 @@ store goes through the pair.
 Everything that makes a transaction a transaction, unchanged:
 
 - **The version format** ([`DBMGR.md`](DBMGR.md#62-key-classes)
-  §6.2) and the
-  visibility test (§4.4 there).
+  §6.2) and the visibility test (§4.4 there).
 - **Status resolution** (§3.4 there), against the session's
   database. A version in X written by a transaction with no
   commit record is dead; so abort still writes nothing.
@@ -227,13 +224,12 @@ transaction at a time. So, for a temporary store:
 
 ## 4. sm3: the temporary catalog
 
-- **A second overlay, which commit does not publish.** A
-  session has an overlay of its open transaction's DDL
+- **A second overlay, which commit does not publish.** A session
+  has an overlay of its open transaction's DDL
   ([`CATALOG.md`](CATALOG.md#4-in-memory) §4). The temporary
-  catalog is the same
-  structure with a longer life: definitions of the session's
-  temporary tables, kept from commit to commit, and dropped
-  when the session closes.
+  catalog is the same structure with a longer life: definitions
+  of the session's temporary tables, kept from commit to commit,
+  and dropped when the session closes.
 - **A change to it is still transactional.** A temporary
   table made or dropped by the open transaction is in the
   transaction's overlay, tagged with its savepoint depth, as
@@ -275,10 +271,9 @@ transaction at a time. So, for a temporary store:
   ([`CATALOG.md`](CATALOG.md#2-object-mapping) §2).
 - **A temporary view is kept there too**
   ([`VIEW.md`](VIEW.md#122-the-view-the-temporary-catalog)
-  §12.2),
-  its name among the session's temporary names, and in the
-  shared catalog's register of temporary readers (§12.3),
-  for another session's drop to find.
+  §12.2), its name among the session's temporary names, and in
+  the shared catalog's register of temporary readers (§12.3), for
+  another session's drop to find.
 - **Not kept yet, and refused**: statistics of a temporary
   table (`tbl_analyze` fails, and `cat_get_stats` gives
   none), and a temporary sequence or collation.
@@ -365,10 +360,9 @@ that no longer exist, and are swept with the rest.
   transaction, and callers reach savepoints without asking
   for them, through an ORM's nested transaction or `psql`'s
   `ON_ERROR_ROLLBACK`.
-- **A cheaper rollback for temporary rows.** A savepoint
-  costs an undo entry for each write made under it, for
-  every table ([`XCTMGR.md`](XCTMGR.md#6-savepoints) §6).
-  Temporary tables
+- **A cheaper rollback for temporary rows.** A savepoint costs an
+  undo entry for each write made under it, for every table
+  ([`XCTMGR.md`](XCTMGR.md#6-savepoints) §6). Temporary tables
   are treated the same; [`XCTMGR.md`](XCTMGR.md) is the design
   that removes the cost for both.
 
@@ -416,16 +410,14 @@ Each step lands on its own, with its tests.
 4. **The temporary catalog in sm3** (§4). Built.
 5. **The wrapper, and `rel`** (§5). Built.
 6. **digres**: Built ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md)
-   step 80).
-   `CREATE TEMPORARY TABLE`, `ON COMMIT`, and
-   the temporary namespace in the search path.
+   step 80). `CREATE TEMPORARY TABLE`, `ON COMMIT`, and the
+   temporary namespace in the search path.
 
 Bulk load into a temporary table ([`BULKLOAD.md`](BULKLOAD.md)),
-first left
-for later, is built too. `tbl_load_open` in
+first left for later, is built too. `tbl_load_open` in
 `sm3/src/table/table.cc` takes no table lock for one, its
 session's alone. In `sm1/src/load.cc`, `load_open` lets a
 read-only transaction load a temporary store, as it may write
-one; `load_put` owes no SSI edge, since no one else reads it;
-and `load_close` marks the transaction as one that wrote a
-temporary store, so `sm1::prepare` refuses it.
+one; `load_put` owes no SSI edge, since no one else reads it; and
+`load_close` marks the transaction as one that wrote a temporary
+store, so `sm1::prepare` refuses it.

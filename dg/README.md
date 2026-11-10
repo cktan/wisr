@@ -1,7 +1,7 @@
 # digres
 
 A fork of PostgreSQL that runs on the storage stack in `../sm`.
-[`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+[`../sm/PGFORK.md`](../sm/PGFORK.md#10-digres-how-the-fork-is-to-be-made)
 §10 says how it is to be made, and §9 what it
 calls.
 
@@ -52,14 +52,14 @@ A statement over constants also runs with no server: `echo
 strict C++ with no `-fpermissive`, and links `build/digres`
 with `../sq` and `../sm`. The server has no catalog tables:
 its catalog is being replaced, not created
-([`../sm/PART4.md`](../sm/PART4.md)
+([`../sm/PGFORK.md`](../sm/PGFORK.md)
 §10).
 
 - [`WORKNOTE.md`](WORKNOTE.md): the decisions taken along the
   way, a step
   at a time.
 - [`CODE.md`](CODE.md): the rules for changing the code.
-- [`ISSUE.md`](ISSUE.md): the problems known and left unfixed.
+- [`ISSUE.md`](../ISSUE.md): the problems known and left unfixed.
 - [`UNSUPPORTED.md`](UNSUPPORTED.md): what of PostgreSQL digres
   refuses, has
   removed, or does otherwise.
@@ -127,7 +127,7 @@ tests hold what it prints to what PostgreSQL's parser printed.
 ## The catalog
 
 PostgreSQL's catalog is being replaced, a lookup at a time
-([`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+([`../sm/PGFORK.md`](../sm/PGFORK.md#10-digres-how-the-fork-is-to-be-made)
 §10, [`WORKNOTE.md`](WORKNOTE.md) step 6). What is built in —
 types, functions, operators — is compiled in:
 `src/backend/catalog/gen_cat.py` writes `cat_builtin.c` from the
@@ -217,7 +217,7 @@ More is to be cut, a piece at a time.
 ## Known incompatibilities
 
 Where digres behaves otherwise than PostgreSQL, by choice;
-[`ISSUE.md`](ISSUE.md) has the bugs.
+[`ISSUE.md`](../ISSUE.md#3-digres-known-issues) has the bugs.
 
 - **A scan begun inside a savepoint ends at a rollback to
   it.** A FETCH inside a savepoint may begin a scan again, as

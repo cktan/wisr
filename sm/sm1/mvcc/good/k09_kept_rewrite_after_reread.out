@@ -1,0 +1,127 @@
+# k09 -- at READ COMMITTED, an update that keeps its key is refused
+# for a newer commit, re-reads, and writes.
+#
+# T1 updates R1, keeping its key, and commits after T2 began. T2's
+# update, keeping the key too, is refused with updated, and holds R1
+# in NKU, its write's mode. T2 reads the newest version under that
+# lock, which keeps every other writer out, and its repeated write
+# goes through, as one under X does (../../LOCKMGR.md §1.9).
+
+
+== pairing RC/RC == T1=RC T2=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 keykept -> ok
+@3 T1 commit -> ok
+@4 T2 write R1 t2 keykept -> updated
+@5 check last T2 updated -> satisfied
+@6 T2 readlatest R1 -> t1
+@7 T2 write R1 t2 keykept -> ok
+@8 check last T2 ok -> satisfied
+@9 T2 commit -> ok
+@10 check committed T1 T2 -> satisfied
+@11 check row R1 t2 -> satisfied
+== pairing RC/RR == T1=RC T2=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 keykept -> ok
+@3 T1 commit -> ok
+@4 T2 write R1 t2 keykept -> updated
+@5 check last T2 updated -> satisfied
+@6 T2 readlatest R1 -> t1
+@7 T2 write R1 t2 keykept -> ok
+@8 check last T2 ok -> satisfied
+@9 T2 commit -> ok
+@10 check committed T1 T2 -> satisfied
+@11 check row R1 t2 -> satisfied
+== pairing RC/S == T1=RC T2=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 keykept -> ok
+@3 T1 commit -> ok
+@4 T2 write R1 t2 keykept -> updated
+@5 check last T2 updated -> satisfied
+@6 T2 readlatest R1 -> t1
+@7 T2 write R1 t2 keykept -> ok
+@8 check last T2 ok -> satisfied
+@9 T2 commit -> ok
+@10 check committed T1 T2 -> satisfied
+@11 check row R1 t2 -> satisfied
+== pairing RR/RC == T1=RR T2=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 keykept -> ok
+@3 T1 commit -> ok
+@4 T2 write R1 t2 keykept -> updated
+@5 check last T2 updated -> satisfied
+@6 T2 readlatest R1 -> t1
+@7 T2 write R1 t2 keykept -> ok
+@8 check last T2 ok -> satisfied
+@9 T2 commit -> ok
+@10 check committed T1 T2 -> satisfied
+@11 check row R1 t2 -> satisfied
+== pairing RR/RR == T1=RR T2=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 keykept -> ok
+@3 T1 commit -> ok
+@4 T2 write R1 t2 keykept -> updated
+@5 check last T2 updated -> satisfied
+@6 T2 readlatest R1 -> t1
+@7 T2 write R1 t2 keykept -> ok
+@8 check last T2 ok -> satisfied
+@9 T2 commit -> ok
+@10 check committed T1 T2 -> satisfied
+@11 check row R1 t2 -> satisfied
+== pairing RR/S == T1=RR T2=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 keykept -> ok
+@3 T1 commit -> ok
+@4 T2 write R1 t2 keykept -> updated
+@5 check last T2 updated -> satisfied
+@6 T2 readlatest R1 -> t1
+@7 T2 write R1 t2 keykept -> ok
+@8 check last T2 ok -> satisfied
+@9 T2 commit -> ok
+@10 check committed T1 T2 -> satisfied
+@11 check row R1 t2 -> satisfied
+== pairing S/RC == T1=SER T2=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 keykept -> ok
+@3 T1 commit -> ok
+@4 T2 write R1 t2 keykept -> updated
+@5 check last T2 updated -> satisfied
+@6 T2 readlatest R1 -> t1
+@7 T2 write R1 t2 keykept -> ok
+@8 check last T2 ok -> satisfied
+@9 T2 commit -> ok
+@10 check committed T1 T2 -> satisfied
+@11 check row R1 t2 -> satisfied
+== pairing S/RR == T1=SER T2=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 keykept -> ok
+@3 T1 commit -> ok
+@4 T2 write R1 t2 keykept -> updated
+@5 check last T2 updated -> satisfied
+@6 T2 readlatest R1 -> t1
+@7 T2 write R1 t2 keykept -> ok
+@8 check last T2 ok -> satisfied
+@9 T2 commit -> ok
+@10 check committed T1 T2 -> satisfied
+@11 check row R1 t2 -> satisfied
+== pairing S/S == T1=SER T2=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 keykept -> ok
+@3 T1 commit -> ok
+@4 T2 write R1 t2 keykept -> updated
+@5 check last T2 updated -> satisfied
+@6 T2 readlatest R1 -> t1
+@7 T2 write R1 t2 keykept -> ok
+@8 check last T2 ok -> satisfied
+@9 T2 commit -> ok
+@10 check committed T1 T2 -> satisfied
+@11 check row R1 t2 -> satisfied

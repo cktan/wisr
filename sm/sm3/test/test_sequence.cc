@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_sequence.cc -- a Sequence against a snapshot (../SEQUENCE.md): it
  * is not transactional, so what a draw sees is the newest state, not the
  * transaction's snapshot.

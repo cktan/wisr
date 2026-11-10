@@ -84,8 +84,7 @@ the relid `0xFFFF`.** This gives three things:
 
 A chunk is a versioned key in every store, a chained store too.
 [`ROWSTORE.md`](ROWSTORE.md) chains a table's rows. TOAST writes
-with
-`sm1::insert` and `sm1::erase`, not with the `chain_` calls.
+with `sm1::insert` and `sm1::erase`, not with the `chain_` calls.
 
 ### 2.3 A datum has an id, and never changes
 
@@ -183,22 +182,23 @@ The old tuple that an update or a delete hands back names datums
 that the write erased. The statement that made the write still
 sees them, and no later statement does.
 
-### 2.10 The cleaner reads with no transaction
+### 2.10 The btree reaper reads with no transaction
 
-The cleaner takes no lock. A writer can erase a chunk between the
-cleaner's read of the row and its read of the chunk. The chunk is
-then gone or not settled, and `toast_read_settled` returns
-`SM_ERR_NOTFOUND`. The cleaner drops the page quietly, and its next
-reader or writer queues it again.
+The btree reaper takes no lock. A writer can erase a chunk
+between the btree reaper's read of the row and its read of the
+chunk. The chunk is then gone or not settled, and
+`toast_read_settled` returns `SM_ERR_NOTFOUND`. The btree reaper
+drops the page quietly, and its next reader or writer queues it
+again.
 
-The B-tree Index's cleaner judges an entry by its row
+The btree reaper judges an entry by its row
 ([`BTREEINDEX.md`](BTREEINDEX.md)). A key column of the row can
-be out of line, so
-the cleaner must read the value. `toast_read` needs a cursor, and
-a cursor needs a transaction. The cleaner has none, and holds no
-snapshot, so that it never holds back the watermark.
+be out of line, so the btree reaper must read the value.
+`toast_read` needs a cursor, and a cursor needs a transaction.
+The btree reaper has none, and holds no snapshot, so that it
+never holds back the watermark.
 
-**Decision: the cleaner reads each chunk by its key, with a
+**Decision: the btree reaper reads each chunk by its key, with a
 settled read.** A settled read gives a key's newest version, if
 that version is committed at or below the GC watermark. A settled
 row's chunks were written with it or before it, so they are
@@ -221,9 +221,8 @@ The read is `sm1::read_settled_versioned`, not
 ### 2.12 Not built
 
 - **Compression.** [`sm2/VARLENA.md`](sm2/VARLENA.md) specifies
-  the compressed
-  form, and the codec refuses it. Whether sm2 ever compresses a
-  datum is open.
+  the compressed form, and the codec refuses it. Whether sm2 ever
+  compresses a datum is open.
 - **A fetch of part of a datum.** digres reads the whole value
   and then cuts the slice.
 - **A key column stays in line.** A key is held to `max_pk_len`,
@@ -336,7 +335,7 @@ erases nothing. The caller rolls back, and the old row is live.
 | `toast_fetch_settled(rel, ...)` | sm2 | `toast_read_settled`; refuses a pointer of another store |
 | `toast_fetch(session, ...)` | sm2 | `toast_read` of the store that the pointer names; no rel, no store check |
 | `tbl_fetch` | sm3 | `toast_fetch(rel, ...)`, for a host |
-| `fetch_cols` | sm3, `table.cc` | fetches the given columns of a row image in place; settled if the table is the cleaner's |
+| `fetch_cols` | sm3, `table.cc` | fetches the given columns of a row image in place; settled if the table is the btree reaper's |
 | `fetch_for` | sm3, `table.cc` | `fetch_cols` of an index's key, INCLUDE and evaluator columns |
 | `tbl_fetch_cols` | sm3 | `fetch_cols` for a caller outside `table.cc` |
 | `sm_tbl_fetch`, `sm_toast_fetch` | wrapper | `tbl_fetch` and `toast_fetch(session, ...)` |
@@ -357,7 +356,7 @@ not settled and live, or if the bytes are not `len`.
 4. Append the chunk.
 5. Check that the bytes are `len`.
 
-`t->settled` selects the read. `tbl_clean_leaf` sets it on the
+`t->settled` selects the read. `tbl_reap_leaf` sets it on the
 `table_t` that it makes. `still_has` fetches the key columns and
 the evaluator's columns, not the INCLUDE columns, because the
 check compares the key alone.
@@ -455,7 +454,7 @@ it, with `rel_insert` ([`BULKLOAD.md`](BULKLOAD.md)).
 | temporary table | the chunks are in its temporary store, the sequence temporary ([`TEMPTABLE.md`](TEMPTABLE.md)) |
 | keyless table | the ids are from the TOAST sequence, so `_id`s keep no holes |
 | bulk load | §3.9; a rollback undoes the rows inserted, chunks with them |
-| B-tree cleaner | §2.10 |
+| btree reaper | §2.10 |
 | vacuum in `tbl_compact` | runs in a transaction, so `toast_fetch` reads the key |
 | a datum of no bytes | never out of line: `toast_min` is above 0, so an empty read means no datum |
 
@@ -478,7 +477,7 @@ it, with `rel_insert` ([`BULKLOAD.md`](BULKLOAD.md)).
   index would then fetch through the table.
 - **A compare of the bytes under the header for a pointer.** It
   calls a pointer equal to the empty text (§3.6).
-- **A cursor for the cleaner's read.** A cursor needs a
+- **A cursor for the btree reaper's read.** A cursor needs a
   transaction, and a transaction's snapshot holds the watermark
   back (§2.10).
 
@@ -491,7 +490,7 @@ it, with `rel_insert` ([`BULKLOAD.md`](BULKLOAD.md)).
   snapshot's read and a later `SM_ERR_NOTFOUND`; an update that
   sm1 refuses; a key made of a pointer, refused and fetched.
 - `sm3/test/test_toast.cc`: TOAST on and off by host; an index of
-  a column out of line; the cleaner's settled fetch; a build
+  a column out of line; the btree reaper's settled fetch; a build
   after the rows; `ANALYZE`; a failed update; a drop of the
   sequence.
 - `rel/test/test_toast.rel`: TOAST through the C API, across

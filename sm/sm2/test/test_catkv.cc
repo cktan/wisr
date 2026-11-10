@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_catkv.cc -- the catalog key-value store over sm1's store 0
  * (../CATALOG.md §3.1).
  */

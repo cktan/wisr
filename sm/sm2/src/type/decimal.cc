@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * decimal.cc -- decimal64 and decimal128 (TYPE.md §3.4,
  * TYPE.md §5.2): a two's complement integer, little-endian,
  * 8 bytes for decimal64 and 16 for decimal128, holding the value

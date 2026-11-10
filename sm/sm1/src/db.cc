@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * db.cc -- sm1::mkdb, sm1::rmdb, sm1::lsdb, and the
  * column family layout every database shares (../DBMGR.md §6,
  * ../DBMGR.md §4, §7).

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm3.h -- level 3: schema and index maintenance (SM3_DESIGN.md).
  *
  * So far, the catalog (../CATALOG.md): made in a database with
@@ -32,7 +37,7 @@ namespace sm3 {
  * the two, and the first oid handed out, which is PostgreSQL's
  * FirstNormalObjectId: the oids below it are for what is built in,
  * and digres compiles those in with PostgreSQL's own numbers
- * (PART4.md §10).
+ * (PGFORK.md §10).
  */
 constexpr uint64_t nsp_pg_catalog = 11;
 constexpr uint64_t nsp_public = 2200;
@@ -330,6 +335,13 @@ struct table_def_t {
     std::vector<sm2::attribute_t> schema;
     sm2::tup_desc_t               desc;    /* over schema */
     std::vector<index_def_t>      indexes;
+    /*
+     * Its key columns (../LOCKMGR.md §1.13): the key columns of its
+     * unique indexes on columns alone, not partial, but the primary
+     * key, 0-based, ascending, each once. An update that changes
+     * none of them keeps its key.
+     */
+    std::vector<int32_t>          key_columns;
     table_rec_t                   rec;     /* the record it was built from */
 };
 
@@ -1663,7 +1675,9 @@ int tbl_load_open(table_t* table, loader_t*& out);
  * Hand over one row; its _id is known at once. It fails as
  * tbl_insert does for what it sees in the row; a duplicate key
  * fails here once rows are being inserted, and at the close
- * otherwise. After a failure the transaction is to be aborted.
+ * otherwise. After a failure the transaction is to be aborted, but
+ * for SM_ERR_INTERRUPTED: an interrupt to act on (sm_should_stop()),
+ * found before the row went in, so the row may be handed again.
  */
 int tbl_load_add(loader_t* loader, std::span<const sm2::datum_t> values,
                  std::span<const bool> isnull, uint64_t& id);
@@ -1737,12 +1751,13 @@ int tbl_read_latest(table_t* table, uint64_t id, pin_ref_t& ref,
 
 /*
  * Lock the row with _id id in mode without writing it, as
- * sm2::rel_lock does, to the end of the transaction: shared, as a
- * foreign key check locks the parent row and SELECT ... FOR SHARE
- * a row it read, which other readers of the key may share and a
- * writer waits for; or exclusive, as SELECT ... FOR UPDATE. The
- * row need not exist. It waits as a write does. A mode other than
- * shared needs the table opened to write, SM_ERR_INVALID if not.
+ * sm2::rel_lock does, to the end of the transaction, in one of the
+ * row modes (../LOCKMGR.md §1.13): KS, as a foreign key check locks
+ * the parent row, which an update that keeps the row's key passes;
+ * S, as SELECT ... FOR SHARE, which every writer waits for; NKU, as
+ * FOR NO KEY UPDATE; or X, as FOR UPDATE. The row need not exist.
+ * It waits as a write does. NKU and X need the table opened to
+ * write, SM_ERR_INVALID if not.
  * Above read committed, a row committed since the snapshot fails
  * with SM_ERR_CONFLICT, as sm1::lock_row says. The row is one the
  * running statement read (sm1::lock_row's as_read): one the
@@ -1867,41 +1882,45 @@ int tbl_scan_rebound(scan_t* scan, const sm2::bound_t* lo,
                      const sm2::bound_t* hi, bool* widened = nullptr);
 
 /*
- * Attach the btree cleaner to cat (../BTREEINDEX.md §9): whoever finds a
- * tree's leaf not all visible queues it, and workers clean what is
- * queued, each pass on a session open() makes, with no transaction.
+ * Attach the reapers' threads to cat (../BTREEINDEX.md §9.9): whoever
+ * finds a tree's leaf not all visible queues it, and workers reap what
+ * is queued, each pass on a session open() makes, with no transaction.
  * The first worker runs when the system is not busy, or the queue is
- * full; the others only when it is full. Call before the catalog's
- * tables are opened. A test gives no workers, and calls
- * cleaner_run_once. open may be called from any worker.
+ * full; the others only when it is full. The first also runs the row
+ * reaper's pass (../GC.md §13.5) when row_pending, asked with no
+ * session, says keys wait; with none, it runs no row pass. Call before
+ * the catalog's tables are opened. A test gives no workers, and calls
+ * btree_reaper_run_once. open and row_pending may be called from any
+ * worker.
  */
-int cleaner_attach(catalog_t* cat, std::function<sm1::session_t*()> open,
-                   size_t workers = 4);
+int btree_reaper_attach(catalog_t* cat, std::function<sm1::session_t*()> open,
+                        size_t workers = 4,
+                        std::function<size_t()> row_pending = {});
 
 /*
  * Stop and join cat's workers; a no-op with none. The queue stays until
  * the catalog closes, as an open index holds it.
  */
-void cleaner_detach(catalog_t* cat);
+void btree_reaper_detach(catalog_t* cat);
 
 /*
- * One pass of the cleaner, on the calling thread, of at most budget
- * pages: 0, or -1. For tests.
+ * One pass of the reapers, on the calling thread: the btree reaper's,
+ * of at most budget pages, then the row reaper's. 0, or -1. For tests.
  */
-int cleaner_run_once(catalog_t* cat, size_t budget = SIZE_MAX);
+int btree_reaper_run_once(catalog_t* cat, size_t budget = SIZE_MAX);
 
 /* The pages on cat's queue: for tests. */
-size_t cleaner_queued(const catalog_t* cat);
+size_t btree_reaper_queued(const catalog_t* cat);
 
 /*
- * Clean page pageid of the tree relid of the table def describes, as
- * VACUUM cleans a leaf, on a session whose sm1 session is set for no
+ * Reap page pageid of the tree relid of the table def describes, as
+ * VACUUM reaps a leaf, on a session whose sm1 session is set for no
  * transaction (sm1::set_no_transaction): no lock, no transaction
  * (../BTREEINDEX.md §9). publishes is cat_publishes, read before def was
  * fetched. 0, doubt set if an entry is left in doubt; 1 if there is
- * nothing to clean, the index gone or the page no leaf; or -1.
+ * nothing to reap, the index gone or the page no leaf; or -1.
  */
-int tbl_clean_leaf(session_t* session, std::shared_ptr<const table_def_t> def,
+int tbl_reap_leaf(session_t* session, std::shared_ptr<const table_def_t> def,
                    uint64_t publishes, uint16_t relid, uint64_t pageid,
                    bool& doubt);
 

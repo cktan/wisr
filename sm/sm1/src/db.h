@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * db.h -- the layout of one database directory: its column
  * families, their options, and CF:meta's keys (../DBMGR.md §6).
  */
@@ -6,6 +11,7 @@
 #define WISR_DB_H
 
 #include "bufpool.h"
+#include "hintq.h"
 #include "locktab.h"
 #include "sm0_blist.h"
 #include "sm1.h"
@@ -513,6 +519,16 @@ struct db_t {
   std::multiset<uint64_t> snapshots;
 
   /*
+   * A copy of the watermark, stored under snap_mu each time a
+   * snapshot is taken, registered or released, and read with no
+   * mutex. It may be stale but never above the watermark, as the
+   * watermark never moves backwards: a version committed at or
+   * below it is settled (../GC.md §13.3). The reader's push to the
+   * row reaper uses it (../GC.md §13.5).
+   */
+  std::atomic<uint64_t> watermark_cache{0};
+
+  /*
    * When each registered snapshot was taken, and those already
    * warned about, for the warning about a snapshot holding back
    * GC for over stuck_warn_secs. Guarded by snap_mu.
@@ -532,25 +548,26 @@ struct db_t {
   std::mutex gc_mu;
   std::condition_variable gc_cv;
   bool gc_stopping = false;
-  struct purge_t {
-    uint64_t storeid;
-    std::string key; /* the tombstone's version key */
-  };
-  std::vector<purge_t> purges;
-  /* The purges queued, each once, by purge_id() (../PURGE_PLAN.md §2.4). */
-  std::unordered_set<std::string> purge_ids;
+  /*
+   * The tombstones to purge: each record holds the store and the
+   * tombstone's version key. A bounded hint, with each key queued
+   * once until the worker takes the queue (../PURGE_PLAN.md §2.4).
+   */
+  hint_queue_t purges;
   /*
    * Chained keys whose newest version is a dead transaction's (xid),
    * which the compaction filter found, for the worker to put back
-   * (../GC.md §4.2). A key queued twice finds nothing to do the
-   * second time.
+   * (../GC.md §4.2). A bounded hint: a key it drops is reported
+   * again by the next compaction that meets it.
    */
-  struct repair_t {
-    uint64_t storeid;
-    std::string key;
-    uint64_t xid;
-  };
-  std::vector<repair_t> repairs;
+  hint_queue_t repairs;
+  /*
+   * Chained keys whose CURR a reader saw committed with a prev, for
+   * the row reaper's pass to cut the chain behind it once it is
+   * settled (../GC.md §13.5). A bounded hint: a key it drops is
+   * queued again by the next read.
+   */
+  hint_queue_t reaps;
   std::multimap<uint64_t, uint64_t> drops; /* commit_ts -> storeid */
   std::thread gc_thread;
   std::mutex gc_run_mu; /* one gc_run_once at a time */
@@ -795,7 +812,7 @@ void gc_queue_drops(db_t *db, uint64_t commit_ts,
 void chain_report(db_t *db, uint64_t storeid, rocksdb::Slice key, uint64_t xid);
 
 /* Put back each queued chained key (chain.cc). */
-void chain_repair(db_t *db, const std::vector<db_t::repair_t> &repairs);
+void chain_repair(db_t *db, const hint_queue_t::batch_t &repairs);
 
 /*
  * The id after the store's last old version, for next_old: 1 if it

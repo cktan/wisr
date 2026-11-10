@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # rowset.py -- psql's output with each unordered result's rows sorted, so
 # that two outputs compare as SQL compares results: a query without ORDER
 # BY returns a multiset of rows, in whatever order its plan reads them. A

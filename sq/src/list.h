@@ -14,6 +14,11 @@
  * outgrows them moves them to an array of its own, which grows by the
  * tree's realloc. A server whose allocator the tree uses so grows and
  * frees sq's lists with its own functions.
+ *
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for sq,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  */
 #ifndef SQ_SRC_LIST_H
 #define SQ_SRC_LIST_H

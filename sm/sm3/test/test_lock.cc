@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_lock.cc -- table-oid locks (../CATALOG.md §1, §6):
  * readers and writers of a table coexist, and DDL waits for them
  * and they for it.

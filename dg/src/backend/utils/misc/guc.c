@@ -15,6 +15,8 @@
  *
  *
  * Copyright (c) 2000-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  * Written by Peter Eisentraut <peter_e@gmx.net>.
  *
  * IDENTIFICATION
@@ -552,9 +554,12 @@ ConfigVariable *ProcessConfigFileInternal(GucContext context,
    * Remember when we last successfully loaded the config file: the main
    * thread's load, which each session's follows.
    */
-  if (applySettings && !IsSessionThread)
+  if (applySettings && !IsSessionThread) {
     pcb_main()->PgReloadTime.store(GetCurrentTimestamp(),
                                    std::memory_order_relaxed);
+    /* Threads read the settings they share from shmem, not their own copy. */
+    publish_shared_settings();
+  }
 
 bail_out:
   if (error && applySettings) {
@@ -3917,7 +3922,7 @@ void AlterSystemSetConfigFile(AlterSystemStmt *altersysstmt) {
    */
   name = altersysstmt->setstmt->name;
 
-  if (!AllowAlterSystem)
+  if (!shmem->allow_alter_system.load(std::memory_order_relaxed))
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("ALTER SYSTEM is not allowed in this environment")));
 

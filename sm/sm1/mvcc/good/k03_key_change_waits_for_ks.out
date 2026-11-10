@@ -1,0 +1,51 @@
+# k03 -- an update that changes the key waits for a key-share lock.
+#
+# T1 holds R1 in KS. T2's update changes a key column, so it writes
+# in X, which KS refuses: T2 waits until T1 commits, and then
+# writes. T1 wrote nothing, so T2 has no conflict.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 lock R1 keyshare -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T1 commit -> ok
+@3 T2 write R1 t2 blocks -> ok (resumed)
+@5 check last T2 ok -> satisfied
+@6 T2 commit -> ok
+@7 check committed T1 T2 -> satisfied
+@8 check row R1 t2 -> satisfied
+== pairing RR/S == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 lock R1 keyshare -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T1 commit -> ok
+@3 T2 write R1 t2 blocks -> ok (resumed)
+@5 check last T2 ok -> satisfied
+@6 T2 commit -> ok
+@7 check committed T1 T2 -> satisfied
+@8 check row R1 t2 -> satisfied
+== pairing S/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 lock R1 keyshare -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T1 commit -> ok
+@3 T2 write R1 t2 blocks -> ok (resumed)
+@5 check last T2 ok -> satisfied
+@6 T2 commit -> ok
+@7 check committed T1 T2 -> satisfied
+@8 check row R1 t2 -> satisfied
+== pairing S/S == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 lock R1 keyshare -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T1 commit -> ok
+@3 T2 write R1 t2 blocks -> ok (resumed)
+@5 check last T2 ok -> satisfied
+@6 T2 commit -> ok
+@7 check committed T1 T2 -> satisfied
+@8 check row R1 t2 -> satisfied

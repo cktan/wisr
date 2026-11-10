@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_locktab.cc -- the lock table alone (src/locktab.h): ids,
  * Gray's modes and opaque owners, with no session, wait or
  * database. test_lock.cc tests the lock manager on top of it
@@ -66,6 +71,46 @@ TEST_CASE("locktab: Gray's modes conflict and convert as his table says") {
   CHECK(lock_cover(SM_LOCKMODE_IX, SM_LOCKMODE_SH) == SM_LOCKMODE_SIX);
   CHECK(lock_cover(SM_LOCKMODE_SH, SM_LOCKMODE_IX) == SM_LOCKMODE_SIX);
   CHECK(lock_cover(SM_LOCKMODE_SIX, SM_LOCKMODE_SH) == SM_LOCKMODE_SIX);
+}
+
+TEST_CASE("locktab: the row modes conflict and convert as PostgreSQL's do") {
+  // Verify KS, S, NKU and X against PostgreSQL's row lock table
+  // (../LOCKMGR.md §1.13), and that no row mode meets an intention
+  // mode.
+  // 1. Check compatibility of the four row modes, both ways round.
+  // 2. Check each conversion: to the weakest mode covering both.
+  // 3. Check that KS and NKU never share with IS, IX or SIX.
+  const sm_lockmode_t row[] = {SM_LOCKMODE_KS, SM_LOCKMODE_SH, SM_LOCKMODE_NKU,
+                               SM_LOCKMODE_EX};
+  const bool ok[4][4] = {
+      {true, true, true, false},
+      {true, true, false, false},
+      {true, false, false, false},
+      {false, false, false, false},
+  };
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 4; j++) {
+      CHECK(lock_compatible(row[i], row[j]) == ok[i][j]);
+      CHECK(lock_compatible(row[j], row[i]) == ok[i][j]);
+    }
+  }
+  const sm_lockmode_t cover[4][4] = {
+      {SM_LOCKMODE_KS, SM_LOCKMODE_SH, SM_LOCKMODE_NKU, SM_LOCKMODE_EX},
+      {SM_LOCKMODE_SH, SM_LOCKMODE_SH, SM_LOCKMODE_EX, SM_LOCKMODE_EX},
+      {SM_LOCKMODE_NKU, SM_LOCKMODE_EX, SM_LOCKMODE_NKU, SM_LOCKMODE_EX},
+      {SM_LOCKMODE_EX, SM_LOCKMODE_EX, SM_LOCKMODE_EX, SM_LOCKMODE_EX},
+  };
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 4; j++) {
+      CHECK(lock_cover(row[i], row[j]) == cover[i][j]);
+    }
+  }
+  for (sm_lockmode_t m : {SM_LOCKMODE_KS, SM_LOCKMODE_NKU}) {
+    for (sm_lockmode_t g : {SM_LOCKMODE_IS, SM_LOCKMODE_IX, SM_LOCKMODE_SIX}) {
+      CHECK(!lock_compatible(m, g));
+      CHECK(!lock_compatible(g, m));
+    }
+  }
 }
 
 TEST_CASE("locktab: an entry is made by its first hold and goes with its "

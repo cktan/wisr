@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * collation.cc -- collations for text and varchar keys, through
  * ICU (../LSMINDEX.md §2.3): opened by locale, carrying ICU's
  * collator version, and refused when that version is not the one

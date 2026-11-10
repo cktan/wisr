@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * error.h -- setting the calling thread's error state.
  *
  * The setters are sm0's (sm0_error.h), brought into namespace

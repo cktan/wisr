@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # slt.sh -- run the sqllogictest files under test/slt on a server, with
 # build/slt, each in a database of its own (test/slt/README.md).
 #

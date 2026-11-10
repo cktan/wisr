@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_chain.cc -- chained stores (../ROWSTORE.md): their column
  * family, and the chain_ calls on them.
  */
@@ -666,9 +671,11 @@ TEST_CASE("compaction reports a dead chained version, and GC puts it back") {
   // readers pass them, and the compaction filter queues the key for
   // the GC worker, which puts the version before them back.
   // 1. Insert k = v1 and n = n1 and commit; update k to v2 and v3,
-  //    insert m, delete n, and abort.
+  //    insert m, delete n, and abort. Commit another store, so a
+  //    snapshot is past the dead versions' timestamps.
   // 2. Readers see k = v1, n = n1 and no m; the dead versions are
-  //    still each key's newest, and a read queues nothing.
+  //    still each key's newest, and the reads queue the three keys,
+  //    once each.
   // 3. Compact, and run GC once: k's newest version is v1 again, n's
   //    n1, and m's key is gone; the old versions passed are unlinked.
   chain_fixture_t f;
@@ -681,7 +688,13 @@ TEST_CASE("compaction reports a dead chained version, and GC puts it back") {
   REQUIRE(sm1::chain_insert(f.s, c, "m", "m1") == 0);
   REQUIRE(sm1::chain_erase(f.s, c, "n") == 0);
   REQUIRE(sm1::abort(f.s) == 0);
+  // A commit past the dead versions' timestamps: a reader's snapshot
+  // then reaches them, and finds their writer dead.
+  mkchain(f.s);
 
+  // Hold gc_run_mu, which a GC run takes first, so the database's own
+  // GC thread takes nothing from the queue meanwhile.
+  std::unique_lock<std::mutex> run(f.s->db->gc_run_mu);
   begin_xct(f.s);
   CHECK(chain_get(f.s, c, "k") == "v1");
   CHECK(chain_get(f.s, c, "n") == "n1");
@@ -694,10 +707,8 @@ TEST_CASE("compaction reports a dead chained version, and GC puts it back") {
   CHECK(payload == "v3");
   curr_of(f.s, c, "m", &payload);
   CHECK(payload == "m1");
-  {
-    std::lock_guard<std::mutex> guard(f.s->db->gc_mu);
-    CHECK(f.s->db->repairs.empty());
-  }
+  CHECK(f.s->db->repairs.size() == 3);
+  run.unlock();
 
   compact_chain(f.s, c);
   gc_run_once(f.s->db);
@@ -1087,6 +1098,52 @@ std::vector<std::string> batch_reads(sm1::session_t *s, uint64_t storeid,
 
 } // namespace
 
+TEST_CASE("a read reports a dead chained version, and GC puts it back") {
+  // Verify each kind of read queues the dead newest version it passes
+  // (../GC.md §4.2), so a repair needs no compaction.
+  // 1. Insert p, b and s, commit, then update each and abort: each
+  //    key's newest version is dead. Commit another store, so a
+  //    snapshot is past the dead versions' timestamps.
+  // 2. Read p by a point read, b by a batch read and s by a cursor,
+  //    then read all three again.
+  // 3. The queue holds the three keys, once each.
+  // 4. Run GC once, with no compaction: each key's newest version is
+  //    the one before the abort.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  for (const char *k : {"p", "b", "s"}) {
+    chain_put(f.s, c, k, std::string(k) + "1", true);
+  }
+  begin_xct(f.s);
+  for (const char *k : {"p", "b", "s"}) {
+    REQUIRE(sm1::chain_update(f.s, c, k, "dead") == 0);
+  }
+  REQUIRE(sm1::abort(f.s) == 0);
+  // A commit past the dead versions' timestamps: a reader's snapshot
+  // then reaches them, and finds their writer dead.
+  mkchain(f.s);
+
+  {
+    // Hold gc_run_mu, so the database's own GC thread takes nothing.
+    std::lock_guard<std::mutex> run(f.s->db->gc_run_mu);
+    for (int round = 0; round < 2; round++) {
+      begin_xct(f.s);
+      CHECK(chain_get(f.s, c, "p") == "p1");
+      CHECK(batch_reads(f.s, c, {"b"}) == std::vector<std::string>{"b1"});
+      CHECK(chain_rows(f.s, c, "s", 1, "s", 1) ==
+            std::vector<std::string>{"s=s1"});
+      commit_xct(f.s);
+    }
+    CHECK(f.s->db->repairs.size() == 3);
+  }
+  gc_run_once(f.s->db);
+  for (const char *k : {"p", "b", "s"}) {
+    std::string payload;
+    curr_of(f.s, c, k, &payload);
+    CHECK(payload == std::string(k) + "1");
+  }
+}
+
 TEST_CASE("a batch read gives each key's row as a single read does") {
   // Verify sm1::chain_read_batch against sm1::chain_read
   // (../ROWSTORE.md).
@@ -1390,4 +1447,545 @@ TEST_CASE("rows of an ascending batch stay in their pins past the call") {
     sm1::unpin(p);
   }
   commit_xct(f.s);
+}
+
+namespace {
+
+/* What a key_kept_fn saw, and what it answers. */
+struct kept_probe_t {
+  bool answer = true;
+  int calls = 0;
+  std::string old_row, new_row;
+};
+
+/* A key_kept_fn that records its rows and answers the probe's answer. */
+bool probe_kept(void *ctx, std::string_view old_row,
+                std::string_view new_row) noexcept {
+  auto *p = static_cast<kept_probe_t *>(ctx);
+  p->calls++;
+  p->old_row = std::string(old_row);
+  p->new_row = std::string(new_row);
+  return p->answer;
+}
+
+} // namespace
+
+TEST_CASE("an update that keeps its key is flagged, and passes a KS lock") {
+  // Verify the NKU write of ../LOCKMGR.md §1.13 against KS.
+  // 1. Insert k = v1, then hold k in KS in session t.
+  // 2. Update k to v2 with a kept that says yes: it does not wait,
+  //    and kept saw v1 and v2.
+  // 3. Confirm CURR's version is flagged key-kept.
+  // 4. A KS lock of another session passes over the version in flight;
+  //    an S lock would wait, so trylock in S answers 1.
+  // 5. Commit all; update k to v3 with no kept: the version is not
+  //    flagged, and OLD's copy of v2 keeps its flag.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  sm1::session_t *t = f.open();
+  sm1::session_t *u = f.open();
+  begin_xct(t);
+  REQUIRE(sm1::chain_lock_row(t, c, "k", sm1::SM_LOCKMODE_KS) == 0);
+
+  kept_probe_t probe;
+  begin_xct(f.s);
+  REQUIRE_MESSAGE(sm1::chain_update(f.s, c, "k", "v2", probe_kept, &probe) == 0,
+                  sm1::errmsg());
+  CHECK(probe.calls == 1);
+  CHECK(probe.old_row == "v1");
+  CHECK(probe.new_row == "v2");
+  std::string buf;
+  CHECK((raw_version(f.s, c, false, "k", "", buf).flags & version_key_kept));
+
+  begin_xct(u, sm1::xctlevel_t::repeatable_read);
+  CHECK(sm1::chain_trylock_row(u, c, "k", sm1::SM_LOCKMODE_KS) == 0);
+  CHECK(sm1::chain_trylock_row(u, c, "k", sm1::SM_LOCKMODE_SH) == 1);
+  commit_xct(f.s);
+  commit_xct(t);
+  commit_xct(u);
+
+  chain_put(f.s, c, "k", "v3", false);
+  CHECK(!(raw_version(f.s, c, false, "k", "", buf).flags & version_key_kept));
+  CHECK((raw_version(f.s, c, true, "k", "v2", buf).flags & version_key_kept));
+}
+
+TEST_CASE("an update that changes its key waits for KS, and KS waits for it") {
+  // Verify that a key-changing write is X: it meets KS both ways.
+  // 1. Hold k in KS in session t.
+  // 2. In another thread, update k with a kept that says no: it waits.
+  // 3. Commit t: the update goes in, unflagged.
+  // 4. With the update in flight, a KS trylock answers 1.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  sm1::session_t *t = f.open();
+  sm1::session_t *u = f.open();
+  begin_xct(t);
+  REQUIRE(sm1::chain_lock_row(t, c, "k", sm1::SM_LOCKMODE_KS) == 0);
+
+  kept_probe_t probe;
+  probe.answer = false;
+  std::atomic<int> done{-2};
+  std::thread th([&] {
+    REQUIRE(sm1::begin(f.s, sm1::xctlevel_t::read_committed) == 0);
+    done = sm1::chain_update(f.s, c, "k", "v2", probe_kept, &probe);
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  CHECK(done == -2);
+  commit_xct(t);
+  th.join();
+  REQUIRE(done == 0);
+  std::string buf;
+  CHECK(!(raw_version(f.s, c, false, "k", "", buf).flags & version_key_kept));
+
+  begin_xct(u);
+  CHECK(sm1::chain_trylock_row(u, c, "k", sm1::SM_LOCKMODE_KS) == 1);
+  commit_xct(f.s);
+  CHECK(sm1::chain_trylock_row(u, c, "k", sm1::SM_LOCKMODE_KS) == 0);
+  commit_xct(u);
+}
+
+TEST_CASE("KS's currency check passes a committed update that kept the key") {
+  // Verify the check of ../LOCKMGR.md §1.6 in KS, above read committed.
+  // 1. Begin three repeatable read readers of k = v1.
+  // 2. Update k to v2, keeping the key, and commit.
+  // 3. The first reader's KS lock is taken; the second's S lock fails
+  //    with SM_ERR_CONFLICT.
+  // 4. Update k to v3, changing the key, and commit: the third
+  //    reader's KS lock fails with SM_ERR_CONFLICT, though v2 kept it.
+  // A conflict ends its transaction, so neither failed reader aborts.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  sm1::session_t *r[3];
+  for (sm1::session_t *&s : r) {
+    s = f.open();
+    begin_xct(s, sm1::xctlevel_t::repeatable_read);
+    CHECK(chain_get(s, c, "k") == "v1");
+  }
+  kept_probe_t probe;
+  begin_xct(f.s);
+  REQUIRE(sm1::chain_update(f.s, c, "k", "v2", probe_kept, &probe) == 0);
+  commit_xct(f.s);
+
+  CHECK(sm1::chain_lock_row(r[0], c, "k", sm1::SM_LOCKMODE_KS) == 0);
+  commit_xct(r[0]);
+  CHECK(sm1::chain_lock_row(r[1], c, "k", sm1::SM_LOCKMODE_SH) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
+
+  chain_put(f.s, c, "k", "v3", false);
+  CHECK(sm1::chain_lock_row(r[2], c, "k", sm1::SM_LOCKMODE_KS) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
+}
+
+TEST_CASE("an update over the writer's own key change is not flagged") {
+  // Verify that the flag says the key is the last committed version's.
+  // 1. In one transaction, update k changing the key, then again with a
+  //    kept that says yes: neither version is flagged, and kept is
+  //    not asked, as the version it would compare against changed it.
+  // 2. A KS trylock of another session answers 1: it waits for the
+  //    writer, as for any key change.
+  // 3. In one transaction, insert j, then update it with a kept that
+  //    says yes: the update is not flagged, and KS waits for it.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  sm1::session_t *u = f.open();
+  kept_probe_t no, yes;
+  no.answer = false;
+  begin_xct(f.s);
+  REQUIRE(sm1::chain_update(f.s, c, "k", "v2", probe_kept, &no) == 0);
+  REQUIRE(sm1::chain_update(f.s, c, "k", "v3", probe_kept, &yes) == 0);
+  CHECK(yes.calls == 0);
+  std::string buf;
+  CHECK(!(raw_version(f.s, c, false, "k", "", buf).flags & version_key_kept));
+  begin_xct(u);
+  CHECK(sm1::chain_trylock_row(u, c, "k", sm1::SM_LOCKMODE_KS) == 1);
+
+  REQUIRE(sm1::chain_insert(f.s, c, "j", "w1") == 0);
+  REQUIRE(sm1::chain_update(f.s, c, "j", "w2", probe_kept, &yes) == 0);
+  CHECK(!(raw_version(f.s, c, false, "j", "", buf).flags & version_key_kept));
+  CHECK(sm1::chain_trylock_row(u, c, "j", sm1::SM_LOCKMODE_KS) == 1);
+  commit_xct(f.s);
+  CHECK(sm1::chain_trylock_row(u, c, "k", sm1::SM_LOCKMODE_KS) == 0);
+  commit_xct(u);
+}
+
+namespace {
+
+/* The CURR version of key in the chained store c, decoded. */
+chain_version_t curr_of(sm1::session_t *s, uint64_t c, const std::string &k) {
+  std::string buf;
+  return raw_version(s, c, false, k, "", buf);
+}
+
+/* Read key in its own read committed transaction: what a reader sees. */
+std::string read_one(sm1::session_t *s, uint64_t c, std::string_view k) {
+  begin_xct(s);
+  std::string v = chain_get(s, c, k);
+  commit_xct(s);
+  return v;
+}
+
+} // namespace
+
+TEST_CASE("the row reaper cuts the chain behind a settled CURR a reader saw") {
+  // Verify the row pass of ../GC.md §13.5.
+  // 1. Insert k and update it four times: four OLD entries.
+  // 2. Read k: the reader queues it, as row_reaps_pending says.
+  // 3. Run a pass: it reaps k, no OLD entry is left, and CURR has no
+  //    prev and reads the last value.
+  // 4. Read k again: with no prev, it is not queued.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  for (const char *v : {"v2", "v3", "v4", "v5"}) {
+    chain_put(f.s, c, "k", v, false);
+  }
+  std::vector<std::string> payloads;
+  CHECK(old_entries(f.s, c, &payloads).size() == 4);
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
+  CHECK(read_one(f.s, c, "k") == "v5");
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 1);
+
+  CHECK(sm1::row_reap_pass(f.s) == 1);
+  payloads.clear();
+  CHECK(old_entries(f.s, c, &payloads).empty());
+  CHECK(curr_of(f.s, c, "k").prev == 0);
+  CHECK(read_one(f.s, c, "k") == "v5");
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
+  CHECK(sm1::row_reaps_pending(f.home.env(), "none") == 0);
+}
+
+TEST_CASE("the row reaper leaves a chain a snapshot still needs") {
+  // Verify that a CURR not settled is skipped, and reaped once it is.
+  // 1. A repeatable read reader t reads k = v1, holding W back.
+  // 2. Update k twice, then read it in another transaction: not queued,
+  //    as CURR committed above W (../GC.md §13.5).
+  // 3. A pass reaps nothing, and t still reads v1 through the chain.
+  // 4. t ends. Read k again: queued, and a pass reaps it.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  sm1::session_t *t = f.open();
+  begin_xct(t, sm1::xctlevel_t::repeatable_read);
+  CHECK(chain_get(t, c, "k") == "v1");
+  chain_put(f.s, c, "k", "v2", false);
+  chain_put(f.s, c, "k", "v3", false);
+  CHECK(read_one(f.s, c, "k") == "v3");
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
+  CHECK(sm1::row_reap_pass(f.s) == 0);
+  CHECK(chain_get(t, c, "k") == "v1");
+  commit_xct(t);
+
+  CHECK(read_one(f.s, c, "k") == "v3");
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 1);
+  CHECK(sm1::row_reap_pass(f.s) == 1);
+  std::vector<std::string> payloads;
+  CHECK(old_entries(f.s, c, &payloads).empty());
+}
+
+TEST_CASE("a reader queues a key only once its CURR is settled") {
+  // Verify the reader's push tests CURR against the cached watermark, in
+  // a point read and in a cursor alike (../GC.md §13.5).
+  // 1. A repeatable read reader t reads k, holding W back.
+  // 2. Update k twice. A point read and a cursor of another session see
+  //    CURR, which committed above W: nothing is queued.
+  // 3. t ends, and W moves up.
+  // 4. A cursor of another session sees CURR, now settled: k is queued.
+  // 5. A pass reaps k.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  sm1::session_t *t = f.open();
+  begin_xct(t, sm1::xctlevel_t::repeatable_read);
+  CHECK(chain_get(t, c, "k") == "v1");
+  chain_put(f.s, c, "k", "v2", false);
+  chain_put(f.s, c, "k", "v3", false);
+  CHECK(read_one(f.s, c, "k") == "v3");
+  begin_xct(f.s);
+  CHECK(chain_rows(f.s, c, nullptr, 0, nullptr, 0) ==
+        std::vector<std::string>{"k=v3"});
+  commit_xct(f.s);
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
+  commit_xct(t);
+
+  begin_xct(f.s);
+  CHECK(chain_rows(f.s, c, nullptr, 0, nullptr, 0) ==
+        std::vector<std::string>{"k=v3"});
+  commit_xct(f.s);
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 1);
+  CHECK(sm1::row_reap_pass(f.s) == 1);
+}
+
+TEST_CASE("a key with no chain, a reader's own write and a temporary store "
+          "are not queued") {
+  // Verify the reader's push of ../GC.md §13.5 queues nothing it need not.
+  // 1. Insert k and read it: no prev, not queued.
+  // 2. Update k and read it in the same transaction: the reader's own
+  //    version, not queued.
+  // 3. In a temporary chained store, update a key and read it: not
+  //    queued.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  CHECK(read_one(f.s, c, "k") == "v1");
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
+  begin_xct(f.s);
+  REQUIRE(sm1::chain_update(f.s, c, "k", "v2") == 0);
+  CHECK(chain_get(f.s, c, "k") == "v2");
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
+  commit_xct(f.s);
+
+  uint64_t tmp = 0;
+  begin_xct(f.s);
+  REQUIRE(sm1::mkstore(f.s, tmp, true, true) == 0);
+  REQUIRE(sm1::chain_insert(f.s, tmp, "t", "w1") == 0);
+  commit_xct(f.s);
+  begin_xct(f.s);
+  REQUIRE(sm1::chain_update(f.s, tmp, "t", "w2") == 0);
+  commit_xct(f.s);
+  CHECK(read_one(f.s, tmp, "t") == "w2");
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
+}
+
+TEST_CASE("a writer that aborts after a reap puts the reaped version back") {
+  // Verify the repair of ../GC.md §13.3 part 4 after a row pass.
+  // 1. Update k, read it, and reap it: CURR has no prev.
+  // 2. Update k again, uncommitted, then abort.
+  // 3. A read sees the reaped version, whose OLD copy the writer made.
+  // 4. A pass with stop set reaps nothing, and leaves the queue taken.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  chain_put(f.s, c, "k", "v2", false);
+  CHECK(read_one(f.s, c, "k") == "v2");
+  REQUIRE(sm1::row_reap_pass(f.s) == 1);
+  begin_xct(f.s);
+  REQUIRE(sm1::chain_update(f.s, c, "k", "v3") == 0);
+  REQUIRE(sm1::abort(f.s) == 0);
+  CHECK(read_one(f.s, c, "k") == "v2");
+
+  chain_put(f.s, c, "k", "v4", false);
+  CHECK(read_one(f.s, c, "k") == "v4");
+  std::atomic<bool> stop{true};
+  CHECK(sm1::row_reap_pass(f.s, &stop) == 0);
+  CHECK(sm1::row_reaps_pending(f.home.env(), "db") == 0);
+}
+
+TEST_CASE("the row reaper writes CURR again stamped with its commit_ts") {
+  // Verify CURR outlives its writer's status record once reaped: a CF:txn
+  // sweep that stamped the stored CURR deletes the record, so the copy the
+  // reaper writes must carry the stamp itself (../GC.md §1, §13.5).
+  // 1. Insert k and update it: with no compaction, CURR is unstamped.
+  // 2. Note its writer's commit_ts from the status record.
+  // 3. Read k and reap it.
+  // 4. CURR is stamped with that commit_ts, has no prev, and reads v2.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  chain_put(f.s, c, "k", "v2", false);
+  chain_version_t before = curr_of(f.s, c, "k");
+  REQUIRE(!(before.flags & version_stamped));
+  uint64_t ts = 0;
+  REQUIRE(XCT_COMMITTED == xct_status(f.s->db, before.xid, &ts));
+
+  CHECK(read_one(f.s, c, "k") == "v2");
+  REQUIRE(sm1::row_reap_pass(f.s) == 1);
+  chain_version_t after = curr_of(f.s, c, "k");
+  CHECK((after.flags & version_stamped));
+  CHECK(after.commit_ts == ts);
+  CHECK(after.prev == 0);
+  CHECK(read_one(f.s, c, "k") == "v2");
+}
+
+#ifndef NDEBUG
+namespace {
+
+/* What the sweep started in the reap hook returned; -2 before it ran. */
+std::atomic<int64_t> g_hook_sweep{-2};
+
+/* A reap hook that starts a CF:txn sweep where a race would run it. */
+void sweep_in_reap(db_t *db) { g_hook_sweep = gc_sweep_txn(db, true); }
+
+/* Empty the commit cache, as eviction or a restart would. */
+void evict_commit_cache(db_t *db) {
+  std::lock_guard<std::mutex> guard(db->txn_mu);
+  for (db_t::cache_slot_t &slot : db->cache) {
+    slot.xid = 0;
+  }
+}
+
+} // namespace
+
+TEST_CASE(
+    "a CF:txn sweep that overlaps a reap leaves the reaped row readable") {
+  // Verify the race a review found: a sweep run between the reaper's read
+  // of CURR's status and its write, then the status record deleted and the
+  // commit cache emptied (../GC.md §1, §13.5).
+  // 1. Insert k and update it four times: CURR is unstamped, with a chain.
+  // 2. Read k, so that it is queued.
+  // 3. Reap, with the hook starting a sweep at the race point: the sweep
+  //    stamps the stored CURR, and waits for the reaper's read epoch.
+  // 4. After the pass, finish the sweep: it deletes the status records.
+  // 5. Empty the commit cache, and read k: it is v5, not gone.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  for (const char *v : {"v2", "v3", "v4", "v5"}) {
+    chain_put(f.s, c, "k", v, false);
+  }
+  REQUIRE(!(curr_of(f.s, c, "k").flags & version_stamped));
+  CHECK(read_one(f.s, c, "k") == "v5");
+
+  g_hook_sweep = -2;
+  g_reap_hook = sweep_in_reap;
+  int64_t reaped = sm1::row_reap_pass(f.s);
+  g_reap_hook = nullptr;
+  REQUIRE(reaped == 1);
+  CHECK(g_hook_sweep == 0);
+  CHECK(gc_sweep_txn(f.s->db, false) > 0);
+
+  evict_commit_cache(f.s->db);
+  CHECK(read_one(f.s, c, "k") == "v5");
+}
+#endif
+
+TEST_CASE("the row reaper reaps beside writers and readers of the same keys") {
+  // Verify the row pass races nothing it shares keys with (../GC.md
+  // §13.5), for the thread sanitizer (make tsan) as for a plain build.
+  // 1. Insert 8 keys. Two writers each own 4, and update each of them 150
+  //    times, a value k<i>:<n> with n rising for its key.
+  // 2. Two readers at read committed read keys at random, which queues
+  //    them: each value is its key's, and n never goes back.
+  // 3. A repeatable read reader reads every key, waits, and reads them
+  //    again: the same values, as a pass spares a chain it needs.
+  // 4. A reaper thread runs passes on a session of its own, as the pool
+  //    does, until the others end. Readers queue only a settled CURR, and
+  //    none settles while the writers run, so the readers and the reaper
+  //    go on for 100 ms after the writers end: it reaps some keys then.
+  // 5. After all end, every key is read and a last pass runs: no OLD
+  //    entry is left, and each key reads its writer's last value.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  constexpr int keys = 8, writes = 300;
+  auto key_of = [](int i) { return "k" + std::to_string(i); };
+  for (int i = 0; i < keys; i++) {
+    chain_put(f.s, c, key_of(i), key_of(i) + ":0", true);
+  }
+  std::atomic<bool> writing{true}, stop{false};
+  std::atomic<int> errors{0};
+  std::atomic<int64_t> reaped{0};
+  std::vector<int> last_n(keys, 0);
+  auto fail = [&](const char *) { errors++; };
+  auto value_n = [&](int i, std::string_view v) {
+    std::string prefix = key_of(i) + ":";
+    if (v.substr(0, prefix.size()) != prefix) {
+      return -1;
+    }
+    return atoi(std::string(v.substr(prefix.size())).c_str());
+  };
+  std::vector<std::thread> threads;
+  for (int w = 0; w < 2; w++) {
+    sm1::session_t *s = f.open();
+    threads.emplace_back([&, s, w] {
+      for (int n = 1; n <= writes / 2; n++) {
+        for (int i = w; i < keys; i += 2) {
+          if (0 != sm1::begin(s, sm1::xctlevel_t::read_committed) ||
+              0 != sm1::chain_update(s, c, key_of(i),
+                                     key_of(i) + ":" + std::to_string(n)) ||
+              0 != sm1::commit(s)) {
+            fail("write");
+            sm1::abort(s);
+          }
+        }
+      }
+      // The final value of each of its keys, read after all end.
+      for (int i = w; i < keys; i += 2) {
+        last_n[i] = writes / 2;
+      }
+    });
+  }
+  for (int r = 0; r < 2; r++) {
+    sm1::session_t *s = f.open();
+    threads.emplace_back([&, s, r] {
+      std::vector<int> seen(keys, 0);
+      for (unsigned i = r; writing.load(); i = i * 5 + 3) {
+        int k = static_cast<int>(i % keys);
+        std::string_view v;
+        if (0 != sm1::begin(s, sm1::xctlevel_t::read_committed) ||
+            0 != sm1::chain_read(s, c, key_of(k), v)) {
+          fail("read");
+          sm1::abort(s);
+          continue;
+        }
+        int n = value_n(k, v);
+        if (n < seen[k]) {
+          fail("went back");
+        }
+        seen[k] = n;
+        sm1::commit(s);
+      }
+    });
+  }
+  {
+    sm1::session_t *s = f.open();
+    threads.emplace_back([&, s] {
+      while (writing.load()) {
+        std::vector<std::string> first(keys);
+        if (0 != sm1::begin(s, sm1::xctlevel_t::repeatable_read)) {
+          fail("begin");
+          continue;
+        }
+        for (int i = 0; i < keys; i++) {
+          std::string_view v;
+          if (0 != sm1::chain_read(s, c, key_of(i), v)) {
+            fail("snapshot read");
+          }
+          first[i] = std::string(v);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        for (int i = 0; i < keys; i++) {
+          std::string_view v;
+          if (0 != sm1::chain_read(s, c, key_of(i), v) || v != first[i]) {
+            fail("snapshot moved");
+          }
+        }
+        sm1::commit(s);
+      }
+    });
+  }
+  sm1::session_t *rs = f.open();
+  std::thread reaper([&] {
+    while (!stop.load()) {
+      int64_t n = sm1::row_reap_pass(rs, &stop);
+      if (n < 0) {
+        fail("pass");
+      } else {
+        reaped += n;
+      }
+      std::this_thread::yield();
+    }
+  });
+  threads[0].join();
+  threads[1].join();
+  // The writers' CURR versions settle once the older snapshots end.
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  writing = false;
+  for (size_t i = 2; i < threads.size(); i++) {
+    threads[i].join();
+  }
+  stop = true;
+  reaper.join();
+  CHECK(errors.load() == 0);
+  CHECK(reaped.load() > 0);
+
+  for (int i = 0; i < keys; i++) {
+    CHECK(read_one(f.s, c, key_of(i)) ==
+          key_of(i) + ":" + std::to_string(last_n[i]));
+  }
+  REQUIRE(sm1::row_reap_pass(f.s) >= 0);
+  std::vector<std::string> payloads;
+  CHECK(old_entries(f.s, c, &payloads).empty());
 }

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * rel_catalog.cc -- rel's sessions, and the tables a statement opens
  * from sm3's catalog.
  */
@@ -40,10 +45,10 @@ int catalog_t::env_attach(const char *path, bool toast,
   // rel evaluates its own partial and expression indexes; the
   // evaluator must be in place before a database is opened.
   // And whether long values go out of line, likewise.
-  // And no cleaner thread: a script counts a tree's entries, which a
-  // tick would change, so it runs a pass by (cleaner-pass).
+  // And no btree reaper thread: a script counts a tree's entries, which a
+  // tick would change, so it runs a pass by (reaper-pass).
   if (sm_set_index_evaluator(env, index_eval, nullptr) != 0 ||
-      sm_set_toast(env, toast) != 0 || sm_set_cleaner_workers(env, 0) != 0) {
+      sm_set_toast(env, toast) != 0 || sm_set_reaper_workers(env, 0) != 0) {
     sm_detach(env, 1);
     return -1;
   }

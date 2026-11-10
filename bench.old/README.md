@@ -8,7 +8,7 @@ differ. digres keeps PostgreSQL's parser, planner and
 executor; what it replaced is the storage under them: a
 table is a RocksDB store in sm, a row an sm2 tuple, and a
 scan an sm cursor whose rows are deformed into a slot
-([`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+([`../sm/PGFORK.md`](../sm/PGFORK.md#10-digres-how-the-fork-is-to-be-made)
 §10). So the benchmark measures scans, and
 the queries are chosen so the scan is nearly all of the time:
 

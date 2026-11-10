@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * int.cc -- int2, int4 and int8 (TYPE.md §3.2): two's complement,
  * little-endian, 2, 4 and 8 bytes; PostgreSQL prints them in
  * decimal.

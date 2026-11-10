@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm2.h -- the wisr type and tuple level's public C++ API, in
  * namespace sm2 (SM2_DESIGN.md): the four steps of SM2_DESIGN.md
  * TYPE.md §9, the types, their keys, the tuple codec and the rels.
@@ -620,6 +625,15 @@ void rel_close(rel_t* rel);
 /* The schema a rel lays its rows out by. */
 std::span<const attribute_t> rel_schema(const rel_t* rel);
 
+/*
+ * Name a rel's key columns (../LOCKMGR.md §1.13), attnums, 0-based,
+ * borrowed: the columns of its unique indexes but the primary key.
+ * An update of a chained rel that changes none of them, bit for bit,
+ * keeps its key: sm1 writes it in NKU and flags it, and a KS lock
+ * passes over it. None, the default: every update keeps its key.
+ */
+void rel_set_key_columns(rel_t* rel, std::span<const int32_t> attnums);
+
 /* Whether a rel is keyed by a primary key, not by _id. */
 bool rel_keyed(const rel_t* rel);
 
@@ -878,7 +892,7 @@ int toast_fetch(rel_t* rel, std::string_view ptr, std::string& out);
 
 /*
  * toast_fetch of a pointer in a settled row, with no transaction: the
- * cleaner's (../BTREEINDEX.md §9).
+ * btree reaper's (../BTREEINDEX.md §9).
  */
 int toast_fetch_settled(rel_t* rel, std::string_view ptr, std::string& out);
 
@@ -1146,9 +1160,9 @@ void idx_set_leaf_note(index_t* index, leaf_note_fn fn, void* ctx);
 /*
  * idx_vacuum of one leaf of a tree, page pageid: 0, doubt set if an
  * entry is left in doubt; 1 if the page is no longer a leaf; or -1.
- * The cleaner's (../BTREEINDEX.md §9). removed counts the entries gone.
+ * The btree reaper's (../BTREEINDEX.md §9). removed counts the entries gone.
  */
-int idx_clean_leaf(index_t* index, uint64_t pageid,
+int idx_reap_leaf(index_t* index, uint64_t pageid,
                    const std::function<int(std::string_view, std::string_view)>& dead,
                    size_t& removed, bool& doubt);
 

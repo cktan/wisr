@@ -7,7 +7,7 @@ tables live in Wisr. The repository holds both, in four parts:
 | Where | What it is |
 | --- | --- |
 | `sm/` | the storage stack: an MVCC storage manager on RocksDB, types and tuples over it, and schema and index maintenance over those, with one API, `sm/include/sm.h` |
-| `dg/` | digres: a fork of PostgreSQL 18.6 that runs on the stack ([`DG-vs-PG.md`](DG-vs-PG.md)). It compiles as C++, is one process with a thread a session, and serves PostgreSQL's own `psql`, its tables sm's; [`dg/README.md`](dg/README.md) says what runs, and [`sm/PART4.md`](sm/PART4.md#10-digres-how-the-fork-is-to-be-made) §10 how it is being made |
+| `dg/` | digres: a fork of PostgreSQL 18.6 that runs on the stack ([`DG-vs-PG.md`](DG-vs-PG.md)). It compiles as C++, is one process with a thread a session, and serves PostgreSQL's own `psql`, its tables sm's; [`dg/README.md`](dg/README.md) says what runs, and [`sm/PGFORK.md`](sm/PGFORK.md#10-digres-how-the-fork-is-to-be-made) §10 how it is being made |
 | `sq/` | the SQL parser: PostgreSQL 18's SQL in, a tree of nodes out, as a library with one API, `sq/include/sq.h`. It is built from nothing outside `sq/` |
 | `aa/` | roles, authentication and authorization, a library on sm that digres links ([`aa/AA_DESIGN.md`](aa/AA_DESIGN.md), [`aa/USAGE.md`](aa/USAGE.md)) |
 | `bench/` | digres against PostgreSQL 18, query by query (`bench/run.sh`) |
@@ -60,10 +60,8 @@ To try digres, from a build to a query:
   without SQL.
 
 Start with [`sm/README.md`](sm/README.md). Before changing code,
-read
-[`CLAUDE.md`](CLAUDE.md), then [`sm/CODE.md`](sm/CODE.md) for
-`sm/` and `aa/`, or
-[`dg/CODE.md`](dg/CODE.md) for `dg/`.
+read [`CLAUDE.md`](CLAUDE.md), then [`sm/CODE.md`](sm/CODE.md)
+for `sm/` and `aa/`, or [`dg/CODE.md`](dg/CODE.md) for `dg/`.
 
 ## Prerequisites
 
@@ -93,13 +91,14 @@ By hand, on Ubuntu:
 sudo apt install build-essential cmake git flex bison python3 \
     clang-format librocksdb-dev libicu-dev \
     libsnappy-dev liblz4-dev libzstd-dev zlib1g-dev libbz2-dev \
-    libreadline-dev libpq-dev libssl-dev pkg-config bc \
+    libreadline-dev libpq-dev libssl-dev openssl pkg-config bc \
     postgresql-client linux-tools-generic
 ```
 
-`libreadline-dev` is for building PostgreSQL 18, `libpq-dev`,
-`libssl-dev` and `pkg-config` for digres's test clients, `bc`
-for `bench.old/btree.sh`.
+`libssl-dev` is OpenSSL, which digres always links for TLS.
+`libreadline-dev` is for building PostgreSQL 18, `libpq-dev` and
+`pkg-config` for digres's test clients, `openssl` for the
+certificates its TLS tests make, `bc` for `bench.old/btree.sh`.
 
 - **RocksDB 8.9.1**: the system's (`librocksdb-dev` on 24.04)
   for the debug build; the release and TSan builds build their
@@ -129,14 +128,15 @@ for `bench.old/btree.sh`.
     built and installed into its own `install/`: pgregress,
     the isolation specs and the regression suite run its
     `psql` and `pg_regress`. Elsewhere, set `PG18_SRC`. Without
-    it those tests say SKIPPED. Clone it whole, as `724edf9`
-    below is in its history:
+    it those tests say SKIPPED. It is built with OpenSSL, so its
+    `psql` can test digres's TLS (`dg/test/tls.sh`). Clone it
+    whole, as `724edf9` below is in its history:
 
     ```
     git clone --branch REL_18_STABLE --single-branch \
         https://github.com/postgres/postgres.git ~/p/postgres18
     cd ~/p/postgres18
-    ./configure --prefix=$HOME/p/postgres18/install
+    ./configure --prefix=$HOME/p/postgres18/install --with-ssl=openssl
     make -j4 && make install && make -C src/test/isolation -j4
     ```
   - `bench/build/pg18`, PostgreSQL 18.6 itself (commit
@@ -160,10 +160,10 @@ Ubuntu 26.10's `librocksdb-dev` is 9.11, and its GCC 15 cannot
 compile RocksDB 8.9.1 as it is. The debug build uses 9.11 with
 no change. The release and TSan builds need two things:
 
-- **Build RocksDB first**, each kind once, as `dg/test/rocksdb.sh`
-  does nothing once its library is there. GCC 15 needs
-  `<cstdint>` given to it (remove `rocksdb/release` or
-  `rocksdb/tsan` first, if a build of it has failed):
+- **Build RocksDB first**, each kind once, as
+  `dg/test/rocksdb.sh` does nothing once its library is there.
+  GCC 15 needs `<cstdint>` given to it (remove `rocksdb/release`
+  or `rocksdb/tsan` first, if a build of it has failed):
 
   ```
   CXX="g++ -include cstdint" dg/test/rocksdb.sh release
@@ -214,9 +214,9 @@ changes to threads, latches, locks or shared state.
 - **`digres --build` says how a binary was built**: the flags
   of digres, sq and sm, and which RocksDB it links. A release
   build shows `-DNDEBUG` on each, and RocksDB `static`.
-- **Flags are not tracked** by digres's make: after changing
-  them, delete the `*.rel.o` objects under `dg/src` and
-  `sq/build/rel` itself before building the release again.
+- **Flags are not tracked** by the make of dg and sq: after
+  changing them, delete `dg/build/rel` and `sq/build/rel` before
+  building the release again.
 - **A part alone** builds in its own directory, as
   `make -C sm/sm1 -j4`, `DEBUG=1` or not.
 - **`make format`** before a commit. dg is formatted by the
@@ -310,7 +310,8 @@ to a file and read that.
 beside it, `BINARY.active` (`sm/sm2/build/test_sm2.active`, for
 one), holds the test case it is in, its name, then its file and
 line. It goes when the run ends; a run that crashed or hangs
-leaves it naming its test (`sm/sm0/include/sm0_doctest_active.h`).
+leaves it naming its test
+(`sm/sm0/include/sm0_doctest_active.h`).
 
 ```
 cat sm/*/build/*.active aa/build/*.active sq/build/*.active 2>/dev/null
@@ -328,13 +329,12 @@ What each is:
   PostgreSQL's regression SQL.
 - **aa**: its unit tests.
 - **dg**: the `.sql` files of `dg/test`, alone and in eight
-  sessions; `initdb`; `server.sh`, a server driven by `psql`;
-  the sqllogictest files of `dg/test/slt`, whose results are
+  sessions; `initdb`; `server.sh`, a server driven by `psql`; the
+  sqllogictest files of `dg/test/slt`, whose results are
   PostgreSQL 18's
   ([`dg/test/slt/README.md`](dg/test/slt/README.md)); and
-  pgregress,
-  PostgreSQL 18's regression files with what digres does not
-  run commented out, against PostgreSQL's output
+  pgregress, PostgreSQL 18's regression files with what digres
+  does not run commented out, against PostgreSQL's output
   ([`dg/test/pgregress/README.md`](dg/test/pgregress/README.md)).
 
 **Keep test data off `/tmp`.** Set `TMPDIR` to a directory on a
@@ -364,10 +364,10 @@ committed ([`CLAUDE.md`](CLAUDE.md#5-test-structure) §5).
 
 `bench/` measures digres against PostgreSQL 18, on optimized
 builds only ([`bench.old/CODE.md`](bench.old/CODE.md)): a debug
-build's number measures
-the build. `perf` must be allowed to count, which a system with
-`kernel.perf_event_paranoid` above 1 refuses: `sudo sysctl
-kernel.perf_event_paranoid=1`, until the next reboot. To keep it:
+build's number measures the build. `perf` must be allowed to
+count, which a system with `kernel.perf_event_paranoid` above 1
+refuses: `sudo sysctl kernel.perf_event_paranoid=1`, until the
+next reboot. To keep it:
 
 ```
 echo 'kernel.perf_event_paranoid = 1' |
@@ -393,15 +393,14 @@ DG_PORT=5432 PG_PORT=5433 make -j4 bench  # both servers up
 - `make bench` builds `dg/build/digres-release`, then runs
   `bench/run.sh`. Start that build's server before the run.
 - `run.sh` makes the database `bench` again on each server
-  (`bench/load.sql`: `usertable`, 10,000 rows), then times q0
-  to q4 (`bench/q0-pkget.sql`, `q1-sk10.sql`,
-  `q2-sk180.sql`, `q3-skfetchrow.sql` and
-  `q4-seqscan.sql`). q0 and q4 run once.
+  (`bench/load.sql`: `usertable`, 10,000 rows), then times q0 to
+  q4 (`bench/q0-pkget.sql`, `q1-sk10.sql`, `q2-sk180.sql`,
+  `q3-skfetchrow.sql` and `q4-seqscan.sql`). q0 and q4 run once.
   q1 to q3 run on regular (lsm) indexes, then on btree ones
   (`mkregidx.sql`, `mkbtidx.sql`). Each query is pgbench,
   prepared, one client, for `Q_SECONDS` (10). It prints tps,
-  latency, and digres's latency over PostgreSQL's; the logs
-  go to `bench/build/run`.
+  latency, and digres's latency over PostgreSQL's; the logs go to
+  `bench/build/run`.
 - It refuses a debug build of either side: a server whose
   `debug_assertions` is on, or a digres whose `--build` is not
   a release's.
@@ -412,8 +411,7 @@ DG_PORT=5432 PG_PORT=5433 make -j4 bench  # both servers up
   - q3: 8 rows, found by the `lastname` index.
   - q4: every row, a sum, no index.
 - [`PERF.md`](PERF.md) has the throughput of digres, PostgreSQL
-  18,
-  MyRocks and InnoDB on q0 to q4.
+  18, MyRocks and InnoDB on q0 to q4.
 - The old benchmark is `bench.old/run.sh`. Its queries, Q1 to
   Q11, are in [`bench.old/DESIGN.md`](bench.old/DESIGN.md).
 - Judge digres against PostgreSQL, never against an older
@@ -440,3 +438,34 @@ DG_PORT=5432 PG_PORT=5433 make -j4 bench  # both servers up
 | [`dg/README.md`](dg/README.md), [`dg/DESIGN.md`](dg/DESIGN.md) | what digres is, and its decisions of record |
 | [`dg/WORKNOTE.md`](dg/WORKNOTE.md) | every step taken in digres, and why |
 | [`sm/BTREEINDEX.md`](sm/BTREEINDEX.md) and the other notes in `sm/` | designs of a feature each, built or proposed |
+
+## License
+
+The project's original code is under the MIT License: see
+[`LICENSE`](LICENSE). Files containing only original code use
+`SPDX-License-Identifier: MIT`.
+
+Files derived from PostgreSQL retain its notices. A separate
+"Portions Copyright" notice licenses this project's original
+additions under MIT. That notice does not relicense upstream
+code. Formatting alone does not warrant a new copyright notice.
+
+The main upstream components and their exceptions are below.
+Each file's notices identify the terms that apply to it.
+
+| Code | License | Notice |
+| --- | --- | --- |
+| PostgreSQL-derived code in `dg/`, except the components below | PostgreSQL License for upstream portions; MIT for this project's original additions | [`dg/COPYRIGHT`](dg/COPYRIGHT), [`LICENSE`](LICENSE), and file headers |
+| Original code in `dg/` | MIT | [`LICENSE`](LICENSE) and file headers |
+| `dg/src/backend/regex/` | Henry Spencer's and Tcl's licenses | [`dg/src/backend/regex/COPYRIGHT`](dg/src/backend/regex/COPYRIGHT) |
+| PostgreSQL-derived grammar, scanner, nodes and helpers in `sq/` | PostgreSQL License for upstream portions; MIT for this project's original additions | [`sq/COPYRIGHT`](sq/COPYRIGHT), [`LICENSE`](LICENSE), and file headers |
+| Ryu files in `dg/src/common/`, `dg/src/include/common/shortest_dec.h` and `sm/sm2/src/ryu/` | PostgreSQL License for PostgreSQL portions; Boost Software License 1.0 for Ryu; MIT for this project's original additions where marked | [`dg/COPYRIGHT`](dg/COPYRIGHT), [`LICENSES/BSL-1.0.txt`](LICENSES/BSL-1.0.txt), and file headers |
+| `dg/src/timezone/localtime.c`, `private.h` and `tzfile.h` | Upstream code is public domain; this project's original additions are MIT where marked | File headers and [`LICENSE`](LICENSE) |
+| `dg/src/timezone/strftime.c` | BSD-3-Clause for upstream code; MIT for this project's original additions where marked | [File notice](dg/src/timezone/strftime.c) and [`LICENSE`](LICENSE) |
+| `sm/sm0/include/doctest.h`, by Viktor Kirilov | MIT | the header of the file |
+| `dg/test/slt/sqlite/`, SQLite's sqllogictest | public domain, or a license of the user's choice | [`dg/test/slt/sqlite/COPYRIGHT.md`](dg/test/slt/sqlite/COPYRIGHT.md) |
+
+RocksDB, ICU, OpenSSL and Janet are linked, not copied into the
+repository. Each keeps its own license. Include the applicable
+license texts and notices when distributing code from this
+repository, including copies of individual components.

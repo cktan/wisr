@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
 /*-------------------------------------------------------------------------
  *
  * datadir.c
@@ -10,7 +15,7 @@
  *
  * The postmaster attaches sm's home directory once, and reads the roles
  * once: sm keeps its state in the memory of the process that attached it
- * (sm/PART4.md section 2), and every session is a thread of that process,
+ * (sm/PGFORK.md section 2), and every session is a thread of that process,
  * given both (SHARED). A session asks sm for its database, and opens an sm
  * session on it for as long as it lasts.  pg_global is no database a
  * client sees: it is not listed, connected to or dropped.
@@ -305,7 +310,7 @@ std::vector<int> datadir_sm_blockers(int pid) {
   return pids;
 }
 
-/* sm's name for a lock mode, as pg_locks shows it: Gray's, not PostgreSQL's. */
+/* sm's name for a lock mode, as pg_locks shows it: sm's, not PostgreSQL's. */
 static const char *datadir_mode_name(sm_lockmode_t mode) {
   switch (mode) {
   case SM_LOCKMODE_IS:
@@ -318,6 +323,10 @@ static const char *datadir_mode_name(sm_lockmode_t mode) {
     return "SIX";
   case SM_LOCKMODE_EX:
     return "X";
+  case SM_LOCKMODE_KS:
+    return "KS";
+  case SM_LOCKMODE_NKU:
+    return "NKU";
   }
   return "?";
 }

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_session.cc -- sm1::opendb, sm1::closedb, the open-database
  * registry, and the transaction state machine.
  */
@@ -74,10 +79,10 @@ wisr::db_t *open_db(sm1::env_t *env, const char *dbname) {
 } // namespace
 
 TEST_CASE("a database stays open for its idle time after its last session") {
-  // Verify the reaper and closedb's idle time.
+  // Verify the db reaper and closedb's idle time.
   // 1. With idle_close_ms 300, close the only session: the database
   //    is still open, and a session opened at once joins it as it is.
-  // 2. Close that one and wait well past 300 ms: the reaper has
+  // 2. Close that one and wait well past 300 ms: the db reaper has
   //    closed it.
   // 3. With idle_close_ms 0, closing the last session closes it at
   //    once, as before there was an idle time.

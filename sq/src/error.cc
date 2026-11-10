@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * error.cc -- the per-thread error state behind sq_errnum(),
  * sq_errmsg(), sq_sqlstate(), sq_errpos(), sq_errdetail() and
  * sq_errhint().

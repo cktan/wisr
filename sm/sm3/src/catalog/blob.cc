@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * blob.cc -- the catalog's values (../CATALOG.md §3.5). A value is a
  * sequence of parts, each an sm2 tuple under a schema this file
  * fixes, framed by its length as a varint. A part evolves as any

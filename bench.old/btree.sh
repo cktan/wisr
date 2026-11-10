@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # btree.sh -- a secondary index as a tree against today's entries
 # (../sm/BTREE.md, ../dg/WORKNOTE.md steps 347 to 353): wide_mixed's
 # million rows loaded with its c2 index of one kind, then Q9 and Q10

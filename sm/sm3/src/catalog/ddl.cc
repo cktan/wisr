@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * ddl.cc -- the catalog's writes (../CATALOG.md §6): cat_init, and
  * the puts and dels of its records. Each writes its entries
  * through sm2's catalog key-value store, in the session's

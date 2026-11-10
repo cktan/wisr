@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * smbench.cc -- the floor of a scan and of a point read in sm, layer
  * by layer, on the same rows: sm1 alone, versioned and chained
  * stores (../../sm/VCHAIN.md), then sm as digres uses it, a table of

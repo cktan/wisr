@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * type.cc -- finding a type by its frozen code, and the errors
  * every type reports through sm1's error state.
  */

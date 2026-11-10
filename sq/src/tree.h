@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * tree.h -- making the nodes and text a tree owns.
  *
  * A tree keeps a store of everything made for it and frees it all in

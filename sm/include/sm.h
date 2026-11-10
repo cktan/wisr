@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm.h -- wisr's API: the one entry into the stack, for
  * PostgreSQL to call (DESIGN.md sections 1 and 5). It is C in
  * style and compiled as C++: the standard types in it are
@@ -1312,15 +1317,15 @@ int sm_set_index_evaluator(sm_env_t* env, sm_index_eval_fn fn, void* ctx);
 int sm_set_toast(sm_env_t* env, int on);
 
 /*
- * The btree cleaner's threads a database gets, 4 by default, set
+ * The btree reaper's threads a database gets, 4 by default, set
  * before any database is opened (../BTREEINDEX.md §9). 0 runs none: for a
- * test, which runs a pass itself by sm_cleaner_run. A negative
+ * test, which runs a pass itself by sm_reaper_run. A negative
  * count is not checked.
  */
-int sm_set_cleaner_workers(sm_env_t* env, int workers);
+int sm_set_reaper_workers(sm_env_t* env, int workers);
 
-/* One pass of dbname's btree cleaner, on this thread: for tests. */
-int sm_cleaner_run(sm_env_t* env, const char* dbname);
+/* One pass of dbname's btree reaper, on this thread: for tests. */
+int sm_reaper_run(sm_env_t* env, const char* dbname);
 
 /* Whether val, a non-null variable-width value, is a TOAST pointer. */
 static inline bool sm_datum_is_toast(sm_datum_t val) {
@@ -1460,7 +1465,12 @@ int sm_tbl_insert_arbiter(sm_tbl_t* tbl, const sm_datum_t* values,
  * table's other writes fail with SM_ERR_INVALID. After one the
  * transaction cannot be prepared. After a failed call the
  * transaction is to be aborted; a load not ended is ended by its
- * transaction's end, and its handle freed by sm_tbl_close.
+ * transaction's end, and its handle freed by sm_tbl_close. One
+ * failure may be followed: sm_tbl_load_add's SM_ERR_INTERRUPTED, an
+ * interrupt found before the row went in, after which the same row
+ * may be handed again. A load's sorts stop for an interrupt only
+ * between rows and at sm_tbl_load_end, and then only as the host's
+ * stop function judges it (sm_sys.h's sm_set_stop_fn).
  */
 int sm_tbl_load_begin(sm_tbl_t* tbl);
 
@@ -1537,11 +1547,12 @@ int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t id, sm_pin_ref_t* ref,
 
 /*
  * Lock the row with _id id in mode without writing it, to the end
- * of the transaction: SM_LOCKMODE_SH, as a foreign key check locks
- * the parent row and SELECT ... FOR SHARE a row it read, which
- * other readers of the key may share and a writer waits for; or
- * SM_LOCKMODE_EX, as SELECT ... FOR UPDATE. Any mode but
- * SM_LOCKMODE_SH needs the table opened to write. The row need not
+ * of the transaction, in a row mode (../LOCKMGR.md §1.13):
+ * SM_LOCKMODE_KS, as a foreign key check locks the parent row,
+ * which an update that keeps the row's key passes; SM_LOCKMODE_SH,
+ * as SELECT ... FOR SHARE, which every writer waits for;
+ * SM_LOCKMODE_NKU, as FOR NO KEY UPDATE; or SM_LOCKMODE_EX, as FOR
+ * UPDATE. NKU and EX need the table opened to write. The row need not
  * exist. It waits as a write does. A row the transaction changed
  * after the running statement began is not locked:
  * SM_ERR_SELFMODIFIED, as a write of it, which a FOR UPDATE cursor

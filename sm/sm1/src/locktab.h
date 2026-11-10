@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * locktab.h -- the lock table (../LOCKMGR.md §3.2): a lock's id ->
  * the owners holding it, each in a mode of its own.
  *

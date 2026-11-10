@@ -5,6 +5,8 @@
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  *
  * IDENTIFICATION
@@ -53,7 +55,7 @@ struct DynamicFileList {
 
 /*
  * This session's loaded files, oldest first: tcb->dfmgr.  Empty: digres
- * loads no library (internal_load_library(), dg/ISSUE.md issue 1).
+ * loads no library (internal_load_library(), ISSUE.md dg issue 1).
  */
 struct dfmgr_state_t {
   std::vector<DynamicFileList *> files;
@@ -170,7 +172,7 @@ void *lookup_external_function(void *filehandle, const char *funcname) {
 
 /*
  * Load the library libname, an exact path: refused, as digres loads no
- * library until loading is redesigned (dg/ISSUE.md issue 1).  Its statics
+ * library until loading is redesigned (ISSUE.md dg issue 1).  Its statics
  * would be one for every session, each a thread of one process.
  */
 static void *internal_load_library(const char *libname) {

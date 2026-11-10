@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * env.cc -- sm1::init, sm1::attach, sm1::detach: the home directory,
  * its root db, and the sweep of unnamed database directories
  * (../DBMGR.md §4).
@@ -395,8 +400,8 @@ sm1::env_t *attach(const char *homedir, const sm1::env_options_t *opt) {
   if (recover_dbs(env.get()) != 0) {
     return nullptr;
   }
-  // The reaper closes databases left idle, until detach stops it.
-  env_start_reaper(env.get());
+  // The db reaper closes databases left idle, until detach stops it.
+  env_start_db_reaper(env.get());
   // Hand the environment to the caller.
   return env.release();
 }
@@ -420,14 +425,14 @@ sm1::env_t::~env_t() {
 namespace {
 
 /*
- * The reaper's loop, until told to stop:
+ * The db reaper's loop, until told to stop:
  * 1. Close each database whose last session closed longer ago than its
  *    idle time.
  * 2. Sleep until the next is due, or until a database's last session
  *    closes.
  * 3. Go back to step 1.
  */
-void reaper_main(sm1::env_t *env) {
+void db_reaper_main(sm1::env_t *env) {
   std::unique_lock<std::mutex> guard(env->mu);
   while (!env->stopping) {
     auto now = std::chrono::steady_clock::now();
@@ -458,20 +463,20 @@ void reaper_main(sm1::env_t *env) {
 
 namespace wisr {
 
-/* Start the reaper; see env.h. */
-void env_start_reaper(sm1::env_t *env) {
-  env->reaper = std::thread(reaper_main, env);
+/* Start the db reaper; see env.h. */
+void env_start_db_reaper(sm1::env_t *env) {
+  env->db_reaper = std::thread(db_reaper_main, env);
 }
 
-/* Stop the reaper and close the idle databases; see env.h. */
-void env_stop_reaper(sm1::env_t *env) {
+/* Stop the db reaper and close the idle databases; see env.h. */
+void env_stop_db_reaper(sm1::env_t *env) {
   {
     std::lock_guard<std::mutex> guard(env->mu);
     env->stopping = true;
   }
   env->idle_cv.notify_one();
-  if (env->reaper.joinable()) {
-    env->reaper.join();
+  if (env->db_reaper.joinable()) {
+    env->db_reaper.join();
   }
   // Every session is closed: what is left open is idle.
   std::lock_guard<std::mutex> guard(env->mu);
@@ -622,8 +627,8 @@ int sm1::detach(sm1::env_t *env, int force) {
   for (sm1::session_t *s : sessions) {
     sm1::closedb(s);
   }
-  // Close the databases left idle, and stop their reaper.
-  env_stop_reaper(env);
+  // Close the databases left idle, and stop their db reaper.
+  env_stop_db_reaper(env);
   // Close the root db and free the environment.
   delete env;
   return 0;
@@ -636,4 +641,15 @@ const char *sm1::build_flags() {
 #else
   return "unknown";
 #endif
+}
+
+/* The keys queued for the row reaper of dbname, with no session; see sm1.h. */
+size_t sm1::row_reaps_pending(sm1::env_t *env, std::string_view dbname) {
+  if (nullptr == env) {
+    return 0;
+  }
+  // Under env's mutex, so the db reaper cannot close the database here.
+  std::lock_guard<std::mutex> guard(env->mu);
+  auto it = env->dbs.find(std::string(dbname));
+  return env->dbs.end() == it ? 0 : it->second->reaps.size();
 }

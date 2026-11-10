@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_sort.cc -- the sort of records by key (include/sm0_sort.h).
  */
 
@@ -363,6 +368,108 @@ TEST_CASE("an interrupt stops a sort") {
   CHECK(sm_take(bit) == bit);
   sm_set_wait_mask(mask);
   sm0::sort_free(s);
+}
+
+namespace {
+
+/* What the stop function says, and how often it was asked. */
+bool g_stop_answer = false;
+int g_stop_asked = 0;
+
+/* A host's stop function: records the ask, and answers g_stop_answer. */
+bool stop_by_answer() {
+  g_stop_asked++;
+  return g_stop_answer;
+}
+
+} // namespace
+
+TEST_CASE("the host's stop function judges an interrupt for a sort") {
+  // Verify sm_should_stop() and the sort through it (sm_sys.h).
+  // 1. With no bit pending, the function is not asked, and nothing stops.
+  // 2. With a bit pending and a function that says no, sort_put goes on:
+  //    the bit is not one to stop for, as a harmless timer's.
+  // 3. The same function saying yes stops the sort with
+  //    SM_ERR_INTERRUPTED.
+  // 4. With no function, any pending bit of the mask stops it.
+  constexpr uint32_t bit = 1u << 7;
+  uint32_t mask = sm_wait_mask();
+  sm_set_wait_mask(bit);
+  sm_set_stop_fn(stop_by_answer);
+  g_stop_asked = 0;
+  CHECK(!sm_should_stop());
+  CHECK(g_stop_asked == 0);
+
+  sm0::sort_t *s = nullptr;
+  REQUIRE(sm0::sort_open(options("unused", 1, false), s) == 0);
+  sm_interrupt_self(bit);
+  g_stop_answer = false;
+  CHECK(sm0::sort_put(s, "a", "v") == 0);
+  CHECK(g_stop_asked == 1);
+  g_stop_answer = true;
+  CHECK(sm0::sort_done(s) == -1);
+  CHECK(sm0::errnum() == SM_ERR_INTERRUPTED);
+  sm0::sort_free(s);
+
+  sm_set_stop_fn(nullptr);
+  CHECK(sm_should_stop());
+  CHECK(sm_take(bit) == bit);
+  CHECK(!sm_should_stop());
+  sm_set_wait_mask(mask);
+}
+
+TEST_CASE("a sort whose input is not interruptible stops only at its end") {
+  // Verify sort_options_t::interruptible_input, for a bulk load's rows.
+  // 1. Open a unique sort with input not interruptible, and spill it by
+  //    hand, as a load's streams are.
+  // 2. With a bit of the mask pending, put 20,000 records and spill
+  //    twice: none fails, though each passes the sort's checks.
+  // 3. sort_done stops for the bit, with SM_ERR_INTERRUPTED.
+  // 4. With the bit taken, a fresh sort of the same records ends, and
+  //    gives every record once, in order.
+  constexpr uint32_t bit = 1u << 7;
+  run_dir_t dir;
+  uint32_t mask = sm_wait_mask();
+  sm_set_wait_mask(bit);
+  sm0::sort_options_t opt;
+  opt.dir = dir.path;
+  opt.unique = true;
+  opt.manual_spill = true;
+  opt.interruptible_input = false;
+  sm0::sort_t *s = nullptr;
+  REQUIRE(sm0::sort_open(opt, s) == 0);
+  sm_interrupt_self(bit);
+  char key[16];
+  for (int i = 20000; i > 0; i--) {
+    snprintf(key, sizeof key, "%08d", i);
+    REQUIRE_MESSAGE(sm0::sort_put(s, key, "v") == 0, sm0::errmsg());
+    if (10000 == i) {
+      REQUIRE_MESSAGE(sm0::sort_spill(s) == 0, sm0::errmsg());
+    }
+  }
+  REQUIRE_MESSAGE(sm0::sort_spill(s) == 0, sm0::errmsg());
+  CHECK(sm0::sort_done(s) == -1);
+  CHECK(sm0::errnum() == SM_ERR_INTERRUPTED);
+  sm0::sort_free(s);
+
+  CHECK(sm_take(bit) == bit);
+  REQUIRE(sm0::sort_open(opt, s) == 0);
+  for (int i = 20000; i > 0; i--) {
+    snprintf(key, sizeof key, "%08d", i);
+    REQUIRE(sm0::sort_put(s, key, "v") == 0);
+  }
+  REQUIRE(sm0::sort_done(s) == 0);
+  std::string_view k, v;
+  int n = 0;
+  std::string last;
+  while (0 == sm0::sort_next(s, k, v)) {
+    CHECK(std::string(k) > last);
+    last = std::string(k);
+    n++;
+  }
+  CHECK(n == 20000);
+  sm0::sort_free(s);
+  sm_set_wait_mask(mask);
 }
 
 TEST_CASE("a sort over its budget spills and merges") {

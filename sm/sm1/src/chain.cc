@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * chain.cc -- a chained store's keys (../ROWSTORE.md): the codec, the
  * chain_ calls, the rollback to a savepoint, and GC's repair.
  *
@@ -27,6 +32,29 @@
 using namespace wisr;
 
 namespace wisr {
+
+/*
+ * Queue storeid's chained key for the row reaper, if v, its CURR
+ * version that a reader sees, has a prev and is settled: committed at
+ * commit_ts, at or below the cached watermark (../GC.md §13.5). A
+ * commit_ts of 0 is a version the reader wrote or could not resolve.
+ * Inline: the read path pays one test for a key with no prev, and one
+ * atomic load for a key with one.
+ */
+static inline void chain_note_reap(db_t *db, uint64_t storeid,
+                                   rocksdb::Slice key, const chain_version_t &v,
+                                   uint64_t commit_ts) {
+  if (0 == v.prev) {
+    return;
+  }
+  // Not settled, or the reader's own write: the cache is never above W.
+  if (0 == commit_ts ||
+      commit_ts > db->watermark_cache.load(std::memory_order_relaxed)) {
+    return;
+  }
+  // A full queue or a key already queued drops this one: a hint.
+  db->reaps.push(storeid, 0, std::string_view(key.data(), key.size()));
+}
 
 /* The same version as the visibility test takes it. */
 version_t chain_version_t::as_version() const {
@@ -187,9 +215,11 @@ struct checked_t {
   bool moved = false;     /* it is a move's tombstone */
   uint64_t commit_ts = 0; /* its commit_ts; 0 for an own version or none */
   uint32_t own_seq = 0;   /* an own version's seq, else 0 */
+  bool own_kept = false;  /* an own version flagged version_key_kept */
   uint64_t inflight = 0;  /* another's uncommitted writer, to wait for */
-  bool head_dead = false; /* CURR holds a dead transaction's version */
-  uint64_t at = 0;        /* the OLD id of the version found, 0 if in CURR */
+  bool inflight_kept = false; /* its version kept the key, no tombstone */
+  bool head_dead = false;     /* CURR holds a dead transaction's version */
+  uint64_t at = 0; /* the OLD id of the version found, 0 if in CURR */
   std::vector<uint64_t> passed; /* dead OLD entries passed on the way */
   chain_version_t head;         /* CURR's version, when there is one */
   rocksdb::PinnableSlice head_buf;
@@ -224,6 +254,7 @@ int chain_latest(sm1::session_t *s, const store_t &st, rocksdb::Slice key,
       c->live = !(v->flags & version_tombstone);
       c->moved = v->flags & version_moved;
       c->own_seq = v->seq;
+      c->own_kept = v->flags & version_key_kept;
       return 0;
     }
     uint64_t ts = v->commit_ts;
@@ -238,6 +269,8 @@ int chain_latest(sm1::session_t *s, const store_t &st, rocksdb::Slice key,
     if (XCT_IN_FLIGHT == state && !skip_inflight) {
       c->found = true;
       c->inflight = v->xid;
+      c->inflight_kept =
+          (v->flags & version_key_kept) && !(v->flags & version_tombstone);
       return 0;
     }
     if (XCT_COMMITTED == state) {
@@ -269,6 +302,12 @@ int chain_latest(sm1::session_t *s, const store_t &st, rocksdb::Slice key,
     }
     v = &c->version;
   }
+}
+
+/* The row c found, in CURR or in OLD: what a write replaces. */
+std::string_view chain_found_row(const checked_t &c) {
+  const rocksdb::Slice row = c.at != 0 ? c.version.payload : c.head.payload;
+  return std::string_view(row.data(), row.size());
 }
 
 /*
@@ -311,7 +350,8 @@ static void stamp_copy(db_t *db, chain_version_t *v) {
  * the write is made; on failure pin keeps what it held.
  */
 int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
-                rocksdb::Slice key, rocksdb::Slice data, sm1::rawpin_t *pin) {
+                rocksdb::Slice key, rocksdb::Slice data, sm1::rawpin_t *pin,
+                sm1::key_kept_fn kept, void *ctx) {
   const store_t &st = chained_store(s, storeid);
   if (!st.cf) {
     return -1;
@@ -332,15 +372,12 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   const bool inserting = op == WRITE_INSERT || op == WRITE_INSERT_NEW;
   const bool erasing = op == WRITE_DELETE || op == WRITE_MOVE;
   std::unique_ptr<checked_t> cp;
+  // The write's mode: X, or NKU for an update that keeps its key.
+  sm1::lockmode_t mode = sm1::SM_LOCKMODE_EX;
   for (;;) {
     int waited = 0;
-    // Another transaction's explicit lock that a write conflicts
-    // with: wait for it, without the latch. A temporary store is
-    // the session's alone.
-    if (!st.owner && lock_write_check(s, storeid, key) != 0) {
-      latch.unlock();
-      waited = lock_wait(s, lock_row_id(storeid, key), sm1::SM_LOCKMODE_EX);
-    } else if (op == WRITE_INSERT_NEW) {
+    mode = sm1::SM_LOCKMODE_EX;
+    if (op == WRITE_INSERT_NEW) {
       // A key no version of was ever written has none to check: no
       // read. A debug build reads, to catch a caller wrong about it.
       cp = std::make_unique<checked_t>();
@@ -350,22 +387,45 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
       }
       assert(!cp->have_head);
 #endif
-      break;
     } else {
       // Look from CURR, afresh each time round.
       cp = std::make_unique<checked_t>();
       if (0 != chain_latest(s, st, key, cp.get())) {
         return -1;
       }
-      // Done looking: this write goes on with the latch held.
-      if (cp->inflight == 0) {
-        break;
-      }
       // Another transaction's uncommitted version is its lock: wait
       // for that transaction, without the latch.
-      latch.unlock();
-      waited = lock_wait_xact(s, cp->inflight);
+      if (cp->inflight != 0) {
+        latch.unlock();
+        waited = lock_wait_xact(s, cp->inflight);
+        if (waited != 0) {
+          return lock_wait_error(s, waited);
+        }
+        latch.lock();
+        continue;
+      }
+      // An update that keeps its key, against the version it replaces,
+      // read under this latch, is NKU (../LOCKMGR.md §1.13). Over an
+      // own version, that version must have kept it too: the flag says
+      // the key is the last committed version's, and an earlier write
+      // of this transaction that changed it, or inserted the row, is
+      // not to be hidden.
+      if (op == WRITE_UPDATE && kept && cp->live &&
+          (cp->own_seq == 0 || cp->own_kept) &&
+          kept(ctx, chain_found_row(*cp),
+               std::string_view(data.data(), data.size()))) {
+        mode = sm1::SM_LOCKMODE_NKU;
+      }
     }
+    // Another transaction's explicit lock that the write conflicts
+    // with: wait for it, without the latch. A temporary store is the
+    // session's alone. Done looking otherwise: this write goes on with
+    // the latch held.
+    if (st.owner || lock_write_check(s, storeid, key, mode) == 0) {
+      break;
+    }
+    latch.unlock();
+    waited = lock_wait(s, lock_row_id(storeid, key), mode);
     if (waited != 0) {
       return lock_wait_error(s, waited);
     }
@@ -384,7 +444,7 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
       if (!inserting && !lock_has_latest(s, storeid, key)) {
         // Keep the key locked until the re-read and the repeated
         // write (../ROWSTORE.md §4.6, ../LOCKMGR.md §1.9).
-        lock_try(s, lock_row_id(storeid, key), sm1::SM_LOCKMODE_EX);
+        lock_try(s, lock_row_id(storeid, key), mode);
         return set_error(sm1::SM_ERR_UPDATED,
                          "key was changed by a transaction that committed "
                          "after this one began; sm1_read_latest it first");
@@ -427,6 +487,10 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   nv.flags = !erasing           ? 0
              : op == WRITE_MOVE ? version_tombstone | version_moved
                                 : version_tombstone;
+  // KS passes over it (../LOCKMGR.md §1.13).
+  if (sm1::SM_LOCKMODE_NKU == mode) {
+    nv.flags |= version_key_kept;
+  }
   nv.xid = s->xid;
   nv.wts = wts;
   nv.seq = seq;
@@ -513,8 +577,8 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
  */
 int write_chained(sm1::session_t *s, write_op_t op, uint64_t storeid,
                   std::string_view key, std::string_view data,
-                  sm1::rawpin_t *pin = nullptr,
-                  std::string_view *old = nullptr) {
+                  sm1::rawpin_t *pin = nullptr, std::string_view *old = nullptr,
+                  sm1::key_kept_fn kept = nullptr, void *ctx = nullptr) {
   if (old) {
     *old = std::string_view();
   }
@@ -531,7 +595,7 @@ int write_chained(sm1::session_t *s, write_op_t op, uint64_t storeid,
     return -1;
   }
   int r = chain_write(s, storeid, op, rocksdb::Slice(key.data(), key.size()),
-                      rocksdb::Slice(data.data(), data.size()), pin);
+                      rocksdb::Slice(data.data(), data.size()), pin, kept, ctx);
   if (0 == r && pin && old) {
     *old = std::string_view(pin->row.data(), pin->row.size());
   }
@@ -575,8 +639,9 @@ int read_latest_chained(sm1::session_t *s, uint64_t storeid,
                      "sm1_read_latest requires a lock held on the key, or "
                      "a write of it by this transaction");
   }
-  // An exclusive holder may now write.
-  if (held && mode == sm1::SM_LOCKMODE_EX) {
+  // A holder no other writer passes, X or NKU, may now write: an
+  // NKU holder's write that changes the key converts to X first.
+  if (held && (mode == sm1::SM_LOCKMODE_EX || mode == sm1::SM_LOCKMODE_NKU)) {
     lock_set_latest(s, storeid, k);
   }
   if (c.moved) {
@@ -590,6 +655,50 @@ int read_latest_chained(sm1::session_t *s, uint64_t storeid,
   return 0;
 }
 
+/*
+ * Whether key's row changed its key in a version committed after the
+ * snapshot at ts (../LOCKMGR.md §1.13): a tombstone, or a version not
+ * flagged version_key_kept. The walk goes from CURR through OLD by prev,
+ * past versions in flight or dead, to the first committed at or before
+ * ts. 1 if it changed, 0 if not, -1 on error.
+ */
+int key_changed_since(sm1::session_t *s, const store_t &st, rocksdb::Slice key,
+                      uint64_t ts) {
+  // Hold a read epoch until the statuses are resolved.
+  uint64_t epoch = db_read_enter(s->db);
+  defer { db_read_leave(s->db, epoch); };
+  rocksdb::PinnableSlice buf;
+  chain_version_t v;
+  int r = get_curr(st, key, &buf, &v);
+  for (;;) {
+    if (r != 0) {
+      return r < 0 ? -1 : 0;
+    }
+    uint64_t at = v.commit_ts;
+    xct_state_t state = XCT_COMMITTED;
+    if (!(v.flags & version_stamped)) {
+      state = xct_status(s->db, v.xid, &at);
+    }
+    if (XCT_ERROR == state) {
+      return -1;
+    }
+    if (XCT_COMMITTED == state) {
+      if (at <= ts) {
+        return 0;
+      }
+      if ((v.flags & version_tombstone) || !(v.flags & version_key_kept)) {
+        return 1;
+      }
+    }
+    if (0 == v.prev) {
+      return 0;
+    }
+    // Only v's flags and stamps are read on: its payload may go.
+    rocksdb::PinnableSlice older;
+    r = get_old(st, v.prev, &older, &v);
+  }
+}
+
 /* sm1::chain_lock_row and chain_trylock_row, minus the out-of-memory guard. */
 int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
                  sm1::lockmode_t mode, bool nowait, bool as_read,
@@ -597,7 +706,8 @@ int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
   if (xct_check_active(s) != 0) {
     return -1;
   }
-  if (static_cast<int>(mode) < 0 || static_cast<int>(mode) > 4) {
+  if (static_cast<int>(mode) < 0 ||
+      static_cast<int>(mode) > sm1::SM_LOCKMODE_NKU) {
     return set_error(sm1::SM_ERR_INVALID, "unknown lock mode {}", (int)mode);
   }
   if (access_enter(s, xct_view(s), storeid, key.data(), key.size()) != 0) {
@@ -639,6 +749,17 @@ int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
       }
       inflight = c.inflight;
       commit_ts = c.commit_ts;
+      // KS passes over another's version in flight that kept the key,
+      // and checks against the newest committed one under it
+      // (../LOCKMGR.md §1.13).
+      if (inflight != 0 && c.inflight_kept && sm1::SM_LOCKMODE_KS == mode) {
+        checked_t under;
+        if (chain_latest(s, st, k, &under, true) != 0) {
+          return -1;
+        }
+        inflight = 0;
+        commit_ts = under.commit_ts;
+      }
       // Free of uncommitted writes: take the lock if no holder
       // conflicts.
       if (inflight == 0 &&
@@ -666,7 +787,15 @@ int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
     return 0;
   }
   // The lock held, a version committed after the transaction began
-  // fails it (../LOCKMGR.md §4.11).
+  // fails it (../LOCKMGR.md §4.11); in KS, only one that changed the key
+  // (§1.13).
+  if (commit_ts > s->snapshot_ts && sm1::SM_LOCKMODE_KS == mode) {
+    int changed = key_changed_since(s, st, k, s->snapshot_ts);
+    if (changed < 0) {
+      return -1;
+    }
+    commit_ts = changed ? commit_ts : 0;
+  }
   if (commit_ts > s->snapshot_ts) {
     return xct_fail_retryable(s, sm1::SM_ERR_CONFLICT,
                               "key was changed by a transaction that "
@@ -675,8 +804,9 @@ int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
   return 0;
 }
 
-int chain_resolve(sm1::session_t *s, const store_t &st, const view_t &view,
-                  int r, chain_version_t &v, sm1::rawpin_t *pin);
+int chain_resolve(sm1::session_t *s, const store_t &st, uint64_t storeid,
+                  rocksdb::Slice key, const view_t &view, int r,
+                  chain_version_t &v, sm1::rawpin_t *pin);
 
 /*
  * The version of key a reader at view sees, into pin: 0, 1 if it
@@ -694,25 +824,43 @@ int chain_get(sm1::session_t *s, const store_t &st, uint64_t storeid,
   defer { db_read_leave(s->db, epoch); };
   chain_version_t v;
   int r = get_curr(st, key, &pin->got, &v);
-  return chain_resolve(s, st, view, r, v, pin);
+  return chain_resolve(s, st, storeid, key, view, r, v, pin);
 }
 
 /*
  * From v, a key's newest version as get_curr() read it with r, to
  * the version a reader at view sees, into pin, following the chain
  * through OLD: 0, 1 if it sees none, or -1 (../ROWSTORE.md §5.3). The
- * caller holds a read epoch.
+ * caller holds a read epoch. key is the userkey: when its newest
+ * version is a dead writer's, the read queues the key for the worker
+ * to put the version before it back (../GC.md §4.2).
  */
-int chain_resolve(sm1::session_t *s, const store_t &st, const view_t &view,
-                  int r, chain_version_t &v, sm1::rawpin_t *pin) {
+int chain_resolve(sm1::session_t *s, const store_t &st, uint64_t storeid,
+                  rocksdb::Slice key, const view_t &view, int r,
+                  chain_version_t &v, sm1::rawpin_t *pin) {
+  // The first version is the newest, CURR's; the rest are OLD's.
+  bool newest = true;
   for (;;) {
     if (r != 0) {
       return r;
     }
-    int seen = access_visible(s->db, v.as_version(), view);
+    bool dead = false;
+    uint64_t commit_ts = 0;
+    int seen = access_visible(s->db, v.as_version(), view,
+                              newest ? &dead : nullptr, &commit_ts);
     if (seen < 0) {
       return -1;
     }
+    // A temporary store's keys are not the worker's to repair.
+    if (dead && nullptr == st.owner) {
+      chain_report(s->db, storeid, key, v.xid);
+    }
+    // A CURR seen, with a chain behind it, for the row reaper to cut
+    // once it is settled (../GC.md §13.5).
+    if (newest && seen == 1 && nullptr == st.owner) {
+      chain_note_reap(s->db, storeid, key, v, commit_ts);
+    }
+    newest = false;
     if (seen == 1) {
       if (v.flags & version_tombstone) {
         return 1;
@@ -956,7 +1104,11 @@ int read_chained_batch(sm1::session_t *s, uint64_t storeid,
         return set_error(sm1::SM_ERR_CORRUPT, "malformed version");
       }
     }
-    r = chain_resolve(s, st, view, r, v, pin);
+    // The userkey is the slice less its class byte.
+    r = chain_resolve(
+        s, st, storeid,
+        rocksdb::Slice(slices[i].data() + 1, slices[i].size() - 1), view, r, v,
+        pin);
     if (r < 0) {
       return -1;
     }
@@ -1000,6 +1152,9 @@ sm1::scan_t *scan_chained(sm1::session_t *s, uint64_t storeid,
   c->seq_hwm = view.seq_hwm;
   c->chained = true;
   c->cf = st.cf;
+  c->chain_storeid = storeid;
+  // A temporary store's keys are not the worker's to repair.
+  c->report_dead = nullptr == st.owner;
   // Under SERIALIZABLE, register the range before the snapshot, so a
   // write into it after the snapshot finds the SIREAD entry (../ROWSTORE.md
   // §5.6). A temporary store takes none.
@@ -1045,14 +1200,15 @@ sm1::scan_t *scan_chained(sm1::session_t *s, uint64_t storeid,
 /*
  * Whether view sees v, as access_visible: a stamped version here,
  * the common case, by its stamps alone (../XCTMGR.md §3.3, access.cc
- * visible()).
+ * visible()). *dead and *commit_ts are set as access_visible sets them.
  */
 int chain_visible(wisr::db_t *db, const wisr::chain_version_t &v,
-                  const wisr::view_t &view) {
+                  const wisr::view_t &view, bool *dead, uint64_t *commit_ts) {
   if (v.flags & version_stamped) {
+    *commit_ts = v.commit_ts;
     return v.wts <= view.snapshot_ts && v.commit_ts <= view.snapshot_ts;
   }
-  return wisr::access_visible(db, v.as_version(), view);
+  return wisr::access_visible(db, v.as_version(), view, dead, commit_ts);
 }
 
 } // namespace
@@ -1183,26 +1339,105 @@ int chain_restore(db_t *db, const store_t &st, rocksdb::Slice key, uint64_t xid,
 /* Queue a chained key whose newest version is dead; see db.h. */
 void chain_report(db_t *db, uint64_t storeid, rocksdb::Slice key,
                   uint64_t xid) {
-  std::lock_guard<std::mutex> guard(db->gc_mu);
-  db->repairs.push_back({storeid, key.ToString(), xid});
+  // A full queue or a key already queued drops this one: a hint.
+  db->repairs.push(storeid, xid, std::string_view(key.data(), key.size()));
 }
 
 /* Put back each queued chained key; see db.h. */
-void chain_repair(db_t *db, const std::vector<db_t::repair_t> &repairs) {
-  for (const db_t::repair_t &r : repairs) {
+void chain_repair(db_t *db, const hint_queue_t::batch_t &repairs) {
+  repairs.for_each([&](const hint_queue_t::record_t &r) {
     store_t st = db_store(db, r.storeid);
     // A store dropped since has nothing to repair.
     if (!st.chained) {
-      continue;
+      return;
     }
+    rocksdb::Slice key(r.key.data(), r.key.size());
     // Under the key's latch, so no write of it comes between.
-    std::lock_guard<std::mutex> latch(lock_latch(db, r.storeid, r.key));
-    if (chain_restore(db, st, r.key, r.xid, 0) != 0) {
+    std::lock_guard<std::mutex> latch(lock_latch(db, r.storeid, key));
+    if (chain_restore(db, st, key, r.xid, 0) != 0) {
       log_msg(sm1::loglevel_t::warn,
               "database {}: a chained key could not be put back: {}",
               db->name.c_str(), sm1::errmsg());
     }
+  });
+}
+
+#ifndef NDEBUG
+/* The row reaper's test hook; see chain.h. */
+std::atomic<reap_hook_fn> g_reap_hook{nullptr};
+#endif
+
+/*
+ * Cut the chain behind key's CURR version if it is settled at w
+ * (../GC.md §13.5): 1 if reaped, 0 if skipped, -1 on an error.
+ * 1. Under the key's latch, so no write of it comes between, read
+ *    CURR again. Skip a key gone, or with no prev.
+ * 2. Skip it unless CURR committed at or below w: every snapshot then
+ *    sees it and stops there, so nothing behind it is read
+ *    (../GC.md §13.3).
+ * 3. Walk the chain from prev, and collect the ids, until prev is 0
+ *    or an id is missing.
+ * 4. In one batch, Delete each id, and write CURR again with no prev,
+ *    stamped with its writer's commit_ts, as stamp_copy() stamps a
+ *    copy: a CF:txn sweep may have stamped the stored CURR, to delete
+ *    the writer's status record next, and an unstamped copy would then
+ *    read as aborted. A Delete, not a SingleDelete: an OLD key can be
+ *    written more than once (../GC.md §4.5).
+ */
+int reap_one(db_t *db, const store_t &st, uint64_t storeid, rocksdb::Slice key,
+             uint64_t w) {
+  std::lock_guard<std::mutex> latch(lock_latch(db, storeid, key));
+  // Hold a read epoch until the statuses are resolved.
+  uint64_t epoch = db_read_enter(db);
+  defer { db_read_leave(db, epoch); };
+  rocksdb::PinnableSlice buf;
+  chain_version_t head;
+  int r = get_curr(st, key, &buf, &head);
+  if (0 != r || 0 == head.prev) {
+    return r < 0 ? -1 : 0;
   }
+  uint64_t ts = head.commit_ts;
+  if (!(head.flags & version_stamped)) {
+    xct_state_t state = xct_status(db, head.xid, &ts);
+    if (XCT_ERROR == state) {
+      return -1;
+    }
+    if (XCT_COMMITTED != state) {
+      return 0;
+    }
+  }
+  if (ts > w) {
+    return 0;
+  }
+#ifndef NDEBUG
+  // A test's stand-in for what may run between the read and the write.
+  if (reap_hook_fn hook = g_reap_hook.load()) {
+    hook(db);
+  }
+#endif
+  rocksdb::WriteBatch batch;
+  for (uint64_t id = head.prev; 0 != id;) {
+    rocksdb::PinnableSlice older;
+    chain_version_t v;
+    r = get_old(st, id, &older, &v);
+    if (r < 0) {
+      return -1;
+    }
+    if (1 == r) {
+      break;
+    }
+    batch.Delete(st.cf, old_key(id));
+    id = v.prev;
+  }
+  head.prev = 0;
+  head.flags |= version_stamped;
+  head.commit_ts = ts;
+  batch.Put(st.cf, curr_key(key), chain_value(head, false));
+  rocksdb::Status status = st.rdb->Write(store_write_options(st), &batch);
+  if (!status.ok()) {
+    return set_status_error(status, "reap a chain");
+  }
+  return 1;
 }
 
 /* The id after the store's last old version; see db.h. */
@@ -1257,13 +1492,29 @@ int chain_scan_next(sm1::scan_t *c, std::string_view &key,
       c->state = -1;
       return set_error(sm1::SM_ERR_CORRUPT, "malformed version");
     }
-    // Walk the key's chain to the version the cursor sees.
+    // Walk the key's chain to the version the cursor sees. The first
+    // version is the newest, CURR's.
+    bool newest = true;
     for (;;) {
-      int r = chain_visible(db, v, view);
+      bool dead = false;
+      uint64_t commit_ts = 0;
+      int r = chain_visible(db, v, view, newest ? &dead : nullptr, &commit_ts);
       if (r < 0) {
         c->state = -1;
         return -1;
       }
+      // Queue a dead newest version for the worker (../GC.md §4.2).
+      if (dead && c->report_dead) {
+        chain_report(db, c->chain_storeid, rocksdb::Slice(c->last_examined),
+                     v.xid);
+      }
+      // A CURR seen, with a chain behind it, for the row reaper
+      // (../GC.md §13.5).
+      if (newest && 1 == r && c->report_dead) {
+        chain_note_reap(db, c->chain_storeid, rocksdb::Slice(c->last_examined),
+                        v, commit_ts);
+      }
+      newest = false;
       if (1 == r) {
         // A tombstone hides the key; a row is handed out, lent by the
         // iterator or by got until the next call.
@@ -1351,15 +1602,19 @@ int sm1::chain_insert_new(sm1::session_t *session, uint64_t storeid,
 
 /* Replace a chained key's value; see sm1.h. */
 int sm1::chain_update(sm1::session_t *session, uint64_t storeid,
-                      std::string_view key, std::string_view data) {
-  return write_chained(session, WRITE_UPDATE, storeid, key, data);
+                      std::string_view key, std::string_view data,
+                      sm1::key_kept_fn kept, void *ctx) {
+  return write_chained(session, WRITE_UPDATE, storeid, key, data, nullptr,
+                       nullptr, kept, ctx);
 }
 
 /* Replace a chained key's value, pinning the row replaced; see sm1.h. */
 int sm1::chain_update(sm1::session_t *session, uint64_t storeid,
                       std::string_view key, std::string_view data,
-                      sm1::rawpin_t *pin, std::string_view &old) {
-  return write_chained(session, WRITE_UPDATE, storeid, key, data, pin, &old);
+                      sm1::rawpin_t *pin, std::string_view &old,
+                      sm1::key_kept_fn kept, void *ctx) {
+  return write_chained(session, WRITE_UPDATE, storeid, key, data, pin, &old,
+                       kept, ctx);
 }
 
 /* Delete a chained key; see sm1.h. */
@@ -1522,4 +1777,36 @@ int sm1::chain_read(sm1::session_t *session, uint64_t storeid,
     return xct_check_active(session);
   }
   return read_chained(session, storeid, key, &session->readpin, data);
+}
+
+/* One pass of the row reaper over the session's database; see sm1.h. */
+int64_t sm1::row_reap_pass(sm1::session_t *session,
+                           const std::atomic<bool> *stop) {
+  if (nullptr == session) {
+    return set_error(sm1::SM_ERR_INVALID, "sm1_row_reap_pass: no session");
+  }
+  db_t *db = session->db;
+  hint_queue_t::batch_t keys = db->reaps.take();
+  if (0 == keys.count()) {
+    return 0;
+  }
+  // W once for the batch: a key settled at it stays settled.
+  uint64_t w = db_watermark(db);
+  int64_t reaped = 0;
+  bool failed = false;
+  keys.for_each([&](const hint_queue_t::record_t &rec) {
+    if (failed || (nullptr != stop && stop->load())) {
+      return;
+    }
+    store_t st = db_store(db, rec.storeid);
+    // A store dropped since has nothing to reap.
+    if (!st.chained) {
+      return;
+    }
+    int r = reap_one(db, st, rec.storeid,
+                     rocksdb::Slice(rec.key.data(), rec.key.size()), w);
+    failed = r < 0;
+    reaped += r > 0 ? 1 : 0;
+  });
+  return failed ? -1 : reaped;
 }

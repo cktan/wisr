@@ -4,6 +4,8 @@
  * External declarations pertaining to Grand Unified Configuration.
  *
  * Copyright (c) 2000-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  * Written by Peter Eisentraut <peter_e@gmx.net>.
  *
  * src/include/utils/guc.h
@@ -259,7 +261,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_statement_stats;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool check_function_bodies;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool current_role_is_superuser;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool AllowAlterSystem;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_duration;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int log_parameter_max_length;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int log_parameter_max_length_on_error;
@@ -364,6 +365,7 @@ extern char *convert_GUC_name_for_parameter_acl(const char *name);
 extern void check_GUC_name_for_parameter_acl(const char *name);
 extern void InitializeGUCOptions(void);
 extern void publish_postmaster_settings(void);
+extern void publish_shared_settings(void);
 extern bool SelectConfigFiles(const char *userDoption, const char *progname);
 extern void ResetAllOptions(void);
 extern void AtStart_GUC(void);

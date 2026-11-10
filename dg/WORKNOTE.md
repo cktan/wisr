@@ -33,7 +33,7 @@ reversed. Newest step last.
 It prints its version and nothing more useful: there is no
 bootstrap, so no catalog and no database to start. That is the
 state
-[`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+[`../sm/PGFORK.md`](../sm/PGFORK.md#10-digres-how-the-fork-is-to-be-made)
 §10 expects before the lookup layer.
 
 How it was done: the headers of each subsystem that was left out
@@ -222,7 +222,7 @@ of its own for SQL. This supersedes what step 3 says of sq.
 ## Step 6: `SELECT 1 + 1` runs
 
 The second thing
-[`../sm/PART4.md`](../sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+[`../sm/PGFORK.md`](../sm/PGFORK.md#10-digres-how-the-fork-is-to-be-made)
 §10 says must run does:
 `echo 'select 1 + 1;' | build/digres --parse --run` prints 2,
 with no server started and no catalog table read. The operator,
@@ -282,7 +282,7 @@ its function and the type are found compiled in.
 ## Step 7: an error is an exception
 
 The first step toward threads
-([`../sm/PART4.md`](../sm/PART4.md#2-the-blocker-the-process-model)
+([`../sm/PGFORK.md`](../sm/PGFORK.md#2-the-blocker-the-process-model)
 §2): digres no
 longer leaves an error by `longjmp`. `ereport(ERROR)` throws a
 C++ exception, `pg_error_t`, and what catches it is a `catch`.
@@ -407,7 +407,7 @@ still a postmaster that forks a process a connection.
   postmaster. Attaching sm leaves RocksDB's threads in the
   process that did it, and a postmaster that forks must have
   none. A backend cannot ask sm either
-  ([`../sm/PART4.md`](../sm/PART4.md#2-the-blocker-the-process-model)
+  ([`../sm/PGFORK.md`](../sm/PGFORK.md#2-the-blocker-the-process-model)
   §2):
   until connections are threads, the databases are the ones
   there were at start.
@@ -501,7 +501,7 @@ before sm's own scans exist.
 
 ## Step 11: VACUUM is gone
 
-sm collects its own garbage ([`../sm/PART4.md`](../sm/PART4.md)),
+sm collects its own garbage ([`../sm/PGFORK.md`](../sm/PGFORK.md)),
 so VACUUM,
 autovacuum, freezing and the wraparound defences built around
 them are removed. 5 files went, and about 11,000 lines.
@@ -1284,7 +1284,7 @@ sets the latch of the thread it runs in, in a thread with none.
 ## Step 37: CREATE TABLE makes a table in sm
 
 The first of
-[`../sm/PART4.md`](../sm/PART4.md#95-the-first-target-insert-and-scan-integers-only)
+[`../sm/PGFORK.md`](../sm/PGFORK.md#95-the-first-target-insert-and-scan-integers-only)
 §9.5's three statements. A table
 of `int2`, `int4` and `int8` columns, some NOT NULL, is created
 in sm3's catalog, in the session's transaction, and seen by
@@ -1335,7 +1335,7 @@ every session once it commits.
 ## Step 38: INSERT and a sequential scan go to sm
 
 The other two of
-[`../sm/PART4.md`](../sm/PART4.md#95-the-first-target-insert-and-scan-integers-only)
+[`../sm/PGFORK.md`](../sm/PGFORK.md#95-the-first-target-insert-and-scan-integers-only)
 §9.5's statements: rows go
 into a table in sm, and a scan reads them back, under the
 transaction's isolation level.
@@ -1436,7 +1436,7 @@ with `SM_ERR_INTERRUPTED` when a bit in it is raised.
   UPDATE and DELETE are. The path is untested end to end.
 - **Two lock managers lock the same table**, PostgreSQL's and
   sm's
-  ([`../sm/PART4.md`](../sm/PART4.md#3-why-the-table-access-method-path-does-not-work-here)
+  ([`../sm/PGFORK.md`](../sm/PGFORK.md#3-why-the-table-access-method-path-does-not-work-here)
   §3 warns of it): a deadlock across
   them is one neither detector sees. Not resolved here.
 - `server.sh` holds a table's lock in one session, and confirms
@@ -5932,7 +5932,7 @@ them.
 ## Step 200: a row is named by its rowno; ctid and xmin are gone
 
 Decided 2026-10-16,
-[`../sm/PART4.md`](../sm/PART4.md#3-why-the-table-access-method-path-does-not-work-here)
+[`../sm/PGFORK.md`](../sm/PGFORK.md#3-why-the-table-access-method-path-does-not-work-here)
 §3: digres is a digression
 from PostgreSQL, and says what it has not. sm keeps no
 transaction ids in a row, and names a row by its `rowno`, not a
@@ -5965,7 +5965,7 @@ row was read, and `ctid` was the rowno packed into a tid,
   server stopped on `select rowno from pg_namespace`, whose
   rows have no tid.
 -
-  [`../sm/PART4.md`](../sm/PART4.md#3-why-the-table-access-method-path-does-not-work-here)
+  [`../sm/PGFORK.md`](../sm/PGFORK.md#3-why-the-table-access-method-path-does-not-work-here)
   §3 and §6,
   [`../sm/sm2/SM2_OBJECTIVE.md`](../sm/sm2/SM2_OBJECTIVE.md) and
   [`../sm/sm2/SM2_DESIGN.md`](../sm/sm2/SM2_DESIGN.md#5-cross-level-decisions)
@@ -6708,7 +6708,7 @@ file through the postmaster's last node, and a session's
 - No library is built in the tree, so no test loads one.
 - A library's own statics are still the process's: a second
   session that `LOAD`s it runs its `_PG_init()` again on them.
-  [`ISSUE.md`](ISSUE.md) issue 1 records it, not to be fixed
+  [`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 1 records it, not to be fixed
   soon, and
   `internal_load_library()` asserts that no session thread
   loads a library.
@@ -7016,7 +7016,7 @@ from another's had nothing to tell.
 - **"cannot affect row a second time"**: ON CONFLICT DO UPDATE
   and MERGE told the case by the row's xmin being their own
   transaction's, which never held. The checks are gone, and the
-  gap they leave is [`ISSUE.md`](ISSUE.md) issue 2: digres keeps
+  gap they leave is [`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 2: digres keeps
   the first
   row and drops the second's update. MERGE does not write yet.
   `test/slt/on_conflict_twice.test` holds PostgreSQL's answer
@@ -7122,7 +7122,7 @@ longer needs is deleted, as here:
 
 ## Step 237: ON CONFLICT DO UPDATE refuses a row twice
 
-[`ISSUE.md`](ISSUE.md) issue 2, from step 233. An `INSERT ... ON
+[`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 2, from step 233. An `INSERT ... ON
 CONFLICT DO
 UPDATE` whose rows conflict with each other, as `values (1, 0),
 (1, 1)` on a key, kept the first row and dropped the second's
@@ -7142,7 +7142,7 @@ told the case by the row's xmin; digres assigns none.
 - `test/slt/on_conflict_twice.test` holds PostgreSQL's answers
   alone now: both cases fail and leave the table as it was, and
   the join UPDATE passes. Issue 2 is removed from
-  [`ISSUE.md`](ISSUE.md).
+  [`ISSUE.md`](../ISSUE.md#3-digres-known-issues).
 
 ## Step 238: views are sm's
 
@@ -7259,7 +7259,7 @@ latches, and `pg_cancel_backend()` and its kin
 (`signalfuncs.c`).
 
 - **Wait sets are epoll's alone**: digres runs on Linux alone
-  ([`../sm/PART4.md`](../sm/PART4.md) section 10).
+  ([`../sm/PGFORK.md`](../sm/PGFORK.md) section 10).
   `waiteventset.c`, 1,600 lines,
   is 590: PostgreSQL's poll(), kqueue() and Windows
   implementations and the self-pipe are gone, none of which
@@ -7550,7 +7550,7 @@ first call, failed `internal_load_library()`'s assertion that
 no session thread loads one, and took the server down:
 PostgreSQL's `create_function_c`, on its first statement.
 Dynamic loading is to be redesigned and redone
-([`ISSUE.md`](ISSUE.md)
+([`ISSUE.md`](../ISSUE.md#3-digres-known-issues)
 issue 1); until then it is disabled.
 
 - **`internal_load_library()` refuses every library**, with
@@ -8869,7 +8869,7 @@ has one.
 
 ## Step 300: a numrange aligns as its decimal128 bounds do
 
-[`ISSUE.md`](ISSUE.md) issue 3: a numeric range in an array or a
+[`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 3: a numeric range in an array or a
 multirange lost a bound, `ARRAY[numrange(1, 2), numrange(3,
 4), numrange(5, 6)]` giving `[3,2475880078570760549798248448)`
 for its second. numrange's bounds are decimal128s, aligned to
@@ -8927,7 +8927,7 @@ column, is a decimal64, and numrange's subtype is decimal128.
 
 A duplicate key in a table made in the open transaction, with
 a UNIQUE column, said `could not open relation with OID N`
-([`ISSUE.md`](ISSUE.md) issue 6): the savepoint of the issue's
+([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 6): the savepoint of the issue's
 repro had
 nothing to do with it. And a unique index made on a table the
 transaction had already written was not kept: the duplicate
@@ -8956,7 +8956,7 @@ went in, `INSERT 0 1`.
 A temporary table that empties at commit, referenced by a
 foreign key of a table that keeps its rows, committed and
 emptied, leaving the child's rows referencing none
-([`ISSUE.md`](ISSUE.md) issue 7). PostgreSQL's `heap_truncate()`
+([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 7). PostgreSQL's `heap_truncate()`
 first
 calls `heap_truncate_check_FKs(rels, true)`, which refuses
 the commit; digres's `PreCommit_on_commit_actions()` truncated
@@ -8979,7 +8979,7 @@ each table by `smstore_truncate()` and skipped the check.
 ## Step 304: a cursor reads as its DECLARE did on each FETCH
 
 A cursor saw its own transaction's writes made after its
-DECLARE ([`ISSUE.md`](ISSUE.md) issue 4): a row deleted after it
+DECLARE ([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 4): a row deleted after it
 was
 gone once the cursor was rewound, `MOVE BACKWARD ALL`, and a
 row inserted after it was there. Not rewinds alone: a nested
@@ -9034,7 +9034,7 @@ command id.
 ## Step 305: FOR UPDATE passes over a row changed since
 
 A FOR UPDATE cursor returned a row its transaction updated or
-deleted after the DECLARE ([`ISSUE.md`](ISSUE.md) issue 5), where
+deleted after the DECLARE ([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 5), where
 PostgreSQL's row lock answers `TM_SelfModified` and
 `ExecLockRows()` passes over the row. It was not SERIALIZABLE
 alone: at REPEATABLE READ and SERIALIZABLE the old row came
@@ -9079,7 +9079,7 @@ version; a deleted one there was passed over as gone.
 
 `INSERT ... ON CONFLICT` at REPEATABLE READ or SERIALIZABLE
 failed with sm1's `sm1_read_latest requires READ COMMITTED`
-when two of its rows had one key ([`ISSUE.md`](ISSUE.md) issue
+when two of its rows had one key ([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue
 9). Not the
 message alone: DO NOTHING, which PostgreSQL runs, inserting
 the first row and passing over the second, failed with it;
@@ -9171,7 +9171,7 @@ is digres's own: PostgreSQL refuses it
 ## Step 307b: nothing is made in pg_catalog
 
 `CREATE TABLE pg_catalog.t ()` made a table
-([`ISSUE.md`](ISSUE.md) issue
+([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue
 8), as did CREATE VIEW and CREATE SEQUENCE there. PostgreSQL
 refuses one in `heap_create()`, which a relation made in sm
 does not reach. In digres no catalog is in sm: the 28 in
@@ -9206,7 +9206,7 @@ taken name looks in sm alone: `CREATE TABLE pg_catalog.pg_class
 ## Step 308: a SET DEFAULT column named twice is kept once
 
 A foreign key's `ON DELETE SET DEFAULT (d, d)` or `SET NULL
-(d, d, d)` kept every column named ([`ISSUE.md`](ISSUE.md) issue
+(d, d, d)` kept every column named ([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue
 11), where
 PostgreSQL's `validateFkOnDeleteSetColumns()` drops a repeat.
 Not the definition alone: the action's UPDATE set `d` twice,
@@ -9231,7 +9231,7 @@ could not be deleted at all.
 
 `CREATE TABLE t (LIKE a, LIKE a)` failed with sm's `could not
 create a table: create table: a column without a name, or two
-with one: xx` ([`ISSUE.md`](ISSUE.md) issue 10). Not LIKE alone:
+with one: xx` ([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 10). Not LIKE alone:
 any column
 named twice, `(a int, a int)` or `(LIKE a, xx text)`, did; the
 table was refused, as PostgreSQL refuses it, with sm's words.
@@ -9256,7 +9256,7 @@ specified more than once`, is not on a table in sm's path.
 ## Step 310: the hash access method cannot exclude, rightly
 
 `pg_indexam_has_property(hash, 'can_exclude')` is false in
-digres and true in PostgreSQL ([`ISSUE.md`](ISSUE.md) issue 12).
+digres and true in PostgreSQL ([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 12).
 Closed as
 digres's answer, not a bug. `amutils.c` computes the property
 from the method's `amgettuple`, a scan an exclusion constraint
@@ -11697,7 +11697,7 @@ a role with
 an md5 hash as its password cannot log in. Over TCP the hash
 also crossed the network in the clear, and an md5 hash of a
 password and a role name can be checked against a guess
-offline. [`ISSUE.md`](ISSUE.md) held it as an open question; the
+offline. [`ISSUE.md`](../ISSUE.md#3-digres-known-issues) held it as an open question; the
 user chose
 to refuse it everywhere. Design:
 [`../aa/ROLE.md`](../aa/ROLE.md#51-a-password-set-in-cleartext)
@@ -11725,7 +11725,7 @@ to refuse it everywhere. Design:
 A logged statement masks each string after the keyword
 `PASSWORD` (step 380). A statement with `PASSWORD` misspelled,
 such as `ALTER ROLE r PASWORD 'x'`, fails to parse, and its
-`STATEMENT:` line showed the password. [`ISSUE.md`](ISSUE.md)
+`STATEMENT:` line showed the password. [`ISSUE.md`](../ISSUE.md#3-digres-known-issues)
 held it as an
 open question; the user chose to mask a failed role statement,
 and to leave `pg_stat_activity` as PostgreSQL's. Design:
@@ -11754,7 +11754,7 @@ on digres, and reports where digres differs
 ([`DUCKPLAN.md`](DUCKPLAN.md),
 [`test/duck/README.md`](test/duck/README.md)). What it found and
 what was not fixed
-is in [`ISSUE.md`](ISSUE.md), issues 15 to 26.
+is in [`ISSUE.md`](../ISSUE.md#3-digres-known-issues), issues 15 to 26.
 
 - **The runner**, `test/duck/duckrun.cc`, beyond the plan:
   - DuckDB writes a loop variable `{i}`, not `${i}`: both are
@@ -12549,8 +12549,6 @@ by sm3 and checked by PostgreSQL's executor.
 
 ## Step 412: ALTER COLUMN SET/DROP NOT NULL and SET/DROP DEFAULT
 
-The decisions are in [`../QUESTION.md`](../QUESTION.md).
-
 - **sm3** (`drop_not_null()`, `set_default()` in
   `../sm/sm3/src/ddl/ddl.cc`): each changes the column's record
   alone, under the table's lock X. DROP NOT NULL of a primary
@@ -12771,7 +12769,7 @@ files, without a process, a thread or a pipe.
 
 ## Step 419: the tombstone purge erases by SingleDelete
 
-[`ISSUE.md`](ISSUE.md) issue 22, a mass delete's purge stalling
+[`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 22, a mass delete's purge stalling
 every writer, fixed as [`../sm/PURGE_PLAN.md`](../sm/PURGE_PLAN.md)
 plans.
 
@@ -12805,7 +12803,7 @@ plans.
   a savepoint's rolled-back version compacts away. The test that
   checked the old purge's flush by count is replaced.
 - **Found too**: digres installs no log hook for sm, so sm's
-  errors are lost ([`ISSUE.md`](ISSUE.md) issue 27).
+  errors are lost ([`ISSUE.md`](../ISSUE.md#3-digres-known-issues) issue 27).
 
 ## Step 419: restart-only settings are read from pcb
 
@@ -12871,3 +12869,247 @@ reads them, and it kept its own copy in the logfile state.
 - **The GUC variables are `static` in `guc_tables.c`**, and
   `show_log_file_mode()` moved there from `variable.c`, as it
   reads the session's own copy.
+
+## Step 422: TLS
+
+[`../aa/ROLE.md`](../aa/ROLE.md#8-decisions) §8 question 4: TLS by
+one setting; when `ssl` is on, every client over TCP must use it,
+and the local socket never does.
+
+- **The build always links OpenSSL**: `USE_OPENSSL` and the five
+  OpenSSL 3.0 features PostgreSQL asks of `configure`, in
+  `src/include/pg_config.h`; `be-secure-openssl.c` compiled;
+  `-lssl -lcrypto`. The hashes stay PostgreSQL's own
+  (`src/common/cryptohash.c`); `pg_strong_random()` takes
+  OpenSSL's `RAND_bytes()`. C++ asks a few casts of PostgreSQL's
+  code.
+- **One context for the process** (`be-secure-openssl.c`): every
+  session is a thread, so the context, the BIO method, and
+  whether the CA store was loaded are in `shmem->tls`, under
+  `shmem->tls_mutex`. The main thread makes the context and
+  replaces it on a reload; a session calls `SSL_new()` under the
+  mutex, which takes a reference, so a replaced context goes
+  with its last connection. The info and ALPN callbacks, which
+  PostgreSQL set on the context at each connection, are set once
+  as it is made: they hold no connection's state.
+  `cert_errdetail` and the error message buffer are a session's
+  own. `LoadedSSL` is gone: `be_tls_loaded()` asks the context.
+- **TCP without TLS is refused** with `ssl` on
+  (`ClientAuthentication()`), before any password crosses the
+  network: `a connection over TCP must use SSL`.
+- **Tests**: `test/tls.sh`, sourced by `server.sh`, against a
+  server of its own with two certificates a CA it makes signs:
+  TLS, `verify-full`, TCP without TLS refused, the local socket,
+  channel binding, a password set in cleartext over TLS, 16
+  sessions over TLS while the configuration is reloaded, a held
+  session across a reload to the second certificate, a bad
+  reload, and a missing key file. Direct TLS is tested by a
+  client of PostgreSQL 17 or later with TLS; PostgreSQL 18's is
+  now built `--with-ssl=openssl` (`../README.md`). Under the
+  thread sanitizer, `tls.sh` reports no race.
+
+## Step 423: the GC queues are bounded hints
+
+[`../sm/GC.md`](../sm/GC.md#46-the-hint-queues) §4.6: the queue of
+purges and the queue of repairs held a string for each key, and
+grew without bound.
+
+- **Found**: the purge queue held a key once (`purge_ids`), but
+  nothing bounded it, and the repair queue held a key each time a
+  compaction met it. A queue is a hint: a key it drops is met
+  again.
+- **sm1** (`../sm/sm1/src/hintq.h`): both queues are a
+  `hint_queue_t`. It is one buffer of 32 MB, made by the first
+  push, with a 1-bit Bloom filter of 1 MB in front. The worker
+  takes the whole buffer and clears the filter in one hold of the
+  queue's mutex. A full buffer drops the key.
+- **Readers queue a dead version**: a point read, a batch read and
+  a cursor that pass a dead newest version of a chained key call
+  `chain_report()`, as the compaction filter does. A reader finds
+  the writer dead only when its snapshot is past the version's
+  `wts`; a version above every snapshot is passed with no lookup.
+- **Tests**: `../sm/sm1/test/test_hintq.cc`, and
+  `../sm/sm1/test/test_chain.cc`, where each kind of read queues a
+  dead key and GC puts the version back with no compaction. The
+  mvcc scenarios cannot express it: they do not force a
+  compaction or run the worker.
+- **Found too**: `test/tls.sh` looked for psql 17's `\conninfo`
+  text. PostgreSQL 18's psql prints a table, so the check failed
+  on a server that was over TLS. It accepts both now.
+
+## Step 424: key-share row locks
+
+A foreign key's check locked its parent row `FOR SHARE`, so an
+update of the parent's other columns waited for every open
+transaction that had inserted one of its children
+([`../sm/LOCKMGR.md`](../sm/LOCKMGR.md#113-key-share-modes)
+§1.13).
+
+- **Two row modes in sm1**: KS (`FOR KEY SHARE`) and NKU
+  (`FOR NO KEY UPDATE`), `SM_LOCKMODE_KS` and
+  `SM_LOCKMODE_NKU`, with PostgreSQL's conflicts among KS, S,
+  NKU and X. `sm1::lock_oid` refuses them.
+- **An update that keeps its key is NKU**: the compare is made
+  under the key's latch, against the version replaced, by
+  sm2's `key_kept_fn`, which `sm1::chain_update` takes. The
+  version is flagged `version_key_kept`; KS passes over it in
+  flight, and its currency check passes over it committed. The
+  flag says the key is the last committed version's: an update
+  over the transaction's own version is flagged only if that one
+  is, so an earlier key change or insert is not hidden (`k10`,
+  `k12`).
+- **The key columns** are those of the unique indexes on columns
+  alone, not partial, but the primary key:
+  `table_def_t::key_columns`, named to sm2 by
+  `sm2::rel_set_key_columns`.
+- **digres** maps PostgreSQL's four row modes to sm's in
+  `smstore_lock_row()`; `pg_locks` shows `KS` and `NKU`.
+- **Tests**: the scenarios `k01` to `k12`, with the driver's
+  `keyshare` and `nokeyupdate` modes, `write ... keykept` and
+  the directive `stores chained`; sm1's unit tests of the
+  matrix, the flag, the pass-over and the currency check;
+  sm3's test of the key columns; and the isolation specs that
+  need the four modes.
+
+## Step 425: the reapers are named for what they reap
+
+Three threads were named apart from what they do. They are now
+the btree reaper, the row reaper and the db reaper.
+
+- **The btree reaper** was the btree cleaner: sm3's
+  `src/btree_reaper/`, `btree_reaper_t`, `reap_queue_t`,
+  `idx_reap_leaf()`, `sm_set_btree_reaper_workers()`,
+  `sm_btree_reaper_run()` and `rel`'s `(btree-reaper-pass)`. Its
+  act on a leaf is a reap.
+- **The row reaper** was the OLD reaper, a design: it reaps the
+  OLD entries behind a settled CURR. It gets threads of its own,
+  a pool a database in sm1, as the btree reaper has
+  ([`../sm/GC.md`](../sm/GC.md#135-reaping-by-the-row-reapers-threads)
+  §13.5); the GC worker does not reap. A writer reaps nothing,
+  for now: its reap costs a Get and a `Delete` on every update,
+  and saves I/O only while the copy is in the memtable (§13.4).
+- **The db reaper** was sm1's reaper, the thread that closes a
+  database left idle (`env_start_db_reaper()`).
+
+## Step 426: the reapers' threads reap rows too
+
+A database's reaper threads, sm3's pool of 4, run the row
+reaper's pass beside the btree reaper's
+([`../sm/GC.md`](../sm/GC.md#135-reaping-by-the-reapers-threads)
+§13.5, [`../sm/BTREEINDEX.md`](../sm/BTREEINDEX.md) §9.9).
+
+- **A reader queues a key** whose CURR it sees committed with a
+  `prev`, in sm1's `reaps` queue: a point read, a batch read and
+  a cursor. It reads no watermark: the pass judges whether CURR is
+  settled.
+- **`sm1::row_reap_pass()`** takes the queue, reads W once, and
+  for each key settled at W deletes its OLD entries and writes
+  CURR again with no `prev`, under the key's latch. The copy is
+  stamped with its writer's `commit_ts`: a `CF:txn` sweep may have
+  stamped the stored CURR and deleted the status record (a review
+  found it). A test checks the stamp; another runs a sweep inside
+  a reap, by the debug build's `g_reap_hook` in `reap_one()`, then
+  empties the commit cache: the row still reads.
+- **The pool**: the first thread asks `sm1::row_reaps_pending()`,
+  with no session, and runs the row pass after the btree pass.
+  `sm_set_btree_reaper_workers()` is `sm_set_reaper_workers()`,
+  `sm_btree_reaper_run()` is `sm_reaper_run()`, and `rel`'s
+  `(btree-reaper-pass)` is `(reaper-pass)`: each runs both.
+- **Tests**: sm1's unit tests of the pass, a held snapshot, what
+  is not queued, and an abort after a reap; the scenario `g03`,
+  with the driver's verb `reap`; sm3's test of the pool's row
+  pass. `rel` and dg's tests cannot see an OLD entry, and run
+  the pass through their suites alone.
+- **Measured** by `bench/idxopen.sh`, which takes `COUNTS`,
+  `UPDATED` and `DIGRES` now.
+
+## Step 427: a disabled timeout leaves no timer set
+
+A COPY's bulk load failed with `sort: interrupted` in
+`server.sh` ([`../ISSUE.md`](../ISSUE.md)). A session's
+timeouts share one sm timer. PostgreSQL's `timeout.c` leaves it
+armed when a timeout is disabled, and the ALARM it raises later,
+with nothing due, ended the load's final sort, which cannot be
+retried.
+
+- **`cancel_alarm()`** (`timeout.c`): when an active timeout is
+  disabled, cancel the timer and take its ALARM bit, then arm it
+  for the earliest timeout left, if any. `disable_all_timeouts()`
+  cancels it too.
+- **Test**: `test/copy_alarm.sh`, sourced by `server.sh`: COPYs
+  under a stale `statement_timeout` timer, alone and inside a
+  transaction whose `transaction_timeout` stays active.
+
+## Step 428: a harmless timeout stops no bulk load
+
+With `client_connection_check_interval` set, every COPY bulk load
+failed: the check's `ALARM` stopped the load's final sort. And a
+load's row could go in twice, if an index's sort stopped after
+the row went in and `waiting()` handed it again
+([`../ISSUE.md`](../ISSUE.md)).
+
+- **sm0**: `sm_set_stop_fn()` and `sm_should_stop()`: work that
+  cannot be retried asks the host whether what is pending stops
+  it (`../sm/sm0/INTERRUPT.md` §5.1). The sort and the buffer
+  pool's search for a frame ask it.
+- **digres**: `InterruptsStopWork()` (`procsignal.c`), set by
+  `miscinit.c`, runs the `ALARM` handler and says whether
+  `ProcessInterrupts()` would raise an error.
+- **A load's row**: its streams' sorts take input with
+  `interruptible_input` off; `sm3::tbl_load_add()` checks once,
+  before the row goes in, so its `SM_ERR_INTERRUPTED` leaves
+  nothing, and the row may be handed again.
+- **Tests**: sm0's stop function and `interruptible_input`; sm3's
+  interrupted row; `test/copy_alarm.sh`'s COPY under a 1 ms
+  connection check, and `statement_timeout` still ending a COPY.
+
+## Step 429: an index scan with a null key reads nothing
+
+Issue 28, found by `bench/soak.sh`: a key of an index scan whose
+value is null at run time, from an InitPlan that returned no
+row, gave the scan no bound, and every entry was read and
+refused. A delete took 141 ms on 100,000 rows, and grew with
+the table; PostgreSQL's took under 1 ms.
+
+- **`smstore_index_beginscan()`**: a key with `SK_ISNULL`, and
+  neither `SK_SEARCHNULL` nor `SK_SEARCHNOTNULL`, makes the scan
+  empty before it reads, as PostgreSQL's `_bt_preprocess_keys()`
+  ends it: a btree operator is strict. One check covers the
+  index scan, the index-only scan and a primary key's scan, which
+  all begin there.
+- **Measured**, debug build, 100,000 rows: the delete from 337 to
+  0.8 ms, the select from 190 to 0.7 ms.
+- **EXPLAIN ANALYZE's Index Searches** counts an sm scan's searches
+  now, as PostgreSQL 18's btree counts its descents: one for each
+  probe opened, and one for each row a primary key's list reads by
+  its key (`count_searches()`). It printed 0 for every sm scan
+  before. `smstore_index_beginscan()` takes the plan node's
+  `IndexScanInstrumentation`.
+- **Test**: `test/select_null_key.sql`, by `run.sh`: first the same
+  scan keyed by a subquery that returns a class, which shows `Index
+  Searches: 1` and its row, so the counts are read for a scan that
+  runs; then an index scan, an index-only scan, a primary key's
+  scan and a delete keyed by a subquery of no row each show `Index
+  Searches: 0` and meet no row;
+  a scan with a key shows 1, and lists one a value; `IS NULL`, `IS
+  NOT NULL` and a null array find theirs. Without the fix the
+  null-key scans show 1. sm's tests cannot express it: sm is never
+  asked for the scan.
+
+## Step 430: the row reaper under the thread sanitizer
+
+The row reaper's pass ran beside writers and readers only in
+single-threaded tests ([`../sm/GC.md`](../sm/GC.md#138-tests)
+§13.8).
+
+- **Test** (`sm1/test/test_chain.cc`): two writers, two readers at
+  read committed, a repeatable read reader and a reaper thread on
+  the same 8 keys. Every read is a value its key's writer
+  committed, and never an older one; a held snapshot's reads stay;
+  after all end, a last pass leaves no OLD entry.
+- **`make tsan` in sm1**: the test under the thread sanitizer, on
+  RocksDB built with it, as sm3's are; `ROCKSDB` names the library
+  to link. sm3's `make tsan` runs the pool's row pass test too.
+- **Checked**: without the key's latch in `reap_one()` the test
+  fails, every run, with OLD entries left; without the hint queue's
+  mutex the thread sanitizer reports the race with `take()`.

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * tree.h -- a B+tree of an index's own pages (../BTREEINDEX.md), a
  * Lehman and Yao B-link tree: each page has a high key and a right
  * link, so a reader pins one page at a time, and a split that moves a
@@ -13,7 +18,7 @@
  * compared bytewise; a key's value is the caller's. Every change is
  * a top-level write of sm1's, made when it is made, whatever the
  * caller's transaction then does. No entry is removed but by
- * tree_prune, tree_clean_leaf, and tree_remove_if, which only a test
+ * tree_prune, tree_reap_leaf, and tree_remove_if, which only a test
  * calls; no page is ever freed.
  */
 #ifndef SM2_TREE_TREE_H
@@ -51,7 +56,7 @@ struct tree_t {
   uint64_t storeid = 0;
   uint16_t relid = 0;
   size_t limit = page_limit;
-  /* Told of a leaf that needs cleaning; none by default. */
+  /* Told of a leaf that needs reaping; none by default. */
   leaf_note_fn note = nullptr;
   void *note_ctx = nullptr;
   /* The sequence of page ids, looked up at the tree's first split. */
@@ -213,11 +218,11 @@ int tree_prune(
 /*
  * tree_prune of one page, by its id, from step 1 for a leaf: 0, doubt
  * set if an entry is left in doubt; 1 if the page is no leaf; or -1.
- * The cleaner's (../BTREEINDEX.md §9), whose queued page id may be stale:
+ * The btree reaper's (../BTREEINDEX.md §9), whose queued page id may be stale:
  * pages are never freed, so it names a page still. removed counts the
  * entries removed.
  */
-int tree_clean_leaf(
+int tree_reap_leaf(
     tree_t &tree, uint64_t pageid,
     const std::function<int(std::string_view, std::string_view)> &dead,
     size_t &removed, bool &doubt);

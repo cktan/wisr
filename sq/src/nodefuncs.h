@@ -6,6 +6,11 @@
  * makefuncs.c and value.c that the grammar calls, and the few
  * functions of nodeFuncs.c, define.c and namespace.c it calls beside
  * them. Each makes its nodes in the tree being built (tree.h).
+ *
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for sq,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  */
 #ifndef SQ_SRC_NODEFUNCS_H
 #define SQ_SRC_NODEFUNCS_H

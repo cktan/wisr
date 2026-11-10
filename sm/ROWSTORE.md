@@ -12,11 +12,10 @@ with no copy. Its code is in `sm1/src/access.cc`,
 
 Types are in [`sm2/TYPE.md`](sm2/TYPE.md), and a tuple's bytes in
 [`sm2/TUPLE.md`](sm2/TUPLE.md). Other modules: TOAST.md for
-values out of line,
-LOCKMGR.md for latches and locks, XCTMGR.md for transactions,
-visibility, savepoints and SSI, GC.md for the Garbage Collector,
-DBMGR.md for column families and options, LSMINDEX.md and
-BTREEINDEX.md for index entries.
+values out of line, LOCKMGR.md for latches and locks, XCTMGR.md
+for transactions, visibility, savepoints and SSI, GC.md for the
+Garbage Collector, DBMGR.md for column families and options,
+LSMINDEX.md and BTREEINDEX.md for index entries.
 
 ---
 
@@ -41,8 +40,8 @@ BTREEINDEX.md for index entries.
 - **A read of a chained key is a `Get`** of CURR. It follows the
   chain while it does not see the version.
 - **An abort repairs nothing.** Readers pass a dead version by
-  the chain. The next write of the key, or the Garbage Collector,
-  removes it.
+  the chain, and queue its key. The next write of the key, or the
+  Garbage Collector, removes it.
 - **A pin keeps a row's bytes in memory**, so a client reads them
   where RocksDB has them. A ref with a generation makes a stale
   handle fail and not read freed memory.
@@ -527,9 +526,9 @@ A load stream is declared chained or not (`sm1::load_stream`). A
 chained stream puts CURR versions of the load's xid, `prev` 0,
 under class `0x01`, as one ingestion into the one column family
 ([`BULKLOAD.md`](BULKLOAD.md)). An abort leaves them dead, for
-the Garbage
-Collector to delete. A rollback to a savepoint deletes the
-store's keys of every class but pages, with one `DeleteRange`.
+the Garbage Collector to delete. A rollback to a savepoint
+deletes the store's keys of every class but pages, with one
+`DeleteRange`.
 
 ---
 
@@ -702,8 +701,9 @@ The re-read is enforced, not requested:
 | rollback to a savepoint taken before the lock | lock released, mark gone with it |
 
 - **The mark is one bit on the session's own lock list**, not on
-  the shared table, so neither call takes a mutex. Only the
-  exclusive holder reads or sets it. The lock is held from the
+  the shared table, so neither call takes a mutex. Only a holder
+  in X or NKU (`LOCKMGR.md` §1.13), which every other writer
+  waits for, reads or sets it. The lock is held from the
   refused write on, so the newest committed version cannot change
   between the read and the write.
 - **The mark is single-use.** Left set, a write after a savepoint
@@ -754,8 +754,9 @@ The re-read is enforced, not requested:
   mark go last.
 - **An abort repairs nothing.** Its versions are dead by the
   status lookup. Readers pass them by the chain, at a hop each.
-  The next write of the key overwrites one. The Garbage Collector
-  repairs the rest. Aborts are rare.
+  The next write of the key overwrites one. A reader that passes
+  one queues its key, and the Garbage Collector repairs the rest
+  ([`GC.md`](GC.md#42-chained-keys) §4.2). Aborts are rare.
 - **A crash is an abort**: there is nothing to recover. The
   `WriteBatch` keeps CURR and OLD together.
 
@@ -902,13 +903,13 @@ against 1.1 µs in key order.
   rows its equal entries name (BTREEINDEX.md). It locks nothing.
   `sm1::wait_writer` waits for the writer it named, as a write
   waits for an uncommitted version, and the caller reads again.
-- **`read_settled`** is the cleaner's. A row is not settled if
-  another's or the session's own write is in flight, or if it
+- **`read_settled`** is the btree reaper's. A row is not settled
+  if another's or the session's own write is in flight, or if it
   committed past the watermark. It locks nothing and waits for no
   one. `read_settled_versioned` reads a versioned key in any
   store, a TOAST chunk's in a chained store.
-- **`sm1::set_no_transaction`** lets a cleaner's session make
-  settled reads with no transaction, for good. It needs no
+- **`sm1::set_no_transaction`** lets a btree reaper's session
+  make settled reads with no transaction, for good. It needs no
   snapshot, and holds no watermark back.
 
 ### 5.6 A scan
@@ -1044,8 +1045,7 @@ a row whose newest version it does not see.
 ### 5.8 The shape of the read calls
 
 [`sm1/API.md`](sm1/API.md) is the contract. Three shapes in it
-encode
-decisions:
+encode decisions:
 
 - **Both range bounds are parameters of `sm1::scan`.** A NULL
   bound means none, and the empty key is a bound. Without an end
@@ -1304,11 +1304,10 @@ int pin_tuple(pin_ref_t ref, std::string_view& tuple);
 sm2 gives the reader: `tup_read_begin` parses a tuple's header
 once, and `tup_read` deforms its columns in as many steps as the
 client takes (`tup_reader_t`, [`sm2/TUPLE.md`](sm2/TUPLE.md)).
-Resuming is free:
-an expression that needs column 3, then one that needs column 40,
-deforms 0 to 3, then 4 to 40, each column once. `tup_deform`
-stays for callers that hold bytes, not a pin, and checks the
-whole tuple.
+Resuming is free: an expression that needs column 3, then one
+that needs column 40, deforms 0 to 3, then 4 to 40, each column
+once. `tup_deform` stays for callers that hold bytes, not a pin,
+and checks the whole tuple.
 
 **A read checks only what it reads**: the header and bitmap once,
 then each entry and varlena it deforms. A malformed part nobody
@@ -1421,8 +1420,7 @@ how many rows a caller keeps pinned at once.
   `ROLLBACK TO`, its next FETCH fails with `SM_ERR_SCANCLOSED`,
   where PostgreSQL goes on: a known incompatibility
   ([`../dg/README.md`](../dg/README.md)).
-  `../dg/test/slt/point_read.test` shows
-  both sides.
+  `../dg/test/slt/point_read.test` shows both sides.
 - **A rollback that closes a cursor takes its lent row.** A
   caller reads that row only before the cursor's next call, which
   fails after such a rollback anyway. digres's nested loop
@@ -1996,8 +1994,8 @@ Why it is laid out so:
   `smtable_slot_callbacks()` returns it, and the sequential,
   index and bitmap heap scans take it from
   `table_slot_callbacks()`.
-- **`getsomeattrs(slot, n)`** calls
-  `sm_pin_deform(ref, tts_nvalid, n, …)`.
+- **`getsomeattrs(slot, n)`** calls `sm_pin_deform(ref,
+  tts_nvalid, n, …)`.
 - **Stored with no ref**, as an INSERT's values, COPY's, a
   projection's, a row's copy or an index-only scan's are, it is a
   virtual slot.

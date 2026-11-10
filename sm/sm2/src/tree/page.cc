@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * page.cc -- a B+tree page's bytes, laid out and read where they lie
  * (../BTREEINDEX.md §4), and a decoded page's insert and split.
  *

@@ -56,7 +56,7 @@ sm2 the way sm2 is built on sm1
 - A PostgreSQL dependency. sm2 must be useful and testable on
   its own, and buildable without a PostgreSQL source tree. The
   PG target shapes sm2's *decisions* (see
-  [`PART4.md`](../PART4.md) at the
+  [`PGFORK.md`](../PGFORK.md) at the
   top level), never its *build*.
 
 ## Decisions
@@ -150,7 +150,7 @@ These are settled and drive [`SM2_DESIGN.md`](SM2_DESIGN.md).
   its parser, planner and executor and replacing its storage
   and transaction layers. The fork is **threaded**, a thread
   per connection instead of a process
-  ([`PART4.md`](../PART4.md#2-the-blocker-the-process-model) §2),
+  ([`PGFORK.md`](../PGFORK.md#2-the-blocker-the-process-model) §2),
   so sm1,
   sm2 and sm3 are linked into the one server process and every
   backend thread shares sm1's transaction table, lock manager
@@ -160,7 +160,7 @@ These are settled and drive [`SM2_DESIGN.md`](SM2_DESIGN.md).
   without taking a dependency on it.
 - **One tuple at a time.** The IPC boundary that once forced
   a batch-shaped API is gone with the threaded fork
-  ([`PART4.md`](../PART4.md#2-the-blocker-the-process-model) §2),
+  ([`PGFORK.md`](../PGFORK.md#2-the-blocker-the-process-model) §2),
   so the call above sm2 is an ordinary
   function call. Whether a batched form earns its keep for
   filter pushdown is a question for the level that has filters
@@ -170,7 +170,7 @@ These are settled and drive [`SM2_DESIGN.md`](SM2_DESIGN.md).
 - **Descending order is inverted bytes, scanned forward.** sm1
   does not scan backwards, and the fork's planner is changed
   never to ask it to
-  ([`PART4.md`](../PART4.md#5-the-one-conflict-with-a-decision-already-made)
+  ([`PGFORK.md`](../PGFORK.md#5-the-one-conflict-with-a-decision-already-made)
   §5). So a descending column
   is the ascending encoding with its bytes inverted, and there
   are no mirror relations.
@@ -187,7 +187,7 @@ These are settled and drive [`SM2_DESIGN.md`](SM2_DESIGN.md).
   a deterministic collation can give two distinct strings one
   sort key, and PostgreSQL keeps them as two datums. Without
   the tie-break the two would share a key and become one row
-  ([`PART4.md`](../PART4.md#6-what-this-forces-on-sm2-and-sm3-now)
+  ([`PGFORK.md`](../PGFORK.md#6-what-this-forces-on-sm2-and-sm3-now)
   §6, [`../LSMINDEX.md`](../LSMINDEX.md#2-key-encoding) §2).
 
 ## Decided questions
@@ -277,7 +277,7 @@ sm3's indexes that feel them most.
   collation library version that produced it. The version is
   recorded with the schema, as `pg_collation.collversion` exists
   to do for PostgreSQL
-  ([`PART4.md`](../PART4.md#6-what-this-forces-on-sm2-and-sm3-now)
+  ([`PGFORK.md`](../PGFORK.md#6-what-this-forces-on-sm2-and-sm3-now)
   §6). The question was what
   happens when the recorded version and the library's differ:
   refuse, or rebuild?

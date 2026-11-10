@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # sortload.sh -- a COPY into an empty table with indexes, on digres and
 # PostgreSQL 18: what a load's sort costs, in instructions and time.
 #

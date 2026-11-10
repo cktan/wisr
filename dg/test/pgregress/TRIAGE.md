@@ -90,8 +90,8 @@ Of the 147, all but the bugs below follow from a decision:
 ## Bugs
 
 Each reproduces alone on both servers, and is an issue in
-[`../../ISSUE.md`](../../ISSUE.md), numbered there as here, with
-its repro.
+[`../../../ISSUE.md`](../../../ISSUE.md#3-digres-known-issues),
+numbered there as here, with its repro.
 
 | Issue | What | Where | Priority |
 | --- | --- | --- | --- |

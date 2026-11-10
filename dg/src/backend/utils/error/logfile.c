@@ -18,6 +18,8 @@
  * postmaster/syslogger.c, which is
  *
  * Copyright (c) 2004-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  * Author of the original: Andreas Pflug <pgadmin@pse-consulting.de>
  *
@@ -43,8 +45,8 @@
 #include "utils/logfile.h"
 
 /*
- * The process's log file, in shmem->logfile and guarded by
- * shmem->stderr_mutex.  Its settings are pcb's Log_* fields, guarded by the
+ * The process's log file, in shmem->log.file and guarded by
+ * shmem->log.mutex.  Its settings are pcb's Log_* fields, guarded by the
  * same mutex: a session thread has settings of its own, which it must not
  * use to rotate.
  */
@@ -191,10 +193,10 @@ static bool logfile_rotate_locked(logfile_state_t *st, bool time_based) {
  * 4. Rotate after, if the file has reached its size limit.
  */
 void logfile_write(const char *buf, int len) {
-  logfile_state_t *st = shmem->logfile.get();
+  logfile_state_t *st = shmem->log.file.get();
   ssize_t rc;
 
-  std::lock_guard<std::mutex> guard(shmem->stderr_mutex);
+  std::lock_guard<std::mutex> guard(shmem->log.mutex);
   if (st->enabled && !st->rotation_disabled && pcb->Log_RotationAge > 0 &&
       time(NULL) >= st->next_rotation)
     logfile_rotate_locked(st, true);
@@ -215,7 +217,7 @@ void logfile_write(const char *buf, int len) {
  * opened is fatal.
  */
 void logfile_open(void) {
-  logfile_state_t *st = shmem->logfile.get();
+  logfile_state_t *st = shmem->log.file.get();
   bool opened;
 
   if (!pcb->Logging_collector)
@@ -223,7 +225,7 @@ void logfile_open(void) {
 
   /* The settings the file is named and rotated by, under the mutex. */
   {
-    std::lock_guard<std::mutex> guard(shmem->stderr_mutex);
+    std::lock_guard<std::mutex> guard(shmem->log.mutex);
     publish_log_file_settings();
   }
 
@@ -235,7 +237,7 @@ void logfile_open(void) {
                 errhint("Future log output will appear in directory \"%s\".",
                         pcb->Log_directory.c_str())));
   {
-    std::lock_guard<std::mutex> guard(shmem->stderr_mutex);
+    std::lock_guard<std::mutex> guard(shmem->log.mutex);
     opened = logfile_rotate_locked(st, false);
   }
   if (!opened)
@@ -253,13 +255,13 @@ void logfile_open(void) {
  *    changed.
  */
 void logfile_reload(void) {
-  logfile_state_t *st = shmem->logfile.get();
+  logfile_state_t *st = shmem->log.file.get();
   bool changed;
 
   if (!pcb->Logging_collector)
     return;
 
-  std::lock_guard<std::mutex> guard(shmem->stderr_mutex);
+  std::lock_guard<std::mutex> guard(shmem->log.mutex);
   std::string old_directory = pcb->Log_directory;
   std::string old_filename = pcb->Log_filename;
 
@@ -280,9 +282,9 @@ void logfile_reload(void) {
  * size-based rotation, it never truncates.
  */
 bool logfile_rotate(void) {
-  logfile_state_t *st = shmem->logfile.get();
+  logfile_state_t *st = shmem->log.file.get();
 
-  std::lock_guard<std::mutex> guard(shmem->stderr_mutex);
+  std::lock_guard<std::mutex> guard(shmem->log.mutex);
   if (!st->enabled)
     return false;
   return logfile_rotate_locked(st, false);

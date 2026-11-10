@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * e06 -- read committed increments on hot counters are never
  * lost and never applied twice, with compaction running.
  *

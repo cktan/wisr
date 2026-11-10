@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # sq -- the SQL parser: PostgreSQL 18's SQL in, a tree of nodes out.
 #
 #   make -j4         build build/libsq.a, its tests, and their tools

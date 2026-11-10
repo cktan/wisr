@@ -80,12 +80,13 @@ regression files are taken out for it (`test/pgregress`,
   functions answer a table's or an index's bytes in sm
   (steps 120, 121).
 - **Tables are clustered on their primary key** — differs. A
-  SELECT with no ORDER BY reads in key order; a primary key is
-  capped at 1024 encoded bytes; `CLUSTER` does nothing, every
-  table being clustered ([`../sm/CLUSTER.md`](../sm/CLUSTER.md)).
-  A primary key
-  index takes no bytes of its own, its entries being the rows:
-  its size is 0 (step 298).
+  sequential scan reads rows in key order, but a query's result
+  has no order without ORDER BY: the plan can use an index, a
+  join or another operator. A primary key is capped at 1024
+  encoded bytes; `CLUSTER` does nothing, every table being
+  clustered ([`../sm/CLUSTER.md`](../sm/CLUSTER.md)). A primary
+  key index takes no bytes of its own, its entries being the
+  rows: its size is 0 (step 298).
 - **VACUUM, CLUSTER, REINDEX, CHECKPOINT** — differs. VACUUM
   compacts each table's store (step 284); CLUSTER and REINDEX
   warn and do nothing (step 64); CHECKPOINT does nothing
@@ -281,8 +282,14 @@ regression files are taken out for it (`test/pgregress`,
   [`../aa/ROLE.md`](../aa/ROLE.md#5-how-a-client-gets-in) §5's
   checks, peer or a password
   on the socket, a password over TCP (steps 320, 327).
-- **TLS, GSSAPI** — refused: their build options are off and
-  their files not compiled ([`README.md`](README.md)).
+- **GSSAPI** — refused: its build option is off and its files
+  not compiled ([`README.md`](README.md)).
+- **TLS** — differs: digres always links OpenSSL, and with
+  `ssl` on every client over TCP must use it, which PostgreSQL
+  asks of a `hostssl` line; the local socket never does
+  ([`../aa/ROLE.md`](../aa/ROLE.md#8-decisions) §8, step 422).
+  No client certificate is asked for, as no `pg_hba.conf` says
+  `clientcert`.
 - **Roles** — differs: roles, memberships, owners and ACLs are
   `pg_global`'s ([`../aa/ROLE.md`](../aa/ROLE.md), steps 318 to
   324), and role

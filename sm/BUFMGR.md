@@ -107,10 +107,9 @@ go up or right, so no cycle forms.
 **A pin's wait.** A pin spins briefly, then waits by `sm_wait()`,
 and fails with `SM_ERR_INTERRUPTED`
 ([`CODE.md`](CODE.md#7-threads-waits-and-logging) §7). A pin's
-wait
-can last most of a second through a stalled write (§1.11), so an
-interrupt must be able to end it. A pin may therefore fail; every
-caller already handles -1.
+wait can last most of a second through a stalled write (§1.11),
+so an interrupt must be able to end it. A pin may therefore fail;
+every caller already handles -1.
 
 **What a pin never covers.** A pin is held for a page's change
 alone, never across a wait for a transaction: a unique check lets
@@ -120,7 +119,7 @@ exceptions, both under the leaf's EX:
 - `tree_insert_unique()` reads rows to judge entries of the
   prefix on the leaf, and a miss is a disk read. Readers of that
   leaf wait. A unique check's entries of one prefix are few.
-- `clean_leaf()` judges again only what is to go. The first
+- `reap_leaf()` judges again only what is to go. The first
   judgement of a leaf runs with no pin, from a copy. So a clean
   leaf takes no row read under EX
   ([`BTREEINDEX.md`](BTREEINDEX.md)).
@@ -135,7 +134,7 @@ began on. A root's split swaps the sibling for a second new page.
 call. A function that changes a page reads it through that pin,
 as a second pin would deadlock with the first. Its callers are
 `latch_covering()`, `write_split()`, `tree_insert_unique()`'s
-walk and `clean_leaf()`.
+walk and `reap_leaf()`.
 
 ### 1.4 The write protocol
 
@@ -235,8 +234,7 @@ Every descent reads page 0, so its pin is a word every probe on
 every core writes. A **page copy** removes that write: a session
 reads page 0 from an immutable copy, with no pin, while the page
 is as it was. [`BTREEINDEX.md`](BTREEINDEX.md) says why a stale
-copy is safe for a
-descent. The pool gives three things.
+copy is safe for a descent. The pool gives three things.
 
 - **A version** in each descriptor, a count each change of the
   frame's tag or bytes moves, under an EX pin: an install, a
@@ -286,10 +284,9 @@ longer holds the pages.
   10.
 - **Its layout is the caller's.** sm1 reads no page. A page's
   header and slots are [`BTREEINDEX.md`](BTREEINDEX.md)'s. They
-  were chosen for
-  the pool: `max` and `top` keep slots with room to grow, 16 at a
-  time, and offsets count from the end of the slot array, so
-  growing it moves no slot's value.
+  were chosen for the pool: `max` and `top` keep slots with room
+  to grow, 16 at a time, and offsets count from the end of the
+  slot array, so growing it moves no slot's value.
 
 ### 1.10 Reads of a tree
 
@@ -540,7 +537,7 @@ opaque `frame_t`.
 **What a call checks first** (`enter_pages`):
 
 1. An active transaction, not prepared or doomed, or a session
-   set by `sm1::set_no_transaction`, a cleaner's
+   set by `sm1::set_no_transaction`, a btree reaper's
    ([`BTREEINDEX.md`](BTREEINDEX.md)).
 2. A store other than 0.
 3. A store live at the view (`catalog_lookup`): a hash look-up in
@@ -668,14 +665,14 @@ every transaction, and its scenarios see only versions.
 - **Readers through a write**, §1.11's largest risk, has three
   steps. Zeroing the next log ahead is built, on WSL alone
   ([`DBMGR.md`](DBMGR.md#84-zero-filled-logs) §8.4): 794 ms goes
-  to about 333 ms.
-  `WriteOptions::no_slowdown` under EX is not built: a write that
-  would stall returns `Incomplete`, and the caller unpins, waits
-  with no pin held, and starts again. It keeps two modes, and the
-  protocol already leaves the frame clean, but it does not cover
-  a memtable switch itself. Whether a retried change costs less
-  than the stall is not measured. A larger
-  `max_write_buffer_number` is the last step, if stalls remain.
+  to about 333 ms. `WriteOptions::no_slowdown` under EX is not
+  built: a write that would stall returns `Incomplete`, and the
+  caller unpins, waits with no pin held, and starts again. It
+  keeps two modes, and the protocol already leaves the frame
+  clean, but it does not cover a memtable switch itself. Whether
+  a retried change costs less than the stall is not measured. A
+  larger `max_write_buffer_number` is the last step, if stalls
+  remain.
 - **The memory split.** A quarter to the pool is a start, not a
   measure (§1.8). The alternative is a machine choice at the
   home's first attach.

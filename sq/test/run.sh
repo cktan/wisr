@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # run.sh -- verify that sq scans and parses the SQL files here as
 # PostgreSQL does.
 #

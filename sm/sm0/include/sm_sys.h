@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm_sys.h -- interrupting a thread, interruptible waits,
  * and timers that interrupt (INTERRUPT.md).
  *
@@ -138,6 +143,25 @@ void sm_set_wait_mask(uint32_t bits);
 
 /* The calling thread's wait mask. */
 uint32_t sm_wait_mask(void);
+
+/*
+ * Whether the calling thread is to stop the work a library is doing on
+ * its behalf that cannot be retried, such as a sort, for an interrupt
+ * pending in its wait mask (INTERRUPT.md). Set by the host, once, for
+ * every thread: it may act on what is pending, as running a timer's
+ * handler, and says whether what is pending now stops the work. It must
+ * not unwind: it runs inside the library's call. No function, the
+ * default: any bit in the mask stops it.
+ */
+typedef bool (*sm_stop_fn)(void);
+void sm_set_stop_fn(sm_stop_fn fn);
+
+/*
+ * Whether the calling thread is to stop such work now: false with no
+ * bit of its wait mask pending, a relaxed load; else what sm_set_stop_fn's
+ * function says, or true with none.
+ */
+bool sm_should_stop(void);
 
 /* ---- time ---- */
 

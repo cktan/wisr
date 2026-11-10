@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_pin.cc -- reads into a raw pin (../ROWSTORE.md §6.3): a pinned
  * row lasts until its pin is emptied, by the caller, whatever
  * else the session does. sm3 keeps the pool, the refs and their

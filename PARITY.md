@@ -1,10 +1,9 @@
 # Parity with PostgreSQL on q1, q2 and q3 (btree indexes)
 
 Goal: digres runs `bench/q1-sk10.sql`, `q2-sk180.sql` and
-`q3-skfetchrow.sql` on btree
-indexes as fast as PostgreSQL 18. This document gives the
-profile, what was changed, and what is left. Written 2026-11-07
-by a profile of `main` at 20f43e31.
+`q3-skfetchrow.sql` on btree indexes as fast as PostgreSQL 18.
+This document gives the profile, what was changed, and what is
+left. Written 2026-11-07 by a profile of `main` at 20f43e31.
 
 ## 1. Method
 
@@ -17,7 +16,7 @@ by a profile of `main` at 20f43e31.
   25,000 prepared statements. The slope of the two cancels the
   connection and the first plan. The busiest thread is the
   backend: digres is one process, so a count of the process
-  holds the cleaner and RocksDB threads too.
+  holds the btree reaper and RocksDB threads too.
 - Profile: `perf record -e instructions:u -c 10007`. The period
   is prime, so it cannot alias with a loop.
 - Both systems use the same plan for q1 and q2: an index-only
@@ -28,8 +27,8 @@ by a profile of `main` at 20f43e31.
 restart moved q2 by up to 47% in one run (374k, then 550k) when
 the server was started in a different way. Compare two builds on
 the same data directory, with the same restart, as
-[`ISSUE.md`](ISSUE.md)
-§2.3 says. The A/B numbers below were taken that way.
+[`ISSUE.md`](ISSUE.md) §2.3 says. The A/B numbers below were
+taken that way.
 
 ## 2. Where the instructions go
 
@@ -76,8 +75,7 @@ section 6.
 key and rechecked the equality on it. Now:
 
 1. The planner sets `IndexOnlyScan.nocols` when nothing above
-   reads a column and the scan checks none
-   (`createplan.c`).
+   reads a column and the scan checks none (`createplan.c`).
 2. `sm_rel_scan_plain` tells, with no decoding, that a tree
    entry's key is whole: not cut, and it gives its columns back.
 3. `smstore_index_getentry` returns such an entry at once if
@@ -152,17 +150,11 @@ digres 13,200 instructions beyond the entry, and 9,000 of them
 are RocksDB's `MultiGet`. The settings are already tuned (16 KB
 blocks, restart interval 4, a hash index in the block, a
 prefix bloom filter). If RocksDB's whole cost went to zero, q3
-would still be 105,000, 1.2 times PostgreSQL. Two things could
-close it, and both are large:
-
-- A row cache in sm, in its buffer pool, keyed by the row's key
-  and version, as the tree pages are. A hit would cost 1,000 to
-  2,000 a row. q3 would be about 115,000, 1.35 times
-  PostgreSQL. It needs a design for the MVCC version in the key
-  and for invalidation.
-- Keep a table's rows in sm's own pages, as the tree does for
-  an index. This is the change that gives parity, and it is a
-  redesign of the row store.
+would still be 105,000, 1.2 times PostgreSQL. No change is
+planned. Dropped: a cache of rows (2026-11-08), as it targets q3
+alone; and keeping a table's rows in sm's own pages, as the tree
+does for an index (2026-11-09), a redesign of the row store. It
+would give parity.
 
 ## 5. Not done, and not known
 
@@ -195,8 +187,9 @@ earlier run is `main` before any change, the same day.
   the q1 and q3 changes are. The q2 change, 27% more tps, is
   far above it, and the instruction counts agree with it.
 - The instruction ratio of q2 is 1.63, but the latency ratio is
-  1.33. digres runs q2's instructions at a higher IPC (3.3, as
-  PostgreSQL's 3.4), because they are a tight loop.
+  1.33. The measured IPCs, 3.3 for digres and 3.4 for
+  PostgreSQL, do not explain this difference. This run did not
+  find its cause.
 - q1 is 1.05 in user instructions and 1.12 in cycles, user and
   kernel together: digres 50,500 cycles, PostgreSQL 45,200.
   digres runs q1 at an IPC of 1.9, PostgreSQL's at 2.0, and

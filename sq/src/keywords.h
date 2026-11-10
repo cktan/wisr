@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * keywords.h -- PostgreSQL's keywords, and the grammar's token for
  * each.
  *

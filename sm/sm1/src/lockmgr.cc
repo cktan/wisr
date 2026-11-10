@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * lockmgr.cc -- the lock table: locks in Gray's modes, the write
  * latches, and deadlock detection (../LOCKMGR.md §3.2).
  *
@@ -512,7 +517,8 @@ void lock_unregister(sm1::session_t *s) {
 }
 
 /* For a write: 2 if another holder conflicts, else convert our own. */
-int lock_write_check(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
+int lock_write_check(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
+                     sm1::lockmode_t mode) {
   db_t *db = s->db;
   // A write meets row locks and no other lock type.
   lockid_t k = lock_row_id(storeid, key);
@@ -524,17 +530,18 @@ int lock_write_check(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   lmode_t want;
   std::vector<sm1::session_t *> others;
   // No entry: the common write, which takes no lock.
-  if (!conflicting(e, s, sm1::SM_LOCKMODE_EX, &mine, &want, &others)) {
+  if (!conflicting(e, s, mode, &mine, &want, &others)) {
     return 0;
   }
   if (!others.empty()) {
     return 2;
   }
-  // A lock of our own on the key is held exclusive from now on,
-  // as a write converts it (../LOCKMGR.md §3.2).
+  // A lock of our own on the key covers the write's mode from now on,
+  // as a write converts it (../LOCKMGR.md §3.2): X, or NKU for a
+  // write that keeps its key.
   if (nullptr != mine) {
-    mine->mode = sm1::SM_LOCKMODE_EX;
-    static_cast<lockref_t *>(mine->first)->mode = sm1::SM_LOCKMODE_EX;
+    mine->mode = want;
+    static_cast<lockref_t *>(mine->first)->mode = want;
   }
   return 0;
 }
@@ -844,7 +851,7 @@ bool lock_from_record(const char *p, lockref_t *l) {
   // A type there is, the one the id's top bit says, and a mode.
   if (type > sm1::LOCKTYPE_OID ||
       lock_type(k) != static_cast<sm1::locktype_t>(type) ||
-      mode > sm1::SM_LOCKMODE_SIX) {
+      mode > sm1::SM_LOCKMODE_NKU) {
     return false;
   }
   uint16_t kind = static_cast<uint16_t>(static_cast<uint8_t>(p[18]) << 8 |
@@ -865,7 +872,7 @@ bool lock_held(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
   return true;
 }
 
-/* Mark (storeid, key)'s exclusive lock: the next write may go ahead. */
+/* Mark (storeid, key)'s X or NKU lock: the next write may go ahead. */
 void lock_set_latest(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   lockref_t *l = find_lockref(s, storeid, key);
   // Count a mark once.

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm_lock.h -- the lock modes of the whole wisr stack, in C.
  *
  * One set of modes serves every level, as sm_error.h's codes do
@@ -22,6 +27,15 @@
  *      S       ok   --   ok   --   --
  *      SIX     ok   --   --   --   --
  *      X       --   --   --   --   --
+ *
+ * And two modes of a row alone, PostgreSQL's FOR KEY SHARE and FOR NO
+ * KEY UPDATE (LOCKMGR.md section 1.13): a row is held KS, S, NKU or X.
+ *
+ *              KS   S    NKU  X
+ *      KS      ok   ok   ok   --
+ *      S       ok   ok   --   --
+ *      NKU     ok   --   --   --
+ *      X       --   --   --   --
  */
 #ifndef SM_LOCK_H
 #define SM_LOCK_H
@@ -31,7 +45,9 @@ typedef enum sm_lockmode_t {
     SM_LOCKMODE_EX  = 1, /* X:   no one else holds it in any mode */
     SM_LOCKMODE_IS  = 2, /* IS:  will read below it */
     SM_LOCKMODE_IX  = 3, /* IX:  will write below it */
-    SM_LOCKMODE_SIX = 4  /* SIX: S, and will write below it */
+    SM_LOCKMODE_SIX = 4, /* SIX: S, and will write below it */
+    SM_LOCKMODE_KS  = 5, /* KS:  a row's key stays: FOR KEY SHARE */
+    SM_LOCKMODE_NKU = 6  /* NKU: a row changes, its key does not */
 } sm_lockmode_t;
 
 #ifdef __cplusplus

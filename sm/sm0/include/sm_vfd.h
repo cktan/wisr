@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm_vfd.h -- virtual file descriptors: many open files over a few
  * real ones (VFD.md).
  *

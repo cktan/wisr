@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 """Write usertable.csv.gz: 10,000 users, the same every run.
 
 Each row is id, lastname, firstname, street, city, state, zip,

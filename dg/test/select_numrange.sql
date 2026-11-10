@@ -1,6 +1,6 @@
 -- Verify that a numrange keeps its bounds wherever an array or a
 -- multirange puts it, as its alignment is its decimal128 bounds'
--- (ISSUE.md issue 3), that its bounds are decimal128 whichever decimal
+-- (ISSUE.md dg issue 3), that its bounds are decimal128 whichever decimal
 -- they are made of, and that a decimal64 is an element of one.
 -- 1. An array of three numranges: the second starts 4 bytes past an
 --    8-byte boundary, where a range aligned to 4 is put.

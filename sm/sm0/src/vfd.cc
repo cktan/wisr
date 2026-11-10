@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * vfd.cc -- virtual file descriptors over a few real ones, under a
  * ceiling for the process (VFD.md, include/sm_vfd.h).
  */

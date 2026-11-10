@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_tree.cc -- a table's index made a tree (../BTREEINDEX.md §11.3 step
  * 7): writes maintain it as any index, and its scan of rows hands out
  * each row, as the snapshot shows it, only while the row still has
@@ -123,15 +128,19 @@ public:
   void close_catalog() {
     sm3::session_close(a);
     sm3::session_close(b);
-    sm3::cleaner_detach(cat);
+    sm3::btree_reaper_detach(cat);
     sm3::builder_detach(cat);
     sm3::cat_close(cat);
   }
 
-  /* Attach the cleaner, with workers threads running it. */
-  void cleaner(size_t workers = 0) {
-    REQUIRE(
-        sm3::cleaner_attach(cat, [this] { return try_open(); }, workers) == 0);
+  /*
+   * Attach the reapers, with workers threads running them, and the row
+   * reaper's queue as sm.cc gives it.
+   */
+  void btree_reaper(size_t workers = 0) {
+    REQUIRE(sm3::btree_reaper_attach(
+                cat, [this] { return try_open(); }, workers,
+                [this] { return sm1::row_reaps_pending(env(), "db"); }) == 0);
   }
 
   /* Attach the catalog to the builder, and queue what is pending. */
@@ -1602,19 +1611,19 @@ TEST_CASE("tree: a batch of a cursor of rows ends where its leaf does") {
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
-TEST_CASE("tree: a leaf is cleaned with no transaction and no lock") {
-  // Verify tbl_clean_leaf judges rows as VACUUM does, with no
+TEST_CASE("tree: a leaf is reaped with no transaction and no lock") {
+  // Verify tbl_reap_leaf judges rows as VACUUM does, with no
   // transaction, no table lock, and no snapshot held (../BTREEINDEX.md
   // ../BTREEINDEX.md §9).
   // 1. Insert rows, move one to another state, and delete one.
-  // 2. With a writer's table lock held exclusive, clean page 0 of
+  // 2. With a writer's table lock held exclusive, reap page 0 of
   //    by_state and by_owner: the dead entries go, no entry is left in
   //    doubt, and the row a scan needs is there.
   // 3. An index-only scan reads no row: the leaf is set.
   // 4. A write not yet settled stays in doubt, and its leaf unset.
   // 5. Publishes older than the catalog's: nothing is judged, and an
   //    entry dead by its row stays.
-  // 6. A relid no index has is nothing to clean.
+  // 6. A relid no index has is nothing to reap.
   trees_t f;
   sm1::session_t *cs = f.open();
   sm1::set_no_transaction(cs);
@@ -1654,10 +1663,10 @@ TEST_CASE("tree: a leaf is cleaned with no transaction and no lock") {
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   sm3::table_t *held = nullptr;
   REQUIRE(sm3::tbl_open(f.a, f.jobs, sm1::SM_LOCKMODE_EX, held) == 0);
-  REQUIRE_MESSAGE(sm3::tbl_clean_leaf(c, def, pubs, by_state, 0, doubt) == 0,
+  REQUIRE_MESSAGE(sm3::tbl_reap_leaf(c, def, pubs, by_state, 0, doubt) == 0,
                   sm1::errmsg());
   CHECK_FALSE(doubt);
-  REQUIRE_MESSAGE(sm3::tbl_clean_leaf(c, def, pubs, by_owner, 0, doubt) == 0,
+  REQUIRE_MESSAGE(sm3::tbl_reap_leaf(c, def, pubs, by_owner, 0, doubt) == 0,
                   sm1::errmsg());
   CHECK_FALSE(doubt);
   sm3::tbl_close(held);
@@ -1676,14 +1685,14 @@ TEST_CASE("tree: a leaf is cleaned with no transaction and no lock") {
   t = f.table(f.a);
   row_t again(2, "later", "Ann");
   REQUIRE(sm3::tbl_update(t, id[2], again.d(), again.null()) == 0);
-  REQUIRE_MESSAGE(sm3::tbl_clean_leaf(c, def, pubs, by_state, 0, doubt) == 0,
+  REQUIRE_MESSAGE(sm3::tbl_reap_leaf(c, def, pubs, by_state, 0, doubt) == 0,
                   sm1::errmsg());
   CHECK(doubt);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 
   doubt = false;
-  REQUIRE(sm3::tbl_clean_leaf(c, def, pubs - 1, by_state, 0, doubt) == 0);
+  REQUIRE(sm3::tbl_reap_leaf(c, def, pubs - 1, by_state, 0, doubt) == 0);
   CHECK(doubt);
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   t = f.table(f.a);
@@ -1691,21 +1700,21 @@ TEST_CASE("tree: a leaf is cleaned with no transaction and no lock") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 
-  CHECK(1 == sm3::tbl_clean_leaf(c, def, pubs, 999, 0, doubt));
+  CHECK(1 == sm3::tbl_reap_leaf(c, def, pubs, 999, 0, doubt));
   sm3::session_close(c);
   REQUIRE(sm1::closedb(cs) == 0);
 }
 
 TEST_CASE("tree: whoever finds a leaf not all visible queues it") {
   // Verify a reader and each kind of writer queue a leaf that needs
-  // cleaning, once, and that a leaf set all visible queues nothing
+  // reaping, once, and that a leaf set all visible queues nothing
   // (../BTREEINDEX.md §9).
-  // 1. Insert rows with no cleaner attached: nothing can be queued.
+  // 1. Insert rows with no btree reaper attached: nothing can be queued.
   // 2. Attach it. A scan finds the leaf unset, and queues it, once.
-  // 3. A pass cleans it: the queue is empty, and a scan queues nothing.
+  // 3. A pass reaps it: the queue is empty, and a scan queues nothing.
   // 4. An update by row id queues the old key's leaf; a second update
   //    on that leaf adds no page.
-  // 5. A pass cleans it; an insert queues its leaf.
+  // 5. A pass reaps it; an insert queues its leaf.
   trees_t f;
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   sm3::table_t *t = f.table(f.a);
@@ -1717,51 +1726,51 @@ TEST_CASE("tree: whoever finds a leaf not all visible queues it") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 
-  f.cleaner();
-  CHECK(0u == sm3::cleaner_queued(f.cat));
+  f.btree_reaper();
+  CHECK(0u == sm3::btree_reaper_queued(f.cat));
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   t = f.table(f.a);
   CHECK(4u == ids(t, f.by_state, "old", "old").size());
-  CHECK(1u == sm3::cleaner_queued(f.cat));
+  CHECK(1u == sm3::btree_reaper_queued(f.cat));
   CHECK(4u == ids(t, f.by_state, "old", "old").size());
-  CHECK(1u == sm3::cleaner_queued(f.cat));
+  CHECK(1u == sm3::btree_reaper_queued(f.cat));
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 
-  REQUIRE_MESSAGE(sm3::cleaner_run_once(f.cat) == 0, sm1::errmsg());
-  CHECK(0u == sm3::cleaner_queued(f.cat));
+  REQUIRE_MESSAGE(sm3::btree_reaper_run_once(f.cat) == 0, sm1::errmsg());
+  CHECK(0u == sm3::btree_reaper_queued(f.cat));
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   t = f.table(f.a);
   CHECK(4u == ids(t, f.by_state, "old", "old").size());
-  CHECK(0u == sm3::cleaner_queued(f.cat));
+  CHECK(0u == sm3::btree_reaper_queued(f.cat));
 
   row_t a(0, "aaa", "O"), b(1, "aab", "O");
   REQUIRE(sm3::tbl_update(t, id[0], a.d(), a.null()) == 0);
-  CHECK(1u == sm3::cleaner_queued(f.cat));
+  CHECK(1u == sm3::btree_reaper_queued(f.cat));
   REQUIRE(sm3::tbl_update(t, id[1], b.d(), b.null()) == 0);
-  CHECK(1u == sm3::cleaner_queued(f.cat));
+  CHECK(1u == sm3::btree_reaper_queued(f.cat));
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 
-  REQUIRE(sm3::cleaner_run_once(f.cat) == 0);
-  CHECK(0u == sm3::cleaner_queued(f.cat));
+  REQUIRE(sm3::btree_reaper_run_once(f.cat) == 0);
+  CHECK(0u == sm3::btree_reaper_queued(f.cat));
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   t = f.table(f.a);
   row_t fresh(9, "new", "O");
   uint64_t rid = 0;
   REQUIRE(sm3::tbl_insert(t, fresh.d(), fresh.null(), rid) == 0);
-  CHECK(1u == sm3::cleaner_queued(f.cat));
+  CHECK(1u == sm3::btree_reaper_queued(f.cat));
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
 TEST_CASE("tree: a temporary table's leaf is not queued") {
-  // Verify the cleaner is told nothing of a temporary table: it cannot
+  // Verify the btree reaper is told nothing of a temporary table: it cannot
   // read that session's instance (../BTREEINDEX.md §9).
-  // 1. Make a temporary table and a tree on it, with the cleaner on.
+  // 1. Make a temporary table and a tree on it, with the btree reaper on.
   // 2. Insert, scan and update: nothing is queued.
   trees_t f;
-  f.cleaner();
+  f.btree_reaper();
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   std::vector<sm3::column_spec_t> cols = {
       {"id", sm2::type_int4.code, -1, true},
@@ -1780,7 +1789,7 @@ TEST_CASE("tree: a temporary table's leaf is not queued") {
   REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), rid) == 0);
   CHECK(1u == ids(t, ts, "x", "x").size());
   REQUIRE(sm3::tbl_update(t, rid, moved.d(), moved.null()) == 0);
-  CHECK(0u == sm3::cleaner_queued(f.cat));
+  CHECK(0u == sm3::btree_reaper_queued(f.cat));
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 }
@@ -1804,14 +1813,14 @@ TEST_CASE("tree: a cursor has no key before its first row") {
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
-TEST_CASE("tree: a pass cleans no more pages than its budget") {
+TEST_CASE("tree: a pass reaps no more pages than its budget") {
   // Verify a busy system's pass stops at its budget, and the rest stay
   // queued (../BTREEINDEX.md §9).
   // 1. Insert enough rows to queue many leaves.
   // 2. A pass with a budget of 2 takes two pages off the queue.
   // 3. A pass with no budget takes the rest.
   trees_t f;
-  f.cleaner();
+  f.btree_reaper();
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   sm3::table_t *t = f.table(f.a);
   uint64_t id = 0;
@@ -1821,22 +1830,22 @@ TEST_CASE("tree: a pass cleans no more pages than its budget") {
   }
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
-  size_t queued = sm3::cleaner_queued(f.cat);
+  size_t queued = sm3::btree_reaper_queued(f.cat);
   REQUIRE(queued > 4);
-  REQUIRE_MESSAGE(sm3::cleaner_run_once(f.cat, 2) == 0, sm1::errmsg());
-  CHECK(queued - 2 == sm3::cleaner_queued(f.cat));
-  REQUIRE_MESSAGE(sm3::cleaner_run_once(f.cat) == 0, sm1::errmsg());
-  CHECK(0u == sm3::cleaner_queued(f.cat));
+  REQUIRE_MESSAGE(sm3::btree_reaper_run_once(f.cat, 2) == 0, sm1::errmsg());
+  CHECK(queued - 2 == sm3::btree_reaper_queued(f.cat));
+  REQUIRE_MESSAGE(sm3::btree_reaper_run_once(f.cat) == 0, sm1::errmsg());
+  CHECK(0u == sm3::btree_reaper_queued(f.cat));
 }
 
 TEST_CASE("tree: a pass removes dead entries, and sets the leaf") {
-  // Verify the cleaner does VACUUM's work on a queued leaf, with no
+  // Verify the btree reaper does VACUUM's work on a queued leaf, with no
   // VACUUM (../BTREEINDEX.md §9).
   // 1. Insert rows, then move one and delete one, and abort an insert.
   // 2. A pass removes the three dead entries; the queue is empty.
   // 3. An index-only scan gives the rows left, none read.
   trees_t f;
-  f.cleaner();
+  f.btree_reaper();
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   sm3::table_t *t = f.table(f.a);
   std::vector<uint64_t> id(5);
@@ -1861,8 +1870,8 @@ TEST_CASE("tree: a pass removes dead entries, and sets the leaf") {
   sm3::tbl_close(t);
   REQUIRE(sm3::abort(f.a) == 0);
 
-  REQUIRE_MESSAGE(sm3::cleaner_run_once(f.cat) == 0, sm1::errmsg());
-  CHECK(0u == sm3::cleaner_queued(f.cat));
+  REQUIRE_MESSAGE(sm3::btree_reaper_run_once(f.cat) == 0, sm1::errmsg());
+  CHECK(0u == sm3::btree_reaper_queued(f.cat));
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   t = f.table(f.a);
   CHECK(4u == entries_of(t, f.by_state));
@@ -1873,17 +1882,17 @@ TEST_CASE("tree: a pass removes dead entries, and sets the leaf") {
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
-TEST_CASE("tree: a page waits for the watermark, then is cleaned") {
+TEST_CASE("tree: a page waits for the watermark, then is reaped") {
   // Verify a leaf an old snapshot keeps in doubt stays queued, unread,
   // until the watermark moves (../BTREEINDEX.md §9).
   // 1. b takes a repeatable read snapshot; a moves a row and commits.
-  // 2. A pass cleans nothing: the page stays on the queue, and the
+  // 2. A pass reaps nothing: the page stays on the queue, and the
   //    entry is there for b.
   // 3. b reads the row by its old key, and commits.
   // 4. A new transaction moves the watermark on. A pass removes the
   //    entry, and the queue is empty.
   trees_t f;
-  f.cleaner();
+  f.btree_reaper();
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   sm3::table_t *t = f.table(f.a);
   row_t r(1, "old", "O");
@@ -1891,8 +1900,8 @@ TEST_CASE("tree: a page waits for the watermark, then is cleaned") {
   REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
-  REQUIRE(sm3::cleaner_run_once(f.cat) == 0);
-  CHECK(0u == sm3::cleaner_queued(f.cat));
+  REQUIRE(sm3::btree_reaper_run_once(f.cat) == 0);
+  CHECK(0u == sm3::btree_reaper_queued(f.cat));
 
   REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::repeatable_read) == 0);
   sm3::table_t *tb = f.table(f.b);
@@ -1904,18 +1913,18 @@ TEST_CASE("tree: a page waits for the watermark, then is cleaned") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 
-  size_t queued = sm3::cleaner_queued(f.cat);
+  size_t queued = sm3::btree_reaper_queued(f.cat);
   REQUIRE(queued > 0);
-  REQUIRE(sm3::cleaner_run_once(f.cat) == 0);
-  CHECK(queued == sm3::cleaner_queued(f.cat));
-  REQUIRE(sm3::cleaner_run_once(f.cat) == 0);
-  CHECK(queued == sm3::cleaner_queued(f.cat));
+  REQUIRE(sm3::btree_reaper_run_once(f.cat) == 0);
+  CHECK(queued == sm3::btree_reaper_queued(f.cat));
+  REQUIRE(sm3::btree_reaper_run_once(f.cat) == 0);
+  CHECK(queued == sm3::btree_reaper_queued(f.cat));
   CHECK(1u == ids(tb, f.by_state, "old", "old").size());
   sm3::tbl_close(tb);
   REQUIRE(sm3::commit(f.b) == 0);
 
-  REQUIRE(sm3::cleaner_run_once(f.cat) == 0);
-  CHECK(0u == sm3::cleaner_queued(f.cat));
+  REQUIRE(sm3::btree_reaper_run_once(f.cat) == 0);
+  CHECK(0u == sm3::btree_reaper_queued(f.cat));
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   t = f.table(f.a);
   CHECK(1u == entries_of(t, f.by_state));
@@ -1933,7 +1942,7 @@ TEST_CASE(
   // 3. Queue page 0, then fill the tree so page 0 is an inner page:
   //    every page is handled, and the rows are all there.
   trees_t f;
-  f.cleaner();
+  f.btree_reaper();
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   sm3::table_t *t = f.table(f.a);
   row_t r(1, "free", "O");
@@ -1941,13 +1950,13 @@ TEST_CASE(
   REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
-  REQUIRE(sm3::cleaner_queued(f.cat) > 0);
+  REQUIRE(sm3::btree_reaper_queued(f.cat) > 0);
 
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE_MESSAGE(sm3::drop_index(f.a, f.jobs, f.by_owner) == 0, sm1::errmsg());
   REQUIRE(sm3::commit(f.a) == 0);
-  REQUIRE_MESSAGE(sm3::cleaner_run_once(f.cat) == 0, sm1::errmsg());
-  CHECK(0u == sm3::cleaner_queued(f.cat));
+  REQUIRE_MESSAGE(sm3::btree_reaper_run_once(f.cat) == 0, sm1::errmsg());
+  CHECK(0u == sm3::btree_reaper_queued(f.cat));
 
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   t = f.table(f.a);
@@ -1955,25 +1964,25 @@ TEST_CASE(
   REQUIRE(sm3::tbl_insert(t, r2.d(), r2.null(), id) == 0);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
-  REQUIRE(sm3::cleaner_queued(f.cat) > 0);
+  REQUIRE(sm3::btree_reaper_queued(f.cat) > 0);
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE_MESSAGE(sm3::truncate_table(f.a, f.jobs) == 0, sm1::errmsg());
   REQUIRE(sm3::commit(f.a) == 0);
-  REQUIRE_MESSAGE(sm3::cleaner_run_once(f.cat) == 0, sm1::errmsg());
-  CHECK(0u == sm3::cleaner_queued(f.cat));
+  REQUIRE_MESSAGE(sm3::btree_reaper_run_once(f.cat) == 0, sm1::errmsg());
+  CHECK(0u == sm3::btree_reaper_queued(f.cat));
 
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   t = f.table(f.a);
   row_t first(0, "aaaa", "O");
   REQUIRE(sm3::tbl_insert(t, first.d(), first.null(), id) == 0);
-  REQUIRE(sm3::cleaner_queued(f.cat) > 0);
+  REQUIRE(sm3::btree_reaper_queued(f.cat) > 0);
   for (int i = 1; i < 2000; i++) {
     row_t row(i, "state" + std::to_string(i), "O");
     REQUIRE(sm3::tbl_insert(t, row.d(), row.null(), id) == 0);
   }
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
-  REQUIRE_MESSAGE(sm3::cleaner_run_once(f.cat) == 0, sm1::errmsg());
+  REQUIRE_MESSAGE(sm3::btree_reaper_run_once(f.cat) == 0, sm1::errmsg());
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   t = f.table(f.a);
   CHECK(2000u == entries_of(t, f.by_state));
@@ -1981,14 +1990,14 @@ TEST_CASE(
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
-TEST_CASE("tree: the cleaner's thread runs with no VACUUM") {
-  // Verify a worker cleans what is queued by itself, and stops at a
+TEST_CASE("tree: the btree reaper's thread runs with no VACUUM") {
+  // Verify a worker reaps what is queued by itself, and stops at a
   // detach.
   // 1. Attach one worker. Move a row and commit.
   // 2. Within ten seconds the dead entry is gone.
   // 3. Detach stops it, and the fixture closes the catalog.
   trees_t f;
-  f.cleaner(1);
+  f.btree_reaper(1);
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   sm3::table_t *t = f.table(f.a);
   row_t r(1, "old", "O");
@@ -2013,11 +2022,55 @@ TEST_CASE("tree: the cleaner's thread runs with no VACUUM") {
     REQUIRE(sm3::commit(f.a) == 0);
   }
   CHECK(1u == entries);
-  sm3::cleaner_detach(f.cat);
+  sm3::btree_reaper_detach(f.cat);
 }
 
-TEST_CASE("tree: scans agree with the rows while the cleaner runs") {
-  // Verify a cleaner running beside writers and readers removes no live
+TEST_CASE("tree: the reapers' thread runs the row reaper's pass") {
+  // Verify the pool of ../BTREEINDEX.md §9.9 runs the row pass of
+  // ../GC.md §13.5.
+  // 1. Attach one worker. Insert a row, update it, commit.
+  // 2. Read the row: the reader queues it for the row reaper.
+  // 3. Within ten seconds the worker's pass has taken the key.
+  // 4. The row reads the same.
+  trees_t f;
+  f.btree_reaper(1);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.table(f.a);
+  row_t r(1, "old", "O");
+  uint64_t id = 0;
+  REQUIRE(sm3::tbl_insert(t, r.d(), r.null(), id) == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  row_t kept(1, "old", "P");
+  REQUIRE(sm3::tbl_update(t, id, kept.d(), kept.null()) == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  std::string_view tuple;
+  REQUIRE(sm3::tbl_read(t, id, tuple) == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  size_t pending = sm1::row_reaps_pending(f.env(), "db");
+  CHECK(1u == pending);
+  for (int i = 0; i < 100 && 0 != pending; i++) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    pending = sm1::row_reaps_pending(f.env(), "db");
+  }
+  CHECK(0u == pending);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  t = f.table(f.a);
+  REQUIRE(sm3::tbl_read(t, id, tuple) == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  sm3::btree_reaper_detach(f.cat);
+}
+
+TEST_CASE("tree: scans agree with the rows while the btree reaper runs") {
+  // Verify a btree reaper running beside writers and readers removes no live
   // entry, and a scan sees every row it should.
   // 1. Insert 400 rows, split between states a and b.
   // 2. Two writers move rows between the states; a reader counts both
@@ -2025,7 +2078,7 @@ TEST_CASE("tree: scans agree with the rows while the cleaner runs") {
   // 3. Each read sees 400 rows in all.
   // 4. Once all stop, a pass leaves one entry a row.
   trees_t f;
-  f.cleaner();
+  f.btree_reaper();
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   sm3::table_t *t = f.table(f.a);
   constexpr int rows = 400;
@@ -2040,9 +2093,9 @@ TEST_CASE("tree: scans agree with the rows while the cleaner runs") {
   std::atomic<bool> stop{false};
   std::atomic<int> bad{0};
   std::atomic<int> reads{0};
-  std::thread cleaner([&] {
+  std::thread btree_reaper([&] {
     while (!stop) {
-      if (sm3::cleaner_run_once(f.cat) != 0) {
+      if (sm3::btree_reaper_run_once(f.cat) != 0) {
         bad++;
       }
     }
@@ -2100,7 +2153,7 @@ TEST_CASE("tree: scans agree with the rows while the cleaner runs") {
     th.join();
   }
   stop = true;
-  cleaner.join();
+  btree_reaper.join();
   CHECK(0 == bad);
   CHECK(30 == reads);
   for (sm3::session_t *s : writers) {
@@ -2112,8 +2165,8 @@ TEST_CASE("tree: scans agree with the rows while the cleaner runs") {
                                  ids(t, f.by_state, "b", "b").size()));
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
-  while (0 != sm3::cleaner_queued(f.cat)) {
-    REQUIRE(sm3::cleaner_run_once(f.cat) == 0);
+  while (0 != sm3::btree_reaper_queued(f.cat)) {
+    REQUIRE(sm3::btree_reaper_run_once(f.cat) == 0);
   }
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   t = f.table(f.a);

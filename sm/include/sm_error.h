@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm_error.h -- the error codes of the whole wisr stack, in C.
  *
  * One errno namespace serves every level (DESIGN.md section 5):

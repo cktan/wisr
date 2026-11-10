@@ -11,6 +11,8 @@
  *
  *
  * Copyright (c) 2000-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  * Written by Peter Eisentraut <peter_e@gmx.net>.
  *
  * IDENTIFICATION
@@ -282,7 +284,8 @@ static const struct config_enum_entry default_toast_compression_options[] = {
 /*
  * GUC option variables that are exported from this module
  */
-thread_local /*LOCAL*/ bool AllowAlterSystem = true;
+/* Sessions read shmem->allow_alter_system, not this */
+static thread_local /*LOCAL*/ bool AllowAlterSystem = true;
 thread_local /*LOCAL*/ bool log_duration = false;
 thread_local /*LOCAL*/ bool Debug_print_plan = false;
 thread_local /*LOCAL*/ bool Debug_print_parse = false;
@@ -410,10 +413,53 @@ static thread_local /*LOCAL*/ char *Log_directory = NULL;
 static thread_local /*LOCAL*/ char *Log_filename = NULL;
 static thread_local /*LOCAL*/ bool Log_truncate_on_rotation = false;
 static thread_local /*LOCAL*/ int Log_file_mode = S_IRUSR | S_IWUSR;
+/* elog.c: log_line_prefix; threads read shmem->log_line_prefix, not this */
+static thread_local /*LOCAL*/ char *Log_line_prefix = NULL;
+/* postmaster.c: log_hostname and authentication_timeout; sessions read shmem */
+static thread_local /*LOCAL*/ bool log_hostname = false;
+static thread_local /*LOCAL*/ int AuthenticationTimeout = 60;
+/* elog.c: syslog_sequence_numbers and syslog_split_messages; shmem->syslog */
+static thread_local /*LOCAL*/ bool syslog_sequence_numbers = true;
+static thread_local /*LOCAL*/ bool syslog_split_messages = true;
+
+/*
+ * Copy the settings that change on a reload and that every thread reads into
+ * the shared block. The main thread calls this after it reads its settings
+ * and after each reload; the other threads read the copy, never the variable.
+ */
+void publish_shared_settings(void) {
+  /* Each is independent of the others, so no order is needed between them. */
+  shmem->log_hostname.store(log_hostname, std::memory_order_relaxed);
+  shmem->authentication_timeout.store(AuthenticationTimeout,
+                                      std::memory_order_relaxed);
+  shmem->allow_alter_system.store(AllowAlterSystem,
+                                  std::memory_order_relaxed);
+
+  /* Allocate before the lock: the lock is held only to swap the pointer. */
+  std::shared_ptr<const std::string> prefix =
+      std::make_shared<const std::string>(Log_line_prefix ? Log_line_prefix
+                                                          : "");
+
+  /* A reader copies the pointer under this lock, so it sees one string. */
+  {
+    std::lock_guard<std::mutex> guard(shmem->log_line_prefix.mutex);
+    shmem->log_line_prefix.value = std::move(prefix);
+  }
+
+  /* The four syslog settings go together, so a writer sees them agree. */
+  std::shared_ptr<const syslog_conf_t> syslog_conf =
+      std::make_shared<const syslog_conf_t>(
+          syslog_conf_t{syslog_ident_str ? syslog_ident_str : "postgres",
+                        syslog_facility, syslog_sequence_numbers,
+                        syslog_split_messages});
+
+  std::lock_guard<std::mutex> guard(shmem->syslog.mutex);
+  shmem->syslog.conf = std::move(syslog_conf);
+}
 
 /*
  * Copy the file logger's settings into the process control block. The
- * postmaster calls this, with shmem->stderr_mutex held, at start and on each
+ * postmaster calls this, with shmem->log.mutex held, at start and on each
  * reload; logfile.c reads the copy under the same mutex.
  */
 void publish_log_file_settings(void) {
@@ -442,10 +488,10 @@ static char *postmaster_setting_dup(const char *value) {
 
 /*
  * Copy the settings that change only with a restart, and the preset ones that
- * never change, into the process control block. The postmaster calls this once
- * it has read its settings, before it starts a thread: from then on every
- * thread reads pcb, not its own copy of the GUC variable, which no code outside
- * this file can name.
+ * never change, into the process control block. The main thread calls this
+ * after it reads its settings, before the postmaster starts a thread or the
+ * standalone backend starts. From then on each thread reads pcb, not its own
+ * copy of the GUC variable, which no code outside this file can name.
  */
 void publish_postmaster_settings(void) {
   pcb_t *b = pcb_main();
@@ -2411,7 +2457,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
      &syslog_ident_str,
      "postgres",
      NULL,
-     assign_syslog_ident,
+     NULL,
      NULL},
 
     {{"event_source", PGC_POSTMASTER, LOGGING_WHERE,
@@ -2842,7 +2888,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
      DEFAULT_SYSLOG_FACILITY,
      syslog_facility_options,
      NULL,
-     assign_syslog_facility,
+     NULL,
      NULL},
 
     {{"xmlbinary", PGC_USERSET, CLIENT_CONN_STATEMENT,

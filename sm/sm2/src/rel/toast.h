@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * toast.h -- a datum out of line (../TOAST.md §2): its chunks
  * in a store's TOAST relid, written, read and erased. rel.cc
  * decides which datums go there.

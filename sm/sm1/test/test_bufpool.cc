@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_bufpool.cc -- the buffer pool alone (src/bufpool.h): tags,
  * bytes and pins, a miss reading through a loader of the test's, with
  * no session, store or RocksDB. test_page.cc tests pages on top of it

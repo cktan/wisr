@@ -147,6 +147,7 @@ Directives set the run up. They are not echoed.
 | `session <name> ser` | declare a session pinned to SERIALIZABLE |
 | `session <name> [<level>] ro` | as above, each transaction begun read-only (`sm1::begin`'s `read_only`) |
 | `seed <row> <value>` | create the row, committed, before the scenario starts |
+| `stores chained` | the script needs chained stores: it runs on them in both modes (§7) |
 
 **How a pairing assigns levels.** The first session declared
 takes T1's level; every other session takes T2's. A session
@@ -174,6 +175,7 @@ can be read at a glance. Several steps may share a time.
 | `scan` | `<lo> <hi>` | the keys in the closed range: `{R1, R2}` |
 | `scan` | `<lo> <hi> limit <n>` | the first `n` keys, then closes the cursor |
 | `write` | `<row> <value>` | `ok`, or an error name |
+| `write` | `<row> <value> keykept` | as `write`, an update that keeps the row's key: on a chained store, written in NKU and flagged |
 | `insert` | `<row> <value>` | `ok`, or an error name |
 | `delete` | `<row>` | `ok`, or an error name |
 | `move` | `<row>` | `ok`, or an error name: a delete whose tombstone is a move's (`sm1::erase_moved`), as a primary key change erases the old key |
@@ -186,7 +188,7 @@ can be read at a glance. Several steps may share a time.
 | `close` | `<cursor>` | `ok` |
 | `savepoint` | — | the new mark's depth: `1`, `2`, … |
 | `rollback` | `<depth>` | `ok`, or an error name |
-| `lock` | `<row> <is\|ix\|shared\|six\|exclusive>` | `ok`, or an error name |
+| `lock` | `<row> <is\|ix\|shared\|six\|exclusive\|keyshare\|nokeyupdate>` | `ok`, or an error name |
 | `lockread` | as `lock` | as `lock`; `selfmodified` on a row changed since the statement began |
 | `lockoid` | `<n> <is\|ix\|shared\|six\|exclusive>` | `ok`, or an error name |
 | `seek` | `<cursor> <key>` | `ok`, or an error name |
@@ -196,6 +198,7 @@ can be read at a glance. Several steps may share a time.
 | `rmstore` | — | `ok`: drops the second store |
 | `mkstore` | — | `ok`: creates a store, whose storeid is not printed |
 | `lsstore` | — | `<n> stores` |
+| `reap` | — | the keys a row reaper pass reaped (`sm1::row_reap_pass`, [`../../GC.md`](../../GC.md#135-reaping-by-the-reapers-threads) §13.5): `0`, `1`, … |
 
 Error names are symbolic, never numbers or messages:
 `conflict`, `serialization`, `dupkey`, `notfound`, `notrans`,
@@ -217,7 +220,10 @@ mark and drops the ones inside it. `sm1::forget` has no verb:
 no scenario has needed one, and it would take the same shape.
 
 **`lock`** takes the row lock without writing the row, in one
-of Gray's modes: `is`, `ix`, `shared`, `six` or `exclusive`.
+of Gray's modes: `is`, `ix`, `shared`, `six` or `exclusive`; or
+in a row mode: `keyshare` (KS) or `nokeyupdate` (NKU), as
+[`../LOCKMGR.md`](../../LOCKMGR.md#113-key-share-modes) §1.13
+sets them. `lockoid` refuses the row modes, `invalid`.
 Compatible holders coexist, as `sm1.h`'s table for `lockmode_t`
 says; anything else waits, so a `lock` step takes `blocks` like
 a write does. A transaction already holding the row and asking
@@ -514,3 +520,10 @@ transcripts against the one expected transcript in `mvcc/good`:
 the scenarios are the specification of a chained key as much as
 of a versioned one, and no expected transcript is kept for the
 chained mode alone.
+
+A script with the directive `stores chained` tests what only a
+chained store does: a KS lock passes over an update that kept
+its key, as the version's flag says
+([`../LOCKMGR.md`](../../LOCKMGR.md#113-key-share-modes) §1.13).
+A versioned store has no flag. Such a script runs on chained
+stores in both modes, so its two transcripts are the same.

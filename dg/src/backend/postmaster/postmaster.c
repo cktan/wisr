@@ -33,6 +33,8 @@
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  *
  * IDENTIFICATION
@@ -197,9 +199,6 @@ static inline bool btmask_contains(BackendTypeMask mask, BackendType t) {
 thread_local /*LOCAL*/ bool EnableSSL = false;
 
 thread_local /*LOCAL*/ int PreAuthDelay = 0;
-thread_local /*LOCAL*/ int AuthenticationTimeout = 60;
-
-thread_local /*LOCAL*/ bool log_hostname; /* for ps display and logging */
 
 /*
  * When terminating child processes after fatal errors, like a crash of a
@@ -311,11 +310,6 @@ static inline postmaster_state_t &pms(void) {
 void postmaster_state_free_t::operator()(postmaster_state_t *state) const {
   delete state;
 }
-
-#ifdef USE_SSL
-/* Set when and if SSL has been initialized properly */
-bool LoadedSSL = false;
-#endif
 
 #ifdef USE_BONJOUR
 static DNSServiceRef bonjour_sdref = NULL;
@@ -644,6 +638,8 @@ void PostmasterMain(int argc, char *argv[]) {
    * pcb, which every thread reads, before any thread starts.
    */
   publish_postmaster_settings();
+  /* The settings that change on a reload: a first copy in shmem. */
+  publish_shared_settings();
 
   if (output_config_variable != NULL) {
     /*
@@ -774,10 +770,8 @@ void PostmasterMain(int argc, char *argv[]) {
    * Initialize SSL library, if specified.
    */
 #ifdef USE_SSL
-  if (EnableSSL) {
+  if (EnableSSL)
     (void)secure_initialize(true);
-    LoadedSSL = true;
-  }
 #endif
 
   /*
@@ -1455,14 +1449,10 @@ static void process_pm_reload_request(void) {
 #ifdef USE_SSL
     /* Reload SSL configuration as well */
     if (EnableSSL) {
-      if (secure_initialize(false) == 0)
-        LoadedSSL = true;
-      else
+      if (secure_initialize(false) != 0)
         ereport(LOG, (errmsg("SSL configuration was not reloaded")));
-    } else {
+    } else
       secure_destroy();
-      LoadedSSL = false;
-    }
 #endif
   }
 }

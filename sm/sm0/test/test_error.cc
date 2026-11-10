@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_error.cc -- the calling thread's error state (sm0.h) and
  * the helpers that set it (sm0_error.h).
  */

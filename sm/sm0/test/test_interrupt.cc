@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_interrupt.cc -- sm_sys.h's interrupts, interruptible
  * waits, the wake fd, and timers (INTERRUPT.md).
  */

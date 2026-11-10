@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * tuple.cc -- the tuple codec (TUPLE.md, VARLENA.md; why in
  * TUPLE.md §10, §11):
  *

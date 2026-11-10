@@ -4,6 +4,11 @@
  * It is PostgreSQL's scan.l, with its errors raised sq's way and its
  * strings made in the tree. A scanner_t is one scan of one text, and
  * releases flex's state when it goes, however the scan ends.
+ *
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for sq,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  */
 #ifndef SQ_SRC_SCAN_H
 #define SQ_SRC_SCAN_H

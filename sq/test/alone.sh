@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # alone.sh -- verify that the library and its tests are built from
 # nothing outside sq: not digres's, and not sm's.
 # 1. Read the compiler's dependency files for the library, what is

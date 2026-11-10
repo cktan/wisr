@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * home.h -- a throwaway sm home with pg_global in it, for aa's tests:
  * made by aa_create(), read by aa_load(), removed at the end.
  */

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_toast.cc -- TOAST through a table (../INDEXBUILD.md §2,
  * ../TOAST.md §2): a row's long datums out of line once
  * the host reads pointers, and every index still made of values.
@@ -362,11 +367,12 @@ TEST_CASE("an index of a column out of line is made of its value") {
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
-TEST_CASE("the cleaner fetches a tree's key out of line by settled reads") {
-  // Verify tbl_clean_leaf reads a value out of line with no transaction,
+TEST_CASE(
+    "the btree reaper fetches a tree's key out of line by settled reads") {
+  // Verify tbl_reap_leaf reads a value out of line with no transaction,
   // in a chained store, whose chunks are versioned (../BTREEINDEX.md §9).
   // 1. Make a tree on body, and insert a row with a body out of line.
-  // 2. Clean its leaf: the entry is live, by the fetched value.
+  // 2. Reap its leaf: the entry is live, by the fetched value.
   // 3. Change the body: the old entry is dead, and goes.
   docs_t f;
   std::vector<sm3::index_key_spec_t> by_body = {
@@ -398,7 +404,7 @@ TEST_CASE("the cleaner fetches a tree's key out of line by settled reads") {
   REQUIRE(0 != relid);
   uint64_t pubs = sm3::cat_publishes(c);
   bool doubt = true;
-  REQUIRE_MESSAGE(sm3::tbl_clean_leaf(c, def, pubs, relid, 0, doubt) == 0,
+  REQUIRE_MESSAGE(sm3::tbl_reap_leaf(c, def, pubs, relid, 0, doubt) == 0,
                   sm1::errmsg());
   CHECK_FALSE(doubt);
 
@@ -409,7 +415,7 @@ TEST_CASE("the cleaner fetches a tree's key out of line by settled reads") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
   doubt = true;
-  REQUIRE_MESSAGE(sm3::tbl_clean_leaf(c, def, pubs, relid, 0, doubt) == 0,
+  REQUIRE_MESSAGE(sm3::tbl_reap_leaf(c, def, pubs, relid, 0, doubt) == 0,
                   sm1::errmsg());
   CHECK_FALSE(doubt);
   sm3::session_close(c);

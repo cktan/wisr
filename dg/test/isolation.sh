@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # isolation.sh -- run PostgreSQL 18's isolation specs on digres, with its
 # isolationtester, and compare each outcome with test/isolation_specs.txt.
 #

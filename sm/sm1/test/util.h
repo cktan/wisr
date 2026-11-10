@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * util.h -- helpers shared by the test files.
  */
 #ifndef WISR_TEST_UTIL_H

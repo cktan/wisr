@@ -2023,7 +2023,7 @@ that needs
 descending order builds it into the key, inverted key bytes
 scanned forward, rather than keeping a mirror store for the
 other direction
-([`../PART4.md`](../PART4.md#5-the-one-conflict-with-a-decision-already-made)
+([`../PGFORK.md`](../PGFORK.md#5-the-one-conflict-with-a-decision-already-made)
 §5).
 
 The cursor's view is fixed at this call (see "Isolation and
@@ -2168,7 +2168,8 @@ int chain_read_latest(session_t* session, uint64_t storeid,
                       std::string_view& data);
 int chain_read_batch(session_t* session, uint64_t storeid,
                      const std::string_view* keys, size_t n,
-                     rawpin_t** pins, std::string_view* data, int* rc);
+                     rawpin_t** pins, std::string_view* data, int* rc,
+                     batch_iter_t* iter = nullptr);
 int chain_lock_row(session_t* session, uint64_t storeid,
                    std::string_view key, lockmode_t mode,
                    bool as_read = false, uint16_t kind = 0);
@@ -2184,7 +2185,35 @@ call ([`../ROWSTORE.md`](../ROWSTORE.md)): key `i`'s row into
 pin then empty. The keys' newest versions are read together,
 in RocksDB's MultiGet, in any order; each key is checked,
 takes its SIREAD entry and is resolved as a single read of it
-is. Returns 0, or -1 on an error, the rows then undefined.
+is. Keys in ascending order are read by one iterator: `iter`'s,
+if given, brought up to date, or one made and kept in `iter`. A
+batch whose keys are too far apart to step between marks
+`iter`, and its later batches of the store are read by MultiGet
+alone. Returns 0, or -1 on an error, the rows then undefined.
+
+### sm1::batch_iter_t* sm1::batch_iter_new(bool scattered = false)
+
+A batch read's iterator, which the caller keeps from one
+`sm1::chain_read_batch` to the next, as a cursor reads its rows
+in batches ([`../ROWSTORE.md`](../ROWSTORE.md) §7.2). It holds no
+RocksDB iterator yet. With `scattered`, the caller says its keys
+are far apart in the store, as an uncorrelated index's rows are:
+every batch is read by MultiGet alone, and `iter` never holds
+an iterator.
+
+The caller makes it, keeps it and frees it. sm1 lets go of the
+RocksDB iterator it holds at the end of the transaction, at a
+rollback to a savepoint, and as the session closes. So an
+unfreed `batch_iter_t` holds no RocksDB files.
+
+### void sm1::batch_iter_free(sm1::batch_iter_t* iter)
+
+Let go of `iter`'s RocksDB iterator, then free `iter`. A
+`nullptr` is a no-op.
+
+### bool sm1::batch_iter_held(const sm1::batch_iter_t* iter)
+
+Whether `iter` holds a RocksDB iterator now. For tests.
 
 ### int sm1::store_chained(sm1::session_t* session, uint64_t storeid, bool& out)
 
@@ -2231,8 +2260,8 @@ every store.
 Lets `session` call `sm1::read_settled`,
 `sm1::read_settled_versioned`, `sm1::pin_page`,
 `sm1::page_enter` and `sm1::page_write` with no transaction, for
-good: a background cleaner's session
-([`../BTREEINDEX.md`](../BTREEINDEX.md#9-cleaning-vacuum-and-the-cleaner)
+good: a background btree reaper's session
+([`../BTREEINDEX.md`](../BTREEINDEX.md#9-reaping-vacuum-and-the-btree-reaper)
 §9). It
 judges a row by its newest version, so it needs no snapshot and
 holds no watermark back. Every other call still needs a
@@ -2242,6 +2271,29 @@ transaction.
 
 The GC watermark of the session's database: the oldest snapshot
 still registered, or everything published if none.
+
+### int64_t sm1::row_reap_pass(sm1::session_t* session, const std::atomic<bool>* stop = nullptr)
+
+One pass of the row reaper over the session's database
+([`../GC.md`](../GC.md#135-reaping-by-the-reapers-threads)
+§13.5). It takes the chained keys readers queued: a reader queues
+a key whose CURR version it sees committed with an older version
+behind it. For each key whose CURR is now settled, at or below
+the watermark read once for the pass, it deletes the OLD entries
+of the chain and writes CURR again with no `prev`. A key not
+settled, gone, or changed is skipped, and a later read queues it
+again. `stop`, if given and set, ends the pass after the key it is
+on. It needs no transaction: the reapers' threads run it on a
+session of their pass.
+
+Returns the keys reaped, or -1 on an error, which drops the rest
+of the batch.
+
+### size_t sm1::row_reaps_pending(sm1::env_t* env, std::string_view dbname)
+
+The keys queued for the row reaper of database `dbname`, read with
+no session, so that asking never keeps a database open: 0 if the
+database is not open.
 
 ### int sm1::read_newest(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::rawpin_t* pin, std::string_view& data, uint64_t& writer)
 

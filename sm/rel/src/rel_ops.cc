@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * rel_ops.cc -- Janet C function bindings for sm.h and relational simulation.
  */
 
@@ -2471,16 +2476,16 @@ static Janet cfun_compact(int32_t argc, Janet *argv) {
 }
 
 /*
- * (cleaner-pass): one pass of the btree cleaner of the session's
- * database (sm_cleaner_run), on this thread. A script gets no cleaner
+ * (reaper-pass): one pass of the btree reaper of the session's
+ * database (sm_reaper_run), on this thread. A script gets no btree reaper
  * thread.
  */
-static Janet cfun_cleaner_pass(int32_t argc, Janet *argv) {
+static Janet cfun_reaper_pass(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 0);
   (void)argv;
   session_ctx_t *s = require_session();
-  if (sm_cleaner_run(get_catalog().env(), s->db_name.c_str()) != 0) {
-    panic_sm_error("cleaner-pass sm_cleaner_run");
+  if (sm_reaper_run(get_catalog().env(), s->db_name.c_str()) != 0) {
+    panic_sm_error("reaper-pass sm_reaper_run");
   }
   return janet_wrap_nil();
 }
@@ -3460,7 +3465,7 @@ static const JanetReg s_rel_cfuns[] = {
     {"_lock-row", cfun_lock_row, "internal"},
     {"_truncate", cfun_truncate, "internal"},
     {"_compact", cfun_compact, "internal"},
-    {"cleaner-pass", cfun_cleaner_pass, "one pass of the btree cleaner"},
+    {"reaper-pass", cfun_reaper_pass, "one pass of the btree reaper"},
     {"_load", cfun_load, "internal"},
     {"_table-size", cfun_table_size, "internal"},
     {"_analyze", cfun_analyze, "internal"},

@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # initdb.sh -- check that initdb makes a data directory, and refuses
 # what digres does not support before making anything.
 #

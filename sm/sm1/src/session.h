@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * session.h -- a session, its transaction, and its cursors,
  * plus the internal calls between xct.cc, catalog.cc, and
  * access.cc.
@@ -374,6 +379,12 @@ struct sm1::scan_t {
    */
   bool chained = false;
   rocksdb::ColumnFamilyHandle *cf = nullptr; /* a chained cursor's store */
+  /*
+   * A chained cursor queues the dead newest versions it passes
+   * (../GC.md §4.2) for this store, unless the store is temporary.
+   */
+  uint64_t chain_storeid = 0;
+  bool report_dead = false;
   rocksdb::PinnableSlice got;
 };
 
@@ -408,7 +419,7 @@ int xct_check_active(sm1::session_t *session);
  * xct_check_active, but for a session set for no transaction, which
  * has none to check: a settled read's and a page call's check.
  */
-int xct_check_cleaner(sm1::session_t *session);
+int xct_check_btree_reaper(sm1::session_t *session);
 
 /* Fail with READONLY if session's transaction was declared read-only. */
 int xct_check_readonly(sm1::session_t *session);
@@ -497,12 +508,14 @@ int lock_try(sm1::session_t *session, const lockid_t &id, sm1::lockmode_t mode,
 
 /*
  * For a write (../LOCKMGR.md §1.7): 2 if another transaction holds
- * a lock on (storeid, key) that a write conflicts with, else 0,
- * converting the session's own lock on the key, if it holds one,
- * to exclusive. A write without a lock of its own takes none.
+ * a lock on (storeid, key) that a write in mode conflicts with, else
+ * 0, converting the session's own lock on the key, if it holds one,
+ * to cover mode. mode is X, or NKU for a chained update that keeps
+ * its key (§1.13). A write without a lock of its own takes none.
  */
 int lock_write_check(sm1::session_t *session, uint64_t storeid,
-                     rocksdb::Slice key);
+                     rocksdb::Slice key,
+                     sm1::lockmode_t mode = sm1::SM_LOCKMODE_EX);
 
 /*
  * Block until no other transaction holds the lock id in a mode
@@ -788,8 +801,15 @@ sm1::scan_t *access_scan(sm1::session_t *session, uint64_t storeid,
 int access_write(sm1::session_t *session, uint64_t storeid, write_op_t op,
                  rocksdb::Slice key, rocksdb::Slice data, sm1::rawpin_t *pin);
 
-/* 1 if v is visible at view, 0 if not, -1 on error (../XCTMGR.md §3.3). */
-int access_visible(db_t *db, const version_t &v, const view_t &view);
+/*
+ * 1 if v is visible at view, 0 if not, -1 on error (../XCTMGR.md §3.3).
+ * *dead is set, if given, when v is invisible because its writer is dead.
+ * *commit_ts is set, if given, to v's commit_ts once it is known; it is
+ * left alone for the view's own write and for a version written after the
+ * snapshot.
+ */
+int access_visible(db_t *db, const version_t &v, const view_t &view,
+                   bool *dead = nullptr, uint64_t *commit_ts = nullptr);
 
 /* Step past v, invisible at view: under SSI, owe its writer an edge. */
 int access_skip(sm1::session_t *session, const version_t &v,

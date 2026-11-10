@@ -24,7 +24,7 @@ document. Use these and no others in code comments and documents.
 | Row Store | row store | [`ROWSTORE.md`](ROWSTORE.md) | row keys, versions, chains, the read and write paths | `sm1/src/access.cc`, `chain.cc`, `sm2/src/rel/rel.cc` |
 | TOAST | toast | [`TOAST.md`](TOAST.md) | a datum stored out of line | `sm2/src/rel/toast.cc` |
 | LSM Index | lsm index | [`LSMINDEX.md`](LSMINDEX.md) | an index whose entries are sm1 keys | `sm2/src/rel/index.cc` |
-| B-tree Index | btree index | [`BTREEINDEX.md`](BTREEINDEX.md) | an index of its own pages, its in-doubt bit, the cleaner | `sm2/src/tree/`, `sm3/src/cleaner/` |
+| B-tree Index | btree index | [`BTREEINDEX.md`](BTREEINDEX.md) | an index of its own pages, its in-doubt bit, the btree reaper | `sm2/src/tree/`, `sm3/src/btree_reaper/` |
 | Index Builder | builder | [`INDEXBUILD.md`](INDEXBUILD.md) | concurrent index builds | `sm3/src/builder/` |
 | Catalog | catalog | [`CATALOG.md`](CATALOG.md) | definitions in memory and on disk, DDL | `sm3/src/catalog/`, `sm3/src/ddl/` |
 | Namespace | namespace | [`NAMESPACE.md`](NAMESPACE.md) | a schema, and name lookup | `sm3/src/ddl/ddl.cc` |
@@ -110,21 +110,19 @@ entry in a table.
 
 A lock-table entry is one of two kinds, by what it names
 ([`LOCKMGR.md`](LOCKMGR.md#15-the-calls) §1.5). A **row lock**
-names a key in a store: a
-table's row locked without being written, or a catalog key
-about to be. An **OID lock** names an object's oid, a key in
-no store: a table's is its **table-oid lock**, and a namespace
-has one too. "Row lock" never means what a write does to the
-row it writes: that is the uncommitted version.
+names a key in a store: a table's row locked without being
+written, or a catalog key about to be. An **OID lock** names an
+object's oid, a key in no store: a table's is its **table-oid
+lock**, and a namespace has one too. "Row lock" never means what
+a write does to the row it writes: that is the uncommitted
+version.
 
-**index.** Two things: an sm3 **index**, an object that maps
-an encoded key to a row's key; and "index" used
-loosely of a
-lookup structure in the catalog — the **name index**, its
-`NAME` keys ([`CATALOG.md`](CATALOG.md#33-keys) §3.3), and the
-**dependency index**, not built
-([`CATALOG.md`](CATALOG.md#11-not-built) §11) —
-which are keys and not objects.
+**index.** Two things: an sm3 **index**, an object that maps an
+encoded key to a row's key; and "index" used loosely of a lookup
+structure in the catalog — the **name index**, its `NAME` keys
+([`CATALOG.md`](CATALOG.md#33-keys) §3.3), and the **dependency
+index**, not built ([`CATALOG.md`](CATALOG.md#11-not-built) §11)
+— which are keys and not objects.
 
 **part.** Two things, both in [`CATALOG.md`](CATALOG.md): in §3 a
 part is one sm2 tuple inside a hand-framed catalog value; in
@@ -155,14 +153,14 @@ Six numbers name things, and none of the six is ever reused.
 | `_id` | uint64 | one table | the sequence `sm3.id.<oid>` | a row of a table without a primary key, its key ([`ROWSTORE.md`](ROWSTORE.md#22-the-row-and-its-index-entries) §2.2) |
 | `attnum` | int32 | one table | the column's position | a column |
 
-- **Never reused** means the same thing in every row: a
-  reused id would name two things at once. A dropped store's
-  column family outlives its `rmstore` until GC
+- **Never reused** means the same thing in every row: a reused id
+  would name two things at once. A dropped store's column family
+  outlives its `rmstore` until GC
   ([`DBMGR.md`](DBMGR.md#7-the-store-catalog-and-ddl) §7); a
-  dropped index's relid is
-  never handed out again, so its surviving entries cannot be
-  read as a new index's; a dropped column keeps its attnum,
-  so no later column shifts under a row already written.
+  dropped index's relid is never handed out again, so its
+  surviving entries cannot be read as a new index's; a dropped
+  column keeps its attnum, so no later column shifts under a row
+  already written.
 - **Scope buys width.** A relid is 2 bytes because it
   only has to be unique within one store, and it sits in
   every key of every index. An oid would cost 6 more bytes
@@ -170,11 +168,10 @@ Six numbers name things, and none of the six is ever reused.
   `relfilenode`, scoped to one store rather than the
   database.
 - **A table's rows are always relid 1**, a constant and not a
-  number drawn from the counter; 0xFFFE, once the `_id`
-  index's, is taken by none; and **0 is unused**, so a zeroed
-  relid is never a live rel.
-  Which relid means what is written down once, in
-  [`CATALOG.md`](CATALOG.md#2-object-mapping) §2.
+  number drawn from the counter; 0xFFFE, once the `_id` index's,
+  is taken by none; and **0 is unused**, so a zeroed relid is
+  never a live rel. Which relid means what is written down once,
+  in [`CATALOG.md`](CATALOG.md#2-object-mapping) §2.
 - **An index therefore has two identities**: its **oid** in
   the catalog, and its **relid** in its table's store, with
   the catalog holding the mapping between them.
@@ -183,9 +180,9 @@ Six numbers name things, and none of the six is ever reused.
   one has none, its key its primary key's encoding, and the calls
   that hand out an `_id` give 0 for it
   ([`ROWSTORE.md`](ROWSTORE.md#22-the-row-and-its-index-entries)
-  §2.2). It
-  was `rowno` before the pivot; SQL reads it as the system column
-  `_id`, in a keyless table alone, and there is no `ctid`.
+  §2.2). It was `rowno` before the pivot; SQL reads it as the
+  system column `_id`, in a keyless table alone, and there is no
+  `ctid`.
 - Ids 1 to 999 are reserved in sm1's objid lease, which starts
   at 1000. `sm3.oid` starts at 16384, PostgreSQL's
   `FirstNormalObjectId`; the oids below it are PostgreSQL's
@@ -197,14 +194,12 @@ Six numbers name things, and none of the six is ever reused.
 ## 2. The stack
 
 **level** — one of the four layers of [`README.md`](README.md):
-the error
-state, helpers and system services `sm0/` (0), the MVCC
-storage manager `sm1/` (1), types and tuples `sm2/` (2),
-schema and index maintenance `sm3/` (3), with the C wrapper
-above them all and RocksDB under sm1. A level calls only the
-levels below it: sm3 calls sm2, and sm1 directly where sm2 has
-nothing to add, and nothing calls upward
-([`CODE.md`](CODE.md#1-levels) §1).
+the error state, helpers and system services `sm0/` (0), the MVCC
+storage manager `sm1/` (1), types and tuples `sm2/` (2), schema
+and index maintenance `sm3/` (3), with the C wrapper above them
+all and RocksDB under sm1. A level calls only the levels below
+it: sm3 calls sm2, and sm1 directly where sm2 has nothing to add,
+and nothing calls upward ([`CODE.md`](CODE.md#1-levels) §1).
 
 **the wrapper** — `include/sm.h` and `src/`, the one API the
 host calls. Belongs to no level.
@@ -213,13 +208,11 @@ host calls. Belongs to no level.
 
 ## 3. Level 1: stores and keys
 
-**store** — sm1's unit of key space, named by a `storeid`.
-Every store *is* a RocksDB column family: `CF:chain.<storeid>`
-for a chained store, as every table's is, `CF:store.<storeid>`
-for a versioned one
-([`ROWSTORE.md`](ROWSTORE.md#35-a-chained-key) §3.5). Nothing
-above sm1 calls
-it one.
+**store** — sm1's unit of key space, named by a `storeid`. Every
+store *is* a RocksDB column family: `CF:chain.<storeid>` for a
+chained store, as every table's is, `CF:store.<storeid>` for a
+versioned one ([`ROWSTORE.md`](ROWSTORE.md#35-a-chained-key)
+§3.5). Nothing above sm1 calls it one.
 
 **store 0** — sm1's own catalog, an ordinary MVCC store
 holding a `"R"` row per store, a `"S"` row per sequence, and
@@ -243,17 +236,15 @@ MB for a value.
 
 ## 4. Level 1: versions and visibility
 
-**row version** — one value of a key. A versioned key's
-version is one RocksDB key-value pair: the class byte, the
-userkey and the version tail
-([`DBMGR.md`](DBMGR.md#62-key-classes) §6.2,
+**row version** — one value of a key. A versioned key's version
+is one RocksDB key-value pair: the class byte, the userkey and
+the version tail ([`DBMGR.md`](DBMGR.md#62-key-classes) §6.2,
 [`ROWSTORE.md`](ROWSTORE.md#32-the-class-byte-and-the-comparator)
-§3.2). A chained store keeps a row's newest version
-under its plain key and the older ones in a chain behind it,
-each pointing to the one before; its index entries and TOAST
-stay versioned ([`ROWSTORE.md`](ROWSTORE.md#35-a-chained-key)
-§3.5). There is no "row" object on
-disk, only versions.
+§3.2). A chained store keeps a row's newest version under its
+plain key and the older ones in a chain behind it, each pointing
+to the one before; its index entries and TOAST stay versioned
+([`ROWSTORE.md`](ROWSTORE.md#35-a-chained-key) §3.5). There is no
+"row" object on disk, only versions.
 
 **version tail** — `~wts | ~seq`, 12 bytes, bitwise
 complemented so that a key's newest version sorts first. A
@@ -447,17 +438,15 @@ added reads for that column. Not a `DEFAULT`, which serves an
 insert that omits the column.
 
 **table-oid lock** — a table's lock: one sm1 lock of type
-`LOCKTYPE_OID` on the table's oid, taken in Gray's modes
-before a transaction reads or writes the table's definition
-and held to the end of the transaction. It is what makes an
-in-memory catalog safe. The name it locks is a key in no
-store, which nothing writes, so the lock only orders and
-never fails as a row lock can
+`LOCKTYPE_OID` on the table's oid, taken in Gray's modes before a
+transaction reads or writes the table's definition and held to
+the end of the transaction. It is what makes an in-memory catalog
+safe. The name it locks is a key in no store, which nothing
+writes, so the lock only orders and never fails as a row lock can
 ([`LOCKMGR.md`](LOCKMGR.md#42-why-the-table-oid-lock-is-a-type-not-a-key)
-§4.2,
-[`CATALOG.md`](CATALOG.md#1-design) §1). A namespace has the same
-kind of
-lock on its own oid. It was called the schema lock.
+§4.2, [`CATALOG.md`](CATALOG.md#1-design) §1). A namespace has
+the same kind of lock on its own oid. It was called the schema
+lock.
 
 **overlay** — a session's own uncommitted DDL, tagged with the
 savepoint depth it was made at, so the transaction sees its

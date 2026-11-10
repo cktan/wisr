@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 """corpus.py -- check sq over PostgreSQL's regression SQL, by digest.
 
     test/corpus.py DIR                    compare with test/regress.digest

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * mvcc.h -- the vocabulary every scenario in mvcc/ is written
  * in. MVCC.md describes the model; this header is its
  * executable form.

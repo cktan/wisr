@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * aa.cc -- the process's state and a session's: pg_global as last
  * committed, which every session reads, and each session's changes to
  * it, with the protocol that commits them (ROLE.md section 3).

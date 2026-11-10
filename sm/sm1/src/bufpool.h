@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * bufpool.h -- the buffer pool of a tree's pages (../BUFMGR.md):
  * frames of 4 KB, each holding one page, found by a page's tag.
  *

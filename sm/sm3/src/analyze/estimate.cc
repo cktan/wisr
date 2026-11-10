@@ -13,6 +13,11 @@
  * Haas-Stokes Duj1 distinct estimator and its 10% rule, which
  * values are common enough to list, the histogram over the rest,
  * the correlation, and WIDTH_THRESHOLD.
+ *
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for sm,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  */
 
 #include "analyze.h"

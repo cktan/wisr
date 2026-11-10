@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_cluster.cc -- a rel keyed by its primary key (../CLUSTER.md
  * §2 to §5, ../ROWSTORE.md §2): rows in key order, with no _id, moved
  * when their key changes, and named by their key in an index.

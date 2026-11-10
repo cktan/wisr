@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm0_doctest_active.h -- a doctest listener that names the test case
  * running now in a file beside the test binary, BINARY.active, so a
  * run whose output goes to a log can be asked which test it is in:

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_toast.cc -- TOAST (../TOAST.md §2): a row's long datums
  * out of line, in the table's own store, under the row's
  * transaction.
@@ -216,7 +221,7 @@ TEST_CASE("a settled read of a datum a writer erased is no corruption") {
   sm1::session_t *c = db.open();
   sm1::set_no_transaction(c);
   sm2::rel_t *rel = open_rel(db, s);
-  sm2::rel_t *cleaner = open_rel(db, c);
+  sm2::rel_t *btree_reaper = open_rel(db, c);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
   std::string big = text_of(20000);
   uint64_t id = insert(rel, {1, big, "short"});
@@ -225,18 +230,18 @@ TEST_CASE("a settled read of a datum a writer erased is no corruption") {
   REQUIRE(sm1::commit(s) == 0);
 
   std::string out;
-  REQUIRE_MESSAGE(sm2::toast_fetch_settled(cleaner, ptr, out) == 0,
+  REQUIRE_MESSAGE(sm2::toast_fetch_settled(btree_reaper, ptr, out) == 0,
                   sm1::errmsg());
   CHECK(big == out);
 
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE_MESSAGE(sm2::rel_delete(rel, sm2::id_key(id)) == 0, sm1::errmsg());
-  CHECK(-1 == sm2::toast_fetch_settled(cleaner, ptr, out));
+  CHECK(-1 == sm2::toast_fetch_settled(btree_reaper, ptr, out));
   CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
   REQUIRE(sm1::commit(s) == 0);
-  CHECK(-1 == sm2::toast_fetch_settled(cleaner, ptr, out));
+  CHECK(-1 == sm2::toast_fetch_settled(btree_reaper, ptr, out));
   CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
-  sm2::rel_close(cleaner);
+  sm2::rel_close(btree_reaper);
   sm2::rel_close(rel);
 }
 

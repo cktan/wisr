@@ -5,6 +5,8 @@
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  *
  * IDENTIFICATION
@@ -121,6 +123,8 @@ void InitPostmasterChild(void) {
    */
   sm_set_wait_mask(INTERRUPT_CANCEL | INTERRUPT_DIE | INTERRUPT_QUIT |
                     INTERRUPT_ALARM);
+  /* Which pending interrupt ends work in sm that cannot be retried. */
+  sm_set_stop_fn(InterruptsStopWork);
 
   /*
    * A session thread is no process: its signal mask is set
@@ -182,6 +186,8 @@ void InitStandaloneProcess(const char *argv0) {
    */
   sm_set_wait_mask(INTERRUPT_CANCEL | INTERRUPT_DIE | INTERRUPT_QUIT |
                     INTERRUPT_ALARM);
+  /* Which pending interrupt ends work in sm that cannot be retried. */
+  sm_set_stop_fn(InterruptsStopWork);
 
   /* Compute paths, no postmaster to inherit from */
   if (pcb->my_exec_path[0] == '\0') {

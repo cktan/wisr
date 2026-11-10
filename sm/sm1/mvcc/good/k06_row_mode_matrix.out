@@ -1,0 +1,26 @@
+# k06 -- the row modes' conflicts, lock against lock.
+#
+# T1 holds R1 in NKU, as FOR NO KEY UPDATE takes it. T2's KS is
+# compatible with NKU and is taken. T3's S is not: it waits for
+# T1. T4's NKU waits too, behind T1, until T1 and T3 end.
+
+
+== pairing RR/RR == T1=RR T2=RR T3=RR T4=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@1 T4 begin -> ok
+@2 T1 lock R1 nokeyupdate -> ok
+@3 T2 lock R1 keyshare -> ok
+@4 check last T2 ok -> satisfied
+@5 T3 lock R1 shared blocks -> blocked
+@6 T1 commit -> ok
+@5 T3 lock R1 shared blocks -> ok (resumed)
+@7 check last T3 ok -> satisfied
+@8 T4 lock R1 nokeyupdate blocks -> blocked
+@9 T3 commit -> ok
+@8 T4 lock R1 nokeyupdate blocks -> ok (resumed)
+@10 check last T4 ok -> satisfied
+@11 T2 commit -> ok
+@12 T4 commit -> ok
+@13 check committed T1 T2 T3 T4 -> satisfied

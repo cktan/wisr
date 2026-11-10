@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_key.cc -- key encoding (TYPE.md §1, §3, §9 step 2):
  * each type's key against its own order, and keys of several
  * columns against the order of their columns.

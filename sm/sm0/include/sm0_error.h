@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * sm0_error.h -- setting the calling thread's error state.
  *
  * Every function here records an error for sm0::errnum() and

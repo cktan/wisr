@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * db.h -- a throwaway sm1 database for sm3's tests: a fresh home
  * and a database, removed at the end.
  */

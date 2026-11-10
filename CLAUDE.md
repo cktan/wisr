@@ -2,7 +2,7 @@
 
 The repository has four parts: `sm/`, the storage stack;
 `dg/`, digres, the fork of PostgreSQL that runs on it
-([`sm/PART4.md`](sm/PART4.md#10-digres-how-the-fork-is-to-be-made)
+([`sm/PGFORK.md`](sm/PGFORK.md#10-digres-how-the-fork-is-to-be-made)
 §10); `sq/`, the SQL parser digres links,
 a library of its own ([`sq/DESIGN.md`](sq/DESIGN.md)); and `aa/`,
 roles,

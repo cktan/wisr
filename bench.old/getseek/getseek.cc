@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * getseek.cc -- time one row read by key in RocksDB two ways
  * (../../sm/VCHAIN.md section 1): as sm1 reads it today, a seek of
  * a new iterator to the newest version of the key, and as VCHAIN's

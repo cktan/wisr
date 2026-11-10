@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_error.cc -- the per-thread error state, and how a failed
  * call reports through it (sq.h).
  */

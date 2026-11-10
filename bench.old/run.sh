@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # run.sh -- run the benchmark of DESIGN.md: load PostgreSQL 18 and digres,
 # one at a time, time the queries on each, and write a report.
 #

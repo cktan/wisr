@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * memcount.h -- the bytes a store's writes put in its memtables, by
  * the first two bytes of the key (STATISTICS.md §3.1).
  *

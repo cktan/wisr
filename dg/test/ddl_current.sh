@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # Verify DDL checks and volatile defaults include later committed rows.
 # 1. Establish an old snapshot, then commit rows from another session.
 # 2. Reject foreign keys with orphan rows, including explicit validation.

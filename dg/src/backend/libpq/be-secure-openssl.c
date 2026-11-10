@@ -6,6 +6,8 @@
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  *
  * IDENTIFICATION
@@ -29,11 +31,14 @@
 
 #include "common/string.h"
 #include "libpq/libpq.h"
+#include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "storage/fd.h"
 #include "storage/latch.h"
+#include "utils/control_block.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
+#include "utils/wait_event.h"
 
 /*
  * These SSL-related #includes must come after all system-provided headers.
@@ -52,7 +57,8 @@
 
 /* default init hook can be overridden by a shared library */
 static void default_openssl_tls_init(SSL_CTX *context, bool isServerStart);
-openssl_tls_init_hook_typ openssl_tls_init_hook = default_openssl_tls_init;
+thread_local /*LOCAL*/ openssl_tls_init_hook_typ openssl_tls_init_hook =
+    default_openssl_tls_init;
 
 static int port_bio_read(BIO *h, char *buf, int size);
 static int port_bio_write(BIO *h, const char *buf, int size);
@@ -76,15 +82,35 @@ static const char *SSLerrmessage(unsigned long ecode);
 
 static char *X509_NAME_to_cstring(const X509_NAME *name);
 
-static SSL_CTX *SSL_context = NULL;
-static bool dummy_ssl_passwd_cb_called = false;
-static bool ssl_is_server_start;
+/*
+ * The process's TLS state, in shmem->tls and guarded by shmem->tls_mutex
+ * (utils/control_block.h): every session is a thread of one process, and
+ * each connection is made from the one context.  The main thread makes the
+ * context and replaces it on a reload; a session takes it under the mutex,
+ * and SSL_new() holds a reference to it, so a context replaced goes when
+ * the last connection made from it does.
+ */
+struct tls_state_t {
+  SSL_CTX *context = nullptr;
+  bool loaded_verify_locations = false; /* ssl_ca_file was loaded */
+  BIO_METHOD *bio_method = nullptr;     /* made once, never freed */
+};
+
+/* Make the state, empty: pcb_init() calls it. */
+tls_state_t *tls_state_new(void) { return new tls_state_t(); }
+
+/* Free the state: never, as shmem is never freed. */
+void tls_state_free_t::operator()(tls_state_t *state) const { delete state; }
+
+/* The main thread's, as it makes a context: no session reads them. */
+static thread_local /*LOCAL*/ bool dummy_ssl_passwd_cb_called = false;
+static thread_local /*LOCAL*/ bool ssl_is_server_start;
 
 static int ssl_protocol_version_to_openssl(int v);
 static const char *ssl_protocol_version_to_string(int v);
 
 /* for passing data back from verify_cb() */
-static const char *cert_errdetail;
+static thread_local /*LOCAL*/ const char *cert_errdetail;
 
 /* ------------------------------------------------------------ */
 /*						 Public interface
@@ -374,20 +400,27 @@ int be_tls_init(bool isServerStart) {
   }
 
   /*
-   * Success!  Replace any existing SSL_context.
+   * The callbacks, set once on the context: no connection's state is in
+   * them, so the sessions' handshakes share them.
    */
-  if (SSL_context)
-    SSL_CTX_free(SSL_context);
-
-  SSL_context = context;
+  SSL_CTX_set_info_callback(context, info_cb);
+  SSL_CTX_set_alpn_select_cb(context, alpn_cb, NULL);
 
   /*
-   * Set flag to remember whether CA store has been loaded into SSL_context.
+   * Success!  Replace any existing context, under the mutex the sessions
+   * take it under; a connection made from the old one keeps it.
    */
-  if (ssl_ca_file[0])
-    ssl_loaded_verify_locations = true;
-  else
-    ssl_loaded_verify_locations = false;
+  {
+    SSL_CTX *old;
+
+    std::lock_guard<std::mutex> guard(shmem->tls_mutex);
+    old = shmem->tls->context;
+    shmem->tls->context = context;
+    /* Whether the CA store has been loaded into the context. */
+    shmem->tls->loaded_verify_locations = ssl_ca_file[0] != '\0';
+    if (old)
+      SSL_CTX_free(old);
+  }
 
   return 0;
 
@@ -399,10 +432,26 @@ error:
 }
 
 void be_tls_destroy(void) {
-  if (SSL_context)
-    SSL_CTX_free(SSL_context);
-  SSL_context = NULL;
-  ssl_loaded_verify_locations = false;
+  std::lock_guard<std::mutex> guard(shmem->tls_mutex);
+
+  if (shmem->tls->context)
+    SSL_CTX_free(shmem->tls->context);
+  shmem->tls->context = NULL;
+  shmem->tls->loaded_verify_locations = false;
+}
+
+/* Whether a context is loaded: a session may make a connection from it. */
+bool be_tls_loaded(void) {
+  std::lock_guard<std::mutex> guard(shmem->tls_mutex);
+
+  return shmem->tls->context != NULL;
+}
+
+/* Whether the context's CA store was loaded, from ssl_ca_file. */
+bool be_tls_loaded_verify_locations(void) {
+  std::lock_guard<std::mutex> guard(shmem->tls_mutex);
+
+  return shmem->tls->loaded_verify_locations;
 }
 
 int be_tls_open_server(Port *port) {
@@ -415,22 +464,27 @@ int be_tls_open_server(Port *port) {
   Assert(!port->ssl);
   Assert(!port->peer);
 
-  if (!SSL_context) {
-    ereport(
-        COMMERROR,
-        (errcode(ERRCODE_PROTOCOL_VIOLATION),
-         errmsg(
-             "could not initialize SSL connection: SSL context not set up")));
-    return -1;
+  /*
+   * The connection from the process's context, under its mutex: SSL_new()
+   * takes a reference, so a reload may replace it from now on.
+   */
+  {
+    std::lock_guard<std::mutex> guard(shmem->tls_mutex);
+
+    if (shmem->tls->context)
+      port->ssl = SSL_new(shmem->tls->context);
+    else
+      port->ssl = NULL;
+    if (!port->ssl && !shmem->tls->context) {
+      ereport(COMMERROR,
+              (errcode(ERRCODE_PROTOCOL_VIOLATION),
+               errmsg("could not initialize SSL connection: SSL context not "
+                      "set up")));
+      return -1;
+    }
   }
 
-  /* set up debugging/info callback */
-  SSL_CTX_set_info_callback(SSL_context, info_cb);
-
-  /* enable ALPN */
-  SSL_CTX_set_alpn_select_cb(SSL_context, alpn_cb, port);
-
-  if (!(port->ssl = SSL_new(SSL_context))) {
+  if (!port->ssl) {
     ereport(COMMERROR, (errcode(ERRCODE_PROTOCOL_VIOLATION),
                         errmsg("could not initialize SSL connection: %s",
                                SSLerrmessage(ERR_get_error()))));
@@ -605,7 +659,7 @@ aloop:
     if (len != -1) {
       char *peer_cn;
 
-      peer_cn = MemoryContextAlloc(TopMemoryContext, len + 1);
+      peer_cn = (char *)MemoryContextAlloc(TopMemoryContext, len + 1);
       r = X509_NAME_get_text_by_NID(unconstify(X509_NAME *, x509name),
                                     NID_commonName, peer_cn, len + 1);
       peer_cn[len] = '\0';
@@ -656,7 +710,7 @@ aloop:
       }
       return -1;
     }
-    peer_dn = MemoryContextAlloc(TopMemoryContext, bio_buf->length + 1);
+    peer_dn = (char *)MemoryContextAlloc(TopMemoryContext, bio_buf->length + 1);
     memcpy(peer_dn, bio_buf->data, bio_buf->length);
     len = bio_buf->length;
     BIO_free(bio);
@@ -839,8 +893,6 @@ ssize_t be_tls_write(Port *port, const void *ptr, size_t len, int *waitfor) {
  * see sock_read() and sock_write() in OpenSSL's crypto/bio/bss_sock.c.
  */
 
-static BIO_METHOD *port_bio_method_ptr = NULL;
-
 static int port_bio_read(BIO *h, char *buf, int size) {
   int res = 0;
   Port *port = (Port *)BIO_get_data(h);
@@ -902,27 +954,33 @@ static long port_bio_ctrl(BIO *h, int cmd, long num, void *ptr) {
   return res;
 }
 
+/*
+ * The BIO method a connection reads and writes its socket through: one for
+ * the process, made by the first connection that asks, under the TLS mutex.
+ */
 static BIO_METHOD *port_bio_method(void) {
-  if (!port_bio_method_ptr) {
+  std::lock_guard<std::mutex> guard(shmem->tls_mutex);
+  BIO_METHOD *method = shmem->tls->bio_method;
+
+  if (!method) {
     int my_bio_index;
 
     my_bio_index = BIO_get_new_index();
     if (my_bio_index == -1)
       return NULL;
     my_bio_index |= BIO_TYPE_SOURCE_SINK;
-    port_bio_method_ptr =
-        BIO_meth_new(my_bio_index, "PostgreSQL backend socket");
-    if (!port_bio_method_ptr)
+    method = BIO_meth_new(my_bio_index, "PostgreSQL backend socket");
+    if (!method)
       return NULL;
-    if (!BIO_meth_set_write(port_bio_method_ptr, port_bio_write) ||
-        !BIO_meth_set_read(port_bio_method_ptr, port_bio_read) ||
-        !BIO_meth_set_ctrl(port_bio_method_ptr, port_bio_ctrl)) {
-      BIO_meth_free(port_bio_method_ptr);
-      port_bio_method_ptr = NULL;
+    if (!BIO_meth_set_write(method, port_bio_write) ||
+        !BIO_meth_set_read(method, port_bio_read) ||
+        !BIO_meth_set_ctrl(method, port_bio_ctrl)) {
+      BIO_meth_free(method);
       return NULL;
     }
+    shmem->tls->bio_method = method;
   }
-  return port_bio_method_ptr;
+  return method;
 }
 
 static int ssl_set_port_bio(Port *port) {
@@ -1230,7 +1288,6 @@ static int alpn_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
    */
   int retval;
 
-  Assert(userdata != NULL);
   Assert(out != NULL);
   Assert(outlen != NULL);
   Assert(in != NULL);
@@ -1353,7 +1410,7 @@ static const char *SSLerrmessageExt(unsigned long ecode,
  */
 static const char *SSLerrmessage(unsigned long ecode) {
   const char *errreason;
-  static char errbuf[36];
+  static thread_local /*LOCAL*/ char errbuf[36];
 
   if (ecode == 0)
     return _("no SSL error reported");
@@ -1481,7 +1538,7 @@ char *be_tls_get_certificate_hash(Port *port, size_t *len) {
   if (!X509_digest(server_cert, algo_type, hash, &hash_size))
     elog(ERROR, "could not generate server certificate hash");
 
-  cert_hash = palloc(hash_size);
+  cert_hash = (char *)palloc(hash_size);
   memcpy(cert_hash, hash, hash_size);
   *len = hash_size;
 

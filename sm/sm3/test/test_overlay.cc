@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_overlay.cc -- a session's overlay (../CATALOG.md §4): its
  * transaction's DDL, seen by it alone until commit, undone by
  * rollback and abort.

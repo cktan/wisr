@@ -6,6 +6,8 @@
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2026, CK Tan: the changes for digres,
+ * under the MIT License (https://github.com/cktan/wisr/blob/main/LICENSE)
  *
  * IDENTIFICATION
  *	  src/backend/storage/ipc/procsignal.c
@@ -108,6 +110,35 @@ void InterruptSelf(uint32 bits) {
  * it runs.
  */
 void InterruptSelfLater(uint32 bits) { sm_interrupt(sm_thread_self(), bits); }
+
+/*
+ * Whether this thread is to stop work in sm that cannot be retried, such
+ * as a bulk load's final sort (sm_sys.h's sm_set_stop_fn): whether
+ * ProcessInterrupts() would raise an error.  It runs inside sm, so it
+ * raises none, and runs only the ALARM handler, whose timeout handlers
+ * set flags; a cancel, an end or a quit stays pending for the next
+ * CHECK_FOR_INTERRUPTS().  A harmless ALARM, a connection check's, ends
+ * nothing.
+ * 1. Take a pending ALARM and run its handler: a timeout due sets its flag
+ *    or raises a cancel.
+ * 2. With interrupts held off, stop nothing, as ProcessInterrupts() acts
+ *    on nothing then.
+ * 3. Stop for an end, a lost client, a transaction's timeout, or a cancel
+ *    not held off, raised or delivered.
+ */
+bool InterruptsStopWork(void) {
+  if (0 != sm_take(INTERRUPT_ALARM))
+    InterruptSelf(INTERRUPT_ALARM);
+  if (InterruptHoldoffCount != 0 || CritSectionCount != 0)
+    return false;
+  uint32 pending = sm_pending();
+  bool cancel = QueryCancelPending || 0 != (pending & INTERRUPT_CANCEL);
+
+  return ProcDiePending || ClientConnectionLost ||
+         0 != (pending & (INTERRUPT_DIE | INTERRUPT_QUIT)) ||
+         (TransactionTimeoutPending && TransactionTimeout > 0) ||
+         (cancel && QueryCancelHoldoffCount == 0);
+}
 
 /* Run the handler of each bit pending for this thread, taking them. */
 void DeliverInterrupts(void) {

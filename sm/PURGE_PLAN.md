@@ -1,9 +1,10 @@
 # PURGE_PLAN — the tombstone purge by SingleDelete
 
 Status: built ([`../dg/WORKNOTE.md`](../dg/WORKNOTE.md) step
-411), as the user decided (§8). It fixes
-[`../dg/ISSUE.md`](../dg/ISSUE.md) issue 22: the purge of a mass
-delete stalls every writer.
+419, "the tombstone purge erases by SingleDelete"), as the user
+decided (§8). It fixes
+[`../ISSUE.md`](../ISSUE.md#3-digres-known-issues) dg issue 22:
+the purge of a mass delete stalls every writer.
 
 ---
 
@@ -88,7 +89,8 @@ issue 22's case, with a probe: one batch the worker took held
 24,932,620 entries for about 1,000,000 tombstones, 25 a key. That
 was the server's memory, which grew to 5.9 GB until the kernel
 killed it, and 25 range deletes a key. So the queue keeps a key
-once (`purge_ids`).
+once (`purge_ids`, since replaced by the hint queue's filter,
+[`GC.md`](GC.md#46-the-hint-queues) §4.6).
 
 ## 3. The design
 

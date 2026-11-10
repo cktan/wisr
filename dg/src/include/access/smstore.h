@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
 /*-------------------------------------------------------------------------
  *
  * smstore.h
@@ -318,8 +323,9 @@ extern bool smstore_scan_nth(smstore_scan_t *scan, uint64 n,
                              TupleTableSlot *slot);
 extern int smstore_scan_natts(const struct Scan *plan, Relation rel);
 extern int smstore_expr_natts(Node *expr, Index varno, Relation rel);
-extern smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
-                                               ScanKey keys, int nkeys);
+extern smstore_scan_t *
+smstore_index_beginscan(Relation heap, Relation index, ScanKey keys, int nkeys,
+                        struct IndexScanInstrumentation *instr);
 extern bool smstore_index_recheck(smstore_scan_t *scan);
 extern void smstore_index_nocols(smstore_scan_t *scan);
 extern bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot);

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CK Tan
+# SPDX-License-Identifier: MIT
+
 # Verify that COPY into an empty B-tree detects a committed reader's SSI edge.
 # 1. Make an empty indexed table and a second table.
 # 2. The loader reads the second table at SERIALIZABLE.

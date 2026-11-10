@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
 /*-------------------------------------------------------------------------
  *
  * smstore.c
@@ -24,77 +29,77 @@
 #include <vector>
 
 #include "access/detoast.h"
-#include "access/rowkey.h"
-#include "access/smstore.h"
-#include "catalog/objectaddress.h"
-#include "access/sysattr.h"
-#include "utils/datum.h"
-#include "access/xact.h"
+#include "access/genam.h"
+#include "access/htup_details.h"
+#include "access/nbtree.h"
 #include "access/relation.h"
 #include "access/reloptions.h"
+#include "access/rowkey.h"
+#include "access/skey.h"
+#include "access/smstore.h"
+#include "access/stratnum.h"
+#include "access/sysattr.h"
+#include "access/table.h"
+#include "access/transam.h"
+#include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
-#include "catalog/index.h"
-#include "parser/parse_node.h"
 #include "catalog/heap.h"
+#include "catalog/index.h"
 #include "catalog/namespace.h"
+#include "catalog/objectaddress.h"
+#include "catalog/pg_am_d.h"
 #include "catalog/pg_class_d.h"
+#include "catalog/pg_collation_d.h"
+#include "catalog/pg_constraint.h"
 #include "catalog/pg_namespace_d.h"
+#include "catalog/pg_rewrite_d.h"
+#include "catalog/pg_sequence_d.h"
+#include "catalog/pg_statistic.h"
 #include "catalog/pg_type_d.h"
 #include "commands/defrem.h"
+#include "commands/sequence.h"
 #include "commands/tablecmds.h"
+#include "commands/trigger.h"
 #include "commands/vacuum.h"
+#include "executor/executor.h"
+#include "funcapi.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
-#include "parser/parse_type.h"
-#include "parser/parse_utilcmd.h"
-#include "commands/sequence.h"
-#include "rewrite/rewriteHandler.h"
-#include "storage/lockdefs.h"
-#include "storage/proc.h"
-#include "access/nbtree.h"
-#include "access/skey.h"
-#include "access/table.h"
-#include "access/stratnum.h"
-#include "catalog/pg_am_d.h"
-#include "catalog/pg_collation_d.h"
-#include "catalog/pg_constraint.h"
-#include "catalog/pg_rewrite_d.h"
-#include "catalog/pg_sequence_d.h"
-#include "commands/trigger.h"
+#include "optimizer/optimizer.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
 #include "parser/parse_expr.h"
+#include "parser/parse_node.h"
 #include "parser/parse_relation.h"
+#include "parser/parse_type.h"
+#include "parser/parse_utilcmd.h"
+#include "rewrite/rewriteHandler.h"
+#include "storage/lockdefs.h"
+#include "storage/proc.h"
+#include "utils/acl.h"
+#include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/control_block.h"
-#include "utils/fmgrprotos.h"
 #include "utils/datadir.h"
-#include "utils/session_thread.h"
+#include "utils/datum.h"
+#include "utils/fmgrprotos.h"
 #include "utils/hsearch.h"
 #include "utils/inval.h"
-#include "utils/rel.h"
-#include "utils/memutils.h"
-#include "utils/pg_global.h"
-#include "utils/acl.h"
-#include "utils/numeric.h"
-#include "utils/portal.h"
 #include "utils/lsyscache.h"
+#include "utils/memutils.h"
+#include "utils/numeric.h"
+#include "utils/pg_global.h"
+#include "utils/portal.h"
+#include "utils/rel.h"
 #include "utils/ruleutils.h"
+#include "utils/session_thread.h"
 #include "utils/timeout.h"
-#include "utils/typcache.h"
-#include "utils/array.h"
-#include "catalog/pg_statistic.h"
-#include "access/transam.h"
-#include "access/htup_details.h"
-#include "funcapi.h"
-#include "utils/tuplestore.h"
-#include "executor/executor.h"
-#include "optimizer/optimizer.h"
-#include "utils/datum.h"
 #include "utils/timestamp.h"
+#include "utils/tuplestore.h"
+#include "utils/typcache.h"
 
 /* Whether this session's PostgreSQL transaction has begun an sm one. */
 static thread_local /*LOCAL*/ bool sm_xact_open = false;
@@ -2568,6 +2573,10 @@ static bool mode_covers(sm_lockmode_t held, sm_lockmode_t want) {
     return want == SM_LOCKMODE_IX || want == SM_LOCKMODE_IS;
   case SM_LOCKMODE_IS:
     return want == SM_LOCKMODE_IS;
+  case SM_LOCKMODE_KS:
+  case SM_LOCKMODE_NKU:
+    /* Row modes: no table is held in one. */
+    return false;
   }
   return false;
 }
@@ -3204,6 +3213,12 @@ static constexpr int read_batch_max = 8;
  */
 struct smstore_scan_t {
   sm_tbl_t *tbl;
+  /*
+   * The plan node's count of index searches, EXPLAIN ANALYZE's: one for
+   * each probe opened, or row read by its key (count_searches()); NULL for
+   * none.
+   */
+  IndexScanInstrumentation *instr;
   /* The table's oid, each row's tableoid, as WHERE CURRENT OF checks. */
   Oid relid;
   sm_rel_scan_t *cursor;
@@ -7385,7 +7400,8 @@ static int smstore_index_eval(void *ctx, uint64_t table, uint64_t index,
   MemoryContext old;
   int rc = 0;
 
-  /* One of sm's builders or cleaners, at its first call: made able to run. */
+  /* One of sm's builders or btree reapers, at its first call: made able to run.
+   */
   session_thread_adopt();
   old = CurrentMemoryContext;
   PG_TRY();
@@ -8632,6 +8648,12 @@ static int array_elems(ScanKey key, Datum **elems) {
   return kept;
 }
 
+/* Count n searches of the index, as a btree counts its descents. */
+static inline void count_searches(smstore_scan_t *scan, uint64 n) {
+  if (scan->instr != NULL)
+    scan->instr->nsearches += n;
+}
+
 /*
  * Open the index scan's probe at its bounds now (../INLIST.md): with point,
  * the row an equality on each of the primary key's columns names, read by
@@ -8640,6 +8662,8 @@ static int array_elems(ScanKey key, Datum **elems) {
  * any other last probe's cursor is closed first.
  */
 static void open_probe(smstore_scan_t *scan) {
+  /* One search of the index, as a btree's descent to a probe's start. */
+  count_searches(scan, 1);
   /* A tree's cursor is aimed at the next probe's bounds, not made anew. */
   if (scan->tree && scan->cursor != NULL) {
     if (sm_rel_scan_rebound(scan->cursor, scan->lo.n > 0 ? &scan->lo : NULL,
@@ -8738,10 +8762,14 @@ static bool next_probe(smstore_scan_t *scan) {
  * key, so a key that bounds nothing still holds; but not a key the bounds
  * hold exactly, one of a primary key's or a tree's integer columns: its
  * rows, keyed by those columns, are read only between the bounds
- * (../sm/ROWSTORE.md section 8, a scan's bounds), and none is null.
+ * (../sm/ROWSTORE.md section 8, a scan's bounds), and none is null.  A key
+ * whose value is null meets no row, and the scan reads nothing.  instr, if
+ * not NULL, is the plan node's, and counts the scan's index searches for
+ * EXPLAIN ANALYZE.
  */
 smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
-                                        ScanKey keys, int nkeys) {
+                                        ScanKey keys, int nkeys,
+                                        IndexScanInstrumentation *instr) {
   sm_tbl_t *tbl = open_table(RelationGetRelid(heap), SM_LOCKMODE_IS);
   Form_pg_index form = index->rd_index;
   int ncols = form->indnkeyatts;
@@ -8787,6 +8815,18 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
     if ((keys[i].sk_flags & SK_SEARCHARRAY) &&
         !(keys[i].sk_flags & SK_ISNULL))
       scan->nelems[i] = array_elems(&keys[i], &scan->elems[i]);
+  /*
+   * A key whose value is null meets no row, as a btree operator is strict:
+   * a runtime key from an InitPlan that returned none, say.  IS NULL and IS
+   * NOT NULL are keys of their own (SK_SEARCHNULL, SK_SEARCHNOTNULL).  The
+   * scan reads nothing, as PostgreSQL's _bt_preprocess_keys() ends it before
+   * it reads.  Unchecked, no bound came of the key, and every entry was read
+   * and refused (WORKNOTE.md step 429).
+   */
+  for (int i = 0; i < nkeys; i++)
+    if ((keys[i].sk_flags & SK_ISNULL) &&
+        !(keys[i].sk_flags & (SK_SEARCHNULL | SK_SEARCHNOTNULL)))
+      scan->empty = true;
 
   for (int c = 0; c < ncols; c++) {
     Oid coltype = index->rd_opcintype[c];
@@ -8953,6 +8993,7 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   }
 
   scan->tbl = tbl;
+  scan->instr = instr;
   scan->relid = RelationGetRelid(heap);
   scan->keys = keys;
   scan->nkeys = nkeys;
@@ -9129,6 +9170,8 @@ static pg_noinline bool next_point_row(smstore_scan_t *scan) {
         break;
       }
     }
+    /* Each row read by its key is one search of the primary key. */
+    count_searches(scan, n);
     ra_read(scan, n);
   }
 }
@@ -9790,8 +9833,9 @@ TM_Result smstore_delete(Relation rel, const RowKey *key,
  * already, and this reads the version to check again (sm_tbl_read_latest);
  * the row is kept, so the executor's next fetch of it is this version.
  *
- * Else it is SELECT ... FOR UPDATE's or FOR SHARE's: the row is locked in
- * sm, shared or exclusive, to the end of the transaction, waiting for
+ * Else it is SELECT ... FOR UPDATE's or FOR SHARE's, or a foreign key's
+ * check: the row is locked in sm, in the sm mode of PostgreSQL's, KEY SHARE,
+ * SHARE, NO KEY UPDATE or UPDATE, to the end of the transaction, waiting for
  * another transaction that holds it or has written it -- or, with NOWAIT,
  * failing, and with SKIP LOCKED answering TM_WouldBlock.  Above READ
  * COMMITTED, sm fails the lock, and the transaction, if the row changed
@@ -9826,7 +9870,11 @@ TM_Result smstore_lock_row(Relation rel, const RowKey *key,
 
   slot->tts_tableOid = oid;
   if (!after_write) {
-    sm_lockmode_t smmode = share ? SM_LOCKMODE_SH : SM_LOCKMODE_EX;
+    /* PostgreSQL's four row modes are four of sm's (LOCKMGR.md 1.13). */
+    sm_lockmode_t smmode = mode == LockTupleKeyShare         ? SM_LOCKMODE_KS
+                           : mode == LockTupleShare          ? SM_LOCKMODE_SH
+                           : mode == LockTupleNoKeyExclusive ? SM_LOCKMODE_NKU
+                                                             : SM_LOCKMODE_EX;
     int rc;
 
     /*

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_tuple.cc -- the tuple codec (TUPLE.md §10, TYPE.md §9
  * step 3): its bytes, its round trip, the schema changes it must
  * survive, and the tuples it must refuse. No database is involved:

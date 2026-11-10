@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * collation.h -- a collation's insides, for the text types' keys
  * (../LSMINDEX.md §2.3, TYPE.md §3.5).
  */

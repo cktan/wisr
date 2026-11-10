@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 CK Tan
+ * SPDX-License-Identifier: MIT
+ */
+
+/*
  * test_db.cc -- sm1::mkdb, sm1::rmdb, sm1::lsdb, and sm1::options_t.
  */
 
