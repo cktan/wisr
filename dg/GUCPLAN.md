@@ -107,6 +107,29 @@ or not. This keeps one variable's move small.
 
 1. Add the field to the right block, with a comment that names
    the file where the variable was defined.
+   - **The field must start with the variable's value.** Copy
+     the initializer of the old variable to the field. Never
+     leave a field at zero, and never relax `check_GUC_init()`
+     to accept zero.
+   - A variable that began as
+
+         static int xxxx = 1000;
+
+     becomes a field with the same initializer:
+
+         struct tcb_guc_t {
+           ...
+           int xxxx = 1000;
+           ...
+         };
+
+     A `shmem_t` or `pcb_t` field follows the same rule.
+   - The old variable may have no initializer. Then the field
+     needs none, as C++ zeroes it. In that case, check that
+     the boot value in the table is zero too.
+   - The initial value of the field must equal the boot value
+     in the table, for every type, enums too. The assertion in
+     `check_GUC_init()` then holds without change.
 2. Bind the table entry. For group 3,
    `build_guc_variables()` sets the entry's `variable` pointer
    to `&tcb->guc.name` as it builds the thread's table.
@@ -231,9 +254,11 @@ or not. This keeps one variable's move small.
 - **Group 3 is mostly done.** About 130 settings read
   `tcb->guc.name`. The table binds them as the thread builds it
   (the table's `&tcb->guc.name`, as `tcb_init()` runs first).
-  A `tcb->guc` field starts at its literal default, or zero.
-  `check_GUC_init()` accepts zero for an enum, as for the other
-  types.
+  **This part must be redone.** Many fields start at zero and
+  `check_GUC_init()` was relaxed to accept zero for an enum.
+  Both are wrong. Each field must start with the initializer of
+  the old variable (step 1 of section 5), and the relaxed
+  enum check in `guc.c` must be reverted.
 - **Left as a plain `thread_local`:**
   - `escape_string_warning`, `standard_conforming_strings`,
     `backslash_quote`, `bytea_output`, `constraint_exclusion`,
