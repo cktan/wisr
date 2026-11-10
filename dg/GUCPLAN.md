@@ -183,3 +183,30 @@ or not. This keeps one variable's move small.
   `allow_alter_system` and `oauth_validator_libraries`. The
   six file-logger settings are read from `pcb` under
   `log.mutex` already, so they do not block the gate.
+
+## 8. Target: three settings a day
+
+- **Why:** so we can remove SIGHUP from the connection threads.
+  A session may stop reloading only when no `SIGHUP` setting
+  it reads is still its own copy. Each setting moved to
+  `shmem` brings that day closer.
+- **Rate:** move three settings a day, each by section 5, each
+  with its own test run and its own commit.
+- **Order:** by reader, so one day touches few files. Settings
+  that `elog.c` reads go together.
+- **Finish:** the day after the last group 2 setting moves, stop
+  the session reloads (step 4 of section 6), which needs the
+  gate.
+- **Group 3:** the same rate applies after that, in the order
+  changes touch the variables.
+
+| Day | Settings | Reader |
+|---|---|---|
+| done | `log_line_prefix` | `elog.c` |
+| 1 | `log_hostname`, `authentication_timeout`, `allow_alter_system` | `backend_startup.c`, `postinit.c`, `be-secure-openssl.c`, ALTER SYSTEM |
+| 2 | `syslog_facility`, `syslog_ident`, `syslog_sequence_numbers` | `elog.c` |
+| 3 | `syslog_split_messages`, `ssl`, `oauth_validator_libraries` | `elog.c`, `postmaster.c`, `auth-oauth.c` |
+| 4 | Stop the session reloads; update the documents | `postgres.c`, `postmaster.c` |
+
+- Move a setting early if a change touches it first. Keep the
+  table current: mark a setting done when it is committed.
