@@ -321,6 +321,27 @@ Owed, and blocking nothing above:
   compaction would move them. Next: repeat those checks
   alone, and print the table's bytes in files and memtables
   beside each estimate.
+- **A log file is at times not rotated by size.** dg's
+  `test/server.sh` failed at "logging_collector: rotation by
+  size" twice (2026-11-10, debug build, on `wip-gucstr-1` and
+  on `wip-guchash-1`). Each time it passed on a rerun, so it
+  is intermittent and older than either change. The check runs
+  1,200 statements with `log_statement = 'all'` and
+  `log_rotation_size = 64` kB, then requires two `lf-*.log`
+  files. After each failure the first file held all 1,200
+  statements (102,002 bytes), and a second file of 197 bytes
+  began one second later.
+  - A rotation (`logfile_rotate_locked()` in
+    `../dg/src/backend/utils/error/logfile.c`) opens the name
+    that `log_filename`, a pattern to the second, gives for
+    now, with `O_APPEND`, and counts the bytes already in it.
+  - Suspected: the statements ran in the second the open file
+    is named for. Then each rotation by size opened the same
+    file again, until the second changed. The test sleeps one
+    second before the statements to prevent this; why that did
+    not suffice is not known.
+  - Next: print each rotation's file name and time in the
+    test's log, and run the check alone until it fails.
 - **The commit cache's size** ([`XCTMGR.md`](XCTMGR.md#95-limits)
   §9.5). 65,536 entries reaches back under a second at 100,000
   transactions a second, while a version needs a lookup until
