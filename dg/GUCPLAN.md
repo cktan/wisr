@@ -282,10 +282,13 @@ or not. This keeps one variable's move small.
   `xmloption` (content; XML is compiled out). A `SET` of one is
   an "unrecognized configuration parameter" error
   (`DG-vs-PG.md`).
-- **Left as a plain `thread_local`:**
-  - `client_min_messages` and `trace_sort`: `errstart()` or a
-    per-tuple loop reads them. Ask before moving them
-    ([`CLAUDE.md`](../CLAUDE.md)).
+- **`client_min_messages` and `trace_sort` are in `tcb->guc`.**
+  `errstart()` reads the first on each message it may send, so
+  the move adds a load of `tcb` there; that cost is not
+  measured. `trace_sort` is read once for each sort event, not
+  for each tuple, as an earlier note said.
+- **Left as a plain `thread_local`:** the three Kerberos and
+  GSSAPI settings, whose code is compiled out.
 - **`log_min_messages` and `log_min_error_statement` are in
   `pcb`**, as atomic ints. They became `PGC_SIGHUP`, so a
   session cannot `SET` them (`DG-vs-PG.md`). The postmaster

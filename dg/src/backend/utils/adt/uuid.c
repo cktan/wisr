@@ -28,6 +28,7 @@
 #include "utils/sortsupport.h"
 #include "utils/timestamp.h"
 #include "utils/uuid.h"
+#include "utils/control_block.h"
 
 /* helper macros */
 #define NS_PER_S	INT64CONST(1000000000)
@@ -323,7 +324,7 @@ static bool uuid_abbrev_abort(int memtupcount, SortSupport ssup) {
    * counting at that point.
    */
   if (abbr_card > 100000.0) {
-    if (trace_sort)
+    if (tcb->guc.trace_sort)
       elog(LOG,
            "uuid_abbrev: estimation ends at cardinality %f"
            " after " INT64_FORMAT " values (%d rows)",
@@ -339,7 +340,7 @@ static bool uuid_abbrev_abort(int memtupcount, SortSupport ssup) {
    * (non-null) rows.
    */
   if (abbr_card < uss->input_count / 2000.0 + 0.5) {
-    if (trace_sort)
+    if (tcb->guc.trace_sort)
       elog(LOG,
            "uuid_abbrev: aborting abbreviation at cardinality %f"
            " below threshold %f after " INT64_FORMAT " values (%d rows)",
@@ -348,7 +349,7 @@ static bool uuid_abbrev_abort(int memtupcount, SortSupport ssup) {
     return true;
   }
 
-  if (trace_sort)
+  if (tcb->guc.trace_sort)
     elog(LOG,
          "uuid_abbrev: cardinality %f after " INT64_FORMAT " values (%d rows)",
          abbr_card, uss->input_count, memtupcount);

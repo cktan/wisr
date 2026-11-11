@@ -2324,7 +2324,7 @@ static bool varstr_abbrev_abort(int memtupcount, SortSupport ssup) {
    * time there are differences within full key strings not captured in
    * abbreviations.
    */
-  if (trace_sort) {
+  if (tcb->guc.trace_sort) {
     double norm_abbrev_card = abbrev_distinct / (double)memtupcount;
 
     elog(LOG,
@@ -2393,7 +2393,7 @@ static bool varstr_abbrev_abort(int memtupcount, SortSupport ssup) {
    * of moderately high to high abbreviated cardinality.  There is little to
    * lose but much to gain, which our strategy reflects.
    */
-  if (trace_sort)
+  if (tcb->guc.trace_sort)
     elog(LOG,
          "varstr_abbrev: aborted abbreviation at %d "
          "(abbrev_distinct: %f, key_distinct: %f, prop_card: %f)",

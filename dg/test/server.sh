@@ -5738,6 +5738,26 @@ done
 [ "$(local_psql -c "show IntervalStyle")" = postgres ] ||
   fail "IntervalStyle: the default"
 
+# Verify that trace_sort and client_min_messages are per session, in tcb->guc.
+# 1. A session sets trace_sort and sorts: the log says the sort started.
+# 2. A new session sorts: the log has no new line of it.
+# 3. A session sets client_min_messages = error: a statement that raises a
+#    WARNING shows none to it; a new session sees the WARNING.
+sorts() { grep -c 'performsort starting' "$work/log"; }
+t0=$(sorts)
+local_psql -c "set trace_sort = on" \
+  -c "select g from generate_series(1, 100) g order by g desc" > /dev/null 2>&1
+[ "$(sorts)" -gt "$t0" ] || fail "trace_sort: a session sets it"
+t1=$(sorts)
+local_psql -c "select g from generate_series(1, 100) g order by g desc" \
+  > /dev/null 2>&1
+[ "$(sorts)" = "$t1" ] || fail "trace_sort: a new session has it off"
+local_psql -c "set client_min_messages = error" -c "commit" 2>&1 |
+  grep -q 'there is no transaction in progress' &&
+  fail "client_min_messages: a session sets it"
+local_psql -c "commit" 2>&1 | grep -q 'there is no transaction in progress' ||
+  fail "client_min_messages: a new session has the default"
+
 # Verify that a session reads the program's name the main thread set
 # (pcb->progname), as a new thread is no longer given a copy of it.
 # 1. Connect with a switch the server does not know in PGOPTIONS.

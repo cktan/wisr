@@ -277,7 +277,6 @@ thread_local /*LOCAL*/ bool current_role_is_superuser;
 
 static thread_local /*LOCAL*/ int log_min_error_statement = ERROR;
 static thread_local /*LOCAL*/ int log_min_messages = WARNING;
-thread_local /*LOCAL*/ int client_min_messages = NOTICE;
 
 thread_local /*LOCAL*/ int num_temp_buffers = 1024;
 
@@ -1224,7 +1223,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"trace_sort", PGC_USERSET, DEVELOPER_OPTIONS,
       gettext_noop("Emit information about resource usage in sorting."), NULL,
       GUC_NOT_IN_SAMPLE},
-     &trace_sort,
+     &tcb->guc.trace_sort,
      false,
      NULL,
      NULL,
@@ -2729,7 +2728,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
       gettext_noop(
           "Each level includes all the levels that follow it. The later"
           " the level, the fewer messages are sent.")},
-     &client_min_messages,
+     &tcb->guc.client_min_messages,
      NOTICE,
      client_message_level_options,
      NULL,

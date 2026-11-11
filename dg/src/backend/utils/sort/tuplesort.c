@@ -114,7 +114,6 @@
 	ALLOCSET_SEPARATE_THRESHOLD / sizeof(SortTuple) + 1)
 
 /* GUC variables */
-thread_local /*LOCAL*/ bool trace_sort = false;
 
 #ifdef DEBUG_BOUNDED_SORT
 #endif
@@ -594,7 +593,7 @@ Tuplesortstate *tuplesort_begin_common(int workMem, int sortopt) {
 
   state = (Tuplesortstate *)palloc0(sizeof(Tuplesortstate));
 
-  if (trace_sort)
+  if (tcb->guc.trace_sort)
     pg_rusage_init(&state->ru_start);
 
   state->base.sortopt = sortopt;
@@ -782,7 +781,7 @@ static void tuplesort_free(Tuplesortstate *state) {
   if (state->tapeset)
     LogicalTapeSetClose(state->tapeset);
 
-  if (trace_sort) {
+  if (tcb->guc.trace_sort) {
     if (state->tapeset)
       elog(LOG, "external sort ended, %" PRId64 " disk blocks used: %s",
            spaceUsed, pg_rusage_show(&state->ru_start));
@@ -1077,7 +1076,7 @@ void tuplesort_puttuple_common(Tuplesortstate *state, SortTuple *tuple,
     if (state->bounded &&
         (state->memtupcount > state->bound * 2 ||
          (state->memtupcount > state->bound && LACKMEM(state)))) {
-      if (trace_sort)
+      if (tcb->guc.trace_sort)
         elog(LOG, "switching to bounded heapsort at %d tuples: %s",
              state->memtupcount, pg_rusage_show(&state->ru_start));
       make_bounded_heap(state);
@@ -1189,7 +1188,7 @@ static bool consider_abort_common(Tuplesortstate *state) {
 void tuplesort_performsort(Tuplesortstate *state) {
   MemoryContext oldcontext = MemoryContextSwitchTo(state->base.sortcontext);
 
-  if (trace_sort)
+  if (tcb->guc.trace_sort)
     elog(LOG, "performsort starting: %s", pg_rusage_show(&state->ru_start));
 
   switch (state->status) {
@@ -1244,7 +1243,7 @@ void tuplesort_performsort(Tuplesortstate *state) {
     break;
   }
 
-  if (trace_sort) {
+  if (tcb->guc.trace_sort) {
     if (state->status == TSS_FINALMERGE)
       elog(LOG, "performsort done (except %d-way final merge): %s",
            state->nInputTapes, pg_rusage_show(&state->ru_start));
@@ -1623,7 +1622,7 @@ static void inittapes(Tuplesortstate *state) {
   /* Compute number of input tapes to use when merging */
   state->maxTapes = tuplesort_merge_order(state->allowedMem);
 
-  if (trace_sort)
+  if (tcb->guc.trace_sort)
     elog(LOG, "switching to external sort with %d tapes: %s", state->maxTapes,
          pg_rusage_show(&state->ru_start));
 
@@ -1811,7 +1810,7 @@ static void mergeruns(Tuplesortstate *state) {
    */
   state->tape_buffer_mem = state->availMem;
   USEMEM(state, state->tape_buffer_mem);
-  if (trace_sort)
+  if (tcb->guc.trace_sort)
     elog(LOG, "using %zu KB of memory for tape buffers",
          state->tape_buffer_mem / 1024);
 
@@ -1855,7 +1854,7 @@ static void mergeruns(Tuplesortstate *state) {
           merge_read_buffer_size(state->tape_buffer_mem, state->nInputTapes,
                                  state->nInputRuns, state->maxTapes);
 
-      if (trace_sort)
+      if (tcb->guc.trace_sort)
         elog(LOG,
              "starting merge pass of %d input runs on %d tapes, " INT64_FORMAT
              " KB of memory for each input tape: %s",
@@ -2045,7 +2044,7 @@ static void dumptuples(Tuplesortstate *state, bool alltuples) {
 
   state->currentRun++;
 
-  if (trace_sort)
+  if (tcb->guc.trace_sort)
     elog(LOG, "starting quicksort of run %d: %s", state->currentRun,
          pg_rusage_show(&state->ru_start));
 
@@ -2055,7 +2054,7 @@ static void dumptuples(Tuplesortstate *state, bool alltuples) {
    */
   tuplesort_sort_memtuples(state);
 
-  if (trace_sort)
+  if (tcb->guc.trace_sort)
     elog(LOG, "finished quicksort of run %d: %s", state->currentRun,
          pg_rusage_show(&state->ru_start));
 
@@ -2086,7 +2085,7 @@ static void dumptuples(Tuplesortstate *state, bool alltuples) {
 
   markrunend(state->destTape);
 
-  if (trace_sort)
+  if (tcb->guc.trace_sort)
     elog(LOG, "finished writing run %d to tape %d: %s", state->currentRun,
          (state->currentRun - 1) % state->nOutputTapes + 1,
          pg_rusage_show(&state->ru_start));

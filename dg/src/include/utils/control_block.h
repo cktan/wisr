@@ -595,6 +595,8 @@ typedef struct tcb_guc_t {
   int bytea_output = 1;         /* varlena.c, BYTEA_OUTPUT_HEX */
   int constraint_exclusion = 2; /* plancat.c, CONSTRAINT_EXCLUSION_PARTITION */
   int IntervalStyle = 0;        /* globals.c, INTSTYLE_POSTGRES */
+  bool trace_sort = false;      /* tuplesort.c */
+  int client_min_messages = 18; /* guc_tables.c */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

@@ -35,6 +35,7 @@
 #include "utils/inet.h"
 #include "utils/lsyscache.h"
 #include "utils/sortsupport.h"
+#include "utils/control_block.h"
 
 /*
  * An IPv4 netmask size is a value in the range of 0 - 32, which is
@@ -437,7 +438,7 @@ static bool network_abbrev_abort(int memtupcount, SortSupport ssup) {
    * we stop counting because we know that we're now fully committed.
    */
   if (abbr_card > 100000.0) {
-    if (trace_sort)
+    if (tcb->guc.trace_sort)
       elog(LOG,
            "network_abbrev: estimation ends at cardinality %f"
            " after " INT64_FORMAT " values (%d rows)",
@@ -453,7 +454,7 @@ static bool network_abbrev_abort(int memtupcount, SortSupport ssup) {
    * (non-null) rows.
    */
   if (abbr_card < uss->input_count / 2000.0 + 0.5) {
-    if (trace_sort)
+    if (tcb->guc.trace_sort)
       elog(LOG,
            "network_abbrev: aborting abbreviation at cardinality %f"
            " below threshold %f after " INT64_FORMAT " values (%d rows)",
@@ -462,7 +463,7 @@ static bool network_abbrev_abort(int memtupcount, SortSupport ssup) {
     return true;
   }
 
-  if (trace_sort)
+  if (tcb->guc.trace_sort)
     elog(LOG,
          "network_abbrev: cardinality %f after " INT64_FORMAT
          " values (%d rows)",

@@ -1142,7 +1142,7 @@ static void execute_extension_script(Oid extensionOid,
    */
   save_nestlevel = NewGUCNestLevel();
 
-  if (client_min_messages < WARNING)
+  if (tcb->guc.client_min_messages < WARNING)
     (void)set_config_option("client_min_messages", "warning", PGC_USERSET,
                             PGC_S_SESSION, GUC_ACTION_SAVE, true, 0, false);
 

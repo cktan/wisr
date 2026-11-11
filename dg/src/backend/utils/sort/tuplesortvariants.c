@@ -30,6 +30,7 @@
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/tuplesort.h"
+#include "utils/control_block.h"
 
 /* sort-type codes for sort__start probes */
 #define HEAP_SORT		0
@@ -80,7 +81,7 @@ Tuplesortstate *tuplesort_begin_heap(TupleDesc tupDesc, int nkeys,
 
   Assert(nkeys > 0);
 
-  if (trace_sort)
+  if (tcb->guc.trace_sort)
     elog(LOG, "begin tuple sort: nkeys = %d, workMem = %d, randomAccess = %c",
          nkeys, workMem, sortopt & TUPLESORT_RANDOMACCESS ? 't' : 'f');
 
@@ -144,7 +145,7 @@ Tuplesortstate *tuplesort_begin_datum(Oid datumType, Oid sortOperator,
   oldcontext = MemoryContextSwitchTo(base->maincontext);
   arg = (TuplesortDatumArg *)palloc(sizeof(TuplesortDatumArg));
 
-  if (trace_sort)
+  if (tcb->guc.trace_sort)
     elog(LOG, "begin datum sort: workMem = %d, randomAccess = %c", workMem,
          sortopt & TUPLESORT_RANDOMACCESS ? 't' : 'f');
 

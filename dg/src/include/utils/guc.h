@@ -246,10 +246,6 @@ typedef enum {
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool current_role_is_superuser;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT int client_min_messages;
-
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool trace_sort;
-
 #ifdef DEBUG_BOUNDED_SORT
 #endif
 

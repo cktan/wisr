@@ -13273,3 +13273,20 @@ settings to `sq/` as parser options.
 - **Test**: `strings`, `regex` and `plpgsql` of pgregress,
   trimmed again: the `SET` of a dropped setting is marked
   `--dg-skip`, with the statements that follow from it.
+
+## Step 437: client_min_messages and trace_sort move
+
+The two settings dg issue 30 held back, on the claim that each
+is read on a hot path.
+
+- **`trace_sort`** is read 12 times, once for each sort, run or
+  merge pass; the one read in the tuple-insert path is inside a
+  bounded-heapsort check. It was not a hot-path read.
+- **`client_min_messages`** is read by `should_output_to_client()`
+  for each message that may go to a client. The move adds a load
+  of `tcb` there. The cost is not measured.
+- **Both are in `tcb->guc`**, starting at `false` and `NOTICE`.
+- **Test** (`test/server.sh`): a session sets `trace_sort`, and
+  the log says the sort started; a new session does not;
+  `client_min_messages = error` hides a WARNING from one session,
+  and a new session sees it.

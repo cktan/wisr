@@ -610,7 +610,8 @@ delete stalling every writer, in step 419; issue 27, sm's log
 messages dropped, by `datadir_set_sm_log()`, which the postmaster
 and initdb install; issue 28, an index scan with a null key
 reading the whole index, in step 429; issue 29, seven settings left
-as plain thread_locals, in step 436; and issues 15 and 17, ALTER
+as plain thread_locals, in step 436; issue 30, two more, in step
+437; and issues 15 and 17, ALTER
 COLUMN TYPE losing a committed update and ADD COLUMN NOT NULL
 counting deleted rows, in step 394. Issue 12, the hash access
 method saying it cannot exclude, was closed as digres's answer,
@@ -664,32 +665,3 @@ one of:
 - **Run `_PG_init()` once per process**, with process-wide
   hooks under a lock. Undoes the per-session hooks
   ([`dg/WORKNOTE.md`](dg/WORKNOTE.md) step 222).
-
-### dg issue 30: two hot-path settings stay plain thread_locals
-
-The move of the settings into the control blocks
-([`dg/GUCPLAN.md`](dg/GUCPLAN.md) §9) left two settings
-outside `tcb->guc`: `client_min_messages` and `trace_sort`.
-`log_min_messages` and `log_min_error_statement` were the
-others: they are now the server's, in `pcb`.
-
-- **Why they stay.** Each is read on a hot path.
-  `errstart()` reads `client_min_messages` on every message the
-  server may send, and the sort code reads `trace_sort` inside
-  a per-tuple loop.
-- **What a move costs.** Each read loads the `tcb` pointer
-  first, then the field. The cost is small but it is on every
-  call, and [`CLAUDE.md`](CLAUDE.md) says to ask before a
-  change that could slow a hot path.
-- **`client_min_messages` is a session's.** It filters what one
-  client sees, so one value for the server, as for the log
-  filters, would change every client's output.
-
-**What closes it:** the owner decides, after a measure of the
-cost on the optimized build (`dg/build/digres-release`). Choose
-one:
-
-- **Move them.** Accept the extra load of `tcb`, if the measure
-  shows no change that matters.
-- **Keep them as they are.** Each stays a `thread_local`; the
-  initial-value rule of the plan does not reach it.

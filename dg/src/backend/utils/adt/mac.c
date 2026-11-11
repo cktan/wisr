@@ -23,6 +23,7 @@
 #include "utils/guc.h"
 #include "utils/inet.h"
 #include "utils/sortsupport.h"
+#include "utils/control_block.h"
 
 /*
  *	Utility macros used for sorting and comparing:
@@ -378,7 +379,7 @@ static bool macaddr_abbrev_abort(int memtupcount, SortSupport ssup) {
    * we stop counting because we know that we're now fully committed.
    */
   if (abbr_card > 100000.0) {
-    if (trace_sort)
+    if (tcb->guc.trace_sort)
       elog(LOG,
            "macaddr_abbrev: estimation ends at cardinality %f"
            " after " INT64_FORMAT " values (%d rows)",
@@ -394,7 +395,7 @@ static bool macaddr_abbrev_abort(int memtupcount, SortSupport ssup) {
    * (non-null) rows.
    */
   if (abbr_card < uss->input_count / 2000.0 + 0.5) {
-    if (trace_sort)
+    if (tcb->guc.trace_sort)
       elog(LOG,
            "macaddr_abbrev: aborting abbreviation at cardinality %f"
            " below threshold %f after " INT64_FORMAT " values (%d rows)",
@@ -403,7 +404,7 @@ static bool macaddr_abbrev_abort(int memtupcount, SortSupport ssup) {
     return true;
   }
 
-  if (trace_sort)
+  if (tcb->guc.trace_sort)
     elog(LOG,
          "macaddr_abbrev: cardinality %f after " INT64_FORMAT
          " values (%d rows)",

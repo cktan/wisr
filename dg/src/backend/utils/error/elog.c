@@ -233,7 +233,7 @@ static inline bool should_output_to_client(int elevel) {
     if (ClientAuthInProgress)
       return (elevel >= ERROR);
     else
-      return (elevel >= client_min_messages || elevel == INFO);
+      return (elevel >= tcb->guc.client_min_messages || elevel == INFO);
   }
   return false;
 }
