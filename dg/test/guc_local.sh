@@ -13,7 +13,8 @@
 # 5. Session a sets application_name with SET LOCAL in a transaction;
 #    session b still shows its value.
 # 6. Session a rolls back, and shows its value from before the transaction.
-# 7. A new session shows the defaults.
+# 7. A placeholder session a sets is unknown in session b.
+# 8. A new session shows the defaults.
 # Sourced by server.sh, using its held-session helpers.
 
 # Print a select that shows the four settings, and the schema whose guc_t
@@ -74,11 +75,17 @@ held_send guc_a "rollback;"
 held_send guc_a "$(guc_show a4)"
 held_wait guc_a "a4:$a_vals" ||
   fail "guc local: session a, its value after the rollback"
+# Step 7: a's placeholder is its own.
+held_send guc_a "set guc_local.x = 'a'; select 'a ph:' || current_setting('guc_local.x');"
+held_wait guc_a "a ph:a" || fail "guc local: session a, its placeholder"
+held_send guc_b "select 'b ph:' || coalesce(current_setting('guc_local.x', true), 'none');"
+held_wait guc_b "b ph:none" ||
+  fail "guc local: session a's placeholder reached session b"
 held_end guc_a
 held_end guc_b
 ! grep -q ERROR "$work/guc_a.out" "$work/guc_b.out" ||
   fail "guc local: a SET failed"
-# Step 7: a new session has the defaults.
+# Step 8: a new session has the defaults.
 [ "$(local_psql -c "select current_setting('search_path') || '|' ||
     current_setting('DateStyle')")" = '"$user", public|ISO, MDY' ] ||
   fail "guc local: a new session does not have the defaults"

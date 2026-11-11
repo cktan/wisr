@@ -50,9 +50,11 @@
 #include "utils/conffiles.h"
 #include "utils/guc_tables.h"
 #include "utils/hooks.h"
-#include "utils/hsearch.h"
 #include "utils/memutils.h"
 #include "utils/timestamp.h"
+
+#include <new>
+#include <unordered_map>
 
 #define CONFIG_FILENAME "postgresql.conf"
 
@@ -190,16 +192,38 @@ static const char *const map_old_guc_names[] = {
 static thread_local /*LOCAL*/ MemoryContext GUCMemoryContext;
 
 /*
- * We use a dynahash table to look up GUCs by name, or to iterate through
- * all the GUCs.  The gucname field is redundant with gucvar->name, but
- * dynahash makes it too painful to not store the hash key separately.
+ * The thread's settings by name, to look one up or to scan them all.
+ * - A key is its setting's gucvar->name: a setting leaves the table before
+ *   its name is freed.
+ * - Names ignore case, as guc_name_compare() does.
+ * - The nodes are on the C++ heap, not in GUCMemoryContext.
+ * - An insert may rehash, which ends a scan: a scan that can insert walks a
+ *   copy of the settings (get_guc_variables()).
  */
-typedef struct {
-  const char *gucname;           /* hash key */
-  struct config_generic *gucvar; /* -> GUC's defining structure */
-} GUCHashEntry;
+struct guc_name_hash_t {
+  size_t operator()(const char *name) const;
+};
+struct guc_name_eq_t {
+  /* Whether two names are equal, ignoring case. */
+  bool operator()(const char *a, const char *b) const {
+    return 0 == guc_name_compare(a, b);
+  }
+};
+typedef std::unordered_map<const char *, struct config_generic *,
+                           guc_name_hash_t, guc_name_eq_t>
+    guc_map_t;
+struct guc_table_t {
+  guc_map_t map;
+};
 
-static thread_local /*LOCAL*/ HTAB *guc_hashtab; /* entries are GUCHashEntrys */
+/* Make a thread's table of settings: empty. */
+guc_table_t *guc_table_new(void) { return new guc_table_t(); }
+
+/* Free a thread's table of settings. */
+void guc_table_free_t::operator()(guc_table_t *table) const { delete table; }
+
+/* The thread's table of settings, made by build_guc_variables(). */
+static inline guc_map_t &guc_map(void) { return tcb->guc_table->map; }
 
 /*
  * In addition to the hash table, variables having certain properties are
@@ -226,8 +250,7 @@ static thread_local /*LOCAL*/ int GUCNestLevel =
     0; /* 1 when in main transaction */
 
 static int guc_var_compare(const void *a, const void *b);
-static uint32 guc_name_hash(const void *key, Size keysize);
-static int guc_name_match(const void *key1, const void *key2, Size keysize);
+static bool add_guc_variable(struct config_generic *var, int elevel);
 static void InitializeGUCOptionsFromEnvironment(void);
 static void InitializeOneGUCOption(struct config_generic *gconf);
 static void RemoveGUCFromLists(struct config_generic *gconf);
@@ -278,8 +301,8 @@ ConfigVariable *ProcessConfigFileInternal(GucContext context,
   bool applying = false;
   const char *ConfFileWithError;
   ConfigVariable *item, *head, *tail;
-  HASH_SEQ_STATUS status;
-  GUCHashEntry *hentry;
+  struct config_generic **vars;
+  int nvars;
 
   /* Parse the main config file into a list of option names and values */
   ConfFileWithError = pcb->ConfigFileName.c_str();
@@ -345,9 +368,8 @@ ConfigVariable *ProcessConfigFileInternal(GucContext context,
    * need this so that we can tell below which ones have been removed from
    * the file since we last processed it.
    */
-  hash_seq_init(&status, guc_hashtab);
-  while ((hentry = (GUCHashEntry *)hash_seq_search(&status)) != NULL) {
-    struct config_generic *gconf = hentry->gucvar;
+  for (auto &entry : guc_map()) {
+    struct config_generic *gconf = entry.second;
 
     gconf->status &= ~GUC_IS_IN_FILE;
   }
@@ -421,11 +443,12 @@ ConfigVariable *ProcessConfigFileInternal(GucContext context,
    * Check for variables having been removed from the config file, and
    * revert their reset values (and perhaps also effective values) to the
    * boot-time defaults.  If such a variable can't be changed after startup,
-   * report that and continue.
+   * report that and continue.  Walk a copy of the settings, as
+   * set_config_option() below may add to the table.
    */
-  hash_seq_init(&status, guc_hashtab);
-  while ((hentry = (GUCHashEntry *)hash_seq_search(&status)) != NULL) {
-    struct config_generic *gconf = hentry->gucvar;
+  vars = get_guc_variables(&nvars);
+  for (int i = 0; i < nvars; i++) {
+    struct config_generic *gconf = vars[i];
     GucStack *stack;
 
     if (gconf->reset_source != PGC_S_FILE || (gconf->status & GUC_IS_IN_FILE))
@@ -797,19 +820,16 @@ static void discard_stack_value(struct config_generic *gconf,
  */
 struct config_generic **get_guc_variables(int *num_vars) {
   struct config_generic **result;
-  HASH_SEQ_STATUS status;
-  GUCHashEntry *hentry;
   int i;
 
-  *num_vars = hash_get_num_entries(guc_hashtab);
+  *num_vars = guc_map().size();
   result =
       (config_generic **)palloc(sizeof(struct config_generic *) * *num_vars);
 
   /* Extract pointers from the hash table */
   i = 0;
-  hash_seq_init(&status, guc_hashtab);
-  while ((hentry = (GUCHashEntry *)hash_seq_search(&status)) != NULL)
-    result[i++] = hentry->gucvar;
+  for (auto &entry : guc_map())
+    result[i++] = entry.second;
   Assert(i == *num_vars);
 
   /* Sort by name */
@@ -824,11 +844,7 @@ struct config_generic **get_guc_variables(int *num_vars) {
  * It's not meant for use anyplace else.
  */
 void build_guc_variables(void) {
-  int size_vars;
   int num_vars = 0;
-  HASHCTL hash_ctl;
-  GUCHashEntry *hentry;
-  bool found;
   int i;
 
   /*
@@ -877,84 +893,49 @@ void build_guc_variables(void) {
     num_vars++;
   }
 
-  /*
-   * Create hash table with 20% slack
-   */
-  size_vars = num_vars + num_vars / 4;
-
-  hash_ctl.keysize = sizeof(char *);
-  hash_ctl.entrysize = sizeof(GUCHashEntry);
-  hash_ctl.hash = guc_name_hash;
-  hash_ctl.match = guc_name_match;
-  hash_ctl.hcxt = GUCMemoryContext;
-  guc_hashtab =
-      hash_create("GUC hash table", size_vars, &hash_ctl,
-                  HASH_ELEM | HASH_FUNCTION | HASH_COMPARE | HASH_CONTEXT);
-
-  for (i = 0; ConfigureNamesBool[i].gen.name; i++) {
-    struct config_generic *gucvar = &ConfigureNamesBool[i].gen;
-
-    hentry = (GUCHashEntry *)hash_search(guc_hashtab, &gucvar->name, HASH_ENTER,
-                                         &found);
-    Assert(!found);
-    hentry->gucvar = gucvar;
+  /* Make the thread's table, with room for every built-in setting. */
+  Assert(!tcb->guc_table);
+  try {
+    tcb->guc_table.reset(guc_table_new());
+    guc_map().reserve(num_vars);
+  } catch (const std::bad_alloc &) {
+    ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
   }
 
-  for (i = 0; ConfigureNamesInt[i].gen.name; i++) {
-    struct config_generic *gucvar = &ConfigureNamesInt[i].gen;
+  for (i = 0; ConfigureNamesBool[i].gen.name; i++)
+    add_guc_variable(&ConfigureNamesBool[i].gen, ERROR);
 
-    hentry = (GUCHashEntry *)hash_search(guc_hashtab, &gucvar->name, HASH_ENTER,
-                                         &found);
-    Assert(!found);
-    hentry->gucvar = gucvar;
-  }
+  for (i = 0; ConfigureNamesInt[i].gen.name; i++)
+    add_guc_variable(&ConfigureNamesInt[i].gen, ERROR);
 
-  for (i = 0; ConfigureNamesReal[i].gen.name; i++) {
-    struct config_generic *gucvar = &ConfigureNamesReal[i].gen;
+  for (i = 0; ConfigureNamesReal[i].gen.name; i++)
+    add_guc_variable(&ConfigureNamesReal[i].gen, ERROR);
 
-    hentry = (GUCHashEntry *)hash_search(guc_hashtab, &gucvar->name, HASH_ENTER,
-                                         &found);
-    Assert(!found);
-    hentry->gucvar = gucvar;
-  }
+  for (i = 0; ConfigureNamesString[i].gen.name; i++)
+    add_guc_variable(&ConfigureNamesString[i].gen, ERROR);
 
-  for (i = 0; ConfigureNamesString[i].gen.name; i++) {
-    struct config_generic *gucvar = &ConfigureNamesString[i].gen;
+  for (i = 0; ConfigureNamesEnum[i].gen.name; i++)
+    add_guc_variable(&ConfigureNamesEnum[i].gen, ERROR);
 
-    hentry = (GUCHashEntry *)hash_search(guc_hashtab, &gucvar->name, HASH_ENTER,
-                                         &found);
-    Assert(!found);
-    hentry->gucvar = gucvar;
-  }
-
-  for (i = 0; ConfigureNamesEnum[i].gen.name; i++) {
-    struct config_generic *gucvar = &ConfigureNamesEnum[i].gen;
-
-    hentry = (GUCHashEntry *)hash_search(guc_hashtab, &gucvar->name, HASH_ENTER,
-                                         &found);
-    Assert(!found);
-    hentry->gucvar = gucvar;
-  }
-
-  Assert(num_vars == hash_get_num_entries(guc_hashtab));
+  Assert((size_t)num_vars == guc_map().size());
 }
 
 /*
  * Add a new GUC variable to the hash of known variables. The
- * hash is expanded if needed.
+ * hash is expanded if needed.  A failed allocation is reported at elevel,
+ * as std::bad_alloc is no error a session thread catches.
  */
 static bool add_guc_variable(struct config_generic *var, int elevel) {
-  GUCHashEntry *hentry;
-  bool found;
+  bool inserted = false;
 
-  hentry = (GUCHashEntry *)hash_search(guc_hashtab, &var->name, HASH_ENTER_NULL,
-                                       &found);
-  if (unlikely(hentry == NULL)) {
+  try {
+    inserted = guc_map().emplace(var->name, var).second;
+  } catch (const std::bad_alloc &) {
     ereport(elevel, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
     return false; /* out of memory */
   }
-  Assert(!found);
-  hentry->gucvar = var;
+  Assert(inserted);
+  (void)inserted;
   return true;
 }
 
@@ -1110,15 +1091,14 @@ static struct config_generic *add_placeholder_variable(const char *name,
  */
 struct config_generic *find_option(const char *name, bool create_placeholders,
                                    bool skip_errors, int elevel) {
-  GUCHashEntry *hentry;
   int i;
 
   Assert(name);
 
   /* Look it up using the hash table. */
-  hentry = (GUCHashEntry *)hash_search(guc_hashtab, &name, HASH_FIND, NULL);
-  if (hentry)
-    return hentry->gucvar;
+  auto it = guc_map().find(name);
+  if (it != guc_map().end())
+    return it->second;
 
   /*
    * See if the name is an obsolete name for a variable.  We assume that the
@@ -1188,9 +1168,8 @@ int guc_name_compare(const char *namea, const char *nameb) {
 /*
  * Hash function that's compatible with guc_name_compare
  */
-static uint32 guc_name_hash(const void *key, Size keysize) {
+size_t guc_name_hash_t::operator()(const char *name) const {
   uint32 result = 0;
-  const char *name = *(const char *const *)key;
 
   while (*name) {
     char ch = *name++;
@@ -1204,16 +1183,6 @@ static uint32 guc_name_hash(const void *key, Size keysize) {
     result ^= (uint32)ch;
   }
   return result;
-}
-
-/*
- * Dynahash match function to use in guc_hashtab
- */
-static int guc_name_match(const void *key1, const void *key2, Size keysize) {
-  const char *name1 = *(const char *const *)key1;
-  const char *name2 = *(const char *const *)key2;
-
-  return guc_name_compare(name1, name2);
 }
 
 /*
@@ -1360,9 +1329,6 @@ static bool check_GUC_init(struct config_generic *gconf) {
  * processed command-line switches.
  */
 void InitializeGUCOptions(void) {
-  HASH_SEQ_STATUS status;
-  GUCHashEntry *hentry;
-
   /*
    * Before log_line_prefix could possibly receive a nonempty setting, make
    * sure that timezone processing is minimally alive (see elog.c).
@@ -1378,12 +1344,11 @@ void InitializeGUCOptions(void) {
    * Load all variables with their compiled-in defaults, and initialize
    * status fields as needed.
    */
-  hash_seq_init(&status, guc_hashtab);
-  while ((hentry = (GUCHashEntry *)hash_seq_search(&status)) != NULL) {
+  for (auto &entry : guc_map()) {
     /* Check mapping between initial and default value */
-    Assert(check_GUC_init(hentry->gucvar));
+    Assert(check_GUC_init(entry.second));
 
-    InitializeOneGUCOption(hentry->gucvar);
+    InitializeOneGUCOption(entry.second);
   }
 
   reporting_enabled = false;
@@ -2180,9 +2145,6 @@ void AtEOXact_GUC(bool isCommit, int nestLevel) {
  * This is executed at completion of backend startup.
  */
 void BeginReportingGUCOptions(void) {
-  HASH_SEQ_STATUS status;
-  GUCHashEntry *hentry;
-
   /*
    * Don't do anything unless talking to an interactive frontend.
    */
@@ -2192,9 +2154,8 @@ void BeginReportingGUCOptions(void) {
   reporting_enabled = true;
 
   /* Transmit initial values of interesting variables */
-  hash_seq_init(&status, guc_hashtab);
-  while ((hentry = (GUCHashEntry *)hash_seq_search(&status)) != NULL) {
-    struct config_generic *conf = hentry->gucvar;
+  for (auto &entry : guc_map()) {
+    struct config_generic *conf = entry.second;
 
     if (conf->flags & GUC_REPORT)
       ReportGUCOption(conf);
@@ -4231,7 +4192,6 @@ init_custom_variable(const char *name, const char *short_desc,
  */
 static void define_custom_variable(struct config_generic *variable) {
   const char *name = variable->name;
-  GUCHashEntry *hentry;
   struct config_string *pHolder;
 
   /* Check mapping between initial and default value */
@@ -4240,8 +4200,8 @@ static void define_custom_variable(struct config_generic *variable) {
   /*
    * See if there's a placeholder by the same name.
    */
-  hentry = (GUCHashEntry *)hash_search(guc_hashtab, &name, HASH_FIND, NULL);
-  if (hentry == NULL) {
+  auto it = guc_map().find(name);
+  if (it == guc_map().end()) {
     /*
      * No placeholder to replace, so we can just add it ... but first,
      * make sure it's initialized to its default value.
@@ -4254,12 +4214,12 @@ static void define_custom_variable(struct config_generic *variable) {
   /*
    * This better be a placeholder
    */
-  if ((hentry->gucvar->flags & GUC_CUSTOM_PLACEHOLDER) == 0)
+  if ((it->second->flags & GUC_CUSTOM_PLACEHOLDER) == 0)
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                     errmsg("attempt to redefine parameter \"%s\"", name)));
 
-  Assert(hentry->gucvar->vartype == PGC_STRING);
-  pHolder = (struct config_string *)hentry->gucvar;
+  Assert(it->second->vartype == PGC_STRING);
+  pHolder = (struct config_string *)it->second;
 
   /*
    * First, set the variable to its default value.  We must do this even
@@ -4270,10 +4230,17 @@ static void define_custom_variable(struct config_generic *variable) {
 
   /*
    * Replace the placeholder in the hash table.  We aren't changing the name
-   * (at least up to case-folding), so the hash value is unchanged.
+   * (at least up to case-folding), so the hash value is unchanged.  The key
+   * becomes the new variable's name, as the placeholder's is freed below:
+   * the node is taken out and put back, which allocates nothing.
    */
-  hentry->gucname = name;
-  hentry->gucvar = variable;
+  {
+    auto node = guc_map().extract(it);
+
+    node.key() = name;
+    node.mapped() = variable;
+    guc_map().insert(std::move(node));
+  }
 
   /*
    * Remove the placeholder from any lists it's in, too.
@@ -4522,8 +4489,6 @@ void DefineCustomEnumVariable(
  */
 void MarkGUCPrefixReserved(const char *className) {
   int classLen = strlen(className);
-  HASH_SEQ_STATUS status;
-  GUCHashEntry *hentry;
   MemoryContext oldcontext;
 
   /*
@@ -4532,9 +4497,8 @@ void MarkGUCPrefixReserved(const char *className) {
    * don't bother trying to free associated memory, since this shouldn't
    * happen often.)
    */
-  hash_seq_init(&status, guc_hashtab);
-  while ((hentry = (GUCHashEntry *)hash_seq_search(&status)) != NULL) {
-    struct config_generic *var = hentry->gucvar;
+  for (auto it = guc_map().begin(); it != guc_map().end();) {
+    struct config_generic *var = it->second;
 
     if ((var->flags & GUC_CUSTOM_PLACEHOLDER) != 0 &&
         strncmp(className, var->name, classLen) == 0 &&
@@ -4546,10 +4510,11 @@ void MarkGUCPrefixReserved(const char *className) {
                   var->name),
            errdetail("\"%s\" is now a reserved prefix.", className)));
       /* Remove it from the hash table */
-      hash_search(guc_hashtab, &var->name, HASH_REMOVE, NULL);
+      it = guc_map().erase(it);
       /* Remove it from any lists it's in, too */
       RemoveGUCFromLists(var);
-    }
+    } else
+      ++it;
   }
 
   /* And remember the name so we can prevent future mistakes. */
@@ -4575,7 +4540,7 @@ struct config_generic **get_explain_guc_options(int *num) {
    * it doesn't seem worth dynamically resizing this array.
    */
   result = (config_generic **)palloc(sizeof(struct config_generic *) *
-                                     hash_get_num_entries(guc_hashtab));
+                                     guc_map().size());
 
   /* We need only consider GUCs with source not PGC_S_DEFAULT */
   dlist_foreach(iter, &guc_nondef_list) {

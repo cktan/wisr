@@ -13355,3 +13355,29 @@ A check hook took the new value as a `char **`, to change it with
   `postgres.c`, `backend_startup.c` and `tableamapi.c`.
 - **The "extra" blobs are unchanged**: they stay `guc_malloc`'d
   `void *`.
+
+## Step 441: the GUC table is a std::unordered_map
+
+- **The table** of a thread's settings by name was a dynahash
+  `HTAB`; it is a `std::unordered_map` in a `guc_table_t`, which
+  `tcb_t` owns (`tcb->guc_table`). `build_guc_variables()` makes
+  it.
+- **A key** is the setting's `gucvar->name`. The hash and the
+  comparison ignore case, as `guc_name_compare()` does.
+- **An insert** (`add_guc_variable()`) catches `std::bad_alloc`
+  and reports "out of memory": a session thread catches no
+  `std::bad_alloc`.
+- **A placeholder replaced** by its real setting
+  (`define_custom_variable()`) is re-keyed by taking its node
+  out and putting it back, which allocates nothing.
+- **`MarkGUCPrefixReserved()`** removes placeholders with
+  `it = erase(it)`. A reload walks a copy of the settings, as
+  `set_config_option()` may insert, and an insert may rehash.
+- **The nodes** are on the C++ heap, not in `GUCMemoryContext`.
+- **Test**: `test/guc_table.sql` sets a setting by a quoted name
+  of mixed case and shows it by another, sets one by its old
+  name, makes 2000 placeholders and reads each back, and checks
+  that `pg_show_all_settings()` lists each setting once. A
+  case-sensitive comparison fails it. `test/guc_local.sh`
+  checks that a placeholder of one session is unknown in
+  another.

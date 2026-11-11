@@ -1,0 +1,25 @@
+-- Verify that the table of settings finds a setting by its name in any
+-- case, by an old name, and keeps placeholders as it grows.
+-- 1. Count the settings pg_show_all_settings() lists.
+-- 2. Set a setting by a quoted name of mixed case, and show it by
+--    another: unquoted, the parser would fold the names.
+-- 3. Set a setting by its old name, and show it by its new one.
+-- 4. Make 2000 placeholders, which grow the table many times, and read
+--    each back.
+-- 5. Show a placeholder by a name of another case.
+-- 6. Confirm pg_show_all_settings() lists the same settings, each once.
+-- 7. Reset all, and show the setting of step 2 at its default.
+select count(*) as n_settings from pg_show_all_settings() \gset
+set "Work_Mem" = '8MB';
+show "WORK_MEM";
+set sort_mem = '5MB';
+show work_mem;
+select count(*) from generate_series(1, 2000) i
+  where set_config('guc_table.p' || i, 'v' || i, false) = 'v' || i;
+select count(*) from generate_series(1, 2000) i
+  where current_setting('guc_table.p' || i) = 'v' || i;
+select current_setting('GUC_TABLE.P17');
+select count(*) = :n_settings, count(*) = count(distinct name)
+  from pg_show_all_settings();
+reset all;
+show work_mem;

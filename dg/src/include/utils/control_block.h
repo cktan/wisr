@@ -75,6 +75,13 @@ struct session_registry_free_t {
 };
 struct session_record_t;
 
+/* guc.c: the thread's GUC settings by name. */
+struct guc_table_t;
+struct guc_table_free_t {
+  void operator()(guc_table_t *table) const;
+};
+extern guc_table_t *guc_table_new(void);
+
 /* sequence.c: this session's last value of each sequence, for currval. */
 typedef struct sequence_state_t sequence_state_t;
 struct sequence_state_free_t {
@@ -614,6 +621,8 @@ typedef struct tcb_guc_t {
 typedef struct tcb_t {
   /* -- the thread's own GUC settings -- */
   tcb_guc_t guc;
+  /* guc.c: the table of the settings by name, made by build_guc_variables() */
+  std::unique_ptr<guc_table_t, guc_table_free_t> guc_table;
 
   /* -- the session -- */
   /* session_registry.c: this session's record, while it is registered */
