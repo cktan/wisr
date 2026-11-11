@@ -66,7 +66,9 @@ layer. [`PERF.md`](PERF.md) measures how fast DG runs against PG.
   configuration parameter". So `SET standard_conforming_strings
   = off`, with its backslash escapes in ordinary strings, is
   refused. A string reads as the SQL standard says; `E'...'`
-  still escapes.
+  still escapes. The server still reports
+  `standard_conforming_strings = on` when a connection starts,
+  as `psql` and libpq lex a string by that report.
 - **Exceptions instead of `sigsetjmp`.** DG compiles all backend
   code as C++20. `ereport(ERROR)` throws `pg_error_t`, and
   `proc_exit()` throws `proc_exit_t` to unwind the session thread

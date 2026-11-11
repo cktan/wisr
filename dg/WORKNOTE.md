@@ -13263,6 +13263,10 @@ settings to `sq/` as parser options.
   entries, variables, enum tables and `postgresql.conf.sample`
   lines are gone. `raw_parser()` leaves `sq/`'s options at
   their defaults, which are the same values.
+- **The server still reports `standard_conforming_strings`**:
+  `BeginReportingGUCOptions()` sends it once, "on". With no
+  report, `psql` and libpq read `\'` as an escape, and the
+  `psql` and `jsonpath` files of pgregress failed on it.
 - **Moved into `tcb->guc`**: `bytea_output` (hex),
   `constraint_exclusion` (partition) and `IntervalStyle`
   (postgres), each field starting at its boot value.

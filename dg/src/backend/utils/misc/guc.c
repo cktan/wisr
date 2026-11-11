@@ -2202,6 +2202,21 @@ void BeginReportingGUCOptions(void) {
     if (conf->flags & GUC_REPORT)
       ReportGUCOption(conf);
   }
+
+  /*
+   * standard_conforming_strings is not a setting here: a string is always
+   * read as the SQL standard says. But libpq and psql read the server's
+   * report of it to lex a string, and take a server that sends none to read
+   * a backslash as an escape. So tell the client once, "on".
+   */
+  {
+    StringInfoData msgbuf;
+
+    pq_beginmessage(&msgbuf, PqMsg_ParameterStatus);
+    pq_sendstring(&msgbuf, "standard_conforming_strings");
+    pq_sendstring(&msgbuf, "on");
+    pq_endmessage(&msgbuf);
+  }
 }
 
 /*

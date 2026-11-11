@@ -5699,6 +5699,45 @@ local_psql -c 'commit' > /dev/null 2>&1
   fail "log_min_messages: a WARNING is logged after the setting is gone"
 rm "$work/data/postgresql.conf"
 
+# Verify that four settings are fixed, not settings, and that three that
+# moved into tcb->guc still work per session.
+# 1. A SET and a SHOW of each fixed setting fail: unrecognized parameter.
+# 2. A string reads as the SQL standard says: a backslash is a character,
+#    and psql, told so by the server, lexes it so.
+# 3. A session sets bytea_output, constraint_exclusion and IntervalStyle,
+#    and sees the new values; a new session sees the defaults.
+for g in standard_conforming_strings backslash_quote escape_string_warning \
+  xmloption; do
+  local_psql -c "set $g = on" > "$work/fixed.out" 2>&1 &&
+    fail "$g: a SET is refused"
+  grep -q "unrecognized configuration parameter \"$g\"" "$work/fixed.out" ||
+    fail "$g: the SET's error"
+  local_psql -c "show $g" > "$work/fixed.out" 2>&1 &&
+    fail "$g: a SHOW is refused"
+  grep -q "unrecognized configuration parameter \"$g\"" "$work/fixed.out" ||
+    fail "$g: the SHOW's error"
+done
+[ "$(local_psql -c "select length('a\\nb')")" = 4 ] ||
+  fail "an ordinary string keeps a backslash"
+# psql lexes a statement by the server's report of standard_conforming_strings:
+# with none, it reads \' as an escape and 'a\' as an unfinished string.
+[ "$(printf '%s\n' "select 'a\\';" | local_psql)" = 'a\' ] ||
+  fail "psql reads a backslash as a character: the server reports it"
+[ "$(local_psql -c "set bytea_output = escape" -c "show bytea_output" |
+  tail -1)" = escape ] || fail "bytea_output: a session sets it"
+[ "$(local_psql -c "show bytea_output")" = hex ] ||
+  fail "bytea_output: the default"
+[ "$(local_psql -c "set constraint_exclusion = on" \
+  -c "show constraint_exclusion" | tail -1)" = on ] ||
+  fail "constraint_exclusion: a session sets it"
+[ "$(local_psql -c "show constraint_exclusion")" = partition ] ||
+  fail "constraint_exclusion: the default"
+[ "$(local_psql -c "set IntervalStyle = sql_standard" \
+  -c "show IntervalStyle" | tail -1)" = sql_standard ] ||
+  fail "IntervalStyle: a session sets it"
+[ "$(local_psql -c "show IntervalStyle")" = postgres ] ||
+  fail "IntervalStyle: the default"
+
 # Verify that a session reads the program's name the main thread set
 # (pcb->progname), as a new thread is no longer given a copy of it.
 # 1. Connect with a switch the server does not know in PGOPTIONS.
