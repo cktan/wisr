@@ -814,7 +814,12 @@ void PostmasterMain(int argc, char *argv[]) {
    * it seems best to do so after starting the log collector, if we intend
    * to use one.
    */
-  ereport(LOG, (errmsg("starting %s", PG_VERSION_STR)));
+  /*
+   * Name digres, not PostgreSQL: skip the "PostgreSQL <version> " prefix
+   * of PG_VERSION_STR. version() still returns the whole string.
+   */
+  ereport(LOG, (errmsg("starting digres %s",
+                       PG_VERSION_STR + sizeof("PostgreSQL " PG_VERSION))));
 
   /*
    * Establish input sockets.
