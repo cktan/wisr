@@ -33,6 +33,7 @@
 #include "utils/datetime.h"
 #include "utils/guc.h"
 #include "utils/tzparser.h"
+#include "utils/control_block.h"
 
 static int DecodeNumber(int flen, char *str, bool haveTextMonth, int fmask,
                         int *tmask, struct pg_tm *tm, fsec_t *fsec,
@@ -3124,7 +3125,8 @@ int DecodeInterval(char **field, int *ftype, int nf, int range, int *dtype,
    * to dump in postgres style, not SQL style.)
    *----------
    */
-  if (IntervalStyle == INTSTYLE_SQL_STANDARD && nf > 0 && *field[0] == '-') {
+  if (tcb->guc.IntervalStyle == INTSTYLE_SQL_STANDARD && nf > 0 &&
+      *field[0] == '-') {
     force_negative = true;
     /* Check for additional explicit signs */
     for (i = 1; i < nf; i++) {

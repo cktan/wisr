@@ -97,7 +97,6 @@ thread_local /*LOCAL*/ bool IsUnderPostmaster = false;
 
 thread_local /*LOCAL*/ int DateStyle = USE_ISO_DATES;
 thread_local /*LOCAL*/ int DateOrder = DATEORDER_MDY;
-thread_local /*LOCAL*/ int IntervalStyle = INTSTYLE_POSTGRES;
 
 /*
  * Primary determinants of sizes of shared-memory structures.

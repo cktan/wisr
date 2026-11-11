@@ -84,9 +84,6 @@ extern char *map_xml_name_to_sql_identifier(const char *name);
 extern char *map_sql_value_to_xml_value(Datum value, Oid type,
                                         bool xml_escape_strings);
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT int
-    xmloption; /* XmlOptionType, but int for guc enum */
-
 extern PGDLLIMPORT const TableFuncRoutine XmlTableRoutine;
 
 #endif /* XML_H */

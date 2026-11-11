@@ -42,15 +42,6 @@
 #include "parser/parser.h"
 #include "parser/sq_nodes.h"
 
-/*
- * The session's settings that change how a string literal is read.
- * They are PostgreSQL's, and it is a wart of PostgreSQL's that the
- * parser depends on them: raw_parser() hands them to sq.
- */
-thread_local /*LOCAL*/ int backslash_quote = BACKSLASH_QUOTE_SAFE_ENCODING;
-thread_local /*LOCAL*/ bool escape_string_warning = true;
-thread_local /*LOCAL*/ bool standard_conforming_strings = true;
-
 /* Something sq had to say that was not an error, kept until it is safe to
  * say it. */
 struct pending_notice_t {
@@ -157,10 +148,11 @@ List *raw_parser(const char *str, RawParseMode mode) {
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("PL/pgSQL parse modes are not supported")));
 
-  /* The settings are the session's; their values are PostgreSQL's. */
-  options.standard_conforming_strings = standard_conforming_strings;
-  options.backslash_quote = (sq_backslash_quote_t)backslash_quote;
-  options.escape_string_warning = escape_string_warning;
+  /*
+   * How a string literal is read is fixed: standard_conforming_strings on,
+   * backslash_quote safe_encoding and escape_string_warning on, which are
+   * sq's defaults and PostgreSQL's (DG-vs-PG.md).
+   */
   /* An index names no access method: sm's default kind, lsm, as a rule. */
   options.default_index_type = raw_parser_index_type;
   options.notice = keep_notice;

@@ -107,9 +107,6 @@
 #include "utils/xml.h"
 #include "utils/control_block.h"
 
-/* GUC variables */
-thread_local /*LOCAL*/ int xmloption = XMLOPTION_CONTENT;
-
 #ifdef USE_LIBXML
 
 /* random number to identify PgXmlErrorContext */
@@ -278,8 +275,8 @@ Datum xml_in(PG_FUNCTION_ARGS) {
    *
    * Note: we don't need to worry about whether a soft error is detected.
    */
-  doc = xml_parse(vardata, xmloption, true, GetDatabaseEncoding(), NULL, NULL,
-                  fcinfo->context);
+  doc = xml_parse(vardata, XMLOPTION_CONTENT, true, GetDatabaseEncoding(), NULL,
+                  NULL, fcinfo->context);
   if (doc != NULL)
     xmlFreeDoc(doc);
 
@@ -393,7 +390,7 @@ Datum xml_recv(PG_FUNCTION_ARGS) {
    * Parse the data to check if it is well-formed XML data.  Assume that
    * xml_parse will throw ERROR if not.
    */
-  doc = xml_parse(result, xmloption, true, encoding, NULL, NULL, NULL);
+  doc = xml_parse(result, XMLOPTION_CONTENT, true, encoding, NULL, NULL, NULL);
   xmlFreeDoc(doc);
 
   /* Now that we know what we're dealing with, convert to server encoding */
@@ -578,7 +575,7 @@ Datum xmlconcat2(PG_FUNCTION_ARGS) {
 Datum texttoxml(PG_FUNCTION_ARGS) {
   text *data = PG_GETARG_TEXT_PP(0);
 
-  PG_RETURN_XML_P(xmlparse(data, (XmlOptionType)xmloption, true));
+  PG_RETURN_XML_P(xmlparse(data, XMLOPTION_CONTENT, true));
 }
 
 Datum xmltotext(PG_FUNCTION_ARGS) {

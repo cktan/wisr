@@ -44,9 +44,9 @@
 #include "utils/pg_locale.h"
 #include "utils/sortsupport.h"
 #include "utils/varlena.h"
+#include "utils/control_block.h"
 
 /* GUC variable */
-thread_local /*LOCAL*/ int bytea_output = BYTEA_OUTPUT_HEX;
 
 typedef struct varlena VarString;
 
@@ -368,13 +368,13 @@ Datum byteaout(PG_FUNCTION_ARGS) {
   char *result;
   char *rp;
 
-  if (bytea_output == BYTEA_OUTPUT_HEX) {
+  if (tcb->guc.bytea_output == BYTEA_OUTPUT_HEX) {
     /* Print hex format */
     rp = result = (char *)palloc(VARSIZE_ANY_EXHDR(vlena) * 2 + 2 + 1);
     *rp++ = '\\';
     *rp++ = 'x';
     rp += hex_encode(VARDATA_ANY(vlena), VARSIZE_ANY_EXHDR(vlena), rp);
-  } else if (bytea_output == BYTEA_OUTPUT_ESCAPE) {
+  } else if (tcb->guc.bytea_output == BYTEA_OUTPUT_ESCAPE) {
     /* Print traditional escaped format */
     char *vp;
     uint64 len;
@@ -422,7 +422,8 @@ Datum byteaout(PG_FUNCTION_ARGS) {
         *rp++ = *vp;
     }
   } else {
-    elog(ERROR, "unrecognized \"bytea_output\" setting: %d", bytea_output);
+    elog(ERROR, "unrecognized \"bytea_output\" setting: %d",
+         tcb->guc.bytea_output);
     rp = result = NULL; /* keep compiler quiet */
   }
   *rp = '\0';

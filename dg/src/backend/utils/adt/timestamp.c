@@ -858,7 +858,7 @@ Datum interval_out(PG_FUNCTION_ARGS) {
     EncodeSpecialInterval(span, buf);
   else {
     interval2itm(*span, itm);
-    EncodeInterval(itm, IntervalStyle, buf);
+    EncodeInterval(itm, tcb->guc.IntervalStyle, buf);
   }
 
   result = pstrdup(buf);

@@ -58,6 +58,15 @@ layer. [`PERF.md`](PERF.md) measures how fast DG runs against PG.
   change with the configuration file, `ALTER SYSTEM` and a reload.
   `errstart()` reads one atomic copy in `pcb`. `CREATE EXTENSION`
   no longer raises `log_min_messages` for its script.
+- **Four settings are fixed, not settings.**
+  `standard_conforming_strings` is on, `backslash_quote` is
+  `safe_encoding`, `escape_string_warning` is on and `xmloption`
+  is `content`: the values PG has by default. `SET`, `SHOW` and
+  `postgresql.conf` of any of them fail with "unrecognized
+  configuration parameter". So `SET standard_conforming_strings
+  = off`, with its backslash escapes in ordinary strings, is
+  refused. A string reads as the SQL standard says; `E'...'`
+  still escapes.
 - **Exceptions instead of `sigsetjmp`.** DG compiles all backend
   code as C++20. `ereport(ERROR)` throws `pg_error_t`, and
   `proc_exit()` throws `proc_exit_t` to unwind the session thread

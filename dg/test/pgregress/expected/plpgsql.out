@@ -3739,7 +3739,8 @@ end;
 --dg-cascade
 --dg drop function fail();
 -- Test handling of string literals.
-set standard_conforming_strings = off;
+--dg-skip: unrecognized configuration parameter "?"
+--dg set standard_conforming_strings = off;
 --dg-skip: language "?" does not exist
 --dg create or replace function strtest() returns text as $$
 --dg begin
@@ -3758,7 +3759,8 @@ set standard_conforming_strings = off;
 --dg $$ language plpgsql;
 --dg-cascade
 --dg select strtest();
-set standard_conforming_strings = on;
+--dg-skip: unrecognized configuration parameter "?"
+--dg set standard_conforming_strings = on;
 --dg-skip: language "?" does not exist
 --dg create or replace function strtest() returns text as $$
 --dg begin

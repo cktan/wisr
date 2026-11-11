@@ -664,7 +664,6 @@
 #idle_session_timeout = 0			# in milliseconds, 0 is disabled
 #bytea_output = 'hex'			# hex, escape
 #xmlbinary = 'base64'
-#xmloption = 'content'
 #gin_pending_list_limit = 4MB
 #createrole_self_grant = ''		# set and/or inherit
 
@@ -727,10 +726,7 @@
 # - Previous PostgreSQL Versions -
 
 #array_nulls = on
-#backslash_quote = safe_encoding	# on, off, or safe_encoding
-#escape_string_warning = on
 #quote_all_identifiers = off
-#standard_conforming_strings = on
 
 # - Other Platforms and Clients -
 

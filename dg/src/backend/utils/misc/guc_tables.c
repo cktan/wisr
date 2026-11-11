@@ -191,30 +191,6 @@ static const struct config_enum_entry xmlbinary_options[] = {
 StaticAssertDecl(lengthof(xmlbinary_options) == (XMLBINARY_HEX + 2),
                  "array length mismatch");
 
-static const struct config_enum_entry xmloption_options[] = {
-    {"content", XMLOPTION_CONTENT, false},
-    {"document", XMLOPTION_DOCUMENT, false},
-    {NULL, 0, false}};
-
-StaticAssertDecl(lengthof(xmloption_options) == (XMLOPTION_CONTENT + 2),
-                 "array length mismatch");
-
-/*
- * Although only "on", "off", and "safe_encoding" are documented, we
- * accept all the likely variants of "on" and "off".
- */
-static const struct config_enum_entry backslash_quote_options[] = {
-    {"safe_encoding", BACKSLASH_QUOTE_SAFE_ENCODING, false},
-    {"on", BACKSLASH_QUOTE_ON, false},
-    {"off", BACKSLASH_QUOTE_OFF, false},
-    {"true", BACKSLASH_QUOTE_ON, true},
-    {"false", BACKSLASH_QUOTE_OFF, true},
-    {"yes", BACKSLASH_QUOTE_ON, true},
-    {"no", BACKSLASH_QUOTE_OFF, true},
-    {"1", BACKSLASH_QUOTE_ON, true},
-    {"0", BACKSLASH_QUOTE_OFF, true},
-    {NULL, 0, false}};
-
 /*
  * Although only "on", "off", and "auto" are documented, we accept
  * all the likely variants of "on" and "off".
@@ -1291,24 +1267,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       NULL},
      &pg_gss_accept_delegation,
      false,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"escape_string_warning", PGC_USERSET, COMPAT_OPTIONS_PREVIOUS,
-      gettext_noop("Warn about backslash escapes in ordinary string literals."),
-      NULL},
-     &escape_string_warning,
-     true,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"standard_conforming_strings", PGC_USERSET, COMPAT_OPTIONS_PREVIOUS,
-      gettext_noop("Causes '...' strings to treat backslashes literally."),
-      NULL, GUC_REPORT},
-     &standard_conforming_strings,
-     true,
      NULL,
      NULL,
      NULL},
@@ -2757,19 +2715,9 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
      NULL}};
 
 thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
-    {{"backslash_quote", PGC_USERSET, COMPAT_OPTIONS_PREVIOUS,
-      gettext_noop("Sets whether \"\\'\" is allowed in string literals."),
-      NULL},
-     &backslash_quote,
-     BACKSLASH_QUOTE_SAFE_ENCODING,
-     backslash_quote_options,
-     NULL,
-     NULL,
-     NULL},
-
     {{"bytea_output", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Sets the output format for bytea."), NULL},
-     &bytea_output,
+     &tcb->guc.bytea_output,
      BYTEA_OUTPUT_HEX,
      bytea_output_options,
      NULL,
@@ -2803,7 +2751,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
       gettext_noop("Table scans will be skipped if their constraints"
                    " guarantee that no rows match the query."),
       GUC_EXPLAIN},
-     &constraint_exclusion,
+     &tcb->guc.constraint_exclusion,
      CONSTRAINT_EXCLUSION_PARTITION,
      constraint_exclusion_options,
      NULL,
@@ -2846,7 +2794,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
     {{"IntervalStyle", PGC_USERSET, CLIENT_CONN_LOCALE,
       gettext_noop("Sets the display format for interval values."), NULL,
       GUC_REPORT},
-     &IntervalStyle,
+     &tcb->guc.IntervalStyle,
      INTSTYLE_POSTGRES,
      intervalstyle_options,
      NULL,
@@ -2922,18 +2870,6 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
      &tcb->guc.xmlbinary,
      XMLBINARY_BASE64,
      xmlbinary_options,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"xmloption", PGC_USERSET, CLIENT_CONN_STATEMENT,
-      gettext_noop(
-          "Sets whether XML data in implicit parsing and serialization "
-          "operations is to be considered as documents or content fragments."),
-      NULL},
-     &xmloption,
-     XMLOPTION_CONTENT,
-     xmloption_options,
      NULL,
      NULL,
      NULL},

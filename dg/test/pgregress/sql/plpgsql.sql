@@ -4281,7 +4281,8 @@ end;
 
 -- Test handling of string literals.
 
-set standard_conforming_strings = off;
+--dg-skip: unrecognized configuration parameter "?"
+--dg set standard_conforming_strings = off;
 
 --dg-skip: language "?" does not exist
 --dg create or replace function strtest() returns text as $$
@@ -4305,7 +4306,8 @@ set standard_conforming_strings = off;
 --dg-cascade
 --dg select strtest();
 
-set standard_conforming_strings = on;
+--dg-skip: unrecognized configuration parameter "?"
+--dg set standard_conforming_strings = on;
 
 --dg-skip: language "?" does not exist
 --dg create or replace function strtest() returns text as $$

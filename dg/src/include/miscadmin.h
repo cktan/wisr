@@ -256,8 +256,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int DateOrder;
 #define INTSTYLE_SQL_STANDARD		2
 #define INTSTYLE_ISO_8601			3
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT int IntervalStyle;
-
 #define MAXTZLEN		10 /* max TZ name len, not counting tr. null */
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT int VacuumCostBalance;

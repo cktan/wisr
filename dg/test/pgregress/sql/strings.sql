@@ -17,7 +17,8 @@ SELECT 'first line'
 	AS "Illegal comment within continuation";
 
 -- Unicode escapes
-SET standard_conforming_strings TO on;
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET standard_conforming_strings TO on;
 
 SELECT U&'d\0061t\+000061' AS U&"d\0061t\+000061";
 SELECT U&'d!0061t\+000061' UESCAPE '!' AS U&"d*0061t\+000061" UESCAPE '*';
@@ -50,19 +51,27 @@ SELECT E'wrong: \udb99\u0061';
 SELECT E'wrong: \U0000db99\U00000061';
 SELECT E'wrong: \U002FFFFF';
 
-SET standard_conforming_strings TO off;
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET standard_conforming_strings TO off;
 
-SELECT U&'d\0061t\+000061' AS U&"d\0061t\+000061";
-SELECT U&'d!0061t\+000061' UESCAPE '!' AS U&"d*0061t\+000061" UESCAPE '*';
+--dg-cascade
+--dg SELECT U&'d\0061t\+000061' AS U&"d\0061t\+000061";
+--dg-cascade
+--dg SELECT U&'d!0061t\+000061' UESCAPE '!' AS U&"d*0061t\+000061" UESCAPE '*';
 
-SELECT U&' \' UESCAPE '!' AS "tricky";
+--dg-cascade
+--dg SELECT U&' \' UESCAPE '!' AS "tricky";
 SELECT 'tricky' AS U&"\" UESCAPE '!';
 
-SELECT U&'wrong: \061';
-SELECT U&'wrong: \+0061';
-SELECT U&'wrong: +0061' UESCAPE '+';
+--dg-cascade
+--dg SELECT U&'wrong: \061';
+--dg-cascade
+--dg SELECT U&'wrong: \+0061';
+--dg-cascade
+--dg SELECT U&'wrong: +0061' UESCAPE '+';
 
-RESET standard_conforming_strings;
+--dg-skip: unrecognized configuration parameter "?"
+--dg RESET standard_conforming_strings;
 
 -- bytea
 SET bytea_output TO hex;
@@ -827,34 +836,49 @@ SELECT '\x8000000000000000'::bytea::int8 AS "-9223372036854775808",
 --
 -- test behavior of escape_string_warning and standard_conforming_strings options
 --
-set escape_string_warning = off;
-set standard_conforming_strings = off;
+--dg-skip: unrecognized configuration parameter "?"
+--dg set escape_string_warning = off;
+--dg-skip: unrecognized configuration parameter "?"
+--dg set standard_conforming_strings = off;
 
-show escape_string_warning;
-show standard_conforming_strings;
+--dg-skip: unrecognized configuration parameter "?"
+--dg show escape_string_warning;
+--dg-skip: unrecognized configuration parameter "?"
+--dg show standard_conforming_strings;
 
-set escape_string_warning = on;
-set standard_conforming_strings = on;
+--dg-skip: unrecognized configuration parameter "?"
+--dg set escape_string_warning = on;
+--dg-skip: unrecognized configuration parameter "?"
+--dg set standard_conforming_strings = on;
 
-show escape_string_warning;
-show standard_conforming_strings;
+--dg-skip: unrecognized configuration parameter "?"
+--dg show escape_string_warning;
+--dg-skip: unrecognized configuration parameter "?"
+--dg show standard_conforming_strings;
 
-select 'a\bcd' as f1, 'a\b''cd' as f2, 'a\b''''cd' as f3, 'abcd\'   as f4, 'ab\''cd' as f5, '\\' as f6;
+--dg-differs: the result
+--dg select 'a\bcd' as f1, 'a\b''cd' as f2, 'a\b''''cd' as f3, 'abcd\'   as f4, 'ab\''cd' as f5, '\\' as f6;
 
-set standard_conforming_strings = off;
+--dg-skip: unrecognized configuration parameter "?"
+--dg set standard_conforming_strings = off;
 
-select 'a\\bcd' as f1, 'a\\b\'cd' as f2, 'a\\b\'''cd' as f3, 'abcd\\'   as f4, 'ab\\\'cd' as f5, '\\\\' as f6;
+--dg-cascade
+--dg select 'a\\bcd' as f1, 'a\\b\'cd' as f2, 'a\\b\'''cd' as f3, 'abcd\\'   as f4, 'ab\\\'cd' as f5, '\\\\' as f6;
+--dg
+--dg set escape_string_warning = off;
+--dg-skip: unrecognized configuration parameter "?"
+--dg set standard_conforming_strings = on;
 
-set escape_string_warning = off;
-set standard_conforming_strings = on;
+--dg-cascade
+--dg select 'a\bcd' as f1, 'a\b''cd' as f2, 'a\b''''cd' as f3, 'abcd\'   as f4, 'ab\''cd' as f5, '\\' as f6;
 
-select 'a\bcd' as f1, 'a\b''cd' as f2, 'a\b''''cd' as f3, 'abcd\'   as f4, 'ab\''cd' as f5, '\\' as f6;
+--dg-cascade
+--dg set standard_conforming_strings = off;
 
-set standard_conforming_strings = off;
-
-select 'a\\bcd' as f1, 'a\\b\'cd' as f2, 'a\\b\'''cd' as f3, 'abcd\\'   as f4, 'ab\\\'cd' as f5, '\\\\' as f6;
-
-reset standard_conforming_strings;
+--dg-cascade
+--dg select 'a\\bcd' as f1, 'a\\b\'cd' as f2, 'a\\b\'''cd' as f3, 'abcd\\'   as f4, 'ab\\\'cd' as f5, '\\\\' as f6;
+--dg
+--dg reset standard_conforming_strings;
 
 
 --

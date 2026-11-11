@@ -260,11 +260,18 @@ or not. This keeps one variable's move small.
   accepts zero for a bool, int, real and string, so it does not
   find a field that starts at zero by mistake. Compare each new
   field with its boot value in the table.
+- **`bytea_output`, `constraint_exclusion` and `IntervalStyle`
+  are in `tcb->guc`.** An earlier note said `sq/` or `sm/` read
+  them and the group 3 move could not reach them. That was
+  wrong: only `dg/` reads each variable, and the hits in `sq/` and
+  `sm/` are comments and parser option fields.
+- **Four settings are gone, fixed at PostgreSQL's default:**
+  `standard_conforming_strings` (on), `backslash_quote`
+  (`safe_encoding`), `escape_string_warning` (on) and
+  `xmloption` (content; XML is compiled out). A `SET` of one is
+  an "unrecognized configuration parameter" error
+  (`DG-vs-PG.md`).
 - **Left as a plain `thread_local`:**
-  - `escape_string_warning`, `standard_conforming_strings`,
-    `backslash_quote`, `bytea_output`, `constraint_exclusion`,
-    `xmloption` and `IntervalStyle`: `sq/` or `sm/` reads the
-    variable, and they cannot see `tcb`.
   - `client_min_messages` and `trace_sort`: `errstart()` or a
     per-tuple loop reads them. Ask before moving them
     ([`CLAUDE.md`](../CLAUDE.md)).

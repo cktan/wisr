@@ -593,6 +593,9 @@ typedef struct tcb_guc_t {
   bool optimize_bounded_sort = true;             /* tuplesort.c */
   char *application_name = "";                   /* guc_tables.c */
   int tcp_user_timeout = 0;                      /* guc_tables.c */
+  int bytea_output = 1;         /* varlena.c, BYTEA_OUTPUT_HEX */
+  int constraint_exclusion = 2; /* plancat.c, CONSTRAINT_EXCLUSION_PARTITION */
+  int IntervalStyle = 0;        /* globals.c, INTSTYLE_POSTGRES */
   /* -- new GUC fields above -- */
 } tcb_guc_t;
 

@@ -13219,3 +13219,25 @@ each move tested and committed alone.
   refused; the defaults are `warning` and `error`; a WARNING is
   logged, then not logged after a reload sets `error`, then
   logged again after the file is removed.
+
+## Step 435: four obscure settings go, three move
+
+The step before it (433) left seven settings as plain
+`thread_local` variables, on the claim that `sq/` or `sm/` read
+them and cannot see `tcb`. That was wrong for all seven: only
+`dg/` reads each variable. `parser.c` hands the three string
+settings to `sq/` as parser options.
+
+- **Dropped, fixed at PostgreSQL's default**:
+  `standard_conforming_strings` (on), `backslash_quote`
+  (`safe_encoding`), `escape_string_warning` (on) and
+  `xmloption` (content; `USE_LIBXML` is undefined). Their GUC
+  entries, variables, enum tables and `postgresql.conf.sample`
+  lines are gone. `raw_parser()` leaves `sq/`'s options at
+  their defaults, which are the same values.
+- **Moved into `tcb->guc`**: `bytea_output` (hex),
+  `constraint_exclusion` (partition) and `IntervalStyle`
+  (postgres), each field starting at its boot value.
+- **Test**: `strings`, `regex` and `plpgsql` of pgregress,
+  trimmed again: the `SET` of a dropped setting is marked
+  `--dg-skip`, with the statements that follow from it.

@@ -60,8 +60,6 @@
 #include "utils/control_block.h"
 
 /* GUC parameter */
-thread_local /*LOCAL*/ int constraint_exclusion =
-    CONSTRAINT_EXCLUSION_PARTITION;
 
 /* Hook for plugins to get control in get_relation_info() */
 
@@ -1453,7 +1451,7 @@ bool relation_excluded_by_constraints(PlannerInfo *root, RelOptInfo *rel,
   /*
    * Skip further tests, depending on constraint_exclusion.
    */
-  switch (constraint_exclusion) {
+  switch (tcb->guc.constraint_exclusion) {
   case CONSTRAINT_EXCLUSION_OFF:
     /* In 'off' mode, never make any further tests */
     return false;
