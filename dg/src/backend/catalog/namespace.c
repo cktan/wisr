@@ -3708,7 +3708,7 @@ static void recomputeNamespacePath(void) {
   if (baseSearchPathValid && namespaceUser == roleid)
     return;
 
-  entry = cachedNamespacePath(tcb->guc.namespace_search_path, roleid);
+  entry = cachedNamespacePath(tcb->guc.namespace_search_path.c_str(), roleid);
 
   if (baseCreationNamespace == entry->firstNS &&
       baseTempCreationPending == entry->temp_missing &&

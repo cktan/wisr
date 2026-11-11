@@ -800,7 +800,7 @@ void PostmasterMain(int argc, char *argv[]) {
     ereport(LOG,
             (errmsg("ending log output to stderr"),
              errhint("Future log output will go to log destination \"%s\".",
-                     pcb->Log_destination_string)));
+                     pcb->Log_destination_string.c_str())));
 
   whereToSendOutput = DestNone;
 
@@ -820,14 +820,14 @@ void PostmasterMain(int argc, char *argv[]) {
   pms().ListenSockets = (pgsocket *)palloc(MAXLISTEN * sizeof(pgsocket));
   on_proc_exit(CloseServerPorts, 0);
 
-  if (pcb->ListenAddresses) {
+  if (!pcb->ListenAddresses.empty()) {
     char *rawstring;
     List *elemlist;
     ListCell *l;
     int success = 0;
 
     /* Need a modifiable copy of ListenAddresses */
-    rawstring = pstrdup(pcb->ListenAddresses);
+    rawstring = pstrdup(pcb->ListenAddresses.c_str());
 
     /* Parse string into list of hostnames */
     if (!SplitGUCList(rawstring, ',', &elemlist)) {
@@ -880,7 +880,7 @@ void PostmasterMain(int argc, char *argv[]) {
      * just a subset of the available network interfaces.
      */
     err = DNSServiceRegister(
-        &bonjour_sdref, 0, 0, pcb->bonjour_name, "_postgresql._tcp.", NULL,
+        &bonjour_sdref, 0, 0, pcb->bonjour_name.c_str(), "_postgresql._tcp.", NULL,
         NULL, pg_hton16(pcb->PostPortNumber), 0, NULL, NULL, NULL);
     if (err != kDNSServiceErr_NoError)
       ereport(LOG, (errmsg("DNSServiceRegister() failed: error code %ld",
@@ -896,14 +896,14 @@ void PostmasterMain(int argc, char *argv[]) {
   }
 #endif
 
-  if (pcb->Unix_socket_directories) {
+  if (!pcb->Unix_socket_directories.empty()) {
     char *rawstring;
     List *elemlist;
     ListCell *l;
     int success = 0;
 
     /* Need a modifiable copy of Unix_socket_directories */
-    rawstring = pstrdup(pcb->Unix_socket_directories);
+    rawstring = pstrdup(pcb->Unix_socket_directories.c_str());
 
     /* Parse string into list of directories */
     if (!SplitDirectoriesString(rawstring, ',', &elemlist)) {
@@ -963,22 +963,22 @@ void PostmasterMain(int argc, char *argv[]) {
   /*
    * Write the external PID file if requested
    */
-  if (pcb->external_pid_file) {
-    FILE *fpidfile = fopen(pcb->external_pid_file, "w");
+  if (!pcb->external_pid_file.empty()) {
+    FILE *fpidfile = fopen(pcb->external_pid_file.c_str(), "w");
 
     if (fpidfile) {
       fprintf(fpidfile, "%d\n", MyProcPid);
       fclose(fpidfile);
 
       /* Make PID file world readable */
-      if (chmod(pcb->external_pid_file,
+      if (chmod(pcb->external_pid_file.c_str(),
                 S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH) != 0)
         write_stderr("%s: could not change permissions of external PID file "
                      "\"%s\": %m\n",
-                     pcb->progname, pcb->external_pid_file);
+                     pcb->progname, pcb->external_pid_file.c_str());
     } else
       write_stderr("%s: could not write external PID file \"%s\": %m\n",
-                   pcb->progname, pcb->external_pid_file);
+                   pcb->progname, pcb->external_pid_file.c_str());
 
     on_proc_exit(unlink_external_pid_file, 0);
   }
@@ -1074,8 +1074,8 @@ static void CloseServerPorts(int status, Datum arg) {
  * on_proc_exit callback to delete external_pid_file
  */
 static void unlink_external_pid_file(int status, Datum arg) {
-  if (pcb->external_pid_file)
-    unlink(pcb->external_pid_file);
+  if (!pcb->external_pid_file.empty())
+    unlink(pcb->external_pid_file.c_str());
 }
 
 /*

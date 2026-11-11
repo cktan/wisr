@@ -13196,7 +13196,35 @@ each move tested and committed alone.
   per-tuple ones, and the Kerberos and GSSAPI ones (compiled out).
 - **Not done**: the session reloads still run.
 
-## Step 434: the log filters are the server's
+## Step 434: string settings are std::string
+
+- **`tcb->guc`**: its 21 string fields are `std::string`.
+  `session_authorization` and `timezone_abbreviations`, NULL at
+  boot, start as `""`; SHOW printed NULL as empty already.
+- **`pcb`**: its 11 string copies of the restart-only settings
+  (`listen_addresses`, `cluster_name`, `config_file` and the
+  rest) are `std::string`, as its `ssl_*` ones were.
+- **guc.c**: a string setting's variable is a
+  `guc_string_var_t`, a `char **` or a `std::string *`. guc.c
+  reads and writes it with `get()` and `set()`. For a
+  `std::string`, guc.c keeps its `char *` value, shared with
+  `reset_val` and the stack as before, and copies it into the
+  field. So SET, RESET and rollback behave as before.
+- **Not changed**: the thread_local string settings in
+  `guc_tables.c`. `cxx_thread_local.py` refuses a thread_local
+  with a constructor; each becomes a `std::string` when it moves
+  into a block.
+- **Test** (`test/guc_local.sh`, in `server.sh`): two held
+  sessions set `application_name`, `search_path`, `DateStyle`
+  and `TimeZone` to their own values; neither sees the other's,
+  a SET again or a `SET LOCAL` in one does not reach the other,
+  a rollback restores the value, and a new session has the
+  defaults. SHOW reads guc.c's `char *`, so each session also
+  reads a table `guc_t` of its own schema, which only the
+  `std::string` field of `search_path` finds. Bound to one
+  shared string, the test fails.
+
+## Step 435: the log filters are the server's
 
 `log_min_messages` and `log_min_error_statement` were
 `PGC_SUSET`: a superuser could `SET` them in one session, and
@@ -13220,7 +13248,7 @@ each move tested and committed alone.
   logged, then not logged after a reload sets `error`, then
   logged again after the file is removed.
 
-## Step 435: four obscure settings go, three move
+## Step 436: four obscure settings go, three move
 
 The step before it (433) left seven settings as plain
 `thread_local` variables, on the claim that `sq/` or `sm/` read

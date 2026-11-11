@@ -130,6 +130,17 @@ or not. This keeps one variable's move small.
    - The initial value of the field must equal the boot value
      in the table, for every type, enums too. The assertion in
      `check_GUC_init()` then holds without change.
+   - **A string setting's field is a `std::string`**, in any
+     block. A NULL boot value is `""`, as the field cannot be
+     NULL. Read it with `.c_str()`, and test `.empty()` where
+     the code tested for NULL. Never pass the `std::string`
+     itself to a `%s`: g++ accepts it through `...`.
+   - The table entry of a `std::string` field is a
+     `guc_string_var_t` (`guc_tables.h`). guc.c keeps its own
+     `char *` of the value, shared with `reset_val` and the
+     stack, and copies it into the field on each change. A
+     thread_local variable, a custom setting and a placeholder
+     stay `char *`.
 2. Bind the table entry. For group 3,
    `build_guc_variables()` sets the entry's `variable` pointer
    to `&tcb->guc.name` as it builds the thread's table.

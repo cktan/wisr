@@ -443,11 +443,11 @@ static List *get_extension_control_directories(void) {
 
   system_dir = psprintf("%s/extension", sharepath);
 
-  if (strlen(tcb->guc.Extension_control_path) == 0) {
+  if (strlen(tcb->guc.Extension_control_path.c_str()) == 0) {
     paths = lappend(paths, system_dir);
   } else {
     /* Duplicate the string so we can modify it */
-    ecp = pstrdup(tcb->guc.Extension_control_path);
+    ecp = pstrdup(tcb->guc.Extension_control_path.c_str());
 
     for (;;) {
       int len;

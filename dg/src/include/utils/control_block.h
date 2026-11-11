@@ -198,8 +198,7 @@ typedef struct pcb_t {
    * publish_postmaster_settings() once the main thread has read its
    * settings, before any session thread starts; ConfigFileName by
    * SelectConfigFiles().  Read these, never the GUC variables, which each
-   * thread has a copy of.  A string is a literal or malloc'd, never freed, or
-   * NULL.
+   * thread has a copy of.  A string with no value is "".
    */
   bool enable_bonjour = false;
   bool Trace_connection_negotiation = false;
@@ -213,16 +212,16 @@ typedef struct pcb_t {
   int max_files_per_process = 1000;
   /* elog.c: the bitmask of LOG_DESTINATION_*, parsed from the string below */
   int Log_destination = 1; /* LOG_DESTINATION_STDERR */
-  char *bonjour_name = "";
-  char *shared_preload_libraries_string = "";
-  char *event_source = DEFAULT_EVENT_SOURCE;
-  char *Unix_socket_group = "";
-  char *Unix_socket_directories = DEFAULT_PGSOCKET_DIR;
-  char *ListenAddresses = "localhost";
-  char *external_pid_file = nullptr;
-  char *cluster_name = "";
-  char *Log_destination_string = "stderr";
-  char *ConfigFileName = nullptr;
+  std::string bonjour_name = "";
+  std::string shared_preload_libraries_string = "";
+  std::string event_source = DEFAULT_EVENT_SOURCE;
+  std::string Unix_socket_group = "";
+  std::string Unix_socket_directories = DEFAULT_PGSOCKET_DIR;
+  std::string ListenAddresses = "localhost";
+  std::string external_pid_file;
+  std::string cluster_name = "";
+  std::string Log_destination_string = "stderr";
+  std::string ConfigFileName;
 
   /*
    * -- preset settings (PGC_INTERNAL) --
@@ -241,9 +240,9 @@ typedef struct pcb_t {
   int max_identifier_length = NAMEDATALEN - 1; /* guc_tables.c */
   int block_size = BLCKSZ;                     /* guc_tables.c */
 #ifdef USE_SSL
-  char *ssl_library = "OpenSSL"; /* be-secure.c */
+  std::string ssl_library = "OpenSSL"; /* be-secure.c */
 #else
-  char *ssl_library = ""; /* be-secure.c */
+  std::string ssl_library = ""; /* be-secure.c */
 #endif
 
   /*
@@ -551,24 +550,24 @@ typedef struct tcb_guc_t {
   double log_statement_sample_rate = 1.0;      /* guc_tables.c */
   double log_xact_sample_rate = 0;             /* guc_tables.c */
   double phony_random_seed = 0.0;              /* guc_tables.c */
-  char *client_encoding_string = "SQL_ASCII";  /* guc_tables.c */
-  char *datestyle_string = "ISO, MDY";         /* guc_tables.c */
-  char *default_table_access_method = "heap";  /* tableam.c */
-  char *createrole_self_grant = "";            /* user.c */
-  char *Dynamic_library_path = "$libdir";      /* dfmgr.c */
-  char *Extension_control_path = "$system";    /* extension.c */
-  char *locale_messages = "";                  /* pg_locale.c */
-  char *locale_monetary = "C";                 /* pg_locale.c */
-  char *locale_numeric = "C";                  /* pg_locale.c */
-  char *locale_time = "C";                     /* pg_locale.c */
-  char *local_preload_libraries_string = "";   /* miscinit.c */
-  char *namespace_search_path = "\"$user\", public"; /* namespace.c */
-  char *role_string = "none";                        /* guc_tables.c */
-  char *session_authorization_string = NULL;         /* guc_tables.c */
-  char *timezone_string = "GMT";                     /* guc_tables.c */
-  char *timezone_abbreviations_string = NULL;        /* guc_tables.c */
-  char *backtrace_functions = "";                    /* guc_tables.c */
-  char *log_connections_string = "";                 /* backend_startup.c */
+  std::string client_encoding_string = "SQL_ASCII";  /* guc_tables.c */
+  std::string datestyle_string = "ISO, MDY";         /* guc_tables.c */
+  std::string default_table_access_method = "heap";  /* tableam.c */
+  std::string createrole_self_grant = "";            /* user.c */
+  std::string Dynamic_library_path = "$libdir";      /* dfmgr.c */
+  std::string Extension_control_path = "$system";    /* extension.c */
+  std::string locale_messages = "";                  /* pg_locale.c */
+  std::string locale_monetary = "C";                 /* pg_locale.c */
+  std::string locale_numeric = "C";                  /* pg_locale.c */
+  std::string locale_time = "C";                     /* pg_locale.c */
+  std::string local_preload_libraries_string = "";   /* miscinit.c */
+  std::string namespace_search_path = "\"$user\", public"; /* namespace.c */
+  std::string role_string = "none";                        /* guc_tables.c */
+  std::string session_authorization_string;         /* guc_tables.c */
+  std::string timezone_string = "GMT";                     /* guc_tables.c */
+  std::string timezone_abbreviations_string;        /* guc_tables.c */
+  std::string backtrace_functions = "";                    /* guc_tables.c */
+  std::string log_connections_string = "";                 /* backend_startup.c */
   int compute_query_id = 2;                          /* queryjumblefuncs.c */
   int default_toast_compression = 'p';               /* toast_compression.c */
   int DefaultXactIsoLevel = 1;                 /* xact.c */
@@ -577,7 +576,7 @@ typedef struct tcb_guc_t {
   int Log_error_verbosity = 1;                 /* elog.c */
   int log_statement = 0;                       /* postgres.c */
   int plan_cache_mode = 0;                     /* plancache.c */
-  char *restrict_nonsystem_relation_kind_string = ""; /* guc_tables.c */
+  std::string restrict_nonsystem_relation_kind_string = ""; /* guc_tables.c */
   bool Debug_write_read_parse_plan_trees = false;     /* guc_tables.c */
   bool Debug_raw_expression_coverage_test = false;    /* guc_tables.c */
   bool enable_geqo = true;                            /* allpaths.c */
@@ -587,11 +586,11 @@ typedef struct tcb_guc_t {
   int Geqo_generations = 0;                      /* geqo_main.c */
   double Geqo_seed = 0.0;                        /* geqo_main.c */
   int default_statistics_target = 100;           /* analyze.c */
-  char *session_preload_libraries_string = "";   /* miscinit.c */
+  std::string session_preload_libraries_string = "";   /* miscinit.c */
   int xmlbinary = 0;                             /* xml.c */
   int Password_encryption = 2;                   /* user.c */
   bool optimize_bounded_sort = true;             /* tuplesort.c */
-  char *application_name = "";                   /* guc_tables.c */
+  std::string application_name = "";                   /* guc_tables.c */
   int tcp_user_timeout = 0;                      /* guc_tables.c */
   int bytea_output = 1;         /* varlena.c, BYTEA_OUTPUT_HEX */
   int constraint_exclusion = 2; /* plancat.c, CONSTRAINT_EXCLUSION_PARTITION */

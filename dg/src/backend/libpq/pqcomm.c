@@ -678,7 +678,6 @@ static int Setup_AF_UNIX(const char *sock_path) {
    * before we listen() to avoid a window where unwanted connections could
    * get accepted.
    */
-  Assert(pcb->Unix_socket_group);
   if (pcb->Unix_socket_group[0] != '\0') {
 #ifdef WIN32
     elog(WARNING, "configuration item \"unix_socket_group\" is not supported "
@@ -688,16 +687,16 @@ static int Setup_AF_UNIX(const char *sock_path) {
     unsigned long val;
     gid_t gid;
 
-    val = strtoul(pcb->Unix_socket_group, &endptr, 10);
+    val = strtoul(pcb->Unix_socket_group.c_str(), &endptr, 10);
     if (*endptr == '\0') { /* numeric group id */
       gid = val;
     } else { /* convert group name to id */
       struct group *gr;
 
-      gr = getgrnam(pcb->Unix_socket_group);
+      gr = getgrnam(pcb->Unix_socket_group.c_str());
       if (!gr) {
         ereport(LOG, (errmsg("group \"%s\" does not exist",
-                             pcb->Unix_socket_group)));
+                             pcb->Unix_socket_group.c_str())));
         return STATUS_ERROR;
       }
       gid = gr->gr_gid;

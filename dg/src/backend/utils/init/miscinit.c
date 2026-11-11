@@ -1382,7 +1382,7 @@ static void load_libraries(const char *libraries, const char *gucname,
  */
 void process_shared_preload_libraries(void) {
   pcb_main()->process_shared_preload_libraries_in_progress = true;
-  load_libraries(pcb->shared_preload_libraries_string,
+  load_libraries(pcb->shared_preload_libraries_string.c_str(),
                  "shared_preload_libraries", false);
   pcb_main()->process_shared_preload_libraries_in_progress = false;
   pcb_main()->process_shared_preload_libraries_done = true;
@@ -1392,9 +1392,9 @@ void process_shared_preload_libraries(void) {
  * process any libraries that should be preloaded at backend start
  */
 void process_session_preload_libraries(void) {
-  load_libraries(tcb->guc.session_preload_libraries_string,
+  load_libraries(tcb->guc.session_preload_libraries_string.c_str(),
                  "session_preload_libraries", false);
-  load_libraries(tcb->guc.local_preload_libraries_string,
+  load_libraries(tcb->guc.local_preload_libraries_string.c_str(),
                  "local_preload_libraries", true);
 }
 

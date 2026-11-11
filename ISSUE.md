@@ -610,7 +610,7 @@ delete stalling every writer, in step 419; issue 27, sm's log
 messages dropped, by `datadir_set_sm_log()`, which the postmaster
 and initdb install; issue 28, an index scan with a null key
 reading the whole index, in step 429; issue 29, seven settings left
-as plain thread_locals, in step 435; and issues 15 and 17, ALTER
+as plain thread_locals, in step 436; and issues 15 and 17, ALTER
 COLUMN TYPE losing a committed update and ADD COLUMN NOT NULL
 counting deleted rows, in step 394. Issue 12, the hash access
 method saying it cannot exclude, was closed as digres's answer,

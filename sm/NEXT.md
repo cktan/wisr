@@ -450,6 +450,24 @@ Owed, and blocking nothing above:
   A string field that starts as a literal
   ([`../dg/GUCPLAN.md`](../dg/GUCPLAN.md) §5) must be set by
   `InitializeOneGUCOption()` before anything frees it.
+- **Move every GUC setting into a control block, or drop it.**
+  The move ([`../dg/GUCPLAN.md`](../dg/GUCPLAN.md) §9) left 12
+  settings as plain `thread_local` variables:
+  - `escape_string_warning`, `standard_conforming_strings`,
+    `backslash_quote`, `bytea_output`, `constraint_exclusion`,
+    `xmloption` and `IntervalStyle`: `sq/` or `sm/` reads them
+    and cannot see `tcb` (dg issue 29 in
+    [`../ISSUE.md`](../ISSUE.md)).
+  - `client_min_messages` and `trace_sort`: read on a hot path
+    (dg issue 30).
+  - `krb_server_keyfile`, `krb_caseins_users` and
+    `gss_accept_delegation`: read only in code that is compiled
+    out. Drop them with that code, or move them.
+
+  Next: for each setting, move it to `tcb->guc`, `pcb` or
+  `shmem`, with its boot value as the field's initializer; or
+  drop it. `client_min_messages` and `trace_sort` also need the
+  owner's decision, as `CLAUDE.md` says for a hot path.
 
 ---
 
