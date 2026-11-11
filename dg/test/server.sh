@@ -5774,6 +5774,23 @@ local_psql -c "set krb_caseins_users = on" > "$work/krb.out" 2>&1 &&
 grep -q 'cannot be changed now' "$work/krb.out" ||
   fail "krb_caseins_users: the SET's error"
 
+# Verify that an empty string is no "default" for a string setting whose
+# boot value was NULL (a string hook sees "" for NULL, and only the default
+# source means "no value").
+# 1. A session's SET of session_authorization or timezone_abbreviations to
+#    the empty string fails, as it did when the hook saw a NULL.
+# 2. RESET session_authorization works, and timezone_abbreviations reads
+#    Default.
+local_psql -c "set session_authorization = ''" > /dev/null 2>&1 &&
+  fail "session_authorization: '' is refused"
+local_psql -c "set timezone_abbreviations = ''" > /dev/null 2>&1 &&
+  fail "timezone_abbreviations: '' is refused"
+[ "$(local_psql -c "set session_authorization = current_user" \
+  -c "reset session_authorization" -c "select 1" | tail -1)" = 1 ] ||
+  fail "session_authorization: RESET"
+[ "$(local_psql -c "show timezone_abbreviations")" = Default ] ||
+  fail "timezone_abbreviations: the default"
+
 # Verify that a session reads the program's name the main thread set
 # (pcb->progname), as a new thread is no longer given a copy of it.
 # 1. Connect with a switch the server does not know in PGOPTIONS.

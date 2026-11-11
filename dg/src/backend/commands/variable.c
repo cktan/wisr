@@ -19,6 +19,7 @@
 #include "postgres.h"
 
 #include <ctype.h>
+#include <vector>
 
 #include "access/htup_details.h"
 #include "access/xact.h"
@@ -45,7 +46,7 @@
 /*
  * check_datestyle: GUC check_hook for datestyle
  */
-bool check_datestyle(char **newval, void **extra, GucSource source) {
+bool check_datestyle(std::string &newval, void **extra, GucSource source) {
   int newDateStyle = DateStyle;
   int newDateOrder = DateOrder;
   bool have_style = false;
@@ -58,7 +59,7 @@ bool check_datestyle(char **newval, void **extra, GucSource source) {
   ListCell *l;
 
   /* Need a modifiable copy of string */
-  rawstring = pstrdup(*newval);
+  rawstring = pstrdup(newval.c_str());
 
   /* Parse string into list of identifiers */
   if (!SplitIdentifierString(rawstring, ',', &elemlist)) {
@@ -123,16 +124,10 @@ bool check_datestyle(char **newval, void **extra, GucSource source) {
        * We can't simply "return check_datestyle(...)" because we need
        * to handle constructs like "DEFAULT, ISO".
        */
-      char *subval;
+      std::string subval = GetConfigOptionResetString("datestyle");
       void *subextra = NULL;
 
-      subval = guc_strdup(LOG, GetConfigOptionResetString("datestyle"));
-      if (!subval) {
-        ok = false;
-        break;
-      }
-      if (!check_datestyle(&subval, &subextra, source)) {
-        guc_free(subval);
+      if (!check_datestyle(subval, &subextra, source)) {
         ok = false;
         break;
       }
@@ -141,7 +136,6 @@ bool check_datestyle(char **newval, void **extra, GucSource source) {
         newDateStyle = myextra[0];
       if (!have_order)
         newDateOrder = myextra[1];
-      guc_free(subval);
       guc_free(subextra);
     } else {
       GUC_check_errdetail("Unrecognized key word: \"%s\".", tok);
@@ -192,8 +186,8 @@ bool check_datestyle(char **newval, void **extra, GucSource source) {
     break;
   }
 
-  guc_free(*newval);
-  *newval = result;
+  newval = result;
+  guc_free(result);
 
   /*
    * Set up the "extra" struct actually used by assign_datestyle.
@@ -211,7 +205,7 @@ bool check_datestyle(char **newval, void **extra, GucSource source) {
 /*
  * assign_datestyle: GUC assign_hook for datestyle
  */
-void assign_datestyle(const char *newval, void *extra) {
+void assign_datestyle(const std::string &newval, void *extra) {
   int *myextra = (int *)extra;
 
   DateStyle = myextra[0];
@@ -225,18 +219,18 @@ void assign_datestyle(const char *newval, void *extra) {
 /*
  * check_timezone: GUC check_hook for timezone
  */
-bool check_timezone(char **newval, void **extra, GucSource source) {
+bool check_timezone(std::string &newval, void **extra, GucSource source) {
   pg_tz *new_tz;
   long gmtoffset;
   char *endptr;
   double hours;
 
-  if (pg_strncasecmp(*newval, "interval", 8) == 0) {
+  if (pg_strncasecmp(newval.c_str(), "interval", 8) == 0) {
     /*
      * Support INTERVAL 'foo'.  This is for SQL spec compliance, not
      * because it has any actual real-world usefulness.
      */
-    const char *valueptr = *newval;
+    const char *valueptr = newval.c_str();
     char *val;
     Interval *interval;
 
@@ -285,8 +279,8 @@ bool check_timezone(char **newval, void **extra, GucSource source) {
     /*
      * Try it as a numeric number of hours (possibly fractional).
      */
-    hours = strtod(*newval, &endptr);
-    if (endptr != *newval && *endptr == '\0') {
+    hours = strtod(newval.c_str(), &endptr);
+    if (endptr != newval.c_str() && *endptr == '\0') {
       /* Here we change from SQL to Unix sign convention */
       gmtoffset = -hours * SECS_PER_HOUR;
       new_tz = pg_tzset_offset(gmtoffset);
@@ -294,7 +288,7 @@ bool check_timezone(char **newval, void **extra, GucSource source) {
       /*
        * Otherwise assume it is a timezone name, and try to load it.
        */
-      new_tz = pg_tzset(*newval);
+      new_tz = pg_tzset(newval.c_str());
 
       if (!new_tz) {
         /* Doesn't seem to be any great value in errdetail here */
@@ -303,7 +297,7 @@ bool check_timezone(char **newval, void **extra, GucSource source) {
 
       if (!pg_tz_acceptable(new_tz)) {
         GUC_check_errmsg("time zone \"%s\" appears to use leap seconds",
-                         *newval);
+                         newval.c_str());
         GUC_check_errdetail("PostgreSQL does not support leap seconds.");
         return false;
       }
@@ -330,7 +324,7 @@ bool check_timezone(char **newval, void **extra, GucSource source) {
 /*
  * assign_timezone: GUC assign_hook for timezone
  */
-void assign_timezone(const char *newval, void *extra) {
+void assign_timezone(const std::string &newval, void *extra) {
   session_timezone = *((pg_tz **)extra);
   /* datetime.c's cache of timezone abbrevs may now be obsolete */
   ClearTimeZoneAbbrevCache();
@@ -362,13 +356,13 @@ const char *show_timezone(void) {
 /*
  * check_log_timezone: GUC check_hook for log_timezone
  */
-bool check_log_timezone(char **newval, void **extra, GucSource source) {
+bool check_log_timezone(std::string &newval, void **extra, GucSource source) {
   pg_tz *new_tz;
 
   /*
    * Assume it is a timezone name, and try to load it.
    */
-  new_tz = pg_tzset(*newval);
+  new_tz = pg_tzset(newval.c_str());
 
   if (!new_tz) {
     /* Doesn't seem to be any great value in errdetail here */
@@ -376,7 +370,8 @@ bool check_log_timezone(char **newval, void **extra, GucSource source) {
   }
 
   if (!pg_tz_acceptable(new_tz)) {
-    GUC_check_errmsg("time zone \"%s\" appears to use leap seconds", *newval);
+    GUC_check_errmsg("time zone \"%s\" appears to use leap seconds",
+                     newval.c_str());
     GUC_check_errdetail("PostgreSQL does not support leap seconds.");
     return false;
   }
@@ -399,7 +394,7 @@ bool check_log_timezone(char **newval, void **extra, GucSource source) {
  * postmaster's thread writes. log_timezone changes with a restart, so a
  * session thread meets only the value the postmaster has already set.
  */
-void assign_log_timezone(const char *newval, void *extra) {
+void assign_log_timezone(const std::string &newval, void *extra) {
   if (NULL != postmaster_tcb)
     pcb_main()->log_timezone = *((pg_tz **)extra);
 }
@@ -426,7 +421,7 @@ const char *show_log_timezone(void) {
 /*
  * GUC check_hook for timezone_abbreviations
  */
-bool check_timezone_abbreviations(char **newval, void **extra,
+bool check_timezone_abbreviations(std::string &newval, void **extra,
                                   GucSource source) {
   /*
    * The boot_val for timezone_abbreviations is NULL.  When we see that we
@@ -438,13 +433,11 @@ bool check_timezone_abbreviations(char **newval, void **extra,
    * The latter doesn't work in an EXEC_BACKEND subprocess because
    * my_exec_path hasn't been set yet and so we can't locate PGSHAREDIR.
    */
-  if (*newval == NULL) {
-    Assert(source == PGC_S_DEFAULT);
+  if (newval.empty() && source == PGC_S_DEFAULT)
     return true;
-  }
 
   /* OK, load the file and produce a guc_malloc'd TimeZoneAbbrevTable */
-  *extra = load_tzoffsets(*newval);
+  *extra = load_tzoffsets(newval.c_str());
 
   /* tzparser.c returns NULL on failure, reporting via GUC_check_errmsg */
   if (!*extra)
@@ -456,7 +449,7 @@ bool check_timezone_abbreviations(char **newval, void **extra,
 /*
  * GUC assign_hook for timezone_abbreviations
  */
-void assign_timezone_abbreviations(const char *newval, void *extra) {
+void assign_timezone_abbreviations(const std::string &newval, void *extra) {
   /* Do nothing for the boot_val default of NULL */
   if (!extra)
     return;
@@ -583,12 +576,13 @@ const char *show_random_seed(void) { return "unavailable"; }
  * SET CLIENT_ENCODING
  */
 
-bool check_client_encoding(char **newval, void **extra, GucSource source) {
+bool check_client_encoding(std::string &newval, void **extra,
+                           GucSource source) {
   int encoding;
   const char *canonical_name;
 
   /* Look up the encoding by name */
-  encoding = pg_valid_client_encoding(*newval);
+  encoding = pg_valid_client_encoding(newval.c_str());
   if (encoding < 0)
     return false;
 
@@ -632,12 +626,8 @@ bool check_client_encoding(char **newval, void **extra, GucSource source) {
    * a workaround, don't replace the string if it's "UNICODE".  Remove that
    * hack when pre-9.1 JDBC drivers are no longer in use.
    */
-  if (strcmp(*newval, canonical_name) != 0 && strcmp(*newval, "UNICODE") != 0) {
-    guc_free(*newval);
-    *newval = guc_strdup(LOG, canonical_name);
-    if (!*newval)
-      return false;
-  }
+  if (newval != canonical_name && newval != "UNICODE")
+    newval = canonical_name;
 
   /*
    * Save the encoding's ID in *extra, for use by assign_client_encoding.
@@ -650,7 +640,7 @@ bool check_client_encoding(char **newval, void **extra, GucSource source) {
   return true;
 }
 
-void assign_client_encoding(const char *newval, void *extra) {
+void assign_client_encoding(const std::string &newval, void *extra) {
   int encoding = *((int *)extra);
 
   /* We do not expect an error if PrepareClientEncoding succeeded */
@@ -668,7 +658,7 @@ typedef struct {
   bool is_superuser;
 } role_auth_extra;
 
-bool check_session_authorization(char **newval, void **extra,
+bool check_session_authorization(std::string &newval, void **extra,
                                  GucSource source) {
   HeapTuple roleTup;
   Form_pg_authid roleform;
@@ -676,8 +666,8 @@ bool check_session_authorization(char **newval, void **extra,
   bool is_superuser;
   role_auth_extra *myextra;
 
-  /* Do nothing for the boot_val default of NULL */
-  if (*newval == NULL)
+  /* Do nothing for the boot_val default, which is "no value" (empty) */
+  if (newval.empty() && source == PGC_S_DEFAULT)
     return true;
 
   if (!IsTransactionState()) {
@@ -697,14 +687,14 @@ bool check_session_authorization(char **newval, void **extra,
    */
 
   /* Look up the username */
-  roleTup = SearchSysCache1(AUTHNAME, PointerGetDatum(*newval));
+  roleTup = SearchSysCache1(AUTHNAME, PointerGetDatum(newval.c_str()));
   if (!HeapTupleIsValid(roleTup)) {
     if (source == PGC_S_TEST) {
       ereport(NOTICE, (errcode(ERRCODE_UNDEFINED_OBJECT),
-                       errmsg("role \"%s\" does not exist", *newval)));
+                       errmsg("role \"%s\" does not exist", newval.c_str())));
       return true;
     }
-    GUC_check_errmsg("role \"%s\" does not exist", *newval);
+    GUC_check_errmsg("role \"%s\" does not exist", newval.c_str());
     return false;
   }
 
@@ -725,12 +715,12 @@ bool check_session_authorization(char **newval, void **extra,
       ereport(NOTICE, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                        errmsg("permission will be denied to set session "
                               "authorization \"%s\"",
-                              *newval)));
+                              newval.c_str())));
       return true;
     }
     GUC_check_errcode(ERRCODE_INSUFFICIENT_PRIVILEGE);
     GUC_check_errmsg("permission denied to set session authorization \"%s\"",
-                     *newval);
+                     newval.c_str());
     return false;
   }
 
@@ -745,7 +735,7 @@ bool check_session_authorization(char **newval, void **extra,
   return true;
 }
 
-void assign_session_authorization(const char *newval, void *extra) {
+void assign_session_authorization(const std::string &newval, void *extra) {
   role_auth_extra *myextra = (role_auth_extra *)extra;
 
   /* Do nothing for the boot_val default of NULL */
@@ -763,14 +753,14 @@ void assign_session_authorization(const char *newval, void *extra) {
  * SET SESSION AUTHORIZATION.
  */
 
-bool check_role(char **newval, void **extra, GucSource source) {
+bool check_role(std::string &newval, void **extra, GucSource source) {
   HeapTuple roleTup;
   Oid roleid;
   bool is_superuser;
   role_auth_extra *myextra;
   Form_pg_authid roleform;
 
-  if (strcmp(*newval, "none") == 0) {
+  if (strcmp(newval.c_str(), "none") == 0) {
     /* hardwired translation */
     roleid = InvalidOid;
     is_superuser = false;
@@ -791,14 +781,14 @@ bool check_role(char **newval, void **extra, GucSource source) {
      */
 
     /* Look up the username */
-    roleTup = SearchSysCache1(AUTHNAME, PointerGetDatum(*newval));
+    roleTup = SearchSysCache1(AUTHNAME, PointerGetDatum(newval.c_str()));
     if (!HeapTupleIsValid(roleTup)) {
       if (source == PGC_S_TEST) {
         ereport(NOTICE, (errcode(ERRCODE_UNDEFINED_OBJECT),
-                         errmsg("role \"%s\" does not exist", *newval)));
+                         errmsg("role \"%s\" does not exist", newval.c_str())));
         return true;
       }
-      GUC_check_errmsg("role \"%s\" does not exist", *newval);
+      GUC_check_errmsg("role \"%s\" does not exist", newval.c_str());
       return false;
     }
 
@@ -813,11 +803,11 @@ bool check_role(char **newval, void **extra, GucSource source) {
       if (source == PGC_S_TEST) {
         ereport(NOTICE, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                          errmsg("permission will be denied to set role \"%s\"",
-                                *newval)));
+                                newval.c_str())));
         return true;
       }
       GUC_check_errcode(ERRCODE_INSUFFICIENT_PRIVILEGE);
-      GUC_check_errmsg("permission denied to set role \"%s\"", *newval);
+      GUC_check_errmsg("permission denied to set role \"%s\"", newval.c_str());
       return false;
     }
   }
@@ -833,7 +823,7 @@ bool check_role(char **newval, void **extra, GucSource source) {
   return true;
 }
 
-void assign_role(const char *newval, void *extra) {
+void assign_role(const std::string &newval, void *extra) {
   role_auth_extra *myextra = (role_auth_extra *)extra;
 
   SetCurrentRoleId(myextra->roleid, myextra->is_superuser);
@@ -861,14 +851,18 @@ const char *show_role(void) {
  * all we want to do is canonicalize the represented path name.
  */
 
-bool check_canonical_path(char **newval, void **extra, GucSource source) {
+bool check_canonical_path(std::string &newval, void **extra, GucSource source) {
   /*
    * Since canonicalize_path never enlarges the string, we can just modify
-   * newval in-place.  But watch out for NULL, which is the default value
-   * for external_pid_file.
+   * a copy of newval in-place.  An empty string is the default value for
+   * external_pid_file, and canonicalizes to itself.
    */
-  if (*newval)
-    canonicalize_path(*newval);
+  if (!newval.empty()) {
+    std::vector<char> path(newval.c_str(), newval.c_str() + newval.size() + 1);
+
+    canonicalize_path(path.data());
+    newval = path.data();
+  }
   return true;
 }
 
@@ -879,55 +873,38 @@ bool check_canonical_path(char **newval, void **extra, GucSource source) {
 /*
  * GUC check_hook for application_name
  */
-bool check_application_name(char **newval, void **extra, GucSource source) {
+bool check_application_name(std::string &newval, void **extra,
+                            GucSource source) {
   char *clean;
-  char *ret;
 
   /* Only allow clean ASCII chars in the application name */
-  clean = pg_clean_ascii(*newval, MCXT_ALLOC_NO_OOM);
+  clean = pg_clean_ascii(newval.c_str(), MCXT_ALLOC_NO_OOM);
   if (!clean)
     return false;
 
-  ret = guc_strdup(LOG, clean);
-  if (!ret) {
-    pfree(clean);
-    return false;
-  }
-
-  guc_free(*newval);
-
+  newval = clean;
   pfree(clean);
-  *newval = ret;
   return true;
 }
 
 /*
  * GUC assign_hook for application_name
  */
-void assign_application_name(const char *newval, void *extra) {}
+void assign_application_name(const std::string &newval, void *extra) {}
 
 /*
  * GUC check_hook for cluster_name
  */
-bool check_cluster_name(char **newval, void **extra, GucSource source) {
+bool check_cluster_name(std::string &newval, void **extra, GucSource source) {
   char *clean;
-  char *ret;
 
   /* Only allow clean ASCII chars in the cluster name */
-  clean = pg_clean_ascii(*newval, MCXT_ALLOC_NO_OOM);
+  clean = pg_clean_ascii(newval.c_str(), MCXT_ALLOC_NO_OOM);
   if (!clean)
     return false;
 
-  ret = guc_strdup(LOG, clean);
-  if (!ret) {
-    pfree(clean);
-    return false;
-  }
-
-  guc_free(*newval);
-
+  newval = clean;
   pfree(clean);
-  *newval = ret;
   return true;
 }
 

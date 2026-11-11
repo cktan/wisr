@@ -42,8 +42,9 @@ extern void DropOwnedObjects(DropOwnedStmt *stmt);
 extern void ReassignOwnedObjects(ReassignOwnedStmt *stmt);
 extern List *roleSpecsToIds(List *memberNames);
 
-extern bool check_createrole_self_grant(char **newval, void **extra,
+extern bool check_createrole_self_grant(std::string &newval, void **extra,
                                         GucSource source);
-extern void assign_createrole_self_grant(const char *newval, void *extra);
+extern void assign_createrole_self_grant(const std::string &newval,
+                                         void *extra);
 
 #endif /* USER_H */

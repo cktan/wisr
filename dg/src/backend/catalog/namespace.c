@@ -3880,9 +3880,9 @@ void ResetTempTableNamespace(void) {
  */
 
 /* check_hook: validate new search_path value */
-bool check_search_path(char **newval, void **extra, GucSource source) {
+bool check_search_path(std::string &newval, void **extra, GucSource source) {
   Oid roleid = InvalidOid;
-  const char *searchPath = *newval;
+  const char *searchPath = newval.c_str();
   char *rawname;
   List *namelist;
   bool use_cache = (SearchPathCacheContext != NULL);
@@ -3932,7 +3932,7 @@ bool check_search_path(char **newval, void **extra, GucSource source) {
 }
 
 /* assign_hook: do extra actions as needed */
-void assign_search_path(const char *newval, void *extra) {
+void assign_search_path(const std::string &newval, void *extra) {
   /* don't access search_path during bootstrap */
   Assert(!IsBootstrapProcessingMode());
 

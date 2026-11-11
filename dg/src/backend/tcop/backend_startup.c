@@ -950,14 +950,15 @@ static bool validate_log_connections_options(List *elemlist, uint32 *flags) {
 /*
  * GUC check hook for log_connections
  */
-bool check_log_connections(char **newval, void **extra, GucSource source) {
+bool check_log_connections(std::string &newval, void **extra,
+                           GucSource source) {
   uint32 flags;
   char *rawstring;
   List *elemlist;
   bool success;
 
   /* Need a modifiable copy of string */
-  rawstring = pstrdup(*newval);
+  rawstring = pstrdup(newval.c_str());
 
   if (!SplitIdentifierString(rawstring, ',', &elemlist)) {
     GUC_check_errdetail("Invalid list syntax in parameter \"%s\".",
@@ -992,6 +993,6 @@ bool check_log_connections(char **newval, void **extra, GucSource source) {
 /*
  * GUC assign hook for log_connections
  */
-void assign_log_connections(const char *newval, void *extra) {
+void assign_log_connections(const std::string &newval, void *extra) {
   log_connections = *((int *)extra);
 }

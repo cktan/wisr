@@ -182,14 +182,14 @@ typedef bool (*GucBoolCheckHook)(bool *newval, void **extra, GucSource source);
 typedef bool (*GucIntCheckHook)(int *newval, void **extra, GucSource source);
 typedef bool (*GucRealCheckHook)(double *newval, void **extra,
                                  GucSource source);
-typedef bool (*GucStringCheckHook)(char **newval, void **extra,
+typedef bool (*GucStringCheckHook)(std::string &newval, void **extra,
                                    GucSource source);
 typedef bool (*GucEnumCheckHook)(int *newval, void **extra, GucSource source);
 
 typedef void (*GucBoolAssignHook)(bool newval, void *extra);
 typedef void (*GucIntAssignHook)(int newval, void *extra);
 typedef void (*GucRealAssignHook)(double newval, void *extra);
-typedef void (*GucStringAssignHook)(const char *newval, void *extra);
+typedef void (*GucStringAssignHook)(const std::string &newval, void *extra);
 typedef void (*GucEnumAssignHook)(int newval, void *extra);
 
 typedef const char *(*GucShowHook)(void);

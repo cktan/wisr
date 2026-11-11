@@ -2835,7 +2835,7 @@ void assign_transaction_timeout(int newval, void *extra) {
 /*
  * GUC check_hook for restrict_nonsystem_relation_kind
  */
-bool check_restrict_nonsystem_relation_kind(char **newval, void **extra,
+bool check_restrict_nonsystem_relation_kind(std::string &newval, void **extra,
                                             GucSource source) {
   char *rawstring;
   List *elemlist;
@@ -2843,7 +2843,7 @@ bool check_restrict_nonsystem_relation_kind(char **newval, void **extra,
   int flags = 0;
 
   /* Need a modifiable copy of string */
-  rawstring = pstrdup(*newval);
+  rawstring = pstrdup(newval.c_str());
 
   if (!SplitIdentifierString(rawstring, ',', &elemlist)) {
     /* syntax error in list */
@@ -2883,7 +2883,8 @@ bool check_restrict_nonsystem_relation_kind(char **newval, void **extra,
 /*
  * GUC assign_hook for restrict_nonsystem_relation_kind
  */
-void assign_restrict_nonsystem_relation_kind(const char *newval, void *extra) {
+void assign_restrict_nonsystem_relation_kind(const std::string &newval,
+                                             void *extra) {
   int *flags = (int *)extra;
 
   restrict_nonsystem_relation_kind = *flags;

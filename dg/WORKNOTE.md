@@ -13331,3 +13331,27 @@ Step 434 made the string fields of `tcb->guc` and `pcb`
   `define_custom_variable()` deletes with the placeholder.
 - **`check_GUC_init()` compares the `std::string`** with the boot
   value, "" for a NULL one.
+
+## Step 440: a string setting's hooks take a std::string
+
+A check hook took the new value as a `char **`, to change it with
+`guc_malloc`; an assign hook took a `const char *`.
+
+- **Check hook**: `bool (std::string &newval, void **extra,
+  GucSource)`. `call_string_check_hook()` gives it a copy of the
+  value, and if the hook changed it, makes a `guc_malloc`'d copy
+  that guc.c keeps.
+- **Assign hook**: `void (const std::string &newval, void *extra)`,
+  called through `call_string_assign_hook()`.
+- **NULL is `""` to a hook.** Two hooks used NULL: the boot value
+  of `timezone_abbreviations` means "do nothing" and the boot
+  value of `session_authorization` means "no value". Each tests
+  `newval.empty() && source == PGC_S_DEFAULT`, so a user's
+  `SET ... = ''` still gets its error. `check_canonical_path()`
+  works on a copy of the path, as `canonicalize_path()` changes a
+  C string in place.
+- **About 24 check hooks and 20 assign hooks changed**, in
+  `variable.c`, `pg_locale.c`, `elog.c`, `namespace.c`, `user.c`,
+  `postgres.c`, `backend_startup.c` and `tableamapi.c`.
+- **The "extra" blobs are unchanged**: they stay `guc_malloc`'d
+  `void *`.

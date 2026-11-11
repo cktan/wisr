@@ -90,15 +90,15 @@ const TableAmRoutine *GetTableAmRoutine(Oid amhandler) {
 }
 
 /* check_hook: validate new default_table_access_method */
-bool check_default_table_access_method(char **newval, void **extra,
+bool check_default_table_access_method(std::string &newval, void **extra,
                                        GucSource source) {
-  if (**newval == '\0') {
+  if (newval.empty()) {
     GUC_check_errdetail("\"%s\" cannot be empty.",
                         "default_table_access_method");
     return false;
   }
 
-  if (strlen(*newval) >= NAMEDATALEN) {
+  if (newval.size() >= NAMEDATALEN) {
     GUC_check_errdetail("\"%s\" is too long (maximum %d characters).",
                         "default_table_access_method", NAMEDATALEN - 1);
     return false;
@@ -110,19 +110,19 @@ bool check_default_table_access_method(char **newval, void **extra,
    * accept the value on faith.
    */
   if (IsTransactionState() && MyDatabaseId != InvalidOid) {
-    if (!OidIsValid(get_table_am_oid(*newval, true))) {
+    if (!OidIsValid(get_table_am_oid(newval.c_str(), true))) {
       /*
        * When source == PGC_S_TEST, don't throw a hard error for a
        * nonexistent table access method, only a NOTICE. See comments in
        * guc.h.
        */
       if (source == PGC_S_TEST) {
-        ereport(NOTICE,
-                (errcode(ERRCODE_UNDEFINED_OBJECT),
-                 errmsg("table access method \"%s\" does not exist", *newval)));
+        ereport(NOTICE, (errcode(ERRCODE_UNDEFINED_OBJECT),
+                         errmsg("table access method \"%s\" does not exist",
+                                newval.c_str())));
       } else {
         GUC_check_errdetail("Table access method \"%s\" does not exist.",
-                            *newval);
+                            newval.c_str());
         return false;
       }
     }

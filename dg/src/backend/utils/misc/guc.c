@@ -260,6 +260,8 @@ static bool call_real_check_hook(struct config_real *conf, double *newval,
                                  void **extra, GucSource source, int elevel);
 static bool call_string_check_hook(struct config_string *conf, char **newval,
                                    void **extra, GucSource source, int elevel);
+static void call_string_assign_hook(struct config_string *conf,
+                                    const char *newval, void *extra);
 static bool call_enum_check_hook(struct config_enum *conf, int *newval,
                                  void **extra, GucSource source, int elevel);
 
@@ -1534,8 +1536,7 @@ static void InitializeOneGUCOption(struct config_generic *gconf) {
     if (!call_string_check_hook(conf, &newval, &extra, PGC_S_DEFAULT, LOG))
       elog(FATAL, "failed to initialize %s to \"%s\"", conf->gen.name,
            newval ? newval : "");
-    if (conf->assign_hook)
-      conf->assign_hook(newval, extra);
+    call_string_assign_hook(conf, newval, extra);
     conf->variable.set(newval);
     conf->reset_val = newval;
     conf->gen.extra = conf->reset_extra = extra;
@@ -1777,8 +1778,7 @@ void ResetAllOptions(void) {
     case PGC_STRING: {
       struct config_string *conf = (struct config_string *)gconf;
 
-      if (conf->assign_hook)
-        conf->assign_hook(conf->reset_val, conf->reset_extra);
+      call_string_assign_hook(conf, conf->reset_val, conf->reset_extra);
       set_string_variable(conf, conf->reset_val);
       set_extra_field(&conf->gen, &conf->gen.extra, conf->reset_extra);
       break;
@@ -2109,8 +2109,7 @@ void AtEOXact_GUC(bool isCommit, int nestLevel) {
 
           if (conf->variable.get() != newval ||
               conf->gen.extra != newextra) {
-            if (conf->assign_hook)
-              conf->assign_hook(newval, newextra);
+            call_string_assign_hook(conf, newval, newextra);
             set_string_variable(conf, newval);
             set_extra_field(&conf->gen, &conf->gen.extra, newextra);
             changed = true;
@@ -3473,8 +3472,7 @@ int set_config_with_handle(const char *name, config_handle *handle,
       if (!makeDefault)
         push_old_value(&conf->gen, action);
 
-      if (conf->assign_hook)
-        conf->assign_hook(newval, newextra);
+      call_string_assign_hook(conf, newval, newextra);
       set_string_variable(conf, newval);
       set_extra_field(&conf->gen, &conf->gen.extra, newextra);
       set_guc_source(&conf->gen, source);
@@ -5418,7 +5416,10 @@ static bool call_string_check_hook(struct config_string *conf, char **newval,
     GUC_check_errdetail_string = NULL;
     GUC_check_errhint_string = NULL;
 
-    if (!conf->check_hook(newval, extra, source)) {
+    /* The hook sees the value as a std::string: NULL is "" to it. */
+    std::string value(*newval ? *newval : "");
+
+    if (!conf->check_hook(value, extra, source)) {
       ereport(elevel,
               (errcode(GUC_check_errcode_value),
                GUC_check_errmsg_string
@@ -5434,6 +5435,16 @@ static bool call_string_check_hook(struct config_string *conf, char **newval,
       /* Flush any strings created in ErrorContext */
       FlushErrorState();
       result = false;
+    } else if (value != (*newval ? *newval : "")) {
+      /* The hook changed the value: guc.c keeps a guc_malloc'd copy. */
+      char *copy = guc_strdup(LOG, value.c_str());
+
+      if (!copy)
+        result = false;
+      else {
+        guc_free(*newval);
+        *newval = copy;
+      }
     }
   }
   PG_CATCH();
@@ -5444,6 +5455,13 @@ static bool call_string_check_hook(struct config_string *conf, char **newval,
   PG_END_TRY();
 
   return result;
+}
+
+/* Call a string setting's assign hook, if it has one: NULL is "" to it. */
+static void call_string_assign_hook(struct config_string *conf,
+                                    const char *newval, void *extra) {
+  if (conf->assign_hook)
+    conf->assign_hook(std::string(newval ? newval : ""), extra);
 }
 
 static bool call_enum_check_hook(struct config_enum *conf, int *newval,

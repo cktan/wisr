@@ -2379,7 +2379,7 @@ static void InitGrantRoleOptions(GrantRoleOptions *popt) {
 /*
  * GUC check_hook for createrole_self_grant
  */
-bool check_createrole_self_grant(char **newval, void **extra,
+bool check_createrole_self_grant(std::string &newval, void **extra,
                                  GucSource source) {
   char *rawstring;
   List *elemlist;
@@ -2388,7 +2388,7 @@ bool check_createrole_self_grant(char **newval, void **extra,
   unsigned *result;
 
   /* Need a modifiable copy of string */
-  rawstring = pstrdup(*newval);
+  rawstring = pstrdup(newval.c_str());
 
   if (!SplitIdentifierString(rawstring, ',', &elemlist)) {
     /* syntax error in list */
@@ -2428,7 +2428,7 @@ bool check_createrole_self_grant(char **newval, void **extra,
 /*
  * GUC assign_hook for createrole_self_grant
  */
-void assign_createrole_self_grant(const char *newval, void *extra) {
+void assign_createrole_self_grant(const std::string &newval, void *extra) {
   unsigned options = *(unsigned *)extra;
 
   createrole_self_grant_enabled = (options != 0);

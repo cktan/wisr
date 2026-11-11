@@ -1945,8 +1945,9 @@ char *GetErrorContextStack(void) {
  * non-reentrant strtok(), as well as keeping the output data in a
  * single palloc() chunk.
  */
-bool check_backtrace_functions(char **newval, void **extra, GucSource source) {
-  int newvallen = strlen(*newval);
+bool check_backtrace_functions(std::string &newval, void **extra,
+                               GucSource source) {
+  int newvallen = newval.size();
   char *someval;
   int validlen;
   int i;
@@ -1956,16 +1957,16 @@ bool check_backtrace_functions(char **newval, void **extra, GucSource source) {
    * Allow characters that can be C identifiers and commas as separators, as
    * well as some whitespace for readability.
    */
-  validlen = strspn(*newval, "0123456789_"
-                             "abcdefghijklmnopqrstuvwxyz"
-                             "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                             ", \n\t");
+  validlen = strspn(newval.c_str(), "0123456789_"
+                                    "abcdefghijklmnopqrstuvwxyz"
+                                    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                    ", \n\t");
   if (validlen != newvallen) {
     GUC_check_errdetail("Invalid character.");
     return false;
   }
 
-  if (*newval[0] == '\0') {
+  if (newval.empty()) {
     *extra = NULL;
     return true;
   }
@@ -1979,13 +1980,12 @@ bool check_backtrace_functions(char **newval, void **extra, GucSource source) {
   if (!someval)
     return false;
   for (i = 0, j = 0; i < newvallen; i++) {
-    if ((*newval)[i] == ',')
+    if (newval[i] == ',')
       someval[j++] = '\0'; /* next item */
-    else if ((*newval)[i] == ' ' || (*newval)[i] == '\n' ||
-             (*newval)[i] == '\t')
+    else if (newval[i] == ' ' || newval[i] == '\n' || newval[i] == '\t')
       ; /* ignore these */
     else
-      someval[j++] = (*newval)[i]; /* copy anything else */
+      someval[j++] = newval[i]; /* copy anything else */
   }
 
   /* two \0s end the setting */
@@ -1999,14 +1999,15 @@ bool check_backtrace_functions(char **newval, void **extra, GucSource source) {
 /*
  * GUC assign_hook for backtrace_functions
  */
-void assign_backtrace_functions(const char *newval, void *extra) {
+void assign_backtrace_functions(const std::string &newval, void *extra) {
   backtrace_function_list = (char *)extra;
 }
 
 /*
  * GUC check_hook for log_destination
  */
-bool check_log_destination(char **newval, void **extra, GucSource source) {
+bool check_log_destination(std::string &newval, void **extra,
+                           GucSource source) {
   char *rawstring;
   List *elemlist;
   ListCell *l;
@@ -2014,7 +2015,7 @@ bool check_log_destination(char **newval, void **extra, GucSource source) {
   int *myextra;
 
   /* Need a modifiable copy of string */
-  rawstring = pstrdup(*newval);
+  rawstring = pstrdup(newval.c_str());
 
   /* Parse string into list of identifiers */
   if (!SplitIdentifierString(rawstring, ',', &elemlist)) {
@@ -2061,7 +2062,7 @@ bool check_log_destination(char **newval, void **extra, GucSource source) {
 /*
  * GUC assign_hook for log_destination
  */
-void assign_log_destination(const char *newval, void *extra) {
+void assign_log_destination(const std::string &newval, void *extra) {
   Log_destination = *((int *)extra);
 }
 

@@ -143,6 +143,11 @@ or not. This keeps one variable's move small.
      `char *` variable: a file-scope variable, a custom setting
      (`DefineCustomStringVariable()`) and a placeholder are all
      a `std::string` too.
+   - A string setting's check hook takes the new value as a
+     `std::string &` and may change it; its assign hook takes a
+     `const std::string &`. A NULL value is `""` to a hook:
+     where a hook tested NULL, it tests `newval.empty()` and
+     `source == PGC_S_DEFAULT`.
 2. Bind the table entry. For group 3,
    `build_guc_variables()` sets the entry's `variable` pointer
    to `&tcb->guc.name` as it builds the thread's table.

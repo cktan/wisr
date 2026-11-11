@@ -382,27 +382,28 @@ bool check_locale(int category, const char *locale, char **canonname) {
  * value, whatever it was (so long as the environment setting is legal).
  * This will have been locked down by an earlier call to pg_perm_setlocale.
  */
-bool check_locale_monetary(char **newval, void **extra, GucSource source) {
-  return check_locale(LC_MONETARY, *newval, NULL);
+bool check_locale_monetary(std::string &newval, void **extra,
+                           GucSource source) {
+  return check_locale(LC_MONETARY, newval.c_str(), NULL);
 }
 
-void assign_locale_monetary(const char *newval, void *extra) {
+void assign_locale_monetary(const std::string &newval, void *extra) {
   CurrentLocaleConvValid = false;
 }
 
-bool check_locale_numeric(char **newval, void **extra, GucSource source) {
-  return check_locale(LC_NUMERIC, *newval, NULL);
+bool check_locale_numeric(std::string &newval, void **extra, GucSource source) {
+  return check_locale(LC_NUMERIC, newval.c_str(), NULL);
 }
 
-void assign_locale_numeric(const char *newval, void *extra) {
+void assign_locale_numeric(const std::string &newval, void *extra) {
   CurrentLocaleConvValid = false;
 }
 
-bool check_locale_time(char **newval, void **extra, GucSource source) {
-  return check_locale(LC_TIME, *newval, NULL);
+bool check_locale_time(std::string &newval, void **extra, GucSource source) {
+  return check_locale(LC_TIME, newval.c_str(), NULL);
 }
 
-void assign_locale_time(const char *newval, void *extra) {
+void assign_locale_time(const std::string &newval, void *extra) {
   CurrentLCTimeValid = false;
 }
 
@@ -416,8 +417,9 @@ void assign_locale_time(const char *newval, void *extra) {
  * The idea there is just to accept the environment setting *if possible*
  * during startup, until we can read the proper value from postgresql.conf.
  */
-bool check_locale_messages(char **newval, void **extra, GucSource source) {
-  if (**newval == '\0') {
+bool check_locale_messages(std::string &newval, void **extra,
+                           GucSource source) {
+  if (newval.empty()) {
     if (source == PGC_S_DEFAULT)
       return true;
     else
@@ -430,7 +432,7 @@ bool check_locale_messages(char **newval, void **extra, GucSource source) {
    * On Windows, we can't even check the value, so accept blindly
    */
 #if defined(LC_MESSAGES) && !defined(WIN32)
-  return check_locale(LC_MESSAGES, *newval, NULL);
+  return check_locale(LC_MESSAGES, newval.c_str(), NULL);
 #else
   return true;
 #endif
@@ -442,7 +444,7 @@ bool check_locale_messages(char **newval, void **extra, GucSource source) {
  * nothing is translated, so only strerror()'s text, in the language
  * main() set, is not the session's.
  */
-void assign_locale_messages(const char *newval, void *extra) {}
+void assign_locale_messages(const std::string &newval, void *extra) {}
 
 /*
  * Frees the malloced content of a struct lconv.  (But not the struct
