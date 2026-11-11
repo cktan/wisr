@@ -665,9 +665,6 @@ void PostmasterMain(int argc, char *argv[]) {
    */
   logfile_open();
 
-  /* Read the superuser and the databases, which every backend inherits */
-  datadir_load();
-
   /*
    * Check for invalid combinations of GUC settings.
    */
@@ -732,6 +729,14 @@ void PostmasterMain(int argc, char *argv[]) {
    * lockfiles go away after CloseServerPorts runs.
    */
   CreateDataDirLockFile(true);
+
+  /*
+   * Read the superuser and the databases, which every backend inherits.
+   * After the lockfile: a second postmaster on this directory then stops at
+   * postmaster.pid, not at RocksDB's LOCK, and at exit sm detaches before
+   * postmaster.pid goes.
+   */
+  datadir_load();
 
   /* Make the nonce for mock authentication, which sessions copy */
   scram_init_mock_nonce();

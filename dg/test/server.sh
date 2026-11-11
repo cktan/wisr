@@ -173,6 +173,18 @@ echo leftover > "$work/data/base/pgsql_tmp/pgsql_tmp99.0"
 server=$!
 server_ready $server "$work/log" || fail "start"
 
+# Verify that a second server on the same data directory stops at its
+# postmaster.pid, before it attaches sm.
+# 1. Start another server on the running one's data directory.
+# 2. Confirm it fails, saying a server runs there.
+# 3. Confirm it did not reach sm, whose RocksDB LOCK would refuse it.
+$digres -D "$work/data" -k "$work" -p "$port" > "$work/second.out" 2>&1 &&
+  fail "a second server is refused"
+grep -q 'lock file "postmaster.pid" already exists' "$work/second.out" ||
+  fail "a second server names postmaster.pid"
+grep -q "could not attach storage" "$work/second.out" &&
+  fail "a second server stops before sm"
+
 # Verify that startup removes the temporary files a prior run left, in
 # base/pgsql_tmp alone: there is no other tablespace to look in.
 # 1. Before the start above, a leftover temporary file was planted.
