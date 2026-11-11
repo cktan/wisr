@@ -689,21 +689,25 @@ from `dg/`, then move the setting into `tcb->guc`. Choose one:
 - **A parameter**: the caller in `dg/` passes the value in the
   call that needs it.
 
-### dg issue 30: four hot-path settings stay plain thread_locals
+### dg issue 30: two hot-path settings stay plain thread_locals
 
 The move of the settings into the control blocks
-([`dg/GUCPLAN.md`](dg/GUCPLAN.md) §9) left four settings
-outside `tcb->guc`: `client_min_messages`,
-`log_min_messages`, `log_min_error_statement` and `trace_sort`.
+([`dg/GUCPLAN.md`](dg/GUCPLAN.md) §9) left two settings
+outside `tcb->guc`: `client_min_messages` and `trace_sort`.
+`log_min_messages` and `log_min_error_statement` were the
+others: they are now the server's, in `pcb`.
 
 - **Why they stay.** Each is read on a hot path.
-  `errstart()` reads the first three on every message the
-  server may log, and the sort code reads `trace_sort` inside
+  `errstart()` reads `client_min_messages` on every message the
+  server may send, and the sort code reads `trace_sort` inside
   a per-tuple loop.
 - **What a move costs.** Each read loads the `tcb` pointer
   first, then the field. The cost is small but it is on every
   call, and [`CLAUDE.md`](CLAUDE.md) says to ask before a
   change that could slow a hot path.
+- **`client_min_messages` is a session's.** It filters what one
+  client sees, so one value for the server, as for the log
+  filters, would change every client's output.
 
 **What closes it:** the owner decides, after a measure of the
 cost on the optimized build (`dg/build/digres-release`). Choose

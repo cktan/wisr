@@ -1129,26 +1129,22 @@ static void execute_extension_script(Oid extensionOid,
   }
 
   /*
-   * Force client_min_messages and log_min_messages to be at least WARNING,
-   * so that we won't spam the user with useless NOTICE messages from common
-   * script actions like creating shell types.
+   * Force client_min_messages to be at least WARNING, so that we won't spam
+   * the user with useless NOTICE messages from common script actions like
+   * creating shell types.
    *
    * We use the equivalent of a function SET option to allow the setting to
    * persist for exactly the duration of the script execution.  guc.c also
    * takes care of undoing the setting on error.
    *
-   * log_min_messages can't be set by ordinary users, so for that one we
-   * pretend to be superuser.
+   * log_min_messages is the server's, not a session's (PGC_SIGHUP): the
+   * script runs with it as it is.
    */
   save_nestlevel = NewGUCNestLevel();
 
   if (client_min_messages < WARNING)
     (void)set_config_option("client_min_messages", "warning", PGC_USERSET,
                             PGC_S_SESSION, GUC_ACTION_SAVE, true, 0, false);
-  if (log_min_messages < WARNING)
-    (void)set_config_option_ext("log_min_messages", "warning", PGC_SUSET,
-                                PGC_S_SESSION, BOOTSTRAP_SUPERUSERID,
-                                GUC_ACTION_SAVE, true, 0, false);
 
   /*
    * Similarly disable check_function_bodies, to ensure that SQL functions

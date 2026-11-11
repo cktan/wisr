@@ -51,6 +51,13 @@ layer. [`PERF.md`](PERF.md) measures how fast DG runs against PG.
   reload time is, or guarded by a mutex, as the file logger's
   settings are by `shmem->log.mutex`. Each field of `shmem` is
   atomic, guarded by a mutex, or an object that guards itself.
+- **`log_min_messages` and `log_min_error_statement` are the
+  server's, not a session's.** In PG a superuser can `SET` them
+  for one session. In DG they are `PGC_SIGHUP`: a `SET` fails with
+  "cannot be changed now", as does a client's startup option. They
+  change with the configuration file, `ALTER SYSTEM` and a reload.
+  `errstart()` reads one atomic copy in `pcb`. `CREATE EXTENSION`
+  no longer raises `log_min_messages` for its script.
 - **Exceptions instead of `sigsetjmp`.** DG compiles all backend
   code as C++20. `ereport(ERROR)` throws `pg_error_t`, and
   `proc_exit()` throws `proc_exit_t` to unwind the session thread

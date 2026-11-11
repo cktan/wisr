@@ -647,7 +647,10 @@ void PostmasterMain(int argc, char *argv[]) {
      * useful to show, even if one would only expect at least PANIC.  LOG
      * entries are hidden.
      */
-    SetConfigOption("log_min_messages", "FATAL", PGC_SUSET, PGC_S_OVERRIDE);
+    SetConfigOption("log_min_messages", "FATAL", PGC_POSTMASTER,
+                    PGC_S_OVERRIDE);
+    /* errstart() reads the copy in pcb, not the variable. */
+    publish_shared_settings();
   }
 
   /* Verify that DataDir looks reasonable */

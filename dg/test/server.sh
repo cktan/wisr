@@ -5648,6 +5648,57 @@ held_wait loadtime "lt1 true" ||
 held_end loadtime
 rm "$work/data/postgresql.conf"
 
+# Verify that log_min_messages and log_min_error_statement are the server's
+# (pcb): a session cannot SET them, and a reload changes what the server
+# logs, for the postmaster's sessions all.
+# 1. A session's SET of each is refused, and the defaults are warning and
+#    error.
+# 2. A statement that raises a WARNING is logged.
+# 3. Set log_min_messages = error in the configuration file and reload:
+#    a new session shows error, and the same WARNING is no longer logged.
+# 4. Empty the file and reload (a missing file fails the reload): the
+#    WARNING is logged again.
+warns() { grep -c 'there is no transaction in progress' "$work/log"; }
+local_psql -c "set log_min_messages = error" > "$work/lm.out" 2>&1 &&
+  fail "a session sets log_min_messages"
+grep -q 'cannot be changed now' "$work/lm.out" ||
+  fail "log_min_messages: the SET's error"
+local_psql -c "set log_min_error_statement = panic" > "$work/lm.out" 2>&1 &&
+  fail "a session sets log_min_error_statement"
+grep -q 'cannot be changed now' "$work/lm.out" ||
+  fail "log_min_error_statement: the SET's error"
+[ "$(local_psql -c 'show log_min_messages')" = warning ] ||
+  fail "log_min_messages: the default"
+[ "$(local_psql -c 'show log_min_error_statement')" = error ] ||
+  fail "log_min_error_statement: the default"
+w0=$(warns)
+local_psql -c 'commit' > /dev/null 2>&1
+[ "$(warns)" = $((w0 + 1)) ] || fail "log_min_messages: a WARNING is logged"
+echo "log_min_messages = error" > "$work/data/postgresql.conf"
+[ "$(local_psql -c 'select pg_reload_conf()')" = t ] ||
+  fail "log_min_messages: pg_reload_conf"
+for _ in $(seq 50); do
+  [ "$(local_psql -c 'show log_min_messages')" = error ] && break
+  sleep 0.1
+done
+[ "$(local_psql -c 'show log_min_messages')" = error ] ||
+  fail "log_min_messages: a reload reaches a new session"
+w1=$(warns)
+local_psql -c 'commit' > /dev/null 2>&1
+[ "$(warns)" = "$w1" ] || fail "log_min_messages: a reload filters the log"
+: > "$work/data/postgresql.conf"
+[ "$(local_psql -c 'select pg_reload_conf()')" = t ] ||
+  fail "log_min_messages: pg_reload_conf after emptying the file"
+for _ in $(seq 50); do
+  [ "$(local_psql -c 'show log_min_messages')" = warning ] && break
+  sleep 0.1
+done
+w2=$(warns)
+local_psql -c 'commit' > /dev/null 2>&1
+[ "$(warns)" = $((w2 + 1)) ] ||
+  fail "log_min_messages: a WARNING is logged after the setting is gone"
+rm "$work/data/postgresql.conf"
+
 # Verify that a session reads the program's name the main thread set
 # (pcb->progname), as a new thread is no longer given a copy of it.
 # 1. Connect with a switch the server does not know in PGOPTIONS.

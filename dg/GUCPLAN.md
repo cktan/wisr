@@ -265,7 +265,11 @@ or not. This keeps one variable's move small.
     `backslash_quote`, `bytea_output`, `constraint_exclusion`,
     `xmloption` and `IntervalStyle`: `sq/` or `sm/` reads the
     variable, and they cannot see `tcb`.
-  - `client_min_messages`, `log_min_messages`,
-    `log_min_error_statement` and `trace_sort`: `errstart()` or
-    a per-tuple loop reads them. Ask before moving them
+  - `client_min_messages` and `trace_sort`: `errstart()` or a
+    per-tuple loop reads them. Ask before moving them
     ([`CLAUDE.md`](../CLAUDE.md)).
+- **`log_min_messages` and `log_min_error_statement` are in
+  `pcb`**, as atomic ints. They became `PGC_SIGHUP`, so a
+  session cannot `SET` them (`DG-vs-PG.md`). The postmaster
+  stores them in `publish_shared_settings()`, and `errstart()`
+  reads `pcb`.

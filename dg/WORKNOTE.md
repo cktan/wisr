@@ -13195,3 +13195,27 @@ each move tested and committed alone.
 - **Not moved**: the settings `sq/` or `sm/` reads, the elog and
   per-tuple ones, and the Kerberos and GSSAPI ones (compiled out).
 - **Not done**: the session reloads still run.
+
+## Step 434: the log filters are the server's
+
+`log_min_messages` and `log_min_error_statement` were
+`PGC_SUSET`: a superuser could `SET` them in one session, and
+`errstart()` read the session's thread-local copy.
+
+- **They are `PGC_SIGHUP` now.** A session's `SET`, and a
+  client's startup option, fail with "cannot be changed now".
+  The configuration file, `ALTER SYSTEM` and a reload change
+  them.
+- **`pcb` holds them**, as atomic ints that start at `WARNING`
+  and `ERROR`. `publish_shared_settings()` stores them at start
+  and on each reload; `errstart()` and `check_log_of_query()`
+  load them.
+- **The command line sets `log_min_messages` alone**: `-d`
+  (`set_debug_options()`) ignores a client's. The `-C` path sets
+  it to `FATAL` as `PGC_POSTMASTER`, and publishes it.
+- **`CREATE EXTENSION` no longer raises `log_min_messages`** to
+  `WARNING` for its script: a session cannot set it.
+- **Test** (`test/server.sh`): a session's `SET` of each is
+  refused; the defaults are `warning` and `error`; a WARNING is
+  logged, then not logged after a reload sets `error`, then
+  logged again after the file is removed.

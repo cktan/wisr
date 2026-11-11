@@ -323,6 +323,14 @@ typedef struct pcb_t {
    * session's reload of it leaves this be
    */
   std::atomic<TimestampTz> PgReloadTime{0};
+  /*
+   * guc_tables.c: the server's log filters (PGC_SIGHUP), which errstart()
+   * reads in every thread. The main thread stores them at start and on each
+   * reload (publish_shared_settings()), so a session cannot SET them.
+   * elog.c reads them; the values are WARNING and ERROR of elog.h.
+   */
+  std::atomic<int> log_min_messages{19};        /* WARNING */
+  std::atomic<int> log_min_error_statement{21}; /* ERROR */
   /* miscinit.c: shared_preload_libraries being loaded, and loaded */
   bool process_shared_preload_libraries_in_progress = false;
   bool process_shared_preload_libraries_done = false;

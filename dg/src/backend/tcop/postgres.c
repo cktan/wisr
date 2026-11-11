@@ -2896,13 +2896,19 @@ void assign_restrict_nonsystem_relation_kind(const char *newval, void *extra) {
  * other output options.
  */
 void set_debug_options(int debug_flag, GucContext context, GucSource source) {
-  if (debug_flag > 0) {
-    char debugstr[64];
+  /*
+   * log_min_messages is the server's (PGC_SIGHUP): only the command line
+   * sets it, never a client's options.
+   */
+  if (context == PGC_POSTMASTER) {
+    if (debug_flag > 0) {
+      char debugstr[64];
 
-    sprintf(debugstr, "debug%d", debug_flag);
-    SetConfigOption("log_min_messages", debugstr, context, source);
-  } else
-    SetConfigOption("log_min_messages", "notice", context, source);
+      sprintf(debugstr, "debug%d", debug_flag);
+      SetConfigOption("log_min_messages", debugstr, context, source);
+    } else
+      SetConfigOption("log_min_messages", "notice", context, source);
+  }
 
   if (debug_flag >= 1 && context == PGC_POSTMASTER) {
     SetConfigOption("log_connections", "all", context, source);

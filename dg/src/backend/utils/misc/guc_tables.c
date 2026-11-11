@@ -299,8 +299,8 @@ static thread_local /*LOCAL*/ char *event_source;
 
 thread_local /*LOCAL*/ bool current_role_is_superuser;
 
-thread_local /*LOCAL*/ int log_min_error_statement = ERROR;
-thread_local /*LOCAL*/ int log_min_messages = WARNING;
+static thread_local /*LOCAL*/ int log_min_error_statement = ERROR;
+static thread_local /*LOCAL*/ int log_min_messages = WARNING;
 thread_local /*LOCAL*/ int client_min_messages = NOTICE;
 
 thread_local /*LOCAL*/ int num_temp_buffers = 1024;
@@ -452,6 +452,11 @@ void publish_shared_settings(void) {
   shmem->allow_alter_system.store(AllowAlterSystem,
                                   std::memory_order_relaxed);
   shmem->pre_auth_delay.store(PreAuthDelay, std::memory_order_relaxed);
+  /* The log filters are in pcb, as errstart() reads pcb. */
+  pcb_main()->log_min_messages.store(log_min_messages,
+                                     std::memory_order_relaxed);
+  pcb_main()->log_min_error_statement.store(log_min_error_statement,
+                                            std::memory_order_relaxed);
   shmem->ssl_min_protocol_version.store(ssl_min_protocol_version,
                                         std::memory_order_relaxed);
   shmem->ssl_max_protocol_version.store(ssl_max_protocol_version,
@@ -2867,7 +2872,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
      NULL,
      NULL},
 
-    {{"log_min_messages", PGC_SUSET, LOGGING_WHEN,
+    {{"log_min_messages", PGC_SIGHUP, LOGGING_WHEN,
       gettext_noop("Sets the message levels that are logged."),
       gettext_noop(
           "Each level includes all the levels that follow it. The later"
@@ -2879,7 +2884,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
      NULL,
      NULL},
 
-    {{"log_min_error_statement", PGC_SUSET, LOGGING_WHEN,
+    {{"log_min_error_statement", PGC_SIGHUP, LOGGING_WHEN,
       gettext_noop("Causes all statements generating error at or above this "
                    "level to be logged."),
       gettext_noop(

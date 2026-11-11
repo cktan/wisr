@@ -215,7 +215,8 @@ static inline bool is_log_level_output(int elevel, int log_min_level) {
  * should_output_to_server --- should message of given elevel go to the log?
  */
 static inline bool should_output_to_server(int elevel) {
-  return is_log_level_output(elevel, log_min_messages);
+  return is_log_level_output(
+      elevel, pcb->log_min_messages.load(std::memory_order_relaxed));
 }
 
 /*
@@ -2408,7 +2409,8 @@ char *get_formatted_start_time(void) {
  */
 bool check_log_of_query(ErrorData *edata) {
   /* log required? */
-  if (!is_log_level_output(edata->elevel, log_min_error_statement))
+  if (!is_log_level_output(edata->elevel, pcb->log_min_error_statement.load(
+                                              std::memory_order_relaxed)))
     return false;
 
   /* query log wanted? */
