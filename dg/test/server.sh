@@ -5984,6 +5984,8 @@ source test/acl_owner_overlap.sh
 source test/tree_load_ssi.sh
 # Two students and the last seat of a class, at SERIALIZABLE.
 source test/seat_ssi.sh
+# Two sessions' string settings stay their own.
+source test/guc_local.sh
 # A stale timer ends no bulk load.
 source test/copy_alarm.sh
 # Check a check constraint against rows committed after the snapshot.

@@ -280,10 +280,10 @@ ConfigVariable *ProcessConfigFileInternal(GucContext context,
   GUCHashEntry *hentry;
 
   /* Parse the main config file into a list of option names and values */
-  ConfFileWithError = pcb->ConfigFileName;
+  ConfFileWithError = pcb->ConfigFileName.c_str();
   head = tail = NULL;
 
-  if (!ParseConfigFile(pcb->ConfigFileName, true, NULL, 0,
+  if (!ParseConfigFile(pcb->ConfigFileName.c_str(), true, NULL, 0,
                        CONF_FILE_START_DEPTH, elevel, &head, &tail)) {
     /* Syntax error(s) detected in the file, so bail out */
     error = true;
@@ -645,7 +645,7 @@ void guc_free(void *ptr) {
 static bool string_field_used(struct config_string *conf, char *strval) {
   GucStack *stack;
 
-  if (strval == *(conf->variable) || strval == conf->reset_val ||
+  if (strval == conf->variable.get() || strval == conf->reset_val ||
       strval == conf->boot_val)
     return true;
   for (stack = conf->gen.stack; stack; stack = stack->prev) {
@@ -669,6 +669,15 @@ static void set_string_field(struct config_string *conf, char **field,
   *field = newval;
 
   /* Free old value if it's not NULL and isn't referenced anymore */
+  if (oldval && !string_field_used(conf, oldval))
+    guc_free(oldval);
+}
+
+/* set_string_field() for the variable of a string GUC item. */
+static void set_string_variable(struct config_string *conf, char *newval) {
+  char *oldval = conf->variable.get();
+
+  conf->variable.set(newval);
   if (oldval && !string_field_used(conf, oldval))
     guc_free(oldval);
 }
@@ -749,7 +758,7 @@ static void set_stack_value(struct config_generic *gconf,
     break;
   case PGC_STRING:
     set_string_field((struct config_string *)gconf, &(val->val.stringval),
-                     *((struct config_string *)gconf)->variable);
+                     ((struct config_string *)gconf)->variable.get());
     break;
   case PGC_ENUM:
     val->val.enumval = *((struct config_enum *)gconf)->variable;
@@ -1304,11 +1313,15 @@ static bool check_GUC_init(struct config_generic *gconf) {
   case PGC_STRING: {
     struct config_string *conf = (struct config_string *)gconf;
 
-    if (*conf->variable != NULL &&
-        (conf->boot_val == NULL ||
-         strcmp(*conf->variable, conf->boot_val) != 0)) {
+    const std::string *svar = conf->variable.svar();
+    const char *cvar = svar ? svar->c_str() : conf->variable.get();
+
+    /* A std::string variable has no NULL: it starts as "" for a NULL boot */
+    if (svar ? 0 != strcmp(cvar, conf->boot_val ? conf->boot_val : "")
+             : NULL != cvar && (NULL == conf->boot_val ||
+                                0 != strcmp(cvar, conf->boot_val))) {
       elog(LOG, "GUC (PGC_STRING) %s, boot_val=%s, C-var=%s", conf->gen.name,
-           conf->boot_val ? conf->boot_val : "<null>", *conf->variable);
+           conf->boot_val ? conf->boot_val : "<null>", cvar);
       return false;
     }
     break;
@@ -1525,7 +1538,8 @@ static void InitializeOneGUCOption(struct config_generic *gconf) {
            newval ? newval : "");
     if (conf->assign_hook)
       conf->assign_hook(newval, extra);
-    *conf->variable = conf->reset_val = newval;
+    conf->variable.set(newval);
+    conf->reset_val = newval;
     conf->gen.extra = conf->reset_extra = extra;
     break;
   }
@@ -1625,7 +1639,7 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
    */
   SetConfigOption("config_file", fname, PGC_POSTMASTER, PGC_S_OVERRIDE);
   /* The file name the process reads its settings from, for every thread. */
-  pcb_main()->ConfigFileName = strdup(fname);
+  pcb_main()->ConfigFileName = fname;
 
   if (fname_is_malloced)
     free(fname);
@@ -1639,7 +1653,7 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
    * the data directory, so that we can read the PG_AUTOCONF_FILENAME file
    * next time.
    */
-  have_config_file = stat(pcb->ConfigFileName, &stat_buf) == 0;
+  have_config_file = stat(pcb->ConfigFileName.c_str(), &stat_buf) == 0;
   if (have_config_file)
     ProcessConfigFile(PGC_POSTMASTER);
 
@@ -1652,8 +1666,8 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
    */
   data_directory_rec = (struct config_string *)find_option("data_directory",
                                                            false, false, PANIC);
-  if (*data_directory_rec->variable)
-    SetDataDir(*data_directory_rec->variable);
+  if (data_directory_rec->variable.get())
+    SetDataDir(data_directory_rec->variable.get());
   else if (configdir)
     SetDataDir(configdir);
   else {
@@ -1661,7 +1675,7 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
                  "This can be specified as \"data_directory\" in \"%s\", "
                  "or by the -D invocation option, or by the "
                  "PGDATA environment variable.\n",
-                 progname, pcb->ConfigFileName);
+                 progname, pcb->ConfigFileName.c_str());
     return false;
   }
 
@@ -1767,7 +1781,7 @@ void ResetAllOptions(void) {
 
       if (conf->assign_hook)
         conf->assign_hook(conf->reset_val, conf->reset_extra);
-      set_string_field(conf, conf->variable, conf->reset_val);
+      set_string_variable(conf, conf->reset_val);
       set_extra_field(&conf->gen, &conf->gen.extra, conf->reset_extra);
       break;
     }
@@ -2095,10 +2109,11 @@ void AtEOXact_GUC(bool isCommit, int nestLevel) {
           char *newval = newvalue.val.stringval;
           void *newextra = newvalue.extra;
 
-          if (*conf->variable != newval || conf->gen.extra != newextra) {
+          if (conf->variable.get() != newval ||
+              conf->gen.extra != newextra) {
             if (conf->assign_hook)
               conf->assign_hook(newval, newextra);
-            set_string_field(conf, conf->variable, newval);
+            set_string_variable(conf, newval);
             set_extra_field(&conf->gen, &conf->gen.extra, newextra);
             changed = true;
           }
@@ -3418,8 +3433,8 @@ int set_config_with_handle(const char *name, config_handle *handle,
       bool newval_different;
 
       /* newval shouldn't be NULL, so we're a bit sloppy here */
-      newval_different = (*conf->variable == NULL || newval == NULL ||
-                          strcmp(*conf->variable, newval) != 0);
+      newval_different = (NULL == conf->variable.get() || newval == NULL ||
+                          0 != strcmp(conf->variable.get(), newval));
 
       /* Release newval, unless it's reset_val */
       if (newval && !string_field_used(conf, newval))
@@ -3447,7 +3462,7 @@ int set_config_with_handle(const char *name, config_handle *handle,
 
       if (conf->assign_hook)
         conf->assign_hook(newval, newextra);
-      set_string_field(conf, conf->variable, newval);
+      set_string_variable(conf, newval);
       set_extra_field(&conf->gen, &conf->gen.extra, newextra);
       set_guc_source(&conf->gen, source);
       conf->gen.scontext = context;
@@ -3704,8 +3719,8 @@ const char *GetConfigOption(const char *name, bool missing_ok,
     return buffer;
 
   case PGC_STRING:
-    return *((struct config_string *)record)->variable
-               ? *((struct config_string *)record)->variable
+    return ((struct config_string *)record)->variable.get()
+               ? ((struct config_string *)record)->variable.get()
                : "";
 
   case PGC_ENUM:
@@ -4276,7 +4291,7 @@ static void define_custom_variable(struct config_generic *variable) {
 
   /* Now, apply current and stacked values, in the order they were stacked */
   reapply_stacked_values(variable, pHolder, pHolder->gen.stack,
-                         *(pHolder->variable), pHolder->gen.scontext,
+                         pHolder->variable.get(), pHolder->gen.scontext,
                          pHolder->gen.source, pHolder->gen.srole);
 
   /* Also copy over any saved source-location information */
@@ -4290,7 +4305,7 @@ static void define_custom_variable(struct config_generic *variable) {
    * leaked.  Since this can only happen once per session per variable, it
    * doesn't seem worth spending much code on.)
    */
-  set_string_field(pHolder, pHolder->variable, NULL);
+  set_string_variable(pHolder, NULL);
   set_string_field(pHolder, &pHolder->reset_val, NULL);
 
   guc_free(pHolder);
@@ -4589,12 +4604,14 @@ struct config_generic **get_explain_guc_options(int *num) {
     case PGC_STRING: {
       struct config_string *lconf = (struct config_string *)conf;
 
-      if (lconf->boot_val == NULL && *lconf->variable == NULL)
+      const char *cur = lconf->variable.get();
+
+      if (NULL == lconf->boot_val && NULL == cur)
         modified = false;
-      else if (lconf->boot_val == NULL || *lconf->variable == NULL)
+      else if (NULL == lconf->boot_val || NULL == cur)
         modified = true;
       else
-        modified = (strcmp(lconf->boot_val, *(lconf->variable)) != 0);
+        modified = (0 != strcmp(lconf->boot_val, cur));
     } break;
 
     case PGC_ENUM: {
@@ -4717,8 +4734,8 @@ char *ShowGUCOption(struct config_generic *record, bool use_units) {
 
     if (conf->show_hook)
       val = conf->show_hook();
-    else if (*conf->variable && **conf->variable)
-      val = *conf->variable;
+    else if (conf->variable.get() && *conf->variable.get())
+      val = conf->variable.get();
     else
       val = "";
   } break;
@@ -4785,8 +4802,8 @@ static void write_one_nondefault_variable(FILE *fp,
   case PGC_STRING: {
     struct config_string *conf = (struct config_string *)gconf;
 
-    if (*conf->variable)
-      fprintf(fp, "%s", *conf->variable);
+    if (conf->variable.get())
+      fprintf(fp, "%s", conf->variable.get());
   } break;
 
   case PGC_ENUM: {

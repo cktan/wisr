@@ -65,7 +65,7 @@ Oid CreateSchemaCommand(CreateSchemaStmt *stmt, const char *queryString,
   Oid saved_uid;
   int save_sec_context;
   int save_nestlevel;
-  char *nsp = tcb->guc.namespace_search_path;
+  const char *nsp = tcb->guc.namespace_search_path.c_str();
   AclResult aclresult;
   ObjectAddress address;
   StringInfoData pathbuf;

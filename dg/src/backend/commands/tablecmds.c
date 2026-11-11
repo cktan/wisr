@@ -1037,7 +1037,7 @@ ObjectAddress DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 
     if (RELKIND_HAS_TABLE_AM(relkind) && !OidIsValid(accessMethodId))
       accessMethodId =
-          get_table_am_oid(tcb->guc.default_table_access_method, false);
+          get_table_am_oid(tcb->guc.default_table_access_method.c_str(), false);
   }
 
   /*
@@ -14992,7 +14992,8 @@ static void ATPrepSetAccessMethod(AlteredTableInfo *tab, Relation rel,
   else if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
     amoid = InvalidOid;
   else
-    amoid = get_table_am_oid(tcb->guc.default_table_access_method, false);
+    amoid =
+        get_table_am_oid(tcb->guc.default_table_access_method.c_str(), false);
 
   /* if it's a match, phase 3 doesn't need to do anything */
   if (rel->rd_rel->relam == amoid)

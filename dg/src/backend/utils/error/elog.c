@@ -450,7 +450,8 @@ void errfinish(const char *filename, int lineno, const char *funcname) {
   oldcontext = MemoryContextSwitchTo(ErrorContext);
 
   /* Collect backtrace, if enabled and we didn't already */
-  if (!edata->backtrace && edata->funcname && tcb->guc.backtrace_functions &&
+  if (!edata->backtrace && edata->funcname &&
+      !tcb->guc.backtrace_functions.empty() &&
       matches_backtrace_functions(edata->funcname))
     set_backtrace(edata, 2);
 
@@ -2213,7 +2214,8 @@ static void write_eventlog(int level, const char *line, int len) {
 
   if (evtHandle == INVALID_HANDLE_VALUE) {
     evtHandle = RegisterEventSource(
-        NULL, pcb->event_source ? pcb->event_source : DEFAULT_EVENT_SOURCE);
+        NULL, !pcb->event_source.empty() ? pcb->event_source.c_str()
+                                          : DEFAULT_EVENT_SOURCE);
     if (evtHandle == NULL) {
       evtHandle = INVALID_HANDLE_VALUE;
       return;
@@ -2553,7 +2555,7 @@ void log_status_format(StringInfo buf, const char *format, ErrorData *edata) {
     switch (*p) {
     case 'a':
       if (MyProcPort) {
-        const char *appname = tcb->guc.application_name;
+        const char *appname = tcb->guc.application_name.c_str();
 
         if (appname == NULL || *appname == '\0')
           appname = _("[unknown]");

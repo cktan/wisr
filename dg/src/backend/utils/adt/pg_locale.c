@@ -539,12 +539,12 @@ struct lconv *PGLC_localeconv(void) {
    * Use thread-safe method of obtaining a copy of lconv from the operating
    * system.
    */
-  if (pg_localeconv_r(tcb->guc.locale_monetary, tcb->guc.locale_numeric,
-                      &tmp) != 0)
+  if (pg_localeconv_r(tcb->guc.locale_monetary.c_str(),
+                      tcb->guc.locale_numeric.c_str(), &tmp) != 0)
     elog(
         ERROR,
         "could not get lconv for LC_MONETARY = \"%s\", LC_NUMERIC = \"%s\": %m",
-        tcb->guc.locale_monetary, tcb->guc.locale_numeric);
+        tcb->guc.locale_monetary.c_str(), tcb->guc.locale_numeric.c_str());
 
   /* Must copy data now so we can re-encode it. */
   extlconv = &tmp;
@@ -586,7 +586,8 @@ struct lconv *PGLC_localeconv(void) {
      * use PG_SQL_ASCII, which will result in just validating that the
      * strings are OK in the database encoding.
      */
-    encoding = pg_get_encoding_from_locale(tcb->guc.locale_numeric, true);
+    encoding =
+        pg_get_encoding_from_locale(tcb->guc.locale_numeric.c_str(), true);
     if (encoding < 0)
       encoding = PG_SQL_ASCII;
 
@@ -594,7 +595,8 @@ struct lconv *PGLC_localeconv(void) {
     db_encoding_convert(encoding, &worklconv.thousands_sep);
     /* grouping is not text and does not require conversion */
 
-    encoding = pg_get_encoding_from_locale(tcb->guc.locale_monetary, true);
+    encoding =
+        pg_get_encoding_from_locale(tcb->guc.locale_monetary.c_str(), true);
     if (encoding < 0)
       encoding = PG_SQL_ASCII;
 
@@ -718,18 +720,18 @@ void cache_locale_time(void) {
     return;
 
   elog(DEBUG3, "cache_locale_time() executed; locale: \"%s\"",
-       tcb->guc.locale_time);
+       tcb->guc.locale_time.c_str());
 
   errno = ENOENT;
 #ifdef WIN32
-  locale = _create_locale(LC_ALL, tcb->guc.locale_time);
+  locale = _create_locale(LC_ALL, tcb->guc.locale_time.c_str());
   if (locale == (locale_t)0)
     _dosmaperr(GetLastError());
 #else
-  locale = newlocale(LC_ALL_MASK, tcb->guc.locale_time, (locale_t)0);
+  locale = newlocale(LC_ALL_MASK, tcb->guc.locale_time.c_str(), (locale_t)0);
 #endif
   if (!locale)
-    report_newlocale_failure(tcb->guc.locale_time);
+    report_newlocale_failure(tcb->guc.locale_time.c_str());
 
   /* We use times close to current time as data for strftime(). */
   timenow = time(NULL);
@@ -791,7 +793,7 @@ void cache_locale_time(void) {
    * encoding implied by LC_TIME to the database encoding.  If we can't
    * identify the LC_TIME encoding, just perform encoding validation.
    */
-  encoding = pg_get_encoding_from_locale(tcb->guc.locale_time, true);
+  encoding = pg_get_encoding_from_locale(tcb->guc.locale_time.c_str(), true);
   if (encoding < 0)
     encoding = PG_SQL_ASCII;
 

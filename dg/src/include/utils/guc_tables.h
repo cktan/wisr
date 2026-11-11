@@ -19,6 +19,8 @@
 #include "lib/ilist.h"
 #include "utils/guc.h"
 
+#include <string>
+
 /*
  * GUC supports these types of variables:
  */
@@ -245,10 +247,47 @@ struct config_real {
  * that NULL doesn't have semantics that are visibly different from an empty
  * string.
  */
+
+/*
+ * The variable of a string setting: a char * (a thread_local variable, a
+ * custom setting, a placeholder) or a std::string (a control block field).
+ * guc.c reads and writes it only through get() and set().
+ *
+ * For a std::string, m_own is the guc_malloc'd value guc.c manages, shared
+ * with reset_val and the stack as a char * variable's value is, and the
+ * std::string is a copy of it that the code reads. NULL is stored as "".
+ */
+struct guc_string_var_t {
+  guc_string_var_t() = default;
+  guc_string_var_t(std::nullptr_t) {}
+  guc_string_var_t(char **p) : m_cvar(p) {}
+  guc_string_var_t(std::string *p) : m_svar(p) {}
+
+  /* The guc_malloc'd value, or a char * variable's value: may be NULL. */
+  char *get() const { return m_svar ? m_own : *m_cvar; }
+
+  /* Set the value; for a std::string, copy it first, as that may throw. */
+  void set(char *v) {
+    if (m_svar) {
+      m_svar->assign(v ? v : "");
+      m_own = v;
+    } else
+      *m_cvar = v;
+  }
+
+  /* The std::string, or NULL for a char * variable. */
+  const std::string *svar() const { return m_svar; }
+
+private:
+  char **m_cvar = nullptr;
+  std::string *m_svar = nullptr;
+  char *m_own = nullptr;
+};
+
 struct config_string {
   struct config_generic gen;
   /* constant fields, must be set correctly in initial value: */
-  char **variable;
+  guc_string_var_t variable;
   const char *boot_val;
   GucStringCheckHook check_hook;
   GucStringAssignHook assign_hook;

@@ -503,9 +503,9 @@ static const char *show_log_file_mode(void) {
   return buf;
 }
 
-/* A malloc'd copy of a string setting, or NULL if it has no value. */
-static char *postmaster_setting_dup(const char *value) {
-  return value ? strdup(value) : NULL;
+/* A copy of a string setting, or "" if it has no value. */
+static std::string postmaster_setting_dup(const char *value) {
+  return value ? value : "";
 }
 
 /*
@@ -2745,7 +2745,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
 
     /* End-of-list marker */
     {{NULL, (GucContext)0, (config_group)0, NULL, NULL},
-     NULL,
+     nullptr,
      NULL,
      NULL,
      NULL,

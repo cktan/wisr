@@ -233,7 +233,7 @@ static char *expand_dynamic_library_name(const char *name) {
   have_slash = (first_dir_separator(name) != NULL);
 
   if (!have_slash) {
-    full = find_in_path(name, tcb->guc.Dynamic_library_path,
+    full = find_in_path(name, tcb->guc.Dynamic_library_path.c_str(),
                         "dynamic_library_path", "$libdir", pcb->pkglib_path);
     if (full)
       return full;
@@ -247,7 +247,7 @@ static char *expand_dynamic_library_name(const char *name) {
   new_ = psprintf("%s%s", name, DLSUFFIX);
 
   if (!have_slash) {
-    full = find_in_path(new_, tcb->guc.Dynamic_library_path,
+    full = find_in_path(new_, tcb->guc.Dynamic_library_path.c_str(),
                         "dynamic_library_path", "$libdir", pcb->pkglib_path);
     pfree(new_);
     if (full)
