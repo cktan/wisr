@@ -90,15 +90,10 @@ thread_local /*LOCAL*/ const char
 thread_local /*LOCAL*/ CommandDest whereToSendOutput = DestDebug;
 
 /* flag for logging end of session */
-thread_local /*LOCAL*/ bool Log_disconnections = false;
-
-thread_local /*LOCAL*/ int log_statement = LOGSTMT_NONE;
 
 /* wait N seconds to allow attach from a debugger */
-thread_local /*LOCAL*/ int PostAuthDelay = 0;
 
 /* Time between checks that the client is still connected. */
-thread_local /*LOCAL*/ int client_connection_check_interval = 0;
 
 /* flags for non-system relation kinds to restrict use */
 thread_local /*LOCAL*/ int restrict_nonsystem_relation_kind;
@@ -436,18 +431,18 @@ List *pg_parse_query(const char *query_string) {
 
   TRACE_POSTGRESQL_QUERY_PARSE_START(query_string);
 
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ResetUsage();
 
   raw_parsetree_list = raw_parser(query_string, RAW_PARSE_DEFAULT);
 
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ShowUsage("PARSER STATISTICS");
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
 
   /* Optional debugging check: pass raw parsetrees through copyObject() */
-  if (Debug_copy_parse_plan_trees) {
+  if (tcb->guc.Debug_copy_parse_plan_trees) {
     List *new_list = copyObject(raw_parsetree_list);
 
     /* This checks both copyObject() and the equal() routines... */
@@ -461,7 +456,7 @@ List *pg_parse_query(const char *query_string) {
    * Optional debugging check: pass raw parsetrees through
    * outfuncs/readfuncs
    */
-  if (Debug_write_read_parse_plan_trees) {
+  if (tcb->guc.Debug_write_read_parse_plan_trees) {
     char *str = nodeToStringWithLocations(raw_parsetree_list);
     List *new_list = (List *)stringToNodeWithLocations(str);
 
@@ -502,13 +497,13 @@ List *pg_analyze_and_rewrite_fixedparams(RawStmt *parsetree,
   /*
    * (1) Perform parse analysis.
    */
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ResetUsage();
 
   query = parse_analyze_fixedparams(parsetree, query_string, paramTypes,
                                     numParams, queryEnv);
 
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ShowUsage("PARSE ANALYSIS STATISTICS");
 
   /*
@@ -538,7 +533,7 @@ List *pg_analyze_and_rewrite_varparams(RawStmt *parsetree,
   /*
    * (1) Perform parse analysis.
    */
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ResetUsage();
 
   query = parse_analyze_varparams(parsetree, query_string, paramTypes,
@@ -556,7 +551,7 @@ List *pg_analyze_and_rewrite_varparams(RawStmt *parsetree,
                              i + 1)));
   }
 
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ShowUsage("PARSE ANALYSIS STATISTICS");
 
   /*
@@ -588,13 +583,13 @@ List *pg_analyze_and_rewrite_withcb(RawStmt *parsetree,
   /*
    * (1) Perform parse analysis.
    */
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ResetUsage();
 
   query = parse_analyze_withcb(parsetree, query_string, parserSetup,
                                parserSetupArg, queryEnv);
 
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ShowUsage("PARSE ANALYSIS STATISTICS");
 
   /*
@@ -616,10 +611,10 @@ List *pg_analyze_and_rewrite_withcb(RawStmt *parsetree,
 List *pg_rewrite_query(Query *query) {
   List *querytree_list;
 
-  if (Debug_print_parse)
-    elog_node_display(LOG, "parse tree", query, Debug_pretty_print);
+  if (tcb->guc.Debug_print_parse)
+    elog_node_display(LOG, "parse tree", query, tcb->guc.Debug_pretty_print);
 
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ResetUsage();
 
   if (query->commandType == CMD_UTILITY) {
@@ -630,13 +625,13 @@ List *pg_rewrite_query(Query *query) {
     querytree_list = QueryRewrite(query);
   }
 
-  if (log_parser_stats)
+  if (tcb->guc.log_parser_stats)
     ShowUsage("REWRITER STATISTICS");
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
 
   /* Optional debugging check: pass querytree through copyObject() */
-  if (Debug_copy_parse_plan_trees) {
+  if (tcb->guc.Debug_copy_parse_plan_trees) {
     List *new_list;
 
     new_list = copyObject(querytree_list);
@@ -649,7 +644,7 @@ List *pg_rewrite_query(Query *query) {
   }
 
   /* Optional debugging check: pass querytree through outfuncs/readfuncs */
-  if (Debug_write_read_parse_plan_trees) {
+  if (tcb->guc.Debug_write_read_parse_plan_trees) {
     List *new_list = NIL;
     ListCell *lc;
 
@@ -679,9 +674,9 @@ List *pg_rewrite_query(Query *query) {
 
 #endif /* DEBUG_NODE_TESTS_ENABLED */
 
-  if (Debug_print_rewritten)
+  if (tcb->guc.Debug_print_rewritten)
     elog_node_display(LOG, "rewritten parse tree", querytree_list,
-                      Debug_pretty_print);
+                      tcb->guc.Debug_pretty_print);
 
   return querytree_list;
 }
@@ -703,19 +698,19 @@ PlannedStmt *pg_plan_query(Query *querytree, const char *query_string,
 
   TRACE_POSTGRESQL_QUERY_PLAN_START();
 
-  if (log_planner_stats)
+  if (tcb->guc.log_planner_stats)
     ResetUsage();
 
   /* call the optimizer */
   plan = planner(querytree, query_string, cursorOptions, boundParams);
 
-  if (log_planner_stats)
+  if (tcb->guc.log_planner_stats)
     ShowUsage("PLANNER STATISTICS");
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
 
   /* Optional debugging check: pass plan tree through copyObject() */
-  if (Debug_copy_parse_plan_trees) {
+  if (tcb->guc.Debug_copy_parse_plan_trees) {
     PlannedStmt *new_plan = copyObject(plan);
 
     /*
@@ -732,7 +727,7 @@ PlannedStmt *pg_plan_query(Query *querytree, const char *query_string,
   }
 
   /* Optional debugging check: pass plan tree through outfuncs/readfuncs */
-  if (Debug_write_read_parse_plan_trees) {
+  if (tcb->guc.Debug_write_read_parse_plan_trees) {
     char *str;
     PlannedStmt *new_plan;
 
@@ -758,8 +753,8 @@ PlannedStmt *pg_plan_query(Query *querytree, const char *query_string,
   /*
    * Print plan if debugging.
    */
-  if (Debug_print_plan)
-    elog_node_display(LOG, "plan", plan, Debug_pretty_print);
+  if (tcb->guc.Debug_print_plan)
+    elog_node_display(LOG, "plan", plan, tcb->guc.Debug_pretty_print);
 
   TRACE_POSTGRESQL_QUERY_PLAN_DONE();
 
@@ -812,7 +807,7 @@ static void exec_simple_query(const char *query_string) {
   MemoryContext oldcontext;
   List *parsetree_list;
   ListCell *parsetree_item;
-  bool save_log_statement_stats = log_statement_stats;
+  bool save_log_statement_stats = tcb->guc.log_statement_stats;
   bool was_logged = false;
   bool use_implicit_block;
   char msec_str[32];
@@ -1161,7 +1156,7 @@ exec_parse_message(const char *query_string, /* string to execute */
   List *querytree_list;
   CachedPlanSource *psrc;
   bool is_named;
-  bool save_log_statement_stats = log_statement_stats;
+  bool save_log_statement_stats = tcb->guc.log_statement_stats;
   char msec_str[32];
 
   /*
@@ -1369,7 +1364,7 @@ static void exec_bind_message(StringInfo input_message) {
   char *saved_stmt_name;
   ParamListInfo params;
   MemoryContext oldContext;
-  bool save_log_statement_stats = log_statement_stats;
+  bool save_log_statement_stats = tcb->guc.log_statement_stats;
   bool snapshot_set = false;
   char msec_str[32];
   ParamsErrorCbData params_data;
@@ -1597,7 +1592,7 @@ static void exec_bind_message(StringInfo input_message) {
          * result of encoding conversion, if any was done.
          */
         if (pstring) {
-          if (log_parameter_max_length_on_error != 0) {
+          if (tcb->guc.log_parameter_max_length_on_error != 0) {
             MemoryContext oldcxt;
 
             oldcxt = MemoryContextSwitchTo(MessageContext);
@@ -1605,7 +1600,7 @@ static void exec_bind_message(StringInfo input_message) {
             if (knownTextValues == NULL)
               knownTextValues = palloc0_array(char *, numParams);
 
-            if (log_parameter_max_length_on_error < 0)
+            if (tcb->guc.log_parameter_max_length_on_error < 0)
               knownTextValues[paramno] = pstrdup(pstring);
             else {
               /*
@@ -1616,7 +1611,7 @@ static void exec_bind_message(StringInfo input_message) {
                * might fail to include the trailing ellipsis.
                */
               knownTextValues[paramno] =
-                  pnstrdup(pstring, log_parameter_max_length_on_error +
+                  pnstrdup(pstring, tcb->guc.log_parameter_max_length_on_error +
                                         2 * MAX_MULTIBYTE_CHAR_LEN);
             }
 
@@ -1678,9 +1673,9 @@ static void exec_bind_message(StringInfo input_message) {
      * in future errors, if configured to do so.  (This is saved in the
      * portal, so that they'll appear when the query is executed later.)
      */
-    if (log_parameter_max_length_on_error != 0)
+    if (tcb->guc.log_parameter_max_length_on_error != 0)
       params->paramValuesStr = BuildParamLogString(
-          params, knownTextValues, log_parameter_max_length_on_error);
+          params, knownTextValues, tcb->guc.log_parameter_max_length_on_error);
   } else
     params = NULL;
 
@@ -1798,7 +1793,7 @@ static void exec_execute_message(const char *portal_name, long max_rows) {
   const char *sourceText;
   const char *prepStmtName;
   ParamListInfo portalParams;
-  bool save_log_statement_stats = log_statement_stats;
+  bool save_log_statement_stats = tcb->guc.log_statement_stats;
   bool is_xact_command;
   bool execute_is_fetch;
   bool was_logged = false;
@@ -2031,16 +2026,16 @@ static void exec_execute_message(const char *portal_name, long max_rows) {
 static bool check_log_statement(List *stmt_list) {
   ListCell *stmt_item;
 
-  if (log_statement == LOGSTMT_NONE)
+  if (tcb->guc.log_statement == LOGSTMT_NONE)
     return false;
-  if (log_statement == LOGSTMT_ALL)
+  if (tcb->guc.log_statement == LOGSTMT_ALL)
     return true;
 
   /* Else we have to inspect the statement(s) to see whether to log */
   foreach (stmt_item, stmt_list) {
     Node *stmt = (Node *)lfirst(stmt_item);
 
-    if (GetCommandLogLevel(stmt) <= log_statement)
+    if (GetCommandLogLevel(stmt) <= tcb->guc.log_statement)
       return true;
   }
 
@@ -2065,8 +2060,8 @@ static bool check_log_statement(List *stmt_list) {
  * essentially prevents 2 from being returned).
  */
 int check_log_duration(char *msec_str, bool was_logged) {
-  if (log_duration || log_min_duration_sample >= 0 ||
-      log_min_duration_statement >= 0 || xact_is_sampled) {
+  if (tcb->guc.log_duration || tcb->guc.log_min_duration_sample >= 0 ||
+      tcb->guc.log_min_duration_statement >= 0 || xact_is_sampled) {
     long secs;
     int usecs;
     int msecs;
@@ -2083,16 +2078,17 @@ int check_log_duration(char *msec_str, bool was_logged) {
      * designed to avoid integer overflow with very long durations: don't
      * compute secs * 1000 until we've verified it will fit in int.
      */
-    exceeded_duration = (log_min_duration_statement == 0 ||
-                         (log_min_duration_statement > 0 &&
-                          (secs > log_min_duration_statement / 1000 ||
-                           secs * 1000 + msecs >= log_min_duration_statement)));
+    exceeded_duration =
+        (tcb->guc.log_min_duration_statement == 0 ||
+         (tcb->guc.log_min_duration_statement > 0 &&
+          (secs > tcb->guc.log_min_duration_statement / 1000 ||
+           secs * 1000 + msecs >= tcb->guc.log_min_duration_statement)));
 
     exceeded_sample_duration =
-        (log_min_duration_sample == 0 ||
-         (log_min_duration_sample > 0 &&
-          (secs > log_min_duration_sample / 1000 ||
-           secs * 1000 + msecs >= log_min_duration_sample)));
+        (tcb->guc.log_min_duration_sample == 0 ||
+         (tcb->guc.log_min_duration_sample > 0 &&
+          (secs > tcb->guc.log_min_duration_sample / 1000 ||
+           secs * 1000 + msecs >= tcb->guc.log_min_duration_sample)));
 
     /*
      * Do not log if log_statement_sample_rate = 0. Log a sample if
@@ -2100,12 +2096,13 @@ int check_log_duration(char *msec_str, bool was_logged) {
      * log_statement_sample_rate = 1.
      */
     if (exceeded_sample_duration)
-      in_sample =
-          log_statement_sample_rate != 0 &&
-          (log_statement_sample_rate == 1 ||
-           pg_prng_double(&pg_global_prng_state) <= log_statement_sample_rate);
+      in_sample = tcb->guc.log_statement_sample_rate != 0 &&
+                  (tcb->guc.log_statement_sample_rate == 1 ||
+                   pg_prng_double(&pg_global_prng_state) <=
+                       tcb->guc.log_statement_sample_rate);
 
-    if (exceeded_duration || in_sample || log_duration || xact_is_sampled) {
+    if (exceeded_duration || in_sample || tcb->guc.log_duration ||
+        xact_is_sampled) {
       snprintf(msec_str, 32, "%ld.%03d", secs * 1000 + msecs, usecs % 1000);
       if ((exceeded_duration || in_sample || xact_is_sampled) && !was_logged)
         return 2;
@@ -2152,10 +2149,11 @@ static int errdetail_execute(List *raw_parsetree_list) {
  * by log_parameter_max_length not log_parameter_max_length_on_error.
  */
 static int errdetail_params(ParamListInfo params) {
-  if (params && params->numParams > 0 && log_parameter_max_length != 0) {
+  if (params && params->numParams > 0 &&
+      tcb->guc.log_parameter_max_length != 0) {
     char *str;
 
-    str = BuildParamLogString(params, NULL, log_parameter_max_length);
+    str = BuildParamLogString(params, NULL, tcb->guc.log_parameter_max_length);
     if (str && str[0] != '\0')
       errdetail("Parameters: %s", str);
   }
@@ -2180,7 +2178,7 @@ static void bind_param_error_callback(void *arg) {
   if (data->paramval) {
     initStringInfo(&buf);
     appendStringInfoStringQuoted(&buf, data->paramval,
-                                 log_parameter_max_length_on_error);
+                                 tcb->guc.log_parameter_max_length_on_error);
     quotedval = buf.data;
   } else
     quotedval = NULL;
@@ -2357,10 +2355,10 @@ static void start_xact_command(void) {
   enable_statement_timeout();
 
   /* Start timeout for checking if the client has gone away if necessary. */
-  if (client_connection_check_interval > 0 && IsUnderPostmaster && MyProcPort &&
-      !get_timeout_active(CLIENT_CONNECTION_CHECK_TIMEOUT))
+  if (tcb->guc.client_connection_check_interval > 0 && IsUnderPostmaster &&
+      MyProcPort && !get_timeout_active(CLIENT_CONNECTION_CHECK_TIMEOUT))
     enable_timeout_after(CLIENT_CONNECTION_CHECK_TIMEOUT,
-                         client_connection_check_interval);
+                         tcb->guc.client_connection_check_interval);
 }
 
 static void finish_xact_command(void) {
@@ -2654,12 +2652,12 @@ void ProcessInterrupts(void) {
      * wake up idle sessions, and they already know how to detect lost
      * connections.
      */
-    if (!DoingCommandRead && client_connection_check_interval > 0) {
+    if (!DoingCommandRead && tcb->guc.client_connection_check_interval > 0) {
       if (!pq_check_connection())
         ClientConnectionLost = true;
       else
         enable_timeout_after(CLIENT_CONNECTION_CHECK_TIMEOUT,
-                             client_connection_check_interval);
+                             tcb->guc.client_connection_check_interval);
     }
   }
 
@@ -2738,7 +2736,7 @@ void ProcessInterrupts(void) {
      * otherwise we could loop in interrupts checking.
      */
     IdleInTransactionSessionTimeoutPending = false;
-    if (IdleInTransactionSessionTimeout > 0) {
+    if (tcb->guc.IdleInTransactionSessionTimeout > 0) {
       INJECTION_POINT("idle-in-transaction-session-timeout", NULL);
       ereport(
           FATAL,
@@ -2751,7 +2749,7 @@ void ProcessInterrupts(void) {
   if (TransactionTimeoutPending) {
     /* As above, ignore the signal if the GUC has been reset to zero. */
     TransactionTimeoutPending = false;
-    if (TransactionTimeout > 0) {
+    if (tcb->guc.TransactionTimeout > 0) {
       INJECTION_POINT("transaction-timeout", NULL);
       ereport(FATAL,
               (errcode(ERRCODE_TRANSACTION_TIMEOUT),
@@ -2762,7 +2760,7 @@ void ProcessInterrupts(void) {
   if (IdleSessionTimeoutPending) {
     /* As above, ignore the signal if the GUC has been reset to zero. */
     IdleSessionTimeoutPending = false;
-    if (IdleSessionTimeout > 0) {
+    if (tcb->guc.IdleSessionTimeout > 0) {
       INJECTION_POINT("idle-session-timeout", NULL);
       ereport(FATAL,
               (errcode(ERRCODE_IDLE_SESSION_TIMEOUT),
@@ -2798,7 +2796,7 @@ bool check_client_connection_check_interval(int *newval, void **extra,
  * we tolerate that.
  */
 bool check_stage_log_stats(bool *newval, void **extra, GucSource source) {
-  if (*newval && log_statement_stats) {
+  if (*newval && tcb->guc.log_statement_stats) {
     GUC_check_errdetail(
         "Cannot enable parameter when \"log_statement_stats\" is true.");
     return false;
@@ -2810,8 +2808,8 @@ bool check_stage_log_stats(bool *newval, void **extra, GucSource source) {
  * GUC check_hook for log_statement_stats
  */
 bool check_log_stats(bool *newval, void **extra, GucSource source) {
-  if (*newval &&
-      (log_parser_stats || log_planner_stats || log_executor_stats)) {
+  if (*newval && (tcb->guc.log_parser_stats || tcb->guc.log_planner_stats ||
+                  tcb->guc.log_executor_stats)) {
     GUC_check_errdetail("Cannot enable \"log_statement_stats\" when "
                         "\"log_parser_stats\", \"log_planner_stats\", "
                         "or \"log_executor_stats\" is true.");
@@ -3247,7 +3245,7 @@ void PostgresMain(const char *dbname, const char *username) {
    * Also set up handler to log session end; we have to wait till now to be
    * sure Log_disconnections has its final value.
    */
-  if (IsUnderPostmaster && Log_disconnections)
+  if (IsUnderPostmaster && tcb->guc.Log_disconnections)
     on_proc_exit(log_disconnections, 0);
 
   /*
@@ -3461,31 +3459,34 @@ void PostgresMain(const char *dbname, const char *username) {
         set_ps_display("idle in transaction (aborted)");
 
         /* Start the idle-in-transaction timer */
-        if (IdleInTransactionSessionTimeout > 0 &&
-            (IdleInTransactionSessionTimeout < TransactionTimeout ||
-             TransactionTimeout == 0)) {
+        if (tcb->guc.IdleInTransactionSessionTimeout > 0 &&
+            (tcb->guc.IdleInTransactionSessionTimeout <
+                 tcb->guc.TransactionTimeout ||
+             tcb->guc.TransactionTimeout == 0)) {
           idle_in_transaction_timeout_enabled = true;
           enable_timeout_after(IDLE_IN_TRANSACTION_SESSION_TIMEOUT,
-                               IdleInTransactionSessionTimeout);
+                               tcb->guc.IdleInTransactionSessionTimeout);
         }
       } else if (IsTransactionOrTransactionBlock()) {
         set_ps_display("idle in transaction");
 
         /* Start the idle-in-transaction timer */
-        if (IdleInTransactionSessionTimeout > 0 &&
-            (IdleInTransactionSessionTimeout < TransactionTimeout ||
-             TransactionTimeout == 0)) {
+        if (tcb->guc.IdleInTransactionSessionTimeout > 0 &&
+            (tcb->guc.IdleInTransactionSessionTimeout <
+                 tcb->guc.TransactionTimeout ||
+             tcb->guc.TransactionTimeout == 0)) {
           idle_in_transaction_timeout_enabled = true;
           enable_timeout_after(IDLE_IN_TRANSACTION_SESSION_TIMEOUT,
-                               IdleInTransactionSessionTimeout);
+                               tcb->guc.IdleInTransactionSessionTimeout);
         }
       } else {
         set_ps_display("idle");
 
         /* Start the idle-session timer */
-        if (IdleSessionTimeout > 0) {
+        if (tcb->guc.IdleSessionTimeout > 0) {
           idle_session_timeout_enabled = true;
-          enable_timeout_after(IDLE_SESSION_TIMEOUT, IdleSessionTimeout);
+          enable_timeout_after(IDLE_SESSION_TIMEOUT,
+                               tcb->guc.IdleSessionTimeout);
         }
       }
 
@@ -3948,10 +3949,11 @@ static void enable_statement_timeout(void) {
   /* must be within an xact */
   Assert(xact_started);
 
-  if (StatementTimeout > 0 &&
-      (StatementTimeout < TransactionTimeout || TransactionTimeout == 0)) {
+  if (tcb->guc.StatementTimeout > 0 &&
+      (tcb->guc.StatementTimeout < tcb->guc.TransactionTimeout ||
+       tcb->guc.TransactionTimeout == 0)) {
     if (!get_timeout_active(STATEMENT_TIMEOUT))
-      enable_timeout_after(STATEMENT_TIMEOUT, StatementTimeout);
+      enable_timeout_after(STATEMENT_TIMEOUT, tcb->guc.StatementTimeout);
   } else {
     if (get_timeout_active(STATEMENT_TIMEOUT))
       disable_timeout(STATEMENT_TIMEOUT, false);

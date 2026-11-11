@@ -105,9 +105,9 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/xml.h"
+#include "utils/control_block.h"
 
 /* GUC variables */
-thread_local /*LOCAL*/ int xmlbinary = XMLBINARY_BASE64;
 thread_local /*LOCAL*/ int xmloption = XMLOPTION_CONTENT;
 
 #ifdef USE_LIBXML
@@ -2344,7 +2344,7 @@ char *map_sql_value_to_xml_value(Datum value, Oid type,
           xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
                       "could not allocate xmlTextWriter");
 
-        if (xmlbinary == XMLBINARY_BASE64)
+        if (tcb->guc.xmlbinary == XMLBINARY_BASE64)
           xmlTextWriterWriteBase64(writer, VARDATA_ANY(bstr), 0,
                                    VARSIZE_ANY_EXHDR(bstr));
         else
@@ -3490,8 +3490,8 @@ static const char *map_sql_type_to_xmlschema_type(Oid typeoid, int typmod) {
       appendStringInfo(&result,
                        "  <xsd:restriction base=\"xsd:%s\">\n"
                        "  </xsd:restriction>\n",
-                       xmlbinary == XMLBINARY_BASE64 ? "base64Binary"
-                                                     : "hexBinary");
+                       tcb->guc.xmlbinary == XMLBINARY_BASE64 ? "base64Binary"
+                                                              : "hexBinary");
       break;
 
     case DECIMAL64OID:

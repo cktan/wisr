@@ -211,7 +211,6 @@ static thread_local /*LOCAL*/ SubTransactionId myTempNamespaceSubID =
  * This is the user's textual search path specification --- it's the value
  * of the GUC variable 'search_path'.
  */
-thread_local /*LOCAL*/ char *namespace_search_path = NULL;
 
 /* Local functions */
 static bool RelationIsVisibleExt(Oid relid, bool *is_missing);
@@ -284,6 +283,7 @@ static inline bool spcachekey_equal(SearchPathCacheKey a,
 #define SH_DEFINE
 #include "lib/simplehash.h"
 #include "utils/hooks.h"
+#include "utils/control_block.h"
 
 /*
  * We only expect a small number of unique search_path strings to be used. If
@@ -3708,7 +3708,7 @@ static void recomputeNamespacePath(void) {
   if (baseSearchPathValid && namespaceUser == roleid)
     return;
 
-  entry = cachedNamespacePath(namespace_search_path, roleid);
+  entry = cachedNamespacePath(tcb->guc.namespace_search_path, roleid);
 
   if (baseCreationNamespace == entry->firstNS &&
       baseTempCreationPending == entry->temp_missing &&

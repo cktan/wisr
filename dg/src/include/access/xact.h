@@ -18,6 +18,7 @@
 
 #include "access/transam.h"
 #include "datatype/timestamp.h"
+#include "utils/control_block.h"
 
 /*
  * Xact isolation levels
@@ -27,18 +28,13 @@
 #define XACT_REPEATABLE_READ	2
 #define XACT_SERIALIZABLE		3
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT int DefaultXactIsoLevel;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int XactIsoLevel;
-
 /*
  * Whether the isolation level reads the whole transaction at one snapshot,
  * sm's (access/smstore.h), rather than each statement at its own.
  */
-#define IsolationUsesXactSnapshot() (XactIsoLevel >= XACT_REPEATABLE_READ)
+#define IsolationUsesXactSnapshot() (tcb->guc.XactIsoLevel >= XACT_REPEATABLE_READ)
 
 /* Xact read-only state */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool DefaultXactReadOnly;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool XactReadOnly;
 
 /* flag for logging statements in this transaction */
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool xact_is_sampled;
@@ -47,8 +43,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool xact_is_sampled;
  * Xact is deferrable -- only meaningful (currently) for read only
  * SERIALIZABLE transactions
  */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool DefaultXactDeferrable;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool XactDeferrable;
 
 /*
  * Miscellaneous flag bits to record events which occur on the top level

@@ -63,11 +63,9 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/selfuncs.h"
+#include "utils/control_block.h"
 
 /* GUC parameters */
-thread_local /*LOCAL*/ double cursor_tuple_fraction =
-    DEFAULT_CURSOR_TUPLE_FRACTION;
-thread_local /*LOCAL*/ bool enable_distinct_reordering = true;
 
 /* Hook for plugins to get control in planner() */
 
@@ -327,7 +325,7 @@ PlannedStmt *standard_planner(Query *parse, const char *query_string,
      * process some of the tuples sooner.  Use a GUC parameter to decide
      * what fraction to optimize for.
      */
-    tuple_fraction = cursor_tuple_fraction;
+    tuple_fraction = tcb->guc.cursor_tuple_fraction;
 
     /*
      * We document cursor_tuple_fraction as simply being a fraction, which
@@ -2882,7 +2880,7 @@ static void adjust_group_pathkeys_for_groupagg(PlannerInfo *root) {
   Assert(root->numOrderedAggs > 0);
 
   /* Do nothing if disabled */
-  if (!enable_presorted_aggregate)
+  if (!tcb->guc.enable_presorted_aggregate)
     return;
 
   /*
@@ -3416,7 +3414,7 @@ static RelOptInfo *create_grouping_paths(PlannerInfo *root,
      * support grouping sets.  create_ordinary_grouping_paths() will check
      * additional conditions, such as whether input_rel is partitioned.
      */
-    if (enable_partitionwise_aggregate && !parse->groupingSets)
+    if (tcb->guc.enable_partitionwise_aggregate && !parse->groupingSets)
       extra.patype = PARTITIONWISE_AGGREGATE_FULL;
     else
       extra.patype = PARTITIONWISE_AGGREGATE_NONE;
@@ -4082,7 +4080,7 @@ static void create_one_window_path(PlannerInfo *root, RelOptInfo *window_rel,
        * No presorted keys or incremental sort disabled, just perform a
        * complete sort.
        */
-      if (presorted_keys == 0 || !enable_incremental_sort)
+      if (presorted_keys == 0 || !tcb->guc.enable_incremental_sort)
         path = (Path *)create_sort_path(root, window_rel, path, window_pathkeys,
                                         -1.0);
       else {
@@ -4356,7 +4354,7 @@ static RelOptInfo *create_final_distinct_paths(PlannerInfo *root,
    */
   if (distinct_rel->pathlist == NIL)
     allow_hash = true; /* we have no alternatives */
-  else if (parse->hasDistinctOn || !enable_hashagg)
+  else if (parse->hasDistinctOn || !tcb->guc.enable_hashagg)
     allow_hash = false; /* policy-based decision not to hash */
   else
     allow_hash = true; /* default */
@@ -4391,7 +4389,7 @@ static List *get_useful_pathkeys_for_distinct(PlannerInfo *root,
   /* always include the given 'needed_pathkeys' */
   useful_pathkeys_list = lappend(useful_pathkeys_list, needed_pathkeys);
 
-  if (!enable_distinct_reordering)
+  if (!tcb->guc.enable_distinct_reordering)
     return useful_pathkeys_list;
 
   /*
@@ -4426,7 +4424,7 @@ static List *get_useful_pathkeys_for_distinct(PlannerInfo *root,
    * incremental sort.
    */
   if (list_length(useful_pathkeys) < list_length(needed_pathkeys) &&
-      !enable_incremental_sort)
+      !tcb->guc.enable_incremental_sort)
     return useful_pathkeys_list;
 
   /* Append the remaining PathKey nodes in needed_pathkeys */
@@ -4497,7 +4495,7 @@ static RelOptInfo *create_ordered_paths(PlannerInfo *root,
        * input path).
        */
       if (input_path != cheapest_input_path &&
-          (presorted_keys == 0 || !enable_incremental_sort))
+          (presorted_keys == 0 || !tcb->guc.enable_incremental_sort))
         continue;
 
       /*
@@ -4505,7 +4503,7 @@ static RelOptInfo *create_ordered_paths(PlannerInfo *root,
        * We'll just do a sort if there are no presorted keys and an
        * incremental sort when there are presorted keys.
        */
-      if (presorted_keys == 0 || !enable_incremental_sort)
+      if (presorted_keys == 0 || !tcb->guc.enable_incremental_sort)
         sorted_path = (Path *)create_sort_path(
             root, ordered_rel, input_path, root->sort_pathkeys, limit_tuples);
       else
@@ -5492,7 +5490,7 @@ static PathTarget *make_sort_input_target(PlannerInfo *root,
          * cpu_operator_cost".  Note this will take in any PL function
          * with default cost.
          */
-        if (cost.per_tuple > 10 * cpu_operator_cost) {
+        if (cost.per_tuple > 10 * tcb->guc.cpu_operator_cost) {
           postpone_col[i] = true;
           have_expensive = true;
         }
@@ -5791,7 +5789,7 @@ bool plan_cluster_use_sort(Oid tableOid, Oid indexOid) {
   ListCell *lc;
 
   /* We can short-circuit the cost comparison if indexscans are disabled */
-  if (!enable_indexscan)
+  if (!tcb->guc.enable_indexscan)
     return true; /* use sort */
 
   /* Set up mostly-dummy planner state */
@@ -5865,7 +5863,7 @@ bool plan_cluster_use_sort(Oid tableOid, Oid indexOid) {
   seqScanPath = create_seqscan_path(root, rel, NULL);
   cost_sort(&seqScanAndSortPath, root, NIL, seqScanPath->disabled_nodes,
             seqScanPath->total_cost, rel->tuples, rel->reltarget->width,
-            comparisonCost, maintenance_work_mem, -1.0);
+            comparisonCost, tcb->guc.maintenance_work_mem, -1.0);
 
   /* Estimate the cost of index scan */
   indexScanPath = create_index_path(root, indexInfo, NIL, NIL, NIL, NIL,
@@ -6227,7 +6225,7 @@ static Path *make_ordered_path(PlannerInfo *root, RelOptInfo *rel, Path *path,
      * disabled unless it's the cheapest input path).
      */
     if (path != cheapest_path &&
-        (presorted_keys == 0 || !enable_incremental_sort))
+        (presorted_keys == 0 || !tcb->guc.enable_incremental_sort))
       return NULL;
 
     /*
@@ -6235,7 +6233,7 @@ static Path *make_ordered_path(PlannerInfo *root, RelOptInfo *rel, Path *path,
      * just do a sort if there are no presorted keys and an incremental
      * sort when there are presorted keys.
      */
-    if (presorted_keys == 0 || !enable_incremental_sort)
+    if (presorted_keys == 0 || !tcb->guc.enable_incremental_sort)
       path = (Path *)create_sort_path(root, rel, path, pathkeys, limit_tuples);
     else
       path = (Path *)create_incremental_sort_path(root, rel, path, pathkeys,

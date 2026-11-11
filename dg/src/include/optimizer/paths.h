@@ -21,9 +21,6 @@
 /*
  * allpaths.c
  */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_geqo;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int geqo_threshold;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_group_by_reordering;
 
 /* Hook for plugins to get control in set_rel_pathlist() */
 typedef void (*set_rel_pathlist_hook_type)(PlannerInfo *root, RelOptInfo *rel,

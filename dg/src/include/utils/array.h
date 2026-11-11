@@ -338,7 +338,6 @@ typedef struct ArrayIteratorData *ArrayIterator;
 /*
  * GUC parameter
  */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool Array_nulls;
 
 /*
  * prototypes for functions defined in arrayfuncs.c

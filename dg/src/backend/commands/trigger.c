@@ -61,6 +61,7 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/tuplestore.h"
+#include "utils/control_block.h"
 
 /* GUC variables */
 thread_local /*LOCAL*/ int SessionReplicationRole =
@@ -297,7 +298,7 @@ ObjectAddress CreateTriggerFiringOn(CreateTrigStmt *stmt,
                            RelationGetRelationName(rel)),
                     errdetail_relkind_not_supported(rel->rd_rel->relkind)));
 
-  if (!allowSystemTableMods && IsSystemRelation(rel))
+  if (!tcb->guc.allowSystemTableMods && IsSystemRelation(rel))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            RelationGetRelationName(rel))));
@@ -1210,7 +1211,7 @@ void RemoveTriggerById(Oid trigOid) {
                            RelationGetRelationName(rel)),
                     errdetail_relkind_not_supported(rel->rd_rel->relkind)));
 
-  if (!allowSystemTableMods && IsSystemRelation(rel))
+  if (!tcb->guc.allowSystemTableMods && IsSystemRelation(rel))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            RelationGetRelationName(rel))));
@@ -1306,7 +1307,7 @@ static void RangeVarCallbackForRenameTrigger(const RangeVar *rv, Oid relid,
   if (!object_ownercheck(RelationRelationId, relid, GetUserId()))
     aclcheck_error(ACLCHECK_NOT_OWNER,
                    get_relkind_objtype(get_rel_relkind(relid)), rv->relname);
-  if (!allowSystemTableMods && IsSystemClass(relid, form))
+  if (!tcb->guc.allowSystemTableMods && IsSystemClass(relid, form))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            rv->relname)));
@@ -3388,7 +3389,7 @@ static Tuplestorestate *GetCurrentFDWTuplestore(void) {
     saveResourceOwner = CurrentResourceOwner;
     CurrentResourceOwner = CurTransactionResourceOwner;
 
-    ret = tuplestore_begin_heap(false, false, work_mem);
+    ret = tuplestore_begin_heap(false, false, tcb->guc.work_mem);
 
     CurrentResourceOwner = saveResourceOwner;
     MemoryContextSwitchTo(oldcxt);
@@ -4257,13 +4258,17 @@ TransitionCaptureState *MakeTransitionCaptureState(TriggerDesc *trigdesc,
   CurrentResourceOwner = CurTransactionResourceOwner;
 
   if (need_old_upd && upd_table->old_tuplestore == NULL)
-    upd_table->old_tuplestore = tuplestore_begin_heap(false, false, work_mem);
+    upd_table->old_tuplestore =
+        tuplestore_begin_heap(false, false, tcb->guc.work_mem);
   if (need_new_upd && upd_table->new_tuplestore == NULL)
-    upd_table->new_tuplestore = tuplestore_begin_heap(false, false, work_mem);
+    upd_table->new_tuplestore =
+        tuplestore_begin_heap(false, false, tcb->guc.work_mem);
   if (need_old_del && del_table->old_tuplestore == NULL)
-    del_table->old_tuplestore = tuplestore_begin_heap(false, false, work_mem);
+    del_table->old_tuplestore =
+        tuplestore_begin_heap(false, false, tcb->guc.work_mem);
   if (need_new_ins && ins_table->new_tuplestore == NULL)
-    ins_table->new_tuplestore = tuplestore_begin_heap(false, false, work_mem);
+    ins_table->new_tuplestore =
+        tuplestore_begin_heap(false, false, tcb->guc.work_mem);
 
   CurrentResourceOwner = saveResourceOwner;
   MemoryContextSwitchTo(oldcxt);

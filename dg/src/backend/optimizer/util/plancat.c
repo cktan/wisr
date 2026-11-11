@@ -57,6 +57,7 @@
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
+#include "utils/control_block.h"
 
 /* GUC parameter */
 thread_local /*LOCAL*/ int constraint_exclusion =
@@ -198,7 +199,7 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
    * whether they're unique indexes or not.
    */
   if ((inhparent && relation->rd_rel->relkind != RELKIND_PARTITIONED_TABLE) ||
-      (IgnoreSystemIndexes && IsSystemRelation(relation)))
+      (tcb->guc.IgnoreSystemIndexes && IsSystemRelation(relation)))
     hasindex = false;
   else
     hasindex = relation->rd_rel->relhasindex;
@@ -1887,7 +1888,7 @@ void add_function_cost(PlannerInfo *root, Oid funcid, Node *node,
   }
 
   /* No support function, or it failed, so rely on procost */
-  cost->per_tuple += procform->procost * cpu_operator_cost;
+  cost->per_tuple += procform->procost * tcb->guc.cpu_operator_cost;
 }
 
 /*

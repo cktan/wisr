@@ -30,6 +30,7 @@
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
 #include "utils/timestamp.h"
+#include "utils/control_block.h"
 
 /*
  * Estimate of the maximum number of open portals a user would have,
@@ -325,7 +326,7 @@ void PortalCreateHoldStore(Portal portal) {
   oldcxt = MemoryContextSwitchTo(portal->holdContext);
 
   portal->holdStore = tuplestore_begin_heap(
-      portal->cursorOptions & CURSOR_OPT_SCROLL, true, work_mem);
+      portal->cursorOptions & CURSOR_OPT_SCROLL, true, tcb->guc.work_mem);
 
   MemoryContextSwitchTo(oldcxt);
 }

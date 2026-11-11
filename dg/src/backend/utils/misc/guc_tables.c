@@ -286,62 +286,27 @@ static const struct config_enum_entry default_toast_compression_options[] = {
  */
 /* Sessions read shmem->allow_alter_system, not this */
 static thread_local /*LOCAL*/ bool AllowAlterSystem = true;
-thread_local /*LOCAL*/ bool log_duration = false;
-thread_local /*LOCAL*/ bool Debug_print_plan = false;
-thread_local /*LOCAL*/ bool Debug_print_parse = false;
-thread_local /*LOCAL*/ bool Debug_print_rewritten = false;
-thread_local /*LOCAL*/ bool Debug_pretty_print = true;
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
-thread_local /*LOCAL*/ bool Debug_copy_parse_plan_trees;
-thread_local /*LOCAL*/ bool Debug_write_read_parse_plan_trees;
-thread_local /*LOCAL*/ bool Debug_raw_expression_coverage_test;
 #endif
 
-thread_local /*LOCAL*/ bool log_parser_stats = false;
-thread_local /*LOCAL*/ bool log_planner_stats = false;
-thread_local /*LOCAL*/ bool log_executor_stats = false;
-thread_local /*LOCAL*/ bool log_statement_stats =
-    false; /* this is sort of all three
-            * above together */
 static thread_local /*LOCAL*/ char *event_source;
-
-thread_local /*LOCAL*/ bool row_security;
-thread_local /*LOCAL*/ bool check_function_bodies = true;
 
 /*
  * This GUC exists solely for backward compatibility, check its definition for
  * details.
  */
-static thread_local /*LOCAL*/ bool default_with_oids = false;
 
 thread_local /*LOCAL*/ bool current_role_is_superuser;
 
 thread_local /*LOCAL*/ int log_min_error_statement = ERROR;
 thread_local /*LOCAL*/ int log_min_messages = WARNING;
 thread_local /*LOCAL*/ int client_min_messages = NOTICE;
-thread_local /*LOCAL*/ int log_min_duration_sample = -1;
-thread_local /*LOCAL*/ int log_min_duration_statement = -1;
-thread_local /*LOCAL*/ int log_parameter_max_length = -1;
-thread_local /*LOCAL*/ int log_parameter_max_length_on_error = 0;
-thread_local /*LOCAL*/ int log_temp_files = -1;
-thread_local /*LOCAL*/ double log_statement_sample_rate = 1.0;
-thread_local /*LOCAL*/ double log_xact_sample_rate = 0;
-thread_local /*LOCAL*/ char *backtrace_functions;
-
-thread_local /*LOCAL*/ int temp_file_limit = -1;
 
 thread_local /*LOCAL*/ int num_temp_buffers = 1024;
 
 static thread_local /*LOCAL*/ char *cluster_name = "";
 static thread_local /*LOCAL*/ char *external_pid_file;
-
-thread_local /*LOCAL*/ char *application_name;
-
-thread_local /*LOCAL*/ int tcp_keepalives_idle;
-thread_local /*LOCAL*/ int tcp_keepalives_interval;
-thread_local /*LOCAL*/ int tcp_keepalives_count;
-thread_local /*LOCAL*/ int tcp_user_timeout;
 
 /*
  * SSL renegotiation was been removed in PostgreSQL 9.5, but we tolerate it
@@ -349,7 +314,6 @@ thread_local /*LOCAL*/ int tcp_user_timeout;
  * This avoids breaking compatibility with clients that have never supported
  * renegotiation and therefore always try to zero it.
  */
-static thread_local /*LOCAL*/ int ssl_renegotiation_limit;
 
 /*
  * These variables are all dummies that don't do anything, except in some
@@ -357,13 +321,9 @@ static thread_local /*LOCAL*/ int ssl_renegotiation_limit;
  * and is kept in sync by assign_hooks.
  */
 static thread_local /*LOCAL*/ char *syslog_ident_str;
-static thread_local /*LOCAL*/ double phony_random_seed;
-static thread_local /*LOCAL*/ char *client_encoding_string;
-static thread_local /*LOCAL*/ char *datestyle_string;
 static thread_local /*LOCAL*/ char *server_encoding_string;
 static thread_local /*LOCAL*/ char *server_version_string;
 static thread_local /*LOCAL*/ int server_version_num;
-static thread_local /*LOCAL*/ char *restrict_nonsystem_relation_kind_string;
 
 #ifdef HAVE_SYSLOG
 #define DEFAULT_SYSLOG_FACILITY LOG_LOCAL0
@@ -372,9 +332,7 @@ static thread_local /*LOCAL*/ char *restrict_nonsystem_relation_kind_string;
 #endif
 static thread_local /*LOCAL*/ int syslog_facility = DEFAULT_SYSLOG_FACILITY;
 
-static thread_local /*LOCAL*/ char *timezone_string;
 static thread_local /*LOCAL*/ char *log_timezone_string;
-static thread_local /*LOCAL*/ char *timezone_abbreviations_string;
 static thread_local /*LOCAL*/ char *data_directory;
 static thread_local /*LOCAL*/ char *ConfigFileName;
 static thread_local /*LOCAL*/ bool enable_bonjour = false;
@@ -392,7 +350,6 @@ static thread_local /*LOCAL*/ char *shared_preload_libraries_string = NULL;
 static thread_local /*LOCAL*/ char *Unix_socket_group;
 static thread_local /*LOCAL*/ char *Unix_socket_directories;
 static thread_local /*LOCAL*/ char *ListenAddresses;
-static thread_local /*LOCAL*/ char *session_authorization_string;
 #ifdef USE_ASSERT_CHECKING
 #define DEFAULT_ASSERT_ENABLED true
 #else
@@ -421,6 +378,63 @@ static thread_local /*LOCAL*/ int AuthenticationTimeout = 60;
 /* elog.c: syslog_sequence_numbers and syslog_split_messages; shmem->syslog */
 static thread_local /*LOCAL*/ bool syslog_sequence_numbers = true;
 static thread_local /*LOCAL*/ bool syslog_split_messages = true;
+/*
+ * The postmaster's own reloadable settings: only the main thread reads them,
+ * from pcb (publish_postmaster_reload_settings()), not from these variables.
+ */
+static thread_local /*LOCAL*/ bool EnableSSL = false;
+static thread_local /*LOCAL*/ bool send_abort_for_crash = false;
+static thread_local /*LOCAL*/ bool send_abort_for_kill = false;
+static thread_local /*LOCAL*/ char *ssl_cert_file;
+/* postmaster.c, be-secure.c: sessions read shmem, not these variables */
+static thread_local /*LOCAL*/ int PreAuthDelay = 0;
+static thread_local /*LOCAL*/ int ssl_min_protocol_version = PG_TLS1_2_VERSION;
+static thread_local /*LOCAL*/ int ssl_max_protocol_version = PG_TLS_ANY;
+static thread_local /*LOCAL*/ char *ssl_key_file;
+static thread_local /*LOCAL*/ char *ssl_ca_file;
+static thread_local /*LOCAL*/ char *ssl_crl_file;
+static thread_local /*LOCAL*/ char *ssl_crl_dir;
+static thread_local /*LOCAL*/ char *ssl_dh_params_file;
+static thread_local /*LOCAL*/ char *SSLECDHCurve;
+static thread_local /*LOCAL*/ char *ssl_passphrase_command;
+static thread_local /*LOCAL*/ bool ssl_passphrase_command_supports_reload;
+static thread_local /*LOCAL*/ char *SSLCipherList;
+static thread_local /*LOCAL*/ char *SSLCipherSuites;
+static thread_local /*LOCAL*/ bool SSLPreferServerCiphers;
+static thread_local /*LOCAL*/ char *oauth_validator_libraries_string;
+
+/* A string setting as a std::string, "" if it has no value. */
+static std::string setting_string(const char *value) {
+  return value ? value : "";
+}
+
+/*
+ * Copy the postmaster's reloadable settings into the process control block.
+ * Only the main thread reads them, so a write on a reload races with no
+ * reader. publish_shared_settings() calls this at start and on each reload.
+ */
+static void publish_postmaster_reload_settings(void) {
+  pcb_t *b = pcb_main();
+
+  b->EnableSSL = EnableSSL;
+  b->send_abort_for_crash = send_abort_for_crash;
+  b->send_abort_for_kill = send_abort_for_kill;
+  b->ssl_cert_file = setting_string(ssl_cert_file);
+  b->ssl_key_file = setting_string(ssl_key_file);
+  b->ssl_ca_file = setting_string(ssl_ca_file);
+  b->ssl_crl_file = setting_string(ssl_crl_file);
+  b->ssl_crl_dir = setting_string(ssl_crl_dir);
+  b->ssl_dh_params_file = setting_string(ssl_dh_params_file);
+  b->SSLECDHCurve = setting_string(SSLECDHCurve);
+  b->ssl_passphrase_command = setting_string(ssl_passphrase_command);
+  b->ssl_passphrase_command_supports_reload =
+      ssl_passphrase_command_supports_reload;
+  b->SSLCipherList = setting_string(SSLCipherList);
+  b->SSLCipherSuites = setting_string(SSLCipherSuites);
+  b->SSLPreferServerCiphers = SSLPreferServerCiphers;
+  b->oauth_validator_libraries_string =
+      setting_string(oauth_validator_libraries_string);
+}
 
 /*
  * Copy the settings that change on a reload and that every thread reads into
@@ -428,12 +442,20 @@ static thread_local /*LOCAL*/ bool syslog_split_messages = true;
  * and after each reload; the other threads read the copy, never the variable.
  */
 void publish_shared_settings(void) {
+  /* The main thread's own reloadable settings go to pcb, for it alone. */
+  publish_postmaster_reload_settings();
+
   /* Each is independent of the others, so no order is needed between them. */
   shmem->log_hostname.store(log_hostname, std::memory_order_relaxed);
   shmem->authentication_timeout.store(AuthenticationTimeout,
                                       std::memory_order_relaxed);
   shmem->allow_alter_system.store(AllowAlterSystem,
                                   std::memory_order_relaxed);
+  shmem->pre_auth_delay.store(PreAuthDelay, std::memory_order_relaxed);
+  shmem->ssl_min_protocol_version.store(ssl_min_protocol_version,
+                                        std::memory_order_relaxed);
+  shmem->ssl_max_protocol_version.store(ssl_max_protocol_version,
+                                        std::memory_order_relaxed);
 
   /* Allocate before the lock: the lock is held only to swap the pointer. */
   std::shared_ptr<const std::string> prefix =
@@ -528,7 +550,6 @@ void publish_postmaster_settings(void) {
 }
 
 /* should be static, but commands/variable.c needs to get at this */
-thread_local /*LOCAL*/ char *role_string;
 
 /*
  * Displayable names for context types (enum GucContext)
@@ -669,7 +690,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"enable_seqscan", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables the planner's use of sequential-scan plans."), NULL,
       GUC_EXPLAIN},
-     &enable_seqscan,
+     &tcb->guc.enable_seqscan,
      true,
      NULL,
      NULL,
@@ -677,7 +698,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"enable_indexscan", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables the planner's use of index-scan plans."), NULL,
       GUC_EXPLAIN},
-     &enable_indexscan,
+     &tcb->guc.enable_indexscan,
      true,
      NULL,
      NULL,
@@ -685,7 +706,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"enable_indexonlyscan", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables the planner's use of index-only-scan plans."), NULL,
       GUC_EXPLAIN},
-     &enable_indexonlyscan,
+     &tcb->guc.enable_indexonlyscan,
      true,
      NULL,
      NULL,
@@ -693,7 +714,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"enable_bitmapscan", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables the planner's use of bitmap-scan plans."), NULL,
       GUC_EXPLAIN},
-     &enable_bitmapscan,
+     &tcb->guc.enable_bitmapscan,
      true,
      NULL,
      NULL,
@@ -701,7 +722,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"enable_tidscan", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables the planner's use of TID scan plans."), NULL,
       GUC_EXPLAIN},
-     &enable_tidscan,
+     &tcb->guc.enable_tidscan,
      true,
      NULL,
      NULL,
@@ -709,7 +730,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"enable_sort", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables the planner's use of explicit sort steps."), NULL,
       GUC_EXPLAIN},
-     &enable_sort,
+     &tcb->guc.enable_sort,
      true,
      NULL,
      NULL,
@@ -717,7 +738,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"enable_incremental_sort", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables the planner's use of incremental sort steps."),
       NULL, GUC_EXPLAIN},
-     &enable_incremental_sort,
+     &tcb->guc.enable_incremental_sort,
      true,
      NULL,
      NULL,
@@ -725,7 +746,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"enable_hashagg", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables the planner's use of hashed aggregation plans."),
       NULL, GUC_EXPLAIN},
-     &enable_hashagg,
+     &tcb->guc.enable_hashagg,
      true,
      NULL,
      NULL,
@@ -733,7 +754,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"enable_material", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables the planner's use of materialization."), NULL,
       GUC_EXPLAIN},
-     &enable_material,
+     &tcb->guc.enable_material,
      true,
      NULL,
      NULL,
@@ -741,7 +762,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"enable_memoize", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables the planner's use of memoization."), NULL,
       GUC_EXPLAIN},
-     &enable_memoize,
+     &tcb->guc.enable_memoize,
      true,
      NULL,
      NULL,
@@ -749,7 +770,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"enable_nestloop", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables the planner's use of nested-loop join plans."),
       NULL, GUC_EXPLAIN},
-     &enable_nestloop,
+     &tcb->guc.enable_nestloop,
      true,
      NULL,
      NULL,
@@ -757,7 +778,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"enable_mergejoin", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables the planner's use of merge join plans."), NULL,
       GUC_EXPLAIN},
-     &enable_mergejoin,
+     &tcb->guc.enable_mergejoin,
      true,
      NULL,
      NULL,
@@ -765,14 +786,14 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"enable_hashjoin", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables the planner's use of hash join plans."), NULL,
       GUC_EXPLAIN},
-     &enable_hashjoin,
+     &tcb->guc.enable_hashjoin,
      true,
      NULL,
      NULL,
      NULL},
     {{"enable_partitionwise_join", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables partitionwise join."), NULL, GUC_EXPLAIN},
-     &enable_partitionwise_join,
+     &tcb->guc.enable_partitionwise_join,
      false,
      NULL,
      NULL,
@@ -780,7 +801,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"enable_partitionwise_aggregate", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables partitionwise aggregation and grouping."), NULL,
       GUC_EXPLAIN},
-     &enable_partitionwise_aggregate,
+     &tcb->guc.enable_partitionwise_aggregate,
      false,
      NULL,
      NULL,
@@ -791,7 +812,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
                    "bounds to conditions in the query to determine which "
                    "partitions must be scanned."),
       GUC_EXPLAIN},
-     &enable_partition_pruning,
+     &tcb->guc.enable_partition_pruning,
      true,
      NULL,
      NULL,
@@ -805,7 +826,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
                    "DISTINCT clause.  When disabled, implicit sorts are always "
                    "performed during execution."),
       GUC_EXPLAIN},
-     &enable_presorted_aggregate,
+     &tcb->guc.enable_presorted_aggregate,
      true,
      NULL,
      NULL,
@@ -813,28 +834,28 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"enable_async_append", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables the planner's use of async append plans."), NULL,
       GUC_EXPLAIN},
-     &enable_async_append,
+     &tcb->guc.enable_async_append,
      true,
      NULL,
      NULL,
      NULL},
     {{"enable_self_join_elimination", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables removal of unique self-joins."), NULL, GUC_EXPLAIN},
-     &enable_self_join_elimination,
+     &tcb->guc.enable_self_join_elimination,
      true,
      NULL,
      NULL,
      NULL},
     {{"enable_group_by_reordering", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables reordering of GROUP BY keys."), NULL, GUC_EXPLAIN},
-     &enable_group_by_reordering,
+     &tcb->guc.enable_group_by_reordering,
      true,
      NULL,
      NULL,
      NULL},
     {{"enable_distinct_reordering", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables reordering of DISTINCT keys."), NULL, GUC_EXPLAIN},
-     &enable_distinct_reordering,
+     &tcb->guc.enable_distinct_reordering,
      true,
      NULL,
      NULL,
@@ -844,7 +865,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       gettext_noop("This algorithm attempts to do planning without "
                    "exhaustive searching."),
       GUC_EXPLAIN},
-     &enable_geqo,
+     &tcb->guc.enable_geqo,
      true,
      NULL,
      NULL,
@@ -918,7 +939,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      NULL},
     {{"log_disconnections", PGC_SU_BACKEND, LOGGING_WHAT,
       gettext_noop("Logs end of a session, including duration."), NULL},
-     &Log_disconnections,
+     &tcb->guc.Log_disconnections,
      false,
      NULL,
      NULL,
@@ -935,7 +956,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
 
     {{"exit_on_error", PGC_USERSET, ERROR_HANDLING_OPTIONS,
       gettext_noop("Terminate session on any error."), NULL},
-     &ExitOnAnyError,
+     &tcb->guc.ExitOnAnyError,
      false,
      NULL,
      NULL,
@@ -960,7 +981,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
 
     {{"log_duration", PGC_SUSET, LOGGING_WHAT,
       gettext_noop("Logs the duration of each completed SQL statement."), NULL},
-     &log_duration,
+     &tcb->guc.log_duration,
      false,
      NULL,
      NULL,
@@ -972,7 +993,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
           "copyObject(), to facilitate catching errors and omissions in "
           "copyObject()."),
       NULL, GUC_NOT_IN_SAMPLE},
-     &Debug_copy_parse_plan_trees,
+     &tcb->guc.Debug_copy_parse_plan_trees,
 /* support for legacy compile-time setting */
 #ifdef COPY_PARSE_PLAN_TREES
      true,
@@ -989,7 +1010,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
           "in "
           "those modules."),
       NULL, GUC_NOT_IN_SAMPLE},
-     &Debug_write_read_parse_plan_trees,
+     &tcb->guc.Debug_write_read_parse_plan_trees,
 /* support for legacy compile-time setting */
 #ifdef WRITE_READ_PARSE_PLAN_TREES
      true,
@@ -1006,7 +1027,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
           "by raw_expression_tree_walker(), to facilitate catching errors and "
           "omissions in that function."),
       NULL, GUC_NOT_IN_SAMPLE},
-     &Debug_raw_expression_coverage_test,
+     &tcb->guc.Debug_raw_expression_coverage_test,
 /* support for legacy compile-time setting */
 #ifdef RAW_EXPRESSION_COVERAGE_TEST
      true,
@@ -1019,28 +1040,28 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
 #endif /* DEBUG_NODE_TESTS_ENABLED */
     {{"debug_print_parse", PGC_USERSET, LOGGING_WHAT,
       gettext_noop("Logs each query's parse tree."), NULL},
-     &Debug_print_parse,
+     &tcb->guc.Debug_print_parse,
      false,
      NULL,
      NULL,
      NULL},
     {{"debug_print_rewritten", PGC_USERSET, LOGGING_WHAT,
       gettext_noop("Logs each query's rewritten parse tree."), NULL},
-     &Debug_print_rewritten,
+     &tcb->guc.Debug_print_rewritten,
      false,
      NULL,
      NULL,
      NULL},
     {{"debug_print_plan", PGC_USERSET, LOGGING_WHAT,
       gettext_noop("Logs each query's execution plan."), NULL},
-     &Debug_print_plan,
+     &tcb->guc.Debug_print_plan,
      false,
      NULL,
      NULL,
      NULL},
     {{"debug_pretty_print", PGC_USERSET, LOGGING_WHAT,
       gettext_noop("Indents parse and plan tree displays."), NULL},
-     &Debug_pretty_print,
+     &tcb->guc.Debug_pretty_print,
      true,
      NULL,
      NULL,
@@ -1048,7 +1069,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"log_parser_stats", PGC_SUSET, STATS_MONITORING,
       gettext_noop("Writes parser performance statistics to the server log."),
       NULL},
-     &log_parser_stats,
+     &tcb->guc.log_parser_stats,
      false,
      check_stage_log_stats,
      NULL,
@@ -1056,7 +1077,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"log_planner_stats", PGC_SUSET, STATS_MONITORING,
       gettext_noop("Writes planner performance statistics to the server log."),
       NULL},
-     &log_planner_stats,
+     &tcb->guc.log_planner_stats,
      false,
      check_stage_log_stats,
      NULL,
@@ -1064,7 +1085,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"log_executor_stats", PGC_SUSET, STATS_MONITORING,
       gettext_noop("Writes executor performance statistics to the server log."),
       NULL},
-     &log_executor_stats,
+     &tcb->guc.log_executor_stats,
      false,
      check_stage_log_stats,
      NULL,
@@ -1073,7 +1094,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       gettext_noop(
           "Writes cumulative performance statistics to the server log."),
       NULL},
-     &log_statement_stats,
+     &tcb->guc.log_statement_stats,
      false,
      check_log_stats,
      NULL,
@@ -1082,7 +1103,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"track_io_timing", PGC_SUSET, STATS_CUMULATIVE,
       gettext_noop("Collects timing statistics for database I/O activity."),
       NULL},
-     &track_io_timing,
+     &tcb->guc.track_io_timing,
      false,
      NULL,
      NULL,
@@ -1092,7 +1113,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       gettext_noop("Updates the process title to show the active SQL command."),
       gettext_noop("Enables updating of the process title every time a new SQL "
                    "command is received by the server.")},
-     &update_process_title,
+     &tcb->guc.update_process_title,
      DEFAULT_UPDATE_PROCESS_TITLE,
      NULL,
      NULL,
@@ -1118,7 +1139,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
           "return true if expr evaluates to the null value, and false "
           "otherwise. The correct behavior of expr = NULL is to always "
           "return null (unknown).")},
-     &Transform_null_equals,
+     &tcb->guc.Transform_null_equals,
      false,
      NULL,
      NULL,
@@ -1126,7 +1147,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"default_transaction_read_only", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Sets the default read-only status of new transactions."),
       NULL, GUC_REPORT},
-     &DefaultXactReadOnly,
+     &tcb->guc.DefaultXactReadOnly,
      false,
      NULL,
      NULL,
@@ -1135,7 +1156,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       gettext_noop("Sets the current transaction's read-only status."), NULL,
       GUC_NO_RESET | GUC_NO_RESET_ALL | GUC_NOT_IN_SAMPLE |
           GUC_DISALLOW_IN_FILE},
-     &XactReadOnly,
+     &tcb->guc.XactReadOnly,
      false,
      check_transaction_read_only,
      NULL,
@@ -1143,7 +1164,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"default_transaction_deferrable", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Sets the default deferrable status of new transactions."),
       NULL},
-     &DefaultXactDeferrable,
+     &tcb->guc.DefaultXactDeferrable,
      false,
      NULL,
      NULL,
@@ -1155,7 +1176,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       NULL,
       GUC_NO_RESET | GUC_NO_RESET_ALL | GUC_NOT_IN_SAMPLE |
           GUC_DISALLOW_IN_FILE},
-     &XactDeferrable,
+     &tcb->guc.XactDeferrable,
      false,
      check_transaction_deferrable,
      NULL,
@@ -1163,7 +1184,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"row_security", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Enables row security."),
       gettext_noop("When enabled, row security will be applied to all users.")},
-     &row_security,
+     &tcb->guc.row_security,
      true,
      NULL,
      NULL,
@@ -1172,7 +1193,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       gettext_noop(
           "Check routine bodies during CREATE FUNCTION and CREATE PROCEDURE."),
       NULL},
-     &check_function_bodies,
+     &tcb->guc.check_function_bodies,
      true,
      NULL,
      NULL,
@@ -1182,7 +1203,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       gettext_noop("When turned on, unquoted NULL in an array input "
                    "value means a null value; "
                    "otherwise it is taken literally.")},
-     &Array_nulls,
+     &tcb->guc.Array_nulls,
      true,
      NULL,
      NULL,
@@ -1196,7 +1217,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"default_with_oids", PGC_USERSET, COMPAT_OPTIONS_PREVIOUS,
       gettext_noop("WITH OIDS is no longer supported; this can only be false."),
       NULL, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE},
-     &default_with_oids,
+     &tcb->guc.default_with_oids,
      false,
      check_default_with_oids,
      NULL,
@@ -1233,7 +1254,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"optimize_bounded_sort", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables bounded sorting using heap sort."), NULL,
       GUC_NOT_IN_SAMPLE | GUC_EXPLAIN},
-     &optimize_bounded_sort,
+     &tcb->guc.optimize_bounded_sort,
      true,
      NULL,
      NULL,
@@ -1290,7 +1311,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"allow_system_table_mods", PGC_SUSET, DEVELOPER_OPTIONS,
       gettext_noop("Allows modifications of the structure of system tables."),
       NULL, GUC_NOT_IN_SAMPLE},
-     &allowSystemTableMods,
+     &tcb->guc.allowSystemTableMods,
      false,
      NULL,
      NULL,
@@ -1301,7 +1322,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       gettext_noop("It does not prevent updating the indexes, so it is safe "
                    "to use.  The worst consequence is slowness."),
       GUC_NOT_IN_SAMPLE},
-     &IgnoreSystemIndexes,
+     &tcb->guc.IgnoreSystemIndexes,
      false,
      NULL,
      NULL,
@@ -1314,7 +1335,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
          gettext_noop("When generating SQL fragments, quote all identifiers."),
          NULL,
      },
-     &quote_all_identifiers,
+     &tcb->guc.quote_all_identifiers,
      false,
      NULL,
      NULL,
@@ -1367,7 +1388,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
                    "authentication on connection startup."),
       gettext_noop("This allows attaching a debugger to the process."),
       GUC_NOT_IN_SAMPLE | GUC_UNIT_S},
-     &PostAuthDelay,
+     &tcb->guc.PostAuthDelay,
      0,
      0,
      INT_MAX / 1000000,
@@ -1379,7 +1400,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop(
           "This applies to table columns that have not had a "
           "column-specific target set via ALTER TABLE SET STATISTICS.")},
-     &default_statistics_target,
+     &tcb->guc.default_statistics_target,
      100,
      1,
      MAX_STATISTICS_TARGET,
@@ -1393,7 +1414,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
                    "queries if the resulting FROM list would have no more than "
                    "this many items."),
       GUC_EXPLAIN},
-     &from_collapse_limit,
+     &tcb->guc.from_collapse_limit,
      8,
      1,
      INT_MAX,
@@ -1407,7 +1428,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
                    "constructs into lists of FROM items whenever a "
                    "list of no more than this many items would result."),
       GUC_EXPLAIN},
-     &join_collapse_limit,
+     &tcb->guc.join_collapse_limit,
      8,
      1,
      INT_MAX,
@@ -1418,7 +1439,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop(
           "Sets the threshold of FROM items beyond which GEQO is used."),
       NULL, GUC_EXPLAIN},
-     &geqo_threshold,
+     &tcb->guc.geqo_threshold,
      12,
      2,
      INT_MAX,
@@ -1429,7 +1450,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop(
           "GEQO: effort is used to set the default for other GEQO parameters."),
       NULL, GUC_EXPLAIN},
-     &Geqo_effort,
+     &tcb->guc.Geqo_effort,
      DEFAULT_GEQO_EFFORT,
      MIN_GEQO_EFFORT,
      MAX_GEQO_EFFORT,
@@ -1439,7 +1460,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"geqo_pool_size", PGC_USERSET, QUERY_TUNING_GEQO,
       gettext_noop("GEQO: number of individuals in the population."),
       gettext_noop("0 means use a suitable default value."), GUC_EXPLAIN},
-     &Geqo_pool_size,
+     &tcb->guc.Geqo_pool_size,
      0,
      0,
      INT_MAX,
@@ -1449,7 +1470,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"geqo_generations", PGC_USERSET, QUERY_TUNING_GEQO,
       gettext_noop("GEQO: number of iterations of the algorithm."),
       gettext_noop("0 means use a suitable default value."), GUC_EXPLAIN},
-     &Geqo_generations,
+     &tcb->guc.Geqo_generations,
      0,
      0,
      INT_MAX,
@@ -1540,7 +1561,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
                    "sort operation and hash table before switching to "
                    "temporary disk files."),
       GUC_UNIT_KB | GUC_EXPLAIN},
-     &work_mem,
+     &tcb->guc.work_mem,
      4096,
      64,
      MAX_KILOBYTES,
@@ -1558,7 +1579,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
           "Sets the maximum memory to be used for maintenance operations."),
       gettext_noop("This includes operations such as VACUUM and CREATE INDEX."),
       GUC_UNIT_KB},
-     &maintenance_work_mem,
+     &tcb->guc.maintenance_work_mem,
      65536,
      64,
      MAX_KILOBYTES,
@@ -1569,7 +1590,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"max_stack_depth", PGC_SUSET, RESOURCES_MEM,
       gettext_noop("Sets the maximum stack depth, in kilobytes."), NULL,
       GUC_UNIT_KB},
-     &max_stack_depth,
+     &tcb->guc.max_stack_depth,
      100,
      100,
      MAX_KILOBYTES,
@@ -1581,7 +1602,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop(
           "Limits the total size of all temporary files used by each process."),
       gettext_noop("-1 means no limit."), GUC_UNIT_KB},
-     &temp_file_limit,
+     &tcb->guc.temp_file_limit,
      -1,
      -1,
      INT_MAX,
@@ -1608,7 +1629,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"statement_timeout", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Sets the maximum allowed duration of any statement."),
       gettext_noop("0 disables the timeout."), GUC_UNIT_MS},
-     &StatementTimeout,
+     &tcb->guc.StatementTimeout,
      0,
      0,
      INT_MAX,
@@ -1624,7 +1645,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop(
           "Sets the time to wait on a lock before checking for deadlock."),
       NULL, GUC_UNIT_MS},
-     &DeadlockTimeout,
+     &tcb->guc.DeadlockTimeout,
      50,
      1,
      INT_MAX,
@@ -1635,7 +1656,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"lock_timeout", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Sets the maximum allowed duration of any wait for a lock."),
       gettext_noop("0 disables the timeout."), GUC_UNIT_MS},
-     &LockTimeout,
+     &tcb->guc.LockTimeout,
      0,
      0,
      INT_MAX,
@@ -1647,7 +1668,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop("Sets the maximum allowed idle time between queries, when "
                    "in a transaction."),
       gettext_noop("0 disables the timeout."), GUC_UNIT_MS},
-     &IdleInTransactionSessionTimeout,
+     &tcb->guc.IdleInTransactionSessionTimeout,
      0,
      0,
      INT_MAX,
@@ -1659,7 +1680,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop("Sets the maximum allowed duration of any transaction "
                    "within a session (not a prepared transaction)."),
       gettext_noop("0 disables the timeout."), GUC_UNIT_MS},
-     &TransactionTimeout,
+     &tcb->guc.TransactionTimeout,
      0,
      0,
      INT_MAX,
@@ -1671,7 +1692,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop("Sets the maximum allowed idle time between queries, when "
                    "not in a transaction."),
       gettext_noop("0 disables the timeout."), GUC_UNIT_MS},
-     &IdleSessionTimeout,
+     &tcb->guc.IdleSessionTimeout,
      0,
      0,
      INT_MAX,
@@ -1713,7 +1734,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
           "A zero or negative parameter value is added to the standard "
           "number of digits (FLT_DIG or DBL_DIG as appropriate). "
           "Any value greater than zero selects precise output mode.")},
-     &extra_float_digits,
+     &tcb->guc.extra_float_digits,
      1,
      -15,
      3,
@@ -1727,7 +1748,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
                    " Sampling is determined by \"log_statement_sample_rate\"."),
       gettext_noop("-1 disables sampling. 0 means sample all statements."),
       GUC_UNIT_MS},
-     &log_min_duration_sample,
+     &tcb->guc.log_min_duration_sample,
      -1,
      -1,
      INT_MAX,
@@ -1741,7 +1762,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop("-1 disables logging statement durations. 0 means log all "
                    "statement durations."),
       GUC_UNIT_MS},
-     &log_min_duration_statement,
+     &tcb->guc.log_min_duration_statement,
      -1,
      -1,
      INT_MAX,
@@ -1753,7 +1774,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop("Sets the maximum length in bytes of data logged for bind "
                    "parameter values when logging statements."),
       gettext_noop("-1 means log values in full."), GUC_UNIT_BYTE},
-     &log_parameter_max_length,
+     &tcb->guc.log_parameter_max_length,
      -1,
      -1,
      INT_MAX / 2,
@@ -1765,7 +1786,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop("Sets the maximum length in bytes of data logged for bind "
                    "parameter values when logging statements, on error."),
       gettext_noop("-1 means log values in full."), GUC_UNIT_BYTE},
-     &log_parameter_max_length_on_error,
+     &tcb->guc.log_parameter_max_length_on_error,
      0,
      -1,
      INT_MAX / 2,
@@ -1861,7 +1882,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"tcp_keepalives_idle", PGC_USERSET, CONN_AUTH_TCP,
       gettext_noop("Time between issuing TCP keepalives."),
       gettext_noop("0 means use the system default."), GUC_UNIT_S},
-     &tcp_keepalives_idle,
+     &tcb->guc.tcp_keepalives_idle,
      0,
      0,
      INT_MAX,
@@ -1872,7 +1893,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"tcp_keepalives_interval", PGC_USERSET, CONN_AUTH_TCP,
       gettext_noop("Time between TCP keepalive retransmits."),
       gettext_noop("0 means use the system default."), GUC_UNIT_S},
-     &tcp_keepalives_interval,
+     &tcb->guc.tcp_keepalives_interval,
      0,
      0,
      INT_MAX,
@@ -1889,7 +1910,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
          NULL,
          GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE,
      },
-     &ssl_renegotiation_limit,
+     &tcb->guc.ssl_renegotiation_limit,
      0,
      0,
      0,
@@ -1906,7 +1927,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
                       "lost before a connection is considered dead. "
                       "0 means use the system default."),
      },
-     &tcp_keepalives_count,
+     &tcb->guc.tcp_keepalives_count,
      0,
      0,
      INT_MAX,
@@ -1926,7 +1947,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
              "This is measured in disk pages, which are normally 8 kB each."),
          GUC_UNIT_BLOCKS | GUC_EXPLAIN,
      },
-     &effective_cache_size,
+     &tcb->guc.effective_cache_size,
      DEFAULT_EFFECTIVE_CACHE_SIZE,
      1,
      INT_MAX,
@@ -1952,7 +1973,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop("-1 disables logging temporary files. 0 means log all "
                    "temporary files."),
       GUC_UNIT_KB},
-     &log_temp_files,
+     &tcb->guc.log_temp_files,
      -1,
      -1,
      INT_MAX,
@@ -1963,7 +1984,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"tcp_user_timeout", PGC_USERSET, CONN_AUTH_TCP,
       gettext_noop("TCP user timeout."),
       gettext_noop("0 means use the system default."), GUC_UNIT_MS},
-     &tcp_user_timeout,
+     &tcb->guc.tcp_user_timeout,
      0,
      0,
      INT_MAX,
@@ -1974,7 +1995,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"debug_discard_caches", PGC_SUSET, DEVELOPER_OPTIONS,
       gettext_noop("Aggressively flush system caches for debugging purposes."),
       gettext_noop("0 means use normal caching behavior."), GUC_NOT_IN_SAMPLE},
-     &debug_discard_caches,
+     &tcb->guc.debug_discard_caches,
 #ifdef DISCARD_CACHES_ENABLED
 /* Set default based on older compile-time-only cache clobber macros */
 #if defined(CLOBBER_CACHE_RECURSIVELY)
@@ -1999,7 +2020,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
       gettext_noop("Sets the time interval between checks for disconnection "
                    "while running queries."),
       gettext_noop("0 disables connection checks."), GUC_UNIT_MS},
-     &client_connection_check_interval,
+     &tcb->guc.client_connection_check_interval,
      0,
      0,
      INT_MAX,
@@ -2010,7 +2031,7 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"scram_iterations", PGC_USERSET, CONN_AUTH_AUTH,
       gettext_noop("Sets the iteration count for SCRAM secret generation."),
       NULL, GUC_REPORT},
-     &scram_sha_256_iterations,
+     &tcb->guc.scram_sha_256_iterations,
      SCRAM_SHA_256_DEFAULT_ITERATIONS,
      1,
      INT_MAX,
@@ -2033,7 +2054,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
       gettext_noop("Sets the planner's estimate of the cost of a "
                    "sequentially fetched disk page."),
       NULL, GUC_EXPLAIN},
-     &seq_page_cost,
+     &tcb->guc.seq_page_cost,
      DEFAULT_SEQ_PAGE_COST,
      0,
      DBL_MAX,
@@ -2044,7 +2065,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
       gettext_noop("Sets the planner's estimate of the cost of a "
                    "nonsequentially fetched disk page."),
       NULL, GUC_EXPLAIN},
-     &random_page_cost,
+     &tcb->guc.random_page_cost,
      DEFAULT_RANDOM_PAGE_COST,
      0,
      DBL_MAX,
@@ -2055,7 +2076,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
       gettext_noop("Sets the planner's estimate of the cost of "
                    "processing each tuple (row)."),
       NULL, GUC_EXPLAIN},
-     &cpu_tuple_cost,
+     &tcb->guc.cpu_tuple_cost,
      DEFAULT_CPU_TUPLE_COST,
      0,
      DBL_MAX,
@@ -2066,7 +2087,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
       gettext_noop("Sets the planner's estimate of the cost of "
                    "processing each index entry during an index scan."),
       NULL, GUC_EXPLAIN},
-     &cpu_index_tuple_cost,
+     &tcb->guc.cpu_index_tuple_cost,
      DEFAULT_CPU_INDEX_TUPLE_COST,
      0,
      DBL_MAX,
@@ -2077,7 +2098,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
       gettext_noop("Sets the planner's estimate of the cost of "
                    "processing each operator or function call."),
       NULL, GUC_EXPLAIN},
-     &cpu_operator_cost,
+     &tcb->guc.cpu_operator_cost,
      DEFAULT_CPU_OPERATOR_COST,
      0,
      DBL_MAX,
@@ -2089,7 +2110,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
       gettext_noop("Sets the planner's estimate of the fraction of "
                    "a cursor's rows that will be retrieved."),
       NULL, GUC_EXPLAIN},
-     &cursor_tuple_fraction,
+     &tcb->guc.cursor_tuple_fraction,
      DEFAULT_CURSOR_TUPLE_FRACTION,
      0.0,
      1.0,
@@ -2101,7 +2122,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
       gettext_noop("Sets the planner's estimate of the average size "
                    "of a recursive query's working table."),
       NULL, GUC_EXPLAIN},
-     &recursive_worktable_factor,
+     &tcb->guc.recursive_worktable_factor,
      DEFAULT_RECURSIVE_WORKTABLE_FACTOR,
      0.001,
      1000000.0,
@@ -2112,7 +2133,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
     {{"geqo_selection_bias", PGC_USERSET, QUERY_TUNING_GEQO,
       gettext_noop("GEQO: selective pressure within the population."), NULL,
       GUC_EXPLAIN},
-     &Geqo_selection_bias,
+     &tcb->guc.Geqo_selection_bias,
      DEFAULT_GEQO_SELECTION_BIAS,
      MIN_GEQO_SELECTION_BIAS,
      MAX_GEQO_SELECTION_BIAS,
@@ -2121,7 +2142,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
      NULL},
     {{"geqo_seed", PGC_USERSET, QUERY_TUNING_GEQO,
       gettext_noop("GEQO: seed for random path selection."), NULL, GUC_EXPLAIN},
-     &Geqo_seed,
+     &tcb->guc.Geqo_seed,
      0.0,
      0.0,
      1.0,
@@ -2132,7 +2153,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
     {{"hash_mem_multiplier", PGC_USERSET, RESOURCES_MEM,
       gettext_noop("Multiple of \"work_mem\" to use for hash tables."), NULL,
       GUC_EXPLAIN},
-     &hash_mem_multiplier,
+     &tcb->guc.hash_mem_multiplier,
      2.0,
      1.0,
      1000.0,
@@ -2144,7 +2165,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
       gettext_noop("Sets the seed for random-number generation."), NULL,
       GUC_NO_SHOW_ALL | GUC_NO_RESET | GUC_NO_RESET_ALL | GUC_NOT_IN_SAMPLE |
           GUC_DISALLOW_IN_FILE},
-     &phony_random_seed,
+     &tcb->guc.phony_random_seed,
      0.0,
      -1.0,
      1.0,
@@ -2154,7 +2175,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
 
     {{"vacuum_cost_delay", PGC_USERSET, VACUUM_COST_DELAY,
       gettext_noop("Vacuum cost delay in milliseconds."), NULL, GUC_UNIT_MS},
-     &VacuumCostDelay,
+     &tcb->guc.VacuumCostDelay,
      0,
      0,
      100,
@@ -2167,7 +2188,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
                    "\"log_min_duration_sample\" to be logged."),
       gettext_noop(
           "Use a value between 0.0 (never log) and 1.0 (always log).")},
-     &log_statement_sample_rate,
+     &tcb->guc.log_statement_sample_rate,
      1.0,
      0.0,
      1.0,
@@ -2180,7 +2201,7 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
                    "statements."),
       gettext_noop("Use a value between 0.0 (never log) and 1.0 (log all "
                    "statements for all transactions).")},
-     &log_xact_sample_rate,
+     &tcb->guc.log_xact_sample_rate,
      0.0,
      0.0,
      1.0,
@@ -2203,7 +2224,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
     {{"client_encoding", PGC_USERSET, CLIENT_CONN_LOCALE,
       gettext_noop("Sets the client's character set encoding."), NULL,
       GUC_IS_NAME | GUC_REPORT},
-     &client_encoding_string,
+     &tcb->guc.client_encoding_string,
      "SQL_ASCII",
      check_client_encoding,
      assign_client_encoding,
@@ -2231,7 +2252,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       gettext_noop("Also controls interpretation of ambiguous "
                    "date inputs."),
       GUC_LIST_INPUT | GUC_REPORT},
-     &datestyle_string,
+     &tcb->guc.datestyle_string,
      "ISO, MDY",
      check_datestyle,
      assign_datestyle,
@@ -2240,7 +2261,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
     {{"default_table_access_method", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Sets the default table access method for new tables."),
       NULL, GUC_IS_NAME},
-     &default_table_access_method,
+     &tcb->guc.default_table_access_method,
      DEFAULT_TABLE_ACCESS_METHOD,
      check_default_table_access_method,
      NULL,
@@ -2251,7 +2272,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
                    "the role to themselves, and with which options."),
       gettext_noop("An empty string disables automatic self grants."),
       GUC_LIST_INPUT},
-     &createrole_self_grant,
+     &tcb->guc.createrole_self_grant,
      "",
      check_createrole_self_grant,
      assign_createrole_self_grant,
@@ -2266,7 +2287,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
           "for "
           "the specified file."),
       GUC_SUPERUSER_ONLY},
-     &Dynamic_library_path,
+     &tcb->guc.Dynamic_library_path,
      "$libdir",
      NULL,
      NULL,
@@ -2279,7 +2300,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
           "loaded "
           "from the same directory where the primary control file was found."),
       GUC_SUPERUSER_ONLY},
-     &Extension_control_path,
+     &tcb->guc.Extension_control_path,
      "$system",
      NULL,
      NULL,
@@ -2306,7 +2327,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
     {{"lc_messages", PGC_SUSET, CLIENT_CONN_LOCALE,
       gettext_noop("Sets the language in which messages are displayed."),
       gettext_noop("An empty string means use the operating system setting.")},
-     &locale_messages,
+     &tcb->guc.locale_messages,
      "",
      check_locale_messages,
      assign_locale_messages,
@@ -2315,7 +2336,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
     {{"lc_monetary", PGC_USERSET, CLIENT_CONN_LOCALE,
       gettext_noop("Sets the locale for formatting monetary amounts."),
       gettext_noop("An empty string means use the operating system setting.")},
-     &locale_monetary,
+     &tcb->guc.locale_monetary,
      "C",
      check_locale_monetary,
      assign_locale_monetary,
@@ -2324,7 +2345,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
     {{"lc_numeric", PGC_USERSET, CLIENT_CONN_LOCALE,
       gettext_noop("Sets the locale for formatting numbers."),
       gettext_noop("An empty string means use the operating system setting.")},
-     &locale_numeric,
+     &tcb->guc.locale_numeric,
      "C",
      check_locale_numeric,
      assign_locale_numeric,
@@ -2333,7 +2354,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
     {{"lc_time", PGC_USERSET, CLIENT_CONN_LOCALE,
       gettext_noop("Sets the locale for formatting date and time values."),
       gettext_noop("An empty string means use the operating system setting.")},
-     &locale_time,
+     &tcb->guc.locale_time,
      "C",
      check_locale_time,
      assign_locale_time,
@@ -2342,7 +2363,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
     {{"session_preload_libraries", PGC_SUSET, CLIENT_CONN_PRELOAD,
       gettext_noop("Lists shared libraries to preload into each backend."),
       NULL, GUC_LIST_INPUT | GUC_LIST_QUOTE | GUC_SUPERUSER_ONLY},
-     &session_preload_libraries_string,
+     &tcb->guc.session_preload_libraries_string,
      "",
      NULL,
      NULL,
@@ -2361,7 +2382,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       gettext_noop(
           "Lists unprivileged shared libraries to preload into each backend."),
       NULL, GUC_LIST_INPUT | GUC_LIST_QUOTE},
-     &local_preload_libraries_string,
+     &tcb->guc.local_preload_libraries_string,
      "",
      NULL,
      NULL,
@@ -2371,7 +2392,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       gettext_noop("Sets the schema search order for names that are not "
                    "schema-qualified."),
       NULL, GUC_LIST_INPUT | GUC_LIST_QUOTE | GUC_EXPLAIN | GUC_REPORT},
-     &namespace_search_path,
+     &tcb->guc.namespace_search_path,
      "\"$user\", public",
      check_search_path,
      assign_search_path,
@@ -2402,7 +2423,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       NULL,
       GUC_IS_NAME | GUC_NO_SHOW_ALL | GUC_NO_RESET_ALL | GUC_NOT_IN_SAMPLE |
           GUC_DISALLOW_IN_FILE | GUC_NOT_WHILE_SEC_REST},
-     &role_string,
+     &tcb->guc.role_string,
      "none",
      check_role,
      assign_role,
@@ -2413,7 +2434,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       gettext_noop("Sets the session user name."), NULL,
       GUC_IS_NAME | GUC_REPORT | GUC_NO_SHOW_ALL | GUC_NO_RESET_ALL |
           GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE | GUC_NOT_WHILE_SEC_REST},
-     &session_authorization_string,
+     &tcb->guc.session_authorization_string,
      NULL,
      check_session_authorization,
      assign_session_authorization,
@@ -2474,14 +2495,14 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       gettext_noop(
           "Sets the time zone for displaying and interpreting time stamps."),
       NULL, GUC_REPORT},
-     &timezone_string,
+     &tcb->guc.timezone_string,
      "GMT",
      check_timezone,
      assign_timezone,
      show_timezone},
     {{"timezone_abbreviations", PGC_USERSET, CLIENT_CONN_LOCALE,
       gettext_noop("Selects a file of time zone abbreviations."), NULL},
-     &timezone_abbreviations_string,
+     &tcb->guc.timezone_abbreviations_string,
      NULL,
      check_timezone_abbreviations,
      assign_timezone_abbreviations,
@@ -2667,7 +2688,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       gettext_noop(
           "Sets the application name to be reported in statistics and logs."),
       NULL, GUC_IS_NAME | GUC_REPORT | GUC_NOT_IN_SAMPLE},
-     &application_name,
+     &tcb->guc.application_name,
      "",
      check_application_name,
      assign_application_name,
@@ -2686,7 +2707,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
     {{"backtrace_functions", PGC_SUSET, DEVELOPER_OPTIONS,
       gettext_noop("Log backtrace for errors in these functions."), NULL,
       GUC_NOT_IN_SAMPLE},
-     &backtrace_functions,
+     &tcb->guc.backtrace_functions,
      "",
      check_backtrace_functions,
      assign_backtrace_functions,
@@ -2696,7 +2717,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       gettext_noop(
           "Prohibits access to non-system relations of specified kinds."),
       NULL, GUC_LIST_INPUT | GUC_NOT_IN_SAMPLE},
-     &restrict_nonsystem_relation_kind_string,
+     &tcb->guc.restrict_nonsystem_relation_kind_string,
      "",
      check_restrict_nonsystem_relation_kind,
      assign_restrict_nonsystem_relation_kind,
@@ -2716,7 +2737,7 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       gettext_noop(
           "Logs specified aspects of connection establishment and setup."),
       NULL, GUC_LIST_INPUT},
-     &log_connections_string,
+     &tcb->guc.log_connections_string,
      "",
      check_log_connections,
      assign_log_connections,
@@ -2764,7 +2785,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
 
     {{"compute_query_id", PGC_SUSET, STATS_MONITORING,
       gettext_noop("Enables in-core computation of query identifiers."), NULL},
-     &compute_query_id,
+     &tcb->guc.compute_query_id,
      COMPUTE_QUERY_ID_AUTO,
      compute_query_id_options,
      NULL,
@@ -2788,7 +2809,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
       gettext_noop(
           "Sets the default compression method for compressible values."),
       NULL},
-     &default_toast_compression,
+     &tcb->guc.default_toast_compression,
      TOAST_PGLZ_COMPRESSION,
      default_toast_compression_options,
      NULL,
@@ -2799,7 +2820,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
       gettext_noop(
           "Sets the transaction isolation level of each new transaction."),
       NULL},
-     &DefaultXactIsoLevel,
+     &tcb->guc.DefaultXactIsoLevel,
      XACT_READ_COMMITTED,
      isolation_level_options,
      NULL,
@@ -2810,7 +2831,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
       gettext_noop("Sets the current transaction's isolation level."), NULL,
       GUC_NO_RESET | GUC_NO_RESET_ALL | GUC_NOT_IN_SAMPLE |
           GUC_DISALLOW_IN_FILE},
-     &XactIsoLevel,
+     &tcb->guc.XactIsoLevel,
      XACT_READ_COMMITTED,
      isolation_level_options,
      check_transaction_isolation,
@@ -2830,7 +2851,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
     {{"icu_validation_level", PGC_USERSET, CLIENT_CONN_LOCALE,
       gettext_noop("Log level for reporting invalid ICU locale strings."),
       NULL},
-     &icu_validation_level,
+     &tcb->guc.icu_validation_level,
      WARNING,
      icu_validation_level_options,
      NULL,
@@ -2839,7 +2860,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
 
     {{"log_error_verbosity", PGC_SUSET, LOGGING_WHAT,
       gettext_noop("Sets the verbosity of logged messages."), NULL},
-     &Log_error_verbosity,
+     &tcb->guc.Log_error_verbosity,
      PGERROR_DEFAULT,
      log_error_verbosity_options,
      NULL,
@@ -2873,7 +2894,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
 
     {{"log_statement", PGC_SUSET, LOGGING_WHAT,
       gettext_noop("Sets the type of statements logged."), NULL},
-     &log_statement,
+     &tcb->guc.log_statement,
      LOGSTMT_NONE,
      log_statement_options,
      NULL,
@@ -2893,7 +2914,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
 
     {{"xmlbinary", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Sets how binary values are to be encoded in XML."), NULL},
-     &xmlbinary,
+     &tcb->guc.xmlbinary,
      XMLBINARY_BASE64,
      xmlbinary_options,
      NULL,
@@ -2914,7 +2935,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
 
     {{"password_encryption", PGC_USERSET, CONN_AUTH_AUTH,
       gettext_noop("Chooses the algorithm for encrypting passwords."), NULL},
-     &Password_encryption,
+     &tcb->guc.Password_encryption,
      PASSWORD_TYPE_SCRAM_SHA_256,
      password_encryption_options,
      NULL,
@@ -2930,7 +2951,7 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
                    "to override "
                    "the default behavior."),
       GUC_EXPLAIN},
-     &plan_cache_mode,
+     &tcb->guc.plan_cache_mode,
      PLAN_CACHE_MODE_AUTO,
      plan_cache_mode_options,
      NULL,

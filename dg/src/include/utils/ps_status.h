@@ -24,8 +24,6 @@
 #define DEFAULT_UPDATE_PROCESS_TITLE true
 #endif
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool update_process_title;
-
 extern char **save_ps_display_args(int argc, char **argv);
 
 extern void init_ps_display(const char *fixed_part);

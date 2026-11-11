@@ -58,6 +58,7 @@
 #include "partitioning/partprune.h"
 #include "utils/array.h"
 #include "utils/lsyscache.h"
+#include "utils/control_block.h"
 
 /*
  * Information about a clause matched with a partition key.
@@ -741,7 +742,7 @@ Bitmapset *prune_append_rel_partitions(RelOptInfo *rel) {
    * If pruning is disabled or if there are no clauses to prune with, return
    * all partitions.
    */
-  if (!enable_partition_pruning || clauses == NIL)
+  if (!tcb->guc.enable_partition_pruning || clauses == NIL)
     return bms_add_range(NULL, 0, rel->nparts - 1);
 
   /*

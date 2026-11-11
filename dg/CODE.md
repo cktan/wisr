@@ -219,6 +219,25 @@ digres is one process; each session is a thread of it.
     logger's are: `publish_log_file_settings()` writes them
     with `shmem->log.mutex` held, and `logfile.c` reads
     them with it held.
+  - **A reloadable setting only the postmaster reads**
+    (`PGC_SIGHUP`, such as the `ssl_*` file names) is a `pcb_t`
+    field, in the section of the postmaster's own reloadable
+    settings. `publish_postmaster_reload_settings()`
+    (`guc_tables.c`) copies it from the GUC variable at start
+    and on each reload, and only the main thread reads it, so
+    it needs no guard. If a session thread reads it, make it
+    an atomic in `shmem_t` (`pre_auth_delay`), or a snapshot
+    under a mutex (`log_line_prefix`), and publish it with
+    `publish_shared_settings()`.
+  - **A setting a session can `SET`** (`USERSET`, `SUSET`,
+    `BACKEND`, `SU_BACKEND`) is a field of `tcb->guc`
+    (`tcb_guc_t`), and the code reads `tcb->guc.name`. The
+    thread's GUC table points at the field, so `SET` and a
+    reload write it. A field that has a value before
+    `InitializeGUCOptions()` runs needs a literal initialiser
+    in `tcb_guc_t` (`scram_sha_256_iterations`). A setting
+    that `sq/` also reads stays a plain `thread_local`
+    variable, as `sq/` cannot see `tcb`.
   - **A LOCAL global moves into `tcb_t`** when a change
     touches it. Put new state in a block from the start.
 - **`src/tools/process_wide.txt`** lists the writable globals

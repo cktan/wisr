@@ -47,6 +47,7 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#include "utils/control_block.h"
 
 static void RangeVarCallbackForPolicy(const RangeVar *rv, Oid relid,
                                       Oid oldrelid, void *arg);
@@ -82,7 +83,7 @@ static void RangeVarCallbackForPolicy(const RangeVar *rv, Oid relid,
                    get_relkind_objtype(get_rel_relkind(relid)), rv->relname);
 
   /* No system table modifications unless explicitly allowed. */
-  if (!allowSystemTableMods && IsSystemClass(relid, classform))
+  if (!tcb->guc.allowSystemTableMods && IsSystemClass(relid, classform))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            rv->relname)));
@@ -349,7 +350,7 @@ void RemovePolicyById(Oid policy_id) {
             (errcode(ERRCODE_WRONG_OBJECT_TYPE),
              errmsg("\"%s\" is not a table", RelationGetRelationName(rel))));
 
-  if (!allowSystemTableMods && IsSystemRelation(rel))
+  if (!tcb->guc.allowSystemTableMods && IsSystemRelation(rel))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            RelationGetRelationName(rel))));

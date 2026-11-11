@@ -59,6 +59,7 @@
 #include "utils/regproc.h"
 #include "utils/syscache.h"
 #include "windowapi.h"
+#include "utils/control_block.h"
 
 /*
  * All the window function APIs are called with this object, which is passed
@@ -1016,7 +1017,7 @@ static pg_noinline void prepare_tuplestore(WindowAggState *winstate) {
   Assert(winstate->buffer == NULL);
 
   /* Create new tuplestore */
-  winstate->buffer = tuplestore_begin_heap(false, false, work_mem);
+  winstate->buffer = tuplestore_begin_heap(false, false, tcb->guc.work_mem);
 
   /*
    * Set up read pointers for the tuplestore.  The current pointer doesn't

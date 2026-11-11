@@ -29,6 +29,7 @@
 #include "utils/fmgrprotos.h"
 #include "utils/lsyscache.h"
 #include "utils/tuplesort.h"
+#include "utils/control_block.h"
 
 /*
  * Generic support for ordered-set aggregates
@@ -280,11 +281,11 @@ static OSAPerGroupState *ordered_set_startup(FunctionCallInfo fcinfo,
     osastate->sortstate = tuplesort_begin_heap(
         qstate->tupdesc, qstate->numSortCols, qstate->sortColIdx,
         qstate->sortOperators, qstate->sortCollations, qstate->sortNullsFirsts,
-        work_mem, tuplesortopt);
+        tcb->guc.work_mem, tuplesortopt);
   else
     osastate->sortstate = tuplesort_begin_datum(
         qstate->sortColType, qstate->sortOperator, qstate->sortCollation,
-        qstate->sortNullsFirst, work_mem, tuplesortopt);
+        qstate->sortNullsFirst, tcb->guc.work_mem, tuplesortopt);
 
   osastate->number_of_rows = 0;
   osastate->sort_done = false;

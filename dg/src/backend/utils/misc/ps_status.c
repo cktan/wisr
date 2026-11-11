@@ -31,7 +31,6 @@ extern char **environ;
 #endif
 
 /* GUC variable */
-thread_local /*LOCAL*/ bool update_process_title = DEFAULT_UPDATE_PROCESS_TITLE;
 
 /*
  * Alternative ways of updating ps display:
@@ -322,10 +321,10 @@ void init_ps_display(const char *fixed_part) {
   /*
    * On the first run, force the update.
    */
-  save_update_process_title = update_process_title;
-  update_process_title = true;
+  save_update_process_title = tcb->guc.update_process_title;
+  tcb->guc.update_process_title = true;
   set_ps_display("");
-  update_process_title = save_update_process_title;
+  tcb->guc.update_process_title = save_update_process_title;
 #endif /* not PS_USE_NONE */
 }
 
@@ -337,7 +336,7 @@ void init_ps_display(const char *fixed_part) {
  */
 static bool update_ps_display_precheck(void) {
   /* update_process_title=off disables updates */
-  if (!update_process_title)
+  if (!tcb->guc.update_process_title)
     return false;
 
   /* no ps display for stand-alone backend */

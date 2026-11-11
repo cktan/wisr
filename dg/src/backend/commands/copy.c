@@ -40,6 +40,7 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/rls.h"
+#include "utils/control_block.h"
 
 /*
  *	 DoCopy executes the SQL COPY statement
@@ -326,7 +327,7 @@ void DoCopy(ParseState *pstate, const CopyStmt *stmt, int stmt_location,
     Assert(rel);
 
     /* check read-only transaction and parallel mode */
-    if (XactReadOnly && !rel->rd_islocaltemp)
+    if (tcb->guc.XactReadOnly && !rel->rd_islocaltemp)
       PreventCommandIfReadOnly("COPY FROM");
 
     cstate =

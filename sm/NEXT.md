@@ -426,6 +426,30 @@ Owed, and blocking nothing above:
   COPY in file mode finds a duplicate when the load closes, in
   sm1's sort, which knows a stream, not the index, and has no row
   to read: it says `key already exists`.
+- **Chase down all uses of `GUCMemoryContext`.** It is a
+  `thread_local` memory context in
+  `../dg/src/backend/utils/misc/guc.c`: each thread makes its
+  own. Today `guc_malloc()`, `guc_strdup()` and `guc_realloc()`
+  allocate in it, and `guc_free()` asserts that a chunk is in
+  it. These are the uses found so far; the list is not proved
+  complete:
+  - the value of every string GUC;
+  - the table of GUC names, and the records of custom
+    variables and their placeholders;
+  - the "extra" blobs that check hooks return
+    (`../dg/src/backend/commands/variable.c`, `datetime.c`,
+    `tzparser.c`, `user.c`, `backend_startup.c`, `postgres.c`,
+    `elog.c`);
+  - the last value reported to the client, a setting's source
+    file name, and the list of reserved class names.
+
+  Next: find every other caller, and every place that puts a
+  GUC string or extra in another context or frees it with
+  `free()` or `pfree()`. Decide for each field of `tcb->guc`,
+  `pcb` and `shmem` who owns its memory and when it is freed.
+  A string field that starts as a literal
+  ([`../dg/GUCPLAN.md`](../dg/GUCPLAN.md) §5) must be set by
+  `InitializeOneGUCOption()` before anything frees it.
 
 ---
 

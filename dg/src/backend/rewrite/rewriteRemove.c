@@ -25,6 +25,7 @@
 #include "utils/fmgroids.h"
 #include "utils/inval.h"
 #include "utils/rel.h"
+#include "utils/control_block.h"
 
 /*
  * Guts of rule deletion.
@@ -64,7 +65,7 @@ void RemoveRewriteRuleById(Oid ruleOid) {
   eventRelationOid = ((Form_pg_rewrite)GETSTRUCT(tuple))->ev_class;
   event_relation = table_open(eventRelationOid, AccessExclusiveLock);
 
-  if (!allowSystemTableMods && IsSystemRelation(event_relation))
+  if (!tcb->guc.allowSystemTableMods && IsSystemRelation(event_relation))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            RelationGetRelationName(event_relation))));

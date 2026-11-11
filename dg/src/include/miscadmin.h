@@ -190,8 +190,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool IsUnderPostmaster;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool IsSessionThread;
 extern int CurrentProcPid(void);
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool ExitOnAnyError;
-
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MyProcPid;
 extern thread_local /*LOCAL*/ PGDLLIMPORT pg_time_t MyStartTime;
 extern thread_local /*LOCAL*/ PGDLLIMPORT TimestampTz MyStartTimestamp;
@@ -262,19 +260,10 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int IntervalStyle;
 
 #define MAXTZLEN		10 /* max TZ name len, not counting tr. null */
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool allowSystemTableMods;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int work_mem;
-extern thread_local /*LOCAL*/ PGDLLIMPORT double hash_mem_multiplier;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int maintenance_work_mem;
-
-extern thread_local /*LOCAL*/ PGDLLIMPORT double VacuumCostDelay;
-
 extern thread_local /*LOCAL*/ PGDLLIMPORT int VacuumCostBalance;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool VacuumCostActive;
 
 /* in utils/misc/stack_depth.c */
-
-extern thread_local /*LOCAL*/ PGDLLIMPORT int max_stack_depth;
 
 /* Required daylight between max_stack_depth and the kernel limit, in bytes */
 #define STACK_DEPTH_SLOP (512 * 1024)
@@ -431,10 +420,6 @@ extern void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
 extern void BaseInit(void);
 
 /* in utils/init/miscinit.c */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool IgnoreSystemIndexes;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char
-    *session_preload_libraries_string;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *local_preload_libraries_string;
 
 extern void CreateDataDirLockFile(bool amPostmaster);
 extern void CreateSocketLockFile(const char *socketfile, bool amPostmaster,

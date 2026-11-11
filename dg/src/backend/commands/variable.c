@@ -479,7 +479,7 @@ void assign_timezone_abbreviations(const char *newval, void *extra) {
  * RecoveryInProgress() in contexts where shared memory is not accessible.
  */
 bool check_transaction_read_only(bool *newval, void **extra, GucSource source) {
-  if (*newval == false && XactReadOnly && IsTransactionState()) {
+  if (*newval == false && tcb->guc.XactReadOnly && IsTransactionState()) {
     /* Can't go to r/w mode inside a r/o transaction */
     if (IsSubTransaction()) {
       GUC_check_errcode(ERRCODE_ACTIVE_SQL_TRANSACTION);
@@ -510,7 +510,7 @@ bool check_transaction_read_only(bool *newval, void **extra, GucSource source) {
 bool check_transaction_isolation(int *newval, void **extra, GucSource source) {
   int newXactIsoLevel = *newval;
 
-  if (newXactIsoLevel != XactIsoLevel && IsTransactionState()) {
+  if (newXactIsoLevel != tcb->guc.XactIsoLevel && IsTransactionState()) {
     if (FirstSnapshotSet) {
       GUC_check_errcode(ERRCODE_ACTIVE_SQL_TRANSACTION);
       GUC_check_errmsg(
@@ -851,7 +851,7 @@ const char *show_role(void) {
     return "none";
 
   /* Otherwise we can just use the GUC string */
-  return role_string ? role_string : "none";
+  return tcb->guc.role_string ? tcb->guc.role_string : "none";
 }
 
 /*

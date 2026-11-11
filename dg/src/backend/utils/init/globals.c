@@ -95,16 +95,9 @@ thread_local /*LOCAL*/ char *DatabasePath = NULL;
  */
 thread_local /*LOCAL*/ bool IsUnderPostmaster = false;
 
-thread_local /*LOCAL*/ bool ExitOnAnyError = false;
-
 thread_local /*LOCAL*/ int DateStyle = USE_ISO_DATES;
 thread_local /*LOCAL*/ int DateOrder = DATEORDER_MDY;
 thread_local /*LOCAL*/ int IntervalStyle = INTSTYLE_POSTGRES;
-
-thread_local /*LOCAL*/ bool allowSystemTableMods = false;
-thread_local /*LOCAL*/ int work_mem = 4096;
-thread_local /*LOCAL*/ double hash_mem_multiplier = 2.0;
-thread_local /*LOCAL*/ int maintenance_work_mem = 65536;
 
 /*
  * Primary determinants of sizes of shared-memory structures.
@@ -115,8 +108,6 @@ thread_local /*LOCAL*/ int maintenance_work_mem = 65536;
  */
 
 /* GUC parameters for vacuum */
-
-thread_local /*LOCAL*/ double VacuumCostDelay = 0;
 
 thread_local /*LOCAL*/ int VacuumCostBalance = 0; /* working state for vacuum */
 thread_local /*LOCAL*/ bool VacuumCostActive = false;

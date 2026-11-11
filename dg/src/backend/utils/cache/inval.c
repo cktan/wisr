@@ -133,6 +133,7 @@
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
+#include "utils/control_block.h"
 
 /*
  * Pending requests are stored as ready-to-send SharedInvalidationMessages.
@@ -256,7 +257,6 @@ static thread_local /*LOCAL*/ TransInvalidationInfo *transInvalInfo = NULL;
 static thread_local /*LOCAL*/ InvalidationInfo *inplaceInvalInfo = NULL;
 
 /* GUC storage */
-thread_local /*LOCAL*/ int debug_discard_caches = 0;
 
 /*
  * Dynamically-registered callback functions.  Current implementation
@@ -878,7 +878,7 @@ void AcceptInvalidationMessages(void) {
   {
     static thread_local /*LOCAL*/ int recursion_depth = 0;
 
-    if (recursion_depth < debug_discard_caches) {
+    if (recursion_depth < tcb->guc.debug_discard_caches) {
       recursion_depth++;
       InvalidateSystemCachesExtended(true);
       recursion_depth--;

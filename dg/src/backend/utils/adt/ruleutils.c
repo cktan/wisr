@@ -75,6 +75,7 @@
 #include "utils/typcache.h"
 #include "utils/varlena.h"
 #include "utils/xml.h"
+#include "utils/control_block.h"
 
 /* ----------
  * Pretty formatting constants
@@ -336,7 +337,6 @@ static const char *const query_getviewrule =
     "SELECT * FROM pg_catalog.pg_rewrite WHERE ev_class = $1 AND rulename = $2";
 
 /* GUC parameters */
-thread_local /*LOCAL*/ bool quote_all_identifiers = false;
 
 /* ----------
  * Local functions
@@ -11770,7 +11770,7 @@ const char *quote_identifier(const char *ident) {
     }
   }
 
-  if (quote_all_identifiers)
+  if (tcb->guc.quote_all_identifiers)
     safe = false;
 
   if (safe) {

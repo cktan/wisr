@@ -53,14 +53,6 @@
 /*
  *	User-tweakable parameters
  */
-thread_local /*LOCAL*/ int DefaultXactIsoLevel = XACT_READ_COMMITTED;
-thread_local /*LOCAL*/ int XactIsoLevel = XACT_READ_COMMITTED;
-
-thread_local /*LOCAL*/ bool DefaultXactReadOnly = false;
-thread_local /*LOCAL*/ bool XactReadOnly;
-
-thread_local /*LOCAL*/ bool DefaultXactDeferrable = false;
-thread_local /*LOCAL*/ bool XactDeferrable;
 
 /*
  * Miscellaneous flag bits to record events which occur on the top level
@@ -697,9 +689,9 @@ static void StartTransaction(void) {
 
   /* Determine if statements are logged in this transaction */
   xact_is_sampled =
-      log_xact_sample_rate != 0 &&
-      (log_xact_sample_rate == 1 ||
-       pg_prng_double(&pg_global_prng_state) <= log_xact_sample_rate);
+      tcb->guc.log_xact_sample_rate != 0 &&
+      (tcb->guc.log_xact_sample_rate == 1 ||
+       pg_prng_double(&pg_global_prng_state) <= tcb->guc.log_xact_sample_rate);
 
   /*
    * initialize current transaction state fields
@@ -721,9 +713,9 @@ static void StartTransaction(void) {
   /*
    * Make sure we've reset xact state variables
    */
-  XactReadOnly = DefaultXactReadOnly;
-  XactDeferrable = DefaultXactDeferrable;
-  XactIsoLevel = DefaultXactIsoLevel;
+  tcb->guc.XactReadOnly = tcb->guc.DefaultXactReadOnly;
+  tcb->guc.XactDeferrable = tcb->guc.DefaultXactDeferrable;
+  tcb->guc.XactIsoLevel = tcb->guc.DefaultXactIsoLevel;
   MyXactFlags = 0;
 
   /*
@@ -776,8 +768,8 @@ static void StartTransaction(void) {
   s->state = TRANS_INPROGRESS;
 
   /* Schedule transaction timeout */
-  if (TransactionTimeout > 0)
-    enable_timeout_after(TRANSACTION_TIMEOUT, TransactionTimeout);
+  if (tcb->guc.TransactionTimeout > 0)
+    enable_timeout_after(TRANSACTION_TIMEOUT, tcb->guc.TransactionTimeout);
 
   ShowTransactionState("StartTransaction");
 }
@@ -864,7 +856,7 @@ static void CommitTransaction(void) {
   s->state = TRANS_COMMIT;
 
   /* Disable transaction timeout */
-  if (TransactionTimeout > 0)
+  if (tcb->guc.TransactionTimeout > 0)
     disable_timeout(TRANSACTION_TIMEOUT, false);
 
   TRACE_POSTGRESQL_TRANSACTION_COMMIT(tcb->lxid);
@@ -958,7 +950,7 @@ static void AbortTransaction(void) {
   HOLD_INTERRUPTS();
 
   /* Disable transaction timeout */
-  if (TransactionTimeout > 0)
+  if (tcb->guc.TransactionTimeout > 0)
     disable_timeout(TRANSACTION_TIMEOUT, false);
 
   /* Make sure we have a valid memory context and resource owner */
@@ -1163,16 +1155,16 @@ void StartTransactionCommand(void) {
  * just skipping the reset in StartTransaction() won't work.)
  */
 void SaveTransactionCharacteristics(SavedTransactionCharacteristics *s) {
-  s->save_XactIsoLevel = XactIsoLevel;
-  s->save_XactReadOnly = XactReadOnly;
-  s->save_XactDeferrable = XactDeferrable;
+  s->save_XactIsoLevel = tcb->guc.XactIsoLevel;
+  s->save_XactReadOnly = tcb->guc.XactReadOnly;
+  s->save_XactDeferrable = tcb->guc.XactDeferrable;
 }
 
 void RestoreTransactionCharacteristics(
     const SavedTransactionCharacteristics *s) {
-  XactIsoLevel = s->save_XactIsoLevel;
-  XactReadOnly = s->save_XactReadOnly;
-  XactDeferrable = s->save_XactDeferrable;
+  tcb->guc.XactIsoLevel = s->save_XactIsoLevel;
+  tcb->guc.XactReadOnly = s->save_XactReadOnly;
+  tcb->guc.XactDeferrable = s->save_XactDeferrable;
 }
 
 /*
@@ -2572,7 +2564,7 @@ static void CommitSubTransaction(void) {
    * upper is read-write while the child is read-only; GUC will incorrectly
    * think it should leave the child state in place.
    */
-  XactReadOnly = s->prevXactReadOnly;
+  tcb->guc.XactReadOnly = s->prevXactReadOnly;
 
   CurrentResourceOwner = s->parent->curTransactionOwner;
   CurTransactionResourceOwner = s->parent->curTransactionOwner;
@@ -2665,7 +2657,7 @@ static void AbortSubTransaction(void) {
    * redundant with GUC's cleanup but we may as well do it for consistency
    * with the commit case.
    */
-  XactReadOnly = s->prevXactReadOnly;
+  tcb->guc.XactReadOnly = s->prevXactReadOnly;
 
   RESUME_INTERRUPTS();
 }
@@ -2742,7 +2734,7 @@ static void PushTransaction(void) {
   s->state = TRANS_DEFAULT;
   s->blockState = TBLOCK_SUBBEGIN;
   GetUserIdAndSecContext(&s->prevUser, &s->prevSecContext);
-  s->prevXactReadOnly = XactReadOnly;
+  s->prevXactReadOnly = tcb->guc.XactReadOnly;
 
   CurrentTransactionState = s;
 

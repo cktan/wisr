@@ -45,6 +45,7 @@
 #include "partitioning/partprune.h"
 #include "tcop/tcopprot.h"
 #include "utils/lsyscache.h"
+#include "utils/control_block.h"
 
 /*
  * Flag bits that can appear in the flags argument of create_plan_recurse().
@@ -1109,7 +1110,7 @@ static Plan *create_append_plan(PlannerInfo *root, AppendPath *best_path,
   }
 
   /* If appropriate, consider async append */
-  consider_async = (enable_async_append && pathkeys == NIL &&
+  consider_async = (tcb->guc.enable_async_append && pathkeys == NIL &&
                     list_length(best_path->subpaths) > 1);
 
   /* Build the plan for each child */
@@ -1185,7 +1186,7 @@ static Plan *create_append_plan(PlannerInfo *root, AppendPath *best_path,
    * pruning during execution.  Gather information needed by the executor to
    * do partition pruning.
    */
-  if (enable_partition_pruning) {
+  if (tcb->guc.enable_partition_pruning) {
     List *prunequal;
 
     prunequal = extract_actual_clauses(rel->baserestrictinfo, false);
@@ -1325,7 +1326,7 @@ static Plan *create_merge_append_plan(PlannerInfo *root,
    * pruning during execution.  Gather information needed by the executor to
    * do partition pruning.
    */
-  if (enable_partition_pruning) {
+  if (tcb->guc.enable_partition_pruning) {
     List *prunequal;
 
     prunequal = extract_actual_clauses(rel->baserestrictinfo, false);
@@ -3924,7 +3925,8 @@ static MergeJoin *create_mergejoin_plan(PlannerInfo *root,
      * We choose to use incremental sort if it is enabled and there are
      * presorted keys; otherwise we use full sort.
      */
-    if (enable_incremental_sort && best_path->outer_presorted_keys > 0) {
+    if (tcb->guc.enable_incremental_sort &&
+        best_path->outer_presorted_keys > 0) {
       sort_plan = (Plan *)make_incrementalsort_from_pathkeys(
           outer_plan, best_path->outersortkeys, outer_relids,
           best_path->outer_presorted_keys);
@@ -3982,7 +3984,7 @@ static MergeJoin *create_mergejoin_plan(PlannerInfo *root,
      * sync with final_cost_mergejoin.)
      */
     copy_plan_costsize(matplan, inner_plan);
-    matplan->total_cost += cpu_operator_cost * matplan->plan_rows;
+    matplan->total_cost += tcb->guc.cpu_operator_cost * matplan->plan_rows;
 
     inner_plan = matplan;
   }
@@ -4680,7 +4682,7 @@ static List *order_qual_clauses(PlannerInfo *root, List *clauses) {
        * security level, which is not so great, but we can alleviate
        * that risk by applying the cost limit cutoff.
        */
-      if (rinfo->leakproof && items[i].cost < 10 * cpu_operator_cost)
+      if (rinfo->leakproof && items[i].cost < 10 * tcb->guc.cpu_operator_cost)
         items[i].security_level = 0;
       else
         items[i].security_level = rinfo->security_level;
@@ -4761,7 +4763,7 @@ static void label_sort_with_costsize(PlannerInfo *root, Sort *plan,
 
   cost_sort(&sort_path, root, NIL, plan->plan.disabled_nodes,
             lefttree->total_cost, lefttree->plan_rows, lefttree->plan_width,
-            0.0, work_mem, limit_tuples);
+            0.0, tcb->guc.work_mem, limit_tuples);
   plan->plan.startup_cost = sort_path.startup_cost;
   plan->plan.total_cost = sort_path.total_cost;
   plan->plan.plan_rows = lefttree->plan_rows;
@@ -4784,7 +4786,8 @@ static void label_incrementalsort_with_costsize(PlannerInfo *root,
   cost_incremental_sort(&sort_path, root, pathkeys, plan->nPresortedCols,
                         plan->sort.plan.disabled_nodes, lefttree->startup_cost,
                         lefttree->total_cost, lefttree->plan_rows,
-                        lefttree->plan_width, 0.0, work_mem, limit_tuples);
+                        lefttree->plan_width, 0.0, tcb->guc.work_mem,
+                        limit_tuples);
   plan->sort.plan.startup_cost = sort_path.startup_cost;
   plan->sort.plan.total_cost = sort_path.total_cost;
   plan->sort.plan.plan_rows = lefttree->plan_rows;
@@ -5254,7 +5257,8 @@ static Sort *make_sort(Plan *lefttree, int numCols, AttrNumber *sortColIdx,
 
   plan = &node->plan;
   plan->targetlist = lefttree->targetlist;
-  plan->disabled_nodes = lefttree->disabled_nodes + (enable_sort == false);
+  plan->disabled_nodes =
+      lefttree->disabled_nodes + (tcb->guc.enable_sort == false);
   plan->qual = NIL;
   plan->lefttree = lefttree;
   plan->righttree = NULL;

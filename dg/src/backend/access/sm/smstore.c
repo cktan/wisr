@@ -425,7 +425,7 @@ static void sm_error(const char *what) {
  *    until interrupts are allowed, has been taken, so the call waits again.
  */
 template <class F> static int waiting(F f, bool lock_wait = true) {
-  const bool timed = lock_wait && LockTimeout > 0;
+  const bool timed = lock_wait && tcb->guc.LockTimeout > 0;
 
   /*
    * lock_timeout ends a wait for a lock that lasts longer, by a cancel the
@@ -434,7 +434,7 @@ template <class F> static int waiting(F f, bool lock_wait = true) {
    * ends in time disarms it, and a cancel it raised meanwhile is not taken.
    */
   if (timed)
-    enable_timeout_after(LOCK_TIMEOUT, LockTimeout);
+    enable_timeout_after(LOCK_TIMEOUT, tcb->guc.LockTimeout);
   for (;;) {
     int rc = f();
 
@@ -632,7 +632,7 @@ static void savepoints_begin(sm_session_t *s) {
 
 /* sm's isolation level for PostgreSQL's. */
 static sm_xctlevel_t xact_level(void) {
-  switch (XactIsoLevel) {
+  switch (tcb->guc.XactIsoLevel) {
   case XACT_SERIALIZABLE:
     return SM_XCT_SERIALIZABLE;
   case XACT_REPEATABLE_READ:
@@ -664,7 +664,7 @@ static sm_session_t *xact_session(void) {
     savepoints_begin(s);
     return s;
   }
-  if (sm_begin(s, xact_level(), XactReadOnly) != 0)
+  if (sm_begin(s, xact_level(), tcb->guc.XactReadOnly) != 0)
     sm_error("begin a transaction");
   sm_xact_open = true;
   statement_pending = true;
@@ -1857,7 +1857,7 @@ static const char *column_update_default(ColumnDef *col, Node *raw_default,
  * as heap_create_with_catalog() finds it before heap_create() refuses.
  */
 static void check_system_namespace(const char *relname, Oid nspoid) {
-  if (allowSystemTableMods ||
+  if (tcb->guc.allowSystemTableMods ||
       !(IsCatalogNamespace(nspoid) || IsToastNamespace(nspoid)))
     return;
   if (OidIsValid(get_relname_relid(relname, nspoid)))
@@ -3116,10 +3116,10 @@ static void load_error(Relation rel, TupleTableSlot *slot, const char *what) {
  */
 bool smstore_lock_wait(void *arg, bool start) noexcept {
   if (start) {
-    if (LockTimeout <= 0 || get_timeout_active(LOCK_TIMEOUT))
+    if (tcb->guc.LockTimeout <= 0 || get_timeout_active(LOCK_TIMEOUT))
       return false;
     /* Count the blocked interval, not the load's sort or file writes. */
-    enable_timeout_after(LOCK_TIMEOUT, LockTimeout);
+    enable_timeout_after(LOCK_TIMEOUT, tcb->guc.LockTimeout);
     return true;
   }
   if (get_timeout_active(LOCK_TIMEOUT) &&
@@ -6797,8 +6797,9 @@ static void analyze_table(Oid oid, const char *name, bool verbose,
   }
   /* An analyze in sm samples, and may be interrupted: so through waiting(). */
   rc = waiting([&] {
-    return skip_locked ? sm_tbl_tryanalyze(tbl, default_statistics_target)
-                       : sm_tbl_analyze(tbl, default_statistics_target);
+    return skip_locked
+               ? sm_tbl_tryanalyze(tbl, tcb->guc.default_statistics_target)
+               : sm_tbl_analyze(tbl, tcb->guc.default_statistics_target);
   });
   if (rc == 1) {
     relation_close(rel, NoLock);

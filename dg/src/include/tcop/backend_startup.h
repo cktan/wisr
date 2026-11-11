@@ -20,7 +20,6 @@
 
 /* GUCs */
 extern thread_local /*LOCAL*/ PGDLLIMPORT uint32 log_connections;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *log_connections_string;
 
 /* Other globals */
 extern thread_local /*LOCAL*/ PGDLLIMPORT struct ConnectionTiming conn_timing;

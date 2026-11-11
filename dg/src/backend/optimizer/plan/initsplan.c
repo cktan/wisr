@@ -35,10 +35,9 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/typcache.h"
+#include "utils/control_block.h"
 
 /* These parameters are set by GUC */
-thread_local /*LOCAL*/ int from_collapse_limit;
-thread_local /*LOCAL*/ int join_collapse_limit;
 
 /*
  * deconstruct_jointree requires multiple passes over the join tree, because we
@@ -1154,7 +1153,7 @@ static List *deconstruct_recurse(PlannerInfo *root, Node *jtnode,
       sub_members = list_length(sub_joinlist);
       remaining--;
       if (sub_members <= 1 || list_length(joinlist) + sub_members + remaining <=
-                                  from_collapse_limit)
+                                  tcb->guc.from_collapse_limit)
         joinlist = list_concat(joinlist, sub_joinlist);
       else
         joinlist = lappend(joinlist, sub_joinlist);
@@ -1303,7 +1302,7 @@ static List *deconstruct_recurse(PlannerInfo *root, Node *jtnode,
       /* force the join order exactly at this node */
       joinlist = list_make1(list_make2(leftjoinlist, rightjoinlist));
     } else if (list_length(leftjoinlist) + list_length(rightjoinlist) <=
-               join_collapse_limit) {
+               tcb->guc.join_collapse_limit) {
       /* OK to combine subproblems */
       joinlist = list_concat(leftjoinlist, rightjoinlist);
     } else {
@@ -1890,7 +1889,7 @@ static void compute_semijoin_info(PlannerInfo *root, SpecialJoinInfo *sjinfo,
   semi_operators = NIL;
   semi_rhs_exprs = NIL;
   all_btree = true;
-  all_hash = enable_hashagg; /* don't consider hash if not enabled */
+  all_hash = tcb->guc.enable_hashagg; /* don't consider hash if not enabled */
   foreach (lc, clause) {
     OpExpr *op = (OpExpr *)lfirst(lc);
     Oid opno;

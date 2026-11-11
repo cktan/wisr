@@ -45,24 +45,6 @@ typedef enum {
 
 /* parameter variables and flags (see also optimizer.h) */
 extern thread_local /*LOCAL*/ PGDLLIMPORT Cost disable_cost;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_seqscan;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_indexscan;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_indexonlyscan;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_bitmapscan;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_tidscan;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_sort;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_incremental_sort;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_hashagg;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_nestloop;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_material;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_memoize;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_mergejoin;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_hashjoin;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_partitionwise_join;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_partitionwise_aggregate;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_partition_pruning;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_presorted_aggregate;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_async_append;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int constraint_exclusion;
 
 extern double index_pages_fetched(double tuples_fetched, BlockNumber pages,

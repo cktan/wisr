@@ -42,6 +42,7 @@
 #include "utils/memutils.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
+#include "utils/control_block.h"
 
 /* Operations available for setPath */
 #define JB_PATH_CREATE					0x0001
@@ -3614,7 +3615,7 @@ static Datum populate_recordset_worker(FunctionCallInfo fcinfo,
   /* make tuplestore in a sufficiently long-lived memory context */
   old_cxt = MemoryContextSwitchTo(rsi->econtext->ecxt_per_query_memory);
   state->tuple_store = tuplestore_begin_heap(
-      rsi->allowedModes & SFRM_Materialize_Random, false, work_mem);
+      rsi->allowedModes & SFRM_Materialize_Random, false, tcb->guc.work_mem);
   MemoryContextSwitchTo(old_cxt);
 
   state->function_name = funcname;

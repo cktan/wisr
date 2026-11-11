@@ -65,6 +65,7 @@
 #include "utils/partcache.h"
 #include "utils/rls.h"
 #include "utils/snapmgr.h"
+#include "utils/control_block.h"
 
 /* Hooks for plugins to get control in ExecutorStart/Run/Finish/End */
 
@@ -142,7 +143,7 @@ void standard_ExecutorStart(QueryDesc *queryDesc, int eflags) {
    * If the transaction is read-only, we need to check if any writes are
    * planned to non-temporary tables.  EXPLAIN is considered read-only.
    */
-  if (XactReadOnly && !(eflags & EXEC_FLAG_EXPLAIN_ONLY))
+  if (tcb->guc.XactReadOnly && !(eflags & EXEC_FLAG_EXPLAIN_ONLY))
     ExecCheckXactReadOnly(queryDesc->plannedstmt);
 
   /*

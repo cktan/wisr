@@ -31,6 +31,7 @@
 #include "utils/hooks.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
+#include "utils/control_block.h"
 
 /* Hook for plugins to get control in add_paths_to_joinrel() */
 
@@ -162,7 +163,7 @@ void add_paths_to_joinrel(PlannerInfo *root, RelOptInfo *joinrel,
    * way of implementing a full outer join, so override enable_mergejoin if
    * it's a full join.
    */
-  if (enable_mergejoin || jointype == JOIN_FULL)
+  if (tcb->guc.enable_mergejoin || jointype == JOIN_FULL)
     extra.mergeclause_list =
         select_mergejoin_clauses(root, joinrel, outerrel, innerrel,
                                  restrictlist, jointype, &mergejoin_allowed);
@@ -264,7 +265,7 @@ void add_paths_to_joinrel(PlannerInfo *root, RelOptInfo *joinrel,
    * before being joined.  As above, disregard enable_hashjoin for full
    * joins, because there may be no other alternative.
    */
-  if (enable_hashjoin || jointype == JOIN_FULL)
+  if (tcb->guc.enable_hashjoin || jointype == JOIN_FULL)
     hash_inner_and_outer(root, joinrel, outerrel, innerrel, jointype, &extra);
 
   /*
@@ -593,7 +594,7 @@ static Path *get_memoize_path(PlannerInfo *root, RelOptInfo *innerrel,
   List *ph_lateral_vars;
 
   /* Obviously not if it's disabled */
-  if (!enable_memoize)
+  if (!tcb->guc.enable_memoize)
     return NULL;
 
   /*
@@ -1360,7 +1361,7 @@ static void match_unsorted_outer(PlannerInfo *root, RelOptInfo *joinrel,
      * enable_material is off or the path in question materializes its
      * output anyway.
      */
-    if (enable_material && inner_cheapest_total != NULL &&
+    if (tcb->guc.enable_material && inner_cheapest_total != NULL &&
         !ExecMaterializesOutput(inner_cheapest_total->pathtype))
       matpath = (Path *)create_material_path(innerrel, inner_cheapest_total);
   }

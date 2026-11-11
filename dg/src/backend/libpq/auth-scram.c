@@ -207,8 +207,6 @@ auth_scram_state_t *auth_scram_state_new(void) {
 /*
  * The number of iterations to use when generating new secrets.
  */
-thread_local /*LOCAL*/ int scram_sha_256_iterations =
-    SCRAM_SHA_256_DEFAULT_ITERATIONS;
 
 /*
  * Get a list of SASL mechanisms that this module supports.
@@ -496,9 +494,9 @@ char *pg_be_scram_build_secret(const char *password) {
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                     errmsg("could not generate random salt")));
 
-  result = scram_build_secret(PG_SHA256, SCRAM_SHA_256_KEY_LEN, saltbuf,
-                              SCRAM_DEFAULT_SALT_LEN, scram_sha_256_iterations,
-                              password, &errstr);
+  result = scram_build_secret(
+      PG_SHA256, SCRAM_SHA_256_KEY_LEN, saltbuf, SCRAM_DEFAULT_SALT_LEN,
+      tcb->guc.scram_sha_256_iterations, password, &errstr);
 
   if (prep_password)
     pfree(prep_password);
@@ -708,7 +706,7 @@ static void mock_scram_secret(const char *username,
   encoded_salt[encoded_len] = '\0';
 
   *salt = encoded_salt;
-  *iterations = scram_sha_256_iterations;
+  *iterations = tcb->guc.scram_sha_256_iterations;
 
   /* StoredKey and ServerKey are not used in a doomed authentication */
   memset(stored_key, 0, SCRAM_MAX_KEY_LEN);

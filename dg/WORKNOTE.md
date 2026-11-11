@@ -13177,3 +13177,21 @@ The server answered to the name `initdb` too: the build made
   know gives the hint `Try "digres --init --help"`; and the
   hint for a directory with no `pg_global` names
   `digres --init`.
+
+## Step 433: GUC settings move into the control blocks
+
+GUCPLAN.md ([`GUCPLAN.md`](GUCPLAN.md)), five settings at a time,
+each move tested and committed alone.
+
+- **`pcb`**: the postmaster's reloadable settings, in one
+  section; `publish_postmaster_reload_settings()` copies them at
+  start and on each reload. Only the main thread reads them.
+- **`shmem`**: `pre_auth_delay`, `ssl_min_protocol_version` and
+  `ssl_max_protocol_version`, atomics. A session reads them.
+- **`tcb->guc`**: the settings a session can `SET`. The GUC table
+  points at the fields; the code reads `tcb->guc.name`.
+- **`optimize_bounded_sort`** was a plain global, written by
+  every thread's GUC table: a race that `tcb->guc` removes.
+- **Not moved**: the settings `sq/` or `sm/` reads, the elog and
+  per-tuple ones, and the Kerberos and GSSAPI ones (compiled out).
+- **Not done**: the session reloads still run.

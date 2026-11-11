@@ -24,8 +24,6 @@
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT CommandDest whereToSendOutput;
 extern thread_local /*LOCAL*/ PGDLLIMPORT const char *debug_query_string;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int PostAuthDelay;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int client_connection_check_interval;
 
 /* GUC-configurable parameters */
 
@@ -35,9 +33,6 @@ typedef enum {
   LOGSTMT_MOD,  /* log modification statements, plus DDL */
   LOGSTMT_ALL,  /* log all statements */
 } LogStmtLevel;
-
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool Log_disconnections;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int log_statement;
 
 /* Flags for restrict_nonsystem_relation_kind value */
 #define RESTRICT_RELKIND_VIEW			0x01

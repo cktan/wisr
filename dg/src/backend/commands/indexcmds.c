@@ -1098,8 +1098,8 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
       rel, indexRelationName, indexRelationId, parentIndexId,
       parentConstraintId, stmt->oldNumber, indexInfo, indexColNames,
       accessMethodId, tablespaceId, collationIds, opclassIds, opclassOptions,
-      coloptions, NULL, reloptions, flags, constr_flags, allowSystemTableMods,
-      !check_rights, &createdConstraintId);
+      coloptions, NULL, reloptions, flags, constr_flags,
+      tcb->guc.allowSystemTableMods, !check_rights, &createdConstraintId);
 
   ObjectAddressSet(address, RelationRelationId, indexRelationId);
 

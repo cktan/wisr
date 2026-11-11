@@ -38,6 +38,7 @@
 #include "optimizer/restrictinfo.h"
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
+#include "utils/control_block.h"
 
 /* XXX see PartCollMatchesExprColl */
 #define IndexCollMatchesExprColl(idxcollation, exprcollation) \
@@ -1955,7 +1956,7 @@ static bool check_index_only(RelOptInfo *rel, IndexOptInfo *index) {
   int i;
 
   /* Index-only scans must be enabled */
-  if (!enable_indexonlyscan)
+  if (!tcb->guc.enable_indexonlyscan)
     return false;
 
   /*

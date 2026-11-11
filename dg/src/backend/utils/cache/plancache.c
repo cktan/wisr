@@ -79,6 +79,7 @@
 #include "utils/rls.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
+#include "utils/control_block.h"
 
 /*
  * This is the head of the backend's list of "saved" CachedPlanSources (i.e.,
@@ -140,7 +141,6 @@ static inline void ResourceOwnerForgetPlanCacheRef(ResourceOwner owner,
 }
 
 /* GUC parameter */
-thread_local /*LOCAL*/ int plan_cache_mode = PLAN_CACHE_MODE_AUTO;
 
 /*
  * InitPlanCache: initialize module during InitPostgres.
@@ -437,7 +437,7 @@ void CompleteCachedPlan(CachedPlanSource *plansource, List *querytree_list,
 
     /* Update RLS info as well. */
     plansource->rewriteRoleId = GetUserId();
-    plansource->rewriteRowSecurity = row_security;
+    plansource->rewriteRowSecurity = tcb->guc.row_security;
 
     /*
      * Also save the current search_path in the query_context.  (This
@@ -679,7 +679,7 @@ static List *RevalidateCachedQuery(CachedPlanSource *plansource,
    */
   if (plansource->is_valid && plansource->dependsOnRLS &&
       (plansource->rewriteRoleId != GetUserId() ||
-       plansource->rewriteRowSecurity != row_security))
+       plansource->rewriteRowSecurity != tcb->guc.row_security))
     plansource->is_valid = false;
 
   /*
@@ -837,7 +837,7 @@ static List *RevalidateCachedQuery(CachedPlanSource *plansource,
 
   /* Update RLS info as well. */
   plansource->rewriteRoleId = GetUserId();
-  plansource->rewriteRowSecurity = row_security;
+  plansource->rewriteRowSecurity = tcb->guc.row_security;
 
   /*
    * Also save the current search_path in the query_context.  (This should
@@ -1083,9 +1083,9 @@ static bool choose_custom_plan(CachedPlanSource *plansource,
     return false;
 
   /* Let settings force the decision */
-  if (plan_cache_mode == PLAN_CACHE_MODE_FORCE_GENERIC_PLAN)
+  if (tcb->guc.plan_cache_mode == PLAN_CACHE_MODE_FORCE_GENERIC_PLAN)
     return false;
-  if (plan_cache_mode == PLAN_CACHE_MODE_FORCE_CUSTOM_PLAN)
+  if (tcb->guc.plan_cache_mode == PLAN_CACHE_MODE_FORCE_CUSTOM_PLAN)
     return true;
 
   /* See if caller wants to force the decision */
@@ -1160,7 +1160,7 @@ static double cached_plan_cost(CachedPlan *plan, bool include_planner) {
        */
       int nrelations = list_length(plannedstmt->rtable);
 
-      result += 1000.0 * cpu_operator_cost * (nrelations + 1);
+      result += 1000.0 * tcb->guc.cpu_operator_cost * (nrelations + 1);
     }
   }
 

@@ -42,9 +42,9 @@
 #include "utils/timestamp.h"
 #include "utils/typcache.h"
 #include "utils/xml.h"
+#include "utils/control_block.h"
 
 /* GUC parameters */
-thread_local /*LOCAL*/ bool Transform_null_equals = false;
 
 static Node *transformExprRecurse(ParseState *pstate, Node *expr);
 static Node *transformParamRef(ParseState *pstate, ParamRef *pref);
@@ -843,7 +843,7 @@ static Node *transformAExprOp(ParseState *pstate, A_Expr *a) {
    * generated internally from a CASE-WHEN expression, and
    * transform_null_equals does not apply.)
    */
-  if (Transform_null_equals && list_length(a->name) == 1 &&
+  if (tcb->guc.Transform_null_equals && list_length(a->name) == 1 &&
       strcmp(strVal(linitial(a->name)), "=") == 0 &&
       (exprIsNullConstant(lexpr) || exprIsNullConstant(rexpr)) &&
       (!IsA(lexpr, CaseTestExpr) && !IsA(rexpr, CaseTestExpr))) {

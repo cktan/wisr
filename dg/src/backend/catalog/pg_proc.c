@@ -43,6 +43,7 @@
 #include "utils/regproc.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#include "utils/control_block.h"
 
 /* ----------------------------------------------------------------
  *		ProcedureCreate
@@ -624,7 +625,7 @@ ObjectAddress ProcedureCreate(
      * shouldn't complain about anything that might depend on a GUC
      * parameter when check_function_bodies is off.
      */
-    if (check_function_bodies) {
+    if (tcb->guc.check_function_bodies) {
       set_items = (ArrayType *)DatumGetPointer(proconfig);
       if (set_items) /* Need a new GUC nesting level */
       {

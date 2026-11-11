@@ -72,13 +72,6 @@ extern Selectivity clauselist_selectivity_ext(PlannerInfo *root, List *clauses,
 /* in path/costsize.c: */
 
 /* widely used cost parameters */
-extern thread_local /*LOCAL*/ PGDLLIMPORT double seq_page_cost;
-extern thread_local /*LOCAL*/ PGDLLIMPORT double random_page_cost;
-extern thread_local /*LOCAL*/ PGDLLIMPORT double cpu_tuple_cost;
-extern thread_local /*LOCAL*/ PGDLLIMPORT double cpu_index_tuple_cost;
-extern thread_local /*LOCAL*/ PGDLLIMPORT double cpu_operator_cost;
-extern thread_local /*LOCAL*/ PGDLLIMPORT double recursive_worktable_factor;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int effective_cache_size;
 
 extern double clamp_row_est(double nrows);
 extern int32 clamp_width_est(int64 tuple_width);
@@ -92,7 +85,6 @@ extern bool is_pseudo_constant_for_index(PlannerInfo *root, Node *expr,
 /* in plan/planner.c: */
 
 /* GUC parameters */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_distinct_reordering;
 
 extern struct PlannedStmt *planner(Query *parse, const char *query_string,
                                    int cursorOptions,

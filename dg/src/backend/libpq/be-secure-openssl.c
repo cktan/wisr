@@ -65,7 +65,17 @@ static int port_bio_write(BIO *h, const char *buf, int size);
 static BIO_METHOD *port_bio_method(void);
 static int ssl_set_port_bio(Port *port);
 
-static DH *load_dh_file(char *filename, bool isServerStart);
+static DH *load_dh_file(const char *filename, bool isServerStart);
+
+/* The ssl_min_protocol_version setting, as the postmaster last published. */
+static int tls_min_protocol_version(void) {
+  return shmem->ssl_min_protocol_version.load(std::memory_order_relaxed);
+}
+
+/* The ssl_max_protocol_version setting, as the postmaster last published. */
+static int tls_max_protocol_version(void) {
+  return shmem->ssl_max_protocol_version.load(std::memory_order_relaxed);
+}
 static DH *load_dh_buffer(const char *buffer, size_t len);
 static int ssl_external_passwd_cb(char *buf, int size, int rwflag,
                                   void *userdata);
@@ -157,15 +167,16 @@ int be_tls_init(bool isServerStart) {
   /*
    * Load and verify server's certificate and private key
    */
-  if (SSL_CTX_use_certificate_chain_file(context, ssl_cert_file) != 1) {
+  if (SSL_CTX_use_certificate_chain_file(context,
+                                         pcb->ssl_cert_file.c_str()) != 1) {
     ereport(isServerStart ? FATAL : LOG,
             (errcode(ERRCODE_CONFIG_FILE_ERROR),
              errmsg("could not load server certificate file \"%s\": %s",
-                    ssl_cert_file, SSLerrmessage(ERR_get_error()))));
+                    pcb->ssl_cert_file.c_str(), SSLerrmessage(ERR_get_error()))));
     goto error;
   }
 
-  if (!check_ssl_key_file_permissions(ssl_key_file, isServerStart))
+  if (!check_ssl_key_file_permissions(pcb->ssl_key_file.c_str(), isServerStart))
     goto error;
 
   /*
@@ -173,19 +184,20 @@ int be_tls_init(bool isServerStart) {
    */
   dummy_ssl_passwd_cb_called = false;
 
-  if (SSL_CTX_use_PrivateKey_file(context, ssl_key_file, SSL_FILETYPE_PEM) !=
+  if (SSL_CTX_use_PrivateKey_file(context, pcb->ssl_key_file.c_str(),
+                                  SSL_FILETYPE_PEM) !=
       1) {
     if (dummy_ssl_passwd_cb_called)
       ereport(isServerStart ? FATAL : LOG,
               (errcode(ERRCODE_CONFIG_FILE_ERROR),
                errmsg("private key file \"%s\" cannot be reloaded because it "
                       "requires a passphrase",
-                      ssl_key_file)));
+                      pcb->ssl_key_file.c_str())));
     else
       ereport(isServerStart ? FATAL : LOG,
               (errcode(ERRCODE_CONFIG_FILE_ERROR),
                errmsg("could not load private key file \"%s\": %s",
-                      ssl_key_file, SSLerrmessage(ERR_get_error()))));
+                      pcb->ssl_key_file.c_str(), SSLerrmessage(ERR_get_error()))));
     goto error;
   }
 
@@ -197,8 +209,8 @@ int be_tls_init(bool isServerStart) {
     goto error;
   }
 
-  if (ssl_min_protocol_version) {
-    ssl_ver_min = ssl_protocol_version_to_openssl(ssl_min_protocol_version);
+  if (tls_min_protocol_version()) {
+    ssl_ver_min = ssl_protocol_version_to_openssl(tls_min_protocol_version());
 
     if (ssl_ver_min == -1) {
       ereport(
@@ -218,8 +230,8 @@ int be_tls_init(bool isServerStart) {
     }
   }
 
-  if (ssl_max_protocol_version) {
-    ssl_ver_max = ssl_protocol_version_to_openssl(ssl_max_protocol_version);
+  if (tls_max_protocol_version()) {
+    ssl_ver_max = ssl_protocol_version_to_openssl(tls_max_protocol_version());
 
     if (ssl_ver_max == -1) {
       ereport(
@@ -240,7 +252,7 @@ int be_tls_init(bool isServerStart) {
   }
 
   /* Check compatibility of min/max protocols */
-  if (ssl_min_protocol_version && ssl_max_protocol_version) {
+  if (tls_min_protocol_version() && tls_max_protocol_version()) {
     /*
      * No need to check for invalid values (-1) for each protocol number
      * as the code above would have already generated an error.
@@ -298,7 +310,7 @@ int be_tls_init(bool isServerStart) {
     goto error;
 
   /* set up the allowed cipher list for TLSv1.2 and below */
-  if (SSL_CTX_set_cipher_list(context, SSLCipherList) != 1) {
+  if (SSL_CTX_set_cipher_list(context, pcb->SSLCipherList.c_str()) != 1) {
     ereport(isServerStart ? FATAL : LOG,
             (errcode(ERRCODE_CONFIG_FILE_ERROR),
              errmsg("could not set the TLSv1.2 cipher list (no valid ciphers "
@@ -310,9 +322,9 @@ int be_tls_init(bool isServerStart) {
    * Set up the allowed cipher suites for TLSv1.3. If the GUC is an empty
    * string we leave the allowed suites to be the OpenSSL default value.
    */
-  if (SSLCipherSuites[0]) {
+  if (!pcb->SSLCipherSuites.empty()) {
     /* set up the allowed cipher suites */
-    if (SSL_CTX_set_ciphersuites(context, SSLCipherSuites) != 1) {
+    if (SSL_CTX_set_ciphersuites(context, pcb->SSLCipherSuites.c_str()) != 1) {
       ereport(isServerStart ? FATAL : LOG,
               (errcode(ERRCODE_CONFIG_FILE_ERROR),
                errmsg("could not set the TLSv1.3 cipher suites (no valid "
@@ -322,21 +334,24 @@ int be_tls_init(bool isServerStart) {
   }
 
   /* Let server choose order */
-  if (SSLPreferServerCiphers)
+  if (pcb->SSLPreferServerCiphers)
     SSL_CTX_set_options(context, SSL_OP_CIPHER_SERVER_PREFERENCE);
 
   /*
    * Load CA store, so we can verify client certificates if needed.
    */
-  if (ssl_ca_file[0]) {
+  if (!pcb->ssl_ca_file.empty()) {
     STACK_OF(X509_NAME) * root_cert_list;
 
-    if (SSL_CTX_load_verify_locations(context, ssl_ca_file, NULL) != 1 ||
-        (root_cert_list = SSL_load_client_CA_file(ssl_ca_file)) == NULL) {
-      ereport(isServerStart ? FATAL : LOG,
-              (errcode(ERRCODE_CONFIG_FILE_ERROR),
-               errmsg("could not load root certificate file \"%s\": %s",
-                      ssl_ca_file, SSLerrmessage(ERR_get_error()))));
+    if (SSL_CTX_load_verify_locations(context, pcb->ssl_ca_file.c_str(),
+                                      NULL) != 1 ||
+        (root_cert_list = SSL_load_client_CA_file(pcb->ssl_ca_file.c_str())) ==
+            NULL) {
+      ereport(
+          isServerStart ? FATAL : LOG,
+          (errcode(ERRCODE_CONFIG_FILE_ERROR),
+           errmsg("could not load root certificate file \"%s\": %s",
+                  pcb->ssl_ca_file.c_str(), SSLerrmessage(ERR_get_error()))));
       goto error;
     }
 
@@ -363,36 +378,40 @@ int be_tls_init(bool isServerStart) {
    * http://searchsecurity.techtarget.com/sDefinition/0,,sid14_gci803160,00.html
    *----------
    */
-  if (ssl_crl_file[0] || ssl_crl_dir[0]) {
+  if (!pcb->ssl_crl_file.empty() || !pcb->ssl_crl_dir.empty()) {
     X509_STORE *cvstore = SSL_CTX_get_cert_store(context);
 
     if (cvstore) {
       /* Set the flags to check against the complete CRL chain */
-      if (X509_STORE_load_locations(cvstore,
-                                    ssl_crl_file[0] ? ssl_crl_file : NULL,
-                                    ssl_crl_dir[0] ? ssl_crl_dir : NULL) == 1) {
+      if (X509_STORE_load_locations(
+              cvstore,
+              !pcb->ssl_crl_file.empty() ? pcb->ssl_crl_file.c_str() : NULL,
+              !pcb->ssl_crl_dir.empty() ? pcb->ssl_crl_dir.c_str() : NULL) ==
+          1) {
         X509_STORE_set_flags(cvstore,
                              X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL);
-      } else if (ssl_crl_dir[0] == 0) {
+      } else if (pcb->ssl_crl_dir.empty()) {
         ereport(isServerStart ? FATAL : LOG,
                 (errcode(ERRCODE_CONFIG_FILE_ERROR),
                  errmsg("could not load SSL certificate revocation list file "
                         "\"%s\": %s",
-                        ssl_crl_file, SSLerrmessage(ERR_get_error()))));
+                        pcb->ssl_crl_file.c_str(),
+                        SSLerrmessage(ERR_get_error()))));
         goto error;
-      } else if (ssl_crl_file[0] == 0) {
-        ereport(isServerStart ? FATAL : LOG,
-                (errcode(ERRCODE_CONFIG_FILE_ERROR),
-                 errmsg("could not load SSL certificate revocation list "
-                        "directory \"%s\": %s",
-                        ssl_crl_dir, SSLerrmessage(ERR_get_error()))));
+      } else if (pcb->ssl_crl_file.empty()) {
+        ereport(
+            isServerStart ? FATAL : LOG,
+            (errcode(ERRCODE_CONFIG_FILE_ERROR),
+             errmsg("could not load SSL certificate revocation list "
+                    "directory \"%s\": %s",
+                    pcb->ssl_crl_dir.c_str(), SSLerrmessage(ERR_get_error()))));
         goto error;
       } else {
         ereport(isServerStart ? FATAL : LOG,
                 (errcode(ERRCODE_CONFIG_FILE_ERROR),
                  errmsg("could not load SSL certificate revocation list file "
                         "\"%s\" or directory \"%s\": %s",
-                        ssl_crl_file, ssl_crl_dir,
+                        pcb->ssl_crl_file.c_str(), pcb->ssl_crl_dir.c_str(),
                         SSLerrmessage(ERR_get_error()))));
         goto error;
       }
@@ -417,7 +436,7 @@ int be_tls_init(bool isServerStart) {
     old = shmem->tls->context;
     shmem->tls->context = context;
     /* Whether the CA store has been loaded into the context. */
-    shmem->tls->loaded_verify_locations = ssl_ca_file[0] != '\0';
+    shmem->tls->loaded_verify_locations = !pcb->ssl_ca_file.empty();
     if (old)
       SSL_CTX_free(old);
   }
@@ -596,12 +615,14 @@ aloop:
                ? errhint(
                      "This may indicate that the client does not support any "
                      "SSL protocol version between %s and %s.",
-                     ssl_min_protocol_version ? ssl_protocol_version_to_string(
-                                                    ssl_min_protocol_version)
-                                              : MIN_OPENSSL_TLS_VERSION,
-                     ssl_max_protocol_version ? ssl_protocol_version_to_string(
-                                                    ssl_max_protocol_version)
-                                              : MAX_OPENSSL_TLS_VERSION)
+                     tls_min_protocol_version()
+                         ? ssl_protocol_version_to_string(
+                               tls_min_protocol_version())
+                         : MIN_OPENSSL_TLS_VERSION,
+                     tls_max_protocol_version()
+                         ? ssl_protocol_version_to_string(
+                               tls_max_protocol_version())
+                         : MAX_OPENSSL_TLS_VERSION)
                : 0));
       cert_errdetail = NULL;
       break;
@@ -1009,7 +1030,7 @@ static int ssl_set_port_bio(Port *port) {
  *	to verify that the DBA-generated DH parameters file contains
  *	what we expect it to contain.
  */
-static DH *load_dh_file(char *filename, bool isServerStart) {
+static DH *load_dh_file(const char *filename, bool isServerStart) {
   FILE *fp;
   DH *dh = NULL;
   int codes;
@@ -1326,8 +1347,8 @@ static bool initialize_dh(SSL_CTX *context, bool isServerStart) {
 
   SSL_CTX_set_options(context, SSL_OP_SINGLE_DH_USE);
 
-  if (ssl_dh_params_file[0])
-    dh = load_dh_file(ssl_dh_params_file, isServerStart);
+  if (!pcb->ssl_dh_params_file.empty())
+    dh = load_dh_file(pcb->ssl_dh_params_file.c_str(), isServerStart);
   if (!dh)
     dh = load_dh_buffer(FILE_DH2048, sizeof(FILE_DH2048));
   if (!dh) {
@@ -1357,7 +1378,7 @@ static bool initialize_dh(SSL_CTX *context, bool isServerStart) {
  */
 static bool initialize_ecdh(SSL_CTX *context, bool isServerStart) {
 #ifndef OPENSSL_NO_ECDH
-  if (SSL_CTX_set1_groups_list(context, SSLECDHCurve) != 1) {
+  if (SSL_CTX_set1_groups_list(context, pcb->SSLECDHCurve.c_str()) != 1) {
     /*
      * OpenSSL 3.3.0 introduced proper error messages for group parsing
      * errors, earlier versions returns "no SSL error reported" which is
@@ -1667,10 +1688,11 @@ static const char *ssl_protocol_version_to_string(int v) {
 
 static void default_openssl_tls_init(SSL_CTX *context, bool isServerStart) {
   if (isServerStart) {
-    if (ssl_passphrase_command[0])
+    if (!pcb->ssl_passphrase_command.empty())
       SSL_CTX_set_default_passwd_cb(context, ssl_external_passwd_cb);
   } else {
-    if (ssl_passphrase_command[0] && ssl_passphrase_command_supports_reload)
+    if (!pcb->ssl_passphrase_command.empty() &&
+        pcb->ssl_passphrase_command_supports_reload)
       SSL_CTX_set_default_passwd_cb(context, ssl_external_passwd_cb);
     else
 

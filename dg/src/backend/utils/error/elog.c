@@ -105,7 +105,6 @@ thread_local /*LOCAL*/ bool PG_exception_handled = false;
  */
 
 /* GUC parameters */
-thread_local /*LOCAL*/ int Log_error_verbosity = PGERROR_DEFAULT;
 /* log_destination's variables: read pcb->Log_destination, not this one */
 thread_local /*LOCAL*/ int Log_destination = LOG_DESTINATION_STDERR;
 thread_local /*LOCAL*/ char *Log_destination_string = NULL;
@@ -337,7 +336,8 @@ bool errstart(int elevel, const char *domain) {
      * infinite recursion!)
      */
     if (elevel == ERROR) {
-      if (!PG_exception_handled || ExitOnAnyError || proc_exit_inprogress)
+      if (!PG_exception_handled || tcb->guc.ExitOnAnyError ||
+          proc_exit_inprogress)
         elevel = FATAL;
     }
 
@@ -450,7 +450,7 @@ void errfinish(const char *filename, int lineno, const char *funcname) {
   oldcontext = MemoryContextSwitchTo(ErrorContext);
 
   /* Collect backtrace, if enabled and we didn't already */
-  if (!edata->backtrace && edata->funcname && backtrace_functions &&
+  if (!edata->backtrace && edata->funcname && tcb->guc.backtrace_functions &&
       matches_backtrace_functions(edata->funcname))
     set_backtrace(edata, 2);
 
@@ -2553,7 +2553,7 @@ void log_status_format(StringInfo buf, const char *format, ErrorData *edata) {
     switch (*p) {
     case 'a':
       if (MyProcPort) {
-        const char *appname = application_name;
+        const char *appname = tcb->guc.application_name;
 
         if (appname == NULL || *appname == '\0')
           appname = _("[unknown]");
@@ -2818,7 +2818,7 @@ static void send_message_to_server_log(ErrorData *edata) {
   log_line_prefix(&buf, edata);
   appendStringInfo(&buf, "%s:  ", _(error_severity(edata->elevel)));
 
-  if (Log_error_verbosity >= PGERROR_VERBOSE)
+  if (tcb->guc.Log_error_verbosity >= PGERROR_VERBOSE)
     appendStringInfo(&buf, "%s: ", unpack_sql_state(edata->sqlerrcode));
 
   if (edata->message)
@@ -2833,7 +2833,7 @@ static void send_message_to_server_log(ErrorData *edata) {
 
   appendStringInfoChar(&buf, '\n');
 
-  if (Log_error_verbosity >= PGERROR_DEFAULT) {
+  if (tcb->guc.Log_error_verbosity >= PGERROR_DEFAULT) {
     if (edata->detail_log) {
       log_line_prefix(&buf, edata);
       appendStringInfoString(&buf, _("DETAIL:  "));
@@ -2863,7 +2863,7 @@ static void send_message_to_server_log(ErrorData *edata) {
       append_with_tabs(&buf, edata->context);
       appendStringInfoChar(&buf, '\n');
     }
-    if (Log_error_verbosity >= PGERROR_VERBOSE) {
+    if (tcb->guc.Log_error_verbosity >= PGERROR_VERBOSE) {
       /* assume no newlines in funcname or filename... */
       if (edata->funcname && edata->filename) {
         log_line_prefix(&buf, edata);

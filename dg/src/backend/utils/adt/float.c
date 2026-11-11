@@ -29,6 +29,7 @@
 #include "utils/float.h"
 #include "utils/fmgrprotos.h"
 #include "utils/sortsupport.h"
+#include "utils/control_block.h"
 
 /*
  * Configurable GUC parameter
@@ -38,7 +39,6 @@
  * get round-trip-accurate results. If 0 or less, then use the old, slow,
  * decimal rounding method.
  */
-thread_local /*LOCAL*/ int extra_float_digits = 1;
 
 /* Cached constants for degree-based trig functions */
 static thread_local /*LOCAL*/ bool degree_consts_set = false;
@@ -279,9 +279,9 @@ float4 float4in_internal(char *num, char **endptr_p, const char *type_name,
 Datum float4out(PG_FUNCTION_ARGS) {
   float4 num = PG_GETARG_FLOAT4(0);
   char *ascii = (char *)palloc(32);
-  int ndig = FLT_DIG + extra_float_digits;
+  int ndig = FLT_DIG + tcb->guc.extra_float_digits;
 
-  if (extra_float_digits > 0) {
+  if (tcb->guc.extra_float_digits > 0) {
     float_to_shortest_decimal_buf(num, ascii);
     PG_RETURN_CSTRING(ascii);
   }
@@ -465,9 +465,9 @@ Datum float8out(PG_FUNCTION_ARGS) {
  */
 char *float8out_internal(double num) {
   char *ascii = (char *)palloc(32);
-  int ndig = DBL_DIG + extra_float_digits;
+  int ndig = DBL_DIG + tcb->guc.extra_float_digits;
 
-  if (extra_float_digits > 0) {
+  if (tcb->guc.extra_float_digits > 0) {
     double_to_shortest_decimal_buf(num, ascii);
     return ascii;
   }

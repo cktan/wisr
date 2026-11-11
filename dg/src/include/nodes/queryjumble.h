@@ -17,6 +17,7 @@
 #define QUERYJUMBLE_H
 
 #include "nodes/parsenodes.h"
+#include "utils/control_block.h"
 
 /*
  * Struct for tracking locations/lengths of constants during normalization
@@ -86,7 +87,6 @@ enum ComputeQueryIdType {
 };
 
 /* GUC parameters */
-extern thread_local /*LOCAL*/ PGDLLIMPORT int compute_query_id;
 
 extern const char *CleanQuerytext(const char *query, int *location, int *len);
 extern JumbleState *JumbleQuery(Query *query);
@@ -99,9 +99,9 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool query_id_enabled;
  * directly in the GUC or by a module when the setting is 'auto'.
  */
 static inline bool IsQueryIdEnabled(void) {
-  if (compute_query_id == COMPUTE_QUERY_ID_OFF)
+  if (tcb->guc.compute_query_id == COMPUTE_QUERY_ID_OFF)
     return false;
-  if (compute_query_id == COMPUTE_QUERY_ID_ON)
+  if (tcb->guc.compute_query_id == COMPUTE_QUERY_ID_ON)
     return true;
   return query_id_enabled;
 }

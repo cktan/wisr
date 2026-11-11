@@ -911,8 +911,8 @@ static void FreeVfd(File file) {
  */
 static void ReportTemporaryFileUsage(const char *path, off_t size) {
 
-  if (log_temp_files >= 0) {
-    if ((size / 1024) >= log_temp_files)
+  if (tcb->guc.log_temp_files >= 0) {
+    if ((size / 1024) >= tcb->guc.log_temp_files)
       ereport(LOG, (errmsg("temporary file: path \"%s\", size %lu", path,
                            (unsigned long)size)));
   }
@@ -1207,7 +1207,7 @@ ssize_t FileWriteV(File file, const struct iovec *iov, int iovcnt, off_t offset,
    * message if we do that.  All current callers would just throw error
    * immediately anyway, so this is safe at present.
    */
-  if (temp_file_limit >= 0 && (vfdP->fdstate & FD_TEMP_FILE_LIMIT)) {
+  if (tcb->guc.temp_file_limit >= 0 && (vfdP->fdstate & FD_TEMP_FILE_LIMIT)) {
     off_t past_write = offset;
 
     for (int i = 0; i < iovcnt; ++i)
@@ -1217,12 +1217,12 @@ ssize_t FileWriteV(File file, const struct iovec *iov, int iovcnt, off_t offset,
       uint64 newTotal = temporary_files_size;
 
       newTotal += past_write - vfdP->fileSize;
-      if (newTotal > (uint64)temp_file_limit * (uint64)1024)
+      if (newTotal > (uint64)tcb->guc.temp_file_limit * (uint64)1024)
         ereport(
             ERROR,
             (errcode(ERRCODE_CONFIGURATION_LIMIT_EXCEEDED),
              errmsg("temporary file size exceeds \"temp_file_limit\" (%dkB)",
-                    temp_file_limit)));
+                    tcb->guc.temp_file_limit)));
     }
   }
 

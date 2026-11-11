@@ -140,6 +140,7 @@
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
 #include "utils/typcache.h"
+#include "utils/control_block.h"
 
 #define DEFAULT_PAGE_CPU_MULTIPLIER 50.0
 
@@ -6328,7 +6329,7 @@ void genericcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
     numIndexPages = 1.0;
 
   /* The settings': digres has no tablespace with costs of its own. */
-  spc_random_page_cost = random_page_cost;
+  spc_random_page_cost = tcb->guc.random_page_cost;
 
   /*
    * Now compute the disk access costs.
@@ -6390,13 +6391,13 @@ void genericcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
    */
   qual_arg_cost = index_other_operands_eval_cost(root, indexQuals) +
                   index_other_operands_eval_cost(root, indexOrderBys);
-  qual_op_cost = cpu_operator_cost *
+  qual_op_cost = tcb->guc.cpu_operator_cost *
                  (list_length(indexQuals) + list_length(indexOrderBys));
 
   indexStartupCost = qual_arg_cost;
   indexTotalCost += qual_arg_cost;
-  indexTotalCost +=
-      numIndexTuples * num_sa_scans * (cpu_index_tuple_cost + qual_op_cost);
+  indexTotalCost += numIndexTuples * num_sa_scans *
+                    (tcb->guc.cpu_index_tuple_cost + qual_op_cost);
 
   /*
    * Generic assumption about index correlation: there isn't any.
@@ -6886,7 +6887,8 @@ void btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
    */
   if (index->tuples > 1) /* avoid computing log(0) */
   {
-    descentCost = ceil(log(index->tuples) / log(2.0)) * cpu_operator_cost;
+    descentCost =
+        ceil(log(index->tuples) / log(2.0)) * tcb->guc.cpu_operator_cost;
     costs.indexStartupCost += descentCost;
     costs.indexTotalCost += costs.num_sa_scans * descentCost;
   }
@@ -6903,7 +6905,7 @@ void btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
    * SAOP/skip array descent.
    */
   descentCost = (index->tree_height + 1) * DEFAULT_PAGE_CPU_MULTIPLIER *
-                cpu_operator_cost;
+                tcb->guc.cpu_operator_cost;
   costs.indexStartupCost += descentCost;
   costs.indexTotalCost += costs.num_sa_scans * descentCost;
 

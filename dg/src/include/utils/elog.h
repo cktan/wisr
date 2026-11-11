@@ -550,7 +550,6 @@ typedef enum {
   PGERROR_VERBOSE, /* all the facts, ma'am */
 } PGErrorVerbosity;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_error_verbosity;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_destination;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *Log_destination_string;
 

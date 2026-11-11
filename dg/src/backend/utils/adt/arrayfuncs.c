@@ -38,11 +38,11 @@
 #include "utils/memutils.h"
 #include "utils/selfuncs.h"
 #include "utils/typcache.h"
+#include "utils/control_block.h"
 
 /*
  * GUC parameter
  */
-thread_local /*LOCAL*/ bool Array_nulls = true;
 
 /*
  * Local definitions
@@ -846,7 +846,7 @@ unquoted_element:
         elembuf->len = dstlen;
         *srcptr = p;
         /* Check if it's unquoted "NULL" */
-        if (Array_nulls && !has_escapes &&
+        if (tcb->guc.Array_nulls && !has_escapes &&
             pg_strcasecmp(elembuf->data, "NULL") == 0)
           return ATOK_ELEM_NULL;
         else

@@ -107,6 +107,7 @@
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
 #include "utils/tuplesort.h"
+#include "utils/control_block.h"
 
 #define LOG2(x)  (log(x) / 0.693147180559945)
 
@@ -125,37 +126,7 @@
  */
 #define MAXIMUM_ROWCOUNT 1e100
 
-thread_local /*LOCAL*/ double seq_page_cost = DEFAULT_SEQ_PAGE_COST;
-thread_local /*LOCAL*/ double random_page_cost = DEFAULT_RANDOM_PAGE_COST;
-thread_local /*LOCAL*/ double cpu_tuple_cost = DEFAULT_CPU_TUPLE_COST;
-thread_local /*LOCAL*/ double cpu_index_tuple_cost =
-    DEFAULT_CPU_INDEX_TUPLE_COST;
-thread_local /*LOCAL*/ double cpu_operator_cost = DEFAULT_CPU_OPERATOR_COST;
-thread_local /*LOCAL*/ double recursive_worktable_factor =
-    DEFAULT_RECURSIVE_WORKTABLE_FACTOR;
-
-thread_local /*LOCAL*/ int effective_cache_size = DEFAULT_EFFECTIVE_CACHE_SIZE;
-
 thread_local /*LOCAL*/ Cost disable_cost = 1.0e10;
-
-thread_local /*LOCAL*/ bool enable_seqscan = true;
-thread_local /*LOCAL*/ bool enable_indexscan = true;
-thread_local /*LOCAL*/ bool enable_indexonlyscan = true;
-thread_local /*LOCAL*/ bool enable_bitmapscan = true;
-thread_local /*LOCAL*/ bool enable_tidscan = true;
-thread_local /*LOCAL*/ bool enable_sort = true;
-thread_local /*LOCAL*/ bool enable_incremental_sort = true;
-thread_local /*LOCAL*/ bool enable_hashagg = true;
-thread_local /*LOCAL*/ bool enable_nestloop = true;
-thread_local /*LOCAL*/ bool enable_material = true;
-thread_local /*LOCAL*/ bool enable_memoize = true;
-thread_local /*LOCAL*/ bool enable_mergejoin = true;
-thread_local /*LOCAL*/ bool enable_hashjoin = true;
-thread_local /*LOCAL*/ bool enable_partitionwise_join = false;
-thread_local /*LOCAL*/ bool enable_partitionwise_aggregate = false;
-thread_local /*LOCAL*/ bool enable_partition_pruning = true;
-thread_local /*LOCAL*/ bool enable_presorted_aggregate = true;
-thread_local /*LOCAL*/ bool enable_async_append = true;
 
 typedef struct {
   PlannerInfo *root;
@@ -290,7 +261,7 @@ void cost_seqscan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
     path->rows = baserel->rows;
 
   /* The settings': digres has no tablespace with costs of its own. */
-  spc_seq_page_cost = seq_page_cost;
+  spc_seq_page_cost = tcb->guc.seq_page_cost;
 
   /*
    * disk costs
@@ -301,13 +272,13 @@ void cost_seqscan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
   get_restriction_qual_cost(root, baserel, param_info, &qpqual_cost);
 
   startup_cost += qpqual_cost.startup;
-  cpu_per_tuple = cpu_tuple_cost + qpqual_cost.per_tuple;
+  cpu_per_tuple = tcb->guc.cpu_tuple_cost + qpqual_cost.per_tuple;
   cpu_run_cost = cpu_per_tuple * baserel->tuples;
   /* tlist eval costs are paid per output row, not per tuple scanned */
   startup_cost += path->pathtarget->cost.startup;
   cpu_run_cost += path->pathtarget->cost.per_tuple * path->rows;
 
-  path->disabled_nodes = enable_seqscan ? 0 : 1;
+  path->disabled_nodes = tcb->guc.enable_seqscan ? 0 : 1;
   path->startup_cost = startup_cost;
   path->total_cost = startup_cost + cpu_run_cost + disk_run_cost;
 }
@@ -345,8 +316,8 @@ void cost_samplescan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
     path->rows = baserel->rows;
 
   /* The settings': digres has no tablespace with costs of its own. */
-  spc_random_page_cost = random_page_cost;
-  spc_seq_page_cost = seq_page_cost;
+  spc_random_page_cost = tcb->guc.random_page_cost;
+  spc_seq_page_cost = tcb->guc.seq_page_cost;
 
   /* if NextSampleBlock is used, assume random access, else sequential */
   spc_page_cost =
@@ -369,7 +340,7 @@ void cost_samplescan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
   get_restriction_qual_cost(root, baserel, param_info, &qpqual_cost);
 
   startup_cost += qpqual_cost.startup;
-  cpu_per_tuple = cpu_tuple_cost + qpqual_cost.per_tuple;
+  cpu_per_tuple = tcb->guc.cpu_tuple_cost + qpqual_cost.per_tuple;
   run_cost += cpu_per_tuple * baserel->tuples;
   /* tlist eval costs are paid per output row, not per tuple scanned */
   startup_cost += path->pathtarget->cost.startup;
@@ -447,7 +418,7 @@ void cost_index(IndexPath *path, PlannerInfo *root, double loop_count) {
   }
 
   /* we don't need to check enable_indexonlyscan; indxpath.c does that */
-  path->path.disabled_nodes = enable_indexscan ? 0 : 1;
+  path->path.disabled_nodes = tcb->guc.enable_indexscan ? 0 : 1;
 
   /*
    * Call index-access-method-specific code to estimate the processing cost
@@ -476,8 +447,8 @@ void cost_index(IndexPath *path, PlannerInfo *root, double loop_count) {
   tuples_fetched = clamp_row_est(indexSelectivity * baserel->tuples);
 
   /* The settings': digres has no tablespace with costs of its own. */
-  spc_random_page_cost = random_page_cost;
-  spc_seq_page_cost = seq_page_cost;
+  spc_random_page_cost = tcb->guc.random_page_cost;
+  spc_seq_page_cost = tcb->guc.seq_page_cost;
 
   /*----------
    * Estimate number of main-table pages fetched, and compute I/O cost.
@@ -588,7 +559,7 @@ void cost_index(IndexPath *path, PlannerInfo *root, double loop_count) {
   cost_qual_eval(&qpqual_cost, qpquals, root);
 
   startup_cost += qpqual_cost.startup;
-  cpu_per_tuple = cpu_tuple_cost + qpqual_cost.per_tuple;
+  cpu_per_tuple = tcb->guc.cpu_tuple_cost + qpqual_cost.per_tuple;
 
   cpu_run_cost += cpu_per_tuple * tuples_fetched;
 
@@ -687,7 +658,7 @@ double index_pages_fetched(double tuples_fetched, BlockNumber pages,
   Assert(T <= total_pages);
 
   /* b is pro-rated share of effective_cache_size */
-  b = (double)effective_cache_size * T / total_pages;
+  b = (double)tcb->guc.effective_cache_size * T / total_pages;
 
   /* force it positive and integral */
   if (b <= 1.0)
@@ -799,8 +770,8 @@ void cost_bitmap_heap_scan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
   T = (baserel->pages > 1) ? (double)baserel->pages : 1.0;
 
   /* The settings': digres has no tablespace with costs of its own. */
-  spc_random_page_cost = random_page_cost;
-  spc_seq_page_cost = seq_page_cost;
+  spc_random_page_cost = tcb->guc.random_page_cost;
+  spc_seq_page_cost = tcb->guc.seq_page_cost;
 
   /*
    * For small numbers of pages we should charge spc_random_page_cost
@@ -830,7 +801,7 @@ void cost_bitmap_heap_scan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
   get_restriction_qual_cost(root, baserel, param_info, &qpqual_cost);
 
   startup_cost += qpqual_cost.startup;
-  cpu_per_tuple = cpu_tuple_cost + qpqual_cost.per_tuple;
+  cpu_per_tuple = tcb->guc.cpu_tuple_cost + qpqual_cost.per_tuple;
   cpu_run_cost = cpu_per_tuple * tuples_fetched;
 
   run_cost += cpu_run_cost;
@@ -839,7 +810,7 @@ void cost_bitmap_heap_scan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
   startup_cost += path->pathtarget->cost.startup;
   run_cost += path->pathtarget->cost.per_tuple * path->rows;
 
-  path->disabled_nodes = enable_bitmapscan ? 0 : 1;
+  path->disabled_nodes = tcb->guc.enable_bitmapscan ? 0 : 1;
   path->startup_cost = startup_cost;
   path->total_cost = startup_cost + run_cost;
 }
@@ -860,7 +831,7 @@ void cost_bitmap_tree_node(Path *path, Cost *cost, Selectivity *selec) {
      * scan doesn't look to be the same cost as an indexscan to retrieve a
      * single tuple.
      */
-    *cost += 0.1 * cpu_operator_cost * path->rows;
+    *cost += 0.1 * tcb->guc.cpu_operator_cost * path->rows;
   } else if (IsA(path, BitmapAndPath)) {
     *cost = path->total_cost;
     *selec = ((BitmapAndPath *)path)->bitmapselectivity;
@@ -910,7 +881,7 @@ void cost_bitmap_and_node(BitmapAndPath *path, PlannerInfo *root) {
 
     totalCost += subCost;
     if (l != list_head(path->bitmapquals))
-      totalCost += 100.0 * cpu_operator_cost;
+      totalCost += 100.0 * tcb->guc.cpu_operator_cost;
   }
   path->bitmapselectivity = selec;
   path->path.rows = 0; /* per above, not used */
@@ -953,7 +924,7 @@ void cost_bitmap_or_node(BitmapOrPath *path, PlannerInfo *root) {
 
     totalCost += subCost;
     if (l != list_head(path->bitmapquals) && !IsA(subpath, IndexPath))
-      totalCost += 100.0 * cpu_operator_cost;
+      totalCost += 100.0 * tcb->guc.cpu_operator_cost;
   }
   path->bitmapselectivity = Min(selec, 1.0);
   path->path.rows = 0; /* per above, not used */
@@ -1002,7 +973,7 @@ void cost_tidscan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
      * should be generating a TID scan only if enable_tidscan=true. Also,
      * if CurrentOfExpr is the qual, there should be only one.
      */
-    Assert(enable_tidscan || IsA(qual, CurrentOfExpr));
+    Assert(tcb->guc.enable_tidscan || IsA(qual, CurrentOfExpr));
     Assert(list_length(tidquals) == 1 || !IsA(qual, CurrentOfExpr));
 
     if (IsA(qual, ScalarArrayOpExpr)) {
@@ -1027,7 +998,7 @@ void cost_tidscan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
   cost_qual_eval(&tid_qual_cost, tidquals, root);
 
   /* The settings': digres has no tablespace with costs of its own. */
-  spc_random_page_cost = random_page_cost;
+  spc_random_page_cost = tcb->guc.random_page_cost;
 
   /* disk costs --- assume each tuple on a different page */
   run_cost += spc_random_page_cost * ntuples;
@@ -1038,7 +1009,7 @@ void cost_tidscan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
   /* XXX currently we assume TID quals are a subset of qpquals */
   startup_cost += qpqual_cost.startup + tid_qual_cost.per_tuple;
   cpu_per_tuple =
-      cpu_tuple_cost + qpqual_cost.per_tuple - tid_qual_cost.per_tuple;
+      tcb->guc.cpu_tuple_cost + qpqual_cost.per_tuple - tid_qual_cost.per_tuple;
   run_cost += cpu_per_tuple * ntuples;
 
   /* tlist eval costs are paid per output row, not per tuple scanned */
@@ -1120,7 +1091,7 @@ void cost_subqueryscan(SubqueryScanPath *path, PlannerInfo *root,
   get_restriction_qual_cost(root, baserel, param_info, &qpqual_cost);
 
   startup_cost = qpqual_cost.startup;
-  cpu_per_tuple = cpu_tuple_cost + qpqual_cost.per_tuple;
+  cpu_per_tuple = tcb->guc.cpu_tuple_cost + qpqual_cost.per_tuple;
   run_cost = cpu_per_tuple * path->subpath->rows;
 
   /* tlist eval costs are paid per output row, not per tuple scanned */
@@ -1179,7 +1150,7 @@ void cost_functionscan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
   get_restriction_qual_cost(root, baserel, param_info, &qpqual_cost);
 
   startup_cost += qpqual_cost.startup;
-  cpu_per_tuple = cpu_tuple_cost + qpqual_cost.per_tuple;
+  cpu_per_tuple = tcb->guc.cpu_tuple_cost + qpqual_cost.per_tuple;
   run_cost += cpu_per_tuple * baserel->tuples;
 
   /* tlist eval costs are paid per output row, not per tuple scanned */
@@ -1234,7 +1205,7 @@ void cost_tablefuncscan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
   get_restriction_qual_cost(root, baserel, param_info, &qpqual_cost);
 
   startup_cost += qpqual_cost.startup;
-  cpu_per_tuple = cpu_tuple_cost + qpqual_cost.per_tuple;
+  cpu_per_tuple = tcb->guc.cpu_tuple_cost + qpqual_cost.per_tuple;
   run_cost += cpu_per_tuple * baserel->tuples;
 
   /* tlist eval costs are paid per output row, not per tuple scanned */
@@ -1274,13 +1245,13 @@ void cost_valuesscan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
    * For now, estimate list evaluation cost at one operator eval per list
    * (probably pretty bogus, but is it worth being smarter?)
    */
-  cpu_per_tuple = cpu_operator_cost;
+  cpu_per_tuple = tcb->guc.cpu_operator_cost;
 
   /* Add scanning CPU costs */
   get_restriction_qual_cost(root, baserel, param_info, &qpqual_cost);
 
   startup_cost += qpqual_cost.startup;
-  cpu_per_tuple += cpu_tuple_cost + qpqual_cost.per_tuple;
+  cpu_per_tuple += tcb->guc.cpu_tuple_cost + qpqual_cost.per_tuple;
   run_cost += cpu_per_tuple * baserel->tuples;
 
   /* tlist eval costs are paid per output row, not per tuple scanned */
@@ -1320,13 +1291,13 @@ void cost_ctescan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
     path->rows = baserel->rows;
 
   /* Charge one CPU tuple cost per row for tuplestore manipulation */
-  cpu_per_tuple = cpu_tuple_cost;
+  cpu_per_tuple = tcb->guc.cpu_tuple_cost;
 
   /* Add scanning CPU costs */
   get_restriction_qual_cost(root, baserel, param_info, &qpqual_cost);
 
   startup_cost += qpqual_cost.startup;
-  cpu_per_tuple += cpu_tuple_cost + qpqual_cost.per_tuple;
+  cpu_per_tuple += tcb->guc.cpu_tuple_cost + qpqual_cost.per_tuple;
   run_cost += cpu_per_tuple * baserel->tuples;
 
   /* tlist eval costs are paid per output row, not per tuple scanned */
@@ -1360,13 +1331,13 @@ void cost_namedtuplestorescan(Path *path, PlannerInfo *root,
     path->rows = baserel->rows;
 
   /* Charge one CPU tuple cost per row for tuplestore manipulation */
-  cpu_per_tuple = cpu_tuple_cost;
+  cpu_per_tuple = tcb->guc.cpu_tuple_cost;
 
   /* Add scanning CPU costs */
   get_restriction_qual_cost(root, baserel, param_info, &qpqual_cost);
 
   startup_cost += qpqual_cost.startup;
-  cpu_per_tuple += cpu_tuple_cost + qpqual_cost.per_tuple;
+  cpu_per_tuple += tcb->guc.cpu_tuple_cost + qpqual_cost.per_tuple;
   run_cost += cpu_per_tuple * baserel->tuples;
 
   path->disabled_nodes = 0;
@@ -1399,7 +1370,7 @@ void cost_resultscan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
   get_restriction_qual_cost(root, baserel, param_info, &qpqual_cost);
 
   startup_cost += qpqual_cost.startup;
-  cpu_per_tuple = cpu_tuple_cost + qpqual_cost.per_tuple;
+  cpu_per_tuple = tcb->guc.cpu_tuple_cost + qpqual_cost.per_tuple;
   run_cost += cpu_per_tuple * baserel->tuples;
 
   path->disabled_nodes = 0;
@@ -1438,7 +1409,7 @@ void cost_recursive_union(Path *runion, Path *nrterm, Path *rterm) {
    * manipulating the tuplestores.  (We don't worry about possible
    * spill-to-disk costs.)
    */
-  total_cost += cpu_tuple_cost * total_rows;
+  total_cost += tcb->guc.cpu_tuple_cost * total_rows;
 
   runion->disabled_nodes = nrterm->disabled_nodes + rterm->disabled_nodes;
   runion->startup_cost = startup_cost;
@@ -1500,7 +1471,7 @@ static void cost_tuplesort(Cost *startup_cost, Cost *run_cost, double tuples,
     tuples = 2.0;
 
   /* Include the default cost-per-comparison */
-  comparison_cost += 2.0 * cpu_operator_cost;
+  comparison_cost += 2.0 * tcb->guc.cpu_operator_cost;
 
   /* Do we have a useful LIMIT? */
   if (limit_tuples > 0 && limit_tuples < tuples) {
@@ -1537,8 +1508,8 @@ static void cost_tuplesort(Cost *startup_cost, Cost *run_cost, double tuples,
       log_runs = 1.0;
     npageaccesses = 2.0 * npages * log_runs;
     /* Assume 3/4ths of accesses are sequential, 1/4th are not */
-    *startup_cost +=
-        npageaccesses * (seq_page_cost * 0.75 + random_page_cost * 0.25);
+    *startup_cost += npageaccesses * (tcb->guc.seq_page_cost * 0.75 +
+                                      tcb->guc.random_page_cost * 0.25);
   } else if (tuples > 2 * output_tuples || input_bytes > sort_mem_bytes) {
     /*
      * We'll use a bounded heap-sort keeping just K tuples in memory, for
@@ -1560,7 +1531,7 @@ static void cost_tuplesort(Cost *startup_cost, Cost *run_cost, double tuples,
    * here --- the upper LIMIT will pro-rate the run cost so we'd be double
    * counting the LIMIT otherwise.
    */
-  *run_cost = cpu_operator_cost * tuples;
+  *run_cost = tcb->guc.cpu_operator_cost * tuples;
 }
 
 /*
@@ -1679,18 +1650,18 @@ void cost_incremental_sort(Path *path, PlannerInfo *root, List *pathkeys,
    * detect the sort groups. This is roughly equal to one extra copy and
    * comparison per tuple.
    */
-  run_cost += (cpu_tuple_cost + comparison_cost) * input_tuples;
+  run_cost += (tcb->guc.cpu_tuple_cost + comparison_cost) * input_tuples;
 
   /*
    * Additionally, we charge double cpu_tuple_cost for each input group to
    * account for the tuplesort_reset that's performed after each group.
    */
-  run_cost += 2.0 * cpu_tuple_cost * input_groups;
+  run_cost += 2.0 * tcb->guc.cpu_tuple_cost * input_groups;
 
   path->rows = input_tuples;
 
   /* should not generate these paths when enable_incremental_sort=false */
-  Assert(enable_incremental_sort);
+  Assert(tcb->guc.enable_incremental_sort);
   path->disabled_nodes = input_disabled_nodes;
 
   path->startup_cost = startup_cost;
@@ -1724,7 +1695,7 @@ void cost_sort(Path *path, PlannerInfo *root, List *pathkeys,
   startup_cost += input_cost;
 
   path->rows = tuples;
-  path->disabled_nodes = input_disabled_nodes + (enable_sort ? 0 : 1);
+  path->disabled_nodes = input_disabled_nodes + (tcb->guc.enable_sort ? 0 : 1);
   path->startup_cost = startup_cost;
   path->total_cost = startup_cost + run_cost;
 }
@@ -1798,8 +1769,8 @@ void cost_append(AppendPath *apath) {
          */
         cost_sort(&sort_path, NULL, /* doesn't currently need root */
                   pathkeys, subpath->disabled_nodes, subpath->total_cost,
-                  subpath->rows, subpath->pathtarget->width, 0.0, work_mem,
-                  apath->limit_tuples);
+                  subpath->rows, subpath->pathtarget->width, 0.0,
+                  tcb->guc.work_mem, apath->limit_tuples);
         subpath = &sort_path;
       }
 
@@ -1815,7 +1786,7 @@ void cost_append(AppendPath *apath) {
    * add a small per-tuple overhead.
    */
   apath->path.total_cost +=
-      cpu_tuple_cost * APPEND_CPU_COST_MULTIPLIER * apath->path.rows;
+      tcb->guc.cpu_tuple_cost * APPEND_CPU_COST_MULTIPLIER * apath->path.rows;
 }
 
 /*
@@ -1860,7 +1831,7 @@ void cost_merge_append(Path *path, PlannerInfo *root, List *pathkeys,
   logN = LOG2(N);
 
   /* Assumed cost per tuple comparison */
-  comparison_cost = 2.0 * cpu_operator_cost;
+  comparison_cost = 2.0 * tcb->guc.cpu_operator_cost;
 
   /* Heap creation cost */
   startup_cost += comparison_cost * N * logN;
@@ -1872,7 +1843,7 @@ void cost_merge_append(Path *path, PlannerInfo *root, List *pathkeys,
    * Although MergeAppend does not do any selection or projection, it's not
    * free; add a small per-tuple overhead.
    */
-  run_cost += cpu_tuple_cost * APPEND_CPU_COST_MULTIPLIER * tuples;
+  run_cost += tcb->guc.cpu_tuple_cost * APPEND_CPU_COST_MULTIPLIER * tuples;
 
   path->disabled_nodes = input_disabled_nodes;
   path->startup_cost = startup_cost + input_startup_cost;
@@ -1897,7 +1868,7 @@ void cost_material(Path *path, int input_disabled_nodes,
   Cost startup_cost = input_startup_cost;
   Cost run_cost = input_total_cost - input_startup_cost;
   double nbytes = relation_byte_size(tuples, width);
-  double work_mem_bytes = work_mem * (Size)1024;
+  double work_mem_bytes = tcb->guc.work_mem * (Size)1024;
 
   path->rows = tuples;
 
@@ -1913,7 +1884,7 @@ void cost_material(Path *path, int input_disabled_nodes,
    * doesn't do qual-checking or projection, so it's got less overhead than
    * most plan nodes.
    */
-  run_cost += 2 * cpu_operator_cost * tuples;
+  run_cost += 2 * tcb->guc.cpu_operator_cost * tuples;
 
   /*
    * If we will spill to disk, charge at the rate of seq_page_cost per page.
@@ -1924,10 +1895,11 @@ void cost_material(Path *path, int input_disabled_nodes,
   if (nbytes > work_mem_bytes) {
     double npages = ceil(nbytes / BLCKSZ);
 
-    run_cost += seq_page_cost * npages;
+    run_cost += tcb->guc.seq_page_cost * npages;
   }
 
-  path->disabled_nodes = input_disabled_nodes + (enable_material ? 0 : 1);
+  path->disabled_nodes =
+      input_disabled_nodes + (tcb->guc.enable_material ? 0 : 1);
   path->startup_cost = startup_cost;
   path->total_cost = startup_cost + run_cost;
 }
@@ -2034,19 +2006,20 @@ static void cost_memoize_rescan(PlannerInfo *root, MemoizePath *mpath,
    * also add on a cpu_operator_cost to account for a cache lookup. This
    * will happen regardless of whether it's a cache hit or not.
    */
-  total_cost = input_total_cost * (1.0 - hit_ratio) + cpu_operator_cost;
+  total_cost =
+      input_total_cost * (1.0 - hit_ratio) + tcb->guc.cpu_operator_cost;
 
   /* Now adjust the total cost to account for cache evictions */
 
   /* Charge a cpu_tuple_cost for evicting the actual cache entry */
-  total_cost += cpu_tuple_cost * evict_ratio;
+  total_cost += tcb->guc.cpu_tuple_cost * evict_ratio;
 
   /*
    * Charge a 10th of cpu_operator_cost to evict every tuple in that entry.
    * The per-tuple eviction is really just a pfree, so charging a whole
    * cpu_operator_cost seems a little excessive.
    */
-  total_cost += cpu_operator_cost / 10.0 * evict_ratio * tuples;
+  total_cost += tcb->guc.cpu_operator_cost / 10.0 * evict_ratio * tuples;
 
   /*
    * Now adjust for storing things in the cache, since that's not free
@@ -2055,7 +2028,7 @@ static void cost_memoize_rescan(PlannerInfo *root, MemoizePath *mpath,
    * cpu_tuple_cost for the creation of the cache entry and also a
    * cpu_operator_cost for each tuple we expect to cache.
    */
-  total_cost += cpu_tuple_cost + cpu_operator_cost * tuples;
+  total_cost += tcb->guc.cpu_tuple_cost + tcb->guc.cpu_operator_cost * tuples;
 
   /*
    * Getting the first row must be also be proportioned according to the
@@ -2067,7 +2040,7 @@ static void cost_memoize_rescan(PlannerInfo *root, MemoizePath *mpath,
    * Additionally we charge a cpu_tuple_cost to account for cache lookups,
    * which we'll do regardless of whether it was a cache hit or not.
    */
-  startup_cost += cpu_tuple_cost;
+  startup_cost += tcb->guc.cpu_tuple_cost;
 
   *rescan_startup_cost = startup_cost;
   *rescan_total_cost = total_cost;
@@ -2129,37 +2102,37 @@ void cost_agg(Path *path, PlannerInfo *root, AggStrategy aggstrategy,
     startup_cost += aggcosts->finalCost.startup;
     startup_cost += aggcosts->finalCost.per_tuple;
     /* we aren't grouping */
-    total_cost = startup_cost + cpu_tuple_cost;
+    total_cost = startup_cost + tcb->guc.cpu_tuple_cost;
     output_tuples = 1;
   } else if (aggstrategy == AGG_SORTED || aggstrategy == AGG_MIXED) {
     /* Here we are able to deliver output on-the-fly */
     startup_cost = input_startup_cost;
     total_cost = input_total_cost;
-    if (aggstrategy == AGG_MIXED && !enable_hashagg)
+    if (aggstrategy == AGG_MIXED && !tcb->guc.enable_hashagg)
       ++disabled_nodes;
     /* calcs phrased this way to match HASHED case, see note above */
     total_cost += aggcosts->transCost.startup;
     total_cost += aggcosts->transCost.per_tuple * input_tuples;
-    total_cost += (cpu_operator_cost * numGroupCols) * input_tuples;
+    total_cost += (tcb->guc.cpu_operator_cost * numGroupCols) * input_tuples;
     total_cost += aggcosts->finalCost.startup;
     total_cost += aggcosts->finalCost.per_tuple * numGroups;
-    total_cost += cpu_tuple_cost * numGroups;
+    total_cost += tcb->guc.cpu_tuple_cost * numGroups;
     output_tuples = numGroups;
   } else {
     /* must be AGG_HASHED */
     startup_cost = input_total_cost;
-    if (!enable_hashagg)
+    if (!tcb->guc.enable_hashagg)
       ++disabled_nodes;
     startup_cost += aggcosts->transCost.startup;
     startup_cost += aggcosts->transCost.per_tuple * input_tuples;
     /* cost of computing hash value */
-    startup_cost += (cpu_operator_cost * numGroupCols) * input_tuples;
+    startup_cost += (tcb->guc.cpu_operator_cost * numGroupCols) * input_tuples;
     startup_cost += aggcosts->finalCost.startup;
 
     total_cost = startup_cost;
     total_cost += aggcosts->finalCost.per_tuple * numGroups;
     /* cost of retrieving from hash table */
-    total_cost += cpu_tuple_cost * numGroups;
+    total_cost += tcb->guc.cpu_tuple_cost * numGroups;
     output_tuples = numGroups;
   }
 
@@ -2225,12 +2198,12 @@ void cost_agg(Path *path, PlannerInfo *root, AggStrategy aggstrategy,
     pages_read *= 2.0;
     pages_written *= 2.0;
 
-    startup_cost += pages_written * random_page_cost;
-    total_cost += pages_written * random_page_cost;
-    total_cost += pages_read * seq_page_cost;
+    startup_cost += pages_written * tcb->guc.random_page_cost;
+    total_cost += pages_written * tcb->guc.random_page_cost;
+    total_cost += pages_read * tcb->guc.seq_page_cost;
 
     /* account for CPU cost of spilling a tuple and reading it back */
-    spill_cost = depth * input_tuples * 2.0 * cpu_tuple_cost;
+    spill_cost = depth * input_tuples * 2.0 * tcb->guc.cpu_tuple_cost;
     startup_cost += spill_cost;
     total_cost += spill_cost;
   }
@@ -2501,8 +2474,9 @@ void cost_windowagg(Path *path, PlannerInfo *root, List *windowFuncs,
    * XXX this neglects costs of spooling the data to disk when it overflows
    * work_mem.  Sooner or later that should get accounted for.
    */
-  total_cost += cpu_operator_cost * (numPartCols + numOrderCols) * input_tuples;
-  total_cost += cpu_tuple_cost * input_tuples;
+  total_cost +=
+      tcb->guc.cpu_operator_cost * (numPartCols + numOrderCols) * input_tuples;
+  total_cost += tcb->guc.cpu_tuple_cost * input_tuples;
 
   path->rows = input_tuples;
   path->disabled_nodes = input_disabled_nodes;
@@ -2549,7 +2523,7 @@ void cost_group(Path *path, PlannerInfo *root, int numGroupCols,
    * Charge one cpu_operator_cost per comparison per input tuple. We assume
    * all columns get compared at most of the tuples.
    */
-  total_cost += cpu_operator_cost * input_tuples * numGroupCols;
+  total_cost += tcb->guc.cpu_operator_cost * input_tuples * numGroupCols;
 
   /*
    * If there are quals (HAVING quals), account for their cost and
@@ -2610,7 +2584,7 @@ void initial_cost_nestloop(PlannerInfo *root, JoinCostWorkspace *workspace,
   Cost inner_rescan_run_cost;
 
   /* Count up disabled nodes. */
-  disabled_nodes = enable_nestloop ? 0 : 1;
+  disabled_nodes = tcb->guc.enable_nestloop ? 0 : 1;
   disabled_nodes += inner_path->disabled_nodes;
   disabled_nodes += outer_path->disabled_nodes;
 
@@ -2817,7 +2791,7 @@ void final_cost_nestloop(PlannerInfo *root, NestPath *path,
   /* CPU costs */
   cost_qual_eval(&restrict_qual_cost, path->jpath.joinrestrictinfo, root);
   startup_cost += restrict_qual_cost.startup;
-  cpu_per_tuple = cpu_tuple_cost + restrict_qual_cost.per_tuple;
+  cpu_per_tuple = tcb->guc.cpu_tuple_cost + restrict_qual_cost.per_tuple;
   run_cost += cpu_per_tuple * ntuples;
 
   /* tlist eval costs are paid per output row, not per tuple scanned */
@@ -2972,7 +2946,7 @@ void initial_cost_mergejoin(PlannerInfo *root, JoinCostWorkspace *workspace,
   Assert(outerstartsel <= outerendsel);
   Assert(innerstartsel <= innerendsel);
 
-  disabled_nodes = enable_mergejoin ? 0 : 1;
+  disabled_nodes = tcb->guc.enable_mergejoin ? 0 : 1;
 
   /* cost of source data */
 
@@ -2989,16 +2963,16 @@ void initial_cost_mergejoin(PlannerInfo *root, JoinCostWorkspace *workspace,
      * We choose to use incremental sort if it is enabled and there are
      * presorted keys; otherwise we use full sort.
      */
-    if (enable_incremental_sort && outer_presorted_keys > 0) {
+    if (tcb->guc.enable_incremental_sort && outer_presorted_keys > 0) {
       cost_incremental_sort(&sort_path, root, outersortkeys,
                             outer_presorted_keys, outer_path->disabled_nodes,
                             outer_path->startup_cost, outer_path->total_cost,
                             outer_path_rows, outer_path->pathtarget->width, 0.0,
-                            work_mem, -1.0);
+                            tcb->guc.work_mem, -1.0);
     } else {
       cost_sort(&sort_path, root, outersortkeys, outer_path->disabled_nodes,
                 outer_path->total_cost, outer_path_rows,
-                outer_path->pathtarget->width, 0.0, work_mem, -1.0);
+                outer_path->pathtarget->width, 0.0, tcb->guc.work_mem, -1.0);
     }
 
     disabled_nodes += sort_path.disabled_nodes;
@@ -3032,7 +3006,7 @@ void initial_cost_mergejoin(PlannerInfo *root, JoinCostWorkspace *workspace,
 
     cost_sort(&sort_path, root, innersortkeys, inner_path->disabled_nodes,
               inner_path->total_cost, inner_path_rows,
-              inner_path->pathtarget->width, 0.0, work_mem, -1.0);
+              inner_path->pathtarget->width, 0.0, tcb->guc.work_mem, -1.0);
     disabled_nodes += sort_path.disabled_nodes;
     startup_cost += sort_path.startup_cost;
     startup_cost +=
@@ -3228,7 +3202,7 @@ void final_cost_mergejoin(PlannerInfo *root, MergePath *path,
    * of the generated Material node.
    */
   mat_inner_cost =
-      inner_run_cost + cpu_operator_cost * inner_rows * rescanratio;
+      inner_run_cost + tcb->guc.cpu_operator_cost * inner_rows * rescanratio;
 
   /*
    * If we don't need mark/restore at all, we don't need materialization.
@@ -3240,7 +3214,7 @@ void final_cost_mergejoin(PlannerInfo *root, MergePath *path,
    * Prefer materializing if it looks cheaper, unless the user has asked to
    * suppress materialization.
    */
-  else if (enable_material && mat_inner_cost < bare_inner_cost)
+  else if (tcb->guc.enable_material && mat_inner_cost < bare_inner_cost)
     path->materialize_inner = true;
 
   /*
@@ -3273,9 +3247,9 @@ void final_cost_mergejoin(PlannerInfo *root, MergePath *path,
    * rather than necessary for correctness, we skip it if enable_material is
    * off.
    */
-  else if (enable_material && innersortkeys != NIL &&
+  else if (tcb->guc.enable_material && innersortkeys != NIL &&
            relation_byte_size(inner_path_rows, inner_path->pathtarget->width) >
-               work_mem * (Size)1024)
+               tcb->guc.work_mem * (Size)1024)
     path->materialize_inner = true;
   else
     path->materialize_inner = false;
@@ -3310,7 +3284,7 @@ void final_cost_mergejoin(PlannerInfo *root, MergePath *path,
    * evaluations here, but it's probably not worth the trouble.
    */
   startup_cost += qp_qual_cost.startup;
-  cpu_per_tuple = cpu_tuple_cost + qp_qual_cost.per_tuple;
+  cpu_per_tuple = tcb->guc.cpu_tuple_cost + qp_qual_cost.per_tuple;
   run_cost += cpu_per_tuple * mergejointuples;
 
   /* tlist eval costs are paid per output row, not per tuple scanned */
@@ -3407,7 +3381,7 @@ void initial_cost_hashjoin(PlannerInfo *root, JoinCostWorkspace *workspace,
   size_t space_allowed; /* unused */
 
   /* Count up disabled nodes. */
-  disabled_nodes = enable_hashjoin ? 0 : 1;
+  disabled_nodes = tcb->guc.enable_hashjoin ? 0 : 1;
   disabled_nodes += inner_path->disabled_nodes;
   disabled_nodes += outer_path->disabled_nodes;
 
@@ -3427,8 +3401,9 @@ void initial_cost_hashjoin(PlannerInfo *root, JoinCostWorkspace *workspace,
    * appropriate, here.  This seems more work than it's worth at the moment.
    */
   startup_cost +=
-      (cpu_operator_cost * num_hashclauses + cpu_tuple_cost) * inner_path_rows;
-  run_cost += cpu_operator_cost * num_hashclauses * outer_path_rows;
+      (tcb->guc.cpu_operator_cost * num_hashclauses + tcb->guc.cpu_tuple_cost) *
+      inner_path_rows;
+  run_cost += tcb->guc.cpu_operator_cost * num_hashclauses * outer_path_rows;
 
   /*
    * Get hash table size that executor would use for inner relation.
@@ -3457,8 +3432,8 @@ void initial_cost_hashjoin(PlannerInfo *root, JoinCostWorkspace *workspace,
     double innerpages =
         page_size(inner_path_rows, inner_path->pathtarget->width);
 
-    startup_cost += seq_page_cost * innerpages;
-    run_cost += seq_page_cost * (innerpages + 2 * outerpages);
+    startup_cost += tcb->guc.seq_page_cost * innerpages;
+    run_cost += tcb->guc.seq_page_cost * (innerpages + 2 * outerpages);
   }
 
   /* CPU costs left for later */
@@ -3694,7 +3669,7 @@ void final_cost_hashjoin(PlannerInfo *root, HashPath *path,
    * not all of the quals may get evaluated at each tuple.)
    */
   startup_cost += qp_qual_cost.startup;
-  cpu_per_tuple = cpu_tuple_cost + qp_qual_cost.per_tuple;
+  cpu_per_tuple = tcb->guc.cpu_tuple_cost + qp_qual_cost.per_tuple;
   run_cost += cpu_per_tuple * hashjointuples;
 
   /* tlist eval costs are paid per output row, not per tuple scanned */
@@ -3740,7 +3715,8 @@ void cost_subplan(PlannerInfo *root, SubPlan *subplan, Plan *plan) {
      * cpu_operator_cost per tuple for the work of loading the hashtable,
      * too.
      */
-    sp_cost.startup += plan->total_cost + cpu_operator_cost * plan->plan_rows;
+    sp_cost.startup +=
+        plan->total_cost + tcb->guc.cpu_operator_cost * plan->plan_rows;
 
     /*
      * The per-tuple costs include the cost of evaluating the lefthand
@@ -3768,7 +3744,7 @@ void cost_subplan(PlannerInfo *root, SubPlan *subplan, Plan *plan) {
       /* assume we need 50% of the tuples */
       sp_cost.per_tuple += 0.50 * plan_run_cost;
       /* also charge a cpu_operator_cost per row examined */
-      sp_cost.per_tuple += 0.50 * plan->plan_rows * cpu_operator_cost;
+      sp_cost.per_tuple += 0.50 * plan->plan_rows * tcb->guc.cpu_operator_cost;
     } else {
       /* assume we need all tuples */
       sp_cost.per_tuple += plan_run_cost;
@@ -3845,15 +3821,15 @@ static void cost_rescan(PlannerInfo *root, Path *path,
      * cpu_tuple_cost per tuple, unless the result is large enough
      * to spill to disk.
      */
-    Cost run_cost = cpu_tuple_cost * path->rows;
+    Cost run_cost = tcb->guc.cpu_tuple_cost * path->rows;
     double nbytes = relation_byte_size(path->rows, path->pathtarget->width);
-    double work_mem_bytes = work_mem * (Size)1024;
+    double work_mem_bytes = tcb->guc.work_mem * (Size)1024;
 
     if (nbytes > work_mem_bytes) {
       /* It will spill, so account for re-read cost */
       double npages = ceil(nbytes / BLCKSZ);
 
-      run_cost += seq_page_cost * npages;
+      run_cost += tcb->guc.seq_page_cost * npages;
     }
     *rescan_startup_cost = 0;
     *rescan_total_cost = run_cost;
@@ -3868,15 +3844,15 @@ static void cost_rescan(PlannerInfo *root, Path *path,
      * the run_cost charge in cost_sort, and also see comments in
      * cost_material before you change it.)
      */
-    Cost run_cost = cpu_operator_cost * path->rows;
+    Cost run_cost = tcb->guc.cpu_operator_cost * path->rows;
     double nbytes = relation_byte_size(path->rows, path->pathtarget->width);
-    double work_mem_bytes = work_mem * (Size)1024;
+    double work_mem_bytes = tcb->guc.work_mem * (Size)1024;
 
     if (nbytes > work_mem_bytes) {
       /* It will spill, so account for re-read cost */
       double npages = ceil(nbytes / BLCKSZ);
 
-      run_cost += seq_page_cost * npages;
+      run_cost += tcb->guc.seq_page_cost * npages;
     }
     *rescan_startup_cost = 0;
     *rescan_total_cost = run_cost;
@@ -4072,7 +4048,7 @@ static bool cost_qual_eval_walker(Node *node, cost_qual_eval_context *context) {
     return false; /* don't recurse into children */
   } else if (IsA(node, GroupingFunc)) {
     /* Treat this as having cost 1 */
-    context->total.per_tuple += cpu_operator_cost;
+    context->total.per_tuple += tcb->guc.cpu_operator_cost;
     return false; /* don't recurse into children */
   } else if (IsA(node, CoerceViaIO)) {
     CoerceViaIO *iocoerce = (CoerceViaIO *)node;
@@ -4110,7 +4086,7 @@ static bool cost_qual_eval_walker(Node *node, cost_qual_eval_context *context) {
              IsA(node, XmlExpr) || IsA(node, CoerceToDomain) ||
              IsA(node, NextValueExpr) || IsA(node, JsonExpr)) {
     /* Treat all these as having cost 1 */
-    context->total.per_tuple += cpu_operator_cost;
+    context->total.per_tuple += tcb->guc.cpu_operator_cost;
   } else if (IsA(node, SubLink)) {
     /* This routine should not be applied to un-planned expressions */
     elog(ERROR, "cannot handle unplanned sub-select");
@@ -5075,7 +5051,7 @@ void set_cte_size_estimates(PlannerInfo *root, RelOptInfo *rel,
      * multiple of the nonrecursive term's size.  The best multiplier will
      * vary depending on query "fan-out", so make its value adjustable.
      */
-    rel->tuples = clamp_row_est(recursive_worktable_factor * cte_rows);
+    rel->tuples = clamp_row_est(tcb->guc.recursive_worktable_factor * cte_rows);
   } else {
     /* Otherwise just believe the CTE's rowcount estimate */
     rel->tuples = cte_rows;
@@ -5469,7 +5445,7 @@ double compute_bitmap_pages(PlannerInfo *root, RelOptInfo *baserel,
    * the bitmap at one time.)
    */
   heap_pages = Min(pages_fetched, baserel->pages);
-  maxentries = tbm_calculate_entries(work_mem * (Size)1024);
+  maxentries = tbm_calculate_entries(tcb->guc.work_mem * (Size)1024);
 
   if (loop_count > 1) {
     /*

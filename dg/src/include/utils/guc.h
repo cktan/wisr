@@ -240,54 +240,19 @@ typedef enum {
 #define GUC_UNIT			 (GUC_UNIT_MEMORY | GUC_UNIT_TIME)
 
 /* GUC vars that are actually defined in guc_tables.c, rather than elsewhere */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool Debug_print_plan;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool Debug_print_parse;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool Debug_print_rewritten;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool Debug_pretty_print;
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool Debug_copy_parse_plan_trees;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool
-    Debug_write_read_parse_plan_trees;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool
-    Debug_raw_expression_coverage_test;
 #endif
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_parser_stats;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_planner_stats;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_executor_stats;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_statement_stats;
-
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool check_function_bodies;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool current_role_is_superuser;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_duration;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int log_parameter_max_length;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int log_parameter_max_length_on_error;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int log_min_error_statement;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int log_min_messages;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int client_min_messages;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int log_min_duration_sample;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int log_min_duration_statement;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int log_temp_files;
-extern thread_local /*LOCAL*/ PGDLLIMPORT double log_statement_sample_rate;
-extern thread_local /*LOCAL*/ PGDLLIMPORT double log_xact_sample_rate;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *backtrace_functions;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT int temp_file_limit;
-
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *application_name;
-
-extern thread_local /*LOCAL*/ PGDLLIMPORT int tcp_keepalives_idle;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int tcp_keepalives_interval;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int tcp_keepalives_count;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int tcp_user_timeout;
-
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *role_string;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool trace_sort;
 
 #ifdef DEBUG_BOUNDED_SORT
-extern PGDLLIMPORT bool optimize_bounded_sort;
 #endif
 
 /*

@@ -278,6 +278,7 @@
 #include "utils/memutils_memorychunk.h"
 #include "utils/syscache.h"
 #include "utils/tuplesort.h"
+#include "utils/control_block.h"
 
 /*
  * Control how many partitions are created when spilling HashAgg to
@@ -503,10 +504,10 @@ static void initialize_phase(AggState *aggstate, int newphase) {
     PlanState *outerNode = outerPlanState(aggstate);
     TupleDesc tupDesc = ExecGetResultType(outerNode);
 
-    aggstate->sort_out =
-        tuplesort_begin_heap(tupDesc, sortnode->numCols, sortnode->sortColIdx,
-                             sortnode->sortOperators, sortnode->collations,
-                             sortnode->nullsFirst, work_mem, TUPLESORT_NONE);
+    aggstate->sort_out = tuplesort_begin_heap(
+        tupDesc, sortnode->numCols, sortnode->sortColIdx,
+        sortnode->sortOperators, sortnode->collations, sortnode->nullsFirst,
+        tcb->guc.work_mem, TUPLESORT_NONE);
   }
 
   aggstate->current_phase = newphase;
@@ -571,13 +572,13 @@ static void initialize_aggregate(AggState *aggstate, AggStatePerTrans pertrans,
 
       pertrans->sortstates[aggstate->current_set] = tuplesort_begin_datum(
           attr->atttypid, pertrans->sortOperators[0],
-          pertrans->sortCollations[0], pertrans->sortNullsFirst[0], work_mem,
-          TUPLESORT_NONE);
+          pertrans->sortCollations[0], pertrans->sortNullsFirst[0],
+          tcb->guc.work_mem, TUPLESORT_NONE);
     } else
       pertrans->sortstates[aggstate->current_set] = tuplesort_begin_heap(
           pertrans->sortdesc, pertrans->numSortCols, pertrans->sortColIdx,
           pertrans->sortOperators, pertrans->sortCollations,
-          pertrans->sortNullsFirst, work_mem, TUPLESORT_NONE);
+          pertrans->sortNullsFirst, tcb->guc.work_mem, TUPLESORT_NONE);
   }
 
   /*
@@ -1844,7 +1845,7 @@ static void hash_create_memory(AggState *aggstate) {
    * Like CreateWorkExprContext(), use smaller sizings for smaller work_mem,
    * to avoid large jumps in memory usage.
    */
-  maxBlockSize = pg_prevpower2_size_t(work_mem * (Size)1024 / 16);
+  maxBlockSize = pg_prevpower2_size_t(tcb->guc.work_mem * (Size)1024 / 16);
 
   /* But no bigger than ALLOCSET_DEFAULT_MAXSIZE */
   maxBlockSize = Min(maxBlockSize, ALLOCSET_DEFAULT_MAXSIZE);

@@ -56,6 +56,7 @@
 #include "utils/hooks.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#include "utils/control_block.h"
 
 /* Hook for plugins to get control at end of parse analysis */
 
@@ -294,7 +295,7 @@ Query *transformStmt(ParseState *pstate, Node *parseTree) {
    * raw_expression_tree_walker() doesn't claim to handle utility
    * statements.
    */
-  if (Debug_raw_expression_coverage_test) {
+  if (tcb->guc.Debug_raw_expression_coverage_test) {
     switch (nodeTag(parseTree)) {
     case T_SelectStmt:
     case T_InsertStmt:

@@ -44,7 +44,6 @@
 
 /* GUCs */
 thread_local /*LOCAL*/ uint32 log_connections = 0;
-thread_local /*LOCAL*/ char *log_connections_string = NULL;
 
 /* Other globals */
 
@@ -128,8 +127,8 @@ static void BackendInitialize(ClientSocket *client_sock, CAC_state cac) {
    * PostAuthDelay, which we allow clients to pass through PGOPTIONS, but it
    * is not honored until after authentication.)
    */
-  if (PreAuthDelay > 0)
-    pg_usleep(PreAuthDelay * 1000000L);
+  if (shmem->pre_auth_delay.load(std::memory_order_relaxed) > 0)
+    pg_usleep(shmem->pre_auth_delay.load(std::memory_order_relaxed) * 1000000L);
 
   /* This flag will remain set until InitPostgres finishes authentication */
   ClientAuthInProgress = true; /* limit visibility of log messages */

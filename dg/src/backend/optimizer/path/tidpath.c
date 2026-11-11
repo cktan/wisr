@@ -52,6 +52,7 @@
 #include "optimizer/paths.h"
 #include "optimizer/restrictinfo.h"
 #include "utils/lsyscache.h"
+#include "utils/control_block.h"
 
 /*
  * Does this Var represent the _id column of the specified baserel?  A
@@ -424,7 +425,7 @@ bool create_tidscan_paths(PlannerInfo *root, RelOptInfo *rel) {
   tidquals = TidQualFromRestrictInfoList(root, rel->baserestrictinfo, rel,
                                          &isCurrentOf);
 
-  if (tidquals != NIL && (enable_tidscan || isCurrentOf)) {
+  if (tidquals != NIL && (tcb->guc.enable_tidscan || isCurrentOf)) {
     /*
      * This path uses no join clauses, but it could still have required
      * parameterization due to LATERAL refs in its tlist.
@@ -445,7 +446,7 @@ bool create_tidscan_paths(PlannerInfo *root, RelOptInfo *rel) {
   }
 
   /* Skip the rest if TID scans are disabled. */
-  if (!enable_tidscan)
+  if (!tcb->guc.enable_tidscan)
     return false;
 
   /*

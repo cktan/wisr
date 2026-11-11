@@ -41,6 +41,7 @@
 #include "utils/pg_global.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#include "utils/control_block.h"
 
 static void AlterSchemaOwner_internal(HeapTuple tup, Relation rel,
                                       Oid newOwnerId);
@@ -64,7 +65,7 @@ Oid CreateSchemaCommand(CreateSchemaStmt *stmt, const char *queryString,
   Oid saved_uid;
   int save_sec_context;
   int save_nestlevel;
-  char *nsp = namespace_search_path;
+  char *nsp = tcb->guc.namespace_search_path;
   AclResult aclresult;
   ObjectAddress address;
   StringInfoData pathbuf;
@@ -105,7 +106,7 @@ Oid CreateSchemaCommand(CreateSchemaStmt *stmt, const char *queryString,
   check_can_set_role(saved_uid, owner_uid);
 
   /* Additional check to protect reserved schema names */
-  if (!allowSystemTableMods && IsReservedName(schemaName))
+  if (!tcb->guc.allowSystemTableMods && IsReservedName(schemaName))
     ereport(ERROR,
             (errcode(ERRCODE_RESERVED_NAME),
              errmsg("unacceptable schema name \"%s\"", schemaName),
