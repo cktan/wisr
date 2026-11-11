@@ -246,6 +246,7 @@ int sm1::page_write(sm1::session_t *session, uint64_t storeid,
   // RocksDB's WAL, unsynced: a later commit's sync covers it, the WAL
   // being one sequence.
   rocksdb::WriteOptions wo;
+  wo.sync = false;
   wo.disableWAL = st->rdb == session->db->tmp;
   rocksdb::Status rs = st->rdb->Write(wo, &batch);
   if (!rs.ok()) {
@@ -337,7 +338,9 @@ int sm1::page_drop(sm1::session_t *session, uint64_t storeid,
   hi.back() = static_cast<char>(static_cast<unsigned char>(hi.back()) + 1);
   rocksdb::WriteBatch batch;
   batch.DeleteRange(st->cf, lo, hi);
+  // Unsynced, as sm1::page_write: a later commit's sync covers it.
   rocksdb::WriteOptions wo;
+  wo.sync = false;
   wo.disableWAL = st->rdb == session->db->tmp;
   rocksdb::Status rs = st->rdb->Write(wo, &batch);
   if (!rs.ok()) {

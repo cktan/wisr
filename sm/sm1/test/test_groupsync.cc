@@ -598,3 +598,85 @@ TEST_CASE("a commit without durability_sync does not sync") {
   CHECK(get(a, f.store(), "a") == "v");
   REQUIRE(sm1::commit(a) == 0);
 }
+
+namespace {
+
+/* Pin key exclusive and write bytes to it, failing the test on an error. */
+void put_page(sm1::session_t *s, uint64_t store, std::string_view key,
+              std::string_view bytes) {
+  sm1::page_t *pin = nullptr;
+  std::string_view old;
+  REQUIRE_MESSAGE(0 == sm1::pin_page(s, store, key, sm1::page_mode_t::ex,
+                                     sm1::page_no_read, pin, old),
+                  sm1::errmsg());
+  int r = sm1::page_write(s, store, {{pin, key, bytes, false}});
+  sm1::unpin_page(s, pin);
+  REQUIRE_MESSAGE(0 == r, sm1::errmsg());
+}
+
+/* The page at key as s reads it, or "<none>"; fails on an error. */
+std::string get_page(sm1::session_t *s, uint64_t store, std::string_view key) {
+  sm1::page_t *pin = nullptr;
+  std::string_view bytes;
+  int r = sm1::pin_page(s, store, key, sm1::page_mode_t::sh, 0, pin, bytes);
+  REQUIRE_MESSAGE(r >= 0, sm1::errmsg());
+  if (1 == r) {
+    return "<none>";
+  }
+  std::string out(bytes);
+  sm1::unpin_page(s, pin);
+  return out;
+}
+
+} // namespace
+
+TEST_CASE("a page's write and drop are not synced; a commit's sync is") {
+  // Verify sm1::page_write and sm1::page_drop do not sync the WAL, and
+  // a later commit's sync makes them durable (../BTREEINDEX.md §6.3).
+  // 1. Make "db" on a file system that loses unsynced data at a
+  //    power cut.
+  // 2. Write page "b", then commit row "x": the commit's sync covers
+  //    "b".
+  // 3. Drop the pages under "b", write page "a", and abort: no
+  //    commit syncs after them.
+  // 4. Cut the power, close the database, and lose what was not
+  //    synced.
+  // 5. Open "db" again: "x" and "b" are there, and "a" is not.
+  home_t home;
+  auto fs = std::make_shared<powercut_fs_t>();
+  // Every file of "db" through the power-cut file system.
+  home.env()->wal_env = rocksdb::NewCompositeEnv(fs);
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  sm1::session_t *s = opendb(home.env(), "db");
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  uint64_t store = mkstore(s);
+  REQUIRE(sm1::commit(s) == 0);
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  put_page(s, store, "b", "bee");
+  REQUIRE(sm1::insert(s, store, "x", "v") == 0);
+  REQUIRE(sm1::commit(s) == 0);
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE_MESSAGE(0 == sm1::page_drop(s, store, "b"), sm1::errmsg());
+  put_page(s, store, "a", "ay");
+  REQUIRE(sm1::abort(s) == 0);
+
+  fs->cut();
+  REQUIRE(sm1::closedb(s) == 0);
+  // Detach closes the database; lose its unsynced data before the
+  // attach, whose recovery opens it again.
+  home.detach();
+  fs->lose_unsynced();
+  home.attach();
+
+  s = opendb(home.env(), "db");
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK("v" == get(s, store, "x"));
+  CHECK("bee" == get_page(s, store, "b"));
+  CHECK("<none>" == get_page(s, store, "a"));
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::closedb(s) == 0);
+}
