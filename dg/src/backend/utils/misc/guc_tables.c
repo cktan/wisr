@@ -1497,9 +1497,13 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      * checking for overflow, so we mustn't allow more than INT_MAX / 2.
      */
     {{"shared_buffers", PGC_POSTMASTER, RESOURCES_MEM,
-      gettext_noop("Sets the size of the block cache every database reads "
-                   "its tables and indexes through."),
-      NULL, GUC_UNIT_BLOCKS},
+      gettext_noop("Sets the memory every database reads its tables and "
+                   "indexes through."),
+      gettext_noop("The storage manager splits it in two: a quarter to its "
+                   "buffer pool of B-tree index pages, in 4 kB frames, at "
+                   "least 64 and at least 6 a session; the rest to RocksDB's "
+                   "block cache of rows and LSM index entries."),
+      GUC_UNIT_BLOCKS},
      &NBuffers,
      16384,
      16,

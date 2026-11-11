@@ -124,7 +124,8 @@
 
 # - Memory -
 
-#shared_buffers = 128MB			# min 128kB: sm's block cache
+#shared_buffers = 128MB			# min 128kB: sm's buffer pool, 1/4,
+					# and block cache, 3/4
 					# (change requires restart)
 #work_mem = 4MB				# min 64kB
 #hash_mem_multiplier = 2.0		# 1-1000.0 multiplier on hash table work_mem
