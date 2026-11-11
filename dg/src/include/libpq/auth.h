@@ -34,10 +34,6 @@
  */
 #define PG_MAX_AUTH_TOKEN_LENGTH	65535
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *pg_krb_server_keyfile;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool pg_krb_caseins_users;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool pg_gss_accept_delegation;
-
 extern void ClientAuthentication(Port *port);
 extern void sendAuthRequest(Port *port, AuthRequest areq, const void *extradata,
                             int extralen);

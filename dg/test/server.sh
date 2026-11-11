@@ -5758,6 +5758,22 @@ local_psql -c "set client_min_messages = error" -c "commit" 2>&1 |
 local_psql -c "commit" 2>&1 | grep -q 'there is no transaction in progress' ||
   fail "client_min_messages: a new session has the default"
 
+# Verify that the Kerberos and GSSAPI settings, now in shmem, are still
+# settings with their boot values (their code is compiled out, so no more
+# of them can be checked).
+# 1. SHOW each of the three: the boot value.
+# 2. A session's SET of one is refused: they are PGC_SIGHUP.
+[ "$(local_psql -c 'show krb_server_keyfile')" = "" ] ||
+  fail "krb_server_keyfile: the default"
+[ "$(local_psql -c 'show krb_caseins_users')" = off ] ||
+  fail "krb_caseins_users: the default"
+[ "$(local_psql -c 'show gss_accept_delegation')" = off ] ||
+  fail "gss_accept_delegation: the default"
+local_psql -c "set krb_caseins_users = on" > "$work/krb.out" 2>&1 &&
+  fail "krb_caseins_users: a SET is refused"
+grep -q 'cannot be changed now' "$work/krb.out" ||
+  fail "krb_caseins_users: the SET's error"
+
 # Verify that a session reads the program's name the main thread set
 # (pcb->progname), as a new thread is no longer given a copy of it.
 # 1. Connect with a switch the server does not know in PGOPTIONS.

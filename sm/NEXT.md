@@ -450,14 +450,6 @@ Owed, and blocking nothing above:
   A string field that starts as a literal
   ([`../dg/GUCPLAN.md`](../dg/GUCPLAN.md) §5) must be set by
   `InitializeOneGUCOption()` before anything frees it.
-- **Move or drop the last three GUC settings.**
-  `krb_server_keyfile`, `krb_caseins_users` and
-  `gss_accept_delegation` are the only GUC settings left as
-  plain `thread_local` variables
-  ([`../dg/GUCPLAN.md`](../dg/GUCPLAN.md) §9). Only code that is
-  compiled out reads them. Next: drop them with that code, or
-  move each to `tcb->guc` or `pcb`, with its boot value as the
-  field's initializer.
 
 ---
 

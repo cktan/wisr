@@ -17,6 +17,7 @@
 
 #include <unistd.h>
 
+#include "utils/control_block.h"
 #include "libpq/auth.h"
 #include "libpq/be-gssapi-common.h"
 #include "libpq/libpq.h"
@@ -512,8 +513,13 @@ ssize_t secure_open_gssapi(Port *port) {
    * Kerberos, we might consider using the credential store extensions in
    * the future instead of the environment variable.
    */
-  if (pg_krb_server_keyfile != NULL && pg_krb_server_keyfile[0] != '\0') {
-    if (setenv("KRB5_KTNAME", pg_krb_server_keyfile, 1) != 0) {
+  std::shared_ptr<const std::string> krb_keyfile;
+  {
+    std::lock_guard<std::mutex> guard(shmem->krb_server_keyfile.mutex);
+    krb_keyfile = shmem->krb_server_keyfile.value;
+  }
+  if (krb_keyfile && !krb_keyfile->empty()) {
+    if (setenv("KRB5_KTNAME", krb_keyfile->c_str(), 1) != 0) {
       /* The only likely failure cause is OOM, so use that errcode */
       ereport(FATAL, (errcode(ERRCODE_OUT_OF_MEMORY),
                       errmsg("could not set environment: %m")));
@@ -568,7 +574,9 @@ ssize_t secure_open_gssapi(Port *port) {
     major = gss_accept_sec_context(
         &minor, &port->gss->ctx, GSS_C_NO_CREDENTIAL, &input,
         GSS_C_NO_CHANNEL_BINDINGS, &port->gss->name, NULL, &output, NULL, NULL,
-        pg_gss_accept_delegation ? &delegated_creds : NULL);
+        shmem->gss_accept_delegation.load(std::memory_order_relaxed)
+            ? &delegated_creds
+            : NULL);
 
     if (GSS_ERROR(major)) {
       pg_GSS_error(_("could not accept GSSAPI security context"), major, minor);

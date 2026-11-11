@@ -28,6 +28,7 @@
 #include "catalog/pg_authid_d.h"
 #include "common/ip.h"
 #include "common/md5.h"
+#include "utils/control_block.h"
 #include "libpq/auth.h"
 #include "libpq/crypt.h"
 #include "libpq/libpq.h"
@@ -242,9 +243,6 @@ static int CheckCertAuth(Port *port);
  * Kerberos and GSSAPI GUCs
  *----------------------------------------------------------------
  */
-thread_local /*LOCAL*/ char *pg_krb_server_keyfile;
-thread_local /*LOCAL*/ bool pg_krb_caseins_users;
-thread_local /*LOCAL*/ bool pg_gss_accept_delegation;
 
 /*----------------------------------------------------------------
  * GSSAPI Authentication
@@ -873,8 +871,13 @@ static int pg_GSS_recvauth(Port *port) {
    * Kerberos, we might consider using the credential store extensions in
    * the future instead of the environment variable.
    */
-  if (pg_krb_server_keyfile != NULL && pg_krb_server_keyfile[0] != '\0') {
-    if (setenv("KRB5_KTNAME", pg_krb_server_keyfile, 1) != 0) {
+  std::shared_ptr<const std::string> krb_keyfile;
+  {
+    std::lock_guard<std::mutex> guard(shmem->krb_server_keyfile.mutex);
+    krb_keyfile = shmem->krb_server_keyfile.value;
+  }
+  if (krb_keyfile && !krb_keyfile->empty()) {
+    if (setenv("KRB5_KTNAME", krb_keyfile->c_str(), 1) != 0) {
       /* The only likely failure cause is OOM, so use that errcode */
       ereport(FATAL, (errcode(ERRCODE_OUT_OF_MEMORY),
                       errmsg("could not set environment: %m")));
@@ -936,7 +939,10 @@ static int pg_GSS_recvauth(Port *port) {
     maj_stat = gss_accept_sec_context(
         &min_stat, &port->gss->ctx, port->gss->cred, &gbuf,
         GSS_C_NO_CHANNEL_BINDINGS, &port->gss->name, NULL, &port->gss->outbuf,
-        &gflags, NULL, pg_gss_accept_delegation ? &delegated_creds : NULL);
+        &gflags, NULL,
+        shmem->gss_accept_delegation.load(std::memory_order_relaxed)
+            ? &delegated_creds
+            : NULL);
 
     /* gbuf no longer used */
     pfree(buf.data);
@@ -1046,7 +1052,7 @@ static int pg_GSS_checkauth(Port *port) {
       /*
        * Match the realm part of the name first
        */
-      if (pg_krb_caseins_users)
+      if (shmem->krb_caseins_users.load(std::memory_order_relaxed))
         ret = pg_strcasecmp(port->hba->krb_realm, cp);
       else
         ret = strcmp(port->hba->krb_realm, cp);
@@ -1067,7 +1073,7 @@ static int pg_GSS_checkauth(Port *port) {
   }
 
   ret = check_usermap(port->hba->usermap, port->user_name, princ,
-                      pg_krb_caseins_users);
+                      shmem->krb_caseins_users.load(std::memory_order_relaxed));
 
   pfree(princ);
 

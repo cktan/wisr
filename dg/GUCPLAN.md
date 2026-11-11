@@ -247,9 +247,10 @@ or not. This keeps one variable's move small.
 
 ## 9. Status
 
-- **Group 1 and 2 are done**, but for the three Kerberos and
-  GSSAPI settings. Those are read in code that is compiled out;
-  they stay as they are.
+- **Group 1 and 2 are done.** The three Kerberos and GSSAPI
+  settings are in `shmem`: a login session reads them, and a
+  reload changes them. The code that reads them is compiled out,
+  so the change to it is not compiled.
   - In `pcb`: `ssl`, `send_abort_for_crash`,
     `send_abort_for_kill`, `oauth_validator_libraries` and the
     `ssl_*` settings of the postmaster. `ssl_ciphers`,
@@ -287,8 +288,9 @@ or not. This keeps one variable's move small.
   the move adds a load of `tcb` there; that cost is not
   measured. `trace_sort` is read once for each sort event, not
   for each tuple, as an earlier note said.
-- **Left as a plain `thread_local`:** the three Kerberos and
-  GSSAPI settings, whose code is compiled out.
+- **No setting is left as a plain `thread_local`** but
+  `config_file` and `log_timezone`, which `pcb` holds by another
+  route: `SelectConfigFiles()` and an assign hook write them.
 - **`log_min_messages` and `log_min_error_statement` are in
   `pcb`**, as atomic ints. They became `PGC_SIGHUP`, so a
   session cannot `SET` them (`DG-vs-PG.md`). The postmaster

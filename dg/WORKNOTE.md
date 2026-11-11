@@ -13290,3 +13290,23 @@ is read on a hot path.
   the log says the sort started; a new session does not;
   `client_min_messages = error` hides a WARNING from one session,
   and a new session sees it.
+
+## Step 438: the Kerberos and GSSAPI settings move
+
+`krb_server_keyfile`, `krb_caseins_users` and
+`gss_accept_delegation` were the last GUC settings left as plain
+`thread_local` variables.
+
+- **They are in `shmem`**, not `pcb`: a login session reads them,
+  and a reload (`PGC_SIGHUP`) changes them. The two bools are
+  atomics; the key file's path is a `shared_ptr` that a leaf
+  mutex guards, as `log_line_prefix` is. `publish_shared_settings()`
+  stores all three. Each starts at its boot value: `false`,
+  `false` and "".
+- **The code that reads them is compiled out** (`ENABLE_GSS`;
+  `be-secure-gssapi.c` is in the build's skip list), so the
+  change to it is not compiled and not tested. The settings are
+  still in the table, and `SHOW` of them works.
+- **No GUC setting is a plain `thread_local` now**, but
+  `config_file` and `log_timezone`, which `pcb` holds by another
+  route.

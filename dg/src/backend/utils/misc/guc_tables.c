@@ -358,6 +358,9 @@ static thread_local /*LOCAL*/ bool syslog_split_messages = true;
  * from pcb (publish_postmaster_reload_settings()), not from these variables.
  */
 static thread_local /*LOCAL*/ bool EnableSSL = false;
+static thread_local /*LOCAL*/ char *pg_krb_server_keyfile = NULL;
+static thread_local /*LOCAL*/ bool pg_krb_caseins_users = false;
+static thread_local /*LOCAL*/ bool pg_gss_accept_delegation = false;
 static thread_local /*LOCAL*/ bool send_abort_for_crash = false;
 static thread_local /*LOCAL*/ bool send_abort_for_kill = false;
 static thread_local /*LOCAL*/ char *ssl_cert_file;
@@ -427,6 +430,10 @@ void publish_shared_settings(void) {
   shmem->allow_alter_system.store(AllowAlterSystem,
                                   std::memory_order_relaxed);
   shmem->pre_auth_delay.store(PreAuthDelay, std::memory_order_relaxed);
+  shmem->krb_caseins_users.store(pg_krb_caseins_users,
+                                 std::memory_order_relaxed);
+  shmem->gss_accept_delegation.store(pg_gss_accept_delegation,
+                                     std::memory_order_relaxed);
   /* The log filters are in pcb, as errstart() reads pcb. */
   pcb_main()->log_min_messages.store(log_min_messages,
                                      std::memory_order_relaxed);
@@ -441,6 +448,15 @@ void publish_shared_settings(void) {
   std::shared_ptr<const std::string> prefix =
       std::make_shared<const std::string>(Log_line_prefix ? Log_line_prefix
                                                           : "");
+
+  /* The Kerberos key file's path, swapped in as the log prefix is. */
+  std::shared_ptr<const std::string> keyfile =
+      std::make_shared<const std::string>(
+          pg_krb_server_keyfile ? pg_krb_server_keyfile : "");
+  {
+    std::lock_guard<std::mutex> guard(shmem->krb_server_keyfile.mutex);
+    shmem->krb_server_keyfile.value = std::move(keyfile);
+  }
 
   /* A reader copies the pointer under this lock, so it sees one string. */
   {

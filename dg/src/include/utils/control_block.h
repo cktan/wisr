@@ -425,6 +425,16 @@ typedef struct shmem_t {
   std::atomic<bool> allow_alter_system{true};
   /* backend_startup.c: seconds a new session sleeps before authentication */
   std::atomic<int> pre_auth_delay{0};
+  /* auth.c, be-secure-gssapi.c: GSSAPI settings (compiled out), read at login
+   */
+  std::atomic<bool> krb_caseins_users{false};
+  std::atomic<bool> gss_accept_delegation{false};
+  struct {
+    /* The path is never changed: a reload swaps in a new one. A leaf mutex. */
+    std::mutex mutex;
+    std::shared_ptr<const std::string> value =
+        std::make_shared<const std::string>(); /* the boot value, "" */
+  } krb_server_keyfile;
   /* be-secure-openssl.c: the protocol versions, in a hint about a failed
    * handshake */
   std::atomic<int> ssl_min_protocol_version{3}; /* PG_TLS1_2_VERSION */
