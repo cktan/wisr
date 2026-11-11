@@ -6186,12 +6186,31 @@ wait $server || fail "smart shutdown: status"
 # 3. The file is readable by its owner alone; the server's lines and sm's
 #    carry the log timezone, which SHOW gives.
 # 4. A session sees postgresql.conf, line 1, as log_filename's source.
-# 5. Log more than 64 kB, and a second file appears.
-# 6. pg_rotate_logfile() in a later second makes a third file.
+# 5. Once the clock is past the first file's second, log more than 64 kB,
+#    and a second file appears.
+# 6. pg_rotate_logfile(), once the clock is past the second file's second,
+#    makes a third file.
+#    The wall clock can step back (WSL2 does): a sleep of a second does not
+#    give a new second, so wait_past_newest_log() reads the clock.
 # 7. Change log_filename in postgresql.conf and reload: the next file has
 #    the new pattern.
 # 8. Stop the server.
 lfdir=$work/data/log
+
+# Wait, 10 s at most, until the wall clock in the log's time zone is past the
+# second the newest file in $lfdir is named for, so that the next rotation's
+# file has a name of its own.
+wait_past_newest_log() {
+  local newest
+  newest=$(ls "$lfdir" |
+    sed -n 's/^[a-z]*-\([0-9]\{8\}_[0-9]\{6\}\)\.log$/\1/p' | sort | tail -1)
+  for _ in $(seq 100); do
+    [[ "$(TZ=Etc/GMT-9 date +%Y%m%d_%H%M%S)" > "$newest" ]] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
 echo "log_filename = 'lf-%Y%m%d_%H%M%S.log'" > "$work/data/postgresql.conf"
 $digres -D "$work/data" -k "$work" -p "$port" -c logging_collector=on \
   -c log_rotation_size=64 -c log_timezone=Etc/GMT-9 \
@@ -6230,14 +6249,14 @@ local_psql -c "set log_destination = 'syslog'" 2>&1 |
 [ "$(stat -c %a "$lfdir"/lf-*.log | sort -u)" = 600 ] ||
   fail "logging_collector: log_file_mode"
 # A new second, so that the next file's name differs from the first's.
-sleep 1
+wait_past_newest_log || fail "logging_collector: the clock passes the first file"
 ( echo "set log_statement = 'all';"
   for i in $(seq 1200); do echo "select $i, repeat('x', 60);"; done
 ) | local_psql > /dev/null 2>&1
 [ "$(ls "$lfdir"/lf-*.log | wc -l)" -ge 2 ] ||
   fail "logging_collector: rotation by size"
 before=$(ls "$lfdir" | wc -l)
-sleep 1
+wait_past_newest_log || fail "logging_collector: the clock passes the second file"
 [ "$(local_psql -c 'select pg_rotate_logfile()')" = t ] ||
   fail "logging_collector: pg_rotate_logfile()"
 [ "$(ls "$lfdir" | wc -l)" -gt "$before" ] ||

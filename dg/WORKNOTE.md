@@ -13420,3 +13420,19 @@ A check hook took the new value as a `char **`, to change it with
 - **Not tested**: a placeholder replaced by an extension's
   setting (`define_custom_variable()`); digres has no module
   that defines one.
+
+## Step 443: the rotation check waits for the clock, not a sleep
+
+- **The failure**: `server.sh`'s "logging_collector: rotation by
+  size" failed at times. A loop of that section failed on run 6
+  of 300: between "ready" and the `sleep 1`, the monotonic clock
+  moved 0.11 s and the wall clock moved 2.8 s back. The 1,200
+  statements then ran in the second the first file is named
+  for, and each rotation by size opened the same file again
+  (432 times) until the batch ended. That matches PostgreSQL's
+  syslogger, which also appends to a file of the same name.
+- **The fix is in the test**: `wait_past_newest_log()` waits, 10 s
+  at most, until the wall clock in the log's time zone is past
+  the second of the newest log file's name. It replaces the
+  `sleep 1` before the 1,200 statements and before
+  `pg_rotate_logfile()`, which both need a new second.
