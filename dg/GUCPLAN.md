@@ -135,12 +135,14 @@ or not. This keeps one variable's move small.
      NULL. Read it with `.c_str()`, and test `.empty()` where
      the code tested for NULL. Never pass the `std::string`
      itself to a `%s`: g++ accepts it through `...`.
-   - The table entry of a `std::string` field is a
-     `guc_string_var_t` (`guc_tables.h`). guc.c keeps its own
-     `char *` of the value, shared with `reset_val` and the
-     stack, and copies it into the field on each change. A
-     thread_local variable, a custom setting and a placeholder
-     stay `char *`.
+   - The table entry of a string setting is a
+     `guc_string_var_t` (`guc_tables.h`) over a `std::string`.
+     guc.c keeps its own `char *` of the value, shared with
+     `reset_val` and the stack, and copies it into the
+     `std::string` on each change. No string setting has a
+     `char *` variable: a file-scope variable, a custom setting
+     (`DefineCustomStringVariable()`) and a placeholder are all
+     a `std::string` too.
 2. Bind the table entry. For group 3,
    `build_guc_variables()` sets the entry's `variable` pointer
    to `&tcb->guc.name` as it builds the thread's table.

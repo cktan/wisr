@@ -107,7 +107,6 @@ thread_local /*LOCAL*/ bool PG_exception_handled = false;
 /* GUC parameters */
 /* log_destination's variables: read pcb->Log_destination, not this one */
 thread_local /*LOCAL*/ int Log_destination = LOG_DESTINATION_STDERR;
-thread_local /*LOCAL*/ char *Log_destination_string = NULL;
 
 /* Processed form of backtrace_functions GUC */
 static thread_local /*LOCAL*/ char *backtrace_function_list;

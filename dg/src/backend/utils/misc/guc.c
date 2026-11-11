@@ -1052,7 +1052,7 @@ static bool assignable_custom_variable_name(const char *name, bool skip_errors,
  */
 static struct config_generic *add_placeholder_variable(const char *name,
                                                        int elevel) {
-  size_t sz = sizeof(struct config_string) + sizeof(char *);
+  size_t sz = sizeof(struct config_string);
   struct config_string *var;
   struct config_generic *gen;
 
@@ -1075,13 +1075,14 @@ static struct config_generic *add_placeholder_variable(const char *name,
   gen->vartype = PGC_STRING;
 
   /*
-   * The char* is allocated at the end of the struct since we have no
-   * 'static' place to point to.  Note that the current value, as well as
-   * the boot and reset values, start out NULL.
+   * The std::string is made with new since we have no 'static' place to
+   * point to.  Note that the current value, as well as the boot and reset
+   * values, start out NULL.
    */
-  var->variable = (char **)(var + 1);
+  var->variable = new std::string;
 
   if (!add_guc_variable((struct config_generic *)var, elevel)) {
+    var->variable.destroy();
     guc_free(unconstify(char *, gen->name));
     guc_free(var);
     return NULL;
@@ -1313,15 +1314,12 @@ static bool check_GUC_init(struct config_generic *gconf) {
   case PGC_STRING: {
     struct config_string *conf = (struct config_string *)gconf;
 
-    const std::string *svar = conf->variable.svar();
-    const char *cvar = svar ? svar->c_str() : conf->variable.get();
+    const std::string &svar = *conf->variable.svar();
 
     /* A std::string variable has no NULL: it starts as "" for a NULL boot */
-    if (svar ? 0 != strcmp(cvar, conf->boot_val ? conf->boot_val : "")
-             : NULL != cvar && (NULL == conf->boot_val ||
-                                0 != strcmp(cvar, conf->boot_val))) {
+    if (0 != strcmp(svar.c_str(), conf->boot_val ? conf->boot_val : "")) {
       elog(LOG, "GUC (PGC_STRING) %s, boot_val=%s, C-var=%s", conf->gen.name,
-           conf->boot_val ? conf->boot_val : "<null>", cvar);
+           conf->boot_val ? conf->boot_val : "<null>", svar.c_str());
       return false;
     }
     break;
@@ -4322,6 +4320,7 @@ static void define_custom_variable(struct config_generic *variable) {
    */
   set_string_variable(pHolder, NULL);
   set_string_field(pHolder, &pHolder->reset_val, NULL);
+  pHolder->variable.destroy();
 
   guc_free(pHolder);
 }
@@ -4477,7 +4476,7 @@ void DefineCustomRealVariable(const char *name, const char *short_desc,
 }
 
 void DefineCustomStringVariable(const char *name, const char *short_desc,
-                                const char *long_desc, char **valueAddr,
+                                const char *long_desc, std::string *valueAddr,
                                 const char *bootValue, GucContext context,
                                 int flags, GucStringCheckHook check_hook,
                                 GucStringAssignHook assign_hook,

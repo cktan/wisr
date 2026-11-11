@@ -551,7 +551,6 @@ typedef enum {
 } PGErrorVerbosity;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_destination;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *Log_destination_string;
 
 /* Log destination bitmap */
 #define LOG_DESTINATION_STDERR	 1

@@ -249,37 +249,37 @@ struct config_real {
  */
 
 /*
- * The variable of a string setting: a char * (a thread_local variable, a
- * custom setting, a placeholder) or a std::string (a control block field).
- * guc.c reads and writes it only through get() and set().
+ * The variable of a string setting: a std::string (a control block field, a
+ * file-scope variable, a custom setting or a placeholder). guc.c reads and
+ * writes it only through get() and set().
  *
- * For a std::string, m_own is the guc_malloc'd value guc.c manages, shared
- * with reset_val and the stack as a char * variable's value is, and the
- * std::string is a copy of it that the code reads. NULL is stored as "".
+ * m_own is the guc_malloc'd value guc.c manages, shared with reset_val and
+ * the stack; the std::string is a copy of it that the code reads. NULL is
+ * stored as "".
  */
 struct guc_string_var_t {
   guc_string_var_t() = default;
-  guc_string_var_t(std::nullptr_t) {}
-  guc_string_var_t(char **p) : m_cvar(p) {}
   guc_string_var_t(std::string *p) : m_svar(p) {}
 
-  /* The guc_malloc'd value, or a char * variable's value: may be NULL. */
-  char *get() const { return m_svar ? m_own : *m_cvar; }
+  /* The guc_malloc'd value: may be NULL. */
+  char *get() const { return m_own; }
 
-  /* Set the value; for a std::string, copy it first, as that may throw. */
+  /* Set the value; copy it into the std::string first, as that may throw. */
   void set(char *v) {
-    if (m_svar) {
-      m_svar->assign(v ? v : "");
-      m_own = v;
-    } else
-      *m_cvar = v;
+    m_svar->assign(v ? v : "");
+    m_own = v;
   }
 
-  /* The std::string, or NULL for a char * variable. */
+  /* The std::string. */
   const std::string *svar() const { return m_svar; }
 
+  /* Delete a std::string made with new: a placeholder's. */
+  void destroy() {
+    delete m_svar;
+    m_svar = nullptr;
+  }
+
 private:
-  char **m_cvar = nullptr;
   std::string *m_svar = nullptr;
   char *m_own = nullptr;
 };

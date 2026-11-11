@@ -13310,3 +13310,24 @@ is read on a hot path.
 - **No GUC setting is a plain `thread_local` now**, but
   `config_file` and `log_timezone`, which `pcb` holds by another
   route.
+
+## Step 439: no char * variable for a GUC string
+
+Step 434 made the string fields of `tcb->guc` and `pcb`
+`std::string`, and left the file-scope variables of
+`guc_tables.c`, custom settings and placeholders as `char *`.
+
+- **The 31 file-scope `char *` variables are `std::string`**:
+  `ssl_cert_file`, `Log_directory`, `bonjour_name`,
+  `Log_destination_string` and the rest. `publish_*()` copies
+  them with a plain assignment, and the two helpers that turned a
+  NULL into "" are gone.
+- **`guc_string_var_t` holds a `std::string *` only.** The
+  `char **` constructor and its branch in `get()` and `set()` are
+  removed.
+- **`DefineCustomStringVariable()` takes a `std::string *`.** No
+  code in the tree calls it.
+- **A placeholder owns a `std::string` made with `new`**, which
+  `define_custom_variable()` deletes with the placeholder.
+- **`check_GUC_init()` compares the `std::string`** with the boot
+  value, "" for a NULL one.

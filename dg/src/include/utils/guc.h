@@ -14,6 +14,8 @@
 #ifndef GUC_H
 #define GUC_H
 
+#include <string>
+
 #include "nodes/parsenodes.h"
 #include "tcop/dest.h"
 #include "utils/array.h"
@@ -299,8 +301,8 @@ extern void DefineCustomRealVariable(const char *name, const char *short_desc,
 
 extern void DefineCustomStringVariable(
     const char *name, const char *short_desc, const char *long_desc,
-    char **valueAddr, const char *bootValue, GucContext context, int flags,
-    GucStringCheckHook check_hook, GucStringAssignHook assign_hook,
+    std::string *valueAddr, const char *bootValue, GucContext context,
+    int flags, GucStringCheckHook check_hook, GucStringAssignHook assign_hook,
     GucShowHook show_hook) pg_attribute_nonnull(1, 4);
 
 extern void DefineCustomEnumVariable(

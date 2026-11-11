@@ -266,7 +266,7 @@ static thread_local /*LOCAL*/ bool AllowAlterSystem = true;
 #ifdef DEBUG_NODE_TESTS_ENABLED
 #endif
 
-static thread_local /*LOCAL*/ char *event_source;
+static thread_local /*LOCAL*/ std::string event_source = DEFAULT_EVENT_SOURCE;
 
 /*
  * This GUC exists solely for backward compatibility, check its definition for
@@ -280,8 +280,9 @@ static thread_local /*LOCAL*/ int log_min_messages = WARNING;
 
 thread_local /*LOCAL*/ int num_temp_buffers = 1024;
 
-static thread_local /*LOCAL*/ char *cluster_name = "";
-static thread_local /*LOCAL*/ char *external_pid_file;
+static thread_local /*LOCAL*/ std::string cluster_name;
+static thread_local /*LOCAL*/ std::string Log_destination_string = "stderr";
+static thread_local /*LOCAL*/ std::string external_pid_file;
 
 /*
  * SSL renegotiation was been removed in PostgreSQL 9.5, but we tolerate it
@@ -295,9 +296,9 @@ static thread_local /*LOCAL*/ char *external_pid_file;
  * cases provide the value for SHOW to display.  The real state is elsewhere
  * and is kept in sync by assign_hooks.
  */
-static thread_local /*LOCAL*/ char *syslog_ident_str;
-static thread_local /*LOCAL*/ char *server_encoding_string;
-static thread_local /*LOCAL*/ char *server_version_string;
+static thread_local /*LOCAL*/ std::string syslog_ident_str = "postgres";
+static thread_local /*LOCAL*/ std::string server_encoding_string = "SQL_ASCII";
+static thread_local /*LOCAL*/ std::string server_version_string = PG_VERSION;
 static thread_local /*LOCAL*/ int server_version_num;
 
 #ifdef HAVE_SYSLOG
@@ -307,9 +308,9 @@ static thread_local /*LOCAL*/ int server_version_num;
 #endif
 static thread_local /*LOCAL*/ int syslog_facility = DEFAULT_SYSLOG_FACILITY;
 
-static thread_local /*LOCAL*/ char *log_timezone_string;
-static thread_local /*LOCAL*/ char *data_directory;
-static thread_local /*LOCAL*/ char *ConfigFileName;
+static thread_local /*LOCAL*/ std::string log_timezone_string = "GMT";
+static thread_local /*LOCAL*/ std::string data_directory;
+static thread_local /*LOCAL*/ std::string ConfigFileName;
 static thread_local /*LOCAL*/ bool enable_bonjour = false;
 static thread_local /*LOCAL*/ bool Trace_connection_negotiation = false;
 static thread_local /*LOCAL*/ bool Logging_collector = false;
@@ -320,11 +321,12 @@ static thread_local /*LOCAL*/ int NBuffers = 16384;
 static thread_local /*LOCAL*/ int PostPortNumber = DEF_PGPORT;
 static thread_local /*LOCAL*/ int Unix_socket_permissions;
 static thread_local /*LOCAL*/ int max_files_per_process = 1000;
-static thread_local /*LOCAL*/ char *bonjour_name;
-static thread_local /*LOCAL*/ char *shared_preload_libraries_string = NULL;
-static thread_local /*LOCAL*/ char *Unix_socket_group;
-static thread_local /*LOCAL*/ char *Unix_socket_directories;
-static thread_local /*LOCAL*/ char *ListenAddresses;
+static thread_local /*LOCAL*/ std::string bonjour_name;
+static thread_local /*LOCAL*/ std::string shared_preload_libraries_string;
+static thread_local /*LOCAL*/ std::string Unix_socket_group;
+static thread_local /*LOCAL*/ std::string Unix_socket_directories =
+    DEFAULT_PGSOCKET_DIR;
+static thread_local /*LOCAL*/ std::string ListenAddresses = "localhost";
 #ifdef USE_ASSERT_CHECKING
 #define DEFAULT_ASSERT_ENABLED true
 #else
@@ -337,16 +339,21 @@ static thread_local /*LOCAL*/ int max_identifier_length;
 static thread_local /*LOCAL*/ int block_size;
 static thread_local /*LOCAL*/ bool integer_datetimes;
 static thread_local /*LOCAL*/ bool assert_enabled = DEFAULT_ASSERT_ENABLED;
-static thread_local /*LOCAL*/ char *ssl_library;
+#ifdef USE_SSL
+static thread_local /*LOCAL*/ std::string ssl_library = "OpenSSL";
+#else
+static thread_local /*LOCAL*/ std::string ssl_library = "";
+#endif
 static thread_local /*LOCAL*/ int Log_RotationAge =
     HOURS_PER_DAY * MINS_PER_HOUR;
 static thread_local /*LOCAL*/ int Log_RotationSize = 10 * 1024;
-static thread_local /*LOCAL*/ char *Log_directory = NULL;
-static thread_local /*LOCAL*/ char *Log_filename = NULL;
+static thread_local /*LOCAL*/ std::string Log_directory = "log";
+static thread_local /*LOCAL*/ std::string Log_filename =
+    "postgresql-%Y-%m-%d_%H%M%S.log";
 static thread_local /*LOCAL*/ bool Log_truncate_on_rotation = false;
 static thread_local /*LOCAL*/ int Log_file_mode = S_IRUSR | S_IWUSR;
 /* elog.c: log_line_prefix; threads read shmem->log_line_prefix, not this */
-static thread_local /*LOCAL*/ char *Log_line_prefix = NULL;
+static thread_local /*LOCAL*/ std::string Log_line_prefix = "%m [%p] ";
 /* postmaster.c: log_hostname and authentication_timeout; sessions read shmem */
 static thread_local /*LOCAL*/ bool log_hostname = false;
 static thread_local /*LOCAL*/ int AuthenticationTimeout = 60;
@@ -358,33 +365,37 @@ static thread_local /*LOCAL*/ bool syslog_split_messages = true;
  * from pcb (publish_postmaster_reload_settings()), not from these variables.
  */
 static thread_local /*LOCAL*/ bool EnableSSL = false;
-static thread_local /*LOCAL*/ char *pg_krb_server_keyfile = NULL;
+static thread_local /*LOCAL*/ std::string pg_krb_server_keyfile = PG_KRB_SRVTAB;
 static thread_local /*LOCAL*/ bool pg_krb_caseins_users = false;
 static thread_local /*LOCAL*/ bool pg_gss_accept_delegation = false;
 static thread_local /*LOCAL*/ bool send_abort_for_crash = false;
 static thread_local /*LOCAL*/ bool send_abort_for_kill = false;
-static thread_local /*LOCAL*/ char *ssl_cert_file;
+static thread_local /*LOCAL*/ std::string ssl_cert_file = "server.crt";
 /* postmaster.c, be-secure.c: sessions read shmem, not these variables */
 static thread_local /*LOCAL*/ int PreAuthDelay = 0;
 static thread_local /*LOCAL*/ int ssl_min_protocol_version = PG_TLS1_2_VERSION;
 static thread_local /*LOCAL*/ int ssl_max_protocol_version = PG_TLS_ANY;
-static thread_local /*LOCAL*/ char *ssl_key_file;
-static thread_local /*LOCAL*/ char *ssl_ca_file;
-static thread_local /*LOCAL*/ char *ssl_crl_file;
-static thread_local /*LOCAL*/ char *ssl_crl_dir;
-static thread_local /*LOCAL*/ char *ssl_dh_params_file;
-static thread_local /*LOCAL*/ char *SSLECDHCurve;
-static thread_local /*LOCAL*/ char *ssl_passphrase_command;
+static thread_local /*LOCAL*/ std::string ssl_key_file = "server.key";
+static thread_local /*LOCAL*/ std::string ssl_ca_file;
+static thread_local /*LOCAL*/ std::string ssl_crl_file;
+static thread_local /*LOCAL*/ std::string ssl_crl_dir;
+static thread_local /*LOCAL*/ std::string ssl_dh_params_file;
+#ifdef USE_SSL
+static thread_local /*LOCAL*/ std::string SSLECDHCurve = "X25519:prime256v1";
+#else
+static thread_local /*LOCAL*/ std::string SSLECDHCurve = "none";
+#endif
+static thread_local /*LOCAL*/ std::string ssl_passphrase_command;
 static thread_local /*LOCAL*/ bool ssl_passphrase_command_supports_reload;
-static thread_local /*LOCAL*/ char *SSLCipherList;
-static thread_local /*LOCAL*/ char *SSLCipherSuites;
+#ifdef USE_OPENSSL
+static thread_local /*LOCAL*/ std::string SSLCipherList =
+    "HIGH:MEDIUM:+3DES:!aNULL";
+#else
+static thread_local /*LOCAL*/ std::string SSLCipherList = "none";
+#endif
+static thread_local /*LOCAL*/ std::string SSLCipherSuites;
 static thread_local /*LOCAL*/ bool SSLPreferServerCiphers;
-static thread_local /*LOCAL*/ char *oauth_validator_libraries_string;
-
-/* A string setting as a std::string, "" if it has no value. */
-static std::string setting_string(const char *value) {
-  return value ? value : "";
-}
+static thread_local /*LOCAL*/ std::string oauth_validator_libraries_string;
 
 /*
  * Copy the postmaster's reloadable settings into the process control block.
@@ -397,21 +408,20 @@ static void publish_postmaster_reload_settings(void) {
   b->EnableSSL = EnableSSL;
   b->send_abort_for_crash = send_abort_for_crash;
   b->send_abort_for_kill = send_abort_for_kill;
-  b->ssl_cert_file = setting_string(ssl_cert_file);
-  b->ssl_key_file = setting_string(ssl_key_file);
-  b->ssl_ca_file = setting_string(ssl_ca_file);
-  b->ssl_crl_file = setting_string(ssl_crl_file);
-  b->ssl_crl_dir = setting_string(ssl_crl_dir);
-  b->ssl_dh_params_file = setting_string(ssl_dh_params_file);
-  b->SSLECDHCurve = setting_string(SSLECDHCurve);
-  b->ssl_passphrase_command = setting_string(ssl_passphrase_command);
+  b->ssl_cert_file = ssl_cert_file;
+  b->ssl_key_file = ssl_key_file;
+  b->ssl_ca_file = ssl_ca_file;
+  b->ssl_crl_file = ssl_crl_file;
+  b->ssl_crl_dir = ssl_crl_dir;
+  b->ssl_dh_params_file = ssl_dh_params_file;
+  b->SSLECDHCurve = SSLECDHCurve;
+  b->ssl_passphrase_command = ssl_passphrase_command;
   b->ssl_passphrase_command_supports_reload =
       ssl_passphrase_command_supports_reload;
-  b->SSLCipherList = setting_string(SSLCipherList);
-  b->SSLCipherSuites = setting_string(SSLCipherSuites);
+  b->SSLCipherList = SSLCipherList;
+  b->SSLCipherSuites = SSLCipherSuites;
   b->SSLPreferServerCiphers = SSLPreferServerCiphers;
-  b->oauth_validator_libraries_string =
-      setting_string(oauth_validator_libraries_string);
+  b->oauth_validator_libraries_string = oauth_validator_libraries_string;
 }
 
 /*
@@ -446,13 +456,11 @@ void publish_shared_settings(void) {
 
   /* Allocate before the lock: the lock is held only to swap the pointer. */
   std::shared_ptr<const std::string> prefix =
-      std::make_shared<const std::string>(Log_line_prefix ? Log_line_prefix
-                                                          : "");
+      std::make_shared<const std::string>(Log_line_prefix);
 
   /* The Kerberos key file's path, swapped in as the log prefix is. */
   std::shared_ptr<const std::string> keyfile =
-      std::make_shared<const std::string>(
-          pg_krb_server_keyfile ? pg_krb_server_keyfile : "");
+      std::make_shared<const std::string>(pg_krb_server_keyfile);
   {
     std::lock_guard<std::mutex> guard(shmem->krb_server_keyfile.mutex);
     shmem->krb_server_keyfile.value = std::move(keyfile);
@@ -466,10 +474,9 @@ void publish_shared_settings(void) {
 
   /* The four syslog settings go together, so a writer sees them agree. */
   std::shared_ptr<const syslog_conf_t> syslog_conf =
-      std::make_shared<const syslog_conf_t>(
-          syslog_conf_t{syslog_ident_str ? syslog_ident_str : "postgres",
-                        syslog_facility, syslog_sequence_numbers,
-                        syslog_split_messages});
+      std::make_shared<const syslog_conf_t>(syslog_conf_t{
+          syslog_ident_str.empty() ? "postgres" : syslog_ident_str,
+          syslog_facility, syslog_sequence_numbers, syslog_split_messages});
 
   std::lock_guard<std::mutex> guard(shmem->syslog.mutex);
   shmem->syslog.conf = std::move(syslog_conf);
@@ -483,8 +490,8 @@ void publish_shared_settings(void) {
 void publish_log_file_settings(void) {
   pcb_t *b = pcb_main();
 
-  b->Log_directory = Log_directory ? Log_directory : "";
-  b->Log_filename = Log_filename ? Log_filename : "";
+  b->Log_directory = Log_directory;
+  b->Log_filename = Log_filename;
   b->Log_file_mode = Log_file_mode;
   b->Log_RotationAge = Log_RotationAge;
   b->Log_RotationSize = Log_RotationSize;
@@ -497,11 +504,6 @@ static const char *show_log_file_mode(void) {
 
   snprintf(buf, sizeof(buf), "%04o", Log_file_mode);
   return buf;
-}
-
-/* A copy of a string setting, or "" if it has no value. */
-static std::string postmaster_setting_dup(const char *value) {
-  return value ? value : "";
 }
 
 /*
@@ -525,16 +527,15 @@ void publish_postmaster_settings(void) {
   b->Unix_socket_permissions = Unix_socket_permissions;
   b->max_files_per_process = max_files_per_process;
   b->Log_destination = Log_destination;
-  b->bonjour_name = postmaster_setting_dup(bonjour_name);
-  b->shared_preload_libraries_string =
-      postmaster_setting_dup(shared_preload_libraries_string);
-  b->event_source = postmaster_setting_dup(event_source);
-  b->Unix_socket_group = postmaster_setting_dup(Unix_socket_group);
-  b->Unix_socket_directories = postmaster_setting_dup(Unix_socket_directories);
-  b->ListenAddresses = postmaster_setting_dup(ListenAddresses);
-  b->external_pid_file = postmaster_setting_dup(external_pid_file);
-  b->cluster_name = postmaster_setting_dup(cluster_name);
-  b->Log_destination_string = postmaster_setting_dup(Log_destination_string);
+  b->bonjour_name = bonjour_name;
+  b->shared_preload_libraries_string = shared_preload_libraries_string;
+  b->event_source = event_source;
+  b->Unix_socket_group = Unix_socket_group;
+  b->Unix_socket_directories = Unix_socket_directories;
+  b->ListenAddresses = ListenAddresses;
+  b->external_pid_file = external_pid_file;
+  b->cluster_name = cluster_name;
+  b->Log_destination_string = Log_destination_string;
 
   b->assert_enabled = assert_enabled;
   b->integer_datetimes = integer_datetimes;
@@ -542,7 +543,7 @@ void publish_postmaster_settings(void) {
   b->max_index_keys = max_index_keys;
   b->max_identifier_length = max_identifier_length;
   b->block_size = block_size;
-  b->ssl_library = postmaster_setting_dup(ssl_library);
+  b->ssl_library = ssl_library;
 }
 
 /* should be static, but commands/variable.c needs to get at this */
