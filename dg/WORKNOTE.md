@@ -13381,3 +13381,42 @@ A check hook took the new value as a `char **`, to change it with
   case-sensitive comparison fails it. `test/guc_local.sh`
   checks that a placeholder of one session is unknown in
   another.
+
+## Step 442: guc.c's copies of a string value are std::strings
+
+- **Each holder owns its copy**: the variable, `reset_val`, each
+  stack entry's prior and masked values, and `last_reported`.
+  `string_field_used()`, `set_string_field()` and the
+  `guc_malloc`'d value in `guc_string_var_t` are gone.
+- **Where NULL means something, a `std::unique_ptr<std::string>`**:
+  `reset_val` and a placeholder's value (NULL until set, and
+  NULL means RESET when a placeholder's stack is applied again),
+  a stacked value, and `last_reported` (NULL until sent). A
+  setting's field takes NULL as `""`. `sourcefile` is a
+  `std::string`, `""` for no file.
+- **`config_var_val` is a struct, not a union**, as it holds a
+  `std::unique_ptr`. A stack entry is made with `new` and
+  deleted when popped, not kept in `TopTransactionContext`.
+  Placeholders and custom settings are made with `new` too.
+- **A restore at commit or abort moves the stacked value back**,
+  so it allocates nothing. Where guc.c compared pointers to ask
+  whether two values are the same, it compares the values.
+- **`std::bad_alloc`** is reported as "out of memory" by
+  `set_config_with_handle()` at its elevel, by
+  `ResetAllOptions()` and `define_custom_variable()` as an
+  ERROR, and by `InitializeGUCOptions()` as FATAL;
+  `ReportGUCOption()` and `set_config_sourcefile()` keep no
+  copy instead.
+- **Extras are unchanged**: `guc_malloc`'d in
+  `GUCMemoryContext`, shared by the holders.
+- **Test** (`test/guc_values.sql`): SET LOCAL and rollback, SET
+  then SET LOCAL and commit, a savepoint rolled back, a
+  placeholder with no value set locally and rolled back, a
+  placeholder reset to none, a placeholder set locally in a
+  released savepoint, RESET ALL. Its expected output was taken
+  from the code before the change. A stack that saves the reset
+  value fails it. `server.sh` checks that a session sees
+  `postgresql.conf`, line 1, as `log_filename`'s source file.
+- **Not tested**: a placeholder replaced by an extension's
+  setting (`define_custom_variable()`); digres has no module
+  that defines one.

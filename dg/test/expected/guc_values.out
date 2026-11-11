@@ -1,0 +1,118 @@
+-- Verify that a string setting keeps its value through SET, SET LOCAL,
+-- savepoints, RESET and rollback, a placeholder's NULL value included.
+-- 1. SET LOCAL a built-in string setting in a transaction that rolls back,
+--    and show the value from before it.
+-- 2. SET a setting, SET LOCAL it, commit, and show the SET value.
+-- 3. SET a setting in a savepoint that rolls back, and show the value of
+--    the transaction around it; commit, and show that value.
+-- 4. SET LOCAL a placeholder that had no value, roll back, and show it
+--    empty, as SHOW shows its NULL.
+-- 5. SET a placeholder, RESET it to its reset value of none, and show it
+--    empty.
+-- 6. SET a placeholder, SET LOCAL it in a savepoint that is released,
+--    commit, and show the SET value.
+-- 7. RESET ALL, and show a built-in string setting at its default.
+set application_name = 'one';
+begin;
+set local application_name = 'two';
+show application_name;
+ application_name 
+------------------
+ two
+(1 row)
+
+rollback;
+show application_name;
+ application_name 
+------------------
+ one
+(1 row)
+
+set search_path = guc_values_a, public;
+begin;
+set local search_path = guc_values_b;
+show search_path;
+ search_path  
+--------------
+ guc_values_b
+(1 row)
+
+commit;
+show search_path;
+     search_path      
+----------------------
+ guc_values_a, public
+(1 row)
+
+begin;
+set search_path = guc_values_c;
+savepoint s1;
+set search_path = guc_values_d;
+show search_path;
+ search_path  
+--------------
+ guc_values_d
+(1 row)
+
+rollback to savepoint s1;
+show search_path;
+ search_path  
+--------------
+ guc_values_c
+(1 row)
+
+commit;
+show search_path;
+ search_path  
+--------------
+ guc_values_c
+(1 row)
+
+begin;
+set local guc_values.x = 'local';
+select current_setting('guc_values.x');
+ current_setting 
+-----------------
+ local
+(1 row)
+
+rollback;
+select '[' || current_setting('guc_values.x') || ']' as x;
+ x  
+----
+ []
+(1 row)
+
+set guc_values.y = 'set';
+reset guc_values.y;
+select '[' || current_setting('guc_values.y') || ']' as y;
+ y  
+----
+ []
+(1 row)
+
+set guc_values.z = 'set';
+begin;
+savepoint s1;
+set local guc_values.z = 'local';
+select current_setting('guc_values.z');
+ current_setting 
+-----------------
+ local
+(1 row)
+
+release savepoint s1;
+commit;
+select current_setting('guc_values.z');
+ current_setting 
+-----------------
+ set
+(1 row)
+
+reset all;
+show search_path;
+   search_path   
+-----------------
+ "$user", public
+(1 row)
+

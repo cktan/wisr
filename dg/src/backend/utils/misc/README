@@ -50,9 +50,9 @@ out-of-memory.
 * Since the newvalue is pass-by-reference, the function can modify it.
 This might be used for example to canonicalize the spelling of a string
 value, round off a buffer size to the nearest supported value, or replace
-a special value such as "-1" with a computed default value.  If the
-function wishes to replace a string value, it must guc_malloc (not palloc)
-the replacement value, and be sure to guc_free() the previous value.
+a special value such as "-1" with a computed default value.  A string
+setting's check hook gets the value as a std::string, and may change it in
+place; guc.c keeps what the hook leaves.
 
 * Derived information, such as the role OID represented by a user name,
 can be stored for use by the assign hook.  To do this, guc_malloc (not palloc)
@@ -255,29 +255,34 @@ maintained by GUC.
 GUC Memory Handling
 -------------------
 
-String variable values are allocated with guc_malloc or guc_strdup,
-which ensure that the values are kept in a long-lived context, and provide
-more control over handling out-of-memory failures than bare palloc.
+A string setting's values are std::strings, and each holder owns its
+copy: the variable, reset_val, each stack entry's prior and masked values,
+and last_reported.  Where NULL means something, the holder is a
+std::unique_ptr<std::string>: a placeholder's value and reset_val, and a
+stacked value, are NULL until set; last_reported is NULL until the value
+is sent.  A setting's variable, a std::string field, takes NULL as "".
+sourcefile is a std::string, "" for no file.
 
-We allow a string variable's actual value, reset_val, boot_val, and stacked
-values to point at the same storage.  This makes it slightly harder to free
-space (we must test whether a value to be freed isn't equal to any of the
-other pointers in the GUC entry or associated stack items).  The main
-advantage is that we never need to malloc during transaction commit/abort,
-so cannot cause an out-of-memory failure there.
+A stack entry is made with new, and deleted when it is popped.  At
+transaction commit or abort, a stacked value moves back into the variable,
+so the restore allocates no memory.  A failed allocation elsewhere throws
+std::bad_alloc, which set_config_with_handle(), ResetAllOptions() and
+define_custom_variable() report as "out of memory".
 
-"Extra" structs returned by check_hook routines are managed in the same
-way as string values.  Note that we support "extra" structs for all types
-of GUC variables, although they are mainly useful with strings.
+"Extra" structs returned by check_hook routines are allocated with
+guc_malloc in GUCMemoryContext.  We allow the extra of the actual value,
+reset_extra and the stacked values to point at the same struct, so a
+struct is freed only when no other of them points at it.  Note that we
+support "extra" structs for all types of GUC variables, although they are
+mainly useful with strings.
 
 
 GUC and Null String Variables
 -----------------------------
 
-A GUC string variable can have a boot_val of NULL.  guc.c handles this
-unsurprisingly, assigning the NULL to the underlying C variable.  Any code
-using such a variable, as well as any hook functions for it, must then be
-prepared to deal with a NULL value.
+A GUC string variable can have a boot_val of NULL.  The variable is a
+std::string, so it holds "" instead, and a hook sees "".  Only a
+placeholder's value, which no code reads, is NULL.
 
 However, it is not possible to assign a NULL value to a GUC string
 variable in any other way: values coming from SET, postgresql.conf, etc,
@@ -287,8 +292,6 @@ treat a NULL value as a distinct user-visible setting.  A typical use
 for a NULL boot_val is to denote that a value hasn't yet been set for
 a variable that will receive a real value later in startup.
 
-If it's undesirable for code using the underlying C variable to have to
-worry about NULL values ever, the variable can be given a non-null static
-initializer as well as a non-null boot_val.  guc.c will overwrite the
-static initializer pointer with a copy of the boot_val during
-InitializeGUCOptions, but the variable will never contain a NULL.
+The variable's initializer must equal its boot_val ("" for a NULL one),
+as check_GUC_init() asserts; InitializeGUCOptions sets it to the boot_val
+again.

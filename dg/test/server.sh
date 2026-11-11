@@ -6185,11 +6185,12 @@ wait $server || fail "smart shutdown: status"
 #    server's ready message.
 # 3. The file is readable by its owner alone; the server's lines and sm's
 #    carry the log timezone, which SHOW gives.
-# 4. Log more than 64 kB, and a second file appears.
-# 5. pg_rotate_logfile() in a later second makes a third file.
-# 6. Change log_filename in postgresql.conf and reload: the next file has
+# 4. A session sees postgresql.conf, line 1, as log_filename's source.
+# 5. Log more than 64 kB, and a second file appears.
+# 6. pg_rotate_logfile() in a later second makes a third file.
+# 7. Change log_filename in postgresql.conf and reload: the next file has
 #    the new pattern.
-# 7. Stop the server.
+# 8. Stop the server.
 lfdir=$work/data/log
 echo "log_filename = 'lf-%Y%m%d_%H%M%S.log'" > "$work/data/postgresql.conf"
 $digres -D "$work/data" -k "$work" -p "$port" -c logging_collector=on \
@@ -6218,6 +6219,9 @@ grep -Eq '^[-0-9: .]+ \+09 \[[0-9]+\] LOG:  starting ' "$work/logfile.all" ||
   fail "log_timezone: the server's lines"
 [ "$(local_psql -c 'show log_timezone')" = Etc/GMT-9 ] ||
   fail "log_timezone: SHOW"
+[ "$(local_psql -c "select sourcefile like '%/postgresql.conf' and
+    sourceline = 1 from pg_show_all_settings() where name = 'log_filename'")" = t ] ||
+  fail "logging_collector: log_filename's source file"
 # log_destination changes only with a restart: no session may set it.
 [ "$(local_psql -c 'show log_destination')" = stderr,syslog ] ||
   fail "log_destination: SHOW"

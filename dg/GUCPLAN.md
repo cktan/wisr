@@ -137,12 +137,12 @@ or not. This keeps one variable's move small.
      itself to a `%s`: g++ accepts it through `...`.
    - The table entry of a string setting is a
      `guc_string_var_t` (`guc_tables.h`) over a `std::string`.
-     guc.c keeps its own `char *` of the value, shared with
-     `reset_val` and the stack, and copies it into the
-     `std::string` on each change. No string setting has a
-     `char *` variable: a file-scope variable, a custom setting
-     (`DefineCustomStringVariable()`) and a placeholder are all
-     a `std::string` too.
+     guc.c sets the field on each change; `reset_val` and the
+     stack keep copies of their own
+     (`src/backend/utils/misc/README`). No string setting has
+     a `char *` variable: a file-scope variable and a custom
+     setting (`DefineCustomStringVariable()`) are a
+     `std::string` too, and a placeholder owns its value.
    - A string setting's check hook takes the new value as a
      `std::string &` and may change it; its assign hook takes a
      `const std::string &`. A NULL value is `""` to a hook:

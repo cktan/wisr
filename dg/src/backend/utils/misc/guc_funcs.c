@@ -628,7 +628,7 @@ static void GetConfigOptionValues(struct config_generic *conf,
     if (lconf->reset_val == NULL)
       values[13] = NULL;
     else
-      values[13] = pstrdup(lconf->reset_val);
+      values[13] = pstrdup(lconf->reset_val->c_str());
   } break;
 
   case PGC_ENUM: {
@@ -685,7 +685,8 @@ static void GetConfigOptionValues(struct config_generic *conf,
    */
   if (conf->source == PGC_S_FILE &&
       has_privs_of_role(GetUserId(), ROLE_PG_READ_ALL_SETTINGS)) {
-    values[14] = conf->sourcefile;
+    values[14] =
+        conf->sourcefile.empty() ? NULL : pstrdup(conf->sourcefile.c_str());
     snprintf(buffer, sizeof(buffer), "%d", conf->sourceline);
     values[15] = pstrdup(buffer);
   } else {

@@ -19,6 +19,7 @@
 #include "lib/ilist.h"
 #include "utils/guc.h"
 
+#include <memory>
 #include <string>
 
 /*
@@ -32,11 +33,16 @@ enum config_type {
   PGC_ENUM,
 };
 
-union config_var_val {
+/*
+ * A value of a setting. A struct, not a union, as a string setting's value
+ * is a std::string: NULL is a value of none, which only a placeholder or a
+ * NULL boot value has.
+ */
+struct config_var_val {
   bool boolval;
   int intval;
   double realval;
-  char *stringval;
+  std::unique_ptr<std::string> stringval;
   int enumval;
 };
 
@@ -45,7 +51,7 @@ union config_var_val {
  * "extra", which is created by its check_hook and used by its assign_hook.
  */
 typedef struct config_var_value {
-  union config_var_val val;
+  struct config_var_val val;
   void *extra;
 } config_var_value;
 
@@ -176,11 +182,12 @@ struct config_generic {
                               * stack */
   slist_node report_link;    /* list link for variables that have the
                               * GUC_NEEDS_REPORT bit set in status */
-  char *last_reported;       /* if variable is GUC_REPORT, value last sent
-                              * to client (NULL if not yet sent) */
-  char *sourcefile;          /* file current setting is from (NULL if not
-                              * set in config file) */
-  int sourceline;            /* line in source file */
+  /* if variable is GUC_REPORT, value last sent to client (NULL if not yet
+   * sent) */
+  std::unique_ptr<std::string> last_reported;
+  std::string sourcefile; /* file current setting is from ("" if not
+                           * set in config file) */
+  int sourceline;         /* line in source file */
 };
 
 /* bit values in status field */
@@ -249,39 +256,44 @@ struct config_real {
  */
 
 /*
- * The variable of a string setting: a std::string (a control block field, a
- * file-scope variable, a custom setting or a placeholder). guc.c reads and
- * writes it only through get() and set().
+ * The variable of a string setting: a std::string the code reads (a control
+ * block field, a file-scope variable or a custom setting's), or a
+ * placeholder's own value. guc.c reads and writes it only through get(),
+ * set() and take().
  *
- * m_own is the guc_malloc'd value guc.c manages, shared with reset_val and
- * the stack; the std::string is a copy of it that the code reads. NULL is
- * stored as "".
+ * A field has no NULL: it takes NULL as "". A placeholder's value is NULL
+ * until it is set, and NULL means RESET when its stack is applied again.
  */
 struct guc_string_var_t {
   guc_string_var_t() = default;
   guc_string_var_t(std::string *p) : m_svar(p) {}
 
-  /* The guc_malloc'd value: may be NULL. */
-  char *get() const { return m_own; }
+  /* The value; NULL only for a placeholder that has none. */
+  const std::string *get() const { return m_svar ? m_svar : m_own.get(); }
 
-  /* Set the value; copy it into the std::string first, as that may throw. */
-  void set(char *v) {
-    m_svar->assign(v ? v : "");
-    m_own = v;
+  /* Set the value to a copy of v. */
+  void set(const std::string *v) {
+    if (!m_svar)
+      m_own = v ? std::make_unique<std::string>(*v) : nullptr;
+    else if (v)
+      m_svar->assign(*v);
+    else
+      m_svar->clear();
   }
 
-  /* The std::string. */
-  const std::string *svar() const { return m_svar; }
-
-  /* Delete a std::string made with new: a placeholder's. */
-  void destroy() {
-    delete m_svar;
-    m_svar = nullptr;
+  /* Set the value by moving v in: a field allocates nothing. */
+  void take(std::unique_ptr<std::string> v) {
+    if (!m_svar)
+      m_own = std::move(v);
+    else if (v)
+      *m_svar = std::move(*v);
+    else
+      m_svar->clear();
   }
 
 private:
-  std::string *m_svar = nullptr;
-  char *m_own = nullptr;
+  std::string *m_svar = nullptr;      /* the field, or NULL: a placeholder */
+  std::unique_ptr<std::string> m_own; /* a placeholder's value */
 };
 
 struct config_string {
@@ -293,7 +305,7 @@ struct config_string {
   GucStringAssignHook assign_hook;
   GucShowHook show_hook;
   /* variable fields, initialized at runtime: */
-  char *reset_val;
+  std::unique_ptr<std::string> reset_val; /* NULL: none, as a placeholder */
   void *reset_extra;
 };
 

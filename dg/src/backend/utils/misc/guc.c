@@ -258,11 +258,12 @@ static void set_guc_source(struct config_generic *gconf, GucSource newsource);
 static void pg_timezone_abbrev_initialize(void);
 static void push_old_value(struct config_generic *gconf, GucAction action);
 static void ReportGUCOption(struct config_generic *record);
-static void set_config_sourcefile(const char *name, char *sourcefile,
+static void set_config_sourcefile(const char *name, const char *sourcefile,
                                   int sourceline);
 static void reapply_stacked_values(struct config_generic *variable,
                                    struct config_string *pHolder,
-                                   GucStack *stack, const char *curvalue,
+                                   GucStack *stack,
+                                   const std::string *curvalue,
                                    GucContext curscontext, GucSource cursource,
                                    Oid cursrole);
 static bool validate_option_array_item(const char *name, const char *value,
@@ -281,10 +282,11 @@ static bool call_int_check_hook(struct config_int *conf, int *newval,
                                 void **extra, GucSource source, int elevel);
 static bool call_real_check_hook(struct config_real *conf, double *newval,
                                  void **extra, GucSource source, int elevel);
-static bool call_string_check_hook(struct config_string *conf, char **newval,
+static bool call_string_check_hook(struct config_string *conf,
+                                   std::unique_ptr<std::string> &newval,
                                    void **extra, GucSource source, int elevel);
 static void call_string_assign_hook(struct config_string *conf,
-                                    const char *newval, void *extra);
+                                    const std::string *newval, void *extra);
 static bool call_enum_check_hook(struct config_enum *conf, int *newval,
                                  void **extra, GucSource source, int elevel);
 
@@ -665,46 +667,21 @@ void guc_free(void *ptr) {
 }
 
 /*
- * Detect whether strval is referenced anywhere in a GUC string item
+ * A copy of a string setting's value, NULL for none. The variable, the reset
+ * value, each stack entry and last_reported own their copies.
  */
-static bool string_field_used(struct config_string *conf, char *strval) {
-  GucStack *stack;
-
-  if (strval == conf->variable.get() || strval == conf->reset_val ||
-      strval == conf->boot_val)
-    return true;
-  for (stack = conf->gen.stack; stack; stack = stack->prev) {
-    if (strval == stack->prior.val.stringval ||
-        strval == stack->masked.val.stringval)
-      return true;
-  }
-  return false;
+static std::unique_ptr<std::string> guc_string_copy(const std::string *v) {
+  return v ? std::make_unique<std::string>(*v) : nullptr;
 }
 
-/*
- * Support for assigning to a field of a string GUC item.  Free the prior
- * value if it's not referenced anywhere else in the item (including stacked
- * states).
- */
-static void set_string_field(struct config_string *conf, char **field,
-                             char *newval) {
-  char *oldval = *field;
-
-  /* Do the assignment */
-  *field = newval;
-
-  /* Free old value if it's not NULL and isn't referenced anymore */
-  if (oldval && !string_field_used(conf, oldval))
-    guc_free(oldval);
+/* Whether two values of a string setting are the same: both none, or equal. */
+static bool guc_string_same(const std::string *a, const std::string *b) {
+  return a && b ? *a == *b : a == b;
 }
 
-/* set_string_field() for the variable of a string GUC item. */
-static void set_string_variable(struct config_string *conf, char *newval) {
-  char *oldval = conf->variable.get();
-
-  conf->variable.set(newval);
-  if (oldval && !string_field_used(conf, oldval))
-    guc_free(oldval);
+/* A string setting's value as set_config_option() takes it: NULL for none. */
+static const char *guc_string_cstr(const std::string *v) {
+  return v ? v->c_str() : NULL;
 }
 
 /*
@@ -766,8 +743,8 @@ static void set_extra_field(struct config_generic *gconf, void **field,
  * Support for copying a variable's active value into a stack entry.
  * The "extra" field associated with the active value is copied, too.
  *
- * NB: be sure stringval and extra fields of a new stack entry are
- * initialized to NULL before this is used, else we'll try to guc_free() them.
+ * NB: be sure the extra field of a new stack entry is initialized to NULL
+ * before this is used, else we'll try to guc_free() it.
  */
 static void set_stack_value(struct config_generic *gconf,
                             config_var_value *val) {
@@ -782,8 +759,8 @@ static void set_stack_value(struct config_generic *gconf,
     val->val.realval = *((struct config_real *)gconf)->variable;
     break;
   case PGC_STRING:
-    set_string_field((struct config_string *)gconf, &(val->val.stringval),
-                     ((struct config_string *)gconf)->variable.get());
+    val->val.stringval =
+        guc_string_copy(((struct config_string *)gconf)->variable.get());
     break;
   case PGC_ENUM:
     val->val.enumval = *((struct config_enum *)gconf)->variable;
@@ -806,8 +783,7 @@ static void discard_stack_value(struct config_generic *gconf,
     /* no need to do anything */
     break;
   case PGC_STRING:
-    set_string_field((struct config_string *)gconf, &(val->val.stringval),
-                     NULL);
+    val->val.stringval.reset();
     break;
   }
   set_extra_field(gconf, &(val->extra), NULL);
@@ -1035,19 +1011,21 @@ static bool assignable_custom_variable_name(const char *name, bool skip_errors,
  */
 static struct config_generic *add_placeholder_variable(const char *name,
                                                        int elevel) {
-  size_t sz = sizeof(struct config_string);
   struct config_string *var;
   struct config_generic *gen;
 
-  var = (struct config_string *)guc_malloc(elevel, sz);
-  if (var == NULL)
+  /* Its fields zeroed, as guc_malloc() and memset() left them. */
+  try {
+    var = new config_string();
+  } catch (const std::bad_alloc &) {
+    ereport(elevel, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
     return NULL;
-  memset(var, 0, sz);
+  }
   gen = &var->gen;
 
   gen->name = guc_strdup(elevel, name);
   if (gen->name == NULL) {
-    guc_free(var);
+    delete var;
     return NULL;
   }
 
@@ -1058,16 +1036,13 @@ static struct config_generic *add_placeholder_variable(const char *name,
   gen->vartype = PGC_STRING;
 
   /*
-   * The std::string is made with new since we have no 'static' place to
+   * The value is the placeholder's own, as we have no 'static' place to
    * point to.  Note that the current value, as well as the boot and reset
    * values, start out NULL.
    */
-  var->variable = new std::string;
-
   if (!add_guc_variable((struct config_generic *)var, elevel)) {
-    var->variable.destroy();
     guc_free(unconstify(char *, gen->name));
-    guc_free(var);
+    delete var;
     return NULL;
   }
 
@@ -1285,12 +1260,13 @@ static bool check_GUC_init(struct config_generic *gconf) {
   case PGC_STRING: {
     struct config_string *conf = (struct config_string *)gconf;
 
-    const std::string &svar = *conf->variable.svar();
+    const std::string *svar = conf->variable.get();
+    const char *cvar = svar ? svar->c_str() : "";
 
     /* A std::string variable has no NULL: it starts as "" for a NULL boot */
-    if (0 != strcmp(svar.c_str(), conf->boot_val ? conf->boot_val : "")) {
+    if (0 != strcmp(cvar, conf->boot_val ? conf->boot_val : "")) {
       elog(LOG, "GUC (PGC_STRING) %s, boot_val=%s, C-var=%s", conf->gen.name,
-           conf->boot_val ? conf->boot_val : "<null>", svar.c_str());
+           conf->boot_val ? conf->boot_val : "<null>", cvar);
       return false;
     }
     break;
@@ -1344,11 +1320,16 @@ void InitializeGUCOptions(void) {
    * Load all variables with their compiled-in defaults, and initialize
    * status fields as needed.
    */
-  for (auto &entry : guc_map()) {
-    /* Check mapping between initial and default value */
-    Assert(check_GUC_init(entry.second));
+  try {
+    for (auto &entry : guc_map()) {
+      /* Check mapping between initial and default value */
+      Assert(check_GUC_init(entry.second));
 
-    InitializeOneGUCOption(entry.second);
+      InitializeOneGUCOption(entry.second);
+    }
+  } catch (const std::bad_alloc &) {
+    /* A copy of a value could not be made: FATAL, as guc_strdup()'s was */
+    ereport(FATAL, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
   }
 
   reporting_enabled = false;
@@ -1439,8 +1420,8 @@ static void InitializeOneGUCOption(struct config_generic *gconf) {
   gconf->reset_srole = BOOTSTRAP_SUPERUSERID;
   gconf->stack = NULL;
   gconf->extra = NULL;
-  gconf->last_reported = NULL;
-  gconf->sourcefile = NULL;
+  gconf->last_reported.reset();
+  gconf->sourcefile.clear();
   gconf->sourceline = 0;
 
   switch (gconf->vartype) {
@@ -1489,21 +1470,18 @@ static void InitializeOneGUCOption(struct config_generic *gconf) {
   }
   case PGC_STRING: {
     struct config_string *conf = (struct config_string *)gconf;
-    char *newval;
+    std::unique_ptr<std::string> newval;
     void *extra = NULL;
 
-    /* non-NULL boot_val must always get strdup'd */
     if (conf->boot_val != NULL)
-      newval = guc_strdup(FATAL, conf->boot_val);
-    else
-      newval = NULL;
+      newval = std::make_unique<std::string>(conf->boot_val);
 
-    if (!call_string_check_hook(conf, &newval, &extra, PGC_S_DEFAULT, LOG))
+    if (!call_string_check_hook(conf, newval, &extra, PGC_S_DEFAULT, LOG))
       elog(FATAL, "failed to initialize %s to \"%s\"", conf->gen.name,
-           newval ? newval : "");
-    call_string_assign_hook(conf, newval, extra);
-    conf->variable.set(newval);
-    conf->reset_val = newval;
+           newval ? newval->c_str() : "");
+    call_string_assign_hook(conf, newval.get(), extra);
+    conf->variable.set(newval.get());
+    conf->reset_val = std::move(newval);
     conf->gen.extra = conf->reset_extra = extra;
     break;
   }
@@ -1630,8 +1608,8 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
    */
   data_directory_rec = (struct config_string *)find_option("data_directory",
                                                            false, false, PANIC);
-  if (data_directory_rec->variable.get())
-    SetDataDir(data_directory_rec->variable.get());
+  if (!data_directory_rec->variable.get()->empty())
+    SetDataDir(data_directory_rec->variable.get()->c_str());
   else if (configdir)
     SetDataDir(configdir);
   else {
@@ -1691,7 +1669,19 @@ static void pg_timezone_abbrev_initialize(void) {
 /*
  * Reset all options to their saved default values (implements RESET ALL)
  */
+static void reset_all_options(void);
+
 void ResetAllOptions(void) {
+  /* A copy of a string value could not be made: an ERROR. */
+  try {
+    reset_all_options();
+  } catch (const std::bad_alloc &) {
+    ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
+  }
+}
+
+/* The body of ResetAllOptions(). */
+static void reset_all_options(void) {
   dlist_mutable_iter iter;
 
   /* We need only consider GUCs not already at PGC_S_DEFAULT */
@@ -1743,8 +1733,8 @@ void ResetAllOptions(void) {
     case PGC_STRING: {
       struct config_string *conf = (struct config_string *)gconf;
 
-      call_string_assign_hook(conf, conf->reset_val, conf->reset_extra);
-      set_string_variable(conf, conf->reset_val);
+      call_string_assign_hook(conf, conf->reset_val.get(), conf->reset_extra);
+      conf->variable.set(conf->reset_val.get());
       set_extra_field(&conf->gen, &conf->gen.extra, conf->reset_extra);
       break;
     }
@@ -1836,10 +1826,10 @@ static void push_old_value(struct config_generic *gconf, GucAction action) {
   /*
    * Push a new stack entry
    *
-   * We keep all the stack entries in TopTransactionContext for simplicity.
+   * An entry is made with new, its fields zeroed, as it owns the copy of a
+   * string setting's value; AtEOXact_GUC() deletes it.
    */
-  stack = (GucStack *)MemoryContextAllocZero(TopTransactionContext,
-                                             sizeof(GucStack));
+  stack = new GucStack();
 
   stack->prev = gconf->stack;
   stack->nest_level = GUCNestLevel;
@@ -1981,7 +1971,7 @@ void AtEOXact_GUC(bool isCommit, int nestLevel) {
             /* LOCAL migrates down */
             prev->masked_scontext = stack->scontext;
             prev->masked_srole = stack->srole;
-            prev->masked = stack->prior;
+            prev->masked = std::move(stack->prior);
             prev->state = GUC_SET_LOCAL;
           } else {
             /* else just forget this stack level */
@@ -1997,7 +1987,7 @@ void AtEOXact_GUC(bool isCommit, int nestLevel) {
           prev->masked_srole = stack->masked_srole;
           if (prev->state == GUC_SET_LOCAL)
             discard_stack_value(gconf, &prev->masked);
-          prev->masked = stack->masked;
+          prev->masked = std::move(stack->masked);
           prev->state = GUC_SET_LOCAL;
           break;
         }
@@ -2007,18 +1997,17 @@ void AtEOXact_GUC(bool isCommit, int nestLevel) {
 
       if (restorePrior || restoreMasked) {
         /* Perform appropriate restoration of the stacked value */
-        config_var_value newvalue;
+        config_var_value &newvalue =
+            restoreMasked ? stack->masked : stack->prior;
         GucSource newsource;
         GucContext newscontext;
         Oid newsrole;
 
         if (restoreMasked) {
-          newvalue = stack->masked;
           newsource = PGC_S_SESSION;
           newscontext = stack->masked_scontext;
           newsrole = stack->masked_srole;
         } else {
-          newvalue = stack->prior;
           newsource = stack->source;
           newscontext = stack->scontext;
           newsrole = stack->srole;
@@ -2069,25 +2058,19 @@ void AtEOXact_GUC(bool isCommit, int nestLevel) {
         }
         case PGC_STRING: {
           struct config_string *conf = (struct config_string *)gconf;
-          char *newval = newvalue.val.stringval;
+          std::unique_ptr<std::string> &newval = newvalue.val.stringval;
           void *newextra = newvalue.extra;
 
-          if (conf->variable.get() != newval ||
+          /* The stacked value moves back in, which allocates nothing. */
+          if (!guc_string_same(conf->variable.get(), newval.get()) ||
               conf->gen.extra != newextra) {
-            call_string_assign_hook(conf, newval, newextra);
-            set_string_variable(conf, newval);
+            call_string_assign_hook(conf, newval.get(), newextra);
+            conf->variable.take(std::move(newval));
             set_extra_field(&conf->gen, &conf->gen.extra, newextra);
             changed = true;
           }
 
-          /*
-           * Release stacked values if not used anymore. We
-           * could use discard_stack_value() here, but since
-           * we have type-specific code anyway, might as
-           * well inline it.
-           */
-          set_string_field(conf, &stack->prior.val.stringval, NULL);
-          set_string_field(conf, &stack->masked.val.stringval, NULL);
+          /* The stacked values go with the entry, deleted below. */
           break;
         }
         case PGC_ENUM: {
@@ -2125,7 +2108,7 @@ void AtEOXact_GUC(bool isCommit, int nestLevel) {
       gconf->stack = prev;
       if (prev == NULL)
         slist_delete_current(&iter);
-      pfree(stack);
+      delete stack;
 
       /* Report new value if we changed it */
       if (changed && (gconf->flags & GUC_REPORT) &&
@@ -2218,8 +2201,7 @@ void ReportChangedGUCOptions(void) {
 static void ReportGUCOption(struct config_generic *record) {
   char *val = ShowGUCOption(record, false);
 
-  if (record->last_reported == NULL ||
-      strcmp(val, record->last_reported) != 0) {
+  if (record->last_reported == NULL || *record->last_reported != val) {
     StringInfoData msgbuf;
 
     pq_beginmessage(&msgbuf, PqMsg_ParameterStatus);
@@ -2228,12 +2210,15 @@ static void ReportGUCOption(struct config_generic *record) {
     pq_endmessage(&msgbuf);
 
     /*
-     * We need a long-lifespan copy.  If guc_strdup() fails due to OOM,
-     * we'll set last_reported to NULL and thereby possibly make a
-     * duplicate report later.
+     * We need a long-lifespan copy.  If it fails due to OOM, we'll set
+     * last_reported to NULL and thereby possibly make a duplicate report
+     * later.
      */
-    guc_free(record->last_reported);
-    record->last_reported = guc_strdup(LOG, val);
+    try {
+      record->last_reported = std::make_unique<std::string>(val);
+    } catch (const std::bad_alloc &) {
+      record->last_reported.reset();
+    }
   }
 
   pfree(val);
@@ -2656,7 +2641,7 @@ char *config_enum_get_options(struct config_enum *record, const char *prefix,
  */
 static bool parse_and_validate_value(struct config_generic *record,
                                      const char *value, GucSource source,
-                                     int elevel, union config_var_val *newval,
+                                     int elevel, struct config_var_val *newval,
                                      void **newextra) {
   switch (record->vartype) {
   case PGC_BOOL: {
@@ -2743,23 +2728,24 @@ static bool parse_and_validate_value(struct config_generic *record,
 
     /*
      * The value passed by the caller could be transient, so we
-     * always strdup it.
+     * always copy it.
      */
-    newval->stringval = guc_strdup(elevel, value);
-    if (newval->stringval == NULL)
-      return false;
+    newval->stringval = std::make_unique<std::string>(value);
 
     /*
      * The only built-in "parsing" check we have is to apply
      * truncation if GUC_IS_NAME.
      */
-    if (conf->gen.flags & GUC_IS_NAME)
-      truncate_identifier(newval->stringval, strlen(newval->stringval), true);
+    if (conf->gen.flags & GUC_IS_NAME) {
+      std::string &s = *newval->stringval;
 
-    if (!call_string_check_hook(conf, &newval->stringval, newextra, source,
+      truncate_identifier(s.data(), s.size(), true);
+      s.resize(strlen(s.c_str()));
+    }
+
+    if (!call_string_check_hook(conf, newval->stringval, newextra, source,
                                 elevel)) {
-      guc_free(newval->stringval);
-      newval->stringval = NULL;
+      newval->stringval.reset();
       return false;
     }
   } break;
@@ -2883,12 +2869,33 @@ int set_config_option_ext(const char *name, const char *value,
  * This should be used by callers which repeatedly set the same config
  * option(s), and want to avoid the overhead of a hash lookup each time.
  */
+static int set_config_with_handle_body(
+    const char *name, config_handle *handle, const char *value,
+    GucContext context, GucSource source, Oid srole, GucAction action,
+    bool changeVal, int elevel, bool is_reload);
+
 int set_config_with_handle(const char *name, config_handle *handle,
                            const char *value, GucContext context,
                            GucSource source, Oid srole, GucAction action,
                            bool changeVal, int elevel, bool is_reload) {
+  /* A copy of a string value could not be made: report it at elevel. */
+  try {
+    return set_config_with_handle_body(name, handle, value, context, source,
+                                       srole, action, changeVal, elevel,
+                                       is_reload);
+  } catch (const std::bad_alloc &) {
+    ereport(elevel, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
+    return 0;
+  }
+}
+
+/* The body of set_config_with_handle(). */
+static int set_config_with_handle_body(
+    const char *name, config_handle *handle, const char *value,
+    GucContext context, GucSource source, Oid srole, GucAction action,
+    bool changeVal, int elevel, bool is_reload) {
   struct config_generic *record;
-  union config_var_val newval_union;
+  struct config_var_val newval_union;
   void *newextra = NULL;
   bool prohibitValueChange = false;
   bool makeDefault;
@@ -3378,24 +3385,16 @@ int set_config_with_handle(const char *name, config_handle *handle,
                                     &newval_union, &newextra))
         return 0;
     } else if (source == PGC_S_DEFAULT) {
-      /* non-NULL boot_val must always get strdup'd */
-      if (conf->boot_val != NULL) {
-        newval = guc_strdup(elevel, conf->boot_val);
-        if (newval == NULL)
-          return 0;
-      } else
-        newval = NULL;
+      if (conf->boot_val != NULL)
+        newval = std::make_unique<std::string>(conf->boot_val);
+      else
+        newval = nullptr;
 
-      if (!call_string_check_hook(conf, &newval, &newextra, source, elevel)) {
-        guc_free(newval);
+      if (!call_string_check_hook(conf, newval, &newextra, source, elevel))
         return 0;
-      }
     } else {
-      /*
-       * strdup not needed, since reset_val is already under
-       * guc.c's control
-       */
-      newval = conf->reset_val;
+      /* A copy of reset_val, which keeps its own */
+      newval = guc_string_copy(conf->reset_val.get());
       newextra = conf->reset_extra;
       source = conf->gen.reset_source;
       context = conf->gen.reset_scontext;
@@ -3407,11 +3406,8 @@ int set_config_with_handle(const char *name, config_handle *handle,
 
       /* newval shouldn't be NULL, so we're a bit sloppy here */
       newval_different = (NULL == conf->variable.get() || newval == NULL ||
-                          0 != strcmp(conf->variable.get(), newval));
+                          *conf->variable.get() != *newval);
 
-      /* Release newval, unless it's reset_val */
-      if (newval && !string_field_used(conf, newval))
-        guc_free(newval);
       /* Release newextra, unless it's reset_extra */
       if (newextra && !extra_field_used(&conf->gen, newextra))
         guc_free(newextra);
@@ -3433,8 +3429,8 @@ int set_config_with_handle(const char *name, config_handle *handle,
       if (!makeDefault)
         push_old_value(&conf->gen, action);
 
-      call_string_assign_hook(conf, newval, newextra);
-      set_string_variable(conf, newval);
+      call_string_assign_hook(conf, newval.get(), newextra);
+      conf->variable.set(newval.get());
       set_extra_field(&conf->gen, &conf->gen.extra, newextra);
       set_guc_source(&conf->gen, source);
       conf->gen.scontext = context;
@@ -3476,7 +3472,7 @@ int set_config_with_handle(const char *name, config_handle *handle,
       GucStack *stack;
 
       if (conf->gen.reset_source <= source) {
-        set_string_field(conf, &conf->reset_val, newval);
+        conf->reset_val = guc_string_copy(newval.get());
         set_extra_field(&conf->gen, &conf->reset_extra, newextra);
         conf->gen.reset_source = source;
         conf->gen.reset_scontext = context;
@@ -3484,7 +3480,7 @@ int set_config_with_handle(const char *name, config_handle *handle,
       }
       for (stack = conf->gen.stack; stack; stack = stack->prev) {
         if (stack->source <= source) {
-          set_string_field(conf, &stack->prior.val.stringval, newval);
+          stack->prior.val.stringval = guc_string_copy(newval.get());
           set_extra_field(&conf->gen, &stack->prior.extra, newextra);
           stack->source = source;
           stack->scontext = context;
@@ -3493,9 +3489,6 @@ int set_config_with_handle(const char *name, config_handle *handle,
       }
     }
 
-    /* Perhaps we didn't install newval anywhere */
-    if (newval && !string_field_used(conf, newval))
-      guc_free(newval);
     /* Perhaps we didn't install newextra anywhere */
     if (newextra && !extra_field_used(&conf->gen, newextra))
       guc_free(newextra);
@@ -3610,7 +3603,7 @@ config_handle *get_config_handle(const char *name) {
 /*
  * Set the fields for source file and line number the setting came from.
  */
-static void set_config_sourcefile(const char *name, char *sourcefile,
+static void set_config_sourcefile(const char *name, const char *sourcefile,
                                   int sourceline) {
   struct config_generic *record;
   int elevel;
@@ -3626,9 +3619,12 @@ static void set_config_sourcefile(const char *name, char *sourcefile,
   if (record == NULL)
     return;
 
-  sourcefile = guc_strdup(elevel, sourcefile);
-  guc_free(record->sourcefile);
-  record->sourcefile = sourcefile;
+  try {
+    record->sourcefile = sourcefile;
+  } catch (const std::bad_alloc &) {
+    record->sourcefile.clear();
+    ereport(elevel, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
+  }
   record->sourceline = sourceline;
 }
 
@@ -3692,7 +3688,7 @@ const char *GetConfigOption(const char *name, bool missing_ok,
 
   case PGC_STRING:
     return ((struct config_string *)record)->variable.get()
-               ? ((struct config_string *)record)->variable.get()
+               ? ((struct config_string *)record)->variable.get()->c_str()
                : "";
 
   case PGC_ENUM:
@@ -3739,7 +3735,7 @@ const char *GetConfigOptionResetString(const char *name) {
 
   case PGC_STRING:
     return ((struct config_string *)record)->reset_val
-               ? ((struct config_string *)record)->reset_val
+               ? ((struct config_string *)record)->reset_val->c_str()
                : "";
 
   case PGC_ENUM:
@@ -3975,7 +3971,7 @@ void AlterSystemSetConfigFile(AlterSystemStmt *altersysstmt) {
        * If a value is specified, verify that it's sane.
        */
       if (value) {
-        union config_var_val newval;
+        struct config_var_val newval;
         void *newextra = NULL;
 
         if (!parse_and_validate_value(record, value, PGC_S_FILE, ERROR, &newval,
@@ -3984,8 +3980,6 @@ void AlterSystemSetConfigFile(AlterSystemStmt *altersysstmt) {
                           errmsg("invalid value for parameter \"%s\": \"%s\"",
                                  name, value)));
 
-        if (record->vartype == PGC_STRING && newval.stringval != NULL)
-          guc_free(newval.stringval);
         guc_free(newextra);
       }
     } else {
@@ -4138,7 +4132,7 @@ void AlterSystemSetConfigFile(AlterSystemStmt *altersysstmt) {
 static struct config_generic *
 init_custom_variable(const char *name, const char *short_desc,
                      const char *long_desc, GucContext context, int flags,
-                     enum config_type type, size_t sz) {
+                     enum config_type type) {
   struct config_generic *gen;
 
   /*
@@ -4171,9 +4165,29 @@ init_custom_variable(const char *name, const char *short_desc,
                                  strcmp(name, "pljava.vmoptions") == 0))
     context = PGC_SUSET;
 
-  /* As above, an OOM here is FATAL */
-  gen = (struct config_generic *)guc_malloc(FATAL, sz);
-  memset(gen, 0, sz);
+  /* As above, an OOM here is FATAL. Made with new, its fields zeroed. */
+  try {
+    switch (type) {
+    case PGC_BOOL:
+      gen = &(new config_bool())->gen;
+      break;
+    case PGC_INT:
+      gen = &(new config_int())->gen;
+      break;
+    case PGC_REAL:
+      gen = &(new config_real())->gen;
+      break;
+    case PGC_STRING:
+      gen = &(new config_string())->gen;
+      break;
+    case PGC_ENUM:
+    default:
+      gen = &(new config_enum())->gen;
+      break;
+    }
+  } catch (const std::bad_alloc &) {
+    ereport(FATAL, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
+  }
 
   gen->name = guc_strdup(FATAL, name);
   gen->context = context;
@@ -4190,7 +4204,19 @@ init_custom_variable(const char *name, const char *short_desc,
  * Common code for DefineCustomXXXVariable subroutines: insert the new
  * variable into the GUC variable hash, replacing any placeholder.
  */
+static void define_custom_variable_body(struct config_generic *variable);
+
 static void define_custom_variable(struct config_generic *variable) {
+  /* A copy of a string value could not be made: an ERROR. */
+  try {
+    define_custom_variable_body(variable);
+  } catch (const std::bad_alloc &) {
+    ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
+  }
+}
+
+/* The body of define_custom_variable(). */
+static void define_custom_variable_body(struct config_generic *variable) {
   const char *name = variable->name;
   struct config_string *pHolder;
 
@@ -4261,7 +4287,7 @@ static void define_custom_variable(struct config_generic *variable) {
   /* First, apply the reset value if any */
   if (pHolder->reset_val)
     (void)set_config_option_ext(
-        name, pHolder->reset_val, pHolder->gen.reset_scontext,
+        name, pHolder->reset_val->c_str(), pHolder->gen.reset_scontext,
         pHolder->gen.reset_source, pHolder->gen.reset_srole, GUC_ACTION_SET,
         true, WARNING, false);
   /* That should not have resulted in stacking anything */
@@ -4273,8 +4299,8 @@ static void define_custom_variable(struct config_generic *variable) {
                          pHolder->gen.source, pHolder->gen.srole);
 
   /* Also copy over any saved source-location information */
-  if (pHolder->gen.sourcefile)
-    set_config_sourcefile(name, pHolder->gen.sourcefile,
+  if (!pHolder->gen.sourcefile.empty())
+    set_config_sourcefile(name, pHolder->gen.sourcefile.c_str(),
                           pHolder->gen.sourceline);
 
   /*
@@ -4283,11 +4309,8 @@ static void define_custom_variable(struct config_generic *variable) {
    * leaked.  Since this can only happen once per session per variable, it
    * doesn't seem worth spending much code on.)
    */
-  set_string_variable(pHolder, NULL);
-  set_string_field(pHolder, &pHolder->reset_val, NULL);
-  pHolder->variable.destroy();
 
-  guc_free(pHolder);
+  delete pHolder;
 }
 
 /*
@@ -4299,7 +4322,8 @@ static void define_custom_variable(struct config_generic *variable) {
  */
 static void reapply_stacked_values(struct config_generic *variable,
                                    struct config_string *pHolder,
-                                   GucStack *stack, const char *curvalue,
+                                   GucStack *stack,
+                                   const std::string *curvalue,
                                    GucContext curscontext, GucSource cursource,
                                    Oid cursrole) {
   const char *name = variable->name;
@@ -4308,37 +4332,38 @@ static void reapply_stacked_values(struct config_generic *variable,
   if (stack != NULL) {
     /* First, recurse, so that stack items are processed bottom to top */
     reapply_stacked_values(variable, pHolder, stack->prev,
-                           stack->prior.val.stringval, stack->scontext,
+                           stack->prior.val.stringval.get(), stack->scontext,
                            stack->source, stack->srole);
 
     /* See how to apply the passed-in value */
     switch (stack->state) {
     case GUC_SAVE:
-      (void)set_config_option_ext(name, curvalue, curscontext, cursource,
+      (void)set_config_option_ext(name, guc_string_cstr(curvalue), curscontext, cursource,
                                   cursrole, GUC_ACTION_SAVE, true, WARNING,
                                   false);
       break;
 
     case GUC_SET:
-      (void)set_config_option_ext(name, curvalue, curscontext, cursource,
+      (void)set_config_option_ext(name, guc_string_cstr(curvalue), curscontext, cursource,
                                   cursrole, GUC_ACTION_SET, true, WARNING,
                                   false);
       break;
 
     case GUC_LOCAL:
-      (void)set_config_option_ext(name, curvalue, curscontext, cursource,
+      (void)set_config_option_ext(name, guc_string_cstr(curvalue), curscontext, cursource,
                                   cursrole, GUC_ACTION_LOCAL, true, WARNING,
                                   false);
       break;
 
     case GUC_SET_LOCAL:
       /* first, apply the masked value as SET */
-      (void)set_config_option_ext(name, stack->masked.val.stringval,
+      (void)set_config_option_ext(name,
+                                  guc_string_cstr(stack->masked.val.stringval.get()),
                                   stack->masked_scontext, PGC_S_SESSION,
                                   stack->masked_srole, GUC_ACTION_SET, true,
                                   WARNING, false);
       /* then apply the current value as LOCAL */
-      (void)set_config_option_ext(name, curvalue, curscontext, cursource,
+      (void)set_config_option_ext(name, guc_string_cstr(curvalue), curscontext, cursource,
                                   cursrole, GUC_ACTION_LOCAL, true, WARNING,
                                   false);
       break;
@@ -4356,11 +4381,11 @@ static void reapply_stacked_values(struct config_generic *variable,
      * this is to be just a transactional assignment.  (We leak the stack
      * entry.)
      */
-    if (curvalue != pHolder->reset_val ||
+    if (!guc_string_same(curvalue, pHolder->reset_val.get()) ||
         curscontext != pHolder->gen.reset_scontext ||
         cursource != pHolder->gen.reset_source ||
         cursrole != pHolder->gen.reset_srole) {
-      (void)set_config_option_ext(name, curvalue, curscontext, cursource,
+      (void)set_config_option_ext(name, guc_string_cstr(curvalue), curscontext, cursource,
                                   cursrole, GUC_ACTION_SET, true, WARNING,
                                   false);
       if (variable->stack != NULL) {
@@ -4383,8 +4408,7 @@ void DefineCustomBoolVariable(const char *name, const char *short_desc,
   struct config_bool *var;
 
   var = (struct config_bool *)init_custom_variable(name, short_desc, long_desc,
-                                                   context, flags, PGC_BOOL,
-                                                   sizeof(struct config_bool));
+                                                   context, flags, PGC_BOOL);
   var->variable = valueAddr;
   var->boot_val = bootValue;
   var->reset_val = bootValue;
@@ -4404,8 +4428,7 @@ void DefineCustomIntVariable(const char *name, const char *short_desc,
   struct config_int *var;
 
   var = (struct config_int *)init_custom_variable(name, short_desc, long_desc,
-                                                  context, flags, PGC_INT,
-                                                  sizeof(struct config_int));
+                                                  context, flags, PGC_INT);
   var->variable = valueAddr;
   var->boot_val = bootValue;
   var->reset_val = bootValue;
@@ -4427,8 +4450,7 @@ void DefineCustomRealVariable(const char *name, const char *short_desc,
   struct config_real *var;
 
   var = (struct config_real *)init_custom_variable(name, short_desc, long_desc,
-                                                   context, flags, PGC_REAL,
-                                                   sizeof(struct config_real));
+                                                   context, flags, PGC_REAL);
   var->variable = valueAddr;
   var->boot_val = bootValue;
   var->reset_val = bootValue;
@@ -4449,8 +4471,7 @@ void DefineCustomStringVariable(const char *name, const char *short_desc,
   struct config_string *var;
 
   var = (struct config_string *)init_custom_variable(
-      name, short_desc, long_desc, context, flags, PGC_STRING,
-      sizeof(struct config_string));
+      name, short_desc, long_desc, context, flags, PGC_STRING);
   var->variable = valueAddr;
   var->boot_val = bootValue;
   var->check_hook = check_hook;
@@ -4467,8 +4488,7 @@ void DefineCustomEnumVariable(
   struct config_enum *var;
 
   var = (struct config_enum *)init_custom_variable(name, short_desc, long_desc,
-                                                   context, flags, PGC_ENUM,
-                                                   sizeof(struct config_enum));
+                                                   context, flags, PGC_ENUM);
   var->variable = valueAddr;
   var->boot_val = bootValue;
   var->reset_val = bootValue;
@@ -4581,7 +4601,7 @@ struct config_generic **get_explain_guc_options(int *num) {
     case PGC_STRING: {
       struct config_string *lconf = (struct config_string *)conf;
 
-      const char *cur = lconf->variable.get();
+      const char *cur = guc_string_cstr(lconf->variable.get());
 
       if (NULL == lconf->boot_val && NULL == cur)
         modified = false;
@@ -4711,8 +4731,8 @@ char *ShowGUCOption(struct config_generic *record, bool use_units) {
 
     if (conf->show_hook)
       val = conf->show_hook();
-    else if (conf->variable.get() && *conf->variable.get())
-      val = conf->variable.get();
+    else if (conf->variable.get() && !conf->variable.get()->empty())
+      val = conf->variable.get()->c_str();
     else
       val = "";
   } break;
@@ -4780,7 +4800,7 @@ static void write_one_nondefault_variable(FILE *fp,
     struct config_string *conf = (struct config_string *)gconf;
 
     if (conf->variable.get())
-      fprintf(fp, "%s", conf->variable.get());
+      fprintf(fp, "%s", conf->variable.get()->c_str());
   } break;
 
   case PGC_ENUM: {
@@ -4792,8 +4812,8 @@ static void write_one_nondefault_variable(FILE *fp,
 
   fputc(0, fp);
 
-  if (gconf->sourcefile)
-    fprintf(fp, "%s", gconf->sourcefile);
+  if (!gconf->sourcefile.empty())
+    fprintf(fp, "%s", gconf->sourcefile.c_str());
   fputc(0, fp);
 
   fwrite(&gconf->sourceline, 1, sizeof(gconf->sourceline), fp);
@@ -5360,73 +5380,54 @@ static bool call_real_check_hook(struct config_real *conf, double *newval,
   return true;
 }
 
-static bool call_string_check_hook(struct config_string *conf, char **newval,
+static bool call_string_check_hook(struct config_string *conf,
+                                   std::unique_ptr<std::string> &newval,
                                    void **extra, GucSource source, int elevel) {
-  volatile bool result = true;
-
   /* Quick success if no hook */
   if (!conf->check_hook)
     return true;
 
-  /*
-   * If elevel is ERROR, or if the check_hook itself throws an elog
-   * (undesirable, but not always avoidable), make sure we don't leak the
-   * already-malloc'd newval string.
-   */
-  PG_TRY();
-  {
-    /* Reset variables that might be set by hook */
-    GUC_check_errcode_value = ERRCODE_INVALID_PARAMETER_VALUE;
-    GUC_check_errmsg_string = NULL;
-    GUC_check_errdetail_string = NULL;
-    GUC_check_errhint_string = NULL;
+  /* Reset variables that might be set by hook */
+  GUC_check_errcode_value = ERRCODE_INVALID_PARAMETER_VALUE;
+  GUC_check_errmsg_string = NULL;
+  GUC_check_errdetail_string = NULL;
+  GUC_check_errhint_string = NULL;
 
-    /* The hook sees the value as a std::string: NULL is "" to it. */
-    std::string value(*newval ? *newval : "");
+  /* The hook sees the value as a std::string: NULL is "" to it. */
+  std::string value(newval ? *newval : std::string());
 
-    if (!conf->check_hook(value, extra, source)) {
-      ereport(elevel,
-              (errcode(GUC_check_errcode_value),
-               GUC_check_errmsg_string
-                   ? errmsg_internal("%s", GUC_check_errmsg_string)
-                   : errmsg("invalid value for parameter \"%s\": \"%s\"",
-                            conf->gen.name, *newval ? *newval : ""),
-               GUC_check_errdetail_string
-                   ? errdetail_internal("%s", GUC_check_errdetail_string)
-                   : 0,
-               GUC_check_errhint_string
-                   ? errhint("%s", GUC_check_errhint_string)
-                   : 0));
-      /* Flush any strings created in ErrorContext */
-      FlushErrorState();
-      result = false;
-    } else if (value != (*newval ? *newval : "")) {
-      /* The hook changed the value: guc.c keeps a guc_malloc'd copy. */
-      char *copy = guc_strdup(LOG, value.c_str());
-
-      if (!copy)
-        result = false;
-      else {
-        guc_free(*newval);
-        *newval = copy;
-      }
-    }
+  if (!conf->check_hook(value, extra, source)) {
+    ereport(elevel,
+            (errcode(GUC_check_errcode_value),
+             GUC_check_errmsg_string
+                 ? errmsg_internal("%s", GUC_check_errmsg_string)
+                 : errmsg("invalid value for parameter \"%s\": \"%s\"",
+                          conf->gen.name, newval ? newval->c_str() : ""),
+             GUC_check_errdetail_string
+                 ? errdetail_internal("%s", GUC_check_errdetail_string)
+                 : 0,
+             GUC_check_errhint_string ? errhint("%s", GUC_check_errhint_string)
+                                      : 0));
+    /* Flush any strings created in ErrorContext */
+    FlushErrorState();
+    return false;
   }
-  PG_CATCH();
-  {
-    guc_free(*newval);
-    PG_RE_THROW();
-  }
-  PG_END_TRY();
 
-  return result;
+  /* The hook changed the value: keep what it made. */
+  if (value != (newval ? *newval : std::string()))
+    newval = std::make_unique<std::string>(std::move(value));
+  return true;
 }
 
 /* Call a string setting's assign hook, if it has one: NULL is "" to it. */
 static void call_string_assign_hook(struct config_string *conf,
-                                    const char *newval, void *extra) {
-  if (conf->assign_hook)
-    conf->assign_hook(std::string(newval ? newval : ""), extra);
+                                    const std::string *newval, void *extra) {
+  if (!conf->assign_hook)
+    return;
+  if (newval)
+    conf->assign_hook(*newval, extra);
+  else
+    conf->assign_hook(std::string(), extra);
 }
 
 static bool call_enum_check_hook(struct config_enum *conf, int *newval,
