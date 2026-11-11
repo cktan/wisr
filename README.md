@@ -18,6 +18,10 @@ To try digres, from a build to a query:
 See [`PERF.md`](PERF.md) for the performance of digres vs
 PostgreSQL 18.
 
+See [`DG-vs-PG.md`](DG-vs-PG.md) for how digres differs from
+PostgreSQL 18: its process model, storage, transactions,
+catalog, roles and SQL surface.
+
 ## How the parts fit
 
 ```
