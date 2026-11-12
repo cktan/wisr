@@ -373,8 +373,14 @@ rocksdb::ColumnFamilyOptions store_cf_options(db_t *db, uint64_t storeid) {
   return cfo;
 }
 
-/* Parse the pass-through RocksDB option string onto *out. */
+/*
+ * Set sm1's DBOptions defaults on *out, then parse the pass-through
+ * RocksDB option string over them.
+ */
 int db_options(const sm1::options_t *opt, rocksdb::DBOptions *out) {
+  // Compress the WAL: a tree's page put logs its page whole
+  // (../DBMGR.md §10.3). The option string may turn it off.
+  out->wal_compression = rocksdb::kZSTD;
   // No option string: keep the defaults.
   if (!opt || !opt->rocksdb_options) {
     return 0;

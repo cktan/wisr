@@ -561,15 +561,32 @@ TEST_CASE("a record torn in a zero-filled log's tail is the end of the log") {
     bytes.assign(std::istreambuf_iterator<char>(in),
                  std::istreambuf_iterator<char>());
   }
-  size_t end = bytes.find_last_not_of('\0');
-  REQUIRE(end != std::string::npos);
+  // The records end at the first zero header: walk the headers,
+  // 7 bytes each (checksum 4, length 2, type 1), in blocks of 32 KB.
+  // The last non-zero byte is not the end, as a compressed record
+  // can end in zeros.
+  const std::string zero_header(7, '\0');
+  size_t end = 0;
+  while (end + 7 <= bytes.size()) {
+    size_t left = 32768 - end % 32768;
+    if (left < 7) {
+      end += left; // a block's tail, too short for a header
+      continue;
+    }
+    if (0 == bytes.compare(end, 7, zero_header)) {
+      break;
+    }
+    end += 7 + (static_cast<uint8_t>(bytes[end + 4]) |
+                static_cast<uint8_t>(bytes[end + 5]) << 8);
+  }
+  REQUIRE(end > 0);
   REQUIRE(bytes.size() > end + 64);
   // checksum (bad), length 100, type 1 (a full record), 20 bytes.
   std::string torn("\xde\xad\xbe\xef\x64\x00\x01", 7);
   torn.append(20, 'x');
   {
     std::fstream out(path, std::ios::binary | std::ios::in | std::ios::out);
-    out.seekp(static_cast<std::streamoff>(end + 1));
+    out.seekp(static_cast<std::streamoff>(end));
     out.write(torn.data(), static_cast<std::streamsize>(torn.size()));
   }
 

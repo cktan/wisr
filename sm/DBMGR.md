@@ -1217,6 +1217,15 @@ Recovery at attach uses the defaults.
 
 `db_open()` refuses a value out of range with `SM_ERR_INVALID`.
 
+`db_options()` sets one `DBOptions` default before it parses
+`rocksdb_options`: `wal_compression` is `kZSTD`. A B-tree
+Index's insert logs its page whole, up to 4 KB
+([`BTREEINDEX.md`](BTREEINDEX.md#101-a-page-written-whole)
+§10.1). Its sorted keys compress well, so the WAL writes fewer
+bytes. The compression costs CPU on each write. The string
+`wal_compression=kNoCompression` turns it off. The root db and
+the temporary instance do not use `db_options()`.
+
 `max_total_wal_size` bounds how long a rarely-written CF can hold
 old WAL files alive. sm1 does not set it. A host sets it in
 `rocksdb_options`.
