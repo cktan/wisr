@@ -36,7 +36,7 @@ GCP machine. Read the repository's `CLAUDE.md` first, then
    fdatasync rate. If digres is much faster, it does not sync:
    stop and report.
 5. Run a smoke test, to find setup problems in about 3 minutes:
-   `W_SECONDS=3 CLIENTS=1 COUNTS="0 1" wbench/run.sh`.
+   `W_TXNS=200 CLIENTS=1 COUNTS="0 1" wbench/run.sh`.
 6. Run the full benchmark (about 20 minutes): `wbench/run.sh >
    wbench/build/full.log 2>&1`. Read the table at the end of
    the log.

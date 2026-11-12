@@ -27,8 +27,9 @@
 # 2. For each workload, index kind and client count (CLIENTS, 1 and
 #    16), make t again, and checkpoint.
 # 3. Read the sectors written to the data's device.
-# 4. Run pgbench, prepared, for W_SECONDS (30), with a log of each
-#    transaction.
+# 4. Run pgbench, prepared, for W_TXNS (10,000) transactions shared by
+#    the clients (ins1k: a twentieth of them, 1000 rows each), with a
+#    log of each transaction. A count, not a time, caps the writes.
 # 5. Read the sectors again: the difference is the run's bytes, WAL,
 #    flushes and compactions included.
 # 6. Report tps, latency p50 and p99, and KB written a transaction.
@@ -43,7 +44,7 @@ here=$PWD
 work=$PWD/build/run
 digres=${DIGRES:-$root/dg/build/digres-release}
 pgbin=${PGBIN:-$HOME/p/postgres18/install/bin}
-seconds=${W_SECONDS:-30}
+txns=${W_TXNS:-10000}
 clients=${CLIENTS:-1 16}
 counts=${COUNTS:-0 1 4 16}
 workloads=${WORKLOADS:-ins1 ins1k upd uniq}
@@ -63,8 +64,9 @@ sock=$(mktemp -d /tmp/wbench.XXXX)
 trap 'rm -rf "$sock"' EXIT
 
 # The device under the data: its sectors written are the bytes of a run.
-dev=$(basename "$(df --output=source "$work" | tail -1)")
-stat=/sys/class/block/$dev/stat
+# The source can be /dev/root, so find the device by its major:minor.
+dev=$(mountpoint -d "$(df --output=target "$work" | tail -1)")
+stat=/sys/dev/block/$dev/stat
 [ -r "$stat" ] || {
   echo "run: no $stat for the device of $work" >&2
   exit 1
@@ -142,7 +144,7 @@ runs() {
 # $1, port $2, and append a line of results to $work/results.
 measure() {
   local sys=$1 port=$2 w=$3 kind=$4 n=$5 c=$6
-  local name=$sys-$w-$kind-$n-c$c script s0 s1 j
+  local name=$sys-$w-$kind-$n-c$c script s0 s1 j t
   script=$here/$w.sql
   [ "$w" = uniq ] && script=$here/ins1.sql
   echo "run: $name"
@@ -152,9 +154,13 @@ measure() {
   }
   rm -rf "$work/txlog" && mkdir "$work/txlog"
   j=$((c < 4 ? c : 4))
+  # ins1k writes 1000 rows a transaction: a twentieth of the count.
+  t=$txns
+  [ "$w" = ins1k ] && t=$((txns / 20))
+  t=$((t / c))
   s0=$(sectors)
   "$pgbin/pgbench" -h "$sock" -p "$port" -d postgres -n -M prepared \
-    -c "$c" -j "$j" -T "$seconds" -D rows="$upd_rows" \
+    -c "$c" -j "$j" -t "$t" -D rows="$upd_rows" \
     -l --log-prefix="$work/txlog/tx" -f "$script" > "$work/$name.log" 2>&1 || {
     echo "run: pgbench failed; see $work/$name.log" >&2
     return 1

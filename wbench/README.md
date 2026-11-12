@@ -56,12 +56,12 @@ Each commit is synced to disk on both systems:
 
 ## 5. Limits
 
-- A run is short (30 seconds by default). PostgreSQL writes
-  most heap pages at a checkpoint, every 5 minutes by default,
-  so a short run counts its WAL but few of its page writes.
-  digres flushes and compacts when its memtables fill, so a
-  short run can count those. Set `W_SECONDS` higher to compare
-  bytes.
+- A run is short (10,000 transactions by default, shared by the
+  clients). PostgreSQL writes most heap pages at a checkpoint,
+  every 5 minutes by default, so a short run counts its WAL but
+  few of its page writes. digres flushes and compacts when its
+  memtables fill, so a short run can count those. Set `W_TXNS`
+  higher to compare bytes.
 - `CHECKPOINT` before a run writes PostgreSQL's dirty pages. In
   digres it does not flush the memtables, so the setup's writes
   can be counted in the run.
