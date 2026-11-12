@@ -35,21 +35,15 @@ GCP machine. Read the repository's `CLAUDE.md` first, then
    1-client `ins1` tps of both systems should be near its
    fdatasync rate. If digres is much faster, it does not sync:
    stop and report.
-5. Run a smoke test, to find setup problems in about 3 minutes:
+5. Run a smoke test, to find setup problems quickly:
    `W_TXNS=200 CLIENTS=1 COUNTS="0 1" wbench/run.sh`.
-6. Run the full benchmark (about 20 minutes): `wbench/run.sh >
+6. Run the full benchmark (a few minutes): `wbench/run.sh >
    wbench/build/full.log 2>&1`. Read the table at the end of
    the log.
-7. Run the long one, for bytes written (about 3 hours):
-   `W_SECONDS=300 wbench/run.sh > wbench/build/long.log 2>&1`.
-   A run of 300 seconds includes PostgreSQL's checkpoint, every
-   5 minutes, so KB/txn compares writes fairly.
-   - Copy `wbench/build/run/results` after each run: `run.sh`
-     deletes `wbench/build/run` when it starts.
-8. Write the results file
+7. Write the results file
    `wbench/results-gcp/<yyyymmdd-hhmm>.md`, with the content of
    "What the results file says" below.
-9. Commit it on `wip-wbench` and push. Do not merge into `main`
+8. Commit it on `wip-wbench` and push. Do not merge into `main`
    until the user asks.
 
 ## 3. What the results file says
@@ -59,7 +53,7 @@ GCP machine. Read the repository's `CLAUDE.md` first, then
 - The digres commit and its `--build` output; the PostgreSQL
   version and where its build came from.
 - The `pg_test_fsync` rate for fdatasync.
-- The table of each run: the full run and the long run.
+- The table of the full run.
 - A short analysis, one point a workload:
   - `ins1`, 0 indexes: commit cost. Both should be near the
     sync rate at 1 client. At 16 clients, the group commit
@@ -78,7 +72,7 @@ GCP machine. Read the repository's `CLAUDE.md` first, then
 - **16 clients on 4 cores:** pgbench uses at most 4 threads,
   and shares the CPUs with the server. Say so in the results.
 - **Device count:** KB/txn is read from
-  `/sys/class/block/<dev>/stat` of the device under
+  `/sys/dev/block/<major:minor>/stat` of the device under
   `wbench/build`. Another process that writes to that device
   adds to it. Do not run other work during a run.
 - **CHECKPOINT is a no-op in digres**
